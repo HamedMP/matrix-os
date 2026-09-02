@@ -21,6 +21,7 @@ const ALLOWED_METHODS = new Set([
   "agent",
   "agent.wait",
   "chat.abort",
+  "sessions.steer",
 ]);
 
 const ChallengeSchema = z.object({
@@ -92,6 +93,12 @@ const ChatAbortParamsSchema = z.object({
   runId: SafeRpcReferenceSchema.optional(),
   preserveSideRuns: z.boolean().optional(),
 }).strict();
+const SessionSteerParamsSchema = z.object({
+  key: SafeRpcReferenceSchema,
+  runId: SafeRpcReferenceSchema.optional(),
+  message: z.string().min(1).max(96 * 1024),
+  idempotencyKey: SafeRpcReferenceSchema,
+}).strict();
 const MethodParamsSchemas: Record<string, z.ZodType> = {
   health: EmptyParamsSchema,
   "channels.status": EmptyParamsSchema,
@@ -102,6 +109,7 @@ const MethodParamsSchemas: Record<string, z.ZodType> = {
   agent: AgentParamsSchema,
   "agent.wait": AgentWaitParamsSchema,
   "chat.abort": ChatAbortParamsSchema,
+  "sessions.steer": SessionSteerParamsSchema,
 };
 
 const HelloSchema = z.object({

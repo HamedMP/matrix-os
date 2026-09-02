@@ -381,6 +381,16 @@ export function createWorkspaceCodingAgentProvider(
       if (!result.ok) throw new Error("Workspace provider turn resume failed");
       return { events: [], outcome: "delivered", resumeState };
     },
+    async steerTurn({ thread, turnId, message, clientRequestId, resumeState }) {
+      if (agent !== "codex" || !options.codexControl) {
+        throw new Error("Workspace provider steering unavailable");
+      }
+      const sessionId = sessionIdForThread(thread.id);
+      if (resumeState.conversationId !== sessionId) {
+        throw new Error("Workspace provider steering target changed");
+      }
+      await options.codexControl.steerTurn({ sessionId, prompt: message, clientRequestId });
+    },
     async abortThread({ thread, clientRequestId, now, nextEventId }) {
       const sessionId = sessionIdForThread(thread.id);
       if (agent === "codex" && options.codexControl) {

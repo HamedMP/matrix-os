@@ -42,6 +42,57 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
+  it("resumes the active Claude session with a steering prompt", async () => {
+    const firstStdout = new FakeStream();
+    const firstStderr = new FakeStream();
+    const firstProcess = new EventEmitter() as EventEmitter & {
+      stdout: FakeStream;
+      stderr: FakeStream;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    firstProcess.stdout = firstStdout;
+    firstProcess.stderr = firstStderr;
+    firstProcess.kill = vi.fn(() => queueMicrotask(() => firstProcess.emit("exit", null, "SIGTERM")));
+    const spawnFn = vi.fn()
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => firstStdout.emit("data", Buffer.from(`${JSON.stringify({
+          type: "system",
+          subtype: "init",
+          session_id: "claude_steer_session",
+          model: "claude-sonnet-4-6",
+        })}\n`)));
+        return firstProcess;
+      })
+      .mockImplementationOnce(() => child([
+        JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "222", session_id: "claude_steer_session" }),
+      ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events: unknown[] = [];
+    const runPromise = (async () => {
+      for await (const event of adapter.start(baseInput)) events.push(event);
+    })();
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "state.updated" })));
+
+    await adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_claude_steer",
+      prompt: "Reply 222",
+      parts: [{ type: "text", text: "Reply 222" }],
+    });
+    await runPromise;
+
+    expect(firstProcess.kill).toHaveBeenCalled();
+    expect(spawnFn).toHaveBeenCalledTimes(2);
+    expect(spawnFn.mock.calls[1]?.[1]).toEqual(expect.arrayContaining([
+      "--resume", "claude_steer_session", "--", "Reply 222",
+    ]));
+    expect(events).toContainEqual({ type: "assistant.delta", delta: "222" });
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("runs the selected model, effort, permission and streams native deltas", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({

@@ -513,7 +513,7 @@ function ConversationTurn({
   callbacks: ConversationPresentationCallbacks;
   initialFinalIds: ReadonlySet<string>;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
   const showWork = turn.active || expanded;
   const hasWork = turn.work.length > 0;
   const terminalPartial = !turn.active
@@ -522,6 +522,10 @@ function ConversationTurn({
     ? [...turn.work].reverse().find((item) => item.kind === "message")
     : undefined;
   const visibleWork = showWork ? turn.work : terminalPartial ? [terminalPartial] : [];
+  const timeline = turn.timeline;
+  const visibleTimeline = timeline?.filter((entry) => (
+    entry.kind === "user-followup" || showWork || (terminalPartial !== undefined && entry.item.id === terminalPartial.id)
+  ));
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={callbacks} /> : null}
@@ -535,13 +539,24 @@ function ConversationTurn({
           onToggle={() => setExpanded((value) => !value)}
         />
       ) : null}
-      {visibleWork.length > 0 ? (
+      {timeline ? (
+        visibleTimeline && visibleTimeline.length > 0 ? (
+          <div data-turn-timeline className="flex min-w-0 flex-col gap-0.5">
+            {visibleTimeline.map((entry) => entry.kind === "user-followup"
+              ? <UserMessage key={entry.message.id} message={entry.message} callbacks={callbacks} />
+              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={callbacks} />)}
+          </div>
+        ) : null
+      ) : visibleWork.length > 0 ? (
         <div data-work-items className="flex min-w-0 flex-col gap-0.5">
           {visibleWork.map((item) => (
             <PresentationItem key={item.id} item={item} callbacks={callbacks} />
           ))}
         </div>
       ) : null}
+      {!timeline ? turn.userFollowups?.map((message) => (
+        <UserMessage key={message.id} message={message} callbacks={callbacks} />
+      )) : null}
       {turn.final ? (
         <PresentationItem
           item={turn.final}

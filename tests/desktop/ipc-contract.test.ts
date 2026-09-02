@@ -54,6 +54,7 @@ describe("IPC contract", () => {
       "update:install",
       "update:get-whats-new",
       "update:acknowledge-whats-new",
+      "app:get-version",
       "app:get-zoom",
       "app:set-zoom",
       "window:toggle-maximize",
@@ -61,6 +62,62 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("bounds the trusted native app version response", () => {
+    const channel = INVOKE_CHANNELS["app:get-version"];
+
+    expect(channel.request.safeParse({}).success).toBe(true);
+    expect(channel.response.safeParse({ version: "1.4.0-canary.2" }).success).toBe(true);
+    expect(channel.response.safeParse({ version: "x".repeat(129) }).success).toBe(false);
+  });
+
+  it("exposes bounded authenticated identity fields without credentials", () => {
+    const response = INVOKE_CHANNELS["auth:status"].response;
+
+    expect(response.safeParse({
+      signedIn: true,
+      handle: "neo",
+      userId: "user_2abcDEF",
+      email: "neo@example.com",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+    }).success).toBe(true);
+    expect(response.safeParse({
+      signedIn: true,
+      handle: "neo",
+      userId: "user_2abcDEF",
+      email: "neo@example.com",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+      accessToken: "must-not-cross-ipc",
+    }).success).toBe(false);
+    expect(response.safeParse({
+      signedIn: true,
+      handle: "neo",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+    }).success).toBe(false);
+    expect(response.safeParse({
+      signedIn: false,
+      userId: "user_2abcDEF",
+      email: "neo@example.com",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 2,
+    }).success).toBe(false);
+    expect(response.safeParse({
+      signedIn: true,
+      handle: "neo",
+      userId: "user_2abcDEF",
+      email: "not-an-email",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+    }).success).toBe(false);
   });
 
   it("keeps Hermes setup IPC typed and credentials write-only", () => {

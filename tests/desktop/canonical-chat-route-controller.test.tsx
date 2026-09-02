@@ -45,6 +45,10 @@ function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClie
       ...(input.projectId === null ? {} : { projectId: input.projectId }),
     })),
     admitTurn: vi.fn(),
+    queueTurn: vi.fn(),
+    steerRun: vi.fn(),
+    cancelQueuedTurn: vi.fn(),
+    reorderQueuedTurns: vi.fn(),
     cancelRun: vi.fn(),
     submitApproval: vi.fn(),
     retryTurn: vi.fn(),
@@ -1081,4 +1085,189 @@ describe("canonical Chat route controller", () => {
     warn.mockRestore();
   });
 
+  it("steers the exact active Run and manages the durable Queue with current revisions", async () => {
+    const runningRecord = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, revision: 5 },
+      activeRun: {
+        runId: "run_queue_controller",
+        turnId: "cturn_queue_controller",
+        status: "running" as const,
+      },
+    };
+    const queuedTurn = (id: string, position: number, text: string) => ({
+      id,
+      chatId: globalRecord.chat.id,
+      clientRequestId: `req_${id}`,
+      position,
+      parts: [{ type: "text" as const, text }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      createdAt: "2026-08-31T01:00:00.000Z",
+      updatedAt: "2026-08-31T01:00:00.000Z",
+    });
+    const activeRunRecord = {
+      id: runningRecord.activeRun.runId,
+      chatId: globalRecord.chat.id,
+      turnId: runningRecord.activeRun.turnId,
+      attempt: 1,
+      driverKind: "codex" as const,
+      instanceId: "codex_default",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      status: "running" as const,
+      historyBoundarySeq: 0,
+      capabilitySnapshot: {
+        revision: "catalog_controller_queue",
+        rootChat: true,
+        attachments: ["file" as const],
+        resources: ["file" as const],
+        tools: [],
+        approvals: true,
+        userInput: true,
+        resume: true,
+        cancellation: true,
+        steering: "same_run" as const,
+        worktrees: "optional" as const,
+        interactionModes: ["default"],
+        permissionModes: ["supervised"],
+      },
+      createdAt: "2026-08-31T01:00:00.000Z",
+      updatedAt: "2026-08-31T01:00:00.000Z",
+    };
+    const first = queuedTurn("qturn_controller_1", 1, "First queued turn");
+    const second = queuedTurn("qturn_controller_2", 2, "Second queued turn");
+    const third = queuedTurn("qturn_controller_3", 3, "Third queued turn");
+    const detailAt = (revision: number, queuedTurns: ReturnType<typeof queuedTurn>[]) => ({
+      ...detail,
+      record: { ...runningRecord, chat: { ...runningRecord.chat, revision } },
+      runs: [activeRunRecord],
+      queuedTurns,
+    });
+    const getDetail = vi.fn(async () => detailAt(5, [first, second]));
+    const steerRun = vi.fn(async () => ({
+      runId: runningRecord.activeRun.runId,
+      turnId: runningRecord.activeRun.turnId,
+      message: {
+        id: "msg_controller_steer",
+        chatId: globalRecord.chat.id,
+        seq: 1,
+        role: "user" as const,
+        state: "committed" as const,
+        turnId: runningRecord.activeRun.turnId,
+        runId: runningRecord.activeRun.runId,
+        parts: [{ type: "text" as const, text: "Steer this run" }],
+        createdAt: "2026-08-31T01:00:01.000Z",
+      },
+      steering: "accepted" as const,
+    }));
+    const queueTurn = vi.fn(async () => ({ queuedTurn: third, queueDepth: 3 }));
+    const reorderQueuedTurns = vi.fn(async () => ({ queuedTurns: [second, first, third] }));
+    const cancelQueuedTurn = vi.fn(async () => ({
+      queuedTurnId: first.id,
+      queueDepth: 2,
+      cancellation: "cancelled" as const,
+    }));
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [runningRecord] })),
+      getDetail,
+      steerRun,
+      queueTurn,
+      reorderQueuedTurns,
+      cancelQueuedTurn,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.chat.revision).toBe(5));
+
+    await act(async () => {
+      await result.current.steerActiveRun([{ type: "text", text: "Steer this run" }]);
+    });
+    expect(steerRun).toHaveBeenCalledWith(globalRecord.chat.id, runningRecord.activeRun.runId, {
+      clientRequestId: expect.any(String),
+      expectedTurnId: runningRecord.activeRun.turnId,
+      parts: [{ type: "text", text: "Steer this run" }],
+    });
+
+    await act(async () => {
+      await result.current.queueTurn({
+        parts: third.parts,
+        selection: third.selection,
+        interactionMode: third.interactionMode,
+        permissionMode: third.permissionMode,
+      });
+    });
+    expect(queueTurn).toHaveBeenCalledWith(globalRecord.chat.id, expect.objectContaining({
+      baseRevision: 7,
+      parts: third.parts,
+    }));
+
+    await act(async () => {
+      await result.current.reorderQueuedTurns([second.id, first.id, third.id]);
+    });
+    expect(reorderQueuedTurns).toHaveBeenCalledWith(globalRecord.chat.id, {
+      clientRequestId: expect.any(String),
+      baseRevision: 8,
+      queuedTurnIds: [second.id, first.id, third.id],
+    });
+
+    await act(async () => {
+      await result.current.cancelQueuedTurn(first.id);
+    });
+    expect(cancelQueuedTurn).toHaveBeenCalledWith(globalRecord.chat.id, first.id, {
+      clientRequestId: expect.any(String),
+      baseRevision: 9,
+    });
+    expect(getDetail).toHaveBeenCalledTimes(1);
+    expect(result.current.detail?.record.chat.revision).toBe(10);
+    expect(result.current.detail?.queuedTurns?.map((turn) => turn.id)).toEqual([
+      second.id,
+      third.id,
+    ]);
+  });
+
+  it("fails closed when the active Run snapshot does not support same-run steering", async () => {
+    const activeRecord = {
+      ...globalRecord,
+      activeRun: {
+        runId: "run_without_steering",
+        turnId: "cturn_without_steering",
+        status: "running" as const,
+      },
+    };
+    const steerRun = vi.fn();
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [activeRecord] })),
+      getDetail: vi.fn(async () => ({
+        ...detail,
+        record: activeRecord,
+        runs: [{
+          id: activeRecord.activeRun.runId,
+          capabilitySnapshot: { steering: "none" },
+        } as never],
+      })),
+      steerRun,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.activeRun).toBeTruthy());
+
+    let response: unknown;
+    await act(async () => {
+      response = await result.current.steerActiveRun([{ type: "text", text: "Do not send" }]);
+    });
+
+    expect(response).toBeNull();
+    expect(steerRun).not.toHaveBeenCalled();
+  });
 });

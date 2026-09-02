@@ -217,6 +217,12 @@ export function createClaudeChatProviderAdapter(options: {
   resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const activeRuns = new Map<string, {
+    ownerId: string;
+    chatId: string;
+    abort: () => void;
+    steer: (prompt: string) => void;
+  }>();
 
   async function* execute(
     inputValue: CanonicalProviderRunInput<ClaudeChatState>,
@@ -269,6 +275,30 @@ export function createClaudeChatProviderAdapter(options: {
     let resultFailed = false;
     let resultSubtype: "success" | "error" | "other" | undefined;
     let emittedState = resumeState;
+    let steerPrompt: string | undefined;
+    const processController = new AbortController();
+    const processSignal = AbortSignal.any([input.signal, processController.signal]);
+    const activeRun = {
+      ownerId: input.owner.ownerId,
+      chatId: input.chatId,
+      abort: () => processController.abort(),
+      steer(prompt: string) {
+        if (!emittedState) throw new Error("Claude Run state unavailable");
+        steerPrompt = prompt;
+        processController.abort();
+      },
+    };
+    if (!activeRuns.has(input.runId) && activeRuns.size >= 100) {
+      const oldest = activeRuns.keys().next().value;
+      if (oldest !== undefined) {
+        activeRuns.get(oldest)?.abort();
+        activeRuns.delete(oldest);
+      }
+    }
+    activeRuns.set(input.runId, activeRun);
+    const releaseActiveRun = () => {
+      if (activeRuns.get(input.runId) === activeRun) activeRuns.delete(input.runId);
+    };
     let pendingDelta = "";
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
@@ -431,7 +461,7 @@ export function createClaudeChatProviderAdapter(options: {
       cwd: launch.cwd,
       env: runEnv,
       replaceEnv: credentialEnv !== undefined,
-      signal: input.signal,
+      signal: processSignal,
       timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,
       maxStderrBytes: MAX_STDERR_BYTES,
@@ -447,6 +477,7 @@ export function createClaudeChatProviderAdapter(options: {
         stderrEvidenceBytes += chunk.byteLength;
       },
     }).then(() => {
+      releaseActiveRun();
       if (buffered.trim()) parseLine(buffered);
       flushPendingDelta();
       emitBufferedResult();
@@ -481,8 +512,21 @@ export function createClaudeChatProviderAdapter(options: {
           }
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
-    }).catch((error: unknown) => {
+    }).catch(async (error: unknown) => {
+      releaseActiveRun();
       flushPendingDelta();
+      if (steerPrompt && emittedState && !input.signal.aborted) {
+        for await (const event of execute({
+          ...input,
+          prompt: steerPrompt,
+          parts: [{ type: "text", text: steerPrompt }],
+          resumeState: emittedState,
+        }, emittedState)) {
+          queue.push(event);
+        }
+        queue.finish();
+        return;
+      }
       if (sawResult && !resultFailed) {
         console.warn("[chat-claude] Claude CLI exited non-zero after a successful result", {
           cliFailureKind: error instanceof CanonicalCliError ? error.kind : "unknown",
@@ -533,5 +577,12 @@ export function createClaudeChatProviderAdapter(options: {
     serializeState: (value) => ClaudeChatStateSchema.parse(value),
     start: (input) => execute(input),
     resume: (input) => execute(input, ClaudeChatStateSchema.parse(input.resumeState)),
+    async steer(input) {
+      const active = activeRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) {
+        throw new Error("Claude active Run unavailable");
+      }
+      active.steer(input.prompt);
+    },
   };
 }

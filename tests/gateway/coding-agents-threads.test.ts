@@ -456,6 +456,56 @@ describe("coding agent thread lifecycle", () => {
     expect(AgentThreadSnapshotSchema.parse(await replay.json()).events.items).toHaveLength(4);
   });
 
+  it("steers only the owner's exact active initial legacy Turn", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-steer-"));
+    const steerTurn = vi.fn(async () => undefined);
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return {
+          events: [AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          })],
+          resumeState: { conversationId: `sess_${thread.id.slice("thread_".length)}` },
+        };
+      },
+      steerTurn,
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    await expect(threads.steerTurn(ownerPrincipal, created.snapshot.thread.id, {
+      message: "Focus on the failing test.",
+      clientRequestId: "req_thread_steer_1",
+    })).resolves.toBeUndefined();
+    expect(steerTurn).toHaveBeenCalledWith(expect.objectContaining({
+      principal: ownerPrincipal,
+      thread: expect.objectContaining({ id: created.snapshot.thread.id }),
+      message: "Focus on the failing test.",
+      clientRequestId: "req_thread_steer_1",
+      resumeState: { conversationId: `sess_${created.snapshot.thread.id.slice("thread_".length)}` },
+    }));
+    expect(steerTurn.mock.calls[0]?.[0]).not.toHaveProperty("turnId");
+    await expect(threads.steerTurn(ownerPrincipal, created.snapshot.thread.id, {
+      expectedTurnId: "turn_stale_target",
+      message: "Stale.",
+      clientRequestId: "req_thread_steer_stale",
+    })).rejects.toThrow();
+    await expect(threads.steerTurn(otherPrincipal, created.snapshot.thread.id, {
+      message: "Cross-owner.",
+      clientRequestId: "req_thread_steer_other",
+    })).rejects.toThrow();
+    expect(steerTurn).toHaveBeenCalledTimes(1);
+  });
+
   it("aggregates every bounded owner project thread beyond the list page", async () => {
     const { threads } = await createHarness();
     for (let index = 0; index < 55; index += 1) {

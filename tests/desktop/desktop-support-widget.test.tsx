@@ -19,14 +19,32 @@ const posthogClient = vi.hoisted(() => ({
   capture: vi.fn(),
   identify: vi.fn(),
   init: vi.fn(),
+  register: vi.fn(),
   reset: vi.fn(),
+  setPersonProperties: vi.fn(),
   set_config: vi.fn(),
+  unregister: vi.fn(),
+}));
+
+const operatorClient = vi.hoisted(() => ({
+  invoke: vi.fn(async () => ({ version: "1.4.0-canary.2" })),
+}));
+
+const runtimeApi = vi.hoisted(() => ({
+  get: vi.fn(async () => ({
+    version: "v2026.08.31-installed",
+    runningVersion: "v2026.09.02-running",
+  })),
 }));
 
 vi.mock("posthog-js/dist/conversations", () => ({}));
 vi.mock("posthog-js/dist/module.no-external", () => ({ default: posthogClient }));
+vi.mock("@desktop/renderer/src/lib/operator", () => operatorClient);
 vi.mock("@desktop/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
   default: () => <button type="button">Main computer</button>,
+}));
+vi.mock("@desktop/renderer/src/features/onboarding/GettingStartedPopover", () => ({
+  default: () => null,
 }));
 vi.mock("@desktop/renderer/src/features/mission-control/AccountMenu", () => ({
   default: () => <button type="button" aria-label="Open account menu">Avatar</button>,
@@ -77,16 +95,31 @@ describe("Desktop support widget", () => {
     useConnection.setState({
       status: "signed-in",
       handle: "neo",
+      userId: "user_2abcDEF",
       displayName: "Neo",
+      email: "neo@example.com",
       platformHost: "https://app.matrix-os.com",
       authGeneration: 1,
+      api: runtimeApi as never,
     });
     useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
     useTabs.setState(useTabs.getInitialState(), true);
     useUi.setState(useUi.getInitialState(), true);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await act(async () => {
+      useConnection.setState({
+        status: "signed-out",
+        handle: null,
+        userId: null,
+        displayName: null,
+        imageUrl: null,
+        email: null,
+        api: null,
+      });
+      await Promise.resolve();
+    });
     cleanup();
     vi.unstubAllEnvs();
     vi.clearAllMocks();
@@ -147,9 +180,22 @@ describe("Desktop support widget", () => {
         persistence_name: "matrix_os_desktop_support",
       }),
     );
-    expect(posthogClient.identify).toHaveBeenCalledWith("neo", {
+    expect(posthogClient.identify).toHaveBeenCalledWith("user_2abcDEF", {
       $name: "Neo",
+      email: "neo@example.com",
       matrix_client: "desktop",
+      matrix_bundle_version: "v2026.09.02-running",
+      matrix_desktop_version: "1.4.0-canary.2",
+    });
+    expect(posthogClient.register).toHaveBeenCalledWith({
+      matrix_client: "desktop",
+      matrix_bundle_version: "v2026.09.02-running",
+      matrix_desktop_version: "1.4.0-canary.2",
+    });
+    expect(posthogClient.setPersonProperties).toHaveBeenCalledWith({
+      matrix_client: "desktop",
+      matrix_bundle_version: "v2026.09.02-running",
+      matrix_desktop_version: "1.4.0-canary.2",
     });
     expect(posthogClient.conversations.hide).toHaveBeenCalledTimes(1);
 
@@ -157,14 +203,30 @@ describe("Desktop support widget", () => {
       useConnection.setState({
         status: "signed-out",
         handle: null,
+        userId: null,
         displayName: null,
         imageUrl: null,
+        email: null,
         api: null,
       });
     });
 
     await waitFor(() => expect(posthogClient.conversations.hide).toHaveBeenCalledTimes(2));
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears a stale email during initial Clerk identification", async () => {
+    useConnection.setState({ email: null });
+
+    render(<DesktopSupportWidget />);
+
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalledWith("user_2abcDEF", {
+      $name: "Neo",
+      email: null,
+      matrix_client: "desktop",
+      matrix_bundle_version: "v2026.09.02-running",
+      matrix_desktop_version: "1.4.0-canary.2",
+    }));
   });
 
   it("opens support from beside the avatar without leaving the default launcher", async () => {
@@ -195,7 +257,6 @@ describe("Desktop support widget", () => {
         "Support",
         "Join Discord",
         "Main computer",
-        "Getting started — 0 of 5",
         "Open account menu",
       ]);
 
@@ -248,6 +309,18 @@ describe("Desktop support widget", () => {
   it("rebinds support to the selected runtime relay", async () => {
     render(<DesktopSupportWidget />);
 
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalledWith("user_2abcDEF", {
+      $name: "Neo",
+      email: "neo@example.com",
+      matrix_client: "desktop",
+      matrix_bundle_version: "v2026.09.02-running",
+      matrix_desktop_version: "1.4.0-canary.2",
+    }));
+    runtimeApi.get.mockResolvedValueOnce({
+      version: "v2026.09.02-installed",
+      runningVersion: "v2026.09.03-preview",
+    });
+
     act(() => {
       useConnection.setState({
         platformHost: "https://preview.matrix-os.com",
@@ -261,10 +334,80 @@ describe("Desktop support widget", () => {
       });
     });
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
-    expect(posthogClient.identify).toHaveBeenLastCalledWith("neo", {
+    expect(posthogClient.identify).toHaveBeenLastCalledWith("user_2abcDEF", {
       $name: "Neo",
+      email: "neo@example.com",
       matrix_client: "desktop",
+      matrix_bundle_version: "v2026.09.03-preview",
+      matrix_desktop_version: "1.4.0-canary.2",
     });
+    expect(posthogClient.register).toHaveBeenLastCalledWith({
+      matrix_client: "desktop",
+      matrix_bundle_version: "v2026.09.03-preview",
+      matrix_desktop_version: "1.4.0-canary.2",
+    });
+  });
+
+  it("updates person metadata without resetting the same Clerk identity", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalledTimes(1));
+    const resetCalls = posthogClient.reset.mock.calls.length;
+
+    act(() => {
+      useConnection.setState({
+        displayName: "The One",
+        email: "the-one@example.com",
+      });
+    });
+
+    await waitFor(() => expect(posthogClient.setPersonProperties).toHaveBeenLastCalledWith({
+      $name: "The One",
+      email: "the-one@example.com",
+    }));
+    expect(posthogClient.identify).toHaveBeenCalledTimes(1);
+    expect(posthogClient.reset).toHaveBeenCalledTimes(resetCalls);
+  });
+
+  it("clears a stale email without resetting the same Clerk identity", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalledTimes(1));
+    const resetCalls = posthogClient.reset.mock.calls.length;
+
+    act(() => {
+      useConnection.setState({ email: null });
+    });
+
+    await waitFor(() => expect(posthogClient.setPersonProperties).toHaveBeenLastCalledWith({
+      $name: "Neo",
+      email: null,
+    }));
+    expect(posthogClient.identify).toHaveBeenCalledTimes(1);
+    expect(posthogClient.reset).toHaveBeenCalledTimes(resetCalls);
+  });
+
+  it("keeps support available when runtime and native version metadata are unavailable", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    runtimeApi.get.mockRejectedValueOnce(new Error("private runtime failure"));
+    operatorClient.invoke.mockRejectedValueOnce(new Error("private IPC failure"));
+
+    render(<DesktopSupportWidget />);
+
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalledWith("user_2abcDEF", {
+      $name: "Neo",
+      email: "neo@example.com",
+      matrix_client: "desktop",
+    }));
+    expect(posthogClient.register).toHaveBeenCalledWith({ matrix_client: "desktop" });
+    expect(posthogClient.unregister).toHaveBeenCalledWith("matrix_bundle_version");
+    expect(posthogClient.unregister).toHaveBeenCalledWith("matrix_desktop_version");
+    expect(warning).toHaveBeenCalledWith(
+      "[desktop-support] Runtime metadata unavailable:",
+      "Error",
+    );
+    expect(warning).toHaveBeenCalledWith(
+      "[desktop-support] Native app version unavailable:",
+      "Error",
+    );
   });
 
   it("captures bounded Desktop lifecycle events after identifying the account", async () => {
@@ -302,8 +445,10 @@ describe("Desktop support widget", () => {
       useConnection.setState({
         status: "signed-out",
         handle: null,
+        userId: null,
         displayName: null,
         imageUrl: null,
+        email: null,
         api: null,
       });
     });

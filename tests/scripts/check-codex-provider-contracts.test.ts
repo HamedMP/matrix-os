@@ -12,13 +12,13 @@ const scriptPath = fileURLToPath(
 );
 
 describe("Codex provider contract checker", () => {
-  it("trusts the reviewed Codex 0.152.0 provider schemas", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.152.0");
-    expect(contract.verifiedVersions["0.152.0"]).toEqual({
+  it("trusts the reviewed Codex 0.152.1 provider schemas", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.152.1");
+    expect(contract.verifiedVersions["0.152.1"]).toEqual({
       schemaSha256: "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32",
     });
-    expect(appServerContract.latestVerifiedVersion).toBe("0.152.0");
-    expect(appServerContract.verifiedVersions["0.152.0"]).toEqual({
+    expect(appServerContract.latestVerifiedVersion).toBe("0.152.1");
+    expect(appServerContract.verifiedVersions["0.152.1"]).toEqual({
       schemaSha256: "65ce2db95109ebedc995d0ff74cc8bcefaa69fc3270f65b4fc69c1877c651f4e",
     });
   });
@@ -107,5 +107,17 @@ describe("Codex provider contract checker", () => {
     expect(workflow).toContain("codex-provider-version-check.mjs");
     expect(workflow).toContain("matrix-install-developer-tools");
     expect(workflow).toContain("terminal-agent-options.ts");
+  });
+
+  it("keeps malformed app-server spike output diagnosable without echoing its contents", () => {
+    const spike = readFileSync(new URL(
+      "../../scripts/spikes/codex-turn-steer.mjs",
+      import.meta.url,
+    ), "utf8");
+
+    expect(spike).toContain('catch (error)');
+    expect(spike).toContain('"[codex-turn-steer] Ignoring malformed output:"');
+    expect(spike).toContain('error instanceof Error ? error.name : "UnknownError"');
+    expect(spike).not.toContain("console.warn(line");
   });
 });

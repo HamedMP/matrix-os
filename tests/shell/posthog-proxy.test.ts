@@ -13,6 +13,9 @@ const posthogMock = vi.hoisted(() => ({
   init: vi.fn(),
   capture: vi.fn(),
   identify: vi.fn(),
+  register: vi.fn(),
+  unregister: vi.fn(),
+  setPersonProperties: vi.fn(),
   reset: vi.fn(),
   captureException: vi.fn(),
 }));
@@ -35,6 +38,7 @@ describe("shell PostHog same-origin proxy", () => {
     document.getElementById("ph-conversations-widget-container")?.remove();
     document.getElementById("unrelated-close")?.remove();
     posthogMock.conversations.show.mockReset();
+    vi.unstubAllGlobals();
   });
 
   it("rewrites the same-origin health probe to the gateway", async () => {
@@ -114,6 +118,14 @@ describe("shell PostHog same-origin proxy", () => {
   });
 
   it("opens PostHog Conversations from the shell navbar", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        version: "v2026.08.31-installed",
+        runningVersion: "v2026.09.02-running",
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
     const unrelatedClose = document.createElement("button");
     unrelatedClose.id = "unrelated-close";
     unrelatedClose.setAttribute("aria-label", "Close");
@@ -145,6 +157,45 @@ describe("shell PostHog same-origin proxy", () => {
     expect(
       document.querySelector('#ph-conversations-widget-container button[aria-label="Close"]'),
     ).not.toBeNull();
+    expect(posthogMock.capture).toHaveBeenCalledWith("shell_support_chat_opened", {
+      matrix_client: "web",
+      matrix_bundle_version: "v2026.09.02-running",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/system\/info$/),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(posthogMock.register).toHaveBeenCalledWith({
+      matrix_client: "web",
+      matrix_bundle_version: "v2026.09.02-running",
+    });
+    expect(posthogMock.setPersonProperties).toHaveBeenCalledWith({
+      matrix_client: "web",
+      matrix_bundle_version: "v2026.09.02-running",
+    });
+  });
+
+  it("opens support without version properties when runtime metadata is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    posthogMock.conversations.show.mockImplementation(() => {
+      const container = document.createElement("div");
+      container.id = "ph-conversations-widget-container";
+      const close = document.createElement("button");
+      close.setAttribute("aria-label", "Close");
+      container.appendChild(close);
+      document.body.appendChild(container);
+    });
+    const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
+
+    await expect(openShellSupport({
+      token: "phc_test",
+      apiHost: "/relay",
+      uiHost: "https://eu.posthog.com",
+    })).resolves.toBe(true);
+
+    expect(posthogMock.register).toHaveBeenCalledWith({ matrix_client: "web" });
+    expect(posthogMock.unregister).toHaveBeenCalledWith("matrix_bundle_version");
+    expect(posthogMock.unregister).toHaveBeenCalledWith("matrix_desktop_version");
     expect(posthogMock.capture).toHaveBeenCalledWith("shell_support_chat_opened", {
       matrix_client: "web",
     });

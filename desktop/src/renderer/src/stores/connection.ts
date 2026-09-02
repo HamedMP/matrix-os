@@ -15,8 +15,10 @@ export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 interface ConnectionState {
   status: ConnectionStatus;
   handle: string | null;
+  userId: string | null;
   displayName: string | null;
   imageUrl: string | null;
+  email: string | null;
   platformHost: string;
   runtimeSlot: string;
   // Trusted-core credential generation; advances on every credential
@@ -31,8 +33,10 @@ interface ConnectionState {
 export const useConnection = create<ConnectionState>()((set, get) => ({
   status: "loading",
   handle: null,
+  userId: null,
   displayName: null,
   imageUrl: null,
+  email: null,
   platformHost: "",
   runtimeSlot: "primary",
   authGeneration: 0,
@@ -51,6 +55,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       const identityChanged =
         previous.status !== (status.signedIn ? "signed-in" : "signed-out")
         || previous.handle !== (status.handle ?? null)
+        || previous.userId !== (status.userId ?? null)
         || previous.platformHost !== status.platformHost
         || previous.runtimeSlot !== status.runtimeSlot
         || previous.authGeneration !== status.authGeneration;
@@ -76,8 +81,10 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       set({
         status: status.signedIn ? "signed-in" : "signed-out",
         handle: status.handle ?? null,
+        userId: status.userId ?? null,
         displayName: status.displayName ?? null,
         imageUrl: status.imageUrl ?? null,
+        email: status.email ?? null,
         platformHost: status.platformHost,
         runtimeSlot: status.runtimeSlot,
         authGeneration: status.authGeneration,
@@ -92,7 +99,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         clearDraftChats();
         clearPreloadedAppIcons();
       }
-      set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
+      set({ status: "signed-out", handle: null, userId: null, displayName: null, imageUrl: null, email: null, api: null });
     }
   },
 
@@ -141,7 +148,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     // request cannot repopulate the next account's desktop.
     clearDesktopQueryCache();
     reconcileDesktopRuntimeChange();
-    set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
+    set({ status: "signed-out", handle: null, userId: null, displayName: null, imageUrl: null, email: null, api: null });
   },
 }));
 

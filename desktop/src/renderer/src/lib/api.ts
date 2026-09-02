@@ -53,7 +53,7 @@ export interface ApiClient {
   patch<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
   put<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
   putBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
-  delete<T>(path: string, options?: JsonRequestOptions): Promise<T>;
+  delete<T>(path: string, body?: unknown, options?: JsonRequestOptions): Promise<T>;
   putText<T>(path: string, body: string, options?: JsonRequestOptions): Promise<T>;
   /** Returns a client whose requests remain bound to one runtime slot. */
   forRuntime(runtimeSlot: string): ApiClient;
@@ -214,11 +214,11 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       request(path, { method: "PUT", headers, body }, requestOptions),
     // The gateway task DELETE route parses the JSON body unconditionally, so a
     // body-less DELETE 400s; always send an empty JSON object.
-    delete: (path, requestOptions) =>
+    delete: (path, body = {}, requestOptions) =>
       request(path, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
-        body: "{}",
+        body: JSON.stringify(body),
       }, requestOptions),
     putText: (path, body, requestOptions) =>
       request(path, {
