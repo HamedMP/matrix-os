@@ -206,6 +206,43 @@ describe("provider preferences store", () => {
     expect(useProviderPreferences.getState().lastComposerInstanceId).toBe("codex_default");
   });
 
+  it("hydrates the last Provider Instance and model while rejecting unsafe model references", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "state:get") {
+        return Promise.resolve({
+          value: {
+            defaultProviderId: "codex",
+            lastComposerInstanceId: "codex:work",
+            composerSelections: {
+              "codex:work": {
+                model: "openai-codex/gpt-5.6-terra",
+                options: [],
+                permissionMode: "supervised",
+              },
+              codex_unsafe: {
+                model: "../../private-model",
+                options: [],
+                permissionMode: "supervised",
+              },
+            },
+          },
+        });
+      }
+      return Promise.resolve({ ok: true });
+    });
+
+    await useProviderPreferences.getState().hydrate();
+
+    expect(useProviderPreferences.getState().lastComposerInstanceId).toBe("codex:work");
+    expect(useProviderPreferences.getState().composerSelections).toEqual({
+      "codex:work": {
+        model: "openai-codex/gpt-5.6-terra",
+        options: [],
+        permissionMode: "supervised",
+      },
+    });
+  });
+
   it("hydrate falls back to automatic when the persisted value is malformed", async () => {
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "state:get") {

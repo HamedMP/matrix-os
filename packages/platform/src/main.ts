@@ -322,6 +322,10 @@ export function createApp(deps: {
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
+  internalFundedAiRuntimeRoutes?: Hono<any>;
+  internalFundedAiRelayRoutes?: Hono<any>;
+  internalFundedAiOperatorRoutes?: Hono<any>;
+  fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -571,6 +575,7 @@ export function createApp(deps: {
     resolveClerkUserId: resolveBillingClerkUserId,
     captureEvent: captureFunnelEvent,
     prebilling,
+    fundedAiRepository: deps.fundedAiRepository,
   }));
 
   // Onboarding journey (spec 092): one server-owned signup-to-ready state every
@@ -724,6 +729,15 @@ export function createApp(deps: {
   }
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
+  if (deps.internalFundedAiRuntimeRoutes) {
+    app.route('/internal/containers/:handle/ai', deps.internalFundedAiRuntimeRoutes);
+  }
+  if (deps.internalFundedAiRelayRoutes) {
+    app.route('/internal/ai/funded', deps.internalFundedAiRelayRoutes);
+  }
+  if (deps.internalFundedAiOperatorRoutes) {
+    app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {

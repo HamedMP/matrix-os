@@ -1,7 +1,9 @@
 import AccountMenu from "../mission-control/AccountMenu";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
+import DesktopDiscordButton from "../support/DesktopDiscordButton";
 import DesktopSupportButton from "../support/DesktopSupportButton";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
+import GettingStartedPopover from "../onboarding/GettingStartedPopover";
 import { Search } from "../../lib/hugeicons";
 import { useUi } from "../../stores/ui";
 
@@ -20,9 +22,11 @@ export default function DesktopModeControls() {
         <Search aria-hidden="true" size={16} />
       </button>
       <DesktopSupportButton />
+      <DesktopDiscordButton />
       <div className="relative w-[156px]">
         <RuntimeComputerMenu collapsed={false} />
       </div>
+      <GettingStartedPopover />
       <DesktopUpdateButton />
       <AccountMenu collapsed compact />
     </div>

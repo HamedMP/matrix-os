@@ -5,8 +5,10 @@
 **Target**: `@anthropic-ai/claude-agent-sdk@0.3.251`
 
 **Production version after Phase 1**: `0.3.240`, the newest release old enough
-to satisfy the workspace's seven-day `minimumReleaseAge` policy. The exact
-`0.3.251` compatibility job remains the forward-compatibility gate.
+to satisfy the workspace's seven-day `minimumReleaseAge` policy as of
+2026-08-30. Upstream `0.3.251` was published on 2026-08-28, so the exact target
+remains quarantined until normal policy resolution accepts it. Do not bypass
+the workspace policy or add a package exception to install it.
 
 ## Reproduce
 
@@ -62,6 +64,9 @@ times.
 | Cloudflare Anthropic streaming | Protocol pass; live Unified Billing blocked | The fake provider proves the Agent SDK's Anthropic streaming and required beta-header behavior through the Matrix-compatible boundary. No Cloudflare gateway credential was available for an external inference call. |
 | Cloudflare privacy / metadata | Contract pass | Funded requests must send `cf-aig-collect-log-payload: false` and `cf-aig-zdr: true`; metadata is allowlisted, content-free, and capped at Cloudflare's five-entry limit. |
 | Cloudflare spend controls | Documentation verified; live enforcement blocked | Gateway rules can scope budgets by model/provider/custom metadata, including split-by-user. They are eventually consistent and are not Matrix's hard customer balance. Matrix remains authoritative for eligibility, add-on credit, and hard admission. |
+| Runtime credential refresh (`0.3.240`) | Pass with bounded-run injection | A loopback Anthropic fixture returned `401` on the first Messages call. `settings.apiKeyHelper` ran again and the same V1 `query()` retried with the replacement token. The undocumented `getHostAuthToken` callback was not invoked for either a normal API-key environment or a host-managed custom environment. Matrix therefore acquires one short-lived runtime credential in the gateway, injects it only into a bounded Agent SDK/Claude CLI run, and reacquires for the next run when the cached credential is inside its safety window. This preserves one in-memory singleflight path instead of executing an external key-helper command with separate cache state. |
+| OpenCode CLI `1.16.0` | Installed CLI and local source contract pass | The installed binary reports `1.16.0`; `opencode run --help` confirms `--format json`, `--pure`, `--model`, and `--session`. An isolated-config, invalid-provider spike emitted one NDJSON `error` record with `timestamp`, `sessionID`, and a structured error before exiting non-zero. The matching local `run.ts` source confirms completed `text`/`tool_use` records and session resume. The Matrix adapter terminates option parsing before user prompt text, disables project config and plugins, applies a final deny-by-default local read/glob/grep/list policy, maps an Anthropic relay URL into provider options, and rejects non-portable Claude OAuth profiles. Network tools, workspace-write, and interactive approval transport remain deferred. |
+| Pi CLI `0.81.0` credential routing | Adapter contract pass | The existing JSON-stream adapter now resolves the exact enabled harness access source for every turn, copies only `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`, and applies funded-run expiry as an upper timeout. Missing or ambiguous settings and unavailable credentials fail before spawn. |
 
 ## Frozen provider contracts
 
@@ -87,12 +92,29 @@ times.
 
 - Production dependencies are pinned to `0.3.240`; the lockfile resolves the
   matching platform packages and MCP SDK peer range.
+- `0.3.251` remains the verified upstream target, not the installed production
+  version, until pnpm accepts it under the unchanged seven-day release-age
+  policy.
 - V1 `query()` plus `resume` remains the kernel path.
 - Skills use `skills: "all"`; the deprecated `Skill` allowlist entry is gone.
 - Claude Fable 5, Opus 5, Sonnet 5, and Haiku 4.5 are the current catalog.
-  Existing 4.x model IDs remain valid legacy choices and are never rewritten.
+  Fable's documented limits are a 1M-token context window and up to 128K output
+  tokens, with $10/$50 per million input/output tokens. Existing 4.x model IDs
+  remain valid legacy choices and are never rewritten; invitation-only Mythos
+  is not exposed.
 - Effort and adaptive thinking are emitted only for models whose current API
   contract supports them. Claude 5 exposes `xhigh`; Haiku and unknown/custom
   models receive neither field.
 - Results normalize cumulative `modelUsage`, and no-fallback refusals reach the
   shell as a safe generic terminal error.
+- Matrix-funded runtime credentials are fetched from the authenticated,
+  handle-scoped platform endpoint with a five-second acquisition deadline,
+  bounded retry/backoff, response-size cap, exact returned-identity checks,
+  singleflight refresh, expiry jitter, and a near-expiry refusal. The opaque
+  credential is held only in gateway memory and is cleared on shutdown.
+- Funded kernel and Claude CLI runs are capped at ten minutes, which leaves a
+  one-minute safety margin inside the default fifteen-minute credential. There
+  is no fallback to a legacy static Anthropic key or indefinite HMAC relay key.
+- Customer hosts receive only the relay URL, enable flag, and their existing
+  scoped platform verification token in the protected host environment. Relay
+  service tokens and Cloudflare credentials are never provisioned to the VPS.

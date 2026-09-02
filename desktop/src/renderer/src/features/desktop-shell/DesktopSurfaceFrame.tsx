@@ -237,6 +237,9 @@ export default function DesktopSurfaceFrame({
   const workChatTitle = isWorkSurface && tab.chatId
     ? tab.chatTitle ?? surfaceChrome?.title ?? "Chat"
     : undefined;
+  const showsSurfaceTopBar = isWindow
+    || Boolean(workChatTitle)
+    || Boolean(surfaceChrome && (!isWorkSurface || surfaceChrome.rightActions));
 
   const frame = (
     <SurfaceChromeContext.Provider value={surfaceChromeHost}>
@@ -250,7 +253,7 @@ export default function DesktopSurfaceFrame({
       ) : undefined}
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBarReservesSafeArea={isWindow || !isWorkSurface}
-      topBar={isWindow || workChatTitle || (surfaceChrome && !isWorkSurface) ? (
+      topBar={showsSurfaceTopBar ? (
         <TopBar
           title={workChatTitle ?? (sidebarHidesTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
           leftActions={surfaceChrome?.leftActions}

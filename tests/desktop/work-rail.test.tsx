@@ -9,6 +9,7 @@ import type {
   CanonicalChatInvalidation,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
+import { PinOffIcon } from "@desktop/renderer/src/lib/hugeicons";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -143,7 +144,8 @@ describe("WorkRail", () => {
     expect(newChat.className).toContain("text-sm");
     expect(newChat.className).toContain("font-medium");
     expect(newChat.closest('[data-slot="chat-sidebar-new-chat"]')).toBeTruthy();
-    expect(search.closest('[data-slot="chat-sidebar-section-heading"]')?.textContent).toContain("Recents");
+    expect(search.closest("[data-chat-sidebar-title]")).toBeTruthy();
+    expect(search.closest('[data-slot="chat-sidebar-section-heading"]')).toBeNull();
     expect(screen.queryByText("Search", { selector: "button" })).toBeNull();
 
     const pinnedChat = await screen.findByRole("button", { name: "Pinned global" });
@@ -293,6 +295,38 @@ describe("WorkRail", () => {
     expect(actions?.getAttribute("style")).toContain(
       "background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg-surface)",
     );
+  });
+
+  it("hides pinned Chat actions until hover or focus while preserving run status and an Unpin icon", async () => {
+    const runningPinned = record("chat_running_pinned", "Running pinned", {
+      pinned: true,
+      updatedAt: "2026-08-28T12:00:00.000Z",
+      activeRunStatus: "running",
+    });
+    const client = {
+      list: vi.fn(async () => ({ items: [runningPinned] })),
+    } as unknown as CanonicalChatClient;
+    renderRail(client);
+
+    const chat = await screen.findByRole("button", { name: "Running pinned" });
+    const pin = screen.getByRole("button", { name: "Unpin Running pinned" });
+    const remove = screen.getByRole("button", { name: "Delete Running pinned" });
+    const actions = pin.parentElement as HTMLElement;
+    const expectedIcon = render(<PinOffIcon size={13} aria-hidden />).container.querySelector("svg");
+
+    expect(within(chat).getByLabelText("Agent running for Running pinned")).toBeTruthy();
+    expect(actions.className).toContain("gap-0.5");
+    expect(actions.className).toContain("opacity-0");
+    expect(actions.className).toContain("pointer-events-none");
+    expect(actions.className).toContain("group-hover/chat:pointer-events-auto");
+    expect(actions.className).toContain("group-focus-within/chat:pointer-events-auto");
+    expect(actions.className).toContain("group-hover/chat:opacity-100");
+    expect(actions.className).toContain("group-focus-within/chat:opacity-100");
+    expect(remove.className).toContain("size-6");
+    expect(pin.querySelector("svg")?.isEqualNode(expectedIcon ?? null)).toBe(true);
+
+    pin.focus();
+    expect(document.activeElement).toBe(pin);
   });
 
   it("scrolls only an overflowing Chat title while hover actions are visible", async () => {

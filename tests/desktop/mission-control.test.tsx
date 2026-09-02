@@ -30,6 +30,9 @@ vi.mock("../../desktop/src/renderer/src/features/threads/Composer", () => ({
 vi.mock("../../desktop/src/renderer/src/features/palette/CommandPalette", () => ({
   default: () => <div data-testid="command-palette" />,
 }));
+vi.mock("@desktop/renderer/src/features/onboarding/GettingStartedPopover", () => ({
+  default: () => <button type="button">Getting started</button>,
+}));
 vi.mock("../../desktop/src/renderer/src/features/mission-control/shortcuts", () => ({
   useGlobalShortcuts: () => undefined,
 }));

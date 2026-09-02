@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -46,10 +46,17 @@ describe("Desktop mode controls", () => {
     expect(labels).toEqual([
       "Search",
       "Support",
+      "Join Discord",
       "Main computer",
+      "Getting started — 0 of 5",
       "Update Matrix OS to 1.2.3",
       "Open account menu",
     ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Join Discord" }));
+    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
+      url: "https://discord.gg/WHbvTG33w",
+    });
 
     const update = screen.getByRole("button", { name: "Update Matrix OS to 1.2.3" });
     const avatar = screen.getByRole("button", { name: "Open account menu" }).querySelector("span");

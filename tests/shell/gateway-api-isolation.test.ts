@@ -3,10 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const gatewayCallers = [
   "shell/src/hooks/useOnboarding.ts",
-  "shell/src/hooks/useSetupChecklist.ts",
-  "shell/src/components/onboarding/steps/AgentStep.tsx",
-  "shell/src/components/onboarding/steps/GithubStep.tsx",
-  "shell/src/components/onboarding/steps/RepoStep.tsx",
+  "shell/src/components/onboarding/GettingStartedPopover.tsx",
   "shell/src/lib/posthog-client.ts",
   "shell/src/lib/file-blob.ts",
 ] as const;

@@ -11,14 +11,9 @@ import {
 } from "../../desktop/src/renderer/src/lib/query-client";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
-function renderSettingsSection(Component: React.ComponentType) {
-  const queryClient = createDesktopQueryClient();
-  queryClient.setDefaultOptions({
-    queries: {
-      ...queryClient.getDefaultOptions().queries,
-      retry: false,
-    },
-  });
+let queryClient: ReturnType<typeof createDesktopQueryClient>;
+
+function renderSection(Component: React.ComponentType) {
   return render(
     <QueryClientProvider client={queryClient}>
       <Component />
@@ -51,6 +46,7 @@ function makePendingApi() {
 describe("settings data sections", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    queryClient = createDesktopQueryClient();
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -62,6 +58,7 @@ describe("settings data sections", () => {
 
   afterEach(() => {
     cleanup();
+    queryClient.clear();
     vi.restoreAllMocks();
   });
 
@@ -81,17 +78,21 @@ describe("settings data sections", () => {
       visible: "1.0.0",
     },
   ])("clears stale $name errors after a successful retry", async ({ Component, unavailable, response, visible }) => {
-    renderSettingsSection(Component);
+    const failingApi = useConnection.getState().api;
+    renderSection(Component);
 
-    await waitFor(() => {
-      expect(screen.queryByText(unavailable)).not.toBeNull();
-    }, { timeout: 2_500 });
+    await waitFor(
+      () => {
+        expect(screen.queryByText(unavailable)).not.toBeNull();
+      },
+      { timeout: 2_500 },
+    );
+    if (name === "cron") {
+      expect(failingApi.get).toHaveBeenCalledTimes(2);
+    }
 
     await act(async () => {
-      useConnection.setState({
-        api: makeApi(response),
-        authGeneration: useConnection.getState().authGeneration + 1,
-      });
+      useConnection.setState({ api: makeApi(response) });
     });
 
     await waitFor(() => {
@@ -110,7 +111,7 @@ describe("settings data sections", () => {
   ])("shows loading instead of empty state while $name load is pending", ({ Component, loading, empty }) => {
     useConnection.setState({ api: makePendingApi() });
 
-    renderSettingsSection(Component);
+    renderSection(Component);
 
     expect(screen.queryByText(loading)).not.toBeNull();
     expect(screen.queryByText(empty)).toBeNull();
@@ -124,7 +125,7 @@ describe("settings data sections", () => {
       }),
     });
 
-    renderSettingsSection(SystemSection);
+    renderSection(SystemSection);
 
     expect(await screen.findByText("Installed version")).not.toBeNull();
     expect(screen.getByText("Running version")).not.toBeNull();

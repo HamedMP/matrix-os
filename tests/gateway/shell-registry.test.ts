@@ -19,6 +19,36 @@ afterEach(async () => {
 });
 
 describe("shell registry", () => {
+  it("reports trustworthy agent liveness through the managed terminal wrapper", async () => {
+    const root = await tempRoot();
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "claude",
+      type: "turn-started",
+      occurredAt: "2026-08-31T12:00:00.000Z",
+    });
+    let command = "/home/matrix/home/system/zellij/matrix-terminal-shell";
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: root, command, observed: true })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+
+    await expect(registry.observeAgentLiveness("main", "claude")).resolves.toBe("running");
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "claude",
+      type: "session-ended",
+      occurredAt: "2026-08-31T12:01:00.000Z",
+    });
+    await expect(registry.observeAgentLiveness("main", "claude")).resolves.toBe("unknown");
+    command = "zsh";
+    await expect(registry.observeAgentLiveness("main", "claude")).resolves.toBe("stopped");
+  });
+
   it("decorates listed sessions concurrently", async () => {
     const root = await tempRoot();
     const live = new Set<string>();

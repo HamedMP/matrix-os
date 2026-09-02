@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TabPane, TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
 import DesktopSurfaceFrame from "@desktop/renderer/src/features/desktop-shell/DesktopSurfaceFrame";
+import { useSurfaceChromeHost } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 import type { Tab } from "@desktop/renderer/src/stores/tabs";
 
 const workTabMock = vi.hoisted(() => vi.fn(() => <div>Work</div>));
@@ -116,6 +117,46 @@ describe("current desktop tab panes", () => {
     const tabSidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
     expect(tabSidebar.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("");
     expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeNull();
+  });
+
+  it("shows the inspector toggle for a New Chat in full-tab mode", () => {
+    workTabMock.mockImplementation(function DraftWorkWithInspectorChrome() {
+      const chromeHost = useSurfaceChromeHost();
+      React.useLayoutEffect(() => {
+        chromeHost?.setChrome({
+          leftPaneWidth: 240,
+          rightPaneWidth: 0,
+          rightActions: <button type="button" aria-label="Show inspector">Inspector</button>,
+        });
+        return () => chromeHost?.setChrome(null);
+      }, [chromeHost]);
+      return <div>Work</div>;
+    });
+    const tab: Tab = {
+      id: "chat-draft",
+      kind: "work",
+      title: "Chat",
+      closable: false,
+      workRoute: "chat",
+      chatView: "draft",
+    };
+
+    const view = render(<DesktopSurfaceFrame
+      tab={tab}
+      surface={{ tabId: tab.id, mode: "tab", bounds: { x: 0, y: 0, width: 1_200, height: 800 }, zIndex: 1 }}
+      active
+      tabWorkspaceActive
+      overlayOpen={false}
+      presentation="desktop"
+      onFocus={vi.fn()}
+      onClose={vi.fn()}
+      onMinimize={vi.fn()}
+      onMaximize={vi.fn()}
+      onBoundsChange={vi.fn()}
+    />);
+
+    expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
+    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
   });
 
   it("collapses and restores an active Chat sidebar through OSWindow", () => {

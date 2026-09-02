@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { MATRIX_HOSTED_MACHINE_PROFILES } from '@matrix-os/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getActiveUserMachineByClerkId,
@@ -15,6 +16,7 @@ import {
   chooseProvisioningImage,
   chooseRecoveryImage,
   fallbackProvisioningImage,
+  getGoldenSnapshotServerProfile,
 } from '../../packages/platform/src/golden-snapshot-activation.js';
 import {
   advanceGoldenSnapshot,
@@ -76,6 +78,21 @@ describe('golden snapshot provisioning activation', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     await destroyTestPlatformDb(db);
+  });
+
+  it('derives snapshot capacity for every offered hosted machine type', () => {
+    for (const profile of MATRIX_HOSTED_MACHINE_PROFILES) {
+      expect(getGoldenSnapshotServerProfile(profile.serverType)).toEqual({
+        architecture: profile.architecture,
+        diskGb: profile.diskGb,
+      });
+    }
+    expect(getGoldenSnapshotServerProfile('constructor')).toBeUndefined();
+  });
+
+  it('preserves snapshot compatibility for legacy recovery server types', () => {
+    expect(getGoldenSnapshotServerProfile('cpx32')).toEqual({ architecture: 'x86', diskGb: 160 });
+    expect(getGoldenSnapshotServerProfile('cax31')).toEqual({ architecture: 'arm', diskGb: 160 });
   });
 
   it('normalizes Postgres BIGINT provider image ids before exact preview comparison', () => {
@@ -453,6 +470,24 @@ describe('golden snapshot provisioning activation', () => {
       targetBundleVersion: 'v2', targetBundleSha256: '2'.repeat(64), activationStep: 'creating',
     });
   });
+
+  it.each([...new Set(MATRIX_HOSTED_MACHINE_PROFILES.map((profile) => profile.serverType))])(
+    'selects an exact snapshot for offered server type %s',
+    async (serverType) => {
+      const snapshotId = await readySnapshot('v2', 302);
+      const selected = await chooseProvisioningImage(db, config, {
+        jobId: '50000000-0000-4000-8000-000000000001',
+        machineId: '30000000-0000-4000-8000-000000000001',
+        targetBundleVersion: 'v2',
+        serverType,
+        purpose: 'provision',
+        leaseId: '40000000-0000-4000-8000-000000000001',
+        now: '2026-07-03T00:01:00.000Z',
+      });
+
+      expect(selected).toMatchObject({ imageSource: 'snapshot', providerImageId: 302, snapshotId });
+    },
+  );
 
   it('links the provisioning job to its singleton create intent', async () => {
     const snapshotId = await readySnapshot('v2', 302);

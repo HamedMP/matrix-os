@@ -10,7 +10,7 @@ Production Matrix OS is VPS-native:
 - one customer VPS per active user;
 - Matrix gateway, shell, code-server, sync, and app assets run on the customer VPS through host services;
 - each customer VPS has its own local Postgres endpoint at `127.0.0.1:5432`;
-- customer VPSes download the published host bundle from `system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/`;
+- production provisioning resolves the `stable` host-bundle channel once and pins that immutable version and SHA for the customer VPS;
 - Pipedream, Clerk server-side auth, provisioning, routing, and host-bundle publication stay on the platform.
 
 Legacy Docker Compose and `/containers/*` instructions are not the production customer runtime. They are only for archived shared-container deployments or local development.
@@ -55,7 +55,7 @@ ATS_ADMIN_SECRET=...
 ATS_BOOKING_BASE_URL=https://booking-provider.example/...
 
 CUSTOMER_VPS_ENABLED=true
-CUSTOMER_VPS_IMAGE_VERSION=matrix-os-host-dev
+CUSTOMER_VPS_IMAGE_VERSION=stable
 HETZNER_API_TOKEN=...
 HETZNER_CUSTOMER_PROJECT=matrix-os-customers
 HETZNER_LOCATION=nbg1
@@ -113,8 +113,18 @@ STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual
 STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly
 STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual
 STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json
+STRIPE_PRICE_AI_CREDIT_USD_5=stripe-price-ai-credit-usd-5
+STRIPE_PRICE_AI_CREDIT_USD_10=stripe-price-ai-credit-usd-10
+STRIPE_PRICE_AI_CREDIT_USD_25=stripe-price-ai-credit-usd-25
 ```
 
+Funded AI add-on credit remains disabled unless the three one-time USD Prices,
+Stripe secret/signing secret, and
+`MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=true` are all present. Set
+`MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED=true` only after the Stripe
+account has the required active tax registrations; otherwise add-on Checkout
+deliberately creates sessions with automatic tax disabled. Use a restricted
+Stripe key and, where Cloud Run has stable egress, a Stripe IP allowlist.
 Annual IDs are retained only to recognize and manage existing subscriptions;
 new Checkout sessions are monthly-only. The legacy catalog secret must be a
 bounded JSON array such as
@@ -123,9 +133,17 @@ List every replaced live Price ID before changing the current monthly secrets,
 so existing customers keep their original subscription and entitlement. The
 current price IDs take precedence if an ID appears in both catalogs.
 
-Stripe automatic tax is enabled in Checkout. Before promotion, verify the live
-account has the required tax registrations; enabling automatic tax alone does
-not create registrations.
+Stripe automatic tax is enabled in subscription Checkout. Before promotion,
+verify the live account has the required tax registrations; enabling automatic
+tax alone does not create registrations.
+
+Funded AI add-on credit remains disabled unless the three one-time USD Prices,
+Stripe secret/signing secret, and
+`MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=true` are all present. Set
+`MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED=true` only after the Stripe
+account has the required active tax registrations; otherwise add-on Checkout
+deliberately creates sessions with automatic tax disabled. Use a restricted
+Stripe key and, where Cloud Run has stable egress, a Stripe IP allowlist.
 
 The two portal configurations are required to enable the customer-facing
 add-computer flow, but their absence does not block an otherwise healthy
@@ -216,12 +234,20 @@ set +a
 sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-Publish:
+Publish an immutable version, then promote the reviewed release through the
+`stable` channel:
 
 ```text
-system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz
-system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production Cloud Run binds `CUSTOMER_VPS_IMAGE_VERSION=stable` directly. At
+provision time the platform resolves that channel to an immutable release and
+stores its exact version and SHA on the machine/job. Golden-snapshot selection
+and clean-image fallback therefore use identical bundle bytes. Roll back new
+provisions by promoting the reviewed prior release to `stable`; do not maintain
+a separate mutable production image-version variable.
 
 The bundle contains `/opt/matrix/app`, `/opt/matrix/runtime`, and `/opt/matrix/bin`. It includes bundled Vite/React default apps and the launchers for `matrix-gateway.service`, `matrix-shell.service`, `matrix-code.service`, `matrix-sync-agent.service`, and `matrix-update`.
 

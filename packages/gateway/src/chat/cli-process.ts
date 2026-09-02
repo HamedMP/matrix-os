@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnIsolatedProviderProcess } from "../coding-agents/provider-process-isolation.js";
 
 export interface CanonicalCliProcess {
   stdout: { on(event: "data", listener: (chunk: Buffer) => void): void };
@@ -14,9 +14,42 @@ export type CanonicalCliSpawn = (
   options: { cwd: string; env: Record<string, string>; stdio: ["ignore", "pipe", "pipe"] },
 ) => CanonicalCliProcess;
 
-const defaultSpawn: CanonicalCliSpawn = (command, args, options) => spawn(command, args, options);
+const defaultSpawn: CanonicalCliSpawn = (command, args, options) => (
+  spawnIsolatedProviderProcess(command, args, options)
+);
 const CLI_TERMINATION_GRACE_MS = 1_000;
 const CLI_FORCE_SETTLE_MS = 250;
+
+export type CanonicalCliFailureKind =
+  | "aborted"
+  | "timeout"
+  | "stdout_limit"
+  | "invalid_output"
+  | "startup"
+  | "exit";
+
+export class CanonicalCliError extends Error {
+  readonly name = "CanonicalCliError";
+
+  constructor(
+    readonly kind: CanonicalCliFailureKind,
+    readonly exitCode?: number | null,
+    readonly signal?: NodeJS.Signals | null,
+  ) {
+    const message = kind === "aborted"
+      ? "Provider CLI Run aborted"
+      : kind === "timeout"
+        ? "Provider CLI Run timed out"
+        : kind === "stdout_limit"
+          ? "Provider CLI output exceeded limit"
+          : kind === "invalid_output"
+            ? "Provider CLI output was invalid"
+            : kind === "startup"
+              ? "Provider CLI could not start"
+              : "Provider CLI exited unsuccessfully";
+    super(message);
+  }
+}
 
 export async function runCanonicalCli(options: {
   command: string;
@@ -30,18 +63,28 @@ export async function runCanonicalCli(options: {
   maxStderrBytes?: number;
   spawnFn?: CanonicalCliSpawn;
   onStdout: (chunk: Buffer) => void;
+  onStderr?: (chunk: Buffer) => void;
 }): Promise<void> {
   const maxStderrBytes = options.maxStderrBytes ?? 8_192;
   let stdoutBytes = 0;
   let stderrBytes = 0;
   let settled = false;
-  const child = (options.spawnFn ?? defaultSpawn)(options.command, options.args, {
-    cwd: options.cwd,
-    env: options.replaceEnv
-      ? options.env
-      : { ...process.env, ...options.env } as Record<string, string>,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  let child: CanonicalCliProcess;
+  try {
+    child = (options.spawnFn ?? defaultSpawn)(options.command, options.args, {
+      cwd: options.cwd,
+      env: options.replaceEnv
+        ? options.env
+        : { ...process.env, ...options.env } as Record<string, string>,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error: unknown) {
+    console.warn(
+      "[chat-cli] Provider CLI spawn failed:",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+    throw new CanonicalCliError("startup");
+  }
 
   await new Promise<void>((resolve, reject) => {
     let timeout: NodeJS.Timeout | undefined;
@@ -70,8 +113,8 @@ export async function runCanonicalCli(options: {
       }, CLI_TERMINATION_GRACE_MS);
       forceKillTimer.unref?.();
     };
-    const abort = () => terminate(new Error("Provider CLI Run aborted"));
-    timeout = setTimeout(() => terminate(new Error("Provider CLI Run timed out")), options.timeoutMs);
+    const abort = () => terminate(new CanonicalCliError("aborted"));
+    timeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.timeoutMs);
     timeout.unref?.();
 
     if (options.signal.aborted) {
@@ -83,26 +126,38 @@ export async function runCanonicalCli(options: {
       if (settled || terminationError) return;
       stdoutBytes += chunk.byteLength;
       if (stdoutBytes > options.maxStdoutBytes) {
-        terminate(new Error("Provider CLI output exceeded limit"));
+        terminate(new CanonicalCliError("stdout_limit"));
         return;
       }
       try {
         options.onStdout(chunk);
       } catch (error: unknown) {
-        terminate(new Error("Provider CLI output was invalid", { cause: error }));
+        console.warn(
+          "[chat-cli] Provider CLI stdout observer failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        terminate(new CanonicalCliError("invalid_output"));
       }
     });
     child.stderr.on("data", (chunk) => {
-      stderrBytes = Math.min(maxStderrBytes, stderrBytes + chunk.byteLength);
+      const remainingBytes = Math.max(0, maxStderrBytes - stderrBytes);
+      if (remainingBytes === 0) return;
+      const boundedChunk = chunk.subarray(0, remainingBytes);
+      stderrBytes += boundedChunk.byteLength;
+      try {
+        options.onStderr?.(boundedChunk);
+      } catch (error: unknown) {
+        console.warn("[chat-cli] Ignoring stderr observer failure:", error instanceof Error ? error.name : "UnknownError");
+      }
     });
-    child.once("error", (error) => finish(terminationError ?? new Error("Provider CLI could not start", { cause: error })));
+    child.once("error", () => finish(terminationError ?? new CanonicalCliError("startup")));
     child.once("exit", (code, signal) => {
       if (terminationError) {
         finish(terminationError);
         return;
       }
       if (code === 0 && signal === null) finish();
-      else finish(new Error("Provider CLI exited unsuccessfully"));
+      else finish(new CanonicalCliError("exit", code, signal));
     });
   });
 }

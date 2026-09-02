@@ -421,7 +421,7 @@ describe("ChatTab", () => {
 
     expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Add files and more" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Choose project for chat" }).closest(".prompt-card"))
       .not.toBeNull();
     expect(screen.queryByRole("button", { name: "Resources" })).toBeNull();
