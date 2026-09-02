@@ -37,6 +37,7 @@ export interface HandlerContext {
     shouldOpen: boolean;
   }>;
   acknowledgeWhatsNew: (version: string) => Promise<void>;
+  getAppVersion: () => string;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
   fetchProjectWorkspace: (
     request: CodingAgentProjectWorkspaceRequest,
@@ -205,6 +206,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     await ctx.auth.expireSession();
     return { ok: true };
   });
+
+  handle("app:get-version", () => ({ version: ctx.getAppVersion() }));
 
   handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
   handle("runtime:select", async ({ slot }) => {

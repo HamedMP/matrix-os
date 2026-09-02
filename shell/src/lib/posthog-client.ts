@@ -6,6 +6,10 @@ import {
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
 } from "@matrix-os/observability/client";
+import {
+  buildSupportChatProperties,
+  type SupportChatProperties,
+} from "@matrix-os/contracts";
 import { getGatewayUrl } from "./gateway";
 
 type ClientProperties = Record<string, string | number | boolean | undefined>;
@@ -23,6 +27,7 @@ const config = getPostHogClientConfig({
 });
 const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
 const SUPPORT_AVAILABILITY_TIMEOUT_MS = 10_000;
+const SUPPORT_METADATA_TIMEOUT_MS = 2_000;
 const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
 const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
 const POSTHOG_CLOSE_SELECTOR = 'button[aria-label="Close"]';
@@ -97,6 +102,8 @@ export async function openShellSupport(currentConfig: typeof config = config): P
   if (!currentConfig) return false;
   try {
     ensurePostHogInitialized(currentConfig);
+    const properties = await loadShellSupportProperties();
+    applySupportChatProperties(properties);
     const deadline = Date.now() + SUPPORT_AVAILABILITY_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (posthog.conversations.isAvailable()) {
@@ -109,7 +116,7 @@ export async function openShellSupport(currentConfig: typeof config = config): P
           closeButton = await waitForPostHogButton(POSTHOG_CLOSE_SELECTOR, deadline);
         }
         if (!closeButton) return false;
-        posthog.capture("shell_support_chat_opened", { matrix_client: "web" });
+        posthog.capture("shell_support_chat_opened", properties);
         return true;
       }
       await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
@@ -119,6 +126,30 @@ export async function openShellSupport(currentConfig: typeof config = config): P
     console.warn("[posthog] Failed to open support chat:", err instanceof Error ? err.name : typeof err);
     return false;
   }
+}
+
+async function loadShellSupportProperties(): Promise<SupportChatProperties> {
+  let systemInfo: unknown;
+  try {
+    const response = await fetch(`${getGatewayUrl()}/api/system/info`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(SUPPORT_METADATA_TIMEOUT_MS),
+    });
+    if (response.ok) systemInfo = await response.json();
+  } catch (err: unknown) {
+    console.warn(
+      "[posthog] Support runtime metadata unavailable:",
+      err instanceof Error ? err.name : typeof err,
+    );
+  }
+  return buildSupportChatProperties({ client: "web", systemInfo });
+}
+
+function applySupportChatProperties(properties: SupportChatProperties): void {
+  if (!properties.matrix_bundle_version) posthog.unregister("matrix_bundle_version");
+  posthog.unregister("matrix_desktop_version");
+  posthog.register(properties);
+  posthog.setPersonProperties(properties);
 }
 
 async function waitForPostHogButton(selector: string, deadline: number): Promise<HTMLButtonElement | null> {

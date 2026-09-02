@@ -291,6 +291,38 @@ describe("connection event wiring", () => {
     expect(useConnection.getState().authGeneration).toBe(7);
   });
 
+  it("publishes the authenticated Clerk identity and clears it on sign-out", async () => {
+    window.operator = {
+      invoke: vi.fn(async () => ({
+        signedIn: true,
+        handle: "neo",
+        userId: "user_2abcDEF",
+        email: "neo@example.com",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+        authGeneration: 1,
+      })),
+      on: vi.fn(),
+    };
+
+    await useConnection.getState().refresh();
+
+    expect(useConnection.getState()).toMatchObject({
+      userId: "user_2abcDEF",
+      email: "neo@example.com",
+    });
+
+    window.operator.invoke = vi.fn(async () => ({
+      signedIn: false,
+      platformHost: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+      authGeneration: 2,
+    }));
+    await useConnection.getState().refresh();
+
+    expect(useConnection.getState()).toMatchObject({ userId: null, email: null });
+  });
+
   it("recovers from an initial auth status failure instead of staying loading", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     window.operator = {

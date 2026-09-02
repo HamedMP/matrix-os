@@ -74,6 +74,9 @@ const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 // renderer can never push the UI outside the supported 50%–200% range.
 const ZoomFactorSchema = z.number().min(0.5).max(2);
 const ZoomFactorResultSchema = z.object({ factor: ZoomFactorSchema }).strict();
+const NativeAppVersionResultSchema = z.object({
+  version: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+}).strict();
 
 const ProfileSchema = z
   .object({
@@ -147,17 +150,30 @@ export const INVOKE_CHANNELS = {
   },
   "auth:status": {
     request: Empty,
-    response: z
-      .object({
-        signedIn: z.boolean(),
-        handle: z.string().max(64).optional(),
+    response: z.discriminatedUnion("signedIn", [
+      z.object({
+        signedIn: z.literal(true),
+        handle: z.string().min(1).max(64),
+        userId: z.string().min(1).max(128),
         displayName: z.string().max(256).optional(),
         imageUrl: z.string().url().max(2048).optional(),
+        email: z.email().max(320).optional(),
         runtimeSlot: z.string().max(64),
         platformHost: z.string().max(256),
         authGeneration: z.number().int().nonnegative(),
-      })
-      .strict(),
+      }).strict(),
+      z.object({
+        signedIn: z.literal(false),
+        handle: z.never().optional(),
+        userId: z.never().optional(),
+        displayName: z.never().optional(),
+        imageUrl: z.never().optional(),
+        email: z.never().optional(),
+        runtimeSlot: z.string().max(64),
+        platformHost: z.string().max(256),
+        authGeneration: z.number().int().nonnegative(),
+      }).strict(),
+    ]),
   },
   "auth:sign-out": { request: Empty, response: Ok },
   "auth:session-expired": { request: Empty, response: Ok },
@@ -285,6 +301,7 @@ export const INVOKE_CHANNELS = {
   // App-wide UI zoom: the renderer owns the persisted factor; main applies it
   // to the sender's webContents and reports menu-driven steps back via the
   // app:zoom-changed event.
+  "app:get-version": { request: Empty, response: NativeAppVersionResultSchema },
   "app:get-zoom": { request: Empty, response: ZoomFactorResultSchema },
   "app:set-zoom": {
     request: ZoomFactorResultSchema,
