@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -13,9 +13,23 @@ import {
 } from "@matrix-os/contracts";
 import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
+import { safeDisplayPath } from "../chat/safe-activity-projection.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
-import { buildPiChildEnvironment, resolvePiCommand } from "./pi-process-environment.js";
-import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
+import { spawnIsolatedProviderProcess } from "./provider-process-isolation.js";
+import {
+  addPortableProviderCredentials,
+  buildPiChildEnvironment,
+  resolvePiCommand,
+} from "./pi-process-environment.js";
+import type {
+  CodingHarnessCredentialLaunch,
+  CodingHarnessCredentialResolver,
+} from "./harness-credentials.js";
+import { hasNativeHarnessAuth } from "./native-harness-auth.js";
+import type {
+  CodingAgentProviderAdapter,
+  CodingAgentProviderEventPublisher,
+} from "./provider-adapter.js";
 
 /**
  * Direct-spawn provider adapter for the pi coding-agent CLI
@@ -47,6 +61,7 @@ const MAX_EVENTS_PER_RUN = 480;
 const MAX_DELTA_CHARS = 3_500;
 const MAX_TEXT_CHARS = 24_000;
 const MAX_STDERR_CHARS = 8_192;
+const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_SESSION_ID_CHARS = 64;
 const MAX_PI_PROMPT_BYTES = 128 * 1024;
 const SESSION_ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
@@ -89,6 +104,7 @@ export interface PiCodingAgentProviderOptions {
   runTimeoutMs?: number;
   killGraceMs?: number;
   maxEvents?: number;
+  resolveCredentialLaunch?: CodingHarnessCredentialResolver;
 }
 
 const execFileAsync = promisify(execFile);
@@ -105,17 +121,87 @@ const defaultRunCommand: PiRunCommandFn = async (command, args, options) => {
 };
 
 const defaultSpawnFn: PiSpawnFn = (command, args, options) =>
-  spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"] });
+  spawnIsolatedProviderProcess(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
 function boundedTimeout(value: number | undefined, fallback: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.min(Math.floor(value), DEFAULT_RUN_TIMEOUT_MS));
 }
 
-function piPromptWithReferences(message: string, attachments: AgentAttachment[] | undefined): string {
+type PiCredentialResolution =
+  | { kind: "resolved"; launch: CodingHarnessCredentialLaunch | undefined }
+  | { kind: "aborted" }
+  | { kind: "timed_out" }
+  | { kind: "failed"; error: unknown };
+
+function interruptedCredentialResolution(signal: AbortSignal | undefined): PiCredentialResolution {
+  const reason = signal?.reason;
+  return typeof reason === "object" && reason !== null && "name" in reason
+      && reason.name === "TimeoutError"
+    ? { kind: "timed_out" }
+    : { kind: "aborted" };
+}
+
+async function resolveCredentialsWithinRun(input: {
+  resolver: CodingHarnessCredentialResolver | undefined;
+  signal?: AbortSignal;
+  timeoutMs: number;
+}): Promise<PiCredentialResolution> {
+  const resolver = input.resolver;
+  if (!resolver) {
+    return input.signal?.aborted
+      ? interruptedCredentialResolution(input.signal)
+      : { kind: "resolved", launch: undefined };
+  }
+  return await new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => finish(interruptedCredentialResolution(input.signal));
+    const finish = (result: PiCredentialResolution) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      input.signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+
+    if (input.signal?.aborted) {
+      finish(interruptedCredentialResolution(input.signal));
+      return;
+    }
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    timer = setTimeout(() => finish({ kind: "timed_out" }), input.timeoutMs);
+    timer.unref?.();
+
+    let pending: Promise<CodingHarnessCredentialLaunch>;
+    try {
+      pending = resolver(input.signal);
+    } catch (error: unknown) {
+      finish({ kind: "failed", error });
+      return;
+    }
+    void pending.then(
+      (launch) => finish({ kind: "resolved", launch }),
+      (error: unknown) => finish({ kind: "failed", error }),
+    );
+  });
+}
+
+function piPromptWithReferences(
+  message: string,
+  attachments: AgentAttachment[] | undefined,
+  options: { homePath: string; executionRoot: string },
+): string {
   const references = (attachments ?? [])
-    .filter((attachment) => attachment.kind === "structured_ref")
-    .map((attachment) => `- ${attachment.label}${attachment.path ? `: ${attachment.path}` : ""}`);
+    .filter((attachment) => attachment.kind === "file" || attachment.kind === "structured_ref")
+    .map((attachment) => {
+      const path = safeDisplayPath(attachment.path, options);
+      return `- ${attachment.label}${path ? `: ${path}` : ""}`;
+    });
   const prompt = references.length > 0
     ? `${message}\n\nContext references:\n${references.join("\n")}`
     : message;
@@ -172,9 +258,12 @@ function truncateText(text: string, maxChars: number): { text: string; truncated
 interface PiRunCollectorOptions {
   threadId: string;
   scope: string;
+  homePath: string;
+  executionRoot: string;
   now: () => Date;
   nextEventId: () => string;
   maxEvents: number;
+  streaming: boolean;
 }
 
 interface PiCollectedRun {
@@ -193,6 +282,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
   let assistantMessageCounter = 0;
   let assistantText = "";
   let assistantMessageId: string | null = null;
+  let assistantEmittedChars = 0;
   let fallbackToolCounter = 0;
   // Each tracked tool needs at least a started + completed event. Reserving
   // half the run budget keeps both the event stream and the in-memory tool
@@ -217,15 +307,27 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
     };
   }
 
+  function emitPendingAssistantText(): void {
+    if (!assistantMessageId || assistantEmittedChars >= assistantText.length) return;
+    const pending = assistantText.slice(assistantEmittedChars);
+    for (const chunk of chunkDisplayText(pending)) {
+      emit({ ...baseEvent(), type: "assistant.text.delta", messageId: assistantMessageId, delta: chunk });
+    }
+    assistantEmittedChars = assistantText.length;
+  }
+
   function flushAssistantText(): void {
     const text = assistantText;
     const messageId = assistantMessageId;
-    assistantText = "";
-    assistantMessageId = null;
     if (!messageId) return;
     const bounded = truncateText(text, MAX_TEXT_CHARS);
-    for (const chunk of chunkDisplayText(bounded.text)) {
-      emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: chunk });
+    assistantText = bounded.text;
+    if (options.streaming) {
+      emitPendingAssistantText();
+    } else {
+      for (const chunk of chunkDisplayText(bounded.text)) {
+        emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: chunk });
+      }
     }
     if (bounded.truncated) {
       emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: "…" });
@@ -233,6 +335,9 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
     if (bounded.text.trim().length > 0) {
       emit({ ...baseEvent(), type: "assistant.text.completed", messageId });
     }
+    assistantText = "";
+    assistantMessageId = null;
+    assistantEmittedChars = 0;
   }
 
   function flushTool(
@@ -295,6 +400,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
           assistantMessageCounter += 1;
           assistantMessageId = `msg_${options.scope}_${assistantMessageCounter}`;
           assistantText = "";
+          assistantEmittedChars = 0;
           return;
         }
         if (kind === "text_delta") {
@@ -304,7 +410,8 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
           }
           const delta = (update as Record<string, unknown>).delta;
           if (typeof delta === "string" && assistantText.length < MAX_TEXT_CHARS) {
-            assistantText += delta;
+            assistantText += delta.slice(0, MAX_TEXT_CHARS - assistantText.length);
+            if (options.streaming) emitPendingAssistantText();
           }
           return;
         }
@@ -340,6 +447,16 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
         flushAssistantText();
         const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${++fallbackToolCounter}`);
         const toolName = safeToolName(event.toolName);
+        const normalizedToolName = toolName.toLowerCase();
+        const args = event.args && typeof event.args === "object" && !Array.isArray(event.args)
+          ? event.args as Record<string, unknown>
+          : {};
+        const readPath = normalizedToolName === "read"
+          ? safeDisplayPath(args.path, {
+              homePath: options.homePath,
+              executionRoot: options.executionRoot,
+            })
+          : undefined;
         if (!toolOutputs.has(toolCallId) && toolOutputs.size >= maxTrackedTools) {
           dropped += 1;
           return;
@@ -349,8 +466,9 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
           ...baseEvent(),
           type: "tool.started",
           toolCallId,
-          displayName: toolName,
-          kind: toolName,
+          displayName: normalizedToolName === "read" ? "Read file" : toolName,
+          kind: normalizedToolName === "read" ? "dynamic_tool" : toolName,
+          ...(readPath ? { preview: readPath, previewKind: "path" as const } : {}),
         });
         return;
       }
@@ -404,6 +522,9 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
       feedEvent(parsed as Record<string, unknown>);
     },
+    drain(): AgentThreadEvent[] {
+      return events.splice(0, events.length);
+    },
     finish(): PiCollectedRun {
       flushAssistantText();
       // Any tool still open at stream end (e.g. SIGTERM mid-execution) is
@@ -450,9 +571,18 @@ interface PiRunInput {
   prompt: string;
   cwd: string;
   sessionId: string;
+  model?: string;
   signal?: AbortSignal;
   now: () => Date;
   nextEventId: () => string;
+  publishEvents?: CodingAgentProviderEventPublisher;
+}
+
+function piModelArguments(reference: string | undefined): string[] {
+  if (reference === undefined || reference === "provider-default") return [];
+  const separator = reference.indexOf(":");
+  if (separator < 1 || separator === reference.length - 1) return ["--model", reference];
+  return ["--provider", reference.slice(0, separator), "--model", reference.slice(separator + 1)];
 }
 
 interface PiRunResult {
@@ -543,16 +673,28 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
   }
 
   async function runPi(input: PiRunInput): Promise<PiRunResult> {
+    const runDeadline = Date.now() + runTimeoutMs;
     const collector = createPiRunCollector({
       threadId: input.threadId,
       scope: input.scope,
+      homePath: options.homePath,
+      executionRoot: input.cwd,
       now: input.now,
       nextEventId: input.nextEventId,
       maxEvents,
+      streaming: input.publishEvents !== undefined,
     });
     const args = [
       "--mode", "json",
       "--print",
+      // Keep canonical runs independent from owner extensions, skills, prompt
+      // templates, context files, update checks, and telemetry. Native auth and
+      // the explicitly selected model still come from the owner-local HOME.
+      "--offline",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
       // Pi exposes no `--sandbox` flag, so confinement is enforced by scoping
       // the tool allowlist to the non-mutating `read` tool. Threads are refused
       // at start unless they asked for read_only, so every run that reaches
@@ -562,10 +704,42 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       // context files from cloned repositories. This is NOT a tool-approval
       // bypass -- dropping it would make Pi trust untrusted repo config.
       "--no-approve",
+      ...piModelArguments(input.model),
       "--session-id", input.sessionId,
       promptArg(input.prompt),
     ];
-    const env = buildPiChildEnvironment(options.env);
+    const credentialResolution = await resolveCredentialsWithinRun({
+      resolver: options.resolveCredentialLaunch,
+      signal: input.signal,
+      timeoutMs: runTimeoutMs,
+    });
+    if (credentialResolution.kind === "aborted") {
+      return { events: [], outcome: "aborted", sessionId: input.sessionId };
+    }
+    if (credentialResolution.kind === "timed_out") {
+      return { events: [], outcome: "failed", sessionId: input.sessionId };
+    }
+    if (credentialResolution.kind === "failed") {
+      logCodingAgentWarning("pi provider credential resolution failed", credentialResolution.error);
+      return { events: [], outcome: "failed", sessionId: input.sessionId };
+    }
+    const credentialLaunch = credentialResolution.launch;
+    const ownerEnvironment = buildPiChildEnvironment({
+      ...options.env,
+      HOME: homePath,
+    });
+    ownerEnvironment.HOME = homePath;
+    const env = addPortableProviderCredentials(
+      ownerEnvironment,
+      credentialLaunch?.env,
+    );
+    const effectiveRunTimeoutMs = credentialLaunch?.maxRunMs
+      ? Math.min(runTimeoutMs, credentialLaunch.maxRunMs)
+      : runTimeoutMs;
+    const remainingRunTimeoutMs = Math.max(1, Math.min(
+      effectiveRunTimeoutMs,
+      runDeadline - Date.now(),
+    ));
 
     return await new Promise<PiRunResult>((resolve) => {
       let proc: PiChildProcess;
@@ -577,23 +751,45 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         return;
       }
       let settled = false;
-      let aborted = false;
-      let timedOut = false;
-      let terminationStarted = false;
+      let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
       let stdoutBuffer = "";
+      let stdoutBytes = 0;
       let stderrText = "";
+      let publishError: unknown;
+      let publishQueue = Promise.resolve();
       const killTimer: { current?: ReturnType<typeof setTimeout> } = {};
 
+      function queueEvents(events: AgentThreadEvent[]): void {
+        if (!input.publishEvents || events.length === 0) return;
+        publishQueue = publishQueue.then(async () => {
+          if (publishError) return;
+          try {
+            await input.publishEvents!({ events });
+          } catch (err: unknown) {
+            publishError = err;
+            logCodingAgentWarning("pi provider event publish failed", err);
+          }
+        });
+      }
+
+      function drainCollector(): void {
+        if (input.publishEvents) queueEvents(collector.drain());
+      }
+
+      function finishCollector(): PiCollectedRun {
+        const collected = collector.finish();
+        if (!input.publishEvents) return collected;
+        queueEvents(collected.events);
+        return { ...collected, events: [] };
+      }
+
       const timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        requestTermination();
-      }, runTimeoutMs);
+        requestTermination("timeout");
+      }, remainingRunTimeoutMs);
       timeoutTimer.unref?.();
 
       const onAbort = () => {
-        if (aborted || settled) return;
-        aborted = true;
-        requestTermination();
+        requestTermination("user_abort");
       };
       const trackedProcess = trackProcess(input.threadId, onAbort);
       if (input.signal) {
@@ -608,36 +804,45 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         if (killTimer.current) clearTimeout(killTimer.current);
         input.signal?.removeEventListener("abort", onAbort);
         untrackProcess(input.threadId, trackedProcess);
-        resolve(result);
+        void publishQueue.then(() => {
+          resolve(publishError ? { ...result, events: [], outcome: "failed" } : result);
+        });
       }
 
       function settleAfterForcedTermination(): void {
         if (settled) return;
-        const collected = collector.finish();
+        const collected = finishCollector();
         const sessionId = collected.sessionId ?? input.sessionId;
-        if (timedOut) {
-          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${runTimeoutMs}ms`));
+        if (terminationReason === "timeout") {
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${remainingRunTimeoutMs}ms`));
         }
         settle({
           events: collected.events,
-          outcome: aborted ? "aborted" : "failed",
+          outcome: terminationReason === "user_abort" ? "aborted" : "failed",
           sessionId,
         });
       }
 
-      function requestTermination(): void {
-        if (terminationStarted || settled) return;
-        terminationStarted = true;
+      function requestTermination(reason: NonNullable<typeof terminationReason>): void {
+        if (terminationReason || settled) return;
+        terminationReason = reason;
+        clearTimeout(timeoutTimer);
         terminate(proc, killTimer, settleAfterForcedTermination);
       }
 
       proc.stdout.on("data", (chunk: Buffer) => {
         if (settled) return;
+        stdoutBytes += chunk.byteLength;
+        if (stdoutBytes > MAX_STDOUT_BYTES) {
+          logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout byte cap exceeded"));
+          requestTermination("failure");
+          stdoutBuffer = "";
+          return;
+        }
         stdoutBuffer += chunk.toString("utf-8");
         if (stdoutBuffer.length > 8 * 1024 * 1024) {
           logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout buffer overflow"));
-          timedOut = true;
-          requestTermination();
+          requestTermination("failure");
           stdoutBuffer = "";
           return;
         }
@@ -646,6 +851,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           const line = stdoutBuffer.slice(0, newlineIndex).replace(/\r$/, "");
           stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
           collector.feedLine(line);
+          drainCollector();
           newlineIndex = stdoutBuffer.indexOf("\n");
         }
       });
@@ -662,15 +868,22 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       proc.once("exit", (code: number | null) => {
         if (settled) return;
         const tail = stdoutBuffer.trim();
-        if (tail.length > 0) collector.feedLine(tail);
-        const collected = collector.finish();
+        if (tail.length > 0) {
+          collector.feedLine(tail);
+          drainCollector();
+        }
+        const collected = finishCollector();
         const sessionId = collected.sessionId ?? input.sessionId;
-        if (aborted) {
+        if (terminationReason === "user_abort") {
           settle({ events: collected.events, outcome: "aborted", sessionId });
           return;
         }
-        if (timedOut) {
-          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${runTimeoutMs}ms`));
+        if (terminationReason === "timeout") {
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
+          settle({ events: collected.events, outcome: "failed", sessionId });
+          return;
+        }
+        if (terminationReason === "failure") {
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
@@ -805,7 +1018,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       await runCommand(command, ["--version"], {
         cwd: homePath,
         timeout: PROBE_TIMEOUT_MS,
-        env: buildPiChildEnvironment(options.env),
+        env: buildPiChildEnvironment({ ...options.env, HOME: homePath }),
       });
       return true;
     } catch (err: unknown) {
@@ -816,18 +1029,20 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
   return {
     providerId,
+    initialRunExecution: "background",
 
     async getSummary({ now }) {
       const installed = await probeInstalled();
+      const authenticated = installed && await hasNativeHarnessAuth(homePath, "pi");
       return AgentProviderSummarySchema.parse({
         id: providerId,
         displayName: "Pi",
         kind: "pi",
-        availability: installed ? "available" : "unavailable",
+        availability: authenticated ? "available" : installed ? "auth_required" : "unavailable",
         installStatus: installed ? "installed" : "missing",
-        // pi has no non-interactive auth probe (`pi auth status` is a prompt,
-        // not a subcommand); binary presence is the configured signal.
-        authStatus: installed ? "authenticated" : "unknown",
+        // Pi has no non-interactive auth command. Readiness checks only bounded
+        // metadata at its fixed owner-local auth path; credential bytes stay CLI-owned.
+        authStatus: authenticated ? "authenticated" : "unknown",
         supportedModes: ["default"],
         defaultMode: "default",
         setupActions: [],
@@ -858,7 +1073,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       ]);
     },
 
-    async startThread({ thread, request, now, nextEventId }) {
+    async startThread({ thread, request, signal, now, nextEventId, publishEvents }) {
       // Fail closed before resolving a workspace or spawning: Pi cannot enforce
       // workspace_write or full_access, so honouring them would mean running
       // with the gateway account's unrestricted filesystem access while the UI
@@ -890,11 +1105,21 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         };
       }
 
-      const runningEvent = statusEvent({ threadId: thread.id, status: "running", now, nextEventId });
       const sessionId = randomUUID();
+      const conversationId = packResumeState(sessionId, cwd);
+      const runningEvent = statusEvent({ threadId: thread.id, status: "running", now, nextEventId });
+      if (publishEvents) {
+        await publishEvents({
+          events: [runningEvent],
+          ...(conversationId ? { resumeState: { conversationId } } : {}),
+        });
+      }
       let prompt: string;
       try {
-        prompt = piPromptWithReferences(request.prompt, request.attachments);
+        prompt = piPromptWithReferences(request.prompt, request.attachments, {
+          homePath,
+          executionRoot: cwd,
+        });
       } catch (err: unknown) {
         logCodingAgentWarning("pi provider prompt construction failed", err);
         return { events: terminalEvents(thread.id, "failed", now, nextEventId) };
@@ -905,21 +1130,24 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         prompt,
         cwd,
         sessionId,
+        model: request.model,
+        signal,
         now,
         nextEventId,
+        publishEvents,
       });
-      const conversationId = packResumeState(run.sessionId, cwd);
+      const finalConversationId = packResumeState(run.sessionId, cwd);
       return {
         events: [
-          runningEvent,
+          ...(publishEvents ? [] : [runningEvent]),
           ...run.events,
           ...terminalEvents(thread.id, run.outcome, now, nextEventId),
         ],
-        ...(conversationId ? { resumeState: { conversationId } } : {}),
+        ...(finalConversationId ? { resumeState: { conversationId: finalConversationId } } : {}),
       };
     },
 
-    async resumeTurn({ thread, turn, resumeState, signal, now, nextEventId }) {
+    async resumeTurn({ thread, turn, resumeState, signal, now, nextEventId, publishEvents }) {
       const parsed = parseResumeState(resumeState.conversationId);
       if (!parsed) {
         logCodingAgentWarning("pi provider resume state invalid", new Error("resume state mismatch"));
@@ -939,7 +1167,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       }
       let prompt: string;
       try {
-        prompt = piPromptWithReferences(turn.message, turn.attachments);
+        prompt = piPromptWithReferences(turn.message, turn.attachments, {
+          homePath,
+          executionRoot: cwd,
+        });
       } catch (err: unknown) {
         logCodingAgentWarning("pi provider prompt construction failed", err);
         return { events: [], outcome: "failed" as const, resumeState };
@@ -950,9 +1181,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         prompt,
         cwd,
         sessionId: parsed.sessionId,
+        model: turn.model,
         signal,
         now,
         nextEventId,
+        publishEvents,
       });
       const conversationId = packResumeState(run.sessionId, cwd);
       return {

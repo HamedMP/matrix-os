@@ -3,7 +3,6 @@
 import "posthog-js/dist/conversations";
 import posthog from "posthog-js";
 import {
-  buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
 } from "@matrix-os/observability/client";
@@ -24,6 +23,10 @@ const config = getPostHogClientConfig({
 });
 const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
 const SUPPORT_AVAILABILITY_TIMEOUT_MS = 10_000;
+const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
+const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
+const POSTHOG_CLOSE_SELECTOR = 'button[aria-label="Close"]';
+const LEGACY_POSTHOG_CONSENT_STORAGE_KEY = "matrix_posthog_cookie_consent";
 // Replay kill switch. NEXT_PUBLIC_* is inlined at build time, so the build
 // flag alone cannot stop replay during an incident. The layout additionally
 // exposes the server's runtime POSTHOG_DISABLE_REPLAY env as a data
@@ -97,8 +100,16 @@ export async function openShellSupport(currentConfig: typeof config = config): P
     const deadline = Date.now() + SUPPORT_AVAILABILITY_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (posthog.conversations.isAvailable()) {
-        posthog.capture("shell_support_chat_opened", { matrix_client: "web" });
         posthog.conversations.show();
+        let closeButton = findPostHogButton(POSTHOG_CLOSE_SELECTOR);
+        if (!closeButton) {
+          const launcher = await waitForPostHogButton(POSTHOG_LAUNCHER_SELECTOR, deadline);
+          if (!launcher) return false;
+          launcher.click();
+          closeButton = await waitForPostHogButton(POSTHOG_CLOSE_SELECTOR, deadline);
+        }
+        if (!closeButton) return false;
+        posthog.capture("shell_support_chat_opened", { matrix_client: "web" });
         return true;
       }
       await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
@@ -108,6 +119,19 @@ export async function openShellSupport(currentConfig: typeof config = config): P
     console.warn("[posthog] Failed to open support chat:", err instanceof Error ? err.name : typeof err);
     return false;
   }
+}
+
+async function waitForPostHogButton(selector: string, deadline: number): Promise<HTMLButtonElement | null> {
+  while (Date.now() < deadline) {
+    const button = findPostHogButton(selector);
+    if (button) return button;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+  }
+  return null;
+}
+
+function findPostHogButton(selector: string): HTMLButtonElement | null {
+  return document.getElementById(POSTHOG_WIDGET_ID)?.querySelector<HTMLButtonElement>(selector) ?? null;
 }
 
 export function setPostHogPersonPropertiesOnce(
@@ -179,11 +203,10 @@ export function resetPostHogIdentity(currentConfig: typeof config = config) {
 }
 
 function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
-  initializeShellPostHog(getPostHogVisitorCountry(), currentConfig);
+  initializeShellPostHog(currentConfig);
 }
 
 export function initializeShellPostHog(
-  visitorCountry?: string | null,
   currentConfig: typeof config = config,
 ) {
   if (!currentConfig || initialized) return;
@@ -220,14 +243,31 @@ export function initializeShellPostHog(
       environment: process.env.NODE_ENV,
       serviceVersion: process.env.NEXT_PUBLIC_MATRIX_BUILD_SHA,
     },
-    ...buildPostHogCookieConsentInitOptions(visitorCountry),
   } as PostHogInitOptions);
+  migrateLegacyPostHogConsent();
   initialized = true;
 }
 
-function getPostHogVisitorCountry(): string | null {
-  if (typeof document === "undefined") return null;
-  return document.documentElement.dataset.posthogVisitorCountry ?? null;
+function migrateLegacyPostHogConsent(): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    const legacyConsent = window.localStorage.getItem(LEGACY_POSTHOG_CONSENT_STORAGE_KEY);
+    if (legacyConsent !== "accepted" && legacyConsent !== "declined") return;
+
+    // The shell no longer uses the Matrix consent banner. Restore capture only
+    // when that removed banner was the source of the opt-out; an opt-out with
+    // no legacy marker may belong to a different privacy control.
+    if (legacyConsent === "declined" && posthog.has_opted_out_capturing()) {
+      posthog.opt_in_capturing({ captureEventName: false });
+    }
+    window.localStorage.removeItem(LEGACY_POSTHOG_CONSENT_STORAGE_KEY);
+  } catch (err: unknown) {
+    console.warn(
+      "[posthog] Failed to migrate legacy consent:",
+      err instanceof Error ? err.name : typeof err,
+    );
+  }
 }
 
 function sanitizeProperties(properties: ClientProperties): Record<string, string | number | boolean> {

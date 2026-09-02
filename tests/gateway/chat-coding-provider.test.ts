@@ -114,6 +114,84 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it("routes Pi through the shared coding seam with its exact model and enforceable sandbox", async () => {
+    const createThread = vi.fn(async () => ({
+      snapshot: {
+        ...snapshot([event({ type: "thread.completed", eventId: "evt_pi_complete", outcome: "completed" })]),
+        thread: { ...snapshot([]).thread, providerId: "pi" },
+      },
+      existing: false,
+    }));
+    const store = {
+      createThread,
+      acceptTurn: vi.fn(),
+      getThread: vi.fn(),
+      abortThread: vi.fn(),
+      submitApproval: vi.fn(),
+      registerEventSink: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "pi", threads: store });
+
+    for await (const _event of adapter.start(input({
+      selection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" },
+    }))) {
+      // Consume completed run.
+    }
+
+    expect(adapter.driverKind).toBe("pi");
+    expect(createThread).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }),
+      expect.objectContaining({
+        providerId: "pi",
+        model: "anthropic:claude-sonnet-5",
+        approvalPolicy: "on_request",
+        sandboxMode: "read_only",
+      }),
+    );
+  });
+
+  it.each([
+    ["pi", "pi_default", "pi"],
+    ["opencode", "opencode_default", "opencode"],
+  ] as const)(
+    "routes %s through the shared coding seam with its exact model and enforceable sandbox",
+    async (providerId, instanceId, driverKind) => {
+    const createThread = vi.fn(async () => ({
+      snapshot: {
+        ...snapshot([event({ type: "thread.completed", eventId: "evt_pi_complete", outcome: "completed" })]),
+        thread: { ...snapshot([]).thread, providerId },
+      },
+      existing: false,
+    }));
+    const store = {
+      createThread,
+      acceptTurn: vi.fn(),
+      getThread: vi.fn(),
+      abortThread: vi.fn(),
+      submitApproval: vi.fn(),
+      registerEventSink: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId, threads: store });
+
+    for await (const _event of adapter.start(input({
+      selection: { instanceId, model: "anthropic:claude-sonnet-5" },
+    }))) {
+      // Consume completed run.
+    }
+
+    expect(adapter.driverKind).toBe(driverKind);
+    expect(createThread).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }),
+      expect.objectContaining({
+        providerId,
+        model: "anthropic:claude-sonnet-5",
+        approvalPolicy: "on_request",
+        sandboxMode: "read_only",
+      }),
+    );
+    },
+  );
+
   it.each([
     ["supervised", "on_request", "workspace_write"],
     ["auto", "on_failure", "workspace_write"],

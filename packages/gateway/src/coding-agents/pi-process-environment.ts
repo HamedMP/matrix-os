@@ -33,6 +33,19 @@ export function buildPiChildEnvironment(overrides: Record<string, string> | unde
   return env;
 }
 
+export function addPortableProviderCredentials(
+  environment: Record<string, string>,
+  credentials: Record<string, string> | undefined,
+): Record<string, string> {
+  const env = { ...environment };
+  for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"] as const) {
+    const value = credentials?.[key];
+    if (typeof value === "string" && value.length > 0) env[key] = value;
+    else delete env[key];
+  }
+  return env;
+}
+
 export function resolvePiCommand(
   explicit: string | undefined,
   env: Record<string, string> | undefined,

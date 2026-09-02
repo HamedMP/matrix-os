@@ -14,10 +14,7 @@ const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const PROXY_FETCH_TIMEOUT_MS = 30_000;
 const PROXY_ADMIN_TOKEN = process.env.PROXY_ADMIN_TOKEN ?? process.env.PROXY_AUTH_TOKEN ?? process.env.PLATFORM_SECRET;
 const PROXY_SHARED_SECRET = process.env.PROXY_SHARED_SECRET ?? process.env.PLATFORM_SECRET;
-const fundedRelayConfig = resolveFundedRelayConfig({
-  ...process.env,
-  PROXY_SHARED_SECRET,
-});
+const fundedRelayConfig = resolveFundedRelayConfig(process.env);
 
 const app = new Hono();
 const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
@@ -339,10 +336,10 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.log(`[proxy] Received ${signal}, shutting down`);
-  fundedRelay.close();
   server.close();
   const forceExit = setTimeout(() => process.exit(1), 6_000);
   try {
+    await fundedRelay.close();
     await posthogErrorTracker.shutdown();
   } catch (err: unknown) {
     console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));

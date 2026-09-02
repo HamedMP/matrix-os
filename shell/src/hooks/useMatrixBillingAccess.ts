@@ -68,12 +68,48 @@ type BillingAccessRemoteState = {
 
 export function useMatrixBillingAccess(): BillingAccessState {
   const state = useManagedMatrixBillingAccess();
+  const e2eBillingScenario = e2eBillingBypass
+    && typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("e2e_billing_state")
+    : null;
   if (!e2eBillingBypass) return state;
+  if (e2eBillingScenario === "legacy-trial") {
+    return {
+      active: true,
+      checking: false,
+      entitlement: {
+        source: "stripe",
+        planSlug: "matrix_builder",
+        status: "trialing",
+        maxRuntimeSlots: 1,
+        includedRuntimeSlots: 1,
+        addonRuntimeSlots: 0,
+        defaultServerType: "cpx32",
+        allowedServerTypes: ["cpx22", "cpx32"],
+        stripeSubscriptionId: "sub_legacy_trial",
+        stripePriceId: "price_legacy_builder_monthly",
+        billingInterval: "monthly",
+        gracePeriodEndsAt: null,
+        trialStartedAt: "2026-08-29T00:00:00.000Z",
+        trialEndsAt: "2026-09-01T00:00:00.000Z",
+        trialConvertedAt: null,
+        firstTrialPaymentFailedAt: null,
+        effectiveFrom: "2026-08-29T00:00:00.000Z",
+        effectiveUntil: null,
+        updatedAt: "2026-08-29T00:00:00.000Z",
+      },
+      trialOffer: { eligible: false, durationDays: 3 },
+      accessReason: "e2e_legacy_trial",
+      accessIssue: null,
+    };
+  }
   return {
     active: false,
     checking: false,
     entitlement: null,
-    trialOffer: null,
+    // Keep browser screenshots deterministic while exercising the same
+    // three-day offer shown to eligible first-time hosted customers.
+    trialOffer: { eligible: true, durationDays: 3 },
     accessReason: "e2e_test_bypass",
     accessIssue: null,
   };

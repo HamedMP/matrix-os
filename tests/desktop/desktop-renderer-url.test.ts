@@ -6,6 +6,10 @@ import {
 } from "@desktop/main/renderer-url";
 
 describe("Desktop renderer URL", () => {
+  it("keeps the local renderer in a potentially trustworthy localhost origin", () => {
+    expect(DESKTOP_DEV_RENDERER_HOST).toMatch(/(?:^|\.)localhost$/);
+  });
+
   it("maps the local Vite renderer onto an allowed Matrix development hostname", () => {
     expect(resolveDesktopRendererUrl("http://127.0.0.1:5173/")).toBe(
       `http://${DESKTOP_DEV_RENDERER_HOST}:5173/`,

@@ -40,6 +40,8 @@ import {
   type CanonicalComposerSelection,
 } from "../chat/canonical-composer-state";
 import { failClosedProviderCatalog, useChatProviderCatalog } from "../chat/chat-provider-catalog";
+import { canonicalChatSubmitFailureMessage } from "../chat/canonical-chat-submit-error";
+import { chatSendFailureMessage } from "../chat/chat-send-error";
 import { useProviderSetup } from "../chat/use-provider-setup";
 import { capabilityEnabled } from "../coding-agents/capabilities";
 import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
@@ -51,6 +53,15 @@ import {
 } from "../coding-agents/composer-seed";
 import { ProjectChatHero } from "./ProjectChatHero";
 import { startCanonicalProjectChat } from "./start-canonical-project-chat";
+
+function composerOptionsEqual(
+  left: CanonicalComposerSelection["options"],
+  right: CanonicalComposerSelection["options"],
+): boolean {
+  return left.length === right.length && left.every((option) => (
+    right.some((candidate) => candidate.id === option.id && candidate.value === option.value)
+  ));
+}
 
 /**
  * The draft-chat pane: shown in the conversation column while no chat is
@@ -90,6 +101,7 @@ export function ProjectChatDraft({
   heroHeadline?: string;
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
+  const lastComposerInstanceId = useProviderPreferences((s) => s.lastComposerInstanceId);
   const composerSelections = useProviderPreferences((s) => s.composerSelections);
   const setComposerSelectionPreference = useProviderPreferences((s) => s.setComposerSelection);
   const api = useConnection((state) => state.api);
@@ -148,7 +160,7 @@ export function ProjectChatDraft({
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const [resolvingTarget, setResolvingTarget] = useState(false);
   const [canonicalSubmitting, setCanonicalSubmitting] = useState(false);
-  const [canonicalError, setCanonicalError] = useState<string | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const submitInFlightRef = useRef(false);
   const busy = submitting || resolvingTarget || canonicalSubmitting;
   // Local focus bumps (type-to-start, chip seeds) combine with the shared
@@ -184,7 +196,7 @@ export function ProjectChatDraft({
     [canonicalClient, liveCatalog.catalog, liveCatalog.status, summary, unavailableCatalog],
   );
   const preferredInstanceId = canonicalClient
-    ? undefined
+    ? lastComposerInstanceId ?? undefined
     : instanceIdForLegacyProvider(projectCatalog, summary, effectiveDraft.providerId);
   const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
     () => {
@@ -193,6 +205,9 @@ export function ProjectChatDraft({
         summary,
         restoredDraft?.providerId ?? initialDraft.providerId,
       ));
+      if (canonicalClient && lastComposerInstanceId && !restoredEntry?.pickerTouched) {
+        selection = createCanonicalComposerSelection(fallbackCatalog, lastComposerInstanceId);
+      }
       if (selection) {
         selection = applyCanonicalComposerPreference(
           fallbackCatalog,
@@ -247,6 +262,7 @@ export function ProjectChatDraft({
         && current.model === next.model
         && current.interactionMode === next.interactionMode
         && current.permissionMode === next.permissionMode
+        && composerOptionsEqual(current.options, next.options)
         ? current
         : next;
     });
@@ -292,14 +308,22 @@ export function ProjectChatDraft({
     const selectedInstance = projectCatalog.instances.find((instance) => (
       instance.id === canonicalSelection?.instanceId
     ));
-    if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) return;
+    if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) {
+      setSubmissionError(chatSendFailureMessage(
+        "The selected provider does not support file attachments.",
+      ));
+      return;
+    }
+    setSubmissionError(null);
     if (canonicalClient && canonicalSelection) {
       submitInFlightRef.current = true;
       setCanonicalSubmitting(true);
-      setCanonicalError(null);
       try {
         const uploaded = await attachments.uploadAll();
-        if (!uploaded.ok) return;
+        if (!uploaded.ok) {
+          setSubmissionError(chatSendFailureMessage(uploaded.error));
+          return;
+        }
         const started = await startCanonicalProjectChat({
           client: canonicalClient,
           projectId: canonicalProjectId,
@@ -321,7 +345,7 @@ export function ProjectChatDraft({
           "[project-chat] canonical first turn failed:",
           error instanceof Error ? error.name : "UnknownError",
         );
-        setCanonicalError("The message could not be sent. Try again.");
+        setSubmissionError(canonicalChatSubmitFailureMessage(error));
       } finally {
         submitInFlightRef.current = false;
         setCanonicalSubmitting(false);
@@ -354,7 +378,10 @@ export function ProjectChatDraft({
         setDraft({ ...effective, prompt: effectiveDraft.prompt });
       }
       const uploaded = await attachments.uploadAll();
-      if (!uploaded.ok) return;
+      if (!uploaded.ok) {
+        setSubmissionError(chatSendFailureMessage(uploaded.error));
+        return;
+      }
       const prompt = effective.prompt.trim() || "Please inspect the attached files.";
       const threadId = await createThread({
         ...effective,
@@ -362,6 +389,9 @@ export function ProjectChatDraft({
         ...(uploaded.attachments.length > 0 ? { attachments: uploaded.attachments } : {}),
       });
       if (!threadId) {
+        const reason = useCodingAgentWorkspace.getState().createError
+          ?? "Agent run could not be started. Try again.";
+        setSubmissionError(chatSendFailureMessage(reason));
         // Keep the prompt for retry; drop one-shot launch context (review
         // references, task targeting) exactly like the legacy form did.
         setDraft((current) => clearComposerLaunchContext(current));
@@ -406,8 +436,8 @@ export function ProjectChatDraft({
       ) : null}
       <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
         <div className={cn("@container/project-composer mx-auto w-full", presentation === "landing" ? "max-w-none" : CHAT_CONTENT_WIDTH_CLASS)} data-slot="draft-composer">
-          {canonicalError || createError ? (
-            <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{canonicalError ?? createError}</p>
+          {submissionError || createError ? (
+            <p className="mb-1 px-1 text-xs" role="alert" style={{ color: "var(--danger)" }}>{submissionError ?? createError}</p>
           ) : null}
           {canCreate ? (
             <>

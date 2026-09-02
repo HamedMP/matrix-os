@@ -1,14 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
+import { loadNativeDesktopConfig } from "../../lib/desktop-config-client";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
-import {
-  captureDesktopIconsHydrationRevision,
-  defaultDesktopIcons,
-  useDesktopIcons,
-} from "../../stores/desktop-icons";
-import { FIXED_DESKTOP_APPS } from "./desktop-apps";
 
 type DesktopBackgroundConfig =
   | { type: "pattern" }
@@ -19,7 +14,6 @@ type DesktopBackgroundConfig =
 
 const FALLBACK_STYLE: CSSProperties = { background: "var(--bg-app)" };
 const WALLPAPER_MAX_BYTES = 10 * 1024 * 1024;
-const DEFAULT_DESKTOP_ICONS = defaultDesktopIcons(FIXED_DESKTOP_APPS.map((app) => app.path));
 
 function meshGradient(): string {
   return [
@@ -114,6 +108,7 @@ export default function DesktopBackground() {
   const [loaded, setLoaded] = useState<{ api: ApiClient; style: CSSProperties } | null>(null);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const activeObjectUrl = useRef<{ api: ApiClient; url: string } | null>(null);
+  const loadedConfigApi = useRef<ApiClient | null>(null);
   const style = api && loaded?.api === api ? loaded.style : FALLBACK_STYLE;
 
   useEffect(() => {
@@ -148,12 +143,14 @@ export default function DesktopBackground() {
 
     if (api) {
       void (async () => {
-        const iconHydrationRevision = captureDesktopIconsHydrationRevision();
-        const config = await api.get<{ background?: unknown; desktopIcons?: unknown }>("/api/settings/desktop");
-        if (!cancelled) {
-          useDesktopIcons.getState().hydrate(config.desktopIcons, DEFAULT_DESKTOP_ICONS, iconHydrationRevision);
-        }
-        const background = backgroundConfig(config?.background);
+        const refresh = loadedConfigApi.current === api;
+        loadedConfigApi.current = api;
+        const config = await loadNativeDesktopConfig(api, { refresh });
+        const background = backgroundConfig(
+          typeof config === "object" && config !== null && !Array.isArray(config)
+            ? (config as { background?: unknown }).background
+            : undefined,
+        );
         if (!background) return;
         if (background.type !== "wallpaper") {
           if (!cancelled) {

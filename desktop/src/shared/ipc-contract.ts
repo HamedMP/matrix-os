@@ -63,6 +63,10 @@ const CodingAgentCreateTurnResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), response: CreateAgentTurnResponseSchema }).strict(),
   z.object({ ok: z.literal(false), error: CreateAgentTurnErrorSchema }).strict(),
 ]);
+const CodingAgentCreateThreadResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), snapshot: AgentThreadSnapshotSchema }).strict(),
+  z.object({ ok: z.literal(false), error: SafeClientErrorSchema }).strict(),
+]);
 const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
 const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
@@ -264,7 +268,7 @@ export const INVOKE_CHANNELS = {
   },
   "runtime:create-thread": {
     request: CreateAgentThreadRequestSchema,
-    response: AgentThreadSnapshotSchema,
+    response: CodingAgentCreateThreadResultSchema,
   },
   "runtime:create-turn": {
     request: CodingAgentCreateTurnRequestSchema,

@@ -4,6 +4,7 @@ import {
   resetDesktopIconsRuntime,
   useDesktopIcons,
 } from "@desktop/renderer/src/stores/desktop-icons";
+import { OsViewStateConflictExhaustedError } from "@desktop/renderer/src/lib/os-view-state-client";
 
 const CHAT = { path: "__chat__", x: 20, y: 20 };
 const FILES = { path: "__file-browser__", x: 108, y: 20 };
@@ -36,9 +37,9 @@ describe("native Desktop icon layout", () => {
     expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
     expect(useDesktopIcons.getState().icons.some((icon) => icon.path === "__file-browser__")).toBe(false);
     expect(useDesktopIcons.getState().icons.some((icon) => icon.path === "apps/notes/index.html")).toBe(true);
-    expect(api.patch).toHaveBeenLastCalledWith("/api/settings/desktop", {
-      desktopIcons: useDesktopIcons.getState().icons,
-    });
+    expect(api.patch).toHaveBeenLastCalledWith("/api/os-view-state", expect.objectContaining({
+      patch: { desktop: { icons: useDesktopIcons.getState().icons } },
+    }));
   });
 
   it("rolls the optimistic layout back when persistence fails", async () => {
@@ -53,6 +54,24 @@ describe("native Desktop icon layout", () => {
     expect(useDesktopIcons.getState().icons).toEqual([CHAT, FILES]);
   });
 
+  it("retains and retries the current layout after conflict retries are exhausted", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn()
+        .mockRejectedValueOnce(new OsViewStateConflictExhaustedError())
+        .mockResolvedValueOnce({ ok: true }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+
+    expect(api.patch).toHaveBeenCalledTimes(2);
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+    expect(api.patch).toHaveBeenLastCalledWith("/api/os-view-state", expect.objectContaining({
+      patch: { desktop: { icons: useDesktopIcons.getState().icons } },
+    }));
+  });
+
   it("allows pending settings hydration after an initial icon write fails", async () => {
     const api = {
       patch: vi.fn(async () => { throw new Error("offline"); }),
@@ -63,12 +82,12 @@ describe("native Desktop icon layout", () => {
     await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
     useDesktopIcons.getState().hydrate([FILES], [CHAT, FILES], pendingHydrationRevision);
 
-    expect(api.patch).toHaveBeenCalledWith("/api/settings/desktop", {
-      desktopIcons: [
+    expect(api.patch).toHaveBeenCalledWith("/api/os-view-state", expect.objectContaining({
+      patch: { desktop: { icons: [
         { path: "__chat__", x: 240, y: 180 },
         FILES,
-      ],
-    });
+      ] } },
+    }));
     expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
   });
 

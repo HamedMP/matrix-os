@@ -21,3 +21,28 @@ export { Tooltip } from "./Tooltip.js";
 export type { TooltipProps } from "./Tooltip.js";
 
 export { cn } from "./cn.js";
+
+export { AgentsProvidersView } from "./agents-providers/AgentsProvidersView.js";
+export type {
+  AgentsProvidersViewProps,
+  ProviderSettingsMutationIntent,
+} from "./agents-providers/AgentsProvidersView.js";
+
+export {
+  ProviderSettingsController,
+  ProviderSettingsTransportError,
+  useProviderSettingsController,
+} from "./agents-providers/provider-settings-controller.js";
+
+export {
+  canonicalProviderAvailabilityLabel,
+  deriveCanonicalProviderChoices,
+} from "./canonical-provider-choice.js";
+export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
+export type {
+  ProviderSettingsControllerState,
+  ProviderSettingsControllerOptions,
+  ProviderSettingsTransport,
+  ProviderSettingsTransportErrorCode,
+  UseProviderSettingsControllerResult,
+} from "./agents-providers/provider-settings-controller.js";

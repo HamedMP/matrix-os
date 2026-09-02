@@ -394,6 +394,10 @@ function threadSnapshotFixture() {
   };
 }
 
+function threadCreateSuccess<T>(snapshot: T) {
+  return { ok: true as const, snapshot };
+}
+
 function reviewReadyThreadSnapshotFixture() {
   const base = threadSnapshotFixture();
   return {
@@ -3152,7 +3156,7 @@ describe("ProjectChatsView", () => {
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
       if (channel === "runtime:create-thread") {
-        return Promise.resolve({
+        return Promise.resolve(threadCreateSuccess({
           thread: {
             id: "thread_review_followup",
             providerId: "codex",
@@ -3167,7 +3171,7 @@ describe("ProjectChatsView", () => {
             hasMore: false,
             limit: 200,
           },
-        });
+        }));
       }
       return Promise.reject(new Error("unexpected channel"));
     });
@@ -3340,7 +3344,7 @@ describe("ProjectChatsView", () => {
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
       if (channel === "runtime:create-thread") {
-        return Promise.resolve({
+        return Promise.resolve(threadCreateSuccess({
           thread: {
             id: "thread_review_followup",
             providerId: "codex",
@@ -3355,7 +3359,7 @@ describe("ProjectChatsView", () => {
             hasMore: false,
             limit: 200,
           },
-        });
+        }));
       }
       return Promise.reject(new Error("unexpected channel"));
     });
@@ -3405,7 +3409,7 @@ describe("ProjectChatsView", () => {
             rejectFirstCreate = reject;
           });
         }
-        return Promise.resolve({
+        return Promise.resolve(threadCreateSuccess({
           thread: {
             id: "thread_unrelated_after_failure",
             providerId: "codex",
@@ -3420,7 +3424,7 @@ describe("ProjectChatsView", () => {
             hasMore: false,
             limit: 200,
           },
-        });
+        }));
       }
       return Promise.reject(new Error("unexpected channel"));
     });
@@ -3744,7 +3748,7 @@ describe("ProjectChatsView", () => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:create-thread") {
-        return Promise.resolve({
+        return Promise.resolve(threadCreateSuccess({
           thread: {
             id: "thread_desktop_1",
             providerId: "codex",
@@ -3759,7 +3763,7 @@ describe("ProjectChatsView", () => {
             hasMore: false,
             limit: 200,
           },
-        });
+        }));
       }
       return Promise.reject(new Error("unexpected channel"));
     });
@@ -3815,7 +3819,7 @@ describe("ProjectChatsView", () => {
       },
     };
     window.operator.invoke = vi.fn((channel: string) => {
-      if (channel === "runtime:create-thread") return Promise.resolve(runningSnapshot);
+      if (channel === "runtime:create-thread") return Promise.resolve(threadCreateSuccess(runningSnapshot));
       if (channel === "runtime:subscribe-thread-events") return Promise.resolve({ ok: true });
       if (channel === "runtime:get-thread-snapshot") return Promise.resolve(completedSnapshot);
       if (channel === "runtime:unsubscribe-thread-events") return Promise.resolve({ ok: true });
@@ -3844,7 +3848,7 @@ describe("ProjectChatsView", () => {
       if (channel === "runtime:get-summary") return Promise.resolve(summary);
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:create-thread") {
-        return Promise.resolve({
+        return Promise.resolve(threadCreateSuccess({
           thread: {
             id: "thread_created_handle",
             providerId: "codex",
@@ -3860,7 +3864,7 @@ describe("ProjectChatsView", () => {
             hasMore: false,
             limit: 200,
           },
-        });
+        }));
       }
       return Promise.reject(new Error("unexpected channel"));
     });
@@ -3919,7 +3923,7 @@ describe("ProjectChatsView", () => {
     window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summary);
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
-      if (channel === "runtime:create-thread") return Promise.resolve(createdSnapshot);
+      if (channel === "runtime:create-thread") return Promise.resolve(threadCreateSuccess(createdSnapshot));
       if (channel === "runtime:get-thread-snapshot") {
         const threadId = (payload as { threadId?: string } | undefined)?.threadId;
         return Promise.resolve(threadId === "thread_created_handle" ? createdSnapshot : threadSnapshotFixture());
@@ -4041,7 +4045,7 @@ describe("ProjectChatsView", () => {
 
     await expect(second).resolves.toBeNull();
     expect(window.operator.invoke).toHaveBeenCalledTimes(1);
-    resolveCreate({
+    resolveCreate(threadCreateSuccess({
       thread: {
         id: "thread_duplicate_1",
         providerId: "codex",
@@ -4056,7 +4060,7 @@ describe("ProjectChatsView", () => {
         hasMore: false,
         limit: 200,
       },
-    });
+    }));
     await expect(first).resolves.toBe("thread_duplicate_1");
   });
 
@@ -4081,7 +4085,7 @@ describe("ProjectChatsView", () => {
 
     const pending = useCodingAgentWorkspace.getState().createThread(draft);
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
-    resolveCreate({
+    resolveCreate(threadCreateSuccess({
       thread: {
         id: "thread_stale_1",
         providerId: "codex",
@@ -4096,7 +4100,7 @@ describe("ProjectChatsView", () => {
         hasMore: false,
         limit: 200,
       },
-    });
+    }));
 
     await expect(pending).resolves.toBeNull();
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBeNull();

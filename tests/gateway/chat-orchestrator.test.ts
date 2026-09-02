@@ -482,6 +482,63 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
   });
 
+  it("projects uploaded attachment paths through the Provider-neutral prompt", async () => {
+    await repository.create(owner, {
+      id: "chat_attachment_prompt",
+      clientRequestId: "req_create_attachment_prompt",
+      title: "Attachment prompt",
+    });
+    let providerPrompt: string | undefined;
+    const provider = adapter(async function* (input) {
+      providerPrompt = input.prompt;
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-31T01:34:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_attachment_prompt", {
+      clientRequestId: "req_attachment_prompt_turn",
+      baseRevision: 0,
+      parts: [
+        { type: "text", text: "Do a summary" },
+        {
+          type: "attachment_reference",
+          attachmentId: "desktop_upload_attachment_prompt",
+          kind: "file",
+          label: "message (1).txt",
+          mimeType: "text/plain",
+          sizeBytes: 19_505,
+          ownerReference: "temporary/desktop-chat/upload_123-message (1).txt",
+        },
+        {
+          type: "attachment_reference",
+          attachmentId: "desktop_upload_shell_chars",
+          kind: "file",
+          label: "notes'$(touch ignored).txt",
+          mimeType: "text/plain",
+          sizeBytes: 32,
+          ownerReference: "temporary/desktop-chat/upload_456-notes'$(touch ignored).txt",
+        },
+      ],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    expect(providerPrompt).toBe([
+      "Do a summary",
+      "",
+      "Attached files (available on this Matrix computer):",
+      '- "message (1).txt": "$MATRIX_HOME"/\'temporary/desktop-chat/upload_123-message (1).txt\'',
+      '- "notes\'$(touch ignored).txt": "$MATRIX_HOME"/\'temporary/desktop-chat/upload_456-notes\'\\\'\'$(touch ignored).txt\'',
+    ].join("\n"));
+  });
+
   it("persists one stable typed activity row across live lifecycle updates", async () => {
     await repository.create(owner, {
       id: "chat_activity_projection",
@@ -736,6 +793,61 @@ describe("CanonicalChatOrchestrator", () => {
     expect(reloaded?.activities).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "run.error" }),
     ]));
+  });
+
+  it("aborts Provider work when canonical event persistence fails", async () => {
+    await repository.create(owner, {
+      id: "chat_provider_persistence_failure",
+      clientRequestId: "req_create_provider_persistence_failure",
+      title: "Provider persistence failure",
+    });
+    let providerAbortObserved = false;
+    const provider = adapter(async function* (input) {
+      input.signal.addEventListener("abort", () => {
+        providerAbortObserved = true;
+      }, { once: true });
+      yield {
+        type: "agent.activity",
+        activityId: "reasoning_0",
+        kind: "reasoning",
+        label: "Thinking",
+        status: "running",
+      };
+      yield {
+        type: "agent.activity",
+        activityId: "reasoning_0",
+        kind: "reasoning",
+        label: "Thinking",
+        status: "completed",
+      };
+      yield {
+        type: "agent.activity",
+        activityId: "reasoning_0",
+        kind: "reasoning",
+        label: "Thinking",
+        status: "running",
+      };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    await orchestrator.admitTurn(principal, owner, "chat_provider_persistence_failure", {
+      clientRequestId: "req_provider_persistence_failure_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "trigger an invalid activity transition" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+
+    expect(providerAbortObserved).toBe(true);
+    const snapshot = await repository.exportChat(owner, "chat_provider_persistence_failure");
+    expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
   });
 
   it("does not reconcile a committed Run while its dispatch registration is pending", async () => {

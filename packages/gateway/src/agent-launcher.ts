@@ -436,6 +436,7 @@ export function createAgentLauncher(options: {
   let installationScanCache: { result: DetectionResult; expiresAt: number } | null = null;
   let credentialScanInFlight: Promise<DetectionResult> | null = null;
   let credentialScanCache: { result: DetectionResult; expiresAt: number } | null = null;
+  let credentialScanGeneration = 0;
 
   function commandFor(id: SupportedAgent): string {
     return id === "codex" && options.codexExecutable
@@ -520,6 +521,7 @@ export function createAgentLauncher(options: {
     if (cached && now() < cached.expiresAt) return cached.result;
     if (credentialScanInFlight) return credentialScanInFlight;
 
+    const generation = credentialScanGeneration;
     const scan = Promise.all([
       probeCredentials("claude"),
       probeCredentials("codex"),
@@ -527,16 +529,25 @@ export function createAgentLauncher(options: {
     credentialScanInFlight = scan;
     try {
       const result = await scan;
-      credentialScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
+      if (generation === credentialScanGeneration) {
+        credentialScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
+      }
       return result;
     } finally {
       if (credentialScanInFlight === scan) credentialScanInFlight = null;
     }
   }
 
+  function invalidateCredentialDetection(): void {
+    credentialScanGeneration += 1;
+    credentialScanCache = null;
+    credentialScanInFlight = null;
+  }
+
   return {
     detectAgentInstallations,
     detectAgentCredentials,
+    invalidateCredentialDetection,
     /** @deprecated Use detectAgentInstallations for executable availability. */
     detectAgents: detectAgentInstallations,
 

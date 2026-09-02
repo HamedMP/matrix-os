@@ -17,8 +17,51 @@ All route schemas use `zod/v4`. Every mutating route uses Hono `bodyLimit` befor
 | `POST` | `/v1/messages` | central relay | Exact relay service token/HMAC audience and scope | 2 MiB initial cap | Anthropic-compatible funded request |
 | `POST` | `/v1/messages/count_tokens` | central relay | Same relay service credential | 256 KiB | Optional funded token-count endpoint |
 | `GET` | `/health/ready` | central relay | Platform/internal health auth; never public detail | n/a | Coarse readiness |
+| `POST` | `/internal/containers/:handle/ai/funding-summary` | platform internal | Exact per-handle platform HMAC; owner/machine/runtime derived from the running machine record | 1 KiB | Identity-free authoritative Matrix credit and monthly-budget summary |
+| `POST` | `/billing/ai-credit/checkout` | platform | Authenticated Clerk owner; active machine/runtime derived server-side | 16 KiB | Create hosted Stripe Checkout for one server-owned add-on package |
+| `POST` | `/billing/webhooks/stripe` | platform | Stripe signature over the exact raw body | 1 MiB | Verify paid add-on completion and atomically record receipt + ledger grant |
 
 The exact prefix can be adapted to existing `/api/settings` compatibility routes. Compatibility routes must call the same service and return the canonical state; they cannot maintain a second provider truth.
+
+The funding-summary request body and query are both strict-empty schemas. Its
+response contains only `contractVersion` plus reconciled microusd funding
+totals. It never returns owner ID, machine ID, runtime slot, credential, ledger
+entries, source references, or database/provider errors. The owner gateway uses
+the provisioned per-handle platform HMAC, a bounded response reader, an explicit
+timeout, and `redirect: "error"`; failure projects usage as unavailable instead
+of falling back to local estimates.
+
+## Funded AI add-on Checkout
+
+The checkout request is a strict object containing only `packageId`
+(`usd_5`, `usd_10`, or `usd_25`), a bounded runtime slot, and a UUID
+`requestId`. The platform maps the package to configured Stripe Price and exact
+USD/microusd amounts. The strict schema rejects extra fields: any client-supplied owner,
+machine, Price, currency, or amount makes the request invalid. The Checkout
+create uses a fixed-length idempotency key derived from owner, machine, and
+request UUID. Browser retries reuse the same UUID.
+
+Before Stripe is called, the platform inserts an immutable Checkout claim. It
+reuses an active same-package claim and permits at most five new claims per
+owner/runtime in a rolling hour. The claim, not mutable environment state, is
+the fulfillment authority after Price rotation or feature disable.
+
+Signed `checkout.session.completed` and
+`checkout.session.async_payment_succeeded` events can grant credit only with
+`mode=payment`, `status=complete`, `payment_status=paid`, `currency=usd`, exact
+pre-tax `amount_subtotal`, `amount_total >= amount_subtotal`, and exact
+server-written kind, owner, machine, runtime, package, Price, request, and
+microusd metadata. Unpaid completion waits; async failure and expiry close the
+attempt without credit. The platform inserts the event receipt and
+`addon:<checkout-session-id>` ledger entry in one Kysely transaction. Mismatch
+rolls back and returns non-2xx; duplicate valid delivery is a 2xx no-op.
+
+Signed `charge.refunded` and dispute lifecycle events resolve through the
+persisted payment-intent/charge association. Any positive refund or open/lost
+dispute reverses the full grant exactly once. Unused balance is removed;
+already consumed/reserved credit becomes durable debt and freezes further
+authorization. A won dispute restores only the removed portion and clears its
+debt atomically.
 
 ## `GET /api/ai/providers`
 

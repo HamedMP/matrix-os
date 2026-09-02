@@ -93,6 +93,10 @@ Allowed client states are `preparing`, `ready_waiting_for_billing`, `payment_set
 - Reorder the new-primary journey to compute/region, developer tools, explicit “Continue to secure checkout,” preparation during checkout, signed billing confirmation, then ready/runtime.
 - Copy must say preparation starts when checkout opens and access starts only after billing authorization.
 - The billing component must submit `developerTools` and `serverType`; it must not separately call a preparation endpoint.
+- A validated `device_return` and optional runtime slot must survive checkout, journey polling, and the final app-session exchange.
+- After checkout, `choose_default_installs` and `start_provision` are not valid client actions for an active or resumable preparation. The shell shows passive progress and follows authoritative journey state instead of issuing another provisioning mutation.
+- `POST /api/auth/provision-runtime` returning an accepted response means work was accepted, not that an app session is ready. A subsequent `POST /api/auth/app-session` `404 no_runtime` is a temporary wait signal in this continuation flow and must be retried without displaying a provisioning failure or build button.
+- Passive app-session polling retries only billing propagation, runtime-not-ready, rate-limit, server, and network failures. Authentication failures return to sign-in; other permanent client errors stop automatic polling with a generic recovery state and no provisioning action. Runtime selectors are validated before journey polling or app-session exchange.
 - Agent authentication remains after runtime readiness. Precheckout selection only chooses optional tools to install asynchronously on first boot.
 - Canvas is the first manual validation surface; Desktop compatibility remains required.
 

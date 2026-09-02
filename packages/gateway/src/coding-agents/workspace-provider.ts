@@ -13,6 +13,10 @@ import {
 import { SupportedAgentSchema, type SupportedAgent } from "../agent-launcher.js";
 import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
 import { createPiCodingAgentProvider, type PiCodingAgentProviderOptions } from "./pi-provider.js";
+import {
+  createOpenCodeCodingAgentProvider,
+  type OpenCodeCodingAgentProviderOptions,
+} from "./opencode-provider.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
@@ -48,6 +52,7 @@ export interface WorkspaceCodingAgentProviderSetOptions {
   codexControl?: CodexControlClient;
   homePath?: string;
   pi?: Omit<PiCodingAgentProviderOptions, "homePath">;
+  opencode?: Omit<OpenCodeCodingAgentProviderOptions, "homePath">;
 }
 
 export interface WorkspaceCodingAgentProviderSet {
@@ -444,11 +449,23 @@ export function createWorkspaceCodingAgentProviderSet(
 ): WorkspaceCodingAgentProviderSet {
   const agents = SupportedAgentSchema.array().max(4).parse(options.agents);
   const registryProviders = agents.map((agent) => {
-    // pi runs as a direct-spawn JSON-stream adapter, not a terminal session.
+    // Pi and OpenCode run as direct-spawn JSON-stream adapters, not terminal sessions.
     if (agent === "pi") {
+      if (!options.pi?.resolveCredentialLaunch) {
+        throw new Error("Pi credential resolver is required");
+      }
       return createPiCodingAgentProvider({
         homePath: options.homePath ?? defaultMatrixHome(),
-        ...(options.pi ?? {}),
+        ...options.pi,
+      });
+    }
+    if (agent === "opencode") {
+      if (!options.opencode?.resolveCredentialLaunch) {
+        throw new Error("OpenCode credential resolver is required");
+      }
+      return createOpenCodeCodingAgentProvider({
+        homePath: options.homePath ?? defaultMatrixHome(),
+        ...options.opencode,
       });
     }
     return createWorkspaceCodingAgentProvider({

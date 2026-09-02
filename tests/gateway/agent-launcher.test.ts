@@ -324,6 +324,34 @@ describe("agent-launcher", () => {
     expect(runCommand).toHaveBeenCalledTimes(8);
   });
 
+  it("invalidates cached credential probes after a foreground Terminal login", async () => {
+    let codexAuthenticated = false;
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (args[0] === "--version") {
+        return {
+          stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+          stderr: "",
+        };
+      }
+      if (command === "codex" && args.join(" ") === "login status" && !codexAuthenticated) {
+        throw Object.assign(new Error("not authenticated"), { code: 1 });
+      }
+      return { stdout: "ok\n", stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand, now: () => 1_000 });
+
+    const before = await launcher.detectAgentCredentials();
+    expect(before.agents.find((agent) => agent.id === "codex"))
+      .toMatchObject({ authState: "required" });
+
+    codexAuthenticated = true;
+    launcher.invalidateCredentialDetection();
+
+    const after = await launcher.detectAgentCredentials();
+    expect(after.agents.find((agent) => agent.id === "codex"))
+      .toMatchObject({ authState: "ok" });
+  });
+
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {
     const launch = buildAgentLaunch({
       agent: "codex",

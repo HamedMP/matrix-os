@@ -62,7 +62,8 @@ export interface HermesStdioClient {
 }
 
 const defaultSpawn: HermesGatewaySpawn = (command, args, options) => spawn(command, args, options);
-const MAX_FRAME_BYTES = 256 * 1024;
+const MAX_INBOUND_FRAME_BYTES = 512 * 1024;
+const MAX_OUTBOUND_FRAME_BYTES = 256 * 1024;
 const MAX_PENDING_REQUESTS = 16;
 const DEFAULT_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -165,7 +166,7 @@ export function createHermesStdioClient(options: {
   }
 
   function handleFrame(line: string): void {
-    if (Buffer.byteLength(line, "utf8") > MAX_FRAME_BYTES) {
+    if (Buffer.byteLength(line, "utf8") > MAX_INBOUND_FRAME_BYTES) {
       fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
       return;
     }
@@ -207,7 +208,7 @@ export function createHermesStdioClient(options: {
   child.stdout.on("data", (chunk) => {
     if (failed || closing) return;
     inputBuffer += decoder.write(chunk);
-    if (Buffer.byteLength(inputBuffer, "utf8") > MAX_FRAME_BYTES && !inputBuffer.includes("\n")) {
+    if (Buffer.byteLength(inputBuffer, "utf8") > MAX_INBOUND_FRAME_BYTES && !inputBuffer.includes("\n")) {
       fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
       return;
     }
@@ -218,7 +219,7 @@ export function createHermesStdioClient(options: {
       inputBuffer = inputBuffer.slice(newline + 1);
       if (line) handleFrame(line);
     }
-    if (!failed && Buffer.byteLength(inputBuffer, "utf8") > MAX_FRAME_BYTES) {
+    if (!failed && Buffer.byteLength(inputBuffer, "utf8") > MAX_INBOUND_FRAME_BYTES) {
       fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
     }
   });
@@ -246,7 +247,7 @@ export function createHermesStdioClient(options: {
       }
       const id = ++requestId;
       const frame = `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`;
-      if (Buffer.byteLength(frame, "utf8") > MAX_FRAME_BYTES) {
+      if (Buffer.byteLength(frame, "utf8") > MAX_OUTBOUND_FRAME_BYTES) {
         return Promise.reject(safeError("Hermes gateway request exceeded limit"));
       }
       return new Promise<unknown>((resolve, reject) => {

@@ -1,20 +1,6 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import {
-  AlertCircle,
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  LoaderCircle,
-  MessageSquare,
-  PanelLeftOpenIcon,
-  PinIcon,
-  PinOffIcon,
-  Plus,
-  Search,
-  Trash2,
-} from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ContextMenu } from "../../design/primitives";
+import { Plus } from "@renderer/lib/hugeicons";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
   CanonicalChatEventSource,
@@ -25,10 +11,11 @@ import { DeleteConversationDialog } from "../chat/DeleteConversationDialog";
 import ProjectLifecycleDialog from "../mission-control/ProjectLifecycleDialog";
 import {
   buildWorkRailModel,
-  resolveWorkRailAgentState,
-  type WorkRailAgentState,
 } from "./work-rail-model";
-import { OverflowingChatTitle } from "./OverflowingChatTitle";
+import { WorkRailChatRow } from "./work-rail/WorkRailChatRow";
+import { WorkRailHeader } from "./work-rail/WorkRailHeader";
+import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
+import { WorkRailSection } from "./work-rail/WorkRailSection";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 
 type SectionKey = "pinned" | "projects" | "recents";
@@ -60,7 +47,7 @@ export function WorkRail({
   onChatDeleted,
   onCollapse,
   showCollapseControl = true,
-  className = "w-[260px]",
+  className = "w-[240px]",
 }: {
   client: CanonicalChatClient | null;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
@@ -217,50 +204,26 @@ export function WorkRail({
   return (
     <nav
       aria-label="Chat navigation"
-      className={`flex min-h-0 shrink-0 flex-col border-r ${className}`}
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
+      className={`flex min-h-0 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-2 ${className}`}
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
     >
-      <div className="mx-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-1 border-b py-3" style={{ borderColor: "var(--border-subtle)" }}>
-        <button
-          type="button"
-          className="flex h-9 min-w-0 flex-1 items-center justify-start gap-2 rounded-md px-2 text-left text-[15px] font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-primary)" }}
-          onClick={onNewGlobalChat}
-        >
-          <Plus size={18} aria-hidden />
-          New chat
-        </button>
-        {showCollapseControl ? <button
-          type="button"
-          aria-label="Hide Chat navigation"
-          title="Hide Chat navigation"
-          className="flex size-8 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-tertiary)" }}
-          onClick={onCollapse}
-        >
-          <PanelLeftOpenIcon size={15} aria-hidden />
-        </button> : null}
-        <button
-          type="button"
-          aria-label="Search chats"
-          className="col-span-2 flex h-9 min-w-0 items-center justify-start gap-2 rounded-md px-2 text-left text-[15px] outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-secondary)" }}
-          onClick={() => setSearchOpen(true)}
-        >
-          <Search size={17} aria-hidden />
-          Search
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-        <RailSection
+      <WorkRailHeader
+        onNewChat={onNewGlobalChat}
+        onSearch={() => setSearchOpen(true)}
+        onCollapse={onCollapse}
+        showCollapseControl={showCollapseControl}
+      />
+      <div className="contents">
+        <WorkRailSection
           label="Pinned"
           expanded={sections.pinned}
           onToggle={() => toggleSection("pinned")}
         >
           {model.pinned.map((record) => (
-            <ChatRow
+            <WorkRailChatRow
               key={record.chat.id}
               record={record}
+              placement="pinned"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
               onSelect={() => onSelectChat(
@@ -276,9 +239,9 @@ export function WorkRail({
               }}
             />
           ))}
-        </RailSection>
+        </WorkRailSection>
 
-        <RailSection
+        <WorkRailSection
           label="Projects"
           expanded={sections.projects}
           onToggle={() => toggleSection("projects")}
@@ -287,92 +250,53 @@ export function WorkRail({
               type="button"
               aria-label="Create project"
               title="Create project"
-              className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="flex size-5 items-center justify-center rounded-md opacity-0 outline-none transition-opacity hover:bg-[var(--bg-hover)] focus:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)] [section:hover_&]:opacity-100"
+              style={{ color: "var(--text-tertiary)" }}
               onClick={onCreateProject}
             >
-              <Plus size={14} aria-hidden />
+              <Plus size={12} aria-hidden />
             </button>
           )}
         >
           {model.projects.map((group) => {
             const expanded = Boolean(expandedProjects[group.id]);
             return (
-              <div key={group.id}>
-                <ContextMenu items={[{
-                  label: "Delete",
-                  danger: true,
-                  onSelect: () => setDeleteProjectTarget(group.project),
-                }]}>
-                  <div className="group/project flex min-w-0 items-center gap-1 rounded-md hover:bg-[var(--bg-hover)]">
-                    <button
-                      type="button"
-                      aria-label={group.name}
-                      aria-expanded={expanded}
-                      className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-                      style={{ color: activeProjectSlug === group.slug ? "var(--text-primary)" : "var(--text-secondary)" }}
-                      onClick={() => setExpandedProjects((current) => ({
-                        ...current,
-                        [group.id]: !current[group.id],
-                      }))}
-                    >
-                      {expanded ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
-                      <Folder size={14} aria-hidden className="shrink-0" />
-                      <span className="truncate">{group.name}</span>
-                    </button>
-                    <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover/project:opacity-100 group-focus-within/project:opacity-100">
-                      <button
-                        type="button"
-                        aria-label={`New chat in ${group.name}`}
-                        title={`New chat in ${group.name}`}
-                        className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                        onClick={() => onNewProjectChat(group.project)}
-                      >
-                        <Plus size={13} aria-hidden />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Delete ${group.name} project`}
-                        title={`Delete ${group.name} project`}
-                        className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                        onClick={() => setDeleteProjectTarget(group.project)}
-                      >
-                        <Trash2 size={13} aria-hidden />
-                      </button>
-                    </div>
-                  </div>
-                </ContextMenu>
-                {expanded ? (
-                  <div className="ml-4 border-l pl-1" style={{ borderColor: "var(--border-subtle)" }}>
-                    {group.chats.map((record) => (
-                      <ChatRow
-                        key={record.chat.id}
-                        record={record}
-                        active={record.chat.id === activeChatId}
-                        pinning={Boolean(pinning[record.chat.id])}
-                        onSelect={() => onSelectChat(record, group.project)}
-                        onPin={() => updatePinned(record)}
-                        onDelete={() => {
-                          setDeleteChatError(null);
-                          setDeleteChatTarget(record);
-                        }}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+              <WorkRailProjectGroup
+                key={group.id}
+                group={group}
+                expanded={expanded}
+                activeProjectSlug={activeProjectSlug}
+                activeChatId={activeChatId}
+                pinning={pinning}
+                onToggle={() => setExpandedProjects((current) => ({
+                  ...current,
+                  [group.id]: !current[group.id],
+                }))}
+                onNewChat={onNewProjectChat}
+                onDeleteProject={setDeleteProjectTarget}
+                onSelectChat={onSelectChat}
+                onPinChat={updatePinned}
+                onDeleteChat={(record) => {
+                  setDeleteChatError(null);
+                  setDeleteChatTarget(record);
+                }}
+              />
             );
           })}
-        </RailSection>
+        </WorkRailSection>
 
-        <RailSection
+        <WorkRailSection
           label="Recents"
           expanded={sections.recents}
           onToggle={() => toggleSection("recents")}
+          divider={false}
+
         >
           {model.recents.map((record) => (
-            <ChatRow
+            <WorkRailChatRow
               key={record.chat.id}
               record={record}
+              placement="recent"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
               onSelect={() => onSelectChat(record)}
@@ -383,7 +307,7 @@ export function WorkRail({
               }}
             />
           ))}
-        </RailSection>
+        </WorkRailSection>
         {status === "loading" && records.length === 0 ? (
           <p role="status" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
         ) : null}
@@ -428,159 +352,5 @@ export function WorkRail({
         }}
       />
     </nav>
-  );
-}
-
-function RailSection({
-  label,
-  expanded,
-  onToggle,
-  action,
-  children,
-}: {
-  label: string;
-  expanded: boolean;
-  onToggle: () => void;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="mb-2">
-      <div className="flex h-7 items-center gap-1">
-        <button
-          type="button"
-          aria-label={label}
-          aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-tertiary)" }}
-          onClick={onToggle}
-        >
-          {expanded ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
-          {label}
-        </button>
-        {action}
-      </div>
-      {expanded ? <div className="space-y-0.5">{children}</div> : null}
-    </section>
-  );
-}
-
-function ChatRow({
-  record,
-  active,
-  pinning,
-  onSelect,
-  onPin,
-  onDelete,
-}: {
-  record: CanonicalChatRecord;
-  active: boolean;
-  pinning: boolean;
-  onSelect: () => void;
-  onPin: () => void;
-  onDelete: () => void;
-}) {
-  const pinned = Boolean(record.chat.userState?.pinned);
-  const agentState = resolveWorkRailAgentState(record);
-  return (
-    <ContextMenu items={[
-      {
-        label: pinned ? "Unpin" : "Pin",
-        disabled: pinning,
-        onSelect: onPin,
-      },
-      {
-        label: "Delete",
-        danger: true,
-        onSelect: onDelete,
-      },
-    ]}>
-      <div
-        className="group/chat relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)] focus-within:bg-[var(--bg-hover)]"
-        style={{ background: active ? "var(--bg-selected)" : undefined }}
-      >
-        <button
-          type="button"
-          aria-label={record.chat.title}
-          aria-current={active ? "page" : undefined}
-          className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-          style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
-          onClick={onSelect}
-        >
-          <MessageSquare size={13} aria-hidden className="shrink-0" />
-          <OverflowingChatTitle title={record.chat.title} />
-          <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
-        </button>
-        <div
-          className="absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100"
-          style={{
-            background: active
-              ? "linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)"
-              : "linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg-surface)",
-          }}
-        >
-          <button
-            type="button"
-            aria-label={`${pinned ? "Unpin" : "Pin"} ${record.chat.title}`}
-            title={`${pinned ? "Unpin" : "Pin"} ${record.chat.title}`}
-            disabled={pinning}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            onClick={onPin}
-          >
-            {pinned ? <PinOffIcon size={13} aria-hidden /> : <PinIcon size={13} aria-hidden />}
-          </button>
-          <button
-            type="button"
-            aria-label={`Delete ${record.chat.title}`}
-            title={`Delete ${record.chat.title}`}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            onClick={onDelete}
-          >
-            <Trash2 size={13} aria-hidden />
-          </button>
-        </div>
-      </div>
-    </ContextMenu>
-  );
-}
-
-function ChatAgentStateIndicator({
-  state,
-  title,
-}: {
-  state: WorkRailAgentState;
-  title: string;
-}) {
-  if (state === "idle") return null;
-  if (state === "unseen_completion") {
-    return (
-      <span
-        aria-label={`Unseen completion for ${title}`}
-        className="ml-auto size-2 shrink-0 rounded-full bg-[var(--accent)]"
-      />
-    );
-  }
-  if (state === "running") {
-    return (
-      <LoaderCircle
-        aria-label={`Agent running for ${title}`}
-        className="ml-auto shrink-0 animate-spin"
-        size={13}
-      />
-    );
-  }
-  const requiresApproval = state === "approval_required";
-  const label = requiresApproval
-    ? `Approval required for ${title}`
-    : state === "input_required"
-      ? `Input required for ${title}`
-      : `Agent failed for ${title}`;
-  return (
-    <AlertCircle
-      aria-label={label}
-      className="ml-auto shrink-0"
-      size={13}
-      style={{ color: state === "failed" ? "var(--danger)" : "var(--warning)" }}
-    />
   );
 }

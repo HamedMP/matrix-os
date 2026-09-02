@@ -193,7 +193,7 @@ export function ConversationContent({ children, className }: { children: ReactNo
   // comfortably compact; the viewport itself stays full-width for fade.
   return (
     <div
-      className={cn("mx-auto flex min-h-full w-full flex-col gap-3 px-4 py-6 sm:px-6 lg:px-8", CHAT_CONTENT_WIDTH_CLASS, className ?? "justify-end")}
+      className={cn("mx-auto flex min-h-full w-full flex-col gap-2 px-4 py-6 sm:px-6 lg:px-8", CHAT_CONTENT_WIDTH_CLASS, className ?? "justify-end")}
       role="log"
       aria-relevant="additions"
       data-slot="message-scroller-content"

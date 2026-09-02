@@ -2,16 +2,15 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
-import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
-import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
-import { buildAuthenticatedWebSocketUrl, getWebSocketAuthToken } from "@/lib/websocket-auth";
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
-import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
+import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
+import { classifyTerminalClipboardShortcut } from "@matrix-os/contracts";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -45,8 +44,37 @@ import {
   correctTerminalPointerCoordinates,
 } from "./terminal-soft-grid";
 import {
+  installTerminalPointerInterception,
+  markTerminalZoomCorrected,
+} from "./terminal-pointer-interception";
+import {
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
+import {
+  IMAGE_ADDON_OPTIONS,
+  MAX_OSC52_BASE64_LENGTH,
+  OSC52_ALLOWED_TARGETS,
+  TERMINAL_CANONICAL_MAX_COLS,
+  TERMINAL_CANONICAL_MAX_ROWS,
+  TERMINAL_FAST_SCROLL_SENSITIVITY,
+  TERMINAL_MINIMUM_READABLE_FONT_SIZE,
+  TERMINAL_SCROLLBACK_LINES,
+  TERMINAL_SCROLL_SENSITIVITY,
+  applyXtermScrollOptions,
+  applyXtermScrollSurface,
+  applyXtermSurfaceBackground,
+  describeReadyState,
+  isAppleCommandPlatform,
+  refreshTerminalRenderer,
+  scrollTerminalViewportToBottom,
+  shouldDisableWebglRenderer,
+  suppressXtermNativeKeyboard,
+  terminalDebug,
+  terminalTelemetry,
+  toDisposableWebglAddon,
+  type CanonicalReplayRequest,
+  type DisposableWebglAddon,
+} from "./terminal-xterm-runtime";
 import {
   isCanonicalShellSessionId,
   isLegacyPtySessionId,
@@ -56,16 +84,9 @@ import { createXtermLogger } from "./xterm-logger";
 import { createColdReplayVisibility, type ColdReplayVisibility } from "./cold-replay-visibility";
 import { parseTerminalServerMessage, stripTerminalControls } from "./terminal-server-message";
 import { useTerminalFocusRequest } from "./useTerminalFocusRequest";
+import { useTerminalFilePaste } from "./useTerminalFilePaste";
 import type { TerminalCompatMode } from "@/stores/terminal-store";
 
-const MAX_OSC52_BASE64_LENGTH = 1_000_000;
-const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
-const BRACKETED_PASTE_OPEN = "\u001b[200~";
-const BRACKETED_PASTE_CLOSE = "\u001b[201~";
-const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
-const MAX_TERMINAL_INPUT = 65_536;
-const SUPPORTED_TERMINAL_PASTE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
 const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
   position: "absolute",
   top: 8,
@@ -81,226 +102,6 @@ const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
   fontSize: 13,
   boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
 };
-const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
-  [".png", "image/png"],
-  [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"],
-  [".gif", "image/gif"],
-  [".webp", "image/webp"],
-]);
-const TERMINAL_SCROLLBACK_LINES = 10_000;
-const TERMINAL_SCROLL_SENSITIVITY = 1;
-const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
-const TERMINAL_MINIMUM_READABLE_FONT_SIZE = 10;
-const TERMINAL_CANONICAL_MAX_COLS = 500;
-const TERMINAL_CANONICAL_MAX_ROWS = 200;
-const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
-  enableSizeReports: false,
-  pixelLimit: 4_194_304,
-  storageLimit: 32,
-  showPlaceholder: true,
-  sixelSupport: true,
-  sixelScrolling: true,
-  sixelPaletteLimit: 256,
-  sixelSizeLimit: 8_000_000,
-  iipSupport: true,
-  iipSizeLimit: 8_000_000,
-};
-
-function shouldDisableWebglRenderer(suppressNativeKeyboard: boolean): boolean {
-  if (suppressNativeKeyboard) return true;
-  if (typeof navigator === "undefined") return false;
-  const userAgent = navigator.userAgent;
-  const isAppleMobile = /\b(iPad|iPhone|iPod)\b/.test(userAgent)
-    || (userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1);
-  const isSafari = /Safari\//.test(userAgent) && !/(Chrome|CriOS|FxiOS|EdgiOS)\//.test(userAgent);
-  return isAppleMobile && isSafari;
-}
-
-function terminalPasteMimeType(file: File): string | null {
-  const typed = file.type.trim().toLowerCase();
-  if (SUPPORTED_TERMINAL_PASTE_MIME_TYPES.has(typed)) {
-    return typed;
-  }
-  const dot = file.name.lastIndexOf(".");
-  if (dot < 0) {
-    return null;
-  }
-  return TERMINAL_PASTE_MIME_BY_EXTENSION.get(file.name.slice(dot).toLowerCase()) ?? null;
-}
-
-function isSupportedTerminalPasteFile(file: File | null | undefined): file is File {
-  return Boolean(file && terminalPasteMimeType(file));
-}
-
-function filesFromTerminalFilePayload(payload: DataTransfer | ClipboardEvent["clipboardData"] | null): File[] {
-  if (!payload) {
-    return [];
-  }
-  const files: File[] = [];
-  const items = Array.from(payload.items ?? []);
-  for (const item of items) {
-    if (item.kind === "file") {
-      const file = item.getAsFile();
-      if (isSupportedTerminalPasteFile(file)) {
-        files.push(file);
-      }
-    }
-  }
-  if (files.length > 0) {
-    return files;
-  }
-  return Array.from(payload.files ?? []).filter(isSupportedTerminalPasteFile);
-}
-
-function terminalPasteUploadTimeout(): { signal: AbortSignal; cleanup: () => void } {
-  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-    return { signal: AbortSignal.timeout(TERMINAL_PASTE_UPLOAD_TIMEOUT_MS), cleanup: () => {} };
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TERMINAL_PASTE_UPLOAD_TIMEOUT_MS);
-  return {
-    signal: controller.signal,
-    cleanup: () => clearTimeout(timeout),
-  };
-}
-
-function splitBracketedPastePayload(parts: string[]): string[] {
-  const maxPayloadLength = MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD;
-  const payload = parts.filter((part) => part.length > 0).join(" ");
-  const chunks: string[] = [];
-  for (let index = 0; index < payload.length; index += maxPayloadLength) {
-    chunks.push(payload.slice(index, index + maxPayloadLength));
-  }
-  return chunks;
-}
-
-function scrollTerminalViewportToBottom(term: Terminal | null): void {
-  term?.scrollToBottom();
-}
-
-function terminalDebug(event: string, details: Record<string, unknown>): void {
-  if (!isTerminalDebugEnabled()) {
-    return;
-  }
-  console.info("[terminal-debug][pane]", event, details);
-}
-
-function suppressXtermNativeKeyboard(container: HTMLElement): void {
-  const helper = container.querySelector("textarea.xterm-helper-textarea");
-  if (!(helper instanceof HTMLTextAreaElement)) {
-    return;
-  }
-  helper.inputMode = "none";
-  helper.readOnly = true;
-  helper.autocomplete = "off";
-  helper.autocapitalize = "none";
-  helper.spellcheck = false;
-  helper.setAttribute("aria-hidden", "true");
-}
-
-function applyXtermSurfaceBackground(
-  xtermElement: HTMLElement | null | undefined,
-  background: string,
-): void {
-  if (!xtermElement) {
-    return;
-  }
-
-  xtermElement.style.backgroundColor = background;
-  for (const selector of [".xterm-viewport", ".xterm-scrollable-element"]) {
-    const surface = xtermElement.querySelector(selector);
-    if (surface instanceof HTMLElement) {
-      surface.style.backgroundColor = background;
-    }
-  }
-}
-
-function applyXtermScrollSurface(
-  xtermElement: HTMLElement | null | undefined,
-  background: string,
-): void {
-  if (!xtermElement) {
-    return;
-  }
-
-  applyXtermSurfaceBackground(xtermElement, background);
-  xtermElement.classList.add("matrix-terminal-xterm-root");
-  xtermElement.style.width = "100%";
-  xtermElement.style.height = "100%";
-  xtermElement.style.overscrollBehavior = "contain";
-  xtermElement.style.touchAction = "pan-y";
-
-  const viewport = xtermElement.querySelector(".xterm-viewport");
-  if (!(viewport instanceof HTMLElement)) {
-    return;
-  }
-
-  viewport.classList.add("matrix-terminal-xterm-viewport");
-  viewport.style.height = "100%";
-  viewport.style.overflowY = "scroll";
-  viewport.style.setProperty("scrollbar-gutter", "stable");
-  viewport.style.overscrollBehavior = "contain";
-  viewport.style.touchAction = "pan-y";
-}
-
-function applyXtermScrollOptions(term: Terminal): void {
-  term.options.scrollback = TERMINAL_SCROLLBACK_LINES;
-  term.options.scrollSensitivity = TERMINAL_SCROLL_SENSITIVITY;
-  term.options.fastScrollSensitivity = TERMINAL_FAST_SCROLL_SENSITIVITY;
-  term.options.scrollOnUserInput = true;
-}
-
-function refreshTerminalRenderer(term: Terminal): void {
-  if (term.rows <= 0) {
-    return;
-  }
-  term.refresh(0, term.rows - 1);
-}
-
-type DisposableWebglAddon = { dispose: () => void };
-type CanonicalReplayRequest = {
-  mode: "cold-replay" | "cursor-resume";
-  requestedSeq: number;
-};
-
-function toDisposableWebglAddon(addon: unknown): DisposableWebglAddon | null {
-  if (!addon || typeof addon !== "object") {
-    return null;
-  }
-  const dispose = (addon as { dispose?: unknown }).dispose;
-  return typeof dispose === "function" ? (addon as DisposableWebglAddon) : null;
-}
-
-function terminalTelemetry(event: string, properties: Record<string, string | number | boolean | undefined>): void {
-  const payload = {
-    source: "terminal-pane",
-    event,
-    ...properties,
-  };
-  capturePostHogEvent("shell_terminal_ws", payload);
-  capturePostHogLog(event.includes("error") ? "error" : "info", `terminal websocket ${event}`, payload);
-}
-
-function describeReadyState(ws: WebSocket | null): string {
-  if (!ws) {
-    return "null";
-  }
-
-  switch (ws.readyState) {
-    case WebSocket.CONNECTING:
-      return "CONNECTING";
-    case WebSocket.OPEN:
-      return "OPEN";
-    case WebSocket.CLOSING:
-      return "CLOSING";
-    case WebSocket.CLOSED:
-      return "CLOSED";
-    default:
-      return `UNKNOWN(${String((ws as { readyState?: unknown }).readyState)})`;
-  }
-}
-
 interface TerminalPaneProps {
   paneId: string;
   cwd: string;
@@ -363,7 +164,7 @@ export function TerminalPane({
   const { height: viewportHeight, offsetTop: viewportOffsetTop, keyboardOpen } = useVisualViewport();
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const termRef = useRef<unknown>(null);
+  const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<unknown>(null);
   const searchAddonRef = useRef<unknown>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
@@ -414,6 +215,22 @@ export function TerminalPane({
   }, []);
   const closeLinkContextMenu = useCallback(() => {
     setLinkContextMenu(null);
+    (termRef.current as Terminal | null)?.focus();
+  }, []);
+  const copyTerminalSelection = useCallback((selection: string) => {
+    if (!navigator.clipboard?.writeText) {
+      setPasteError("Clipboard copy failed. Try again.");
+      return;
+    }
+    void navigator.clipboard.writeText(selection).catch((error: unknown) => {
+      console.warn("[terminal] clipboard copy unavailable", {
+        category: error instanceof DOMException ? error.name : "clipboard-error",
+      });
+      setPasteError("Clipboard copy failed. Try again.");
+    });
+  }, []);
+  const selectAllTerminal = useCallback(() => {
+    (termRef.current as Terminal | null)?.selectAll();
   }, []);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
@@ -468,8 +285,6 @@ export function TerminalPane({
     const container = containerRef.current;
     if (!container) return;
 
-    const MOUSE_EVENTS = ["mousedown", "mousemove", "mouseup"] as const;
-
     const correct = (e: MouseEvent) => {
       const visualScale = canvasZoomRef.current * softGridScaleRef.current;
       if (visualScale === 1) return;
@@ -520,28 +335,16 @@ export function TerminalPane({
         movementY: e.movementY,
       });
       // Mark the event so our own handler ignores it and does not re-correct.
-      Object.defineProperty(synthetic, "_xtermZoomCorrected", { value: true });
+      markTerminalZoomCorrected(synthetic);
       target.dispatchEvent(synthetic);
     };
 
-    const handler = (e: MouseEvent) => {
-      // Skip synthetic events we already corrected to avoid infinite loops.
-      if ((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected) return;
-      const visualScale = canvasZoomRef.current * softGridScaleRef.current;
-      if (visualScale === 1) return;
-      correct(e);
-    };
-
-    for (const type of MOUSE_EVENTS) {
-      // Capture phase so we intercept before xterm's own listeners.
-      container.addEventListener(type, handler, { capture: true });
-    }
-
-    return () => {
-      for (const type of MOUSE_EVENTS) {
-        container.removeEventListener(type, handler, { capture: true });
-      }
-    };
+    return installTerminalPointerInterception({
+      container,
+      getTerminal: () => termRef.current,
+      getVisualScale: () => canvasZoomRef.current * softGridScaleRef.current,
+      correctPointer: correct,
+    });
   // Effect wires once and reads zoom through the ref — no dependency on
   // canvasZoom directly, which avoids tearing down/re-registering listeners
   // on every zoom change while the user is actively zooming the canvas.
@@ -557,6 +360,8 @@ export function TerminalPane({
     setPasteError(message);
   };
 
+  useTerminalFilePaste({ containerRef, cwd, sessionIdRef, wsRef });
+
   useEffect(() => {
     isClosingRef.current = !!isClosing;
   }, [isClosing]);
@@ -569,122 +374,6 @@ export function TerminalPane({
       hasReplayCursorRef.current = false;
     }
   }, [initialSessionId]);
-
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers paste/drop listeners; the fetch runs later from those user event handlers with an AbortSignal timeout.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const sendBracketedPaste = (terminalPaths: string[]) => {
-      const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        for (const chunk of splitBracketedPastePayload(terminalPaths)) {
-          ws.send(JSON.stringify({
-            type: "input",
-            data: `${BRACKETED_PASTE_OPEN}${chunk}${BRACKETED_PASTE_CLOSE}`,
-          }));
-        }
-      }
-    };
-
-    const uploadAndPasteFiles = async (files: File[]) => {
-      const sessionId = sessionIdRef.current;
-      if (!sessionId) {
-        return;
-      }
-      const terminalPaths: string[] = [];
-      let authToken: string | null = null;
-      try {
-        authToken = await getWebSocketAuthToken();
-      } catch (err: unknown) {
-        console.warn("Terminal paste auth token unavailable:", err instanceof Error ? err.message : err);
-      }
-      for (const file of files) {
-        const mimeType = terminalPasteMimeType(file);
-        if (!mimeType) {
-          continue;
-        }
-        const uploadTimeout = terminalPasteUploadTimeout();
-        // react-doctor-disable-next-line react-doctor/react-compiler-unsupported-syntax, react-hooks-js/todo -- try/finally guarantees each paste upload timeout is cleaned up after this user-triggered event handler finishes.
-        try {
-          const headers: Record<string, string> = {
-            "Content-Type": mimeType,
-            "X-Matrix-Filename": file.name,
-          };
-          if (authToken) {
-            headers.Authorization = `Bearer ${authToken}`;
-          }
-          const url = new URL(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/paste-assets`);
-          url.searchParams.set("cwd", cwd || "projects");
-          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- paste uploads are intentionally sequential to preserve terminal insertion order and avoid multiple simultaneous file bodies.
-          const res = await fetch(url.toString(), {
-            method: "POST",
-            credentials: "same-origin",
-            headers,
-            signal: uploadTimeout.signal,
-            body: file,
-          });
-          if (!res.ok) {
-            console.warn(`Terminal paste upload failed: ${res.status}`);
-            continue;
-          }
-          const payload = await res.json() as { terminalPath?: unknown };
-          if (typeof payload.terminalPath === "string") {
-            terminalPaths.push(payload.terminalPath);
-          }
-        } catch (err: unknown) {
-          console.warn("Terminal paste upload failed:", err instanceof Error ? err.message : err);
-        } finally {
-          uploadTimeout.cleanup();
-        }
-      }
-      if (terminalPaths.length > 0) {
-        sendBracketedPaste(terminalPaths);
-      }
-    };
-
-    const captureImagePayload = (event: ClipboardEvent | DragEvent): File[] => {
-      const files = "clipboardData" in event
-        ? filesFromTerminalFilePayload(event.clipboardData)
-        : filesFromTerminalFilePayload(event.dataTransfer);
-      if (files.length === 0) {
-        return [];
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      if ("stopImmediatePropagation" in event) {
-        event.stopImmediatePropagation();
-      }
-      return files;
-    };
-
-    const onPaste = (event: ClipboardEvent) => {
-      const files = captureImagePayload(event);
-      if (files.length > 0) {
-        void uploadAndPasteFiles(files);
-      }
-    };
-    const onDrag = (event: DragEvent) => {
-      captureImagePayload(event);
-    };
-    const onDrop = (event: DragEvent) => {
-      const files = captureImagePayload(event);
-      if (files.length > 0) {
-        void uploadAndPasteFiles(files);
-      }
-    };
-
-    container.addEventListener("paste", onPaste, { capture: true });
-    container.addEventListener("dragenter", onDrag, { capture: true });
-    container.addEventListener("dragover", onDrag, { capture: true });
-    container.addEventListener("drop", onDrop, { capture: true });
-    return () => {
-      container.removeEventListener("paste", onPaste, { capture: true });
-      container.removeEventListener("dragenter", onDrag, { capture: true });
-      container.removeEventListener("dragover", onDrag, { capture: true });
-      container.removeEventListener("drop", onDrop, { capture: true });
-    };
-  }, [cwd]);
 
   // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom
   // window event with the target paneId; we forward to this pane's PTY if it
@@ -1162,6 +851,7 @@ export function TerminalPane({
           scrollSensitivity: TERMINAL_SCROLL_SENSITIVITY,
           fastScrollSensitivity: TERMINAL_FAST_SCROLL_SENSITIVITY,
           scrollOnUserInput: true,
+          rightClickSelectsWord: false,
           allowProposedApi: true,
           logger: createXtermLogger(),
           fontSize: terminalFontSize,
@@ -1836,14 +1526,18 @@ export function TerminalPane({
 
       const onLinkContextMenu = (event: MouseEvent) => {
         const cell = terminalCellFromPointer(term, event.clientX, event.clientY);
-        if (!cell) return;
-        const link = findTerminalLinkAtCell(term, cell);
-        if (!link) return;
+        const link = cell ? findTerminalLinkAtCell(term, cell) : null;
         event.preventDefault();
         event.stopPropagation();
-        setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
+        event.stopImmediatePropagation();
+        setLinkContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          link,
+          selection: term.getSelection(),
+        });
       };
-      container.addEventListener("contextmenu", onLinkContextMenu);
+      container.addEventListener("contextmenu", onLinkContextMenu, true);
 
       onDataDisposableRef.current?.dispose();
       onDataDisposableRef.current = term.onData((data: string) => {
@@ -1880,18 +1574,6 @@ export function TerminalPane({
           return false;
         }
 
-        if (ev.ctrlKey && ev.shiftKey && ev.key === "C") {
-          const selection = term.getSelection();
-          if (selection) {
-            navigator.clipboard.writeText(selection).catch((err: unknown) => {
-              console.warn("Clipboard copy failed:", err instanceof Error ? err.message : err);
-            });
-            term.clearSelection();
-            return false;
-          }
-          return true;
-        }
-
         if (ev.altKey && ev.shiftKey && ev.key.toUpperCase() === "C") {
           const block = commandBlockBufferRef.current.trim();
           if (block) {
@@ -1903,16 +1585,50 @@ export function TerminalPane({
           return true;
         }
 
-        if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
-          pasteClipboardIntoTerminal({
+        const clipboardAction = classifyTerminalClipboardShortcut({
+          type: ev.type as "keydown" | "keyup" | "keypress",
+          key: ev.key,
+          isMac: isAppleCommandPlatform(navigator.platform),
+          metaKey: ev.metaKey,
+          ctrlKey: ev.ctrlKey,
+          shiftKey: ev.shiftKey,
+          altKey: ev.altKey,
+          repeat: ev.repeat,
+          isComposing: ev.isComposing,
+          hasSelection: term.getSelection().length > 0,
+        });
+        if (clipboardAction === "copy") {
+          ev.preventDefault();
+          const selection = term.getSelection();
+          void navigator.clipboard?.writeText(selection).catch((error: unknown) => {
+            console.warn("[terminal] clipboard copy unavailable", {
+              category: error instanceof DOMException ? error.name : "clipboard-error",
+            });
+            showPasteError("Clipboard copy failed. Try again.");
+          });
+          return false;
+        }
+        if (clipboardAction === "paste") {
+          ev.preventDefault();
+          void pasteClipboardIntoTerminal({
             clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
             gatewayUrl: getGatewayUrl(),
             ws: wsRef.current,
-            submit: ev.altKey,
-          }).catch((err: unknown) => {
-            console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+          }).then((result) => {
+            if (result === "failed" || result === "unavailable") {
+              showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
+            }
+          }).catch((error: unknown) => {
+            console.warn("[terminal] clipboard paste unavailable", {
+              category: error instanceof DOMException ? error.name : "clipboard-error",
+            });
             showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
           });
+          return false;
+        }
+        if (clipboardAction === "select-all") {
+          ev.preventDefault();
+          term.selectAll();
           return false;
         }
 
@@ -1967,7 +1683,7 @@ export function TerminalPane({
 
       return () => {
         document.removeEventListener("visibilitychange", onVisibilityChange);
-        container.removeEventListener("contextmenu", onLinkContextMenu);
+        container.removeEventListener("contextmenu", onLinkContextMenu, true);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
         if (softGridLayoutFrame !== null) {
@@ -2256,6 +1972,8 @@ export function TerminalPane({
         onClose={closeLinkContextMenu}
         onOpen={openTerminalLink}
         onCopy={copyTerminalLink}
+        onCopySelection={copyTerminalSelection}
+        onSelectAll={selectAllTerminal}
       />
       {/* Reading the imperative xterm search-addon handle during render is
           intentional: the addon is created inside the init effect and is stable

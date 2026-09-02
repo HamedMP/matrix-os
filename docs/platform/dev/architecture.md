@@ -75,9 +75,13 @@ The current bootstrap starts Postgres as a single machine-local `postgres:16` se
 Customer VPSes download and extract:
 
 ```text
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production resolves the `stable` channel to an immutable version and SHA when
+the provisioning job is created. Snapshot and clean-image paths share that
+pinned target.
 
 The bundle includes:
 
@@ -157,7 +161,7 @@ Legacy `/containers/*` routes remain for local development and old fallback path
 
 ```
 1. Platform publishes matrix-host-bundle.tar.gz and .sha256 under system-bundles/<version>/
-2. New VPSes download the selected CUSTOMER_VPS_IMAGE_VERSION during cloud-init
+2. New VPS jobs resolve `stable` once and download that pinned version during cloud-init
 3. Existing VPSes refresh in place with matrix-update or recovery/reprovision
 4. matrix-db-backup.timer uploads hourly custom-format pg_dump snapshots to the user's R2 prefix
 ```

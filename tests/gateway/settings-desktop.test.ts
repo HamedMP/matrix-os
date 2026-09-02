@@ -54,7 +54,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const data = await res.json();
       expect(data.background).toEqual({
         type: "wallpaper",
-        name: "moraine-lake.jpg",
+        name: "matrix-dusk.webp",
       });
       expect(data.dock).toEqual({
         position: "left",
@@ -62,13 +62,15 @@ describe("Settings: desktop + theme + wallpapers", () => {
         iconSize: 40,
         autoHide: false,
       });
-      expect(data.pinnedApps).toEqual(["__workspace__", "__terminal__", "__file-browser__", "__chat__"]);
+      expect(data.pinnedApps).toEqual(["__terminal__", "__file-browser__", "__chat__"]);
+      expect(data.legacyDesktopImport).toEqual({});
     });
 
     it("returns saved config merged with defaults when desktop.json exists", async () => {
       const config = {
         background: { type: "solid", color: "#ff0000" },
         dock: { position: "bottom", size: 64, iconSize: 48, autoHide: true },
+        pinnedApps: ["__workspace__", "__terminal__", "apps/notes/index.html"],
       };
       writeFileSync(
         join(homePath, "system/desktop.json"),
@@ -79,7 +81,23 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const data = await res.json();
       expect(data.background.type).toBe("solid");
       expect(data.dock.position).toBe("bottom");
-      expect(data.pinnedApps).toEqual(["__workspace__", "__terminal__", "__file-browser__", "__chat__"]);
+      expect(data.pinnedApps).toEqual(["__terminal__", "apps/notes/index.html"]);
+      expect(data.legacyDesktopImport).toEqual({
+        pinnedApps: ["__terminal__", "apps/notes/index.html"],
+      });
+    });
+
+    it("reports an explicitly empty legacy icon layout without inventing absent pins", async () => {
+      writeFileSync(
+        join(homePath, "system/desktop.json"),
+        JSON.stringify({ desktopIcons: [] }),
+      );
+
+      const res = await app.request("/api/settings/desktop");
+      const data = await res.json();
+
+      expect(data.pinnedApps).toEqual(["__terminal__", "__file-browser__", "__chat__"]);
+      expect(data.legacyDesktopImport).toEqual({ desktopIcons: [] });
     });
   });
 
@@ -111,6 +129,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const config = {
         background: { type: "gradient", from: "#000", to: "#fff" },
         dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+        legacyDesktopImport: { pinnedApps: ["__chat__"] },
       };
       const res = await app.request("/api/settings/desktop", {
         method: "PUT",
@@ -125,6 +144,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
         readFileSync(join(homePath, "system/desktop.json"), "utf-8"),
       );
       expect(saved.background.type).toBe("gradient");
+      expect(saved.legacyDesktopImport).toBeUndefined();
     });
 
     it("rejects invalid JSON body", async () => {
@@ -134,6 +154,37 @@ describe("Settings: desktop + theme + wallpapers", () => {
         body: "not-json{{{",
       });
       expect(res.status).toBe(400);
+    });
+
+    it("preserves retired pins when a client replaces the visible config", async () => {
+      writeFileSync(join(homePath, "system/desktop.json"), JSON.stringify({
+        pinnedApps: ["__workspace__", "__terminal__"],
+      }));
+
+      const response = await app.request("/api/settings/desktop", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinnedApps: ["__terminal__", "apps/notes/index.html"] }),
+      });
+
+      expect(response.status).toBe(200);
+      const saved = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      expect(saved.pinnedApps).toEqual(["__terminal__", "apps/notes/index.html", "__workspace__"]);
+    });
+
+    it("preserves the complete pin list when a replacement omits pinnedApps", async () => {
+      const pinnedApps = ["__workspace__", "apps/custom/index.html"];
+      writeFileSync(join(homePath, "system/desktop.json"), JSON.stringify({ pinnedApps }));
+
+      const response = await app.request("/api/settings/desktop", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ background: { type: "solid", color: "#123456" } }),
+      });
+
+      expect(response.status).toBe(200);
+      const saved = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      expect(saved.pinnedApps).toEqual(pinnedApps);
     });
 
     it("rejects oversized desktop payloads", async () => {
@@ -199,6 +250,25 @@ describe("Settings: desktop + theme + wallpapers", () => {
         body: JSON.stringify({ desktopIcons: [{ path: "__chat__", x: -1, y: 20 }] }),
       });
       expect(invalid.status).toBe(400);
+    });
+
+    it("preserves retired pins when a client patches the filtered visible array", async () => {
+      writeFileSync(join(homePath, "system/desktop.json"), JSON.stringify({
+        pinnedApps: ["__workspace__", "__terminal__"],
+      }));
+
+      const response = await app.request("/api/settings/desktop", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinnedApps: ["__terminal__", "apps/notes/index.html"] }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        config: { pinnedApps: ["__terminal__", "apps/notes/index.html"] },
+      });
+      const saved = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      expect(saved.pinnedApps).toEqual(["__terminal__", "apps/notes/index.html", "__workspace__"]);
     });
 
     it("rejects invalid and oversized patch bodies", async () => {

@@ -205,4 +205,65 @@ describe("terminal rich clipboard paste", () => {
     const sent = JSON.parse(ws.send.mock.calls[0]![0]);
     expect(sent.data).toContain("~/data/terminal-paste/paste-");
   });
+
+  it("pastes clipboard text exactly once without submitting it", async () => {
+    vi.stubGlobal("WebSocket", { OPEN: 1 });
+    const clipboard = { readText: vi.fn(async () => "first row\nλ second row 👩🏽‍💻") };
+    const ws = { readyState: 1, send: vi.fn() };
+
+    await expect(pasteClipboardIntoTerminal({
+      clipboard,
+      gatewayUrl: "https://gateway.example",
+      ws,
+    })).resolves.toBe("text");
+
+    expect(ws.send).toHaveBeenCalledOnce();
+    expect(JSON.parse(ws.send.mock.calls[0]![0])).toEqual({
+      type: "input",
+      data: "\x1b[200~first row\nλ second row 👩🏽‍💻\x1b[201~",
+    });
+  });
+
+  it("reports empty and unavailable clipboard reads without sending", async () => {
+    vi.stubGlobal("WebSocket", { OPEN: 1 });
+    const ws = { readyState: 1, send: vi.fn() };
+
+    await expect(pasteClipboardIntoTerminal({
+      clipboard: { readText: vi.fn(async () => "") },
+      gatewayUrl: "https://gateway.example",
+      ws,
+    })).resolves.toBe("empty");
+    await expect(pasteClipboardIntoTerminal({
+      clipboard: undefined,
+      gatewayUrl: "https://gateway.example",
+      ws,
+    })).resolves.toBe("unavailable");
+
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it("reports failed when text or image data cannot reach the terminal", async () => {
+    vi.stubGlobal("WebSocket", { OPEN: 1 });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    const disconnected = { readyState: 3, send: vi.fn() };
+    const blob = new Blob(["fake image"], { type: "image/png" });
+
+    await expect(pasteClipboardIntoTerminal({
+      clipboard: { readText: vi.fn(async () => "not delivered") },
+      gatewayUrl: "https://gateway.example",
+      ws: disconnected,
+    })).resolves.toBe("failed");
+    await expect(pasteClipboardIntoTerminal({
+      clipboard: {
+        read: vi.fn(async () => [{
+          types: ["image/png"],
+          getType: vi.fn(async () => blob),
+        }]),
+      },
+      gatewayUrl: "https://gateway.example",
+      ws: disconnected,
+    })).resolves.toBe("failed");
+
+    expect(disconnected.send).not.toHaveBeenCalled();
+  });
 });

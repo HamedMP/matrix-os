@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { appsQueryOptions } from "@/api/apps";
 import { useVocalSession, type VocalIntent, type BuildProgressSnapshot } from "@/hooks/useVocalSession";
 import type { ChatState } from "@/hooks/useChatState";
-import { useWindowManager } from "@/hooks/useWindowManager";
 import { AgentStatusCard } from "./AgentStatusCard";
 import { ShellNotificationCard } from "./ShellNotificationCard";
 import { ShellNotificationPortal } from "./ShellNotificationPortal";
@@ -60,15 +61,12 @@ interface VocalPanelProps {
   active: boolean;
   chat?: ChatState;
   onOpenApp?: (query: string) => { success: boolean; resolvedName?: string };
-  // Dismisses the chat popover so Aoede's delegation banner is the only
-  // build-surface on screen. Called when vocal activates and again when
-  // Aoede delegates a build, since the popup otherwise lingers.
-  onDismissChat?: () => void;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-purpose vocal/build-delegation panel: the mic/WS lifecycle, delegation snapshot throttling, build-progress indicator, and entrance animations are tightly coupled around one shared session and timer set; splitting them would fragment the session lifecycle and add prop-drilling without reducing real complexity.
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (enabled, hasEntered, delegation, rememberedFlash, buildProgress) are independent concerns with separate lifecycles and update sources; collapsing them into one reducer would couple unrelated state and is not a mechanical transform.
-export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPanelProps) {
+export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
+  const { data: installedApps = [], refetch: refreshApps } = useQuery(appsQueryOptions());
   // Delay WS/mic mount by one tick so React strict-mode's double-mount
   // doesn't open two sessions back-to-back.
   const [enabled, setEnabled] = useState(false);
@@ -97,18 +95,6 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
   useEffect(() => {
     onOpenAppRef.current = onOpenApp;
   }, [onOpenApp]);
-
-  const onDismissChatRef = useRef(onDismissChat);
-  useEffect(() => {
-    onDismissChatRef.current = onDismissChat;
-  }, [onDismissChat]);
-
-  // When Aoede activates, dismiss the chat popover so the delegation
-  // banner + progress card are the only build surfaces on screen.
-  useEffect(() => {
-    // react-doctor-disable-next-line react-doctor/no-event-handler -- `active` is an out-of-band prop edge driven by the vocal session activating, not a local user event; there is no parent click/change handler that owns this transition, so dismissing the chat must run from an effect keyed on `active`.
-    if (active) onDismissChatRef.current?.();
-  }, [active]);
 
   const [delegation, setDelegation] = useState<DelegationStatus | null>(null);
 
@@ -158,11 +144,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
   const handleExecute = (intent: VocalIntent) => {
     if (intent.kind === "create_app") {
       const startIdx = chatRef.current?.messages.length ?? 0;
-      const appsSnapshot = new Set(useWindowManager.getState().apps.map((a) => a.name));
-      // Submitting a message flips chat.busy true, which the ChatPopover's
-      // rising-edge effect would turn into an auto-open. Dismiss first so
-      // the popup can't take over the screen mid-build.
-      onDismissChatRef.current?.();
+      const appsSnapshot = new Set(installedApps.map((app) => app.name));
       chatRef.current?.submitMessage(intent.description);
       setDelegation({
         kind: "create_app",
@@ -288,23 +270,24 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
       // Apps list may lag the kernel write by a beat — Chokidar polls
       // every 1000ms, so worst-case detection is ~1s after write.
       // Retry 6×400ms (2.4s) to comfortably clear the poll cycle.
-      const tryFindNewApp = (attempt: number) => {
+      const tryFindNewApp = async (attempt: number) => {
         if (reported) return;
-        const appsNow = useWindowManager.getState().apps;
-        const newApp = appsNow.find((a) => !current.appsSnapshot.has(a.name));
+        const result = await refreshApps();
+        if (reported) return;
+        const newApp = result.data?.find((app) => !current.appsSnapshot.has(app.name));
         if (newApp) {
           const opened = onOpenAppRef.current?.(newApp.name);
           reportCompletion(opened?.resolvedName ?? newApp.name);
           return;
         }
         if (attempt < 6) {
-          pendingTimersRef.current.push(setTimeout(() => tryFindNewApp(attempt + 1), 400));
+          pendingTimersRef.current.push(setTimeout(() => void tryFindNewApp(attempt + 1), 400));
           return;
         }
         reportCompletion();
       };
       // react-doctor-disable-next-line react-doctor/no-pass-live-state-to-parent -- notifyDelegationComplete is not a parent render prop; it is an imperative WS narration to the voice gateway, invoked here from async detection timers (deferred event handlers), never during render. There is no parent rendering this state to lift it into.
-      tryFindNewApp(0);
+      void tryFindNewApp(0);
 
       pendingTimersRef.current.push(
         setTimeout(() => {
@@ -312,7 +295,7 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
         }, 3200),
       );
     }
-  }, [chatBusy, notifyDelegationComplete, clearPendingTimers]);
+  }, [chatBusy, notifyDelegationComplete, clearPendingTimers, refreshApps]);
 
   // Throttled status push: every 1.5s while running, compute a snapshot
   // and ship it to the gateway for `check_build_status`. Skipped when the

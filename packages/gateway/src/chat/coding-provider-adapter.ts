@@ -32,9 +32,11 @@ type CodingThreads = Pick<
 
 type CodingState = { conversationId: string; providerThreadId?: string };
 
-function driverKind(providerId: string): "codex" | "claude_code" {
+function driverKind(providerId: string): "codex" | "claude_code" | "opencode" | "pi" {
   if (providerId === "codex") return "codex";
   if (providerId === "claude") return "claude_code";
+  if (providerId === "opencode") return "opencode";
+  if (providerId === "pi") return "pi";
   throw new Error("Unsupported canonical coding Provider");
 }
 
@@ -46,7 +48,16 @@ function principal(ownerId: string) {
   return { userId: ownerId, source: "configured-container" as const };
 }
 
-function permissions(permissionMode: string): Pick<CreateAgentThreadRequest, "approvalPolicy" | "sandboxMode"> {
+function permissions(
+  permissionMode: string,
+  providerId: "codex" | "claude" | "opencode" | "pi",
+): Pick<CreateAgentThreadRequest, "approvalPolicy" | "sandboxMode"> {
+  if (providerId === "pi" || providerId === "opencode") {
+    if (permissionMode !== "supervised") {
+      throw new Error(`Unsupported ${providerId === "pi" ? "Pi" : "OpenCode"} permission mode`);
+    }
+    return { approvalPolicy: "on_request", sandboxMode: "read_only" };
+  }
   if (permissionMode === "full_access") return { approvalPolicy: "never", sandboxMode: "full_access" };
   if (permissionMode === "auto" || permissionMode === "auto_accept_edits") {
     return { approvalPolicy: "on_failure", sandboxMode: "workspace_write" };
@@ -313,7 +324,7 @@ function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string):
 }
 
 export function createCanonicalCodingChatProviderAdapter(options: {
-  providerId: "codex" | "claude";
+  providerId: "codex" | "claude" | "opencode" | "pi";
   threads: CodingThreads;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);
@@ -378,7 +389,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           mode,
           model: input.selection.model,
           modelOptions: input.selection.options ?? [],
-          ...permissions(input.permissionMode),
+          ...permissions(input.permissionMode, options.providerId),
           attachments: attachments(input),
           clientRequestId: requestId,
         });
@@ -415,7 +426,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           attachments: attachments(input),
           model: input.selection.model,
           modelOptions: input.selection.options ?? [],
-          ...permissions(input.permissionMode),
+          ...permissions(input.permissionMode, options.providerId),
           clientRequestId: requestId,
         });
         releaseSteerRun = registerSteerRun(input.runId, {

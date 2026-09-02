@@ -22,8 +22,10 @@ describe("local store", () => {
     const store = createLocalStore({ dir: await makeDir() });
     const preferences = {
       defaultProviderId: "codex",
+      lastComposerInstanceId: "codex_default",
       composerSelections: {
         codex_default: {
+          model: "openai-codex/gpt-5.6-sol",
           options: [{ id: "effort", value: "high" }],
           permissionMode: "full_access",
         },
@@ -42,6 +44,43 @@ describe("local store", () => {
         },
       },
     })).rejects.toThrow();
+    await expect(store.setUnknown("providerPreferences", {
+      ...preferences,
+      composerSelections: {
+        codex_default: {
+          model: "../../private-model",
+          options: [],
+          permissionMode: "supervised",
+        },
+      },
+    })).rejects.toThrow();
+    await expect(store.setUnknown("providerPreferences", {
+      ...preferences,
+      composerSelections: {
+        codex_default: {
+          model: "C:/private-model",
+          options: [],
+          permissionMode: "supervised",
+        },
+      },
+    })).rejects.toThrow();
+  });
+
+  it("keeps older composer preferences readable before a model is chosen", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const legacyPreferences = {
+      defaultProviderId: "codex",
+      composerSelections: {
+        codex_default: {
+          options: [{ id: "effort", value: "high" }],
+          permissionMode: "full_access",
+        },
+      },
+    };
+
+    await store.set("providerPreferences", legacyPreferences);
+
+    expect(await store.get("providerPreferences")).toEqual(legacyPreferences);
   });
 
   it("persists bounded desktop release notes for the post-update What's New dialog", async () => {

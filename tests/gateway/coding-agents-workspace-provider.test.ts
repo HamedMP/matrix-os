@@ -314,6 +314,16 @@ exec /bin/sh "$@"
     }));
   });
 
+  it.each(["pi", "opencode"] as const)(
+    "refuses to register %s without an exact credential resolver",
+    (agent) => {
+      const runtime = { startSession: vi.fn(), stopSession: vi.fn() };
+
+      expect(() => createWorkspaceCodingAgentProviderSet({ agents: [agent], runtime }))
+        .toThrow(`${agent === "pi" ? "Pi" : "OpenCode"} credential resolver is required`);
+    },
+  );
+
   it("maps Claude sandbox startup failures to safe thread events", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-workspace-provider-"));
     const runtime = {

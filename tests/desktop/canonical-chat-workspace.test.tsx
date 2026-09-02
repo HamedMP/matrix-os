@@ -2,16 +2,22 @@
 
 import React, { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
+import {
+  canonicalChatRecord as record,
+  createCanonicalChatWorkspaceClient as client,
+  providerCatalog,
+  snapshot,
+} from "./canonical-chat-workspace-test-utils";
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { snapshot, providerCatalog } = createCanonicalChatFixture("completed");
 const resizeObserverCallbacks: ResizeObserverCallback[] = [];
 
 class WorkspaceResizeObserver implements ResizeObserver {
@@ -37,51 +43,6 @@ function resizeChatWorkspace(width: number) {
   }
 }
 
-const record = {
-  chat: {
-    id: snapshot.chat.id,
-    ownerScope: snapshot.chat.ownerScope,
-    title: snapshot.chat.title,
-    lifecycle: snapshot.chat.lifecycle,
-    attention: snapshot.chat.attention,
-    revision: snapshot.chat.revision,
-    messageCount: snapshot.chat.messageCount,
-    lastMessagePreview: snapshot.chat.lastMessagePreview,
-    currentSelection: snapshot.chat.currentSelection,
-    createdAt: snapshot.chat.createdAt,
-    updatedAt: snapshot.chat.updatedAt,
-  },
-  projectId: "matrix-os",
-  providerBinding: snapshot.chat.providerBinding,
-};
-
-function client(): CanonicalChatClient {
-  return {
-    list: vi.fn(async () => ({ items: [record] })),
-    search: vi.fn(async () => ({ items: [record] })),
-    getDetail: vi.fn(async () => ({
-      record,
-      messages: snapshot.messages,
-      turns: snapshot.turns,
-      runs: snapshot.runs,
-      activities: snapshot.activities,
-    })),
-    create: vi.fn(),
-    updateProject: vi.fn(),
-    delete: vi.fn(),
-    admitTurn: vi.fn(),
-    queueTurn: vi.fn(),
-    steerRun: vi.fn(),
-    steerQueuedTurn: vi.fn(),
-    updateQueuedTurn: vi.fn(),
-    cancelQueuedTurn: vi.fn(),
-    reorderQueuedTurns: vi.fn(),
-    cancelRun: vi.fn(),
-    submitApproval: vi.fn(),
-    retryTurn: vi.fn(),
-  } as CanonicalChatClient;
-}
-
 describe("CanonicalChatWorkspace", () => {
   beforeAll(() => {
     globalThis.ResizeObserver = WorkspaceResizeObserver;
@@ -91,6 +52,10 @@ describe("CanonicalChatWorkspace", () => {
     resizeObserverCallbacks.length = 0;
     useBoard.setState(useBoard.getInitialState(), true);
     useConnection.setState(useConnection.getInitialState(), true);
+    window.operator = {
+      invoke: vi.fn(async () => ({ ok: true })),
+      on: vi.fn(() => () => undefined),
+    };
   });
 
   afterEach(cleanup);
@@ -367,6 +332,7 @@ describe("CanonicalChatWorkspace", () => {
     const index = screen.getByRole("complementary", { name: "Global chats" }).parentElement;
     const starters = document.querySelector<HTMLElement>('[data-slot="chat-starter-cards"]');
     const starterScroll = document.querySelector<HTMLElement>('[data-slot="chat-starter-scroll"]');
+    const starterStack = document.querySelector<HTMLElement>('[data-slot="chat-starter-stack"]');
     const composer = document.querySelector<HTMLElement>('[data-slot="shared-chat-composer"] .prompt-card');
     const newChatContent = document.querySelector<HTMLElement>('[data-slot="chat-new-chat-content"]');
     expect(workspace?.getAttribute("data-layout")).toBe("narrow");
@@ -376,6 +342,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toContain("min-h-20");
     expect(starterScroll?.className).toContain("overflow-y-auto");
     expect(starterScroll?.className).toContain("items-start");
+    expect(starterStack?.className).toContain("my-auto");
     expect(starterScroll?.style.scrollbarGutter).toBe("stable");
     expect(newChatContent?.className).toContain("overflow-hidden");
     expect(composer?.getAttribute("data-layout")).toBe("narrow");
@@ -426,6 +393,22 @@ describe("CanonicalChatWorkspace", () => {
     expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
     expect(existingChat.getAttribute("aria-current")).toBe("true");
     expect(existingChat.style.background).toBe("var(--bg-selected)");
+  });
+
+  it("focuses the prompt when the surrounding Chat shell requests it", async () => {
+    act(() => useCodingAgentWorkspace.getState().requestComposerFocus());
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId={null}
+        initialView="draft"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+    const prompt = await screen.findByRole("textbox", { name: "Start a chat" });
+
+    await waitFor(() => expect(document.activeElement).toBe(prompt));
   });
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
@@ -668,6 +651,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(chat).toBeTruthy();
     expect(chat?.getAttribute("aria-hidden")).toBe("true");
     expect(chat?.hasAttribute("inert")).toBe(true);
+    expect(chat?.hidden).toBe(true);
     expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
   });
 
@@ -1433,4 +1417,140 @@ describe("CanonicalChatWorkspace", () => {
     const newChatEditor = await screen.findByRole("textbox", { name: "Start a chat" });
     expect(newChatEditor.getAttribute("aria-placeholder")).toBe("How can I help you today?");
   });
+  it("uses the file capability to attach, preview, retry, remove, and submit multiple files", async () => {
+    const instanceId = "openclaw_file_capable";
+    const fileCatalog: CanonicalProviderCatalog = {
+      ...providerCatalog,
+      drivers: [{
+        ...providerCatalog.drivers[0]!,
+        kind: "openclaw",
+        displayName: "OpenClaw",
+        capabilityClass: "system_agent",
+      }],
+      instances: [{
+        ...providerCatalog.instances[0]!,
+        id: instanceId,
+        driverKind: "openclaw",
+        displayName: "OpenClaw",
+        supports: { ...providerCatalog.instances[0]!.supports, attachments: ["file"] },
+        defaultSelection: { instanceId, model: providerCatalog.instances[0]!.models[0]!.id },
+      }],
+    };
+    const fileRecord = {
+      ...record,
+      chat: {
+        ...record.chat,
+        currentSelection: { instanceId, model: providerCatalog.instances[0]!.models[0]!.id },
+      },
+      providerBinding: {
+        ...record.providerBinding,
+        driverKind: "openclaw" as const,
+        instanceId,
+      },
+    };
+    let retryFailed = false;
+    const api = {
+      baseUrl: "https://matrix.test",
+      get: vi.fn(),
+      getText: vi.fn(),
+      getBlob: vi.fn(),
+      post: vi.fn(),
+      postBytes: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      putBytes: vi.fn(async (url: string, file: File) => {
+        if (file.name === "retry.txt" && !retryFailed) {
+          retryFailed = true;
+          throw new Error("temporary upload failure");
+        }
+        return {
+          ok: true,
+          path: decodeURIComponent(url.split("path=")[1] ?? ""),
+          size: file.size,
+        };
+      }),
+      delete: vi.fn(),
+      putText: vi.fn(),
+    } as never;
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [fileRecord] });
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record: fileRecord,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+      record: fileRecord,
+      message: { ...snapshot.messages[0]!, id: "msg_attachment", turnId: "turn_attachment" },
+      turn: {
+        ...snapshot.turns[0]!,
+        id: "turn_attachment",
+        inputMessageId: "msg_attachment",
+        clientRequestId: "req_attachment",
+      },
+      run: { ...snapshot.runs[0]!, id: "run_attachment", turnId: "turn_attachment" },
+      admission: "accepted",
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    render(
+      <CanonicalChatWorkspace
+        api={api}
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={fileCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    const input = screen.getByLabelText("Choose files") as HTMLInputElement;
+    const inputClick = vi.spyOn(input, "click");
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    expect(inputClick).toHaveBeenCalledOnce();
+    expect(input.multiple).toBe(true);
+    const contextButton = screen.getByRole("button", { name: "Project Matrix OS" });
+    expect(contextButton).toBeTruthy();
+    expect(contextButton.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeNull();
+
+    const keep = new File(["keep"], "keep.txt", { type: "text/plain" });
+    const remove = new File(["remove"], "remove.txt", { type: "text/plain" });
+    const retry = new File(["retry"], "retry.txt", { type: "text/plain" });
+    fireEvent.change(input, { target: { files: [keep, remove, retry] } });
+
+    expect(screen.getByRole("group", { name: "Attachments" })).toBeTruthy();
+    expect(screen.getByText("keep.txt")).toBeTruthy();
+    expect(screen.getByText("remove.txt")).toBeTruthy();
+    expect(screen.getByText("retry.txt")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove remove.txt" }));
+    expect(screen.queryByText("remove.txt")).toBeNull();
+
+    await setSharedComposerText(editor, "Inspect these files");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const retryButton = await screen.findByRole("button", { name: "Retry retry.txt" });
+    expect(routeClient.admitTurn).not.toHaveBeenCalled();
+
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry retry.txt" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledOnce());
+    const request = vi.mocked(routeClient.admitTurn).mock.calls[0]![1];
+    expect(request.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text", text: "Inspect these files" }),
+      expect.objectContaining({ type: "attachment_reference", kind: "file", label: "keep.txt" }),
+      expect.objectContaining({ type: "attachment_reference", kind: "file", label: "retry.txt" }),
+    ]));
+    expect(request.parts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "remove.txt" }),
+      expect.objectContaining({ type: "resource_reference" }),
+    ]));
+    warn.mockRestore();
+  });
+
 });

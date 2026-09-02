@@ -1,4 +1,8 @@
 import { Terminal } from "@xterm/xterm";
+import {
+  classifyTerminalClipboardShortcut,
+  classifyTerminalPointerEvent,
+} from "@matrix-os/contracts";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -25,10 +29,12 @@ import {
 import {
   bracketTerminalPaths,
   MAX_TERMINAL_PASTE_FILE_BYTES,
+  readTerminalClipboardFiles,
   safeTerminalUploadFilename,
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
+import { decodeOsc52Clipboard } from "./terminal-osc52";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -79,6 +85,7 @@ export default function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
+  const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const endedRef = useRef(false);
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
@@ -86,7 +93,10 @@ export default function TerminalView({
   const [leaseRevoked, setLeaseRevoked] = useState(false);
   const [leaseAttempt, setLeaseAttempt] = useState(0);
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
-  const closeTerminalContextMenu = useCallback(() => setTerminalContextMenu(null), []);
+  const closeTerminalContextMenu = useCallback(() => {
+    setTerminalContextMenu(null);
+    termRef.current?.focus();
+  }, []);
   const [pasteError, setPasteError] = useState<string | null>(null);
 
   if (stateSessionName !== sessionName) {
@@ -112,6 +122,7 @@ export default function TerminalView({
       fontFamily: buildTerminalFontStack("JetBrains Mono", undefined),
       lineHeight: 1.25,
       scrollback: 5000,
+      rightClickSelectsWord: false,
       theme,
       linkHandler: {
         activate: activateDesktopTerminalLink,
@@ -128,22 +139,34 @@ export default function TerminalView({
     terminal.loadAddon(fit);
     terminal.loadAddon(serialize);
     terminal.open(host);
+    const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
+      const decoded = decodeOsc52Clipboard(data);
+      if (!decoded.handled) return false;
+      if (decoded.text !== null) void copyDesktopTerminalText(decoded.text);
+      return true;
+    });
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown" || !terminal.hasSelection()) return true;
-      const key = event.key.toLowerCase();
-      const isMacCopy = key === "c"
-        && event.metaKey
-        && !event.ctrlKey
-        && !event.altKey
-        && !event.shiftKey;
-      const isTerminalCopy = key === "c"
-        && event.ctrlKey
-        && event.shiftKey
-        && !event.metaKey
-        && !event.altKey;
-      if (!isMacCopy && !isTerminalCopy) return true;
+      const action = classifyTerminalClipboardShortcut({
+        type: event.type as "keydown" | "keyup" | "keypress",
+        key: event.key,
+        isMac: navigator.platform.startsWith("Mac"),
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        repeat: event.repeat,
+        isComposing: event.isComposing,
+        hasSelection: terminal.hasSelection(),
+      });
+      if (!action) return true;
       event.preventDefault();
-      copyDesktopTerminalText(terminal.getSelection());
+      if (action === "copy") {
+        void copyDesktopTerminalText(terminal.getSelection());
+      } else if (action === "paste") {
+        void pasteClipboardRef.current();
+      } else {
+        terminal.selectAll();
+      }
       return false;
     });
     applyTerminalSurfaceTheme(terminal.element, theme.background);
@@ -168,10 +191,22 @@ export default function TerminalView({
       event.stopPropagation();
       if (event.button === 0) openDesktopTerminalLink(link);
     };
+    const onTerminalPointer = (event: MouseEvent) => {
+      const decision = classifyTerminalPointerEvent({
+        type: event.type as "mousedown" | "mousemove" | "mouseup",
+        button: event.button,
+        buttons: event.buttons,
+        hasSelection: terminal.hasSelection(),
+      });
+      if (decision !== "shield-selection") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
     const onTerminalContextMenu = (event: MouseEvent) => {
       const link = linkAtPointer(event);
       event.preventDefault();
       event.stopPropagation();
+      event.stopImmediatePropagation();
       setTerminalContextMenu({
         x: event.clientX,
         y: event.clientY,
@@ -179,8 +214,11 @@ export default function TerminalView({
         selection: terminal.getSelection(),
       });
     };
+    host.addEventListener("mousedown", onTerminalPointer, true);
+    host.addEventListener("mousemove", onTerminalPointer, true);
+    host.addEventListener("mouseup", onTerminalPointer, true);
     host.addEventListener("mouseup", onLinkMouseUp, true);
-    host.addEventListener("contextmenu", onTerminalContextMenu);
+    host.addEventListener("contextmenu", onTerminalContextMenu, true);
     try {
       terminal.loadAddon(new WebglAddon());
     } catch (err: unknown) {
@@ -205,11 +243,15 @@ export default function TerminalView({
     observer.observe(host);
 
     return () => {
-      closeTerminalContextMenu();
+      setTerminalContextMenu(null);
       hoveredLinkRef.current = null;
+      host.removeEventListener("mousedown", onTerminalPointer, true);
+      host.removeEventListener("mousemove", onTerminalPointer, true);
+      host.removeEventListener("mouseup", onTerminalPointer, true);
       host.removeEventListener("mouseup", onLinkMouseUp, true);
-      host.removeEventListener("contextmenu", onTerminalContextMenu);
+      host.removeEventListener("contextmenu", onTerminalContextMenu, true);
       linkProviderDisposable.dispose();
+      osc52Disposable.dispose();
       observer.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
@@ -225,7 +267,7 @@ export default function TerminalView({
       terminal.dispose();
       termRef.current = null;
     };
-  }, [closeTerminalContextMenu, sessionName]);
+  }, [sessionName]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -243,7 +285,7 @@ export default function TerminalView({
     if (!active) {
       terminal.blur();
       hoveredLinkRef.current = null;
-      closeTerminalContextMenu();
+      setTerminalContextMenu(null);
       return;
     }
     if (endedRef.current) return;
@@ -288,7 +330,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, closeTerminalContextMenu, leaseAttempt]);
+  }, [sessionName, chatId, active, leaseAttempt]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -348,6 +390,46 @@ export default function TerminalView({
       }
     };
 
+    const pasteFromClipboard = async () => {
+      const clipboard = navigator.clipboard;
+      if (!clipboard) {
+        if (!cancelled) setPasteError("Clipboard paste is unavailable. Try again.");
+        return;
+      }
+      const clipboardWithOptionalRead = clipboard as Clipboard & {
+        read?: () => Promise<ClipboardItems>;
+      };
+      if (typeof clipboardWithOptionalRead.read === "function") {
+        try {
+          const imageFiles = await readTerminalClipboardFiles(clipboardWithOptionalRead);
+          if (imageFiles.length > 0) {
+            await uploadAndPaste(imageFiles);
+            return;
+          }
+        } catch (error: unknown) {
+          console.warn("[terminal] clipboard image read unavailable", {
+            category: error instanceof DOMException ? error.name : "clipboard-error",
+          });
+        }
+      }
+      if (!clipboard.readText) {
+        if (!cancelled) setPasteError("Clipboard paste is unavailable. Try again.");
+        return;
+      }
+      try {
+        const text = await clipboard.readText();
+        if (cancelled || text.length === 0) return;
+        termRef.current?.paste(text);
+        setPasteError(null);
+      } catch (error: unknown) {
+        console.warn("[terminal] clipboard text read unavailable", {
+          category: error instanceof DOMException ? error.name : "clipboard-error",
+        });
+        if (!cancelled) setPasteError("Clipboard paste failed. Try again.");
+      }
+    };
+    pasteClipboardRef.current = pasteFromClipboard;
+
     const onPaste = (event: ClipboardEvent) => {
       const files = captureFiles(event);
       if (files.length > 0) void uploadAndPaste(files);
@@ -366,6 +448,9 @@ export default function TerminalView({
     host.addEventListener("drop", onDrop, { capture: true });
     return () => {
       cancelled = true;
+      if (pasteClipboardRef.current === pasteFromClipboard) {
+        pasteClipboardRef.current = async () => undefined;
+      }
       host.removeEventListener("paste", onPaste, { capture: true });
       host.removeEventListener("dragenter", onDrag, { capture: true });
       host.removeEventListener("dragover", onDrag, { capture: true });

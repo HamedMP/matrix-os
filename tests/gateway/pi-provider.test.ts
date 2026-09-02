@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,8 +15,10 @@ import {
   createPiCodingAgentProvider,
   type PiSpawnFn,
 } from "../../packages/gateway/src/coding-agents/pi-provider.js";
+import { createCodingHarnessCredentialResolver } from "../../packages/gateway/src/coding-agents/harness-credentials.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const baseNow = new Date("2026-07-23T12:00:00.000Z");
@@ -241,6 +243,42 @@ function nextEventIdFactory() {
 }
 
 describe("pi provider adapter — spawn contract", () => {
+  it("publishes normalized output before returning the terminal result", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+    const published: AgentThreadEvent[] = [];
+    const resumeStates: unknown[] = [];
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      publishEvents: async (batch) => {
+        published.push(...batch.events);
+        if (batch.resumeState) resumeStates.push(batch.resumeState);
+      },
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(published).toEqual([
+      expect.objectContaining({ type: "thread.status", status: "running" }),
+      expect.objectContaining({ type: "assistant.text.delta", delta: "hello" }),
+      expect.objectContaining({ type: "assistant.text.completed" }),
+    ]);
+    const sessionFlagIndex = fake.calls[0]!.args.indexOf("--session-id");
+    expect(resumeStates).toEqual([{
+      conversationId: JSON.stringify({
+        s: fake.calls[0]!.args[sessionFlagIndex + 1],
+        c: "/work/repo",
+      }),
+    }]);
+    expect(result.events).toEqual([
+      expect.objectContaining({ type: "thread.status", status: "completed" }),
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]);
+  });
+
   it("spawns pi in json print mode with an exact session id and the prompt as trailing argv", async () => {
     const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
     const provider = providerFor(fake.spawnFn);
@@ -262,6 +300,11 @@ describe("pi provider adapter — spawn contract", () => {
     expect(call.args).toEqual([
       "--mode", "json",
       "--print",
+      "--offline",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
       "--tools", "read",
       "--no-approve",
       "--session-id", expect.stringMatching(/^[0-9a-f-]{36}$/),
@@ -321,6 +364,160 @@ describe("pi provider adapter — spawn contract", () => {
     for (const mutating of ["bash", "edit", "write"]) {
       expect(allowlist).not.toContain(mutating);
     }
+  });
+
+  it("passes the configured provider and model as separate argv values", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { model: "anthropic:claude-sonnet-5" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
+      "--provider", "anthropic", "--model", "claude-sonnet-5",
+    ]));
+  });
+
+  it("runs an exact model through owner-local Terminal auth in the same HOME used for readiness", async () => {
+    const authDirectory = join(homePath, ".pi", "agent");
+    await mkdir(authDirectory, { recursive: true });
+    await writeFile(join(authDirectory, "auth.json"), "{\"anthropic\":{}}\n", { mode: 0o600 });
+    const resolveCredentialLaunch = createCodingHarnessCredentialResolver({
+      harness: "pi",
+      homePath,
+      settings: {
+        getSnapshot: async () => ({ ...providerSettingsCanonicalFixture(), harnesses: [] }),
+      },
+    });
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn, {
+      env: { HOME: "/wrong-service-home", PATH: "/runtime/bin" },
+      resolveCredentialLaunch,
+    });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { model: "anthropic:claude-sonnet-5" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.env).toMatchObject({ HOME: homePath, PATH: "/runtime/bin" });
+    expect(fake.calls[0]!.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
+      "--offline",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
+      "--provider", "anthropic", "--model", "claude-sonnet-5",
+    ]));
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]));
+  });
+
+  it("lets Pi use its configured default model for the native Terminal profile", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { model: "provider-default" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.args).not.toContain("--model");
+    expect(fake.calls[0]!.args).not.toContain("--provider");
+  });
+
+  it("resolves fresh selected credentials per turn without inheriting gateway secrets", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const resolveCredentialLaunch = vi.fn(async () => ({
+      env: {
+        ANTHROPIC_API_KEY: "selected-key",
+        ANTHROPIC_BASE_URL: "https://relay.example.test",
+      },
+      maxRunMs: 120_000,
+    }));
+    const provider = providerFor(fake.spawnFn, {
+      env: { PATH: "/runtime/bin", UPGRADE_TOKEN: "gateway-secret" },
+      resolveCredentialLaunch,
+    });
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(resolveCredentialLaunch).toHaveBeenCalledOnce();
+    expect(fake.calls[0]!.env).toMatchObject({
+      PATH: "/runtime/bin",
+      ANTHROPIC_API_KEY: "selected-key",
+      ANTHROPIC_BASE_URL: "https://relay.example.test",
+    });
+    expect(fake.calls[0]!.env).not.toHaveProperty("UPGRADE_TOKEN");
+  });
+
+  it("fails closed before spawn when selected credentials are unavailable", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => { throw new Error("private credential detail"); },
+    });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error", error: expect.objectContaining({ code: "provider_run_failed" }) }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("private credential detail");
+  });
+
+  it("reports credential resolution cancellation as aborted before spawn", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const controller = new AbortController();
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => {
+        controller.abort();
+        throw new Error("private cancellation detail");
+      },
+    });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      signal: controller.signal,
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+    ]));
+    expect(result.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error" }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain("private cancellation detail");
   });
 
   it.each([
@@ -420,7 +617,7 @@ describe("pi provider adapter — spawn contract", () => {
     });
 
     expect(fake.calls[0]!.args.at(-1)).toBe(
-      "Review this\n\nContext references:\n- Review hunk 1: src/auth.ts",
+      "Review this\n\nContext references:\n- Review hunk 1: src/auth.ts\n- Ignored file: tmp/output.txt",
     );
   });
 
@@ -541,8 +738,12 @@ describe("pi provider adapter — event normalization", () => {
     }
     expect(started.toolCallId).not.toContain("|");
     expect(started.toolCallId.length).toBeLessThanOrEqual(128);
-    expect(started.displayName).toBe("read");
-    expect(started.kind).toBe("read");
+    expect(started).toMatchObject({
+      displayName: "Read file",
+      kind: "dynamic_tool",
+      preview: "sample.txt",
+      previewKind: "path",
+    });
     expect(completed.toolCallId).toBe(started.toolCallId);
     expect(completed.outcome).toBe("success");
     for (const event of parsed.events) AgentThreadEventSchema.parse(event);
@@ -939,6 +1140,88 @@ describe("pi provider adapter — failures", () => {
 });
 
 describe("pi provider adapter — abort and timeout", () => {
+  it("bounds blocked credential resolution at the provider-local deadline", async () => {
+    const fake = fakeSpawn({ lines: [] });
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => await new Promise(() => {}),
+      runTimeoutMs: 10,
+    });
+
+    const result = await Promise.race([
+      provider.resumeTurn!({
+        principal: ownerPrincipal,
+        thread: threadSummary({ status: "idle" }),
+        turn: {
+          turnId: "turn_credential_deadline",
+          message: "Continue",
+          sandboxMode: "read_only",
+        },
+        resumeState: { conversationId: JSON.stringify({ s: SESSION_ID, c: "/work/repo" }) },
+        now: () => baseNow,
+        nextEventId: nextEventIdFactory(),
+      }),
+      new Promise<"watchdog">((resolve) => setTimeout(() => resolve("watchdog"), 200)),
+    ]);
+
+    expect(result).not.toBe("watchdog");
+    expect(result).toMatchObject({ events: [], outcome: "failed" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("settles explicit cancellation while credential resolution is blocked", async () => {
+    const fake = fakeSpawn({ lines: [] });
+    const controller = new AbortController();
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => await new Promise(() => {}),
+      runTimeoutMs: 10_000,
+    });
+    const pending = provider.resumeTurn!({
+      principal: ownerPrincipal,
+      thread: threadSummary({ status: "idle" }),
+      turn: {
+        turnId: "turn_credential_cancel",
+        message: "Continue",
+        sandboxMode: "read_only",
+      },
+      resumeState: { conversationId: JSON.stringify({ s: SESSION_ID, c: "/work/repo" }) },
+      signal: controller.signal,
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+    controller.abort();
+
+    const result = await Promise.race([
+      pending,
+      new Promise<"watchdog">((resolve) => setTimeout(() => resolve("watchdog"), 200)),
+    ]);
+    expect(result).not.toBe("watchdog");
+    expect(result).toMatchObject({ events: [], outcome: "aborted" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("reports a signal deadline during credential resolution as failed", async () => {
+    const fake = fakeSpawn({ lines: [] });
+    const provider = providerFor(fake.spawnFn, {
+      resolveCredentialLaunch: async () => await new Promise(() => {}),
+      runTimeoutMs: 10_000,
+    });
+
+    await expect(provider.resumeTurn!({
+      principal: ownerPrincipal,
+      thread: threadSummary({ status: "idle" }),
+      turn: {
+        turnId: "turn_credential_signal_deadline",
+        message: "Continue",
+        sandboxMode: "read_only",
+      },
+      resumeState: { conversationId: JSON.stringify({ s: SESSION_ID, c: "/work/repo" }) },
+      signal: AbortSignal.timeout(10),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    })).resolves.toMatchObject({ events: [], outcome: "failed" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
   it("kills the child with SIGTERM when the turn signal aborts", async () => {
     const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true });
     const provider = providerFor(fake.spawnFn);
@@ -959,6 +1242,66 @@ describe("pi provider adapter — abort and timeout", () => {
 
     expect(fake.kills).toContain("SIGTERM");
     expect(result.outcome).toBe("aborted");
+  });
+
+  it("disarms the run timeout after explicit cancellation", async () => {
+    vi.useFakeTimers();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const controller = new AbortController();
+    const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true, ignoreKill: true });
+    const provider = providerFor(fake.spawnFn, { runTimeoutMs: 20, killGraceMs: 30 });
+
+    try {
+      const pending = provider.startThread({
+        principal: ownerPrincipal,
+        thread: threadSummary(),
+        request: createRequest("Say hi"),
+        signal: controller.signal,
+        now: () => baseNow,
+        nextEventId: nextEventIdFactory(),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(31);
+
+      const result = parseCodingAgentProviderRunResult(await pending, threadSummary().id);
+      expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "aborted" });
+      expect(fake.kills).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(warning).not.toHaveBeenCalledWith(
+        expect.stringContaining("run cut off"),
+        expect.anything(),
+      );
+    } finally {
+      warning.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a timeout failed when cancellation races after the deadline", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true, ignoreKill: true });
+    const provider = providerFor(fake.spawnFn, { runTimeoutMs: 20, killGraceMs: 30 });
+
+    try {
+      const pending = provider.startThread({
+        principal: ownerPrincipal,
+        thread: threadSummary(),
+        request: createRequest("Say hi"),
+        signal: controller.signal,
+        now: () => baseNow,
+        nextEventId: nextEventIdFactory(),
+      });
+      await vi.advanceTimersByTimeAsync(21);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(30);
+
+      const result = parseCodingAgentProviderRunResult(await pending, threadSummary().id);
+      expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
+      expect(fake.kills).toEqual(["SIGTERM", "SIGKILL"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("times out a hung startThread run and fails the thread", async () => {
@@ -1061,7 +1404,7 @@ describe("pi provider adapter — availability and summary", () => {
     }]);
   });
 
-  it("reports installed and authenticated when the binary answers --version", async () => {
+  it("reports installation without inventing authentication when the binary answers --version", async () => {
     const provider = createPiCodingAgentProvider({
       homePath,
       spawnFn: fakeSpawn({ lines: [] }).spawnFn,
@@ -1078,9 +1421,9 @@ describe("pi provider adapter — availability and summary", () => {
       id: "pi",
       displayName: "Pi",
       kind: "pi",
-      availability: "available",
+      availability: "auth_required",
       installStatus: "installed",
-      authStatus: "authenticated",
+      authStatus: "unknown",
       supportedModes: ["default"],
       defaultMode: "default",
     });
@@ -1089,6 +1432,27 @@ describe("pi provider adapter — availability and summary", () => {
       now: () => baseNow,
       signal: AbortSignal.timeout(1_000),
     })).toEqual({ ok: true });
+  });
+
+  it("reports the fixed owner-local Pi auth profile as authenticated without reading credentials", async () => {
+    const authDirectory = join(homePath, ".pi", "agent");
+    await mkdir(authDirectory, { recursive: true });
+    await writeFile(join(authDirectory, "auth.json"), "{\"anthropic\":{}}\n", { mode: 0o600 });
+    const provider = createPiCodingAgentProvider({
+      homePath,
+      spawnFn: fakeSpawn({ lines: [] }).spawnFn,
+      runCommand: async () => ({ stdout: "0.81.0\n", stderr: "" }),
+    });
+
+    await expect(provider.getSummary!({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    })).resolves.toMatchObject({
+      availability: "available",
+      installStatus: "installed",
+      authStatus: "authenticated",
+    });
   });
 
   it("reports the provider missing when the binary probe fails", async () => {
@@ -1151,8 +1515,12 @@ describe("pi provider adapter — thread store integration", () => {
     });
 
     const created = await store.createThread(ownerPrincipal, createRequest("Say hi"));
-    expect(created.snapshot.thread.status).toBe("completed");
-    const textEvents = created.snapshot.events.items.filter((event: AgentThreadEvent) =>
+    expect(created.snapshot.thread.status).toBe("queued");
+    await vi.waitFor(async () => {
+      expect((await store.getThread(ownerPrincipal, created.snapshot.thread.id)).thread.status).toBe("completed");
+    }, { timeout: 2_000, interval: 20 });
+    const initialSnapshot = await store.getThread(ownerPrincipal, created.snapshot.thread.id);
+    const textEvents = initialSnapshot.events.items.filter((event: AgentThreadEvent) =>
       event.type === "assistant.text.delta"
     );
     expect(textEvents.length).toBeGreaterThan(0);

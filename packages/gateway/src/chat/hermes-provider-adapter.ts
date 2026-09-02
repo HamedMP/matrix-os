@@ -663,6 +663,12 @@ export function createHermesChatProviderAdapter(options: {
         liveSessionId = session.session_id;
         durableSessionId = session.stored_session_id ?? session.session_key ?? resumeState?.sessionId;
         if (!durableSessionId) throw new Error("Hermes did not return a durable session");
+        if (durableSessionId !== resumeState?.sessionId) {
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "state.updated",
+            state: { sessionId: durableSessionId },
+          }));
+        }
         releaseApprovalRun = approvals.registerRun({
           owner: input.owner,
           chatId: input.chatId,
@@ -743,12 +749,6 @@ export function createHermesChatProviderAdapter(options: {
         if (final.status === "interrupted" && !input.signal.aborted) {
           throw new HermesRunFailure("interrupted", "Hermes Run was interrupted");
         }
-        if (durableSessionId && durableSessionId !== resumeState?.sessionId) {
-          queue.push(CanonicalProviderRunEventSchema.parse({
-            type: "state.updated",
-            state: { sessionId: durableSessionId },
-          }));
-        }
         queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "completed" }));
       } catch (error: unknown) {
         flushVisibleText(true);
@@ -765,7 +765,12 @@ export function createHermesChatProviderAdapter(options: {
             ? `${error.name}:${error.reason}${error.eventType ? `:${error.eventType}` : ""}`
             : error instanceof Error ? error.name : "UnknownError",
         );
-        const safeFailure = error instanceof HermesRunFailure
+        const safeFailure = error instanceof HermesGatewayProtocolError && error.reason === "frame_too_large"
+          ? {
+              code: "run_failed" as const,
+              safeMessage: "The agent returned a response that was too large to process.",
+            }
+          : error instanceof HermesRunFailure
           ? {
               code: "run_failed" as const,
               safeMessage: error.reason === "interrupted"

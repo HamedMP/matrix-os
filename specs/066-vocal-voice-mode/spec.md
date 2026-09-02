@@ -128,7 +128,7 @@ For `create_app`, the agent is instructed to challenge the premise in round 1 ("
 - `packages/gateway/src/auth.ts` -- `/ws/vocal` in `WS_QUERY_TOKEN_PATHS`
 - `packages/gateway/src/onboarding/gemini-live.ts` -- shared client (extracted for reuse)
 - `shell/src/components/Desktop.tsx` -- mount `VocalPanel` from `useVocalStore`, dock mic toggle, delayed-unmount for exit animation
-- `shell/src/components/ChatPopover.tsx` -- suppress rising-edge auto-open when `vocalActive` (delegation banner in overlay replaces the popup)
+- The former shell `ChatPopover` integration was retired after this spec; Aoede now delegates directly to the canonical Chat app state without a duplicate popup surface.
 - `shell/src/stores/desktop-mode.ts` -- removed `"vocal"` from `DesktopMode` union; rehydrate coerces stale `"vocal"` → `"canvas"`
 - `shell/src/hooks/useChatState.ts` -- surface delegation progress to vocal session
 

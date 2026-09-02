@@ -103,6 +103,32 @@ const baseInput = {
 async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
   const events = [];
   for await (const event of iterable) events.push(event);
+  // Most adapter behavior tests predate the early durable-state checkpoint and
+  // assert the visible Provider timeline. Keep their legacy checkpoint position
+  // stable; the cancellation regression below uses collectRaw to verify that
+  // the real stream publishes state before a Run can be aborted.
+  const stateIndex = events.findIndex((event) => (
+    typeof event === "object" && event !== null && "type" in event
+    && event.type === "state.updated"
+  ));
+  if (stateIndex >= 0) {
+    const [state] = events.splice(stateIndex, 1);
+    const terminalIndex = events.findIndex((event) => (
+      typeof event === "object" && event !== null && "type" in event
+      && event.type === "run.completed"
+    ));
+    const terminal = terminalIndex < 0 ? undefined : events[terminalIndex];
+    if (typeof terminal === "object" && terminal !== null && "outcome" in terminal
+      && terminal.outcome === "completed") {
+      events.splice(terminalIndex, 0, state);
+    }
+  }
+  return events;
+}
+
+async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
+  const events = [];
+  for await (const event of iterable) events.push(event);
   return events;
 }
 
@@ -139,6 +165,70 @@ describe("Hermes canonical Chat Provider adapter", () => {
       prompt: "Too late.",
       parts: [{ type: "text", text: "Too late." }],
     })).rejects.toThrow("steering Run unavailable");
+  });
+
+  it("projects a large official Hermes vision result before the final assistant message", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    const privateVisionPayload = "vision-private-sentinel".repeat(19_000);
+    gateway.event("tool.start", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      args: { path: "/home/matrix/home/private/screenshot.png" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      result: { success: true, output: privateVisionPayload },
+    });
+    gateway.event("message.complete", { text: "The game is ready.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_browser_vision",
+        status: "running",
+      }),
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_browser_vision",
+        status: "completed",
+      }),
+      { type: "assistant.delta", delta: "The game is ready." },
+      { type: "run.completed", outcome: "completed" },
+    ]));
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toContain("vision-private-sentinel");
+    expect(JSON.stringify(events)).not.toContain("/home/matrix/home/private/screenshot.png");
+  });
+
+  it("reports an oversized Hermes response as a Run failure instead of a connection failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.complete", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      result: { success: true, output: "oversized-private-sentinel".repeat(25_000) },
+    });
+
+    expect(await eventsPromise).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "run_failed",
+        safeMessage: "The agent returned a response that was too large to process.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }]);
+    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("projects official Hermes tool frames without leaking provider payloads", async () => {
@@ -397,8 +487,13 @@ describe("Hermes canonical Chat Provider adapter", () => {
     const gateway = fakeGateway({ ignoreMethods: ["approval.respond"] });
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
     const iterator = adapter.start(baseInput)[Symbol.asyncIterator]();
-    const approvalEvent = iterator.next();
+    const stateEvent = iterator.next();
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    await expect(stateEvent).resolves.toEqual({
+      done: false,
+      value: { type: "state.updated", state: { sessionId: "durable_session" } },
+    });
 
     gateway.event("approval.request", {
       request_id: "approval_session",
@@ -406,7 +501,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       choices: ["once", "session", "always", "deny"],
     });
 
-    await expect(approvalEvent).resolves.toEqual({
+    await expect(iterator.next()).resolves.toEqual({
       done: false,
       value: {
         type: "approval.requested",
@@ -457,7 +552,6 @@ describe("Hermes canonical Chat Provider adapter", () => {
     for await (const event of { [Symbol.asyncIterator]: () => iterator }) remaining.push(event);
     expect(remaining).toEqual([
       { type: "assistant.delta", delta: "Done." },
-      { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
   });
@@ -719,9 +813,15 @@ describe("Hermes canonical Chat Provider adapter", () => {
     const firstEvent = iterator.next();
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
 
+    await expect(firstEvent).resolves.toEqual({
+      done: false,
+      value: { type: "state.updated", state: { sessionId: "durable_session" } },
+    });
+
     gateway.event("message.delta", { text: "first live fragment" });
+    const firstVisibleEvent = iterator.next();
     const observed = await Promise.race([
-      firstEvent,
+      firstVisibleEvent,
       new Promise<"not-streamed">((resolve) => setTimeout(() => resolve("not-streamed"), 50)),
     ]);
 
@@ -738,7 +838,6 @@ describe("Hermes canonical Chat Provider adapter", () => {
       remaining.push(next.value);
     }
     expect(remaining).toEqual([
-      { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
   });
@@ -1392,12 +1491,15 @@ describe("Hermes canonical Chat Provider adapter", () => {
     const gateway = fakeGateway();
     const abortController = new AbortController();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
-    const eventsPromise = collect(adapter.start({ ...baseInput, signal: abortController.signal }));
+    const eventsPromise = collectRaw(adapter.start({ ...baseInput, signal: abortController.signal }));
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
 
     abortController.abort();
 
-    expect(await eventsPromise).toEqual([{ type: "run.completed", outcome: "aborted" }]);
+    expect(await eventsPromise).toEqual([
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "aborted" },
+    ]);
     expect(gateway.requests).toContainEqual(expect.objectContaining({
       method: "session.interrupt",
       params: { session_id: "live_session" },

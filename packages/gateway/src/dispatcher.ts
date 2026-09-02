@@ -24,7 +24,11 @@ import {
   aiCostTotal,
   aiTokensTotal,
 } from "./metrics.js";
-import { buildKernelEnv } from "./kernel-credentials.js";
+import {
+  buildKernelCredentialLaunch,
+  type KernelCredentialAccessSourceId,
+} from "./kernel-credentials.js";
+import type { MatrixFundedCredentialProvider } from "./funded-ai-credential-manager.js";
 import type { KernelEffort, KernelModel } from "./kernel-settings.js";
 
 export type SpawnFn = typeof spawnKernel;
@@ -35,6 +39,7 @@ export interface DispatchOptions {
   maxTurns?: number;
   spawnFn?: SpawnFn;
   maxConcurrency?: number;
+  fundedCredentialProvider?: MatrixFundedCredentialProvider;
   /** Called once per completed kernel query with usage metadata only
       (trace/session id, model, latency, token counts, error category input).
       Never receives message content. Failures are swallowed. */
@@ -51,6 +56,8 @@ export interface DispatchContext {
 export interface KernelDispatchOverrides {
   model?: KernelModel;
   effort?: KernelEffort;
+  /** Explicit credential/funding source selected from the canonical provider snapshot. */
+  accessSourceId?: KernelCredentialAccessSourceId;
   /** Internal, validated execution root. Never accepted from client frames. */
   workingDirectory?: string;
 }
@@ -121,6 +128,25 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
   let active = 0;
   let batchRunning = false;
 
+  function fundedAbortController(
+    existing: AbortController | undefined,
+    timeoutMs: number | undefined,
+  ): { controller: AbortController | undefined; cleanup: () => void } {
+    if (timeoutMs === undefined) return { controller: existing, cleanup: () => {} };
+    const controller = new AbortController();
+    const forwardAbort = () => controller.abort(existing?.signal.reason);
+    if (existing?.signal.aborted) forwardAbort();
+    else existing?.signal.addEventListener("abort", forwardAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(new Error("Matrix AI run deadline exceeded")), timeoutMs);
+    return {
+      controller,
+      cleanup: () => {
+        clearTimeout(timer);
+        existing?.signal.removeEventListener("abort", forwardAbort);
+      },
+    };
+  }
+
   function logNonFatal(label: string, err: unknown) {
     console.warn(label, err instanceof Error ? err.message : String(err));
   }
@@ -183,6 +209,13 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         });
       }
 
+      const credentialLaunch = await buildKernelCredentialLaunch(
+        homePath,
+        process.env,
+        entry.kernelOverrides?.accessSourceId,
+        opts.fundedCredentialProvider,
+      );
+      const deadline = fundedAbortController(entry.abortController, credentialLaunch.fundedRunTimeoutMs);
       const config: KernelConfig = {
         db,
         homePath,
@@ -191,18 +224,21 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         effort: entry.kernelOverrides?.effort,
         workingDirectory: entry.kernelOverrides?.workingDirectory,
         maxTurns: opts.maxTurns,
-        env: await buildKernelEnv(homePath),
+        env: credentialLaunch.env,
       };
-
-      for await (const event of spawnFn(message, config, entry.abortController)) {
-        await entry.onEvent(event);
-        if (event.type === "init") {
-          resultSessionId = event.sessionId;
-        } else if (event.type === "tool_start") {
-          toolsUsed.push(event.tool);
-        } else if (event.type === "result") {
-          resultData = event.data;
+      try {
+        for await (const event of spawnFn(message, config, deadline.controller)) {
+          await entry.onEvent(event);
+          if (event.type === "init") {
+            resultSessionId = event.sessionId;
+          } else if (event.type === "tool_start") {
+            toolsUsed.push(event.tool);
+          } else if (event.type === "result") {
+            resultData = event.data;
+          }
         }
+      } finally {
+        deadline.cleanup();
       }
 
       completeTask(db, processId, { message: entry.message });
@@ -320,16 +356,23 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           let batchResultData: KernelResult | undefined;
           let batchSessionId = "";
 
+          const credentialLaunch = await buildKernelCredentialLaunch(
+            homePath,
+            process.env,
+            undefined,
+            opts.fundedCredentialProvider,
+          );
+          const deadline = fundedAbortController(undefined, credentialLaunch.fundedRunTimeoutMs);
           const config: KernelConfig = {
             db,
             homePath,
             model: opts.model,
             maxTurns: opts.maxTurns,
-            env: await buildKernelEnv(homePath),
+            env: credentialLaunch.env,
           };
 
           try {
-            for await (const event of spawnFn(batchEntry.message, config)) {
+            for await (const event of spawnFn(batchEntry.message, config, deadline.controller)) {
               batchEntry.onEvent(event);
               if (event.type === "init") batchSessionId = event.sessionId;
               if (event.type === "result") batchResultData = event.data;
@@ -345,6 +388,8 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
               error: err,
             });
             throw err;
+          } finally {
+            deadline.cleanup();
           }
 
           const durationMs = Date.now() - startTime;

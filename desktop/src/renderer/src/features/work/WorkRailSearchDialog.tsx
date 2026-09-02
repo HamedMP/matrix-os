@@ -23,6 +23,7 @@ export function WorkRailSearchDialog({
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listboxId = useId();
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const results = useMemo(
     () => buildWorkRailSearchResults(records, projects, query),
@@ -62,10 +63,11 @@ export function WorkRailSearchDialog({
   return (
     <Dialog open={open} onClose={close} width={560} title="Search chats" top="12vh">
       <div className="p-3">
-        <div className="flex h-10 items-center gap-2 rounded-lg border px-3" style={{ borderColor: "var(--border-default)" }}>
+        <div className="chat-search-field flex h-10 items-center gap-2 rounded-lg border px-3" style={{ borderColor: "var(--border-default)" }}>
           <Search size={16} aria-hidden style={{ color: "var(--text-tertiary)" }} />
           <input
-            type="search"
+            ref={searchInputRef}
+            type="text"
             role="searchbox"
             aria-label="Search chats"
             aria-controls={listboxId}
@@ -76,8 +78,17 @@ export function WorkRailSearchDialog({
               : undefined}
             autoFocus
             value={query}
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-            style={{ color: "var(--text-primary)" }}
+            className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-sm shadow-none outline-none ring-0 focus:border-0 focus:ring-0"
+            style={{
+              appearance: "none",
+              WebkitAppearance: "none",
+              borderStyle: "none",
+              borderWidth: 0,
+              borderRadius: 0,
+              boxShadow: "none",
+              outline: "none",
+              color: "var(--text-primary)",
+            }}
             placeholder="Search chats"
             onChange={(event) => updateQuery(event.currentTarget.value)}
             onKeyDown={(event) => {
@@ -98,9 +109,13 @@ export function WorkRailSearchDialog({
           />
           <button
             type="button"
-            aria-label="Close Chat search"
-            className="flex size-7 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            onClick={close}
+            aria-label="Clear Chat search"
+            title="Clear Chat search"
+            className="flex size-7 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)]"
+            onClick={() => {
+              updateQuery("");
+              searchInputRef.current?.focus();
+            }}
           >
             <X size={14} aria-hidden />
           </button>

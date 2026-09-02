@@ -1,6 +1,5 @@
 import { LayoutGrid } from "@renderer/lib/hugeicons";
 import type { ReactNode } from "react";
-import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import DesktopAppIcon from "./DesktopAppIcon";
@@ -161,7 +160,6 @@ export default function DesktopTaskbar({
           })}
         </div>
       </> : null}
-      <DesktopUpdateButton collapsed />
     </nav>
   );
 }

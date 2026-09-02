@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import React from "react";
+import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Desktop } from "../../shell/src/components/Desktop.js";
 import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import type { useWindowManager, AppWindow } from "../../shell/src/hooks/useWindowManager.js";
+import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
 const { terminalRender } = vi.hoisted(() => ({
   terminalRender: vi.fn(() => <div>Terminal content</div>),
@@ -20,10 +22,6 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
 
 vi.mock("../../shell/src/components/AppViewer.js", () => ({
   AppViewer: () => <div>App content</div>,
-}));
-
-vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
-  WorkspaceApp: () => null,
 }));
 
 vi.mock("../../shell/src/components/file-browser/FileBrowser.js", () => ({
@@ -72,10 +70,6 @@ vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
 
 vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
-}));
-
-vi.mock("../../shell/src/components/ChatPopover.js", () => ({
-  ChatPopover: () => null,
 }));
 
 vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
@@ -129,6 +123,15 @@ type WindowManagerStore = typeof useWindowManager;
 let DesktopComponent: DesktopComponentType;
 let desktopModeStore: DesktopModeStore;
 let windowManagerStore: WindowManagerStore;
+let queryClient: QueryClient;
+
+function renderDesktop() {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <DesktopComponent />
+    </QueryClientProvider>,
+  );
+}
 
 function resetStores(win: AppWindow, fullscreenWindowId: string | null = win.id) {
   desktopModeStore.setState({
@@ -141,7 +144,6 @@ function resetStores(win: AppWindow, fullscreenWindowId: string | null = win.id)
     nextZ: 11,
     closedPaths: new Set(),
     closedLayouts: new Map(),
-    apps: [],
     focusedWindowId: win.id,
     fullscreenWindowId,
   });
@@ -168,6 +170,7 @@ describe("Desktop terminal fullscreen chrome", () => {
     DesktopComponent = (await import("../../shell/src/components/Desktop.js")).Desktop;
     desktopModeStore = (await import("../../shell/src/stores/desktop-mode.js")).useDesktopMode;
     windowManagerStore = (await import("../../shell/src/hooks/useWindowManager.js")).useWindowManager;
+    queryClient = createShellQueryClient();
   });
 
   afterEach(() => {
@@ -177,7 +180,7 @@ describe("Desktop terminal fullscreen chrome", () => {
   it("shows no exit pill for a fullscreen terminal in Canvas mode (header stays instead)", async () => {
     resetStores(terminalWindow);
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     await screen.findByText("Terminal content");
     await waitFor(() => {
@@ -188,7 +191,7 @@ describe("Desktop terminal fullscreen chrome", () => {
   it("shows no exit pill for a fullscreen app window in Canvas mode (header stays instead)", async () => {
     resetStores(appWindow);
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     await screen.findByText("App content");
     // Canvas windows keep their header (with traffic lights) when maximized,
@@ -200,7 +203,7 @@ describe("Desktop terminal fullscreen chrome", () => {
     resetStores(appWindow);
     desktopModeStore.setState({ mode: "canvas", previousMode: null, _hydrated: true });
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
@@ -210,7 +213,7 @@ describe("Desktop terminal fullscreen chrome", () => {
   it("lets the terminal-owned title bar double-click toggle window zoom", async () => {
     resetStores(terminalWindow, null);
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     await screen.findByText("Terminal content");
     const props = terminalRender.mock.lastCall?.[0] as {
@@ -234,7 +237,7 @@ describe("Desktop terminal fullscreen chrome", () => {
     resetStores(appWindow);
     desktopModeStore.setState({ mode: "desktop", previousMode: null, _hydrated: true });
 
-    render(<DesktopComponent />);
+    renderDesktop();
 
     await screen.findByText("App content");
     fireEvent.click(screen.getByRole("tab", { name: "Show desktop" }));

@@ -33,6 +33,64 @@ describe("Desktop canonical Provider catalog client", () => {
     expect(api.get).toHaveBeenCalledWith("/api/chat-providers");
   });
 
+  it("accepts the canonical Matrix Agent instance projected from provider truth", async () => {
+    const catalog = CanonicalProviderCatalogSchema.parse({
+      revision: "catalog_kernel",
+      drivers: [{
+        kind: "kernel",
+        displayName: "Matrix Agent",
+        adapterVersion: "1.0.0",
+        capabilityClass: "system_agent",
+      }],
+      instances: [{
+        id: "kernel_matrix_included",
+        driverKind: "kernel",
+        displayName: "Matrix AI",
+        availability: "available",
+        workspaceRequirement: "project_optional",
+        catalogRevision: "catalog_kernel",
+        models: [{
+          id: "claude-sonnet-5",
+          displayName: "Claude Sonnet 5",
+          availability: "available",
+          capabilities: ["reasoning", "tools", "vision", "long_context"],
+          supportsVision: true,
+          supportsToolUse: true,
+        }],
+        options: [],
+        skills: [],
+        commands: [],
+        setupActions: [],
+        supports: {
+          rootChat: true,
+          resume: true,
+          cancellation: true,
+          attachments: ["image"],
+          tools: [],
+          approvals: true,
+          userInput: true,
+          worktrees: "optional",
+          resources: ["file", "terminal_session"],
+          interactionModes: ["default"],
+          permissionModes: ["full_access"],
+        },
+        defaultSelection: {
+          instanceId: "kernel_matrix_included",
+          model: "claude-sonnet-5",
+        },
+      }],
+    });
+    const api = apiReturning(catalog);
+
+    const result = await fetchCanonicalProviderCatalog(api);
+
+    expect(result.instances[0]).toMatchObject({
+      driverKind: "kernel",
+      displayName: "Matrix AI",
+      defaultSelection: { model: "claude-sonnet-5" },
+    });
+  });
+
   it("can force a live provider refresh after terminal configuration", async () => {
     const catalog = CanonicalProviderCatalogSchema.parse({
       revision: "catalog_refreshed",

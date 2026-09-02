@@ -1,3 +1,9 @@
+import {
+  MATRIX_HOSTED_BILLING_PLANS,
+  MATRIX_HOSTED_MACHINE_PROFILES,
+  type MatrixHostedBillingRegionSlug,
+} from '@matrix-os/contracts';
+
 export const BILLING_GRACE_PERIOD_MS = 3 * 24 * 60 * 60 * 1000;
 
 export type MatrixBillingPlanSlug = 'matrix_starter' | 'matrix_builder' | 'matrix_max';
@@ -18,7 +24,6 @@ export interface BillingPlanDefinition {
   slug: MatrixBillingPlanSlug;
   marketingName: string;
   monthlyUsd: number;
-  annualUsd: number;
   includedRuntimeSlots: number;
   defaultCatalogSku: RuntimeCatalogSku;
   allowedCatalogSkus: RuntimeCatalogSku[];
@@ -33,6 +38,7 @@ export interface RuntimeCatalogProfile {
   vcpu: number;
   memoryGb: number;
   diskGb: number;
+  regionSlug: MatrixHostedBillingRegionSlug | null;
   active: boolean;
 }
 
@@ -114,72 +120,35 @@ export interface RuntimeAccessDecision {
   gracePeriodEndsAt?: string | null;
 }
 
-export const DEFAULT_BILLING_PLAN_DEFINITIONS: BillingPlanDefinition[] = [
-  {
-    slug: 'matrix_starter',
-    marketingName: 'Starter',
-    monthlyUsd: 14,
-    annualUsd: 140,
-    includedRuntimeSlots: 1,
-    defaultCatalogSku: 'starter',
-    allowedCatalogSkus: ['starter'],
-    rank: 10,
-  },
-  {
-    slug: 'matrix_builder',
-    marketingName: 'Builder',
-    monthlyUsd: 19,
-    annualUsd: 190,
-    includedRuntimeSlots: 1,
-    defaultCatalogSku: 'builder',
-    allowedCatalogSkus: ['starter', 'builder'],
-    rank: 20,
-  },
-  {
-    slug: 'matrix_max',
-    marketingName: 'Max',
-    monthlyUsd: 49,
-    annualUsd: 490,
-    includedRuntimeSlots: 1,
-    defaultCatalogSku: 'max',
-    allowedCatalogSkus: ['starter', 'builder', 'max'],
-    rank: 30,
-  },
-];
+export const DEFAULT_BILLING_PLAN_DEFINITIONS: BillingPlanDefinition[] =
+  MATRIX_HOSTED_BILLING_PLANS.map((plan) => {
+    const defaultCatalogSku = plan.slug.replace('matrix_', '') as RuntimeCatalogSku;
+    return {
+      slug: plan.slug,
+      marketingName: plan.label,
+      monthlyUsd: plan.monthlyUsd,
+      includedRuntimeSlots: 1,
+      defaultCatalogSku,
+      allowedCatalogSkus: MATRIX_HOSTED_BILLING_PLANS
+        .filter((candidate) => candidate.rank <= plan.rank)
+        .map((candidate) => candidate.slug.replace('matrix_', '') as RuntimeCatalogSku),
+      rank: plan.rank,
+    };
+  });
 
 const DEFAULT_RUNTIME_CATALOG: RuntimeCatalog = {
-  profiles: [
-    {
-      sku: 'starter',
-      label: 'Starter',
-      provider: 'hetzner',
-      serverType: 'cpx22',
-      vcpu: 2,
-      memoryGb: 4,
-      diskGb: 80,
-      active: true,
-    },
-    {
-      sku: 'builder',
-      label: 'Builder',
-      provider: 'hetzner',
-      serverType: 'cpx32',
-      vcpu: 4,
-      memoryGb: 8,
-      diskGb: 160,
-      active: true,
-    },
-    {
-      sku: 'max',
-      label: 'Max',
-      provider: 'hetzner',
-      serverType: 'cpx52',
-      vcpu: 12,
-      memoryGb: 24,
-      diskGb: 480,
-      active: true,
-    },
-  ],
+  profiles: MATRIX_HOSTED_MACHINE_PROFILES.map((profile) => ({
+    sku: profile.planSlug.replace('matrix_', ''),
+    label: MATRIX_HOSTED_BILLING_PLANS.find((plan) => plan.slug === profile.planSlug)?.label
+      ?? profile.planSlug,
+    provider: 'hetzner' as const,
+    serverType: profile.serverType,
+    vcpu: profile.vcpus,
+    memoryGb: profile.memoryGb,
+    diskGb: profile.diskGb,
+    regionSlug: profile.regionSlug,
+    active: true,
+  })),
 };
 
 export function loadRuntimeCatalog(env: NodeJS.ProcessEnv): RuntimeCatalog {
@@ -188,7 +157,10 @@ export function loadRuntimeCatalog(env: NodeJS.ProcessEnv): RuntimeCatalog {
   try {
     const parsed = JSON.parse(raw) as Partial<RuntimeCatalog>;
     if (!Array.isArray(parsed.profiles)) return DEFAULT_RUNTIME_CATALOG;
-    const profiles = parsed.profiles.filter(isRuntimeCatalogProfile);
+    const profiles = parsed.profiles.filter(isRuntimeCatalogProfile).map((profile) => ({
+      ...profile,
+      regionSlug: profile.regionSlug ?? null,
+    }));
     return profiles.length > 0 ? { profiles } : DEFAULT_RUNTIME_CATALOG;
   } catch (err: unknown) {
     if (err instanceof SyntaxError) return DEFAULT_RUNTIME_CATALOG;
@@ -196,7 +168,9 @@ export function loadRuntimeCatalog(env: NodeJS.ProcessEnv): RuntimeCatalog {
   }
 }
 
-function isRuntimeCatalogProfile(value: unknown): value is RuntimeCatalogProfile {
+function isRuntimeCatalogProfile(
+  value: unknown,
+): value is Omit<RuntimeCatalogProfile, 'regionSlug'> & { regionSlug?: MatrixHostedBillingRegionSlug | null } {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<RuntimeCatalogProfile>;
   return (
@@ -207,12 +181,19 @@ function isRuntimeCatalogProfile(value: unknown): value is RuntimeCatalogProfile
     typeof candidate.vcpu === 'number' &&
     typeof candidate.memoryGb === 'number' &&
     typeof candidate.diskGb === 'number' &&
+    (candidate.regionSlug === null || candidate.regionSlug === undefined || (
+      typeof candidate.regionSlug === 'string'
+      && ['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil'].includes(candidate.regionSlug)
+    )) &&
     typeof candidate.active === 'boolean'
   );
 }
 
 export function loadStripePriceCatalog(env: NodeJS.ProcessEnv): StripePriceCatalog {
   const priceToPlan = new Map<string, StripePriceCatalogEntry>();
+  for (const entry of parseLegacyStripePriceCatalog(env.STRIPE_LEGACY_PRICE_CATALOG_JSON)) {
+    addBasePrice(priceToPlan, entry.priceId, entry.planSlug, entry.interval);
+  }
   addBasePrice(priceToPlan, env.STRIPE_PRICE_MATRIX_STARTER_MONTHLY, 'matrix_starter', 'monthly');
   addBasePrice(priceToPlan, env.STRIPE_PRICE_MATRIX_STARTER_ANNUAL, 'matrix_starter', 'annual');
   addBasePrice(priceToPlan, env.STRIPE_PRICE_MATRIX_BUILDER_MONTHLY, 'matrix_builder', 'monthly');
@@ -220,6 +201,44 @@ export function loadStripePriceCatalog(env: NodeJS.ProcessEnv): StripePriceCatal
   addBasePrice(priceToPlan, env.STRIPE_PRICE_MATRIX_MAX_MONTHLY, 'matrix_max', 'monthly');
   addBasePrice(priceToPlan, env.STRIPE_PRICE_MATRIX_MAX_ANNUAL, 'matrix_max', 'annual');
   return { priceToPlan };
+}
+
+function parseLegacyStripePriceCatalog(raw: string | undefined): Array<{
+  priceId: string;
+  planSlug: MatrixBillingPlanSlug;
+  interval: MatrixBillingInterval;
+}> {
+  if (!raw) return [];
+  if (raw.length > 16_384) throw new Error('STRIPE_LEGACY_PRICE_CATALOG_JSON is too large');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) throw new Error('STRIPE_LEGACY_PRICE_CATALOG_JSON is invalid');
+    throw err;
+  }
+  if (!Array.isArray(parsed) || parsed.length > 30) {
+    throw new Error('STRIPE_LEGACY_PRICE_CATALOG_JSON is invalid');
+  }
+  return parsed.map((value) => {
+    if (!value || typeof value !== 'object') {
+      throw new Error('STRIPE_LEGACY_PRICE_CATALOG_JSON is invalid');
+    }
+    const entry = value as Record<string, unknown>;
+    if (
+      typeof entry.priceId !== 'string'
+      || !/^price_[A-Za-z0-9_]{1,120}$/.test(entry.priceId)
+      || !['matrix_starter', 'matrix_builder', 'matrix_max'].includes(String(entry.planSlug))
+      || (entry.interval !== 'monthly' && entry.interval !== 'annual')
+    ) {
+      throw new Error('STRIPE_LEGACY_PRICE_CATALOG_JSON is invalid');
+    }
+    return {
+      priceId: entry.priceId,
+      planSlug: entry.planSlug as MatrixBillingPlanSlug,
+      interval: entry.interval,
+    };
+  });
 }
 
 function addBasePrice(
@@ -280,10 +299,14 @@ export function deriveStripeEntitlement(
     };
   }
 
-  const defaultServerType = resolveServerType(options.runtimeCatalog, selectedPlan.defaultCatalogSku);
-  const allowedServerTypes = selectedPlan.allowedCatalogSkus
-    .map((sku) => resolveServerType(options.runtimeCatalog, sku))
-    .filter((serverType): serverType is string => Boolean(serverType));
+  const defaultServerType = resolveServerType(
+    options.runtimeCatalog,
+    selectedPlan.defaultCatalogSku,
+    'region_fsn1',
+  );
+  const allowedServerTypes = Array.from(new Set(
+    selectedPlan.allowedCatalogSkus.flatMap((sku) => resolveServerTypes(options.runtimeCatalog, sku)),
+  ));
   const gracePeriodEndsAt = getGracePeriodEnd(
     subscription.status,
     subscription.currentPeriodEnd,
@@ -331,8 +354,22 @@ function getPlanDefinition(slug: MatrixBillingPlanSlug): BillingPlanDefinition {
   return plan;
 }
 
-function resolveServerType(catalog: RuntimeCatalog, sku: string): string | null {
-  return catalog.profiles.find((profile) => profile.sku === sku && profile.active)?.serverType ?? null;
+export function resolveServerType(
+  catalog: RuntimeCatalog,
+  sku: string,
+  regionSlug: MatrixHostedBillingRegionSlug,
+): string | null {
+  return catalog.profiles.find(
+    (profile) => profile.sku === sku && profile.active && profile.regionSlug === regionSlug,
+  )?.serverType ?? catalog.profiles.find(
+    (profile) => profile.sku === sku && profile.active && profile.regionSlug === null,
+  )?.serverType ?? null;
+}
+
+function resolveServerTypes(catalog: RuntimeCatalog, sku: string): string[] {
+  return catalog.profiles
+    .filter((profile) => profile.sku === sku && profile.active)
+    .map((profile) => profile.serverType);
 }
 
 function getGracePeriodEnd(

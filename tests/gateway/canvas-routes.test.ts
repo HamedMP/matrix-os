@@ -87,6 +87,20 @@ describe("canvas routes", () => {
     expect(createCanvas).not.toHaveBeenCalled();
   });
 
+  it("retires new Workspace Canvas creation without calling the persistence service", async () => {
+    const createCanvas = vi.fn();
+    const app = createApp({ ...service, createCanvas });
+    const res = await app.request("/api/canvases", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Retired", scopeType: "global", scopeRef: null }),
+    });
+
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({ error: "Workspace Canvas creation is retired" });
+    expect(createCanvas).not.toHaveBeenCalled();
+  });
+
   it("applies a body limit to delete requests before request handling", async () => {
     const deleteCanvas = vi.fn();
     const app = createApp({ ...service, deleteCanvas });
@@ -112,18 +126,11 @@ describe("canvas routes", () => {
     expect(body).toEqual({ error: "Canvas request failed" });
   });
 
-  it("returns CRUD status codes and conflict responses", async () => {
+  it("preserves existing canvas read, update, delete, and conflict behavior", async () => {
     const app = createApp({
       ...service,
       replaceCanvas: vi.fn().mockRejectedValue(new CanvasConflictError("cnv_0123456789abcdef", 4)),
     });
-
-    const createRes = await app.request("/api/canvases", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "PR 57", scopeType: "global", scopeRef: null }),
-    });
-    expect(createRes.status).toBe(201);
 
     const getRes = await app.request("/api/canvases/cnv_0123456789abcdef");
     expect(getRes.status).toBe(200);

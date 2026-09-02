@@ -45,6 +45,7 @@
 
   /* ── Hairlines & borders ────────────────────────────────────── */
   --border-subtle: #ebe9e1;
+  --border-xsoft: color-mix(in srgb, var(--border-subtle) 50%, transparent);
   --border-default: #d6d3c8;
   --border-strong: #c4c0b2;
   --border-success: #34b275;

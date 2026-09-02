@@ -393,6 +393,31 @@ describe("canonical Chat client", () => {
       },
     );
   });
+
+  it("admits files accepted by the Desktop 10 MiB attachment picker", async () => {
+    const turnInput = {
+      clientRequestId: "req_client_attachment",
+      baseRevision: 0,
+      parts: [{
+        type: "attachment_reference" as const,
+        attachmentId: "desktop_upload_large_file",
+        kind: "file" as const,
+        label: "research.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 6 * 1024 * 1024,
+        ownerReference: "temporary/desktop-chat/large-research.pdf",
+      }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    };
+    const post = vi.fn(async () => admissionResponse(turnInput));
+    const client = createCanonicalChatClient(api({ post }));
+
+    await client.admitTurn(record.chat.id, turnInput);
+
+    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns", turnInput);
+  });
 });
 
 const capabilitySnapshot = {

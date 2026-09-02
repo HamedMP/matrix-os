@@ -49,8 +49,8 @@ describe("platform-owned shell assets", () => {
       .toBe("/_next/static/chunks/app.js");
     expect(getPlatformShellAssetUpstreamPath("/__platform-shell/matrix-logo.svg"))
       .toBe("/matrix-logo.svg");
-    expect(getPlatformShellAssetUpstreamPath("/__platform-shell/wallpapers/moraine-lake.jpg"))
-      .toBe("/wallpapers/moraine-lake.jpg");
+    expect(getPlatformShellAssetUpstreamPath("/__platform-shell/wallpapers/matrix-dusk.webp"))
+      .toBe("/wallpapers/matrix-dusk.webp");
 
     for (const rejectedPath of [
       "/__platform-shell/api/auth/computers",
@@ -68,15 +68,15 @@ describe("platform-owned shell assets", () => {
     vi.stubEnv("NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX", "/__platform-shell");
     vi.resetModules();
     const { platformShellAssetPath } = await import("../../shell/src/lib/platform-shell-assets");
-    expect(platformShellAssetPath("/wallpapers/moraine-lake.jpg")).toBe(
-      "/__platform-shell/wallpapers/moraine-lake.jpg",
+    expect(platformShellAssetPath("/wallpapers/matrix-dusk.webp")).toBe(
+      "/__platform-shell/wallpapers/matrix-dusk.webp",
     );
 
     vi.stubEnv("NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX", "");
     vi.resetModules();
     const customerAssets = await import("../../shell/src/lib/platform-shell-assets");
-    expect(customerAssets.platformShellAssetPath("/wallpapers/moraine-lake.jpg"))
-      .toBe("/wallpapers/moraine-lake.jpg");
+    expect(customerAssets.platformShellAssetPath("/wallpapers/matrix-dusk.webp"))
+      .toBe("/wallpapers/matrix-dusk.webp");
   });
 
   it("keeps manifest, icon, and social metadata on the same platform revision", async () => {
@@ -114,9 +114,11 @@ describe("platform-owned shell assets", () => {
       join(process.cwd(), "packages/platform/src/app-domain-service-worker.ts"),
       "utf8",
     );
-    expect(platformWorker).toContain('const VERSION = "app-v2"');
+    expect(platformWorker).toContain('const VERSION = "app-v3"');
     expect(platformWorker).toContain(
       'p === "/__platform-shell" || p.startsWith("/__platform-shell/")',
     );
+    expect(platformWorker).not.toContain('p.startsWith("/_next/static/")');
+    expect(platformWorker).not.toMatch(/woff2\?\|ttf\|css\|js/);
   });
 });

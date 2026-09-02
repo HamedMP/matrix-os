@@ -14,6 +14,7 @@ import {
 } from "@desktop/renderer/src/features/terminal/terminal-rich-paste";
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const attachmentResize = vi.fn();
@@ -22,18 +23,21 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
   createdTerminals: [] as Array<{
     initialOptions: {
       theme?: unknown;
+      rightClickSelectsWord?: boolean;
       linkHandler?: {
         activate: (event: Pick<MouseEvent, "button">, text: string) => void;
       };
     };
     options: { theme?: unknown };
     registeredProviders: unknown[];
+    oscHandlers: Map<number, (data: string) => boolean>;
     dataCallback?: (data: string) => void;
     element: HTMLElement | null;
     focus: ReturnType<typeof vi.fn>;
     blur: ReturnType<typeof vi.fn>;
     selection: string;
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
+    paste: ReturnType<typeof vi.fn>;
     selectAll: ReturnType<typeof vi.fn>;
     reset: ReturnType<typeof vi.fn>;
   }>,
@@ -60,13 +64,22 @@ vi.mock("@xterm/xterm", () => ({
     };
     initialOptions: {
       theme?: unknown;
+      rightClickSelectsWord?: boolean;
       linkHandler?: {
         activate: (event: Pick<MouseEvent, "button">, text: string) => void;
       };
     };
     registeredProviders: unknown[] = [];
+    oscHandlers = new Map<number, (data: string) => boolean>();
+    parser = {
+      registerOscHandler: (identifier: number, handler: (data: string) => boolean) => {
+        this.oscHandlers.set(identifier, handler);
+        return { dispose: () => this.oscHandlers.delete(identifier) };
+      },
+    };
     selection = "";
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
+    paste = vi.fn((text: string) => this.dataCallback?.(text));
     selectAll = vi.fn();
     reset = vi.fn();
 
@@ -151,6 +164,10 @@ vi.mock("@desktop/renderer/src/features/terminal/terminal-runtime", () => ({
 
 describe("TerminalView session switching", () => {
   beforeEach(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
     createdFitAddons.length = 0;
     createdTerminals.length = 0;
     resizeObserverCallbacks.length = 0;
@@ -195,6 +212,11 @@ describe("TerminalView session switching", () => {
       Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
     } else {
       Reflect.deleteProperty(navigator, "clipboard");
+    }
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(navigator, "platform", originalPlatformDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "platform");
     }
   });
 
@@ -452,7 +474,11 @@ describe("TerminalView session switching", () => {
     );
   });
 
-  it("copies the xterm selection with the desktop copy shortcut", () => {
+  it.each([
+    { label: "Command+C", metaKey: true, ctrlKey: false, shiftKey: false },
+    { label: "Command+Shift+C", metaKey: true, ctrlKey: false, shiftKey: true },
+    { label: "Ctrl+Shift+C", metaKey: false, ctrlKey: true, shiftKey: true },
+  ])("copies the exact xterm selection once with $label", async ({ metaKey, ctrlKey, shiftKey }) => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -460,7 +486,120 @@ describe("TerminalView session switching", () => {
     });
     render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;
-    terminal.selection = "HTTP/1.1 401 Unauthorized";
+    terminal.selection = "HTTP/1.1 401 Unauthorized\nλ-value: 👩🏽‍💻";
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey,
+      ctrlKey,
+      shiftKey,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith("HTTP/1.1 401 Unauthorized\nλ-value: 👩🏽‍💻");
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
+  it("copies the exact Claude authentication URL emitted after the user presses c", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const authUrl = "https://claude.ai/oauth/authorize?code=true&client_id=matrix-os-desktop";
+    const encodedUrl = btoa(authUrl);
+
+    const handled = terminal.oscHandlers.get(52)?.(`c;${encodedUrl}`);
+
+    expect(handled).toBe(true);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(authUrl));
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
+  it("leaves copy unhandled without a selection and ignores repeated shortcuts", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+
+    const withoutSelection = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    terminal.selection = "do not duplicate";
+    const repeated = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: true,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    expect(withoutSelection).toBe(true);
+    expect(repeated).toBe(true);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("selects all terminal scrollback with Command+A", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "a",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(terminal.selectAll).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat Meta+C as a macOS shortcut on non-Mac platforms", () => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Linux x86_64",
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "leave this selection alone";
     const preventDefault = vi.fn();
 
     const handled = terminal.customKeyEventHandler?.({
@@ -470,13 +609,121 @@ describe("TerminalView session switching", () => {
       ctrlKey: false,
       shiftKey: false,
       altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(true);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: "Command+V", metaKey: true, ctrlKey: false, shiftKey: false },
+    { label: "Ctrl+Shift+V", metaKey: false, ctrlKey: true, shiftKey: true },
+  ])("pastes clipboard text once without Enter with $label", async ({ metaKey, ctrlKey, shiftKey }) => {
+    const readText = vi.fn().mockResolvedValue("printf 'λ 👩🏽‍💻'");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey,
+      ctrlKey,
+      shiftKey,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
       preventDefault,
     } as unknown as KeyboardEvent);
 
     expect(handled).toBe(false);
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(writeText).toHaveBeenCalledWith("HTTP/1.1 401 Unauthorized");
-    expect(attachmentWrite).not.toHaveBeenCalled();
+    await waitFor(() => expect(terminal.paste).toHaveBeenCalledWith("printf 'λ 👩🏽‍💻'"));
+    expect(readText).toHaveBeenCalledOnce();
+    expect(terminal.paste).toHaveBeenCalledOnce();
+    expect(attachmentWrite).toHaveBeenCalledOnce();
+    expect(attachmentWrite).toHaveBeenCalledWith("printf 'λ 👩🏽‍💻'");
+    expect(attachmentWrite.mock.calls[0]?.[0]).not.toMatch(/[\r\n]$/);
+  });
+
+  it("keeps rich image paste precedence for Command+V", async () => {
+    const blob = new Blob(["image"], { type: "image/png" });
+    const readText = vi.fn().mockResolvedValue("text fallback");
+    const read = vi.fn().mockResolvedValue([{
+      types: ["image/png"],
+      getType: vi.fn().mockResolvedValue(blob),
+    }]);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { read, readText },
+    });
+    const postBytes = vi.fn(async () => ({
+      terminalPath: "/home/matrix/home/data/terminal-paste/clipboard.png",
+    }));
+    useConnection.setState({ api: { postBytes } as never });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+
+    terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    await waitFor(() => expect(attachmentWrite).toHaveBeenCalledWith(
+      "\x1b[200~/home/matrix/home/data/terminal-paste/clipboard.png\x1b[201~",
+    ));
+    expect(read).toHaveBeenCalledOnce();
+    expect(readText).not.toHaveBeenCalled();
+    expect(terminal.paste).not.toHaveBeenCalled();
+    expect(postBytes).toHaveBeenCalledOnce();
+  });
+
+  it("keeps clipboard shortcuts pane-local when multiple terminals exist", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <>
+        <TerminalView sessionName="alpha" active={false} />
+        <TerminalView sessionName="beta" />
+      </>,
+    );
+    const first = createdTerminals[0]!;
+    const focused = createdTerminals[1]!;
+    first.selection = "wrong pane";
+    focused.selection = "focused pane";
+
+    focused.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith("focused pane");
   });
 
   it("opens terminal actions on right click and copies the xterm selection", () => {
@@ -496,6 +743,64 @@ describe("TerminalView session switching", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
 
     expect(writeText).toHaveBeenCalledWith("content-type: application/json");
+  });
+
+  it("captures the immutable multiline selection before an inner xterm context listener", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const root = terminal.element!;
+    terminal.selection = "first row\nλ second row 👩🏽‍💻";
+    terminal.focus.mockClear();
+    root.addEventListener("contextmenu", () => {
+      terminal.selection = "hovered";
+    });
+
+    expect(terminal.initialOptions.rightClickSelectsWord).toBe(false);
+    expect(fireEvent.contextMenu(root, { clientX: 120, clientY: 80 })).toBe(false);
+    const copy = screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(false);
+    fireEvent.click(copy);
+
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith("first row\nλ second row 👩🏽‍💻");
+    expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
+    expect(terminal.focus).toHaveBeenCalledOnce();
+    expect(container.querySelector("[role=menu]")).toBeNull();
+  });
+
+  it("shields a completed selection from passive and secondary TUI mouse reports", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const root = terminal.element!;
+    const reports: string[] = [];
+    for (const type of ["mousemove", "mousedown", "mouseup"] as const) {
+      root.addEventListener(type, () => {
+        reports.push(type);
+        terminal.selection = "";
+      });
+    }
+    terminal.selection = "first row\nλ second row 👩🏽‍💻";
+
+    for (let index = 0; index < 20; index += 1) {
+      fireEvent.mouseMove(root, { button: 0, buttons: 0 });
+    }
+    fireEvent.mouseDown(root, { button: 2, buttons: 2 });
+    fireEvent.mouseUp(root, { button: 2, buttons: 0 });
+
+    expect(reports).toEqual([]);
+    expect(terminal.selection).toBe("first row\nλ second row 👩🏽‍💻");
+
+    fireEvent.mouseDown(root, { button: 0, buttons: 1 });
+    expect(reports).toEqual(["mousedown"]);
+    expect(terminal.selection).toBe("");
+
+    fireEvent.mouseMove(root, { button: 0, buttons: 0 });
+    expect(reports).toEqual(["mousedown", "mousemove"]);
   });
 
   it("opens terminal actions without a selection and can select the buffer", () => {
