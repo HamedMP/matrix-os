@@ -133,7 +133,7 @@ function codingSupports(
     rootChat: true,
     resume: true,
     cancellation: true,
-    steering: isCodex ? "same_run" : "none",
+    steering: "same_run",
     attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
@@ -318,7 +318,7 @@ function systemSupports(driverKind: CanonicalProviderDriverKind): CanonicalProvi
     rootChat: true,
     resume: true,
     cancellation: true,
-    steering: driverKind === "hermes" ? "same_run" : "none",
+    steering: driverKind === "hermes" || driverKind === "openclaw" ? "same_run" : "none",
     attachments: ["file", "image", "structured_ref"],
     tools: [],
     approvals: false,

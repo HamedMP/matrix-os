@@ -243,6 +243,42 @@ function nextEventIdFactory() {
 }
 
 describe("pi provider adapter — spawn contract", () => {
+  it("continues the same Pi session with a steering prompt instead of failing the active Run", async () => {
+    const first = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true });
+    const second = fakeSpawn({ lines: textRunLines(SESSION_ID, "Reply 222", "222") });
+    let spawnCount = 0;
+    const provider = providerFor((command, args, options) => (
+      spawnCount++ === 0
+        ? first.spawnFn(command, args, options)
+        : second.spawnFn(command, args, options)
+    ));
+
+    const resultPromise = provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Wait and reply 111"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+    await vi.waitFor(() => expect(first.calls).toHaveLength(1));
+
+    await provider.steerTurn!({
+      principal: ownerPrincipal,
+      thread: threadSummary({ status: "running" }),
+      message: "Reply 222",
+      clientRequestId: "req_pi_steer",
+      resumeState: { conversationId: JSON.stringify({ s: SESSION_ID, c: "/work/repo" }) },
+    });
+
+    const result = await resultPromise;
+    expect(first.kills).toContain("SIGTERM");
+    expect(second.calls[0]?.args.at(-1)).toBe("Reply 222");
+    expect(parseCodingAgentProviderRunResult(result, threadSummary().id).outcome).toBeUndefined();
+    expect(parseCodingAgentProviderRunResult(result, threadSummary().id).events).toContainEqual(
+      expect.objectContaining({ type: "assistant.text.delta", delta: "222" }),
+    );
+  });
+
   it("publishes normalized output before returning the terminal result", async () => {
     const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
     const provider = providerFor(fake.spawnFn);

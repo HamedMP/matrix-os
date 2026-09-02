@@ -873,6 +873,11 @@ describe("canonical Chat Provider catalog", () => {
         ["opencode", "coding_agent"],
         ["pi", "coding_agent"],
       ]);
+    expect(catalog.instances.filter((instance) => [
+      "hermes", "openclaw", "codex", "claude_code", "opencode", "pi",
+    ].includes(instance.driverKind)).every((instance) => (
+      instance.supports.steering === "same_run"
+    ))).toBe(true);
     expect(catalog.instances.find((instance) => instance.id === "hermes_default"))
       .toMatchObject({
         driverKind: "hermes",
@@ -1473,6 +1478,10 @@ describe("canonical Chat Provider catalog", () => {
     expect([pi, opencode].map((instance) => instance.supports.attachments)).toEqual([
       ["file", "structured_ref"],
       ["file", "structured_ref"],
+    ]);
+    expect([pi, opencode].map((instance) => instance.supports.steering)).toEqual([
+      "same_run",
+      "same_run",
     ]);
     expect(validateChatProviderSelection({
       catalog,

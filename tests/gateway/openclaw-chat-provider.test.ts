@@ -42,6 +42,7 @@ class FakeRpc implements OpenClawRpcClient {
       return this.agentRun.promise;
     }
     if (method === "chat.abort") return { ok: true, aborted: true, runIds: [this.accepted.runId] };
+    if (method === "sessions.steer") return { runId: this.accepted.runId, status: "started" };
     throw new Error("unexpected method");
   });
 
@@ -273,6 +274,45 @@ describe("OpenClaw canonical Chat Provider adapter", () => {
     });
     rpc.agentRun.resolve({ runId: "openclaw-run-1", status: "error", error: "aborted" });
     await expect(result).resolves.toContainEqual({ type: "run.completed", outcome: "aborted" });
+  });
+
+  it("steers the exact active OpenClaw run through sessions.steer", async () => {
+    const rpc = new FakeRpc();
+    const adapter = createOpenClawChatProviderAdapter({ rpc, homePath: "/home/matrix/home" });
+    const result = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(rpc.calls).toHaveLength(1));
+
+    await expect(adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_openclaw_steer",
+      prompt: "Switch to the second task.",
+      parts: [{ type: "text", text: "Switch to the second task." }],
+      state: { sessionKey: "agent:main:chat-openclaw", agentId: "main" },
+    })).resolves.toBeUndefined();
+    expect(rpc.calls[1]).toMatchObject({
+      method: "sessions.steer",
+      params: {
+        key: "agent:main:chat-openclaw",
+        runId: "openclaw-run-1",
+        message: "Switch to the second task.",
+        idempotencyKey: "req_openclaw_steer",
+      },
+    });
+
+    rpc.agentRun.resolve({ runId: "openclaw-run-1", status: "ok" });
+    await result;
+    await expect(adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_openclaw_stale",
+      prompt: "Too late.",
+      parts: [{ type: "text", text: "Too late." }],
+    })).rejects.toThrow("steering Run unavailable");
   });
 
   it("retries chat.abort when cancellation races ahead of agent acceptance", async () => {

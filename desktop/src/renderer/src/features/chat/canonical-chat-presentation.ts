@@ -611,6 +611,25 @@ export function canonicalChatPresentation(input: {
       }
     }
     const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run));
+    const timeline = [
+      ...work.map((item, index) => ({
+        kind: "work" as const,
+        item,
+        timestamp: item.timestamp ?? Number.MAX_SAFE_INTEGER,
+        index,
+      })),
+      ...userFollowups.map((message, index) => ({
+        kind: "user-followup" as const,
+        message: messagePresentation(message, "commentary"),
+        timestamp: Date.parse(message.createdAt),
+        index: work.length + index,
+      })),
+    ].sort((left, right) => (
+      left.timestamp - right.timestamp
+      || (left.kind === "user-followup" ? -1 : right.kind === "user-followup" ? 1 : left.index - right.index)
+    )).map((entry) => entry.kind === "work"
+      ? { kind: entry.kind, item: entry.item }
+      : { kind: entry.kind, message: entry.message });
     const startedAt = Date.parse(run?.startedAt ?? run?.createdAt ?? turn.createdAt);
     const endedAt = Date.parse(run?.completedAt ?? run?.updatedAt ?? turn.updatedAt);
     return {
@@ -623,6 +642,8 @@ export function canonicalChatPresentation(input: {
         ? { userFollowups: userFollowups.map((message) => messagePresentation(message, "commentary")) }
         : {}),
       work,
+      ...(timeline.length > 0 ? { timeline } : {}),
+      ...(userFollowups.length > 0 ? { expandedByDefault: true } : {}),
       ...(finalMessage && messageText(finalMessage)
         ? { final: messagePresentation(finalMessage, "final") }
         : live.streamingFinal

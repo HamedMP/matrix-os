@@ -107,6 +107,59 @@ function provider(spawnFn: OpenCodeSpawnFn, overrides: Record<string, unknown> =
 }
 
 describe("OpenCode coding-agent provider", () => {
+  it("resumes the same OpenCode session with the steering prompt", async () => {
+    const second = fakeSpawn([
+      line("text", { part: { id: "part_steered", type: "text", text: "222", time: { end: 1 } } }),
+    ]);
+    const firstKills: NodeJS.Signals[] = [];
+    let calls = 0;
+    const spawnFn: OpenCodeSpawnFn = (command, args, options) => {
+      if (calls++ > 0) return second.spawnFn(command, args, options);
+      const stdout = new EventEmitter();
+      const stderr = new EventEmitter();
+      const exit: Array<(code: number | null) => void> = [];
+      queueMicrotask(() => stdout.emit("data", Buffer.from(`${line("step_start", { part: { id: "part_start", type: "step-start" } })}\n`)));
+      return {
+        stdout,
+        stderr,
+        once(event: "exit" | "error", listener: never) {
+          if (event === "exit") exit.push(listener);
+        },
+        kill(signal) {
+          firstKills.push(signal);
+          queueMicrotask(() => {
+            stdout.emit("end");
+            exit.forEach((listener) => listener(null));
+          });
+        },
+      };
+    };
+    const adapter = provider(spawnFn);
+    const resultPromise = adapter.startThread({
+      principal,
+      thread: thread(),
+      request: request({ prompt: "Wait and reply 111" }),
+      now: () => now,
+      nextEventId: ids(),
+    });
+    await vi.waitFor(() => expect(calls).toBe(1));
+
+    await adapter.steerTurn!({
+      principal,
+      thread: { ...thread(), status: "running" },
+      message: "Reply 222",
+      clientRequestId: "req_opencode_steer",
+      resumeState: { conversationId: JSON.stringify({ s: sessionId, c: "/work/repo" }) },
+    });
+
+    const result = await resultPromise;
+    expect(firstKills).toContain("SIGTERM");
+    expect(second.calls[0]?.args.at(-1)).toBe("Reply 222");
+    expect(result).toMatchObject({
+      events: expect.arrayContaining([expect.objectContaining({ type: "assistant.text.delta", delta: "222" })]),
+    });
+  });
+
   it("runs the verified JSON contract with exact model, safe config, and selected credentials", async () => {
     const fake = fakeSpawn([
       line("step_start", { part: { id: "part_step", type: "step-start" } }),
