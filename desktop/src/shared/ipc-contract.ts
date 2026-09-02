@@ -40,6 +40,7 @@ import {
   SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
+  SupportIdentityResponseSchema,
   ThreadIdSchema,
   RequestIdSchema,
   UserInputAnswerRequestSchema,
@@ -51,6 +52,7 @@ import {
   DesktopUpdateSnapshotSchema,
   DesktopUpdateVersionSchema,
 } from "./desktop-update";
+import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 
 const Empty = z.object({}).strict();
 
@@ -129,6 +131,7 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  "analytics:flush-complete": { request: Empty, response: Ok },
   "auth:start-device-flow": {
     request: Empty,
     response: z
@@ -177,6 +180,7 @@ export const INVOKE_CHANNELS = {
   },
   "auth:sign-out": { request: Empty, response: Ok },
   "auth:session-expired": { request: Empty, response: Ok },
+  "support:get-identity": { request: Empty, response: SupportIdentityResponseSchema },
   "runtime:list-computers": {
     request: Empty,
     response: MatrixComputerListSchema,
@@ -444,6 +448,8 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
+  "analytics:capture": DesktopAnalyticsDetailSchema,
+  "analytics:flush-requested": Empty,
   "auth:changed": z
     .object({
       signedIn: z.boolean(),

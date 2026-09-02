@@ -3,6 +3,7 @@ import {
   buildRendererCsp,
   installGatewayCors,
   installHeaderInjection,
+  installSupportMessageAnalytics,
   shouldInjectAuth,
 } from "@desktop/main/auth/header-injection";
 
@@ -76,6 +77,40 @@ function headerSession() {
       const cb = vi.fn();
       listener?.({ url, requestHeaders }, cb);
       return cb.mock.calls[0]?.[0]?.requestHeaders ?? {};
+    },
+  };
+}
+
+type BeforeRequestListener = (
+  details: { url: string; method: string },
+  callback: (response: Record<string, never>) => void,
+) => void;
+type CompletedListener = (details: { url: string; method: string; statusCode: number }) => void;
+type ErrorListener = (details: { url: string; method: string; error: string }) => void;
+
+function analyticsSession() {
+  let beforeRequest: BeforeRequestListener | null = null;
+  let completed: CompletedListener | null = null;
+  let failed: ErrorListener | null = null;
+  const session = {
+    webRequest: {
+      onBeforeRequest: (listener: BeforeRequestListener) => { beforeRequest = listener; },
+      onCompleted: (listener: CompletedListener) => { completed = listener; },
+      onErrorOccurred: (listener: ErrorListener) => { failed = listener; },
+    },
+  };
+  return {
+    session,
+    attempt(details: { url: string; method: string }) {
+      const callback = vi.fn();
+      beforeRequest?.(details, callback);
+      return callback;
+    },
+    complete(details: { url: string; method: string; statusCode: number }) {
+      completed?.(details);
+    },
+    fail(details: { url: string; method: string; error: string }) {
+      failed?.(details);
     },
   };
 }
@@ -293,5 +328,63 @@ describe("shouldInjectAuth", () => {
   it("rejects garbage urls and null origins", () => {
     expect(shouldInjectAuth("not a url", GATEWAY)).toBe(false);
     expect(shouldInjectAuth("https://app.matrix-os.com/api", null)).toBe(false);
+  });
+});
+
+describe("installSupportMessageAnalytics", () => {
+  it("emits only allowlisted attempt and success events for the exact Support POST", () => {
+    const { session, attempt, complete } = analyticsSession();
+    const emit = vi.fn();
+    installSupportMessageAnalytics(session, () => GATEWAY, emit);
+    const details = {
+      url: `${GATEWAY}/relay/api/conversations/v1/widget/message`,
+      method: "POST",
+    };
+
+    expect(attempt(details)).toHaveBeenCalledWith({});
+    complete({ ...details, statusCode: 201 });
+
+    expect(emit.mock.calls).toEqual([
+      [{ name: "desktop_support_send_attempted" }],
+      [{ name: "desktop_support_send_succeeded" }],
+    ]);
+  });
+
+  it("reduces HTTP and network failures to coarse kinds without raw details", () => {
+    const { session, complete, fail } = analyticsSession();
+    const emit = vi.fn();
+    installSupportMessageAnalytics(session, () => GATEWAY, emit);
+    const details = {
+      url: `${GATEWAY}/relay/api/conversations/v1/widget/message`,
+      method: "POST",
+    };
+
+    complete({ ...details, statusCode: 403 });
+    complete({ ...details, statusCode: 503 });
+    fail({ ...details, error: "net::ERR_FAILED token=/home/matrix/private" });
+
+    expect(emit.mock.calls).toEqual([
+      [{ name: "desktop_support_send_failed", failureKind: "client" }],
+      [{ name: "desktop_support_send_failed", failureKind: "server" }],
+      [{ name: "desktop_support_send_failed", failureKind: "network" }],
+    ]);
+    expect(JSON.stringify(emit.mock.calls)).not.toContain("ERR_FAILED");
+    expect(JSON.stringify(emit.mock.calls)).not.toContain("/home/matrix");
+  });
+
+  it("ignores GETs, other paths, and non-gateway origins", () => {
+    const { session, attempt, complete, fail } = analyticsSession();
+    const emit = vi.fn();
+    installSupportMessageAnalytics(session, () => GATEWAY, emit);
+
+    attempt({ url: `${GATEWAY}/relay/api/conversations/v1/widget/message`, method: "GET" });
+    complete({ url: `${GATEWAY}/relay/i/v0/e/`, method: "POST", statusCode: 200 });
+    fail({
+      url: "https://eu.i.posthog.com/api/conversations/v1/widget/message",
+      method: "POST",
+      error: "net::ERR_FAILED",
+    });
+
+    expect(emit).not.toHaveBeenCalled();
   });
 });

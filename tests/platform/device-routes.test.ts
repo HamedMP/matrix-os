@@ -11,6 +11,7 @@ import { createAuthRoutes } from "../../packages/platform/src/auth-routes.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt, verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import { desktopFonts, desktopPalette } from "@matrix-os/brand/tokens";
+import { createHmac } from "node:crypto";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -281,6 +282,82 @@ describe("device routes", () => {
 
       expect(res.status).toBe(429);
       expect((await res.json()).error).toBe("too_many_requests");
+    });
+  });
+
+  describe("GET /api/support/identity", () => {
+    it("signs only the authenticated Sync JWT Clerk subject", async () => {
+      const supportIdentitySecret = "posthog-conversations-server-secret";
+      const authApp = createAuthRoutes({
+        db,
+        jwtSecret: JWT_SECRET,
+        platformUrl: "https://app.matrix-os.com",
+        gatewayUrlForHandle: () => "https://app.matrix-os.com",
+        supportIdentitySecret,
+      });
+      const issued = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: "user_alice",
+        handle: "alice",
+        gatewayUrl: "https://app.matrix-os.com",
+      });
+
+      const response = await authApp.request(
+        "/api/support/identity?distinctId=user_mallory",
+        { headers: { authorization: `Bearer ${issued.token}` } },
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        status: "verified",
+        distinctId: "user_alice",
+        identityHash: createHmac("sha256", supportIdentitySecret)
+          .update("user_alice")
+          .digest("hex"),
+      });
+    });
+
+    it("rejects missing or invalid authentication without signing an identity", async () => {
+      const supportIdentitySecret = "posthog-conversations-server-secret";
+      const authApp = createAuthRoutes({
+        db,
+        jwtSecret: JWT_SECRET,
+        platformUrl: "https://app.matrix-os.com",
+        gatewayUrlForHandle: () => "https://app.matrix-os.com",
+        supportIdentitySecret,
+      });
+
+      const missing = await authApp.request("/api/support/identity");
+      const invalid = await authApp.request("/api/support/identity", {
+        headers: { authorization: "Bearer invalid-token" },
+      });
+
+      expect(missing.status).toBe(401);
+      expect(invalid.status).toBe(401);
+      await expect(missing.json()).resolves.toEqual({ error: "unauthorized" });
+      await expect(invalid.json()).resolves.toEqual({ error: "unauthorized" });
+    });
+
+    it("degrades generically when the server signing secret is unavailable", async () => {
+      const authApp = createAuthRoutes({
+        db,
+        jwtSecret: JWT_SECRET,
+        platformUrl: "https://app.matrix-os.com",
+        gatewayUrlForHandle: () => "https://app.matrix-os.com",
+      });
+      const issued = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: "user_alice",
+        handle: "alice",
+        gatewayUrl: "https://app.matrix-os.com",
+      });
+
+      const response = await authApp.request("/api/support/identity", {
+        headers: { authorization: `Bearer ${issued.token}` },
+      });
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({ status: "unavailable" });
     });
   });
 

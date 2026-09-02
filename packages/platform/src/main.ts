@@ -498,6 +498,7 @@ export function createApp(deps: {
         db,
         clerkAuth,
         jwtSecret: platformJwtSecret,
+        supportIdentitySecret: appEnv.POSTHOG_CONVERSATIONS_IDENTITY_SECRET,
         platformUrl: deviceAuthPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
         ignoreLegacyContainers: Boolean(deps.customerVpsService),

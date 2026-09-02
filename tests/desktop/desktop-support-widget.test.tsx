@@ -10,6 +10,11 @@ import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navig
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 
+const operatorEventListeners = vi.hoisted(() => ({
+  analyticsCapture: null as null | ((payload: unknown) => void),
+  flushRequested: null as null | ((payload: unknown) => void),
+}));
+
 const posthogClient = vi.hoisted(() => ({
   conversations: {
     hide: vi.fn(),
@@ -17,17 +22,31 @@ const posthogClient = vi.hoisted(() => ({
     show: vi.fn(),
   },
   capture: vi.fn(),
+  clearIdentity: vi.fn(),
   identify: vi.fn(),
   init: vi.fn(),
   register: vi.fn(),
   reset: vi.fn(),
+  shutdown: vi.fn(async () => undefined),
+  setIdentity: vi.fn(),
   setPersonProperties: vi.fn(),
   set_config: vi.fn(),
   unregister: vi.fn(),
 }));
 
 const operatorClient = vi.hoisted(() => ({
-  invoke: vi.fn(async () => ({ version: "1.4.0-canary.2" })),
+  onEvent: vi.fn((channel: string, callback: (payload: unknown) => void) => {
+    if (channel === "analytics:capture") operatorEventListeners.analyticsCapture = callback;
+    if (channel === "analytics:flush-requested") operatorEventListeners.flushRequested = callback;
+    return () => undefined;
+  }),
+  invoke: vi.fn(async (channel: string) => channel === "support:get-identity"
+    ? {
+        status: "verified",
+        distinctId: "user_2abcDEF",
+        identityHash: "ab".repeat(32),
+      }
+    : { version: "1.4.0-canary.2" }),
 }));
 
 const runtimeApi = vi.hoisted(() => ({
@@ -89,6 +108,16 @@ function renderPersistedOpenPostHogPanel(): HTMLDivElement {
 
 describe("Desktop support widget", () => {
   beforeEach(() => {
+    operatorEventListeners.analyticsCapture = null;
+    operatorEventListeners.flushRequested = null;
+    operatorClient.invoke.mockImplementation(async (channel: string) => channel === "support:get-identity"
+      ? {
+          status: "verified",
+          distinctId: "user_2abcDEF",
+          identityHash: "ab".repeat(32),
+        }
+      : { version: "1.4.0-canary.2" });
+    posthogClient.conversations.isAvailable.mockReturnValue(true);
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "phc_desktop_test");
     vi.stubEnv("VITE_POSTHOG_HOST", "https://eu.posthog.com");
     useConnection.setState(useConnection.getInitialState(), true);
@@ -187,6 +216,22 @@ describe("Desktop support widget", () => {
       matrix_bundle_version: "v2026.09.02-running",
       matrix_desktop_version: "1.4.0-canary.2",
     });
+    expect(posthogClient.setIdentity).toHaveBeenCalledWith("user_2abcDEF", "ab".repeat(32));
+    expect(posthogClient.identify.mock.invocationCallOrder[0]).toBeLessThan(
+      posthogClient.setIdentity.mock.invocationCallOrder[0]!,
+    );
+    expect(posthogClient.capture).toHaveBeenCalledWith("desktop_auth_completed", {
+      matrix_client: "desktop",
+    });
+    expect(posthogClient.capture).toHaveBeenCalledWith("desktop_application_opened", {
+      matrix_client: "desktop",
+    });
+    const authCapture = posthogClient.capture.mock.calls.findIndex(
+      ([name]) => name === "desktop_auth_completed",
+    );
+    expect(posthogClient.identify.mock.invocationCallOrder[0]).toBeLessThan(
+      posthogClient.capture.mock.invocationCallOrder[authCapture]!,
+    );
     expect(posthogClient.register).toHaveBeenCalledWith({
       matrix_client: "desktop",
       matrix_bundle_version: "v2026.09.02-running",
@@ -212,7 +257,74 @@ describe("Desktop support widget", () => {
     });
 
     await waitFor(() => expect(posthogClient.conversations.hide).toHaveBeenCalledTimes(2));
+    expect(posthogClient.capture).toHaveBeenCalledWith("desktop_sign_out", {
+      matrix_client: "desktop",
+    });
+    expect(posthogClient.clearIdentity).toHaveBeenCalledTimes(1);
+    expect(posthogClient.clearIdentity.mock.invocationCallOrder[0]).toBeLessThan(
+      posthogClient.reset.mock.invocationCallOrder[0]!,
+    );
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Support available when verified identity is transiently unavailable", async () => {
+    operatorClient.invoke.mockImplementation(async (channel: string) => channel === "support:get-identity"
+      ? { status: "unavailable" }
+      : { version: "1.4.0-canary.2" });
+
+    render(<DesktopSupportWidget />);
+
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+    expect(posthogClient.setIdentity).not.toHaveBeenCalled();
+    expect(posthogClient.capture).toHaveBeenCalledWith(
+      "desktop_support_identity_unavailable",
+      { matrix_client: "desktop" },
+    );
+  });
+
+  it("keeps Support available when analytics capture itself fails", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    posthogClient.conversations.hide.mockImplementation(() => {
+      document.getElementById("ph-conversations-widget-container")?.remove();
+    });
+    posthogClient.conversations.show.mockImplementation(renderPostHogLauncher);
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+    posthogClient.capture.mockImplementationOnce(() => {
+      throw new Error("provider capture failure");
+    });
+
+    await expect(openDesktopSupport()).resolves.toBe(true);
+    expect(warning).toHaveBeenCalledWith(
+      "[desktop-support] Analytics capture unavailable:",
+      "Error",
+    );
+  });
+
+  it("does not apply an old identity response after the Clerk account changes", async () => {
+    let resolveIdentity: ((value: unknown) => void) | undefined;
+    operatorClient.invoke.mockImplementation((channel: string) => channel === "support:get-identity"
+      ? new Promise((resolve) => { resolveIdentity = resolve; })
+      : Promise.resolve({ version: "1.4.0-canary.2" }));
+
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(resolveIdentity).toBeDefined());
+
+    act(() => {
+      useConnection.setState({
+        handle: "trinity",
+        userId: "user_trinity",
+        authGeneration: 2,
+      });
+    });
+    act(() => resolveIdentity?.({
+      status: "verified",
+      distinctId: "user_2abcDEF",
+      identityHash: "ab".repeat(32),
+    }));
+
+    await act(async () => Promise.resolve());
+    expect(posthogClient.setIdentity).not.toHaveBeenCalledWith("user_2abcDEF", expect.any(String));
   });
 
   it("clears a stale email during initial Clerk identification", async () => {
@@ -277,6 +389,9 @@ describe("Desktop support widget", () => {
         document.querySelector('#ph-conversations-widget-container button[aria-label="Close"]'),
       ).not.toBeNull();
     });
+    expect(posthogClient.capture).toHaveBeenCalledWith("desktop_support_opened", {
+      matrix_client: "desktop",
+    });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
     // PostHog can re-render its panel while it is open. Replacing the close
@@ -292,6 +407,9 @@ describe("Desktop support widget", () => {
 
     await waitFor(() => expect(document.getElementById("ph-conversations-widget-container")).toBeNull());
     await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+    expect(posthogClient.capture).toHaveBeenCalledWith("desktop_support_closed", {
+      matrix_client: "desktop",
+    });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Support" }));
@@ -388,7 +506,14 @@ describe("Desktop support widget", () => {
   it("keeps support available when runtime and native version metadata are unavailable", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     runtimeApi.get.mockRejectedValueOnce(new Error("private runtime failure"));
-    operatorClient.invoke.mockRejectedValueOnce(new Error("private IPC failure"));
+    operatorClient.invoke.mockImplementation(async (channel: string) => {
+      if (channel === "app:get-version") throw new Error("private IPC failure");
+      return {
+        status: "verified",
+        distinctId: "user_2abcDEF",
+        identityHash: "ab".repeat(32),
+      };
+    });
 
     render(<DesktopSupportWidget />);
 
@@ -424,6 +549,40 @@ describe("Desktop support widget", () => {
     });
   });
 
+  it("captures main-process Support send events under the active Clerk identity", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+    expect(operatorEventListeners.analyticsCapture).not.toBeNull();
+
+    act(() => operatorEventListeners.analyticsCapture?.({
+      name: "desktop_support_send_failed",
+      failureKind: "server",
+    }));
+
+    expect(posthogClient.capture).toHaveBeenCalledWith("desktop_support_send_failed", {
+      failure_kind: "server",
+      matrix_client: "desktop",
+    });
+  });
+
+  it("captures quit, bounds PostHog shutdown, and acknowledges the main process", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+    expect(operatorEventListeners.flushRequested).not.toBeNull();
+
+    await act(async () => {
+      operatorEventListeners.flushRequested?.({});
+      await Promise.resolve();
+    });
+
+    expect(posthogClient.capture).toHaveBeenCalledWith(
+      "desktop_application_quit_requested",
+      { matrix_client: "desktop" },
+    );
+    expect(posthogClient.shutdown).toHaveBeenCalledOnce();
+    expect(operatorClient.invoke).toHaveBeenCalledWith("analytics:flush-complete", {});
+  });
+
   it("does not finish an old support open after sign-out", async () => {
     posthogClient.conversations.hide.mockImplementation(() => {
       document.getElementById("ph-conversations-widget-container")?.remove();
@@ -455,6 +614,11 @@ describe("Desktop support widget", () => {
     await waitFor(() => {
       expect(posthogClient.reset.mock.calls.length).toBeGreaterThan(resetCallsBeforeSignOut);
     });
+    const captureCountAfterSignOut = posthogClient.capture.mock.calls.length;
+    window.dispatchEvent(new CustomEvent("matrix:desktop-analytics", {
+      detail: { name: "desktop_support_opened" },
+    }));
+    expect(posthogClient.capture).toHaveBeenCalledTimes(captureCountAfterSignOut);
 
     renderPostHogLauncher();
 

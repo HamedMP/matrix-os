@@ -6,7 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { DesktopReleaseNotes, DesktopUpdateSnapshot } from "../../shared/desktop-update";
-import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
+import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse, SupportIdentityResponse } from "@matrix-os/contracts";
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
@@ -38,6 +38,8 @@ export interface HandlerContext {
   }>;
   acknowledgeWhatsNew: (version: string) => Promise<void>;
   getAppVersion: () => string;
+  completeAnalyticsFlush: () => void;
+  fetchSupportIdentity: () => Promise<SupportIdentityResponse>;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
   fetchProjectWorkspace: (
     request: CodingAgentProjectWorkspaceRequest,
@@ -195,6 +197,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     });
   }
 
+  handle("analytics:flush-complete", () => {
+    ctx.completeAnalyticsFlush();
+    return { ok: true };
+  });
   handle("auth:start-device-flow", () => ctx.auth.startDeviceFlow());
   handle("auth:poll", () => ctx.auth.poll());
   handle("auth:status", () => ctx.auth.getStatus());
@@ -206,6 +212,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     await ctx.auth.expireSession();
     return { ok: true };
   });
+  handle("support:get-identity", () => ctx.fetchSupportIdentity());
 
   handle("app:get-version", () => ({ version: ctx.getAppVersion() }));
 
