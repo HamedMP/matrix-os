@@ -118,14 +118,20 @@ describe("Web Chat Electron Desktop parity", () => {
   });
 
   it("does not expose Stop while busy work has no cancellable active run", async () => {
+    const onSubmit = vi.fn();
     renderChat({
       busy: true,
       canAbort: false,
       onAbort: vi.fn(),
+      onSubmit,
       messages: [{ id: "msg_user", role: "user", content: "Uploading", timestamp: Date.now() }],
     });
 
     expect(await screen.findByRole("button", { name: "Send" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Stop response" })).toBeNull();
+    const composer = screen.getByPlaceholderText("Ask anything...");
+    fireEvent.change(composer, { target: { value: "Do not submit yet" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
