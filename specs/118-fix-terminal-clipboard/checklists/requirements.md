@@ -1,7 +1,7 @@
 # Specification Quality Checklist: Reliable Terminal Clipboard and Selection
 
-**Purpose**: Validate specification completeness and quality before proceeding to planning  
-**Created**: 2026-08-29  
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Created**: 2026-08-29
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -34,4 +34,3 @@
 - Validation iteration 1 passed all checklist items.
 - No clarification markers were needed; the reported journeys establish the expected shortcut, selection, right-click, mouse-movement, and shell-mode behavior.
 - The specification intentionally treats the focused terminal's visible selection as the user-facing source of truth without prescribing a technical implementation.
-

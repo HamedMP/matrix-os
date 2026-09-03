@@ -165,15 +165,15 @@
 
 ### Tests for User Story 6 — write and observe RED first
 
-- [ ] T043 [P] [US6] Add failing native clipboard denial, fallback failure, generic feedback, selection retention, stale-session cancellation, unmount, and exactly-once retry tests in `tests/desktop/terminal-link-actions.test.ts` and `tests/desktop/terminal-view.test.tsx`
-- [ ] T044 [P] [US6] Add failing web clipboard denial, disconnected transport, stale-pane cancellation, generic feedback, zero-write failure, and exactly-once retry tests in `tests/shell/terminal-rich-paste.test.ts` and `tests/shell/terminal-pane-scrolling.test.tsx`
-- [ ] T045 [US6] Add privacy assertions that UI and diagnostics never contain selected text, clipboard text, raw errors, provider details, paths, filenames, or session IDs in `tests/desktop/terminal-view.test.tsx` and `tests/shell/terminal-pane-privacy.test.tsx` after T043–T044
+- [x] T043 [P] [US6] Add failing native clipboard denial, fallback failure, generic feedback, selection retention, stale-session cancellation, unmount, and exactly-once retry tests in `tests/desktop/terminal-link-actions.test.ts` and `tests/desktop/terminal-view.test.tsx`
+- [x] T044 [P] [US6] Add failing web clipboard denial, disconnected transport, stale-pane cancellation, generic feedback, zero-write failure, and exactly-once retry tests in `tests/shell/terminal-rich-paste.test.ts` and `tests/shell/terminal-pane-scrolling.test.tsx`
+- [x] T045 [US6] Add privacy assertions that UI and diagnostics never contain selected text, clipboard text, raw errors, provider details, paths, filenames, or session IDs in `tests/desktop/terminal-view.test.tsx` and `tests/shell/terminal-pane-privacy.test.tsx` after T043–T044
 
 ### Implementation for User Story 6
 
-- [ ] T046 [P] [US6] Add bounded native clipboard operation state, safe generic feedback, and session-generation/unmount cancellation in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`, `desktop/src/renderer/src/features/terminal/terminal-link-actions.ts`, and `desktop/src/renderer/src/features/terminal/terminal-rich-paste.ts`
-- [ ] T047 [P] [US6] Add bounded web clipboard outcomes, safe generic feedback, and pane/socket generation cancellation in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/terminal-rich-paste.ts`
-- [ ] T048 [US6] Run all User Story 6 tests in `tests/desktop/terminal-link-actions.test.ts`, `tests/desktop/terminal-view.test.tsx`, `tests/shell/terminal-rich-paste.test.ts`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-pane-privacy.test.tsx`
+- [x] T046 [P] [US6] Add bounded native clipboard operation state, safe generic feedback, and session-generation/unmount cancellation in `desktop/src/renderer/src/features/terminal/TerminalView.tsx`, `desktop/src/renderer/src/features/terminal/terminal-link-actions.ts`, and `desktop/src/renderer/src/features/terminal/terminal-rich-paste.ts`
+- [x] T047 [P] [US6] Add bounded web clipboard outcomes, safe generic feedback, and pane/socket generation cancellation in `shell/src/components/terminal/TerminalPane.tsx` and `shell/src/components/terminal/terminal-rich-paste.ts`
+- [x] T048 [US6] Run all User Story 6 tests in `tests/desktop/terminal-link-actions.test.ts`, `tests/desktop/terminal-view.test.tsx`, `tests/shell/terminal-rich-paste.test.ts`, `tests/shell/terminal-pane-scrolling.test.tsx`, and `tests/shell/terminal-pane-privacy.test.tsx`
 
 **Checkpoint**: Clipboard failures are safe, private, retryable, and independently testable.
 
@@ -183,14 +183,14 @@
 
 **Purpose**: Prove the complete journeys with real xterm/Electron behavior and satisfy Matrix OS delivery gates.
 
-- [ ] T049 Add a packaged Electron E2E journey using native `clipboard`, deterministic multiline/wrapped/Unicode output, inner-xterm right-click, 50 selection trials, SGR any-motion for at least ten seconds, multiple terminals, native Canvas/Desktop modes, and exactly-once Paste in `tests/e2e/desktop/terminal-clipboard.e2e.test.ts`
-- [ ] T050 Update the post-desktop-build E2E invocation so `tests/e2e/desktop/terminal-clipboard.e2e.test.ts` cannot pass by skipping when build artifacts are absent in `.github/workflows/ci.yml`
-- [ ] T051 Run the targeted suites and packaged Electron test from `specs/118-fix-terminal-clipboard/quickstart.md`, fixing only feature regressions and recording unrelated baseline failures
-- [ ] T052 Run `npx react-doctor@latest desktop` and `npx react-doctor@latest shell`, resolving findings for changed React files listed in `specs/118-fix-terminal-clipboard/plan.md`
-- [ ] T053 Run `bun run typecheck`, `bun run check:patterns`, `bun run test`, and the relevant coverage command from `package.json`; resolve all feature failures and verify changed pure/renderer logic meets the repository coverage target
-- [ ] T054 Capture and attach a current screenshot plus short recording using synthetic output, showing multiline selection, Copy enabled, and passive motion stability, following `specs/118-fix-terminal-clipboard/quickstart.md`
-- [ ] T055 Open a separate private documentation PR in `FinnaAI/matrix-os-site` updating the existing terminal page under `content/docs/` with shortcuts, right-click/Select All behavior, mouse-aware selection behavior, and renderer parity
-- [ ] T056 Re-run every acceptance scenario and measurable outcome in `specs/118-fix-terminal-clipboard/spec.md`, mark all completed implementation tasks in `specs/118-fix-terminal-clipboard/tasks.md`, verify `git diff --check`, and freeze the review commit range
+- [x] T049 Add a packaged Electron E2E journey using native `clipboard`, deterministic multiline/wrapped/Unicode output, inner-xterm right-click, 50 selection trials, SGR any-motion for at least ten seconds, multiple terminals, native Canvas/Desktop modes, and exactly-once Paste in `tests/e2e/desktop/terminal-clipboard.e2e.test.ts`
+- [x] T050 Update the post-desktop-build E2E invocation so `tests/e2e/desktop/terminal-clipboard.e2e.test.ts` cannot pass by skipping when build artifacts are absent in `.github/workflows/ci.yml`
+- [x] T051 Run the targeted suites and packaged Electron test from `specs/118-fix-terminal-clipboard/quickstart.md`, fixing only feature regressions and recording unrelated baseline failures
+- [x] T052 Run `npx react-doctor@latest desktop` and `npx react-doctor@latest shell`, resolving findings for changed React files listed in `specs/118-fix-terminal-clipboard/plan.md`
+- [x] T053 Run `bun run typecheck`, `bun run check:patterns`, `bun run test`, and the relevant coverage command from `package.json`; resolve all feature failures and verify changed pure/renderer logic meets the repository coverage target
+- [x] T054 Capture and attach a current screenshot plus short recording using synthetic output, showing multiline selection, Copy enabled, and passive motion stability, following `specs/118-fix-terminal-clipboard/quickstart.md`
+- [x] T055 Open a separate private documentation PR in `FinnaAI/matrix-os-site` updating the existing terminal page under `content/docs/` with shortcuts, right-click/Select All behavior, mouse-aware selection behavior, and renderer parity
+- [x] T056 Re-run every acceptance scenario and measurable outcome in `specs/118-fix-terminal-clipboard/spec.md`, mark all completed implementation tasks in `specs/118-fix-terminal-clipboard/tasks.md`, verify `git diff --check`, and freeze the review commit range
 
 **Checkpoint**: Complete feature is review-ready only after CI is green, screenshot/recording evidence is attached, both React audits pass, the docs PR exists, and Greptile reports 5/5 for every code-stack layer.
 

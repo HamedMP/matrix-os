@@ -4711,7 +4711,7 @@ describe("TerminalApp", () => {
 
     await chooseNewSessionMenuItemAfterStatus(/^Codex$/);
 
-    const codexPayload = expectTerminalCreatePayloadForCommand("codex");
+    const codexPayload = expectTerminalCreatePayloadForCommand("codex --no-alt-screen");
     expect(codexPayload.agent).toBe("codex");
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({

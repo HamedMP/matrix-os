@@ -16,7 +16,7 @@ import {
 export interface StubGateway {
   url: string;
   port: number;
-  sendTerminalOutput(data: string): void;
+  sendTerminalOutput(data: string, session?: "matrix-task-1" | "matrix-review"): void;
   setConversationBusy(id: string, busy: boolean): void;
   setProjectLifecycle(lifecycle: "active" | "archived" | "deleted"): void;
   setKernelResponseDelay(delayMs: number): void;
@@ -26,6 +26,8 @@ export interface StubGateway {
     deviceCodeRequests: number;
     tokenRequests: number;
     terminalInputs: string[];
+    terminalInputEvents: Array<{ session: string; data: string }>;
+    terminalResizeEvents: Array<{ session: string; cols: number; rows: number }>;
     kernelMessages: Array<Record<string, unknown>>;
     codingAgentCreates: Array<Record<string, unknown>>;
     taskUpdates: Array<Record<string, unknown>>;
@@ -559,6 +561,8 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     deviceCodeRequests: 0,
     tokenRequests: 0,
     terminalInputs: [],
+    terminalInputEvents: [],
+    terminalResizeEvents: [],
     kernelMessages: [],
     codingAgentCreates: [],
     taskUpdates: [],
@@ -567,7 +571,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     kernelConnections: 0,
   };
   let currentToken = TOKEN;
-  let activeTerminalOutput: ((data: string) => void) | null = null;
+  const activeTerminalOutputs: Partial<Record<"matrix-task-1" | "matrix-review", (data: string) => void>> = {};
   let createdHermesConversation = false;
   const hermesConversationContexts = new Map<string, Map<string, string>>([
     [TOKEN, new Map()],
@@ -1207,7 +1211,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
 
   function runTerminalSession(ws: WebSocket, session: string): void {
     let seq = 0;
-    if (session !== "matrix-task-1") {
+    if (session !== "matrix-task-1" && session !== "matrix-review") {
       ws.send(JSON.stringify({ type: "error", code: "session_not_found", message: "Session not found" }));
       ws.close();
       return;
@@ -1217,9 +1221,9 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       seq += 1;
       ws.send(JSON.stringify({ type: "output", seq, data }));
     };
-    activeTerminalOutput = sendOutput;
+    activeTerminalOutputs[session] = sendOutput;
     ws.once("close", () => {
-      if (activeTerminalOutput === sendOutput) activeTerminalOutput = null;
+      if (activeTerminalOutputs[session] === sendOutput) delete activeTerminalOutputs[session];
     });
     sendOutput("stub-shell$ ");
     ws.on("message", (raw) => {
@@ -1235,8 +1239,15 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       }
       if (msg.type === "input" && typeof msg.data === "string") {
         state.terminalInputs.push(msg.data);
+        state.terminalInputEvents.push({ session, data: msg.data });
         // Echo back like a shell, with deterministic seq numbering.
         sendOutput(msg.data.replace(/\r/g, "\r\nran!\r\nstub-shell$ "));
+      } else if (
+        msg.type === "resize"
+        && typeof msg.cols === "number"
+        && typeof msg.rows === "number"
+      ) {
+        state.terminalResizeEvents.push({ session, cols: msg.cols, rows: msg.rows });
       } else if (msg.type === "ping") {
         ws.send(JSON.stringify({ type: "pong" }));
       }
@@ -1295,7 +1306,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     url: `http://127.0.0.1:${port}`,
     port,
     state,
-    sendTerminalOutput: (data) => activeTerminalOutput?.(data),
+    sendTerminalOutput: (data, session = "matrix-task-1") => activeTerminalOutputs[session]?.(data),
     setConversationBusy: (id, busy) => {
       if (busy) busyHermesConversations.add(id);
       else busyHermesConversations.delete(id);

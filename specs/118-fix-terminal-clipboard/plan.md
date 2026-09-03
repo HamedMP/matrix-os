@@ -9,14 +9,14 @@ Make terminal selection and clipboard actions deterministic in the native Electr
 
 ## Technical Context
 
-**Language/Version**: TypeScript 5.9 strict ES modules; React 19; Node.js 24+ build/runtime tooling  
-**Primary Dependencies**: `@xterm/xterm` 6.0.0, Electron 41, Next.js 16 shell, existing Matrix terminal link/context-menu helpers, `@matrix-os/contracts`  
-**Storage**: N/A; selection, context-menu snapshots, and clipboard operation state are transient and must not be persisted  
-**Testing**: Vitest 4, React Testing Library, Playwright Electron E2E, shell browser/component tests, manual macOS acceptance  
-**Target Platform**: Native Matrix Electron Canvas/Desktop on macOS as the reported surface; Matrix Web Canvas/Desktop; regression coverage for existing Windows/Linux shortcuts  
-**Project Type**: Multi-surface React frontend with a shared pure contracts package  
-**Performance Goals**: Handled clipboard feedback within one second; no per-pointer-move React state updates; retain responsive 60 fps pointer behavior at interactive Canvas zoom levels  
-**Constraints**: Clipboard text never enters telemetry, persistence, or error messages; no duplicate paste writes; preserve existing image paste; use public xterm APIs; do not disrupt non-terminal shortcuts or TUI mouse reporting when no selection exists  
+**Language/Version**: TypeScript 5.9 strict ES modules; React 19; Node.js 24+ build/runtime tooling
+**Primary Dependencies**: `@xterm/xterm` 6.0.0, Electron 41, Next.js 16 shell, existing Matrix terminal link/context-menu helpers, `@matrix-os/contracts`
+**Storage**: N/A; selection, context-menu snapshots, and clipboard operation state are transient and must not be persisted
+**Testing**: Vitest 4, React Testing Library, Playwright Electron E2E, shell browser/component tests, manual macOS acceptance
+**Target Platform**: Native Matrix Electron Canvas/Desktop on macOS as the reported surface; Matrix Web Canvas/Desktop; regression coverage for existing Windows/Linux shortcuts
+**Project Type**: Multi-surface React frontend with a shared pure contracts package
+**Performance Goals**: Handled clipboard feedback within one second; no per-pointer-move React state updates; retain responsive 60 fps pointer behavior at interactive Canvas zoom levels
+**Constraints**: Clipboard text never enters telemetry, persistence, or error messages; no duplicate paste writes; preserve existing image paste; use public xterm APIs; do not disrupt non-terminal shortcuts or TUI mouse reporting when no selection exists
 **Scale/Scope**: Multiple simultaneous panes/windows; native scrollback of 5,000 lines and web scrollback of 10,000 lines; native Canvas zoom 0.5–2; interactive web Canvas zoom 0.25–3 plus preservation across preview zoom transitions
 
 ## Constitution Check

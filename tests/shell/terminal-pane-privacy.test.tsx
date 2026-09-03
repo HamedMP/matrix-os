@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
 
 const stubTerminal = vi.hoisted(() => ({
   element: null as HTMLElement | null,
@@ -15,6 +18,7 @@ const stubTerminal = vi.hoisted(() => ({
   onData: vi.fn(() => ({ dispose: vi.fn() })),
   onResize: vi.fn(() => ({ dispose: vi.fn() })),
   attachCustomKeyEventHandler: vi.fn(),
+  customKeyEventHandler: null as ((event: KeyboardEvent) => boolean) | null,
   clearSelection: vi.fn(),
   getSelection: vi.fn(() => ""),
 }));
@@ -102,6 +106,10 @@ class ResizeObserverMock {
 
 describe("TerminalPane session replay privacy", () => {
   beforeEach(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
     stubTerminal.element = document.createElement("div");
     stubWs.readyState = 1;
     stubWs.send.mockClear();
@@ -109,6 +117,11 @@ describe("TerminalPane session replay privacy", () => {
     wsAuth.buildAuthenticatedWebSocketUrl.mockClear();
     wsAuth.getWebSocketAuthToken.mockClear();
     wsAuth.getWebSocketAuthToken.mockResolvedValue("ws-token");
+    stubTerminal.customKeyEventHandler = null;
+    stubTerminal.attachCustomKeyEventHandler.mockImplementation((handler) => {
+      stubTerminal.customKeyEventHandler = handler;
+    });
+    stubTerminal.getSelection.mockReturnValue("");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       path: "projects/.matrix-terminal-pastes/2026-07-07/upload.png",
       terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png",
@@ -120,6 +133,67 @@ describe("TerminalPane session replay privacy", () => {
       globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
         setTimeout(() => cb(0), 0)) as typeof requestAnimationFrame;
     }
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    if (originalClipboardDescriptor) {
+      Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(navigator, "platform", originalPlatformDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "platform");
+    }
+  });
+
+  it("shows only generic clipboard failures and keeps private values out of diagnostics", async () => {
+    const selection = "token=clipboard-secret /Users/operator/private.txt session-main";
+    const rawFailure = "OpenAI provider rejected private.txt";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error(rawFailure)) },
+    });
+    stubTerminal.getSelection.mockReturnValue(selection);
+    render(
+      <TerminalPane
+        paneId="pane-private-copy"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(stubTerminal.customKeyEventHandler).toBeTypeOf("function"));
+
+    stubTerminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    expect(await screen.findByText("Clipboard copy failed. Try again.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain(selection);
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(selection);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("OpenAI");
+    expect(diagnostics).not.toContain("private.txt");
+    expect(diagnostics).not.toContain("session-main");
   });
 
   it("marks the xterm container with ph-no-capture so recordings never include terminal output", () => {
@@ -304,10 +378,9 @@ describe("TerminalPane session replay privacy", () => {
   });
 
   it("captures dropped image files and does not close or reconnect the terminal socket on upload failure", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(
-      JSON.stringify({ error: { code: "upload_failed", message: "Request failed" } }),
-      { status: 500 },
-    )));
+    const rawFailure = "OpenAI /home/matrix/home/private/photo.jpg session-main";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(rawFailure)));
     const file = new File([Uint8Array.from([0xff, 0xd8, 0xff])], "photo.jpg", {
       type: "image/jpeg",
     });
@@ -342,5 +415,11 @@ describe("TerminalPane session replay privacy", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     expect(stubWs.close).not.toHaveBeenCalled();
     expect(stubWs.send).not.toHaveBeenCalledWith(expect.stringContaining("photo.jpg"));
+    expect(await screen.findByText("Image paste failed. Try again.")).toBeTruthy();
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("OpenAI");
+    expect(diagnostics).not.toContain("photo.jpg");
+    expect(diagnostics).not.toContain("session-main");
   });
 });

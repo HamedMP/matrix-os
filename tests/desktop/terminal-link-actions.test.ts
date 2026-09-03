@@ -128,6 +128,28 @@ describe("desktop terminal link actions", () => {
     await expect(copyDesktopTerminalText("private selection")).resolves.toBe("unavailable");
   });
 
+  it("never logs clipboard content or raw denial details when copy fallbacks fail", async () => {
+    const privateSelection = "token=clipboard-secret";
+    const rawFailure = "OpenAI /Users/operator/private.txt session-alpha";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error(rawFailure)) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+
+    await expect(copyDesktopTerminalText(privateSelection)).resolves.toBe("unavailable");
+
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(privateSelection);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("/Users/operator/private.txt");
+    expect(diagnostics).not.toContain("session-alpha");
+  });
+
   it("detects plain-text URLs and does not activate them on secondary click", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     const lines = [{ isWrapped: false, translateToString: () => `Docs: ${LINK.url}` }];

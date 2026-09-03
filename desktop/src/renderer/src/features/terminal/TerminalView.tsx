@@ -19,7 +19,6 @@ import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./Termin
 import {
   DesktopWebLinkProvider,
   activateDesktopTerminalLink,
-  copyDesktopTerminalLink,
   copyDesktopTerminalText,
   findDesktopTerminalLinkAtPointer,
   openDesktopTerminalLink,
@@ -34,6 +33,7 @@ import {
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
+import { installMouseTrackingSelection } from "./terminal-mouse-selection";
 import { decodeOsc52Clipboard } from "./terminal-osc52";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
@@ -58,6 +58,40 @@ function applyTerminalSurfaceTheme(element: HTMLElement | undefined, background:
   }
 }
 
+function readOwnedDomSelection(host: HTMLElement): string {
+  const selection = host.ownerDocument.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return "";
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+    if (
+      !host.contains(range.startContainer)
+      || !host.contains(range.endContainer)
+      || !host.contains(range.commonAncestorContainer)
+    ) {
+      return "";
+    }
+  }
+  return selection.toString().replaceAll("\u00a0", " ");
+}
+
+function ownedDomSelectionUsesAccessibilityTree(host: HTMLElement): boolean {
+  const selection = host.ownerDocument.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+    const start = range.startContainer instanceof Element
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const end = range.endContainer instanceof Element
+      ? range.endContainer
+      : range.endContainer.parentElement;
+    if (!start?.closest(".xterm-accessibility-tree") || !end?.closest(".xterm-accessibility-tree")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 interface TerminalViewProps {
   sessionName: string;
   chatId?: string;
@@ -66,6 +100,29 @@ interface TerminalViewProps {
   active?: boolean;
   visualScale?: number;
   onRecreate?: () => void;
+}
+
+type ClipboardFeedback = {
+  sequence: number;
+  message: string;
+};
+
+function clipboardFailureFeedback(
+  current: ClipboardFeedback | null,
+  sequence: number,
+  message: string,
+): ClipboardFeedback {
+  return current && current.sequence > sequence ? current : { sequence, message };
+}
+
+function clipboardSuccessFeedback(
+  current: ClipboardFeedback | null,
+  sequence: number,
+): ClipboardFeedback | null {
+  // Copy and paste execute independently. A success may clear feedback that
+  // was already visible when the operation began, but it must not silence a
+  // still-running operation that reports its own failure afterward.
+  return current && current.sequence > sequence ? current : null;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component -- This component owns one xterm instance and its coupled attach, resize, link, paste, and teardown lifecycle. Splitting those effects across child components would obscure single-resource ownership; visual theme helpers and menus remain extracted.
@@ -88,6 +145,12 @@ export default function TerminalView({
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
+  const copyOperationGenerationRef = useRef(0);
+  const pasteOperationGenerationRef = useRef(0);
+  const clipboardOperationSequenceRef = useRef(0);
+  const confirmedSelectionRef = useRef("");
+  const confirmedDomSelectionRef = useRef("");
+  const extendedSelectionRef = useRef("");
   const visualScaleRef = useRef(visualScale);
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
@@ -100,12 +163,38 @@ export default function TerminalView({
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
   const closeTerminalContextMenu = useCallback(() => {
     setTerminalContextMenu(null);
-    termRef.current?.focus();
+    window.requestAnimationFrame(() => termRef.current?.focus());
   }, []);
-  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [clipboardFeedback, setClipboardFeedback] = useState<ClipboardFeedback | null>(null);
+  const reportClipboardFailure = useCallback((sequence: number, message: string) => {
+    setClipboardFeedback((current) => clipboardFailureFeedback(current, sequence, message));
+  }, []);
+  const reportClipboardSuccess = useCallback((sequence: number) => {
+    setClipboardFeedback((current) => clipboardSuccessFeedback(current, sequence));
+  }, []);
+  const copyTerminalTextWithFeedback = useCallback(async (text: string) => {
+    const operation = ++copyOperationGenerationRef.current;
+    const feedbackSequence = ++clipboardOperationSequenceRef.current;
+    const result = await copyDesktopTerminalText(text);
+    if (copyOperationGenerationRef.current !== operation) return result;
+    if (result === "success") {
+      reportClipboardSuccess(feedbackSequence);
+    } else {
+      reportClipboardFailure(feedbackSequence, "Clipboard copy failed. Try again.");
+    }
+    return result;
+  }, [reportClipboardFailure, reportClipboardSuccess]);
+
+  useEffect(() => () => {
+    copyOperationGenerationRef.current += 1;
+    pasteOperationGenerationRef.current += 1;
+  }, []);
 
   if (stateSessionName !== sessionName) {
     setStateSessionName(sessionName);
+    confirmedSelectionRef.current = "";
+    confirmedDomSelectionRef.current = "";
+    extendedSelectionRef.current = "";
     endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
@@ -127,6 +216,7 @@ export default function TerminalView({
       fontFamily: buildTerminalFontStack("JetBrains Mono", undefined),
       lineHeight: 1.25,
       scrollback: 5000,
+      macOptionClickForcesSelection: true,
       rightClickSelectsWord: false,
       theme,
       linkHandler: {
@@ -144,13 +234,56 @@ export default function TerminalView({
     terminal.loadAddon(fit);
     terminal.loadAddon(serialize);
     terminal.open(host);
+    confirmedSelectionRef.current = "";
+    confirmedDomSelectionRef.current = "";
+    extendedSelectionRef.current = "";
+    const readTerminalSelection = () => {
+      if (extendedSelectionRef.current) return extendedSelectionRef.current;
+      const xtermSelection = terminal.getSelection();
+      const domSelection = readOwnedDomSelection(host);
+      if (xtermSelection && domSelection) {
+        const withoutVisualWraps = (selection: string) => selection.replace(/[\r\n]/g, "");
+        return ownedDomSelectionUsesAccessibilityTree(host)
+          || withoutVisualWraps(xtermSelection) === withoutVisualWraps(domSelection)
+          ? xtermSelection
+          : domSelection;
+      }
+      return xtermSelection
+        || domSelection
+        || confirmedSelectionRef.current
+        || confirmedDomSelectionRef.current;
+    };
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      const selection = terminal.getSelection();
+      if (selection) confirmedSelectionRef.current = selection;
+    });
     const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
       const decoded = decodeOsc52Clipboard(data);
       if (!decoded.handled) return false;
-      if (decoded.text !== null) void copyDesktopTerminalText(decoded.text);
+      if (decoded.text !== null) {
+        extendedSelectionRef.current = decoded.text;
+        confirmedSelectionRef.current = decoded.text;
+        void copyTerminalTextWithFeedback(decoded.text);
+      }
       return true;
     });
+    const onDocumentSelectionChange = () => {
+      const selection = readOwnedDomSelection(host);
+      if (selection) {
+        confirmedDomSelectionRef.current = selection;
+        return;
+      }
+      const documentSelection = host.ownerDocument.getSelection();
+      if (documentSelection && !documentSelection.isCollapsed) {
+        confirmedDomSelectionRef.current = "";
+        confirmedSelectionRef.current = "";
+        extendedSelectionRef.current = "";
+        terminal.clearSelection();
+      }
+    };
+    host.ownerDocument.addEventListener("selectionchange", onDocumentSelectionChange);
     terminal.attachCustomKeyEventHandler((event) => {
+      const selection = readTerminalSelection();
       const action = classifyTerminalClipboardShortcut({
         type: event.type as "keydown" | "keyup" | "keypress",
         key: event.key,
@@ -161,12 +294,12 @@ export default function TerminalView({
         altKey: event.altKey,
         repeat: event.repeat,
         isComposing: event.isComposing,
-        hasSelection: terminal.hasSelection(),
+        hasSelection: Boolean(selection),
       });
       if (!action) return true;
       event.preventDefault();
       if (action === "copy") {
-        void copyDesktopTerminalText(terminal.getSelection());
+        void copyTerminalTextWithFeedback(selection);
       } else if (action === "paste") {
         void pasteClipboardRef.current();
       } else {
@@ -198,11 +331,16 @@ export default function TerminalView({
     };
     const onTerminalPointer = (event: MouseEvent) => {
       if ((event as MouseEvent & { _xtermScaleCorrected?: boolean })._xtermScaleCorrected) return;
+      if (event.type === "mousedown" && event.button === 0) {
+        confirmedSelectionRef.current = "";
+        confirmedDomSelectionRef.current = "";
+        extendedSelectionRef.current = "";
+      }
       const decision = classifyTerminalPointerEvent({
         type: event.type as "mousedown" | "mousemove" | "mouseup",
         button: event.button,
         buttons: event.buttons,
-        hasSelection: terminal.hasSelection(),
+        hasSelection: Boolean(readTerminalSelection()),
       });
       if (decision === "shield-selection") {
         event.preventDefault();
@@ -247,9 +385,23 @@ export default function TerminalView({
         x: event.clientX,
         y: event.clientY,
         link,
-        selection: terminal.getSelection(),
+        selection: readTerminalSelection(),
       });
     };
+    const removeMouseTrackingSelection = installMouseTrackingSelection({
+      host,
+      getTerminal: () => terminal,
+      getVisualScale: () => visualScaleRef.current,
+      isMac: navigator.platform.startsWith("Mac"),
+      onPrimaryGestureStart: () => {
+        confirmedSelectionRef.current = "";
+        confirmedDomSelectionRef.current = "";
+        extendedSelectionRef.current = "";
+      },
+      onExtendedSelection: (selection) => {
+        extendedSelectionRef.current = selection;
+      },
+    });
     host.addEventListener("mousedown", onTerminalPointer, true);
     host.addEventListener("mousemove", onTerminalPointer, true);
     host.addEventListener("mouseup", onTerminalPointer, true);
@@ -281,13 +433,19 @@ export default function TerminalView({
     return () => {
       setTerminalContextMenu(null);
       hoveredLinkRef.current = null;
+      removeMouseTrackingSelection();
       host.removeEventListener("mousedown", onTerminalPointer, true);
       host.removeEventListener("mousemove", onTerminalPointer, true);
       host.removeEventListener("mouseup", onTerminalPointer, true);
       host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onTerminalContextMenu, true);
+      host.ownerDocument.removeEventListener("selectionchange", onDocumentSelectionChange);
       linkProviderDisposable.dispose();
+      selectionDisposable.dispose();
       osc52Disposable.dispose();
+      confirmedSelectionRef.current = "";
+      confirmedDomSelectionRef.current = "";
+      extendedSelectionRef.current = "";
       observer.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
@@ -303,7 +461,7 @@ export default function TerminalView({
       terminal.dispose();
       termRef.current = null;
     };
-  }, [sessionName]);
+  }, [copyTerminalTextWithFeedback, sessionName]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -357,12 +515,16 @@ export default function TerminalView({
     const dataDisposable = terminal.onData((data) => {
       attachment.write(data);
     });
+    const binaryDisposable = terminal.onBinary((data) => {
+      attachment.write(data);
+    });
     const proposed = proposedTerminalDimensions(fit, terminal);
     attachment.resize(proposed.cols, proposed.rows);
     terminal.focus();
 
     return () => {
       dataDisposable.dispose();
+      binaryDisposable.dispose();
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
@@ -372,7 +534,15 @@ export default function TerminalView({
     const host = hostRef.current;
     if (!host || !active) return;
     let cancelled = false;
+    copyOperationGenerationRef.current += 1;
+    pasteOperationGenerationRef.current += 1;
 
+    const isCurrentOperation = (
+      operation: number,
+      attachment: ActiveAttachment | null,
+    ) => !cancelled
+      && pasteOperationGenerationRef.current === operation
+      && attachmentRef.current === attachment;
     const filesForEvent = (event: ClipboardEvent | DragEvent) => terminalPasteFiles(
       "clipboardData" in event ? event.clipboardData : event.dataTransfer,
     );
@@ -386,13 +556,22 @@ export default function TerminalView({
       return files;
     };
 
-    const uploadAndPaste = async (files: ReturnType<typeof terminalPasteFiles>) => {
+    const uploadAndPaste = async (
+      files: ReturnType<typeof terminalPasteFiles>,
+      operation = ++pasteOperationGenerationRef.current,
+      initiatingAttachment = attachmentRef.current,
+      feedbackSequence = ++clipboardOperationSequenceRef.current,
+    ) => {
       if (files.some(({ file }) => file.size > MAX_TERMINAL_PASTE_FILE_BYTES)) {
-        if (!cancelled) setPasteError("Images are limited to 10 MB.");
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          reportClipboardFailure(feedbackSequence, "Images are limited to 10 MB.");
+        }
         return;
       }
-      if (!api || !attachmentRef.current) {
-        if (!cancelled) setPasteError("Image paste is unavailable. Reconnect and try again.");
+      if (!api || !initiatingAttachment) {
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          reportClipboardFailure(feedbackSequence, "Image paste is unavailable. Reconnect and try again.");
+        }
         return;
       }
       try {
@@ -415,21 +594,30 @@ export default function TerminalView({
           }
           return response.terminalPath;
         }));
-        if (paths.length === 0 || cancelled) return;
+        if (paths.length === 0 || !isCurrentOperation(operation, initiatingAttachment)) return;
         const payload = bracketTerminalPaths(paths);
         if (payload === "\x1b[200~\x1b[201~") throw new Error("invalid terminal paste paths");
-        attachmentRef.current?.write(payload);
-        setPasteError(null);
+        initiatingAttachment.write(payload);
+        reportClipboardSuccess(feedbackSequence);
       } catch (err: unknown) {
-        console.warn("[terminal] image paste failed:", err instanceof Error ? err.message : String(err));
-        if (!cancelled) setPasteError("Image paste failed. Try again.");
+        console.warn("[terminal] image paste failed", {
+          category: err instanceof DOMException ? err.name : "terminal-paste-error",
+        });
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          reportClipboardFailure(feedbackSequence, "Image paste failed. Try again.");
+        }
       }
     };
 
     const pasteFromClipboard = async () => {
+      const operation = ++pasteOperationGenerationRef.current;
+      const feedbackSequence = ++clipboardOperationSequenceRef.current;
+      const initiatingAttachment = attachmentRef.current;
       const clipboard = navigator.clipboard;
       if (!clipboard) {
-        if (!cancelled) setPasteError("Clipboard paste is unavailable. Try again.");
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          reportClipboardFailure(feedbackSequence, "Clipboard paste is unavailable. Try again.");
+        }
         return;
       }
       const clipboardWithOptionalRead = clipboard as Clipboard & {
@@ -439,7 +627,8 @@ export default function TerminalView({
         try {
           const imageFiles = await readTerminalClipboardFiles(clipboardWithOptionalRead);
           if (imageFiles.length > 0) {
-            await uploadAndPaste(imageFiles);
+            if (!isCurrentOperation(operation, initiatingAttachment)) return;
+            await uploadAndPaste(imageFiles, operation, initiatingAttachment, feedbackSequence);
             return;
           }
         } catch (error: unknown) {
@@ -449,19 +638,25 @@ export default function TerminalView({
         }
       }
       if (!clipboard.readText) {
-        if (!cancelled) setPasteError("Clipboard paste is unavailable. Try again.");
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          reportClipboardFailure(feedbackSequence, "Clipboard paste is unavailable. Try again.");
+        }
         return;
       }
       try {
         const text = await clipboard.readText();
-        if (cancelled || text.length === 0) return;
-        termRef.current?.paste(text);
-        setPasteError(null);
+        if (!isCurrentOperation(operation, initiatingAttachment) || text.length === 0) return;
+        const terminal = termRef.current;
+        if (!terminal) return;
+        terminal.paste(text);
+        reportClipboardSuccess(feedbackSequence);
       } catch (error: unknown) {
         console.warn("[terminal] clipboard text read unavailable", {
           category: error instanceof DOMException ? error.name : "clipboard-error",
         });
-        if (!cancelled) setPasteError("Clipboard paste failed. Try again.");
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          reportClipboardFailure(feedbackSequence, "Clipboard paste failed. Try again.");
+        }
       }
     };
     pasteClipboardRef.current = pasteFromClipboard;
@@ -484,6 +679,8 @@ export default function TerminalView({
     host.addEventListener("drop", onDrop, { capture: true });
     return () => {
       cancelled = true;
+      copyOperationGenerationRef.current += 1;
+      pasteOperationGenerationRef.current += 1;
       if (pasteClipboardRef.current === pasteFromClipboard) {
         pasteClipboardRef.current = async () => undefined;
       }
@@ -492,7 +689,7 @@ export default function TerminalView({
       host.removeEventListener("dragover", onDrag, { capture: true });
       host.removeEventListener("drop", onDrop, { capture: true });
     };
-  }, [active, api, sessionName]);
+  }, [active, api, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
     if (leaseRevoked) {
@@ -515,6 +712,7 @@ export default function TerminalView({
     if (socketState === "connection-lost") return { text: "Connection lost. Reconnecting…", action: null };
     return null;
   })();
+  const clipboardError = clipboardFeedback?.message ?? null;
 
   return (
     <div
@@ -528,10 +726,10 @@ export default function TerminalView({
         data-terminal-viewport
         data-selectable
       />
-      {pasteError ? (
+      {clipboardError ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-3" aria-live="polite">
           <span className="rounded-md px-3 py-1.5 text-xs" style={{ background: "var(--danger-muted)", color: "var(--danger)" }}>
-            {pasteError}
+            {clipboardError}
           </span>
         </div>
       ) : null}
@@ -552,8 +750,8 @@ export default function TerminalView({
         menu={terminalContextMenu}
         onClose={closeTerminalContextMenu}
         onOpen={openDesktopTerminalLink}
-        onCopy={copyDesktopTerminalLink}
-        onCopySelection={copyDesktopTerminalText}
+        onCopy={(link) => copyTerminalTextWithFeedback(link.url)}
+        onCopySelection={copyTerminalTextWithFeedback}
         onSelectAll={() => termRef.current?.selectAll()}
       />
     </div>
