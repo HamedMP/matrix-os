@@ -13,6 +13,7 @@ import {
   type CanonicalProviderDriverKind,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { AiTokenUsageSchema } from "../ai-analytics.js";
 
 const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 
@@ -80,6 +81,8 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("run.completed"),
     outcome: z.enum(["completed", "failed", "aborted"]),
     error: CanonicalChatSafeErrorSchema.optional(),
+    provider: SafeProviderRefSchema.optional(),
+    tokenUsage: AiTokenUsageSchema.optional(),
   }).strict(),
 ]);
 

@@ -110,6 +110,7 @@ describe("CanonicalChatOrchestrator", () => {
       primaryWorkspaceRoot: "/safe/project",
       projectSlug: "matrix-os",
     }));
+    const onAiGeneration = vi.fn();
     const roots: ChatExecutionRootResolver = { resolve, revalidate };
     const sawCommittedAdmission = vi.fn();
     const provider = adapter(async function* (input) {
@@ -119,7 +120,16 @@ describe("CanonicalChatOrchestrator", () => {
       yield { type: "state.updated", state: { sessionId: "native_session" } };
       yield { type: "assistant.delta", delta: "hello" };
       yield { type: "assistant.delta", delta: " world" };
-      yield { type: "run.completed", outcome: "completed" };
+      yield {
+        type: "run.completed",
+        outcome: "completed",
+        tokenUsage: {
+          inputTokens: 120,
+          outputTokens: 36,
+          cachedInputTokens: 40,
+          reasoningOutputTokens: 12,
+        },
+      };
     });
     const orchestrator = new CanonicalChatOrchestrator({
       repository,
@@ -127,6 +137,7 @@ describe("CanonicalChatOrchestrator", () => {
       adapters: new CanonicalChatProviderRegistry([provider]),
       executionRoots: roots,
       now: () => new Date("2026-08-26T00:00:00.000Z"),
+      onAiGeneration,
     });
 
     const admitted = await orchestrator.admitTurn(principal, owner, "chat_orchestrated", {
@@ -153,6 +164,21 @@ describe("CanonicalChatOrchestrator", () => {
         ["user", "committed", [{ type: "text", text: "hello" }]],
         ["assistant", "committed", [{ type: "text", text: "hello world" }]],
       ]);
+    expect(onAiGeneration).toHaveBeenCalledOnce();
+    expect(onAiGeneration).toHaveBeenCalledWith({
+      traceId: admitted.run.id,
+      distinctId: owner.ownerId,
+      provider: "openai",
+      harness: "codex",
+      model: "gpt-5.6-sol",
+      latencyMs: 0,
+      tokensIn: 120,
+      tokensOut: 36,
+      cachedInputTokens: 40,
+      reasoningOutputTokens: 12,
+      responseCharacterCount: 11,
+      productEvent: "gateway_chat_response_completed",
+    });
     expect(snapshot?.runs[0]).toMatchObject({
       status: "completed",
       outcome: "completed",

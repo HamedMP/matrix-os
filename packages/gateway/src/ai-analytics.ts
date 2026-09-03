@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { z } from "zod/v4";
 
 /**
  * PostHog LLM analytics: manual `$ai_generation` events captured once per
- * completed kernel query. PostHog auto-assembles traces from events sharing
- * `$ai_trace_id` (the Agent SDK session id).
+ * completed AI run. PostHog auto-assembles traces from events sharing
+ * `$ai_trace_id` (the canonical Run or Agent SDK session id).
  *
  * Privacy: `$ai_input` and `$ai_output_choices` are intentionally never sent.
  * Conversation content stays on the user's VPS; only model, token counts,
@@ -11,6 +12,15 @@ import { randomUUID } from "node:crypto";
  */
 
 export const AI_GENERATION_EVENT = "$ai_generation";
+
+export const AiTokenUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  cachedInputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  reasoningOutputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+}).strict();
+
+export type AiTokenUsage = z.infer<typeof AiTokenUsageSchema>;
 
 type EnvSource = Record<string, string | undefined>;
 
@@ -29,6 +39,14 @@ export interface AiGenerationInput {
   latencyMs: number;
   tokensIn?: number;
   tokensOut?: number;
+  cachedInputTokens?: number;
+  reasoningOutputTokens?: number;
+  distinctId?: string;
+  provider?: string;
+  harness?: string;
+  responseCharacterCount?: number;
+  /** Optional product-analytics companion emitted for canonical Chat runs. */
+  productEvent?: "gateway_chat_response_completed";
   /** Present when the query failed. Only the error category is captured. */
   error?: unknown;
 }
@@ -82,22 +100,49 @@ export function createAiGenerationRecorder(
     try {
       const isError = input.error !== undefined;
       const result = options.capture(AI_GENERATION_EVENT, {
-        distinctId,
+        distinctId: input.distinctId ?? distinctId,
         properties: {
           $ai_trace_id: sanitizeAiTraceId(input.traceId),
-          $ai_provider: "anthropic",
+          $ai_provider: input.provider ?? "anthropic",
           $ai_model: input.model,
           $ai_latency: input.latencyMs / 1000,
           $ai_input_tokens: input.tokensIn,
           $ai_output_tokens: input.tokensOut,
+          cached_input_token_count: input.cachedInputTokens,
+          reasoning_output_token_count: input.reasoningOutputTokens,
           $ai_is_error: isError,
           $ai_error: isError ? categorizeAiError(input.error) : undefined,
+          harness: input.harness,
+          response_character_count: input.responseCharacterCount,
         },
       });
       if (isPromiseLike(result)) {
         result.then(undefined, (err: unknown) => {
           logger.warn(`[ai-analytics] failed to capture generation: ${categorizeAiError(err)}`);
         });
+      }
+      if (input.productEvent) {
+        const productResult = options.capture(input.productEvent, {
+          distinctId: input.distinctId ?? distinctId,
+          properties: {
+            trace_id: sanitizeAiTraceId(input.traceId),
+            model_provider: input.provider ?? "anthropic",
+            model: input.model,
+            latency_ms: input.latencyMs,
+            input_token_count: input.tokensIn,
+            output_token_count: input.tokensOut,
+            cached_input_token_count: input.cachedInputTokens,
+            reasoning_output_token_count: input.reasoningOutputTokens,
+            is_error: isError,
+            harness: input.harness,
+            response_character_count: input.responseCharacterCount,
+          },
+        });
+        if (isPromiseLike(productResult)) {
+          productResult.then(undefined, (err: unknown) => {
+            logger.warn(`[ai-analytics] failed to capture product event: ${categorizeAiError(err)}`);
+          });
+        }
       }
     } catch (err: unknown) {
       // Observability must never break dispatch. Log the error kind only.

@@ -47,6 +47,8 @@ export async function startCanonicalProjectChat({
     selection: modelSelection,
     interactionMode: selection.interactionMode,
     permissionMode: selection.permissionMode,
+  }, {
+    chatScope: "project",
   });
   return { chatId: admitted.record.chat.id, title };
 }

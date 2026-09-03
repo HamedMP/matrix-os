@@ -96,10 +96,18 @@ export function createKernelChatProviderAdapter(options: {
         }));
         activeTool = null;
       } else if (event.type === "result") {
+        const completionMetadata = {
+          ...(event.data.provider ? { provider: event.data.provider } : {}),
+          tokenUsage: {
+            inputTokens: event.data.tokensIn,
+            outputTokens: event.data.tokensOut,
+          },
+        };
         if ((event.data.errors?.length ?? 0) > 0 || isKernelResultFailureText(event.data.result)) {
           pushTerminal({
             type: "run.completed",
             outcome: "failed",
+            ...completionMetadata,
             error: {
               code: "run_failed",
               safeMessage: "The selected provider could not complete this Run.",
@@ -108,7 +116,7 @@ export function createKernelChatProviderAdapter(options: {
             },
           });
         } else {
-          pushTerminal({ type: "run.completed", outcome: "completed" });
+          pushTerminal({ type: "run.completed", outcome: "completed", ...completionMetadata });
         }
       } else if (event.type === "aborted") {
         pushTerminal({ type: "run.completed", outcome: "aborted" });
@@ -130,7 +138,11 @@ export function createKernelChatProviderAdapter(options: {
       input.prompt,
       resumeState?.sessionId,
       onEvent,
-      undefined,
+      {
+        senderId: input.owner.ownerId,
+        chatId: input.chatId,
+        suppressAiGeneration: true,
+      },
       controller,
       {
         model,

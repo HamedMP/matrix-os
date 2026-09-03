@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
 import {
@@ -11,8 +11,10 @@ import {
   InvalidRequestPrincipalError,
   JWT_CLAIMS_CONTEXT_KEY,
   MissingRequestPrincipalError,
+  SAFE_PRINCIPAL_USER_ID,
   markAuthContextReady,
   requireRequestPrincipal,
+  setPlatformVerifiedPrincipal,
 } from "./request-principal.js";
 
 export { AUTH_CONTEXT_READY_CONTEXT_KEY, JWT_CLAIMS_CONTEXT_KEY, markAuthContextReady };
@@ -127,6 +129,14 @@ function timingSafeCompare(a: string, b: string): boolean {
   bBuf.copy(paddedB);
   const equal = timingSafeEqual(paddedA, paddedB);
   return aBuf.length === bBuf.length && equal;
+}
+
+function readPlatformVerifiedUserId(c: Context, token: string): string | undefined {
+  const userId = c.req.header("x-platform-user-id");
+  const proof = c.req.header("x-platform-verified");
+  if (!userId || !proof || !SAFE_PRINCIPAL_USER_ID.test(userId)) return undefined;
+  const expected = createHmac("sha256", token).update(userId).digest("hex");
+  return timingSafeCompare(proof, expected) ? userId : undefined;
 }
 
 const rateLimiter = createRateLimiter({
@@ -327,7 +337,13 @@ export function authMiddleware(
     const legacyQueryOk =
       token && isWsUpgrade && queryToken && timingSafeCompare(queryToken, token);
 
-    if (legacyHeaderOk || legacyQueryOk) {
+    if (legacyHeaderOk) {
+      const platformUserId = readPlatformVerifiedUserId(c, token);
+      if (platformUserId) setPlatformVerifiedPrincipal(c, platformUserId);
+      return nextWithReady(c, next);
+    }
+
+    if (legacyQueryOk) {
       return nextWithReady(c, next);
     }
 

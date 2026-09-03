@@ -444,6 +444,7 @@ describe("Codex app-server control runtime", () => {
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-final-item', type: 'agentMessage', text: '', phase: 'final_answer' } } }));",
       "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-final-item', delta: 'The repository is ready.' } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-final-item', type: 'agentMessage', text: 'The repository is ready.', phase: 'final_answer' } } }));",
+      "    console.log(JSON.stringify({ method: 'thread/tokenUsage/updated', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', tokenUsage: { total: { inputTokens: 120, cachedInputTokens: 40, outputTokens: 36, reasoningOutputTokens: 12, totalTokens: 156 }, last: { inputTokens: 120, cachedInputTokens: 40, outputTokens: 36, reasoningOutputTokens: 12, totalTokens: 156 }, modelContextWindow: 200000 } } }));",
       "    console.log(JSON.stringify({ method: 'turn/completed', params: { threadId: 'native-thread-items', turn: { id: 'native-turn-items', status: 'completed', items: [] } } }));",
       "  }",
       "}",
@@ -469,11 +470,18 @@ describe("Codex app-server control runtime", () => {
       expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output|secret-mcp-token|private result/);
 
       let sequence = 0;
-      const events = transcript.trim().split("\n").flatMap((line) => parseCodexExecJsonLine(line, {
+      const parsedTranscript = transcript.trim().split("\n").map((line) => parseCodexExecJsonLine(line, {
         threadId: "thread_matrix_1",
         now: () => new Date("2026-08-21T10:00:00.000Z"),
         nextEventId: () => `evt_${++sequence}`,
-      }).events);
+      }));
+      expect(parsedTranscript.at(-1)?.tokenUsage).toEqual({
+        inputTokens: 120,
+        outputTokens: 36,
+        cachedInputTokens: 40,
+        reasoningOutputTokens: 12,
+      });
+      const events = parsedTranscript.flatMap((parsed) => parsed.events);
       expect(events.map((event) => event.type)).toEqual([
         "assistant.text.delta",
         "assistant.text.completed",

@@ -75,6 +75,65 @@ describe("createAiGenerationRecorder", () => {
     expect(props.$ai_error).toBeUndefined();
   });
 
+  it("captures canonical Chat completion as both LLM observability and a Recent events product event", () => {
+    const { calls, capture } = makeCapture();
+    const record = createAiGenerationRecorder({ capture, env: {} });
+
+    record({
+      traceId: "run-canonical-1",
+      distinctId: "user_canonical_1",
+      provider: "openai",
+      harness: "codex",
+      model: "gpt-5.6-sol",
+      latencyMs: 1_250,
+      tokensIn: 120,
+      tokensOut: 36,
+      cachedInputTokens: 40,
+      reasoningOutputTokens: 12,
+      responseCharacterCount: 480,
+      productEvent: "gateway_chat_response_completed",
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      event: "$ai_generation",
+      options: {
+        distinctId: "user_canonical_1",
+        properties: expect.objectContaining({
+          $ai_trace_id: "run-canonical-1",
+          $ai_provider: "openai",
+          $ai_model: "gpt-5.6-sol",
+          $ai_input_tokens: 120,
+          $ai_output_tokens: 36,
+          cached_input_token_count: 40,
+          reasoning_output_token_count: 12,
+          $ai_latency: 1.25,
+          harness: "codex",
+          response_character_count: 480,
+        }),
+      },
+    });
+    expect(calls[1]).toEqual({
+      event: "gateway_chat_response_completed",
+      options: {
+        distinctId: "user_canonical_1",
+        properties: {
+          trace_id: "run-canonical-1",
+          model_provider: "openai",
+          model: "gpt-5.6-sol",
+          latency_ms: 1250,
+          input_token_count: 120,
+          output_token_count: 36,
+          cached_input_token_count: 40,
+          reasoning_output_token_count: 12,
+          is_error: false,
+          harness: "codex",
+          response_character_count: 480,
+        },
+      },
+    });
+  });
+
   it("never sends conversation content properties", () => {
     const { calls, capture } = makeCapture();
     const record = createAiGenerationRecorder({ capture, env: {} });
@@ -227,6 +286,26 @@ describe("dispatcher $ai_generation wiring", () => {
     expect(input.tokensOut).toBe(36);
     expect(input.latencyMs).toBeGreaterThanOrEqual(0);
     expect(input.error).toBeUndefined();
+  });
+
+  it("does not double-capture a canonical Chat kernel dispatch", async () => {
+    const onAiGeneration = vi.fn();
+    const dispatcher = createDispatcher({
+      homePath,
+      model: "claude-opus-4-6",
+      spawnFn: usageSpawn(),
+      maxConcurrency: 1,
+      onAiGeneration,
+    });
+
+    await dispatcher.dispatch(
+      "private canonical prompt",
+      undefined,
+      () => {},
+      { senderId: "owner_1", chatId: "chat_1", suppressAiGeneration: true },
+    );
+
+    expect(onAiGeneration).not.toHaveBeenCalled();
   });
 
   it("records an errored generation when the kernel run fails", async () => {

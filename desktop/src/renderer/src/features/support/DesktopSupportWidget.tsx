@@ -2,11 +2,16 @@ import "posthog-js/dist/conversations";
 import posthog from "posthog-js/dist/module.no-external";
 import {
   buildSupportChatProperties,
+  SupportIdentityResponseSchema,
   type SupportChatProperties,
 } from "@matrix-os/contracts";
-import { DESKTOP_ANALYTICS_EVENT, isDesktopAnalyticsName, type DesktopAnalyticsDetail } from "../../lib/desktop-analytics";
+import {
+  DESKTOP_ANALYTICS_EVENT,
+  DesktopAnalyticsDetailSchema,
+  type DesktopAnalyticsDetail,
+} from "../../lib/desktop-analytics";
 import type { ApiClient } from "../../lib/api";
-import { invoke } from "../../lib/operator";
+import { invoke, onEvent } from "../../lib/operator";
 import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
@@ -22,11 +27,14 @@ let openSupportPromise: Promise<boolean> | null = null;
 let supportLifecycleGeneration = 0;
 let cancelPendingElementWait: (() => void) | null = null;
 let supportOverlayHeld = false;
+let supportPanelTracked = false;
+let applicationOpenTracked = false;
 
 const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
 const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
 const POSTHOG_CLOSE_SELECTOR = 'button[aria-label="Close"]';
 const SUPPORT_OPEN_TIMEOUT_MS = 10_000;
+const QUIT_CAPTURE_TIMEOUT_MS = 500;
 
 function errorKind(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
@@ -89,6 +97,55 @@ function applyDesktopSupportProperties(properties: SupportChatProperties): void 
   posthog.setPersonProperties(properties);
 }
 
+function captureActive(
+  detail: DesktopAnalyticsDetail,
+): ReturnType<typeof posthog.capture> {
+  if (!initialized || activeIdentity === null) return;
+  try {
+    const properties = {
+      ...("appKind" in detail && detail.appKind
+        ? { app_kind: detail.appKind }
+        : {}),
+      ...(detail.name === "desktop_launcher_toggled" ? { open: detail.open } : {}),
+      ...(detail.name === "desktop_support_send_failed"
+        ? { failure_kind: detail.failureKind }
+        : {}),
+      ...("chatScope" in detail ? { chat_scope: detail.chatScope } : {}),
+      ...("hasAttachments" in detail ? { has_attachments: detail.hasAttachments } : {}),
+      ...("harness" in detail ? { harness: detail.harness } : {}),
+      ...("modelProvider" in detail ? { model_provider: detail.modelProvider } : {}),
+      ...("model" in detail ? { model: detail.model } : {}),
+      ...("responseCharacterCount" in detail
+        ? { response_character_count: detail.responseCharacterCount }
+        : {}),
+      ...(detail.name === "desktop_chat_message_send_failed"
+        ? { failure_kind: detail.failureKind }
+        : {}),
+      matrix_client: "desktop",
+    };
+    return posthog.capture(detail.name, properties);
+  } catch (error: unknown) {
+    console.warn("[desktop-support] Analytics capture unavailable:", errorKind(error));
+  }
+}
+
+async function sendCapturedQuitEvent(payload: NonNullable<ReturnType<typeof posthog.capture>>): Promise<void> {
+  if (!activeApiHost) return;
+  const response = await fetch(`${activeApiHost}/i/v0/e/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(QUIT_CAPTURE_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error("quit capture failed");
+}
+
+function closeTrackedSupportPanel(): void {
+  if (!supportPanelTracked) return;
+  supportPanelTracked = false;
+  captureActive({ name: "desktop_support_closed" });
+}
+
 function hidePostHogWidget(): void {
   try {
     posthog.conversations.hide();
@@ -117,6 +174,7 @@ function suppressDefaultLauncher(): void {
   if (allowPostHogWidget) {
     if (openSupportPromise || panel) return;
     allowPostHogWidget = false;
+    closeTrackedSupportPanel();
     releaseSupportOverlay();
   }
   if (!launcher && !panel) return;
@@ -235,7 +293,12 @@ export function openDesktopSupport(): Promise<boolean> {
         return false;
       })
       .then((opened) => {
-        if (!opened) releaseSupportOverlay();
+        if (opened) {
+          supportPanelTracked = true;
+          captureActive({ name: "desktop_support_opened" });
+        } else {
+          releaseSupportOverlay();
+        }
         return opened;
       })
       .finally(() => {
@@ -246,19 +309,32 @@ export function openDesktopSupport(): Promise<boolean> {
   return openSupportPromise;
 }
 
-function hideAndResetSupport(): void {
-  invalidatePendingSupportOpen();
-  allowPostHogWidget = false;
-  releaseSupportOverlay();
-  if (!initialized) return;
-  hidePostHogWidget();
+function clearActivePostHogIdentity(
+  eventName: "desktop_sign_out" | "desktop_identity_reset",
+): void {
   if (activeIdentity === null) return;
+  closeTrackedSupportPanel();
+  captureActive({ name: eventName });
+  try {
+    posthog.clearIdentity();
+  } catch (error: unknown) {
+    console.warn("[desktop-support] Failed to clear Conversations identity:", errorKind(error));
+  }
   try {
     posthog.reset();
   } catch (error: unknown) {
     console.warn("[desktop-support] Failed to reset PostHog identity:", errorKind(error));
   }
   activeIdentity = null;
+}
+
+function hideAndResetSupport(): void {
+  invalidatePendingSupportOpen();
+  allowPostHogWidget = false;
+  releaseSupportOverlay();
+  if (!initialized) return;
+  hidePostHogWidget();
+  clearActivePostHogIdentity("desktop_sign_out");
 }
 
 export default function DesktopSupportWidget() {
@@ -319,8 +395,7 @@ export default function DesktopSupportWidget() {
       allowPostHogWidget = false;
       hidePostHogWidget();
       try {
-        if (activeIdentity !== null) posthog.reset();
-        activeIdentity = null;
+        clearActivePostHogIdentity("desktop_identity_reset");
         posthog.set_config({ api_host: apiHost });
         activeApiHost = apiHost;
       } catch (error: unknown) {
@@ -345,16 +420,17 @@ export default function DesktopSupportWidget() {
       invalidatePendingSupportOpen();
       allowPostHogWidget = false;
       hidePostHogWidget();
-      try {
-        posthog.reset();
-      } catch (error: unknown) {
-        console.warn("[desktop-support] Failed to reset PostHog identity:", errorKind(error));
-      }
-      activeIdentity = null;
+      clearActivePostHogIdentity("desktop_identity_reset");
     }
     const generation = supportLifecycleGeneration;
 
-    void loadDesktopSupportProperties(api).then((properties) => {
+    void Promise.all([
+      loadDesktopSupportProperties(api),
+      invoke("support:get-identity", {}).catch((error: unknown) => {
+        console.warn("[desktop-support] Verified identity unavailable:", errorKind(error));
+        return { status: "unavailable" as const };
+      }),
+    ]).then(([properties, rawSupportIdentity]) => {
       if (cancelled || generation !== supportLifecycleGeneration) return;
       try {
         applyDesktopSupportProperties(properties);
@@ -364,6 +440,24 @@ export default function DesktopSupportWidget() {
           ...properties,
         });
         activeIdentity = identity;
+        const supportIdentity = SupportIdentityResponseSchema.safeParse(rawSupportIdentity);
+        if (
+          supportIdentity.success &&
+          supportIdentity.data.status === "verified" &&
+          supportIdentity.data.distinctId === userId
+        ) {
+          posthog.setIdentity(
+            supportIdentity.data.distinctId,
+            supportIdentity.data.identityHash,
+          );
+        } else {
+          captureActive({ name: "desktop_support_identity_unavailable" });
+        }
+        captureActive({ name: "desktop_auth_completed" });
+        if (!applicationOpenTracked) {
+          applicationOpenTracked = true;
+          captureActive({ name: "desktop_application_opened" });
+        }
         hidePostHogWidget();
         suppressDefaultLauncher();
       } catch (error: unknown) {
@@ -378,17 +472,47 @@ export default function DesktopSupportWidget() {
 
   useEffect(() => {
     const capture = (event: Event) => {
-      const detail = (event as CustomEvent<DesktopAnalyticsDetail>).detail;
-      if (!initialized || activeIdentity === null || !isDesktopAnalyticsName(detail?.name)) return;
-      posthog.capture(detail.name, {
-        ...(detail.appKind ? { app_kind: detail.appKind } : {}),
-        ...(typeof detail.open === "boolean" ? { open: detail.open } : {}),
-        matrix_client: "desktop",
-      });
+      const parsed = DesktopAnalyticsDetailSchema.safeParse(
+        (event as CustomEvent<unknown>).detail,
+      );
+      if (!parsed.success) return;
+      captureActive(parsed.data);
     };
+    const removeMainAnalyticsListener = onEvent("analytics:capture", (detail) => {
+      captureActive(detail);
+    });
     window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
-    return () => window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    return () => {
+      removeMainAnalyticsListener();
+      window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    };
   }, []);
+
+  useEffect(() => onEvent("analytics:flush-requested", () => {
+    const flush = async () => {
+      if (initialized && activeIdentity !== null) {
+        const payload = captureActive({ name: "desktop_application_quit_requested" });
+        if (payload) {
+          try {
+            await sendCapturedQuitEvent(payload);
+          } catch (error: unknown) {
+            console.warn("[desktop-support] Quit analytics delivery unavailable:", errorKind(error));
+          }
+        }
+        try {
+          await posthog.shutdown();
+        } catch (error: unknown) {
+          console.warn("[desktop-support] PostHog shutdown unavailable:", errorKind(error));
+        }
+      }
+      try {
+        await invoke("analytics:flush-complete", {});
+      } catch (error: unknown) {
+        console.warn("[desktop-support] Analytics flush acknowledgement failed:", errorKind(error));
+      }
+    };
+    void flush();
+  }), []);
 
   useEffect(() => () => {
     invalidatePendingSupportOpen();

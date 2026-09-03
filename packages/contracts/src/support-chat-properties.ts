@@ -15,6 +15,30 @@ export const SupportChatPropertiesSchema = z.object({
 
 export type SupportChatProperties = z.infer<typeof SupportChatPropertiesSchema>;
 
+const SupportIdentityDistinctIdSchema = z
+  .string()
+  .min(6)
+  .max(256)
+  .regex(/^user_[A-Za-z0-9_-]+$/);
+
+const SupportIdentityHashSchema = z
+  .string()
+  .length(64)
+  .regex(/^[a-f0-9]{64}$/);
+
+export const SupportIdentityResponseSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("verified"),
+    distinctId: SupportIdentityDistinctIdSchema,
+    identityHash: SupportIdentityHashSchema,
+  }).strict(),
+  z.object({
+    status: z.literal("unavailable"),
+  }).strict(),
+]);
+
+export type SupportIdentityResponse = z.infer<typeof SupportIdentityResponseSchema>;
+
 export interface BuildSupportChatPropertiesInput {
   client: SupportChatProperties["matrix_client"];
   systemInfo?: unknown;

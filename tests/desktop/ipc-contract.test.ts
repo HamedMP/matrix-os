@@ -13,6 +13,8 @@ describe("IPC contract", () => {
       "auth:poll",
       "auth:status",
       "auth:sign-out",
+      "analytics:flush-complete",
+      "support:get-identity",
       "runtime:create-thread",
       "runtime:create-turn",
       "runtime:subscribe-thread-events",
@@ -118,6 +120,46 @@ describe("IPC contract", () => {
       platformHost: "https://app.matrix-os.com",
       authGeneration: 1,
     }).success).toBe(false);
+  });
+
+  it("returns only a verified Support identity proof over IPC", () => {
+    const response = INVOKE_CHANNELS["support:get-identity"].response;
+
+    expect(response.safeParse({
+      status: "verified",
+      distinctId: "user_2abcDEF",
+      identityHash: "ab".repeat(32),
+    }).success).toBe(true);
+    expect(response.safeParse({ status: "unavailable" }).success).toBe(true);
+    expect(response.safeParse({
+      status: "verified",
+      distinctId: "user_2abcDEF",
+      identityHash: "ab".repeat(32),
+      signingSecret: "must-not-cross-ipc",
+    }).success).toBe(false);
+  });
+
+  it("allows only privacy-safe Desktop analytics on main-to-renderer IPC", () => {
+    const schema = EVENT_CHANNELS["analytics:capture"];
+    expect(schema.safeParse({ name: "desktop_support_send_attempted" }).success).toBe(true);
+    expect(schema.safeParse({
+      name: "desktop_support_send_failed",
+      failureKind: "network",
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      name: "desktop_support_send_failed",
+      failureKind: "network",
+      error: "private upstream error",
+    }).success).toBe(false);
+  });
+
+  it("keeps the quit flush handshake payload-free", () => {
+    expect(INVOKE_CHANNELS["analytics:flush-complete"].request.safeParse({}).success).toBe(true);
+    expect(INVOKE_CHANNELS["analytics:flush-complete"].request.safeParse({ event: "private" }).success)
+      .toBe(false);
+    expect(EVENT_CHANNELS["analytics:flush-requested"].safeParse({}).success).toBe(true);
+    expect(EVENT_CHANNELS["analytics:flush-requested"].safeParse({ reason: "quit" }).success)
+      .toBe(false);
   });
 
   it("keeps Hermes setup IPC typed and credentials write-only", () => {

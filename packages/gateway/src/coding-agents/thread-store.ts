@@ -49,6 +49,7 @@ import {
   type CodingAgentProviderEventBatch,
   type CodingAgentProviderResumeState,
 } from "./provider-adapter.js";
+import type { AiTokenUsage } from "../ai-analytics.js";
 import { createCodingAgentTurnDispatcher } from "./turn-dispatcher.js";
 import {
   deriveThreadProjectionChanges,
@@ -169,6 +170,7 @@ type ThreadEventSink = (input: {
   ownerId: string;
   threadId: string;
   events: AgentThreadEvent[];
+  tokenUsage?: AiTokenUsage;
 }) => void;
 
 export interface CodingAgentThreadStoreOptions {
@@ -867,11 +869,16 @@ export function createCodingAgentThreadStore(
     return provider;
   }
 
-  function publish(ownerId: string, threadId: string, events: AgentThreadEvent[]): void {
+  function publish(
+    ownerId: string,
+    threadId: string,
+    events: AgentThreadEvent[],
+    tokenUsage?: AiTokenUsage,
+  ): void {
     if (events.length === 0) return;
     for (const sink of eventSinks) {
       try {
-        sink({ ownerId, threadId, events });
+        sink({ ownerId, threadId, events, ...(tokenUsage ? { tokenUsage } : {}) });
       } catch (err: unknown) {
         logCodingAgentWarning("thread event sink failed", err);
       }
@@ -1761,7 +1768,14 @@ export function createCodingAgentThreadStore(
           },
         };
       });
-      publish(principal.userId, threadId, result.eventsToPublish);
+      publish(
+        principal.userId,
+        threadId,
+        result.eventsToPublish,
+        result.eventsToPublish.some((event) => event.type === "thread.completed")
+          ? parsed.tokenUsage
+          : undefined,
+      );
       return result.snapshot;
     },
     async abortThread(principal, threadId, clientRequestId) {

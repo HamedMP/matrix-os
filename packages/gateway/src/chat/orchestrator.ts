@@ -32,6 +32,7 @@ import {
   type CanonicalChatApprovalSubmissionResponse,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
+import type { AiGenerationInput } from "../ai-analytics.js";
 import type {
   ChatExecutionRootProvenance,
   ChatExecutionRootResolver,
@@ -87,6 +88,15 @@ interface ActiveRun {
 
 function id(prefix: "cturn_" | "run_" | "msg_" | "activity_" | "steer_"): string {
   return `${prefix}${randomUUID().replaceAll("-", "")}`;
+}
+
+function analyticsProvider(model: string, driverKind: CanonicalChatRun["driverKind"]): string {
+  const qualified = /^([a-z0-9_-]+)[:/]/i.exec(model)?.[1]?.toLowerCase();
+  if (qualified === "openai-codex") return "openai";
+  if (qualified) return qualified;
+  if (driverKind === "codex") return "openai";
+  if (driverKind === "claude_code" || driverKind === "kernel") return "anthropic";
+  return "unknown";
 }
 
 async function finalizeAcceptedSteer<T>(operation: () => Promise<T>): Promise<T> {
@@ -275,6 +285,7 @@ export class CanonicalChatOrchestrator {
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     executionRoots?: ChatExecutionRootResolver;
+    onAiGeneration?: (input: AiGenerationInput) => void;
     now?: () => Date;
     shutdownDrainMs?: number;
   }) {
@@ -884,6 +895,28 @@ export class CanonicalChatOrchestrator {
         outcome: terminal.outcome,
         completedAt,
       });
+      try {
+        this.options.onAiGeneration?.({
+          traceId: run.id,
+          distinctId: owner.ownerId,
+          provider: terminal.provider ?? analyticsProvider(run.selection.model, run.driverKind),
+          harness: run.driverKind,
+          model: run.selection.model,
+          latencyMs: Math.max(0, Date.parse(completedAt) - Date.parse(startedAt)),
+          tokensIn: terminal.tokenUsage?.inputTokens,
+          tokensOut: terminal.tokenUsage?.outputTokens,
+          cachedInputTokens: terminal.tokenUsage?.cachedInputTokens,
+          reasoningOutputTokens: terminal.tokenUsage?.reasoningOutputTokens,
+          responseCharacterCount: text.length,
+          productEvent: "gateway_chat_response_completed",
+          ...(terminal.outcome === "failed" ? { error: new Error("CanonicalProviderRunError") } : {}),
+        });
+      } catch (analyticsError: unknown) {
+        console.warn(
+          "[chat/orchestrator] AI generation capture failed:",
+          analyticsError instanceof Error ? analyticsError.name : "UnknownError",
+        );
+      }
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
       const wasAborted = controller.signal.aborted;

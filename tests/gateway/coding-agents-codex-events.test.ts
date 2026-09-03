@@ -53,6 +53,9 @@ describe("Codex structured event normalization", () => {
         "0.152.1": {
           schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
+        "0.153.0": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
       },
     });
     expect(codexExecContractStatus("codex-cli 0.144.1")).toEqual({
@@ -106,6 +109,10 @@ describe("Codex structured event normalization", () => {
     expect(codexExecContractStatus("codex-cli 0.152.1")).toEqual({
       status: "verified",
       version: "0.152.1",
+    });
+    expect(codexExecContractStatus("codex-cli 0.153.0")).toEqual({
+      status: "verified",
+      version: "0.153.0",
     });
     expect(codexExecContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",
@@ -319,7 +326,16 @@ describe("Codex structured event normalization", () => {
         output_tokens: 2,
         reasoning_output_tokens: 1,
       },
-    }), context)).toEqual({ events: [], outcome: "completed" });
+    }), context)).toEqual({
+      events: [],
+      outcome: "completed",
+      tokenUsage: {
+        inputTokens: 10,
+        cachedInputTokens: 4,
+        outputTokens: 2,
+        reasoningOutputTokens: 1,
+      },
+    });
 
     expect(parseCodexExecJsonLine(JSON.stringify({
       type: "turn.failed",
