@@ -92,6 +92,8 @@ const CanonicalChatWebSocketTokenSchema = z.string().min(1).max(4096);
 const DEFAULT_MAX_CHAT_EVENT_CONSUMERS = 16;
 const DEFAULT_MAX_SEEN_CHAT_EVENT_CURSORS = 500;
 const DEFAULT_MAX_RECONNECT_DELAY_MS = 10_000;
+const DEFAULT_CHAT_EVENT_HEARTBEAT_MS = 10_000;
+const MAX_CHAT_EVENT_HEARTBEAT_MS = 60_000;
 const MAX_CHAT_EVENT_FRAME_CHARS = 16 * 1024;
 
 export type CanonicalChatInvalidation =
@@ -125,6 +127,9 @@ export function createCanonicalChatEventSource(options: {
   maxReconnectDelayMs?: number;
   setTimeoutFn?: (callback: () => void, delay: number) => unknown;
   clearTimeoutFn?: (timer: unknown) => void;
+  heartbeatIntervalMs?: number;
+  setIntervalFn?: (callback: () => void, delay: number) => unknown;
+  clearIntervalFn?: (timer: unknown) => void;
 }): CanonicalChatEventSource {
   const consumers = new Set<(event: CanonicalChatInvalidation) => void>();
   const seenCursors = new Map<number, true>();
@@ -142,8 +147,17 @@ export function createCanonicalChatEventSource(options: {
   ));
   const setTimeoutFn = options.setTimeoutFn ?? ((callback, delay) => globalThis.setTimeout(callback, delay));
   const clearTimeoutFn = options.clearTimeoutFn ?? ((timer) => globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>));
+  const heartbeatIntervalMs = Math.max(1_000, Math.min(
+    options.heartbeatIntervalMs ?? DEFAULT_CHAT_EVENT_HEARTBEAT_MS,
+    MAX_CHAT_EVENT_HEARTBEAT_MS,
+  ));
+  const setIntervalFn = options.setIntervalFn ?? ((callback, delay) => globalThis.setInterval(callback, delay));
+  const clearIntervalFn = options.clearIntervalFn
+    ?? ((timer) => globalThis.clearInterval(timer as ReturnType<typeof setInterval>));
   let socket: DesktopCanonicalChatWebSocket | null = null;
   let reconnectTimer: unknown;
+  let heartbeatTimer: unknown;
+  let awaitingHeartbeatPong = false;
   let reconnectAttempt = 0;
   let lastCursor: number | undefined;
   let replayGap = false;
@@ -191,7 +205,14 @@ export function createCanonicalChatEventSource(options: {
     }
   };
 
-  const scheduleReconnect = () => {
+  const clearHeartbeat = () => {
+    awaitingHeartbeatPong = false;
+    if (heartbeatTimer === undefined) return;
+    clearIntervalFn(heartbeatTimer);
+    heartbeatTimer = undefined;
+  };
+
+  function scheduleReconnect() {
     if (disposed || reconnectTimer !== undefined) return;
     const delay = Math.min(250 * (2 ** reconnectAttempt), maxReconnectDelayMs);
     reconnectAttempt += 1;
@@ -199,6 +220,41 @@ export function createCanonicalChatEventSource(options: {
       reconnectTimer = undefined;
       void connect();
     }, delay);
+  }
+
+  const closeHeartbeatSocket = (target: DesktopCanonicalChatWebSocket) => {
+    clearHeartbeat();
+    try {
+      target.close();
+    } catch (error: unknown) {
+      console.warn(
+        "[canonical-chat] event socket close failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
+    scheduleReconnect();
+  };
+
+  const startHeartbeat = (target: DesktopCanonicalChatWebSocket) => {
+    clearHeartbeat();
+    heartbeatTimer = setIntervalFn(() => {
+      if (disposed || socket !== target || target.readyState !== 1) return;
+      if (awaitingHeartbeatPong) {
+        console.warn("[canonical-chat] event stream heartbeat timed out");
+        closeHeartbeatSocket(target);
+        return;
+      }
+      try {
+        target.send(JSON.stringify({ type: "ping" }));
+        awaitingHeartbeatPong = true;
+      } catch (error: unknown) {
+        console.warn(
+          "[canonical-chat] event stream heartbeat failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        closeHeartbeatSocket(target);
+      }
+    }, heartbeatIntervalMs);
   };
 
   const connect = async (): Promise<void> => {
@@ -250,9 +306,14 @@ export function createCanonicalChatEventSource(options: {
       closeSocket(nextSocket);
       return;
     }
+    let replayComplete = false;
+    let replaySawEvent = false;
+    replayGap = false;
     socket = nextSocket;
     nextSocket.onopen = () => {
-      if (socket === nextSocket) reconnectAttempt = 0;
+      if (socket !== nextSocket) return;
+      reconnectAttempt = 0;
+      startHeartbeat(nextSocket);
     };
     nextSocket.onmessage = (message) => {
       if (socket !== nextSocket || typeof message.data !== "string") return;
@@ -276,6 +337,7 @@ export function createCanonicalChatEventSource(options: {
         return;
       }
       const frame = parsed.data;
+      awaitingHeartbeatPong = false;
       if (frame.type === "chat.replay.gap") {
         replayGap = true;
         return;
@@ -283,16 +345,20 @@ export function createCanonicalChatEventSource(options: {
       if (frame.type === "chat.replay.end") {
         lastCursor = frame.nextCursor;
         reconnectAttempt = 0;
-        emit({
-          type: "chat.full_refresh",
-          ...(frame.nextCursor === undefined ? {} : { cursor: frame.nextCursor }),
-        });
+        if (replayGap || replaySawEvent) {
+          emit({
+            type: "chat.full_refresh",
+            ...(frame.nextCursor === undefined ? {} : { cursor: frame.nextCursor }),
+          });
+        }
+        replayComplete = true;
         replayGap = false;
         return;
       }
       if (frame.type === "chat.event") {
         lastCursor = frame.event.cursor;
         if (!rememberCursor(frame.event.cursor)) return;
+        if (!replayComplete) replaySawEvent = true;
         emit({
           type: "chat.changed",
           chatId: frame.event.chatId,
@@ -313,6 +379,7 @@ export function createCanonicalChatEventSource(options: {
     };
     nextSocket.onclose = () => {
       if (socket !== nextSocket) return;
+      clearHeartbeat();
       scheduleReconnect();
     };
   };
@@ -344,6 +411,7 @@ export function createCanonicalChatEventSource(options: {
         clearTimeoutFn(reconnectTimer);
         reconnectTimer = undefined;
       }
+      clearHeartbeat();
       const currentSocket = socket;
       socket = null;
       closeSocket(currentSocket);

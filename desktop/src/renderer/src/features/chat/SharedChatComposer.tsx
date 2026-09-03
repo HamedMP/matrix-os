@@ -38,6 +38,13 @@ function selectedOptionValue(
   return selection.options.find((option) => option.id === optionId)?.value;
 }
 
+function permissionModeLabel(mode: string): string {
+  return mode
+    .split("_")
+    .map((word) => `${word.charAt(0).toLocaleUpperCase()}${word.slice(1)}`)
+    .join(" ");
+}
+
 function CompactSelect({
   label,
   value,
@@ -62,7 +69,7 @@ function CompactSelect({
           aria-label={label}
           aria-haspopup="menu"
           aria-expanded={open}
-          className="flex h-8 max-w-[9rem] items-center gap-1.5 truncate rounded-lg px-2 text-sm capitalize outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="flex h-8 max-w-[9rem] items-center gap-1.5 truncate rounded-lg px-2 text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           style={{ color: "var(--text-secondary)" }}
           onKeyDown={(event) => {
             if (event.key === "Escape") setOpen(false);
@@ -410,6 +417,10 @@ export function SharedChatComposer({
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
+  const permissionModeOptions = (instance?.supports.permissionModes ?? []).map((mode) => ({
+    value: mode,
+    label: permissionModeLabel(mode),
+  }));
   const hasSecondaryControls = composerOptions.some((option) => option.kind === "enum" && (option.values?.length ?? 0) > 1)
     || (instance?.supports.permissionModes.length ?? 0) > 1;
   useEffect(() => {
@@ -548,7 +559,7 @@ export function SharedChatComposer({
                 <CompactSelect
                   label="Permission mode"
                   value={selection.permissionMode}
-                  options={(instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: mode.replace(/_/g, " ") }))}
+                  options={permissionModeOptions}
                   menuSide={menuSide}
                   onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
                 />
@@ -597,7 +608,7 @@ export function SharedChatComposer({
                         <CompactSelect
                           label="Permission mode"
                           value={selection.permissionMode}
-                          options={(instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: mode.replace(/_/g, " ") }))}
+                          options={permissionModeOptions}
                           menuSide={menuSide}
                           onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
                         />

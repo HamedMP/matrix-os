@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscript } from "../../desktop/src/renderer/src/components/conversation/transcript";
+import { MessageResponse } from "../../desktop/src/renderer/src/components/conversation/message";
 import type { ConversationTurnPresentation } from "../../desktop/src/renderer/src/components/conversation/presentation";
 import {
   adaptProjectLikeConversation,
@@ -23,6 +24,65 @@ describe("provider-neutral conversation transcript", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps code block Copy and Wrap actions alive while streamed markdown rerenders", async () => {
+    let finishCopy: (() => void) | undefined;
+    const copyText = vi.fn(() => new Promise<void>((resolve) => {
+      finishCopy = resolve;
+    }));
+    const firstMarkdown = "```sh\npwd && git status --short\n```";
+    const rendered = render(<MessageResponse copyText={copyText}>{firstMarkdown}</MessageResponse>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Wrap code block" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy code block" }));
+    rendered.rerender(
+      <MessageResponse copyText={copyText}>{`${firstMarkdown}\n\nStill working…`}</MessageResponse>,
+    );
+
+    expect(screen.getByRole("button", { name: "Disable code wrapping" })).toBeTruthy();
+    expect(screen.getByText("pwd && git status --short").closest("pre")?.className)
+      .toContain("whitespace-pre-wrap");
+    await act(async () => finishCopy?.());
+    expect(copyText).toHaveBeenCalledWith("pwd && git status --short");
+    expect(screen.getByRole("button", { name: "Copied code block" })).toBeTruthy();
+  });
+
+  it("contains an unwrapped long code line inside the shared Chat message width", () => {
+    const longLine = `const customer = { ${"accountIdentifier: 'matrix-os', ".repeat(20)} };`;
+    const markdown = `\`\`\`ts\n${longLine}\n\`\`\``;
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-long-code-line",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: false,
+      work: [],
+      final: {
+        kind: "message",
+        id: "message-long-code-line",
+        role: "assistant",
+        phase: "final",
+        markdown,
+        copyText: markdown,
+        timestamp: 2_000,
+      },
+    }];
+
+    const { container } = render(
+      <ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />,
+    );
+
+    const code = container.querySelector("pre code") as HTMLElement;
+    expect(code.textContent).toBe(longLine);
+    const codeBlock = code.closest("pre")?.parentElement as HTMLElement;
+    const assistantBubbleContent = code.closest('[data-slot="bubble-content"]') as HTMLElement;
+    expect(assistantBubbleContent.className).toContain("w-full");
+    expect(assistantBubbleContent.className).toContain("max-w-full");
+    expect(assistantBubbleContent.className).not.toContain("max-w-[64rem]");
+    expect(codeBlock.className).toContain("w-full");
+    expect(codeBlock.className).toContain("max-w-full");
+    expect(codeBlock.className).toContain("min-w-0");
+    expect(code.closest("pre")?.className).toContain("overflow-x-auto");
   });
 
   it("renders typed non-Hermes adapter output without importing a provider store", () => {

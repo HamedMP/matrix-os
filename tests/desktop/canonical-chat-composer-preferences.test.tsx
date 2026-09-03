@@ -75,7 +75,7 @@ describe("Canonical Chat composer preferences", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
 
     expect(useProviderPreferences.getState().composerSelections.codex_fixture).toEqual({
       model: "gpt-5.6-sol",
@@ -88,7 +88,7 @@ describe("Canonical Chat composer preferences", () => {
 
     await screen.findByRole("textbox", { name: "Start a chat" });
     expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
-    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
   });
 
   it("uses the last provider and model choice as the default for a new Chat", async () => {

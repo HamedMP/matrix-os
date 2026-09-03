@@ -142,6 +142,31 @@ describe("canonical Chat route controller", () => {
     expect(JSON.stringify(acknowledgeCompletion.mock.calls)).not.toContain("private tool status");
   });
 
+  it("keeps a rendered Chat ready while a full refresh runs in the background", async () => {
+    const events = eventHarness();
+    let resolveRefresh!: (value: { items: typeof globalRecord[] }) => void;
+    const refresh = new Promise<{ items: typeof globalRecord[] }>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const list = vi.fn(async () => ({ items: [globalRecord] }));
+    const sharedClient = client({ list });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+      eventSource: events.eventSource,
+    }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    list.mockImplementationOnce(() => refresh);
+
+    act(() => events.emit({ type: "chat.full_refresh", cursor: 2 }));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+
+    expect(result.current.status).toBe("ready");
+    await act(async () => resolveRefresh({ items: [globalRecord] }));
+  });
+
   it("refreshes only the selected Chat from the shared event source and acknowledges its exact completion", async () => {
     const events = eventHarness();
     const runningA = {

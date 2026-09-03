@@ -389,8 +389,9 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
 
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
-    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
+    expect(screen.getByRole("menuitemradio", { name: "Supervised" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
   });
 
   it("opens all Project Chat composer menus below the top composer", () => {

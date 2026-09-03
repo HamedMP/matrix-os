@@ -45,6 +45,7 @@ import { useCanonicalChatRouteController } from "./use-canonical-chat-route-cont
 import { useCanonicalComposerSelection } from "./use-canonical-composer-selection";
 import { useProviderSetup } from "./use-provider-setup";
 import { useCreateAppRequest } from "../../stores/create-app-request";
+import { useChatComposerDrafts } from "./use-chat-composer-drafts";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
@@ -117,10 +118,28 @@ export function CanonicalChatWorkspace({
     autoSelectFirst: false,
     eventSource,
   });
-  const [draft, setDraft] = useState("");
+  const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
+    initialView ?? (initialChatId ? "conversation" : "index"),
+  );
+  const routedComposerChatId = externalNavigation
+    ? initialChatId ?? controller.activeChatId
+    : controller.activeChatId ?? initialChatId;
+  const {
+    text: draft,
+    referenceTokens,
+    draftProjectId,
+    setText: setDraft,
+    setReferenceTokens,
+    setDraftProjectId,
+    prepareNewChatDraft,
+    removeChatDraft,
+  } = useChatComposerDrafts({
+    clientIdentity: client,
+    chatId: routedComposerChatId,
+    projectId,
+    conversation: globalView === "conversation",
+  });
   const [query, setQuery] = useState("");
-  const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
-  const [draftProjectId, setDraftProjectId] = useState<string | null>(projectId);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [composerAction, setComposerAction] = useState<"queue" | "edit" | null>(null);
   const [queuePendingAction, setQueuePendingAction] = useState<{
@@ -130,9 +149,6 @@ export function CanonicalChatWorkspace({
   const [optimisticQueuedTurns, setOptimisticQueuedTurns] = useState<CanonicalChatQueuedTurn[] | null>(null);
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
-  const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
-    initialView ?? (initialChatId ? "conversation" : "index"),
-  );
   const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
@@ -166,11 +182,10 @@ export function CanonicalChatWorkspace({
 
   useEffect(() => {
     if (!active || !createAppRequest) return;
-    setDraft(createAppRequest.prompt);
-    setDraftProjectId(projectId);
+    prepareNewChatDraft({ text: createAppRequest.prompt });
     setGlobalView("draft");
     clearCreateAppRequest(createAppRequest.id);
-  }, [active, clearCreateAppRequest, createAppRequest, projectId]);
+  }, [active, clearCreateAppRequest, createAppRequest, prepareNewChatDraft]);
 
   useLayoutEffect(() => {
     const workspace = workspaceRef.current;
@@ -499,7 +514,7 @@ export function CanonicalChatWorkspace({
     controller.startNewChat();
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
-    setDraftProjectId(projectId);
+    prepareNewChatDraft();
     setGlobalView("draft");
     setLocalComposerFocusRequestId((requestId) => requestId + 1);
   };
@@ -791,6 +806,7 @@ export function CanonicalChatWorkspace({
             setDeleting(true);
             void controller.deleteChat(deleteTarget.id).then((deleted) => {
               if (deleted) {
+                removeChatDraft(deleteTarget.id);
                 setDeleteTarget(null);
                 setDeleteError(null);
               } else {

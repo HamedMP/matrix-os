@@ -743,7 +743,7 @@ describe("ChatTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
 
     expect(useProviderPreferences.getState().composerSelections.hermes_default).toEqual({
       model: "provider-default",
