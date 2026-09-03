@@ -25,6 +25,7 @@ describe("DesktopTabGroup", () => {
   });
 
   it("keeps the non-interactive body of a full workspace tab draggable", () => {
+    const onRestore = vi.fn();
     render(
       <DesktopTab
         mode="full"
@@ -32,7 +33,7 @@ describe("DesktopTabGroup", () => {
         icon={<Monitor />}
         canClose
         onClick={vi.fn()}
-        onMinimize={vi.fn()}
+        onRestore={onRestore}
         onClose={vi.fn()}
       />,
     );
@@ -43,8 +44,10 @@ describe("DesktopTabGroup", () => {
     expect(tabBody?.classList.contains("no-drag")).toBe(false);
     expect(browserTab.tagName).toBe("BUTTON");
     expect(browserTab.classList.contains("no-drag")).toBe(true);
-    expect(screen.getByRole("button", { name: "Minimize Browser tab" }).classList.contains("no-drag")).toBe(true);
+    const restore = screen.getByRole("button", { name: "Restore Browser as window" });
+    expect(restore.classList.contains("no-drag")).toBe(true);
     expect(screen.getByRole("button", { name: "Close Browser" }).classList.contains("no-drag")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Minimize Browser tab" })).toBeNull();
   });
 
   it("gives every tab a left border and only the final tab a right border", () => {

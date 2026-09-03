@@ -175,6 +175,14 @@ describe("desktop release workflows", () => {
     expect(bundledPreloadDependencies).toHaveLength(1);
   });
 
+  it("hides the native macOS window controls without moving them off-screen", () => {
+    const main = readFileSync(join(root, "desktop/src/main/index.ts"), "utf8");
+
+    expect(main).toContain('if (process.platform === "darwin")');
+    expect(main).toContain("win.setWindowButtonVisibility(false)");
+    expect(main).not.toContain("trafficLightPosition:");
+  });
+
   it("emits one self-contained sandbox preload for the shell and native apps", () => {
     const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
     const preload = readFileSync(join(root, "desktop/src/preload/index.ts"), "utf8");

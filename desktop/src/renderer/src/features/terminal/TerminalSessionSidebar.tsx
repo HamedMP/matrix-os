@@ -1,5 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PinIcon, PinOffIcon, SquareTerminal, Trash2, X } from "@renderer/lib/hugeicons";
+import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PanelLeftCloseIcon, PinIcon, PinOffIcon, SquareTerminal, Trash2, X } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -44,6 +44,7 @@ export function TerminalSessionSidebar({
   renameDraft,
   renameError,
   onCreate,
+  onCollapse,
   onCreateAgent,
   onRefreshAgentStatuses,
   onSelect,
@@ -65,6 +66,7 @@ export function TerminalSessionSidebar({
   renameDraft: string;
   renameError: string | null;
   onCreate: () => void;
+  onCollapse: () => void;
   onCreateAgent: (option: TerminalAgentOption, action: TerminalAgentMenuAction) => void;
   onRefreshAgentStatuses: () => void;
   onSelect: (session: ShellSessionSummary) => void;
@@ -86,6 +88,17 @@ export function TerminalSessionSidebar({
             <h1 className="truncate text-base font-medium tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>Terminal</h1>
           </div>
           <div data-terminal-sidebar-header-actions className="no-drag flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              aria-label="Hide terminal tabs"
+              aria-controls="desktop-terminal-tabs-sidebar"
+              aria-expanded="true"
+              title="Hide terminal tabs"
+              className="flex size-9 shrink-0 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+              onClick={onCollapse}
+            >
+              <PanelLeftCloseIcon size={15} aria-hidden="true" />
+            </button>
             <DesktopTerminalThemePicker />
             <DesktopNewSessionControl
               disabled={disabled}
