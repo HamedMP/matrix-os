@@ -149,7 +149,15 @@ describe("CanonicalChatWorkspace send failures", () => {
     rejectQueue(new AppError("offline"));
 
     await waitFor(() => expect(editor.textContent).toBe("Keep this message if queueing fails"));
-    expect((await screen.findByRole("alert")).textContent).toBe(
+    const alert = await screen.findByRole("alert");
+    const detailCallsWhenErrorAppeared = vi.mocked(routeClient.getDetail).mock.calls.length;
+    await waitFor(() => {
+      expect(vi.mocked(routeClient.getDetail).mock.calls.length).toBeGreaterThan(
+        detailCallsWhenErrorAppeared,
+      );
+    });
+    expect(screen.getByRole("alert")).toBe(alert);
+    expect(screen.getByRole("alert").textContent).toBe(
       "The message could not be queued. Refresh and try again.",
     );
     warn.mockRestore();

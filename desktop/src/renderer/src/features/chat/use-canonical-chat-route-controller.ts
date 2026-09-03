@@ -79,7 +79,10 @@ export function useCanonicalChatRouteController({
     runId: string;
   } | null>(null);
 
-  const loadDetail = useCallback(async (chatId: string) => {
+  const loadDetail = useCallback(async (
+    chatId: string,
+    options: { background?: boolean } = {},
+  ) => {
     const sequence = ++detailRequestSequence.current;
     try {
       const loaded = await client.getDetail(chatId, { limit: 200 });
@@ -91,12 +94,12 @@ export function useCanonicalChatRouteController({
       }
       detailRef.current = loaded;
       setDetail(loaded);
-      setError(null);
+      if (!options.background) setError(null);
       return loaded;
     } catch (error: unknown) {
       console.warn("[canonical-chat] detail load failed:", diagnosticErrorKind(error));
       if (sequence !== detailRequestSequence.current) return null;
-      setError("Chat could not be loaded. Try again.");
+      if (!options.background) setError("Chat could not be loaded. Try again.");
       return null;
     }
   }, [client]);
@@ -110,7 +113,7 @@ export function useCanonicalChatRouteController({
         : await client.list({ projectId, limit: 100 });
       if (sequence !== listRequestSequence.current) return;
       setItems(page.items);
-      setError(null);
+      if (!options.background) setError(null);
       setStatus("ready");
       setActiveChatId((current) => {
         const next = current && page.items.some((record) => record.chat.id === current)
@@ -127,7 +130,7 @@ export function useCanonicalChatRouteController({
       console.warn("[canonical-chat] list load failed:", diagnosticErrorKind(error));
       if (sequence !== listRequestSequence.current) return;
       if (!options.background) setStatus("error");
-      setError("Chats could not be loaded. Try again.");
+      if (!options.background) setError("Chats could not be loaded. Try again.");
     }
   }, [autoSelectFirst, client, projectId]);
 
@@ -167,7 +170,7 @@ export function useCanonicalChatRouteController({
       do {
         detailRefreshPending = false;
         const selectedChatId = activeChatIdRef.current;
-        if (selectedChatId) await loadDetail(selectedChatId);
+        if (selectedChatId) await loadDetail(selectedChatId, { background: true });
       } while (current && detailRefreshPending);
       detailRefreshInFlight = false;
     };
@@ -284,7 +287,7 @@ export function useCanonicalChatRouteController({
     let consecutiveFailures = 0;
     const poll = (delay = ACTIVE_RUN_POLL_MS) => {
       timeout = window.setTimeout(async () => {
-        const loaded = await loadDetail(activeChatId);
+        const loaded = await loadDetail(activeChatId, { background: true });
         if (cancelled) return;
         if (!loaded) {
           consecutiveFailures += 1;
