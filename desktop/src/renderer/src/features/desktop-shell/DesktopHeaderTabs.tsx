@@ -16,7 +16,6 @@ export default function DesktopHeaderTabs() {
   const surfaces = useDesktopSurfaces((state) => state.surfaces);
   const activateSurface = useDesktopSurfaces((state) => state.activateSurface);
   const restoreAsWindow = useDesktopSurfaces((state) => state.restoreAsWindow);
-  const minimizeSurface = useDesktopSurfaces((state) => state.minimizeSurface);
   const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
   const showDesktop = useDesktopSurfaces((state) => state.showDesktop);
@@ -76,11 +75,6 @@ export default function DesktopHeaderTabs() {
       activeTabId={activeTabId}
       onActivate={activate}
       onRestore={restore}
-      onMinimize={(tabId) => {
-        minimizeSurface(tabId);
-        setWorkspaceView("desktop");
-        requestBackgroundRefresh();
-      }}
       onClose={close}
       workspaceView={workspaceView}
       onShowDesktop={focusDesktopOrShowDesktop}

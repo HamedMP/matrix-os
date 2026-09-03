@@ -452,18 +452,18 @@ describe("native desktop shell", () => {
     expect(terminalContent.getAttribute("data-visual-scale")).toBe("2");
   });
 
-  it("puts minimize and close controls inside each maximized tab", () => {
+  it("puts restore and close controls inside each maximized tab", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
 
-    expect(screen.getByRole("button", { name: "Minimize Terminal tab" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Close Terminal workspace" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Restore Terminal as window" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Restore Terminal as window" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close Terminal" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Minimize Terminal tab" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Minimize Terminal tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore Terminal as window" }));
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode)
-      .toBe("minimized");
+      .toBe("window");
     expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
   });
 
