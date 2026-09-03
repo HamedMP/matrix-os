@@ -45,6 +45,8 @@ export interface AiGenerationInput {
   provider?: string;
   harness?: string;
   responseCharacterCount?: number;
+  /** Optional product-analytics companion emitted for canonical Chat runs. */
+  productEvent?: "gateway_chat_response_completed";
   /** Present when the query failed. Only the error category is captured. */
   error?: unknown;
 }
@@ -118,6 +120,29 @@ export function createAiGenerationRecorder(
         result.then(undefined, (err: unknown) => {
           logger.warn(`[ai-analytics] failed to capture generation: ${categorizeAiError(err)}`);
         });
+      }
+      if (input.productEvent) {
+        const productResult = options.capture(input.productEvent, {
+          distinctId: input.distinctId ?? distinctId,
+          properties: {
+            trace_id: sanitizeAiTraceId(input.traceId),
+            model_provider: input.provider ?? "anthropic",
+            model: input.model,
+            latency_ms: input.latencyMs,
+            input_token_count: input.tokensIn,
+            output_token_count: input.tokensOut,
+            cached_input_token_count: input.cachedInputTokens,
+            reasoning_output_token_count: input.reasoningOutputTokens,
+            is_error: isError,
+            harness: input.harness,
+            response_character_count: input.responseCharacterCount,
+          },
+        });
+        if (isPromiseLike(productResult)) {
+          productResult.then(undefined, (err: unknown) => {
+            logger.warn(`[ai-analytics] failed to capture product event: ${categorizeAiError(err)}`);
+          });
+        }
       }
     } catch (err: unknown) {
       // Observability must never break dispatch. Log the error kind only.

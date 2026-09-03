@@ -177,6 +177,7 @@ describe("CanonicalChatOrchestrator", () => {
       cachedInputTokens: 40,
       reasoningOutputTokens: 12,
       responseCharacterCount: 11,
+      productEvent: "gateway_chat_response_completed",
     });
     expect(snapshot?.runs[0]).toMatchObject({
       status: "completed",

@@ -75,7 +75,7 @@ describe("createAiGenerationRecorder", () => {
     expect(props.$ai_error).toBeUndefined();
   });
 
-  it("captures canonical Chat route, cache, reasoning, response length, and owner identity", () => {
+  it("captures canonical Chat completion as both LLM observability and a Recent events product event", () => {
     const { calls, capture } = makeCapture();
     const record = createAiGenerationRecorder({ capture, env: {} });
 
@@ -91,9 +91,11 @@ describe("createAiGenerationRecorder", () => {
       cachedInputTokens: 40,
       reasoningOutputTokens: 12,
       responseCharacterCount: 480,
+      productEvent: "gateway_chat_response_completed",
     });
 
-    expect(calls).toEqual([{
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
       event: "$ai_generation",
       options: {
         distinctId: "user_canonical_1",
@@ -110,7 +112,26 @@ describe("createAiGenerationRecorder", () => {
           response_character_count: 480,
         }),
       },
-    }]);
+    });
+    expect(calls[1]).toEqual({
+      event: "gateway_chat_response_completed",
+      options: {
+        distinctId: "user_canonical_1",
+        properties: {
+          trace_id: "run-canonical-1",
+          model_provider: "openai",
+          model: "gpt-5.6-sol",
+          latency_ms: 1250,
+          input_token_count: 120,
+          output_token_count: 36,
+          cached_input_token_count: 40,
+          reasoning_output_token_count: 12,
+          is_error: false,
+          harness: "codex",
+          response_character_count: 480,
+        },
+      },
+    });
   });
 
   it("never sends conversation content properties", () => {

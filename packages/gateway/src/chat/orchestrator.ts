@@ -908,6 +908,7 @@ export class CanonicalChatOrchestrator {
           cachedInputTokens: terminal.tokenUsage?.cachedInputTokens,
           reasoningOutputTokens: terminal.tokenUsage?.reasoningOutputTokens,
           responseCharacterCount: text.length,
+          productEvent: "gateway_chat_response_completed",
           ...(terminal.outcome === "failed" ? { error: new Error("CanonicalProviderRunError") } : {}),
         });
       } catch (analyticsError: unknown) {
