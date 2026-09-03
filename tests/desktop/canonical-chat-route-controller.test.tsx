@@ -74,6 +74,74 @@ function eventHarness() {
 }
 
 describe("canonical Chat route controller", () => {
+  it("acknowledges a completed response with privacy-safe routing and character count", async () => {
+    const completedRecord = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, revision: 2, messageCount: 2 },
+      latestSuccessfulCompletion: {
+        runId: "run_response_analytics",
+        completedAt: "2026-08-26T00:01:00.000Z",
+        unacknowledged: true,
+      },
+    };
+    const completedRun = {
+      id: "run_response_analytics",
+      driverKind: "hermes" as const,
+      selection: { instanceId: "hermes_default", model: "anthropic:claude-opus-5" },
+    };
+    const assistantMessage = {
+      id: "msg_response_analytics",
+      chatId: globalRecord.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "committed" as const,
+      runId: completedRun.id,
+      parts: [
+        { type: "text" as const, text: "hello" },
+        { type: "status" as const, tone: "success" as const, label: "private tool status" },
+        { type: "text" as const, text: " world" },
+      ],
+      createdAt: "2026-08-26T00:01:00.000Z",
+    };
+    const acknowledgedRecord = {
+      ...completedRecord,
+      latestSuccessfulCompletion: {
+        ...completedRecord.latestSuccessfulCompletion,
+        unacknowledged: false,
+      },
+    };
+    const acknowledgeCompletion = vi.fn(async () => acknowledgedRecord);
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [completedRecord] })),
+      getDetail: vi.fn(async () => ({
+        ...detail,
+        record: completedRecord,
+        messages: [assistantMessage],
+        runs: [completedRun],
+      })),
+      acknowledgeCompletion,
+    });
+
+    renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+
+    await waitFor(() => expect(acknowledgeCompletion).toHaveBeenCalledWith(
+      globalRecord.chat.id,
+      completedRun.id,
+      {
+        chatScope: "global",
+        harness: "hermes",
+        model: "anthropic:claude-opus-5",
+        responseCharacterCount: 11,
+      },
+    ));
+    expect(JSON.stringify(acknowledgeCompletion.mock.calls)).not.toContain("private tool status");
+  });
+
   it("refreshes only the selected Chat from the shared event source and acknowledges its exact completion", async () => {
     const events = eventHarness();
     const runningA = {

@@ -38,7 +38,7 @@ describe("Desktop analytics allowlist", () => {
     }).success).toBe(false);
   });
 
-  it("accepts only coarse Chat send context", () => {
+  it("accepts privacy-safe Chat routing metadata and response length", () => {
     expect(DesktopAnalyticsDetailSchema.safeParse({
       name: "desktop_chat_message_send_attempted",
       chatScope: "project",
@@ -48,12 +48,23 @@ describe("Desktop analytics allowlist", () => {
       name: "desktop_chat_message_send_succeeded",
       chatScope: "global",
       hasAttachments: false,
+      harness: "codex",
+      modelProvider: "openai",
+      model: "gpt-5.6-sol",
     }).success).toBe(true);
     expect(DesktopAnalyticsDetailSchema.safeParse({
       name: "desktop_chat_message_send_failed",
       chatScope: "global",
       hasAttachments: false,
       failureKind: "network",
+    }).success).toBe(true);
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_chat_response_completed",
+      chatScope: "project",
+      harness: "hermes",
+      modelProvider: "anthropic",
+      model: "anthropic:claude-opus-5",
+      responseCharacterCount: 420,
     }).success).toBe(true);
     expect(DesktopAnalyticsDetailSchema.safeParse({
       name: "desktop_chat_message_send_failed",
@@ -63,6 +74,15 @@ describe("Desktop analytics allowlist", () => {
       message: "private prompt",
       chatId: "chat_private",
       model: "private-model",
+    }).success).toBe(false);
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_chat_response_completed",
+      chatScope: "global",
+      harness: "hermes",
+      modelProvider: "anthropic",
+      model: "anthropic:claude-opus-5",
+      responseCharacterCount: 5,
+      response: "private response",
     }).success).toBe(false);
   });
 

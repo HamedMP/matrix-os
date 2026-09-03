@@ -64,6 +64,12 @@ import {
   trackDesktopEvent,
   type DesktopAnalyticsDetail,
 } from "./desktop-analytics";
+import {
+  desktopChatModelProvider,
+  type CanonicalChatResponseAnalytics,
+} from "./canonical-chat-analytics";
+
+export type { CanonicalChatResponseAnalytics } from "./canonical-chat-analytics";
 
 const CanonicalChatListInputSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
@@ -357,7 +363,11 @@ export interface CanonicalChatClient {
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
   updateUserState(chatId: string, input: CanonicalUpdateChatUserStateRequest): Promise<CanonicalChatRecord>;
-  acknowledgeCompletion(chatId: string, runId: string): Promise<CanonicalChatRecord>;
+  acknowledgeCompletion(
+    chatId: string,
+    runId: string,
+    analytics?: CanonicalChatResponseAnalytics,
+  ): Promise<CanonicalChatRecord>;
   delete(chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   getDetail(
     chatId: string,
@@ -476,14 +486,25 @@ export function createCanonicalChatClient(
       ));
     },
 
-    async acknowledgeCompletion(chatId, runId) {
+    async acknowledgeCompletion(chatId, runId, analytics) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
       const request = CanonicalAcknowledgeChatCompletionRequestSchema.parse({});
-      return CanonicalChatRecordSchema.parse(await api.post(
+      const response = CanonicalChatRecordSchema.parse(await api.post(
         `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/acknowledge`,
         request,
       ));
+      if (analytics) {
+        trackEvent({
+          name: "desktop_chat_response_completed",
+          chatScope: analytics.chatScope,
+          harness: analytics.harness,
+          modelProvider: desktopChatModelProvider(analytics.model, analytics.harness),
+          model: analytics.model,
+          responseCharacterCount: analytics.responseCharacterCount,
+        });
+      }
+      return response;
     },
 
     async delete(chatId, clientRequestId) {
@@ -527,6 +548,9 @@ export function createCanonicalChatClient(
             name: "desktop_chat_message_send_succeeded",
             chatScope: analytics.chatScope,
             hasAttachments,
+            harness: response.run.driverKind,
+            modelProvider: desktopChatModelProvider(response.run.selection.model, response.run.driverKind),
+            model: response.run.selection.model,
           });
         }
         return response;

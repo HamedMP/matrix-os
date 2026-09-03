@@ -15,6 +15,7 @@ import type {
 import { diagnosticErrorKind } from "../../lib/errors";
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
+import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const ACTIVE_RUN_POLL_MS = 200;
@@ -238,7 +239,11 @@ export function useCanonicalChatRouteController({
     const routeScope = routeScopeRef.current;
     const attempt = { client, chatId: activeChatId, runId: completion.runId };
     acknowledgementAttemptRef.current = attempt;
-    void client.acknowledgeCompletion(activeChatId, completion.runId).then((record) => {
+    const analytics = completedResponseAnalytics(detail, completion.runId);
+    const acknowledgement = analytics
+      ? client.acknowledgeCompletion(activeChatId, completion.runId, analytics)
+      : client.acknowledgeCompletion(activeChatId, completion.runId);
+    void acknowledgement.then((record) => {
       if (!routeScope?.active || routeScopeRef.current !== routeScope
         || activeChatIdRef.current !== attempt.chatId) {
         return;

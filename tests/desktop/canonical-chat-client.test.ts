@@ -68,10 +68,35 @@ describe("canonical Chat client", () => {
       name: "desktop_chat_message_send_succeeded",
       chatScope: "project",
       hasAttachments: true,
+      harness: "codex",
+      modelProvider: "openai",
+      model: "gpt-5.6-sol",
     });
     expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("private-filename.pdf");
     expect(JSON.stringify(trackEvent.mock.calls)).not.toContain(record.chat.id);
-    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("gpt-5.6-sol");
+  });
+
+  it("tracks a completed response with routing and length but no response content", async () => {
+    const post = vi.fn(async () => record);
+    const trackEvent = vi.fn();
+    const client = createCanonicalChatClient(api({ post }), { trackEvent });
+
+    await client.acknowledgeCompletion(record.chat.id, "run_client_completed", {
+      chatScope: "global",
+      harness: "hermes",
+      model: "anthropic:claude-opus-5",
+      responseCharacterCount: 37,
+    });
+
+    expect(trackEvent).toHaveBeenCalledWith({
+      name: "desktop_chat_response_completed",
+      chatScope: "global",
+      harness: "hermes",
+      modelProvider: "anthropic",
+      model: "anthropic:claude-opus-5",
+      responseCharacterCount: 37,
+    });
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("private response");
   });
 
   it("tracks a coarse Chat send failure and preserves the original error", async () => {

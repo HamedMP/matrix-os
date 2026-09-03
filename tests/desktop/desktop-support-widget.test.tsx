@@ -590,6 +590,35 @@ describe("Desktop support widget", () => {
     );
   });
 
+  it("maps Chat routing and response length without content properties", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    window.dispatchEvent(new CustomEvent("matrix:desktop-analytics", {
+      detail: {
+        name: "desktop_chat_response_completed",
+        chatScope: "global",
+        harness: "hermes",
+        modelProvider: "anthropic",
+        model: "anthropic:claude-opus-5",
+        responseCharacterCount: 420,
+      },
+    }));
+
+    expect(posthogClient.capture).toHaveBeenCalledWith(
+      "desktop_chat_response_completed",
+      {
+        chat_scope: "global",
+        harness: "hermes",
+        matrix_client: "desktop",
+        model: "anthropic:claude-opus-5",
+        model_provider: "anthropic",
+        response_character_count: 420,
+      },
+    );
+    expect(JSON.stringify(posthogClient.capture.mock.calls)).not.toContain("private response");
+  });
+
   it("waits for the quit event HTTP response before acknowledging the main process", async () => {
     let finishRequest: ((response: Response) => void) | undefined;
     const quitPayload = {

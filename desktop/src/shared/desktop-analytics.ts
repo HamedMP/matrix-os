@@ -55,12 +55,22 @@ const SupportSendFailureEventSchema = z.object({
 }).strict();
 
 const ChatSendEventSchema = z.object({
-  name: z.enum([
-    "desktop_chat_message_send_attempted",
-    "desktop_chat_message_send_succeeded",
-  ]),
+  name: z.literal("desktop_chat_message_send_attempted"),
   chatScope: z.enum(["global", "project"]),
   hasAttachments: z.boolean(),
+}).strict();
+
+const ChatRoutingFields = {
+  harness: z.enum(["kernel", "hermes", "openclaw", "codex", "claude_code", "opencode", "pi"]),
+  modelProvider: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/),
+  model: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/),
+} as const;
+
+const ChatSendSucceededEventSchema = z.object({
+  name: z.literal("desktop_chat_message_send_succeeded"),
+  chatScope: z.enum(["global", "project"]),
+  hasAttachments: z.boolean(),
+  ...ChatRoutingFields,
 }).strict();
 
 const ChatSendFailureEventSchema = z.object({
@@ -70,13 +80,22 @@ const ChatSendFailureEventSchema = z.object({
   failureKind: z.enum(["client", "server", "network", "unknown"]),
 }).strict();
 
+const ChatResponseCompletedEventSchema = z.object({
+  name: z.literal("desktop_chat_response_completed"),
+  chatScope: z.enum(["global", "project"]),
+  ...ChatRoutingFields,
+  responseCharacterCount: z.number().int().min(0).max(1_000_000),
+}).strict();
+
 export const DesktopAnalyticsDetailSchema = z.union([
   PropertyFreeDesktopEventSchema,
   AppLifecycleDesktopEventSchema,
   LauncherDesktopEventSchema,
   SupportSendFailureEventSchema,
   ChatSendEventSchema,
+  ChatSendSucceededEventSchema,
   ChatSendFailureEventSchema,
+  ChatResponseCompletedEventSchema,
 ]);
 
 export type DesktopAnalyticsDetail = z.infer<typeof DesktopAnalyticsDetailSchema>;

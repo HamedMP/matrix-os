@@ -112,6 +112,12 @@ function captureActive(
         : {}),
       ...("chatScope" in detail ? { chat_scope: detail.chatScope } : {}),
       ...("hasAttachments" in detail ? { has_attachments: detail.hasAttachments } : {}),
+      ...("harness" in detail ? { harness: detail.harness } : {}),
+      ...("modelProvider" in detail ? { model_provider: detail.modelProvider } : {}),
+      ...("model" in detail ? { model: detail.model } : {}),
+      ...("responseCharacterCount" in detail
+        ? { response_character_count: detail.responseCharacterCount }
+        : {}),
       ...(detail.name === "desktop_chat_message_send_failed"
         ? { failure_kind: detail.failureKind }
         : {}),
