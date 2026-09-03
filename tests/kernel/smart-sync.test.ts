@@ -205,6 +205,41 @@ describe("smart syncTemplate", () => {
     expect(installed["agents/builder.md"]).toBe(sha256("builder"));
   });
 
+  it("recovers from a corrupt installed manifest without overwriting customized files", async () => {
+    const smartSync = await importSync();
+
+    mkdirSync(join(templateDir, "apps", "notes"), { recursive: true });
+    mkdirSync(join(homeDir, "apps", "notes"), { recursive: true });
+    writeFileSync(join(templateDir, "apps", "notes", "matching.ts"), "bundled matching");
+    writeFileSync(join(templateDir, "apps", "notes", "customized.ts"), "bundled customized");
+    writeFileSync(join(homeDir, "apps", "notes", "matching.ts"), "bundled matching");
+    writeFileSync(join(homeDir, "apps", "notes", "customized.ts"), "owner customization");
+
+    writeManifest(templateDir, {
+      "apps/notes/matching.ts": sha256("bundled matching"),
+      "apps/notes/customized.ts": sha256("bundled customized"),
+    });
+    writeFileSync(
+      join(homeDir, ".template-manifest.json"),
+      '{"apps/notes/matching.ts":"stale"}trailing-corruption',
+    );
+
+    const report = smartSync(homeDir, templateDir);
+
+    expect(report.updated).toEqual([]);
+    expect(report.added).toEqual([]);
+    expect(report.skipped).toEqual(["apps/notes/customized.ts"]);
+    expect(readFileSync(join(homeDir, "apps", "notes", "customized.ts"), "utf-8")).toBe(
+      "owner customization",
+    );
+    expect(JSON.parse(readFileSync(join(homeDir, ".template-manifest.json"), "utf-8"))).toEqual({
+      "apps/notes/matching.ts": sha256("bundled matching"),
+    });
+    expect(readFileSync(join(homeDir, "system", "logs", "template-sync.log"), "utf-8")).toContain(
+      "Ignoring invalid installed manifest",
+    );
+  });
+
   it("is idempotent - running twice produces same result", async () => {
     const smartSync = await importSync();
 
