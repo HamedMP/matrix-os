@@ -118,6 +118,7 @@ describe("Desktop support widget", () => {
         }
       : { version: "1.4.0-canary.2" });
     posthogClient.conversations.isAvailable.mockReturnValue(true);
+    posthogClient.capture.mockImplementation(() => undefined);
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "phc_desktop_test");
     vi.stubEnv("VITE_POSTHOG_HOST", "https://eu.posthog.com");
     useConnection.setState(useConnection.getInitialState(), true);
@@ -589,23 +590,50 @@ describe("Desktop support widget", () => {
     );
   });
 
-  it("captures quit, bounds PostHog shutdown, and acknowledges the main process", async () => {
+  it("waits for the quit event HTTP response before acknowledging the main process", async () => {
+    let finishRequest: ((response: Response) => void) | undefined;
+    const quitPayload = {
+      uuid: "019cc3de-7b86-7000-8000-000000000001",
+      event: "desktop_application_quit_requested",
+      properties: {
+        token: "phc_desktop_test",
+        distinct_id: "user_2abcDEF",
+        matrix_client: "desktop",
+      },
+      timestamp: "2026-09-03T06:27:26.000Z",
+    };
+    posthogClient.capture.mockImplementation((name: string) =>
+      name === "desktop_application_quit_requested" ? quitPayload : undefined);
+    const request = vi.fn(() => new Promise<Response>((resolve) => { finishRequest = resolve; }));
+    vi.stubGlobal("fetch", request);
     render(<DesktopSupportWidget />);
     await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
     expect(operatorEventListeners.flushRequested).not.toBeNull();
 
-    await act(async () => {
+    act(() => {
       operatorEventListeners.flushRequested?.({});
-      await Promise.resolve();
     });
 
     expect(posthogClient.capture).toHaveBeenCalledWith(
       "desktop_application_quit_requested",
       { matrix_client: "desktop" },
-      { send_instantly: true, transport: "sendBeacon" },
     );
-    expect(posthogClient.shutdown).toHaveBeenCalledOnce();
-    expect(operatorClient.invoke).toHaveBeenCalledWith("analytics:flush-complete", {});
+    await waitFor(() => expect(request).toHaveBeenCalledOnce());
+    const [url, init] = request.mock.calls[0]!;
+    expect(url).toBe("https://app.matrix-os.com/relay/i/v0/e/");
+    expect(init).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(quitPayload),
+    });
+    expect(operatorClient.invoke).not.toHaveBeenCalledWith("analytics:flush-complete", {});
+    expect(posthogClient.shutdown).not.toHaveBeenCalled();
+
+    finishRequest?.(new Response(null, { status: 200 }));
+    await waitFor(() => {
+      expect(posthogClient.shutdown).toHaveBeenCalledOnce();
+      expect(operatorClient.invoke).toHaveBeenCalledWith("analytics:flush-complete", {});
+    });
   });
 
   it("does not finish an old support open after sign-out", async () => {

@@ -34,6 +34,7 @@ const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
 const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
 const POSTHOG_CLOSE_SELECTOR = 'button[aria-label="Close"]';
 const SUPPORT_OPEN_TIMEOUT_MS = 10_000;
+const QUIT_CAPTURE_TIMEOUT_MS = 500;
 
 function errorKind(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
@@ -98,8 +99,7 @@ function applyDesktopSupportProperties(properties: SupportChatProperties): void 
 
 function captureActive(
   detail: DesktopAnalyticsDetail,
-  options?: { send_instantly: true; transport: "sendBeacon" },
-): void {
+): ReturnType<typeof posthog.capture> {
   if (!initialized || activeIdentity === null) return;
   try {
     const properties = {
@@ -117,11 +117,21 @@ function captureActive(
         : {}),
       matrix_client: "desktop",
     };
-    if (options) posthog.capture(detail.name, properties, options);
-    else posthog.capture(detail.name, properties);
+    return posthog.capture(detail.name, properties);
   } catch (error: unknown) {
     console.warn("[desktop-support] Analytics capture unavailable:", errorKind(error));
   }
+}
+
+async function sendCapturedQuitEvent(payload: NonNullable<ReturnType<typeof posthog.capture>>): Promise<void> {
+  if (!activeApiHost) return;
+  const response = await fetch(`${activeApiHost}/i/v0/e/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(QUIT_CAPTURE_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error("quit capture failed");
 }
 
 function closeTrackedSupportPanel(): void {
@@ -475,10 +485,14 @@ export default function DesktopSupportWidget() {
   useEffect(() => onEvent("analytics:flush-requested", () => {
     const flush = async () => {
       if (initialized && activeIdentity !== null) {
-        captureActive(
-          { name: "desktop_application_quit_requested" },
-          { send_instantly: true, transport: "sendBeacon" },
-        );
+        const payload = captureActive({ name: "desktop_application_quit_requested" });
+        if (payload) {
+          try {
+            await sendCapturedQuitEvent(payload);
+          } catch (error: unknown) {
+            console.warn("[desktop-support] Quit analytics delivery unavailable:", errorKind(error));
+          }
+        }
         try {
           await posthog.shutdown();
         } catch (error: unknown) {
