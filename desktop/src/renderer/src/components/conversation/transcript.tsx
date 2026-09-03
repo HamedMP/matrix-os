@@ -268,7 +268,7 @@ function ResponseMessage({
       <Message>
         <MessageContent className="gap-0">
           <Bubble variant="ghost">
-            <BubbleContent className="max-w-[64rem] overflow-visible">
+            <BubbleContent className="w-full max-w-full overflow-visible">
               <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>

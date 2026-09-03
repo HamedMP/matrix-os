@@ -48,6 +48,43 @@ describe("provider-neutral conversation transcript", () => {
     expect(screen.getByRole("button", { name: "Copied code block" })).toBeTruthy();
   });
 
+  it("contains an unwrapped long code line inside the shared Chat message width", () => {
+    const longLine = `const customer = { ${"accountIdentifier: 'matrix-os', ".repeat(20)} };`;
+    const markdown = `\`\`\`ts\n${longLine}\n\`\`\``;
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-long-code-line",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: false,
+      work: [],
+      final: {
+        kind: "message",
+        id: "message-long-code-line",
+        role: "assistant",
+        phase: "final",
+        markdown,
+        copyText: markdown,
+        timestamp: 2_000,
+      },
+    }];
+
+    const { container } = render(
+      <ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />,
+    );
+
+    const code = container.querySelector("pre code") as HTMLElement;
+    expect(code.textContent).toBe(longLine);
+    const codeBlock = code.closest("pre")?.parentElement as HTMLElement;
+    const assistantBubbleContent = code.closest('[data-slot="bubble-content"]') as HTMLElement;
+    expect(assistantBubbleContent.className).toContain("w-full");
+    expect(assistantBubbleContent.className).toContain("max-w-full");
+    expect(assistantBubbleContent.className).not.toContain("max-w-[64rem]");
+    expect(codeBlock.className).toContain("w-full");
+    expect(codeBlock.className).toContain("max-w-full");
+    expect(codeBlock.className).toContain("min-w-0");
+    expect(code.closest("pre")?.className).toContain("overflow-x-auto");
+  });
+
   it("renders typed non-Hermes adapter output without importing a provider store", () => {
     const sourceTurns: ProjectLikeConversationTurn[] = [{
       id: "turn-synthetic",

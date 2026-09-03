@@ -210,7 +210,7 @@ function CodeBlock({
   const [wrapped, setWrapped] = React.useState(false);
   return (
     <div
-      className="my-3 overflow-hidden rounded-lg border"
+      className="my-3 w-full max-w-full min-w-0 overflow-hidden rounded-lg border"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
     >
       <div
@@ -233,7 +233,7 @@ function CodeBlock({
           <CopyAction text={code} target="code block" copyText={copyText} />
         </span>
       </div>
-      <pre className={cn("max-h-80 overflow-x-auto p-3", wrapped && "whitespace-pre-wrap wrap-break-word")}>
+      <pre className={cn("max-h-80 max-w-full overflow-x-auto p-3", wrapped && "whitespace-pre-wrap wrap-break-word")}>
         <code className="font-mono text-xs" style={{ background: "transparent", border: 0, padding: 0 }}>{code}</code>
       </pre>
     </div>
