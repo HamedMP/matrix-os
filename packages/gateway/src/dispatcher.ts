@@ -51,6 +51,8 @@ export interface DispatchContext {
   senderId?: string;
   senderName?: string;
   chatId?: string;
+  /** Canonical Chat records its unified generation event after durable completion. */
+  suppressAiGeneration?: boolean;
 }
 
 export interface KernelDispatchOverrides {
@@ -259,13 +261,15 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       if (tokensIn > 0) aiTokensTotal.inc({ model, direction: "in" }, tokensIn);
       if (tokensOut > 0) aiTokensTotal.inc({ model, direction: "out" }, tokensOut);
 
-      recordAiGeneration({
-        traceId: resultSessionId || entry.sessionId,
-        model: dispatchModel,
-        latencyMs: durationMs,
-        tokensIn: resultData?.tokensIn,
-        tokensOut: resultData?.tokensOut,
-      });
+      if (!entry.context?.suppressAiGeneration) {
+        recordAiGeneration({
+          traceId: resultSessionId || entry.sessionId,
+          model: dispatchModel,
+          latencyMs: durationMs,
+          tokensIn: resultData?.tokensIn,
+          tokensOut: resultData?.tokensOut,
+        });
+      }
 
       try {
         interactionLogger.log({
@@ -306,14 +310,16 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       kernelDispatchTotal.inc({ source, status: "error" });
       kernelDispatchDuration.observe({ source }, durationSec);
 
-      recordAiGeneration({
-        traceId: resultSessionId || entry.sessionId,
-        model: dispatchModel,
-        latencyMs: durationMs,
-        tokensIn: resultData?.tokensIn,
-        tokensOut: resultData?.tokensOut,
-        error,
-      });
+      if (!entry.context?.suppressAiGeneration) {
+        recordAiGeneration({
+          traceId: resultSessionId || entry.sessionId,
+          model: dispatchModel,
+          latencyMs: durationMs,
+          tokensIn: resultData?.tokensIn,
+          tokensOut: resultData?.tokensOut,
+          error,
+        });
+      }
 
       const err = error as Error;
       try {

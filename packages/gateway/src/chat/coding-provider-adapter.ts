@@ -11,6 +11,7 @@ import type {
   CodingAgentThreadStore,
   CodingAgentTurnStore,
 } from "../coding-agents/thread-store.js";
+import type { AiTokenUsage } from "../ai-analytics.js";
 import { CodingAgentProviderResumeStateSchema } from "../coding-agents/provider-adapter.js";
 import {
   CanonicalProviderRunEventSchema,
@@ -249,10 +250,11 @@ class ThreadEventInbox {
   private queuedBytes = 0;
   private failure: Error | undefined;
   private wake: (() => void) | undefined;
+  private tokenUsage: AiTokenUsage | undefined;
 
   constructor(private readonly signal: AbortSignal) {}
 
-  push(events: AgentThreadEvent[]): void {
+  push(events: AgentThreadEvent[], tokenUsage?: AiTokenUsage): void {
     if (this.signal.aborted || this.failure) return;
     const incomingBytes = Buffer.byteLength(JSON.stringify(events), "utf8");
     if (this.queued.length + events.length > MAX_BUFFERED_EVENTS
@@ -262,8 +264,15 @@ class ThreadEventInbox {
     }
     this.queued.push(...events);
     this.queuedBytes += incomingBytes;
+    if (tokenUsage) this.tokenUsage = tokenUsage;
     this.wake?.();
     this.wake = undefined;
+  }
+
+  takeTokenUsage(): AiTokenUsage | undefined {
+    const tokenUsage = this.tokenUsage;
+    this.tokenUsage = undefined;
+    return tokenUsage;
   }
 
   fail(error: Error): void {
@@ -305,6 +314,7 @@ class ThreadEventInbox {
 async function* normalizedEvents(
   initial: AgentThreadEvent[],
   inbox: ThreadEventInbox,
+  providerId: "codex" | "claude" | "opencode" | "pi",
 ): AsyncGenerator<CanonicalProviderRunEvent> {
   const recentEventIds = new Set<string>();
   const toolActivities = new Map<string, ToolActivity>();
@@ -341,7 +351,18 @@ async function* normalizedEvents(
         continue;
       }
       for (const normalized of normalizeEvent(event, toolActivities)) {
-        yield normalized;
+        if (normalized.type === "run.completed") {
+          const tokenUsage = inbox.takeTokenUsage();
+          yield CanonicalProviderRunEventSchema.parse({
+            ...normalized,
+            ...(tokenUsage ? {
+              tokenUsage,
+              ...(providerId === "codex" ? { provider: "openai" } : {}),
+            } : {}),
+          });
+        } else {
+          yield normalized;
+        }
         if (normalized.type === "run.completed") return;
       }
     }
@@ -398,7 +419,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     async *start(inputValue) {
       const { input, mode } = validate(inputValue);
       const inbox = new ThreadEventInbox(input.signal);
-      const buffered: Array<{ threadId: string; events: AgentThreadEvent[] }> = [];
+      const buffered: Array<{ threadId: string; events: AgentThreadEvent[]; tokenUsage?: AiTokenUsage }> = [];
       let bufferedEventCount = 0;
       let bufferedEventBytes = 0;
       let targetThreadId: string | undefined;
@@ -414,9 +435,13 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           }
           bufferedEventCount += published.events.length;
           bufferedEventBytes += incomingBytes;
-          buffered.push({ threadId: published.threadId, events: published.events });
+          buffered.push({
+            threadId: published.threadId,
+            events: published.events,
+            ...(published.tokenUsage ? { tokenUsage: published.tokenUsage } : {}),
+          });
         } else if (published.threadId === targetThreadId) {
-          inbox.push(published.events);
+          inbox.push(published.events, published.tokenUsage);
         }
       });
       try {
@@ -439,10 +464,10 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           threadId: targetThreadId,
         });
         for (const published of buffered) {
-          if (published.threadId === targetThreadId) inbox.push(published.events);
+          if (published.threadId === targetThreadId) inbox.push(published.events, published.tokenUsage);
         }
         yield { type: "state.updated", state: { conversationId: targetThreadId } };
-        yield* normalizedEvents(created.snapshot.events.items, inbox);
+        yield* normalizedEvents(created.snapshot.events.items, inbox, options.providerId);
       } finally {
         releaseSteerRun?.();
         sink.dispose();
@@ -456,7 +481,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let releaseSteerRun: (() => void) | undefined;
       const sink = options.threads.registerEventSink((published) => {
         if (published.ownerId === input.owner.ownerId && published.threadId === targetThreadId) {
-          inbox.push(published.events);
+          inbox.push(published.events, published.tokenUsage);
         }
       });
       try {
@@ -475,7 +500,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           legacyTurnId: accepted.turnId,
         });
         const current = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId);
-        yield* normalizedEvents(eventsForAcceptedRun(current, requestId), inbox);
+        yield* normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId);
       } finally {
         releaseSteerRun?.();
         sink.dispose();

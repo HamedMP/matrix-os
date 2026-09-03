@@ -27,7 +27,14 @@ describe("kernel canonical Chat adapter", () => {
       await onEvent({ type: "tool_end", input: { path: "README.md" } });
       await onEvent({
         type: "result",
-        data: { result: "Hello", cost: 0, durationMs: 1, tokensIn: 1, tokensOut: 1 },
+        data: {
+          result: "Hello",
+          cost: 0,
+          durationMs: 1,
+          tokensIn: 11,
+          tokensOut: 3,
+          provider: "anthropic",
+        },
       });
     });
     const adapter = createKernelChatProviderAdapter({
@@ -41,7 +48,11 @@ describe("kernel canonical Chat adapter", () => {
       "Hello Matrix",
       undefined,
       expect.any(Function),
-      undefined,
+      {
+        senderId: "owner_1",
+        chatId: "chat_1",
+        suppressAiGeneration: true,
+      },
       expect.any(AbortController),
       { model: "claude-sonnet-5", accessSourceId: "matrix_included" },
     );
@@ -50,7 +61,12 @@ describe("kernel canonical Chat adapter", () => {
       { type: "assistant.delta", delta: "Hello" },
       { type: "tool.progress", toolCallId: "kernel_tool_1", label: "Read", status: "running" },
       { type: "tool.progress", toolCallId: "kernel_tool_1", label: "Read", status: "completed" },
-      { type: "run.completed", outcome: "completed" },
+      {
+        type: "run.completed",
+        outcome: "completed",
+        provider: "anthropic",
+        tokenUsage: { inputTokens: 11, outputTokens: 3 },
+      },
     ]);
   });
 

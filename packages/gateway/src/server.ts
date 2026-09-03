@@ -573,7 +573,7 @@ export async function createGateway(config: GatewayConfig) {
       },
     });
   };
-  // PostHog LLM analytics: one $ai_generation per completed kernel query.
+  // PostHog LLM analytics: one $ai_generation per completed AI run.
   // Reuses the tracker above (already flushed per-capture and shut down on
   // gateway close), so no separate PostHog client or shutdown path is needed.
   const recordAiGeneration = createAiGenerationRecorder({
@@ -4332,6 +4332,7 @@ export async function createGateway(config: GatewayConfig) {
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
       executionRoots: canonicalChatExecutionRoots,
+      onAiGeneration: recordAiGeneration,
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });

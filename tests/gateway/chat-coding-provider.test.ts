@@ -107,8 +107,13 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     abortThread,
     steerTurn,
     submitApproval,
-    publish(events: AgentThreadEvent[]) {
-      sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events });
+    publish(events: AgentThreadEvent[], tokenUsage?: {
+      inputTokens: number;
+      outputTokens: number;
+      cachedInputTokens?: number;
+      reasoningOutputTokens?: number;
+    }) {
+      sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events, tokenUsage });
     },
   };
 }
@@ -301,7 +306,12 @@ describe("canonical coding Chat Provider adapter", () => {
       event({ type: "assistant.text.delta", eventId: "evt_delta", messageId: "msg_native", delta: "done" }),
       event({ type: "file.changed", eventId: "evt_file", path: "src/index.ts", changeKind: "updated" }),
       event({ type: "thread.completed", eventId: "evt_complete", outcome: "completed" }),
-    ]));
+    ], {
+      inputTokens: 100,
+      outputTokens: 24,
+      cachedInputTokens: 32,
+      reasoningOutputTokens: 8,
+    }));
 
     const events = [];
     for await (const candidate of adapter.start(input())) events.push(candidate);
@@ -311,7 +321,17 @@ describe("canonical coding Chat Provider adapter", () => {
       { type: "terminal.bound", terminalSessionId: "terminal_native", terminalSessionCreatedAt: occurredAt },
       { type: "assistant.delta", messageId: "msg_native", delta: "done" },
       expect.objectContaining({ type: "resource.changed", resourceKind: "file", changeKind: "updated" }),
-      { type: "run.completed", outcome: "completed" },
+      {
+        type: "run.completed",
+        outcome: "completed",
+        provider: "openai",
+        tokenUsage: {
+          inputTokens: 100,
+          outputTokens: 24,
+          cachedInputTokens: 32,
+          reasoningOutputTokens: 8,
+        },
+      },
     ]);
     expect(fake.createThread).toHaveBeenCalledTimes(1);
   });

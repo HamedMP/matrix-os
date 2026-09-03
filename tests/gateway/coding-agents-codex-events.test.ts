@@ -319,7 +319,16 @@ describe("Codex structured event normalization", () => {
         output_tokens: 2,
         reasoning_output_tokens: 1,
       },
-    }), context)).toEqual({ events: [], outcome: "completed" });
+    }), context)).toEqual({
+      events: [],
+      outcome: "completed",
+      tokenUsage: {
+        inputTokens: 10,
+        cachedInputTokens: 4,
+        outputTokens: 2,
+        reasoningOutputTokens: 1,
+      },
+    });
 
     expect(parseCodexExecJsonLine(JSON.stringify({
       type: "turn.failed",

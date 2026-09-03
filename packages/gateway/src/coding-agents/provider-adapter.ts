@@ -11,6 +11,7 @@ import {
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
+import { AiTokenUsageSchema } from "../ai-analytics.js";
 
 const MAX_PROVIDER_EVENTS = 500;
 
@@ -35,6 +36,7 @@ export const CodingAgentProviderEventBatchSchema = z.object({
     }),
   providerThreadId: CodingAgentProviderResumeStateSchema.shape.providerThreadId,
   resumeState: CodingAgentProviderResumeStateSchema.optional(),
+  tokenUsage: AiTokenUsageSchema.optional(),
 }).strict();
 
 const CodingAgentProviderRunResultSchema = z.object({

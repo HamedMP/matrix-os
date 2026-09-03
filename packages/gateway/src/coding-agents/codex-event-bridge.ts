@@ -12,6 +12,7 @@ import {
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
+import type { AiTokenUsage } from "../ai-analytics.js";
 import { parseCodexExecJsonLine } from "./codex-events.js";
 import { codexExecContractStatus } from "./codex-version.js";
 import { codexAppServerContractStatus } from "./codex-app-server-version.js";
@@ -220,6 +221,7 @@ export function createCodexEventBridge(options: {
     if (!store) throw new Error("Codex event store is unavailable");
     const events: AgentThreadEvent[] = [];
     let providerThreadId: string | undefined;
+    let tokenUsage: AiTokenUsage | undefined;
     let terminal = false;
     let lineStart = 0;
     let absoluteOffset = entry.offset;
@@ -242,6 +244,7 @@ export function createCodexEventBridge(options: {
         }
         providerThreadId = parsed.providerThreadId;
       }
+      if (parsed.tokenUsage) tokenUsage = parsed.tokenUsage;
       if (parsed.outcome) {
         terminal = true;
         events.push(...completionEvents({
@@ -262,6 +265,7 @@ export function createCodexEventBridge(options: {
       await store.ingestProviderEvents(entry.principal, entry.threadId, {
         events: chunk,
         ...(index === 0 && providerThreadId ? { providerThreadId } : {}),
+        ...(index === chunks.length - 1 && terminal && tokenUsage ? { tokenUsage } : {}),
       });
     }
     return terminal;
