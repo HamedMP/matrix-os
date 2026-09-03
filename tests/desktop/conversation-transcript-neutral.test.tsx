@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscript } from "../../desktop/src/renderer/src/components/conversation/transcript";
+import { MessageResponse } from "../../desktop/src/renderer/src/components/conversation/message";
 import type { ConversationTurnPresentation } from "../../desktop/src/renderer/src/components/conversation/presentation";
 import {
   adaptProjectLikeConversation,
@@ -23,6 +24,28 @@ describe("provider-neutral conversation transcript", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps code block Copy and Wrap actions alive while streamed markdown rerenders", async () => {
+    let finishCopy: (() => void) | undefined;
+    const copyText = vi.fn(() => new Promise<void>((resolve) => {
+      finishCopy = resolve;
+    }));
+    const firstMarkdown = "```sh\npwd && git status --short\n```";
+    const rendered = render(<MessageResponse copyText={copyText}>{firstMarkdown}</MessageResponse>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Wrap code block" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy code block" }));
+    rendered.rerender(
+      <MessageResponse copyText={copyText}>{`${firstMarkdown}\n\nStill working…`}</MessageResponse>,
+    );
+
+    expect(screen.getByRole("button", { name: "Disable code wrapping" })).toBeTruthy();
+    expect(screen.getByText("pwd && git status --short").closest("pre")?.className)
+      .toContain("whitespace-pre-wrap");
+    await act(async () => finishCopy?.());
+    expect(copyText).toHaveBeenCalledWith("pwd && git status --short");
+    expect(screen.getByRole("button", { name: "Copied code block" })).toBeTruthy();
   });
 
   it("renders typed non-Hermes adapter output without importing a provider store", () => {

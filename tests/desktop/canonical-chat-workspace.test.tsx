@@ -4,6 +4,10 @@ import React, { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
+import type {
+  CanonicalChatEventSource,
+  CanonicalChatInvalidation,
+} from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
@@ -411,6 +415,42 @@ describe("CanonicalChatWorkspace", () => {
     await waitFor(() => expect(document.activeElement).toBe(prompt));
   });
 
+  it("keeps the focused prompt editable during a background full refresh", async () => {
+    let listener: ((event: CanonicalChatInvalidation) => void) | undefined;
+    const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
+      subscribe(next) {
+        listener = next;
+        return { dispose: () => { listener = undefined; } };
+      },
+    };
+    let resolveRefresh!: (value: { items: typeof record[] }) => void;
+    const refresh = new Promise<{ items: typeof record[] }>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const routeClient = client();
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        initialChatId={record.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+        eventSource={eventSource}
+      />,
+    );
+    const prompt = await screen.findByRole("textbox", { name: "Reply to chat" });
+    prompt.focus();
+    vi.mocked(routeClient.list).mockImplementationOnce(() => refresh);
+
+    act(() => listener?.({ type: "chat.full_refresh", cursor: 2 }));
+    await waitFor(() => expect(routeClient.list).toHaveBeenCalledTimes(2));
+
+    expect(prompt.getAttribute("contenteditable")).toBe("true");
+    expect(document.activeElement).toBe(prompt);
+    await act(async () => resolveRefresh({ items: [record] }));
+  });
+
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
     const chatClient = client();
     vi.mocked(chatClient.delete).mockResolvedValue({
@@ -766,6 +806,94 @@ describe("CanonicalChatWorkspace", () => {
     await waitFor(() => expect(reportedIds).toContain(secondChatId));
     expect(reportedIds).not.toContain(firstChatId);
     expect(vi.mocked(routeClient.getDetail).mock.calls.at(-1)?.[0]).toBe(secondChatId);
+  });
+
+  it("keeps an independent unsent prompt for each Chat", async () => {
+    const firstChatId = snapshot.chat.id;
+    const secondChatId = "chat_with_independent_draft";
+    const secondRecord = {
+      ...record,
+      chat: { ...record.chat, id: secondChatId, title: "Independent draft chat" },
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [record, secondRecord] });
+    vi.mocked(routeClient.getDetail).mockImplementation(async (chatId) => ({
+      record: chatId === secondChatId ? secondRecord : record,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    }));
+    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+      record: { ...record, chat: { ...record.chat, revision: record.chat.revision + 1 } },
+      message: { ...snapshot.messages[0]!, id: "message_independent_draft" },
+      turn: {
+        ...snapshot.turns[0]!,
+        id: "turn_independent_draft",
+        userMessageId: "message_independent_draft",
+      },
+      run: {
+        ...snapshot.runs[0]!,
+        id: "run_independent_draft",
+        turnId: "turn_independent_draft",
+      },
+      admission: "accepted",
+    });
+
+    const view = render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={firstChatId}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    await setSharedComposerText(editor, "1");
+    fireEvent.click(screen.getByRole("button", { name: secondRecord.chat.title }));
+    await waitFor(() => expect(routeClient.getDetail).toHaveBeenCalledWith(secondChatId, { limit: 200 }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe(""));
+
+    await setSharedComposerText(screen.getByRole("textbox", { name: "Reply to chat" }), "2");
+    fireEvent.click(screen.getByRole("button", { name: record.chat.title }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe("1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Start a chat" }).textContent).toBe(""));
+    fireEvent.click(screen.getByRole("button", { name: record.chat.title }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe("1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe(""));
+    fireEvent.click(screen.getByRole("button", { name: secondRecord.chat.title }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe("2"));
+
+    const replacementClient = client();
+    vi.mocked(replacementClient.list).mockResolvedValue({ items: [record, secondRecord] });
+    vi.mocked(replacementClient.getDetail).mockResolvedValue({
+      record: secondRecord,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+    view.rerender(
+      <CanonicalChatWorkspace
+        client={replacementClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={secondChatId}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe(""));
   });
 
   it("does not let stale Global Chat detail overwrite a requested New Chat draft", async () => {

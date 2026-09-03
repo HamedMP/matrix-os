@@ -101,9 +101,9 @@ export function useCanonicalChatRouteController({
     }
   }, [client]);
 
-  const load = useCallback(async (query = "") => {
+  const load = useCallback(async (query = "", options: { background?: boolean } = {}) => {
     const sequence = ++listRequestSequence.current;
-    setStatus("loading");
+    if (!options.background) setStatus("loading");
     try {
       const page = query.trim()
         ? await client.search(query, { projectId, limit: 100 })
@@ -126,7 +126,7 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] list load failed:", diagnosticErrorKind(error));
       if (sequence !== listRequestSequence.current) return;
-      setStatus("error");
+      if (!options.background) setStatus("error");
       setError("Chats could not be loaded. Try again.");
     }
   }, [autoSelectFirst, client, projectId]);
@@ -179,7 +179,7 @@ export function useCanonicalChatRouteController({
       listRefreshInFlight = true;
       do {
         listRefreshPending = false;
-        await load();
+        await load("", { background: true });
       } while (current && listRefreshPending);
       listRefreshInFlight = false;
     };

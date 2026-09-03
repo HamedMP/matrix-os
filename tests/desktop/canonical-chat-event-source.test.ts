@@ -16,6 +16,7 @@ class FakeSocket implements DesktopCanonicalChatWebSocket {
   constructor(readonly url: string) {}
   send(data: string) { this.sent.push(data); }
   close() { this.closed = true; this.readyState = 3; }
+  emitOpen() { this.onopen?.(); }
   emit(frame: unknown) { this.onmessage?.({ data: JSON.stringify(frame) }); }
   emitClose() { this.readyState = 3; this.onclose?.(); }
 }
@@ -33,6 +34,7 @@ function event(cursor: number, prefix = "chat") {
 function harness(overrides: Partial<SourceOptions> = {}) {
   const sockets: FakeSocket[] = [];
   const timers: Timer[] = [];
+  const heartbeatTimers: Timer[] = [];
   const invalidations: CanonicalChatInvalidation[] = [];
   const source = createCanonicalChatEventSource({
     gatewayOrigin: "https://runtime.test",
@@ -44,9 +46,15 @@ function harness(overrides: Partial<SourceOptions> = {}) {
       return timer;
     },
     clearTimeoutFn: (timer) => { (timer as Timer).cleared = true; },
+    setIntervalFn: (callback, delay) => {
+      const timer = { callback, delay, cleared: false };
+      heartbeatTimers.push(timer);
+      return timer;
+    },
+    clearIntervalFn: (timer) => { (timer as Timer).cleared = true; },
     ...overrides,
   });
-  return { source, sockets, timers, invalidations };
+  return { source, sockets, timers, heartbeatTimers, invalidations };
 }
 
 async function start(input: ReturnType<typeof harness>) {
@@ -57,6 +65,54 @@ async function start(input: ReturnType<typeof harness>) {
 
 describe("shared Desktop canonical Chat event source", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("does not invalidate the rendered Chat after an empty replay", async () => {
+    const input = harness();
+    const ws = await start(input);
+
+    ws.emit({ type: "chat.stream.attached" });
+    ws.emit({ type: "chat.replay.end", nextCursor: 7 });
+
+    expect(input.invalidations).toEqual([]);
+  });
+
+  it("reconciles the Chat list once after replaying unseen events", async () => {
+    const input = harness();
+    const ws = await start(input);
+
+    ws.emit(event(8));
+    ws.emit({ type: "chat.replay.end", nextCursor: 8 });
+
+    expect(input.invalidations).toEqual([
+      { type: "chat.changed", chatId: "chat_8", cursor: 8 },
+      { type: "chat.full_refresh", cursor: 8 },
+    ]);
+  });
+
+  it("keeps an open stream alive with bounded ping/pong and closes a stale socket", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const input = harness();
+    const ws = await start(input);
+
+    ws.emitOpen();
+    expect(input.heartbeatTimers).toHaveLength(1);
+    expect(input.heartbeatTimers[0]?.delay).toBe(10_000);
+    input.heartbeatTimers[0]!.callback();
+    expect(ws.sent).toEqual([JSON.stringify({ type: "ping" })]);
+    ws.emit({ type: "pong" });
+    input.heartbeatTimers[0]!.callback();
+    expect(ws.sent).toEqual([
+      JSON.stringify({ type: "ping" }),
+      JSON.stringify({ type: "ping" }),
+    ]);
+
+    input.heartbeatTimers[0]!.callback();
+    expect(ws.closed).toBe(true);
+    expect(input.heartbeatTimers[0]?.cleared).toBe(true);
+    expect(input.timers).toHaveLength(1);
+
+    input.source.dispose();
+  });
 
   it("shares one authenticated owner stream across rail and selected-Chat consumers", async () => {
     const fetchWebSocketToken = vi.fn(async () => "signed-ws-token");
@@ -72,7 +128,7 @@ describe("shared Desktop canonical Chat event source", () => {
     expect(input.sockets).toHaveLength(1);
     expect(ws.url).toBe("wss://runtime.test/ws/chats/events?token=signed-ws-token");
     expect(input.invalidations).toEqual([
-      { type: "chat.full_refresh", cursor: 7 }, { type: "chat.changed", chatId: "chat_background", cursor: 8 },
+      { type: "chat.changed", chatId: "chat_background", cursor: 8 },
     ]);
     expect(selected).toEqual(input.invalidations);
   });
@@ -80,8 +136,10 @@ describe("shared Desktop canonical Chat event source", () => {
   it("resumes the exact last cursor after bounded reconnect and clears timers on dispose", async () => {
     const input = harness({ maxReconnectDelayMs: 1_000 });
     const ws = await start(input);
+    ws.emitOpen();
     ws.emit({ type: "chat.replay.end", nextCursor: 41 });
     ws.emitClose();
+    expect(input.heartbeatTimers[0]?.cleared).toBe(true);
     expect(input.timers[0]?.delay).toBeGreaterThan(0);
     expect(input.timers[0]?.delay).toBeLessThanOrEqual(1_000);
     input.timers[0]!.callback();
@@ -99,7 +157,7 @@ describe("shared Desktop canonical Chat event source", () => {
     ws.emit({ type: "chat.replay.end", nextCursor: 3 });
     for (const cursor of [5, 4, 5, 4]) ws.emit(event(cursor));
     expect(input.invalidations).toEqual([
-      { type: "chat.full_refresh", cursor: 3 }, { type: "chat.changed", chatId: "chat_5", cursor: 5 },
+      { type: "chat.changed", chatId: "chat_5", cursor: 5 },
       { type: "chat.changed", chatId: "chat_4", cursor: 4 },
     ]);
   });
@@ -110,7 +168,7 @@ describe("shared Desktop canonical Chat event source", () => {
     ws.emit({ type: "chat.replay.end", nextCursor: 0 });
     for (const cursor of [1, 2, 3, 3, 1]) ws.emit(event(cursor, "chat_cursor"));
     expect(input.invalidations.map((next) => next.type === "chat.changed" ? next.cursor : 0))
-      .toEqual([0, 1, 2, 3, 1]);
+      .toEqual([1, 2, 3, 1]);
   });
 
   it("turns a replay gap into one canonical full refresh and rejects unsafe frames", async () => {
