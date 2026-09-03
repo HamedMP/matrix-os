@@ -16,6 +16,7 @@ import { useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
 import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
 import { seedDesktopApps } from "./apps-query-test-utils";
 import { createDefaultOsViewDocument } from "@matrix-os/contracts";
+import { DESKTOP_ANALYTICS_EVENT } from "@desktop/renderer/src/lib/desktop-analytics";
 
 const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
@@ -468,9 +469,15 @@ describe("native desktop shell", () => {
   });
 
   it("opens Chat as a floating window and only adds it to the tab strip when maximized", () => {
+    const events: unknown[] = [];
+    const capture = (event: Event) => events.push((event as CustomEvent).detail);
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
+
+    expect(events).toContainEqual({ name: "desktop_app_opened", appKind: "chat" });
+    window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
 
     const tab = useTabs.getState().tabs.find((candidate) => candidate.kind === "work");
     expect(tab).toBeTruthy();
@@ -483,6 +490,27 @@ describe("native desktop shell", () => {
 
     expect(useDesktopSurfaces.getState().surfaces[tab!.id]?.mode).toBe("tab");
     expect(screen.getByRole("tab", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("tracks Create app and user-installed app launches without app identity", () => {
+    const events: unknown[] = [];
+    const capture = (event: Event) => events.push((event as CustomEvent).detail);
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    seedDesktopApps([{ slug: "customer-roadmap", name: "Customer Roadmap" }]);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Customer Roadmap" }));
+    expect(events).toContainEqual({ name: "desktop_app_opened", appKind: "installed_app" });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Create app" }));
+    expect(events).toContainEqual({ name: "desktop_app_creation_started" });
+    expect(JSON.stringify(events)).not.toContain("customer-roadmap");
+    expect(JSON.stringify(events)).not.toContain("Customer Roadmap");
+    window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
   });
 
   it("opens Apps as a transient launcher instead of a desktop app surface", () => {

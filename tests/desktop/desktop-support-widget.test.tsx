@@ -565,6 +565,30 @@ describe("Desktop support widget", () => {
     });
   });
 
+  it("maps Chat send telemetry to coarse PostHog properties only", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    window.dispatchEvent(new CustomEvent("matrix:desktop-analytics", {
+      detail: {
+        name: "desktop_chat_message_send_failed",
+        chatScope: "project",
+        hasAttachments: true,
+        failureKind: "network",
+      },
+    }));
+
+    expect(posthogClient.capture).toHaveBeenCalledWith(
+      "desktop_chat_message_send_failed",
+      {
+        chat_scope: "project",
+        failure_kind: "network",
+        has_attachments: true,
+        matrix_client: "desktop",
+      },
+    );
+  });
+
   it("captures quit, bounds PostHog shutdown, and acknowledges the main process", async () => {
     render(<DesktopSupportWidget />);
     await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
@@ -578,6 +602,7 @@ describe("Desktop support widget", () => {
     expect(posthogClient.capture).toHaveBeenCalledWith(
       "desktop_application_quit_requested",
       { matrix_client: "desktop" },
+      { send_instantly: true, transport: "sendBeacon" },
     );
     expect(posthogClient.shutdown).toHaveBeenCalledOnce();
     expect(operatorClient.invoke).toHaveBeenCalledWith("analytics:flush-complete", {});

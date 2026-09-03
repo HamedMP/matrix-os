@@ -372,6 +372,8 @@ export function useCanonicalChatRouteController({
         ...input,
         clientRequestId: canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
+      }, {
+        chatScope: current.record.projectId ? "project" : "global",
       });
       if (!isCurrentScope()) return null;
       const next: CanonicalChatDetailResponse = {

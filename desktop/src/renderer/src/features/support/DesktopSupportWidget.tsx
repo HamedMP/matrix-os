@@ -96,10 +96,13 @@ function applyDesktopSupportProperties(properties: SupportChatProperties): void 
   posthog.setPersonProperties(properties);
 }
 
-function captureActive(detail: DesktopAnalyticsDetail): void {
+function captureActive(
+  detail: DesktopAnalyticsDetail,
+  options?: { send_instantly: true; transport: "sendBeacon" },
+): void {
   if (!initialized || activeIdentity === null) return;
   try {
-    posthog.capture(detail.name, {
+    const properties = {
       ...("appKind" in detail && detail.appKind
         ? { app_kind: detail.appKind }
         : {}),
@@ -107,8 +110,15 @@ function captureActive(detail: DesktopAnalyticsDetail): void {
       ...(detail.name === "desktop_support_send_failed"
         ? { failure_kind: detail.failureKind }
         : {}),
+      ...("chatScope" in detail ? { chat_scope: detail.chatScope } : {}),
+      ...("hasAttachments" in detail ? { has_attachments: detail.hasAttachments } : {}),
+      ...(detail.name === "desktop_chat_message_send_failed"
+        ? { failure_kind: detail.failureKind }
+        : {}),
       matrix_client: "desktop",
-    });
+    };
+    if (options) posthog.capture(detail.name, properties, options);
+    else posthog.capture(detail.name, properties);
   } catch (error: unknown) {
     console.warn("[desktop-support] Analytics capture unavailable:", errorKind(error));
   }
@@ -465,7 +475,10 @@ export default function DesktopSupportWidget() {
   useEffect(() => onEvent("analytics:flush-requested", () => {
     const flush = async () => {
       if (initialized && activeIdentity !== null) {
-        captureActive({ name: "desktop_application_quit_requested" });
+        captureActive(
+          { name: "desktop_application_quit_requested" },
+          { send_instantly: true, transport: "sendBeacon" },
+        );
         try {
           await posthog.shutdown();
         } catch (error: unknown) {

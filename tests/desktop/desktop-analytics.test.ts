@@ -18,8 +18,52 @@ describe("Desktop analytics allowlist", () => {
     "desktop_support_closed",
     "desktop_support_send_attempted",
     "desktop_support_send_succeeded",
+    "desktop_app_creation_started",
   ])("accepts the property-free critical event %s", (name) => {
     expect(DesktopAnalyticsDetailSchema.safeParse({ name }).success).toBe(true);
+  });
+
+  it("accepts only privacy-safe app kinds for Desktop lifecycle events", () => {
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_app_opened",
+      appKind: "chat",
+    }).success).toBe(true);
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_app_opened",
+      appKind: "installed_app",
+    }).success).toBe(true);
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_app_opened",
+      appKind: "customer-roadmap",
+    }).success).toBe(false);
+  });
+
+  it("accepts only coarse Chat send context", () => {
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_chat_message_send_attempted",
+      chatScope: "project",
+      hasAttachments: true,
+    }).success).toBe(true);
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_chat_message_send_succeeded",
+      chatScope: "global",
+      hasAttachments: false,
+    }).success).toBe(true);
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_chat_message_send_failed",
+      chatScope: "global",
+      hasAttachments: false,
+      failureKind: "network",
+    }).success).toBe(true);
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_chat_message_send_failed",
+      chatScope: "global",
+      hasAttachments: false,
+      failureKind: "server",
+      message: "private prompt",
+      chatId: "chat_private",
+      model: "private-model",
+    }).success).toBe(false);
   });
 
   it("accepts only a coarse failure kind on Support send failure", () => {

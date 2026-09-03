@@ -3,6 +3,7 @@ import {
   createCanonicalChatClient,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { AppError } from "@desktop/shared/app-error";
 
 const record = {
   chat: {
@@ -36,6 +37,78 @@ function api(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 describe("canonical Chat client", () => {
+  it("tracks a privacy-safe Chat send funnel without message or identity data", async () => {
+    const turnInput = {
+      clientRequestId: "req_client_turn_analytics",
+      baseRevision: 0,
+      parts: [{
+        type: "attachment_reference" as const,
+        attachmentId: "desktop_upload_analytics",
+        kind: "file" as const,
+        label: "private-filename.pdf",
+      }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    };
+    const trackEvent = vi.fn();
+    const client = createCanonicalChatClient(
+      api({ post: vi.fn(async () => admissionResponse(turnInput)) }),
+      { trackEvent },
+    );
+
+    await client.admitTurn(record.chat.id, turnInput, { chatScope: "project" });
+
+    expect(trackEvent).toHaveBeenNthCalledWith(1, {
+      name: "desktop_chat_message_send_attempted",
+      chatScope: "project",
+      hasAttachments: true,
+    });
+    expect(trackEvent).toHaveBeenNthCalledWith(2, {
+      name: "desktop_chat_message_send_succeeded",
+      chatScope: "project",
+      hasAttachments: true,
+    });
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("private-filename.pdf");
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain(record.chat.id);
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("gpt-5.6-sol");
+  });
+
+  it("tracks a coarse Chat send failure and preserves the original error", async () => {
+    const turnInput = {
+      clientRequestId: "req_client_turn_failure",
+      baseRevision: 0,
+      parts: [{ type: "text" as const, text: "private message" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    };
+    const failure = new AppError("offline");
+    const trackEvent = vi.fn();
+    const client = createCanonicalChatClient(
+      api({ post: vi.fn(async () => Promise.reject(failure)) }),
+      { trackEvent },
+    );
+
+    await expect(client.admitTurn(
+      record.chat.id,
+      turnInput,
+      { chatScope: "global" },
+    )).rejects.toBe(failure);
+    expect(trackEvent).toHaveBeenNthCalledWith(1, {
+      name: "desktop_chat_message_send_attempted",
+      chatScope: "global",
+      hasAttachments: false,
+    });
+    expect(trackEvent).toHaveBeenNthCalledWith(2, {
+      name: "desktop_chat_message_send_failed",
+      chatScope: "global",
+      hasAttachments: false,
+      failureKind: "network",
+    });
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("private message");
+  });
+
   it("lists Chats through one filtered Gateway endpoint", async () => {
     const get = vi.fn(async () => ({ items: [record], nextCursor: "chatcur_next" }));
     const client = createCanonicalChatClient(api({ get }));

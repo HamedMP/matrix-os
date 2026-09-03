@@ -4,6 +4,7 @@ import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { trackDesktopEvent } from "../../lib/desktop-analytics";
 import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
 import {
   OS_VIEW_DESTINATION_PATHS,
@@ -146,6 +147,7 @@ export default function AppLauncher({
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
   const openInstalled = (app: MatrixApp) => {
+    trackDesktopEvent({ name: "desktop_app_opened", appKind: "installed_app" });
     const tabId = openTab({
       kind: "app",
       slug: app.slug,
