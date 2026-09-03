@@ -54,6 +54,7 @@ describe("Codex app-server contract", () => {
         "item/completed",
         "item/agentMessage/delta",
         "item/commandExecution/outputDelta",
+        "thread/tokenUsage/updated",
         "turn/completed",
       ],
     });

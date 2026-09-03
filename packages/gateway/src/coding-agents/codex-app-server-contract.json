@@ -54,6 +54,7 @@
     "item/completed",
     "item/agentMessage/delta",
     "item/commandExecution/outputDelta",
+    "thread/tokenUsage/updated",
     "turn/completed"
   ]
 }

@@ -212,6 +212,22 @@ const TurnCompletedSchema = z.object({
     }).passthrough(),
   }).passthrough(),
 }).passthrough();
+const TokenUsageBreakdownSchema = z.object({
+  inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  cachedInputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  reasoningOutputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).passthrough();
+const TokenUsageUpdatedSchema = z.object({
+  method: z.literal("thread/tokenUsage/updated"),
+  params: z.object({
+    threadId: NativeReferenceSchema,
+    turnId: NativeReferenceSchema,
+    tokenUsage: z.object({
+      last: TokenUsageBreakdownSchema,
+    }).passthrough(),
+  }).passthrough(),
+}).passthrough();
 const RpcResponseSchema = z.object({
   id: NativeRequestIdSchema,
   result: z.unknown().optional(),
@@ -343,6 +359,7 @@ let activeTurn = false;
 let activeTurnOutcome;
 let nativeThreadId;
 let activeNativeTurnId;
+let activeTurnTokenUsage;
 let terminalEventCount = 0;
 let stdinClosed = false;
 let wakeTurn;
@@ -807,6 +824,23 @@ async function handleProviderMessage(raw) {
     assistantItemsWithDelta.add(messageId);
     return;
   }
+  const usage = TokenUsageUpdatedSchema.safeParse(raw);
+  if (usage.success) {
+    if (
+      activeTurn &&
+      usage.data.params.threadId === nativeThreadId &&
+      usage.data.params.turnId === activeNativeTurnId
+    ) {
+      const last = usage.data.params.tokenUsage.last;
+      activeTurnTokenUsage = {
+        input_tokens: last.inputTokens,
+        output_tokens: last.outputTokens,
+        cached_input_tokens: last.cachedInputTokens,
+        reasoning_output_tokens: last.reasoningOutputTokens,
+      };
+    }
+    return;
+  }
   const completed = TurnCompletedSchema.safeParse(raw);
   if (completed.success) {
     const status = completed.data.params.turn.status;
@@ -1118,8 +1152,10 @@ async function finishTurn(outcome) {
     }
     return;
   }
+  const tokenUsage = activeTurnTokenUsage;
   activeTurn = false;
   activeNativeTurnId = undefined;
+  activeTurnTokenUsage = undefined;
   settleToolBoundaryWaiters(false);
   for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
@@ -1139,6 +1175,7 @@ async function finishTurn(outcome) {
   toolItemsWithOutput.clear();
   await persist({
     type: outcome === "completed" ? "turn.completed" : outcome === "aborted" ? "turn.aborted" : "turn.failed",
+    ...(outcome === "completed" && tokenUsage ? { usage: tokenUsage } : {}),
   });
   terminalEventCount += 1;
   activeTurnOutcome?.(outcome);
@@ -1151,6 +1188,7 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
+  activeTurnTokenUsage = undefined;
   try {
     const started = await request("turn/start", turnStartParams(threadId, turn));
     activeNativeTurnId = z.object({
@@ -1159,6 +1197,7 @@ async function runTurn(threadId, turn) {
   } catch (error) {
     activeTurn = false;
     activeNativeTurnId = undefined;
+    activeTurnTokenUsage = undefined;
     activeTurnOutcome = undefined;
     throw error;
   }
