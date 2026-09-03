@@ -2,9 +2,13 @@ import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { mapRequestPrincipalError, requireRequestPrincipal, isRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
+import { buildPlatformUserProof } from "../../packages/platform/src/session-routing-websocket.js";
 
 const WEBHOOK_PROVIDERS = new Set(["twilio", "mock"]);
-const TEST_TOKEN = "test-bearer-token-for-auth-tests";
+const PREVIEW_HANDLE = "pr-1530";
+const PLATFORM_SECRET = "test-platform-secret-for-auth-contract";
+const TEST_TOKEN = buildPlatformVerificationToken(PREVIEW_HANDLE, PLATFORM_SECRET);
 
 function mockContext(path: string, authHeader?: string, queryToken?: string, ip?: string, headers: Record<string, string> = {}) {
   const url = queryToken
@@ -41,6 +45,10 @@ function createTestApp() {
 
   // Regular protected route
   app.get("/api/conversations", (c) => c.json({ ok: true }));
+  app.get("/api/principal", (c) => c.json(requireRequestPrincipal(c, {
+    configuredUserId: "preview_owner",
+    isTrustedSingleUserGateway: true,
+  })));
 
   return app;
 }
@@ -105,6 +113,44 @@ describe("T133: Auth token middleware", () => {
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(true);
+  });
+
+  it("uses the platform-signed viewer identity as the request principal", async () => {
+    const app = createTestApp();
+    const viewerId = "user_preview_viewer";
+    const proof = buildPlatformUserProof(PREVIEW_HANDLE, viewerId, PLATFORM_SECRET);
+
+    const response = await app.request("/api/principal", {
+      headers: {
+        authorization: `Bearer ${TEST_TOKEN}`,
+        "x-platform-user-id": viewerId,
+        "x-platform-verified": proof,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      userId: viewerId,
+      source: "platform-verified",
+    });
+  });
+
+  it("does not trust a platform viewer identity with an invalid proof", async () => {
+    const app = createTestApp();
+
+    const response = await app.request("/api/principal", {
+      headers: {
+        authorization: `Bearer ${TEST_TOKEN}`,
+        "x-platform-user-id": "user_preview_viewer",
+        "x-platform-verified": "0".repeat(64),
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      userId: "preview_owner",
+      source: "configured-container",
+    });
   });
 
   it("delegates the exact terminal acceptance path to its request-signature verifier", async () => {
