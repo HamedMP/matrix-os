@@ -22,7 +22,11 @@ import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
-import { buildTranscript, type TranscriptMessage } from "@/lib/canonical-chat-transcript";
+import {
+  buildTranscript,
+  type TranscriptActivityState,
+  type TranscriptMessage,
+} from "@/lib/canonical-chat-transcript";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon, IconButton } from "@/components/ui";
@@ -50,6 +54,15 @@ export default function ChatScreen() {
   const turnModes = defaultTurnModes(catalog, selection);
 
   const messages = useMemo(() => buildTranscript(detail), [detail]);
+  // TEMP diagnostic -- remove once streaming is confirmed working.
+  console.warn(
+    "[canonical-chat] render",
+    JSON.stringify({
+      messagesLength: messages.length,
+      headTextLength: messages[0]?.text.length ?? 0,
+      headIsRunning: messages[0]?.isRunning ?? null,
+    }),
+  );
   const busy = sendMessage.isPending || (detail?.runs.some(
     (run) => !["completed", "failed", "aborted"].includes(run.status),
   ) ?? false);
@@ -236,12 +249,23 @@ function MessageBubble({ message }: { message: TranscriptMessage }) {
   return <AssistantMessage message={message} />;
 }
 
+function activityStateGlyph(state: TranscriptActivityState): string {
+  switch (state) {
+    case "running": return "…";
+    case "completed": return "✓";
+    case "failed": return "✕";
+    case "partial":
+    case "stopped":
+      return "–";
+  }
+}
+
 function AssistantMessage({ message }: { message: TranscriptMessage }) {
   // Auto-expanded while the turn is running (so reasoning/tool activity is
   // visible live, matching desktop), until the user manually toggles it.
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
   const expanded = manualExpanded ?? message.isRunning;
-  const hasWork = message.toolCalls.length > 0 || message.reasoningNotes.length > 0;
+  const hasWork = message.toolCalls.length > 0 || message.activities.length > 0;
   const workedLabel = message.isRunning
     ? "Working…"
     : message.elapsedSeconds != null
@@ -270,8 +294,27 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
       ) : null}
       {expanded && hasWork ? (
         <View style={styles.toolCallsList}>
-          {message.reasoningNotes.map((note) => (
-            <Text key={note.id} style={styles.reasoningText}>{note.label}</Text>
+          {message.activities.map((activity) => (
+            <View key={activity.id} style={styles.activityRow}>
+              <Text style={styles.activityGlyph}>{activityStateGlyph(activity.state)}</Text>
+              <Text
+                style={[
+                  styles.reasoningText,
+                  activity.state === "failed" && styles.activityTextFailed,
+                ]}
+              >
+                {activity.label}
+                {activity.preview ? (
+                  <Text
+                    style={activity.previewKind === "command" || activity.previewKind === "path"
+                      ? styles.activityPreviewMono
+                      : styles.activityPreview}
+                  >
+                    {" "}· {activity.preview}
+                  </Text>
+                ) : null}
+              </Text>
+            </View>
           ))}
           {message.toolCalls.map((call) => (
             <Text key={call.id} style={styles.toolText}>{call.label}</Text>
@@ -380,9 +423,34 @@ const styles = StyleSheet.create({
     color: mockColors.muted,
   },
   reasoningText: {
+    flexShrink: 1,
     fontFamily: mockFonts.body,
     fontStyle: "italic",
     fontSize: 13,
+    color: mockColors.muted,
+  },
+  activityRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+  },
+  activityGlyph: {
+    fontFamily: mockFonts.medium,
+    fontSize: 12,
+    color: mockColors.muted,
+    lineHeight: 18,
+  },
+  activityTextFailed: {
+    color: "#B3402C",
+  },
+  activityPreview: {
+    fontStyle: "normal",
+    color: mockColors.muted,
+  },
+  activityPreviewMono: {
+    fontFamily: mockFonts.mono,
+    fontStyle: "normal",
+    fontSize: 12,
     color: mockColors.muted,
   },
   systemRow: {

@@ -18,8 +18,29 @@ const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "aborted"]);
  */
 function pollWhileRunActive(query: Query<CanonicalChatDetailResponse>): number | false {
   const runs = query.state.data?.runs;
-  if (!runs?.some((run) => !TERMINAL_RUN_STATUSES.has(run.status))) return false;
-  return ACTIVE_RUN_POLL_MS;
+  const active = runs?.some((run) => !TERMINAL_RUN_STATUSES.has(run.status)) ?? false;
+  // TEMP diagnostic -- remove once streaming is confirmed working.
+  console.warn(
+    "[canonical-chat] poll decision",
+    JSON.stringify({
+      runs: runs?.map((run) => ({ id: run.id, status: run.status })) ?? [],
+      messages: query.state.data?.messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        state: m.state,
+        runId: m.runId ?? null,
+        seq: m.seq,
+        partTypes: m.parts.map((p) => p.type),
+        textLength: m.parts.filter((p) => p.type === "text")
+          .reduce((sum, p) => sum + p.text.length, 0),
+      })) ?? [],
+      activities: query.state.data?.activities.map((a) => (
+        a.type === "agent.activity" ? { type: a.type, kind: a.kind, runId: a.runId } : { type: a.type, runId: a.runId }
+      )) ?? [],
+      active,
+    }),
+  );
+  return active ? ACTIVE_RUN_POLL_MS : false;
 }
 
 export function useCanonicalChatDetail(chatId: string | null) {
