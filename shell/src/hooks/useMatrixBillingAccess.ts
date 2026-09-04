@@ -1,6 +1,10 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
+import {
+  MatrixBillingPublicEntitlementSchema,
+  type MatrixBillingPublicEntitlement,
+} from "@matrix-os/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { hasMatrixBillingAccess } from "@/lib/billing";
 
@@ -36,27 +40,7 @@ export type BillingTrialOffer = {
   durationDays: number;
 };
 
-export type BillingEntitlementSummary = {
-  source: "stripe" | "override";
-  planSlug: "matrix_starter" | "matrix_builder" | "matrix_max" | "internal";
-  status: string;
-  maxRuntimeSlots: number;
-  includedRuntimeSlots: number;
-  addonRuntimeSlots: number;
-  defaultServerType: string;
-  allowedServerTypes: string[];
-  stripeSubscriptionId: string | null;
-  stripePriceId: string | null;
-  billingInterval?: "monthly" | "annual" | null;
-  gracePeriodEndsAt: string | null;
-  trialStartedAt?: string | null;
-  trialEndsAt?: string | null;
-  trialConvertedAt?: string | null;
-  firstTrialPaymentFailedAt?: string | null;
-  effectiveFrom: string;
-  effectiveUntil: string | null;
-  updatedAt: string;
-};
+export type BillingEntitlementSummary = MatrixBillingPublicEntitlement;
 
 type BillingAccessRemoteState = {
   active: boolean | null;
@@ -84,11 +68,26 @@ export function useMatrixBillingAccess(): BillingAccessState {
         maxRuntimeSlots: 1,
         includedRuntimeSlots: 1,
         addonRuntimeSlots: 0,
-        defaultServerType: "cpx32",
-        allowedServerTypes: ["cpx22", "cpx32"],
-        stripeSubscriptionId: "sub_legacy_trial",
-        stripePriceId: "price_legacy_builder_monthly",
+        allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+        allowedSelections: [
+          { planSlug: "matrix_starter", regionSlug: "region_ash" },
+          { planSlug: "matrix_builder", regionSlug: "region_ash" },
+        ],
+        portalAvailable: true,
         billingInterval: "monthly",
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: "usd",
+          interval: "monthly",
+          intervalCount: 1,
+          quantity: 1,
+        },
+        runtimePlacement: {
+          regionSlug: "region_ash",
+          label: "Ashburn, Virginia",
+          countryLabel: "United States",
+          networkZone: "us-east",
+        },
         gracePeriodEndsAt: null,
         trialStartedAt: "2026-08-29T00:00:00.000Z",
         trialEndsAt: "2026-09-01T00:00:00.000Z",
@@ -114,12 +113,37 @@ export function useMatrixBillingAccess(): BillingAccessState {
         maxRuntimeSlots: 1,
         includedRuntimeSlots: 1,
         addonRuntimeSlots: 0,
-        defaultServerType: "",
-        allowedServerTypes: [],
-        stripeSubscriptionId: "sub_e2e_active",
-        stripePriceId: "price_e2e_active",
+        allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+        allowedSelections: [
+          { planSlug: "matrix_starter", regionSlug: "region_fsn1" },
+          { planSlug: "matrix_starter", regionSlug: "region_nbg1" },
+          { planSlug: "matrix_starter", regionSlug: "region_ash" },
+          { planSlug: "matrix_starter", regionSlug: "region_hil" },
+          { planSlug: "matrix_builder", regionSlug: "region_fsn1" },
+          { planSlug: "matrix_builder", regionSlug: "region_nbg1" },
+          { planSlug: "matrix_builder", regionSlug: "region_ash" },
+          { planSlug: "matrix_builder", regionSlug: "region_hil" },
+        ],
+        portalAvailable: true,
         billingInterval: "monthly",
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: "usd",
+          interval: "monthly",
+          intervalCount: 1,
+          quantity: 1,
+        },
+        runtimePlacement: {
+          regionSlug: "region_ash",
+          label: "Ashburn, Virginia",
+          countryLabel: "United States",
+          networkZone: "us-east",
+        },
         gracePeriodEndsAt: null,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialConvertedAt: null,
+        firstTrialPaymentFailedAt: null,
         effectiveFrom: "2026-08-31T00:00:00.000Z",
         effectiveUntil: null,
         updatedAt: "2026-08-31T00:00:00.000Z",
@@ -152,7 +176,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
   const [remoteChecked, setRemoteChecked] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setRemoteState/setRemoteChecked pairs live in mutually-exclusive branches (auth-gate, missing-userId, cache-hit, async fetch then/catch) representing a single load's loading -> result transition; they are not a synchronous render cascade and combining them across branches would obscure the distinct cases
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- this Clerk-dependent status hook is the billing cache/retry coordinator: requests are bounded by AbortSignal.timeout, stale results are gated by `disposed`, retry timers are cleared in cleanup, and no shell-wide query dependency exists. The state pairs are mutually-exclusive loading/result transitions, not a synchronous render cascade.
   useEffect(() => {
     if (!isLoaded || legacyActive) {
       // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async billing-status load hook: it reads Clerk auth + a module-level cache and otherwise fetches /billing/status, setting remoteState/remoteChecked from the (async) result; the value cannot be derived in render
@@ -292,12 +316,16 @@ function readRemoteBillingStatus(
       }
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
-        entitlement?: BillingEntitlementSummary | null;
+        entitlement?: unknown;
         trialOffer?: { eligible?: unknown; durationDays?: unknown };
       };
+      const parsedEntitlement = body.entitlement === null || body.entitlement === undefined
+        ? null
+        : MatrixBillingPublicEntitlementSchema.safeParse(body.entitlement);
+      if (parsedEntitlement && !parsedEntitlement.success) throw new Error("billing_status_invalid");
       return {
         active: body.access?.runtimeProxyAllowed === true,
-        entitlement: body.entitlement ?? null,
+        entitlement: parsedEntitlement?.data ?? null,
         trialOffer: parseBillingTrialOffer(body.trialOffer),
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
         accessIssue: null,

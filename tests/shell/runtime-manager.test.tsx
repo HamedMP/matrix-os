@@ -82,16 +82,30 @@ function billingStatus(maxRuntimeSlots = 3, source: "stripe" | "override" = "str
       maxRuntimeSlots,
       includedRuntimeSlots: maxRuntimeSlots,
       addonRuntimeSlots: 0,
-      defaultServerType: "cpx42",
-      allowedServerTypes: ["cpx22", "cpx21", "cpx42", "cpx31"],
-      stripeSubscriptionId: source === "stripe" ? "sub_123" : null,
-      stripePriceId: source === "stripe" ? "price_builder_monthly" : null,
+      allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+      allowedSelections: [
+        { planSlug: "matrix_starter", regionSlug: "region_fsn1" },
+        { planSlug: "matrix_starter", regionSlug: "region_nbg1" },
+        { planSlug: "matrix_starter", regionSlug: "region_ash" },
+        { planSlug: "matrix_starter", regionSlug: "region_hil" },
+        { planSlug: "matrix_builder", regionSlug: "region_fsn1" },
+        { planSlug: "matrix_builder", regionSlug: "region_nbg1" },
+        { planSlug: "matrix_builder", regionSlug: "region_ash" },
+        { planSlug: "matrix_builder", regionSlug: "region_hil" },
+      ],
+      portalAvailable: source === "stripe",
+      billingInterval: "monthly",
       gracePeriodEndsAt: null,
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: null,
       effectiveFrom: "2026-07-01T00:00:00.000Z",
       effectiveUntil: null,
       updatedAt: "2026-07-18T00:00:00.000Z",
     },
     access: { runtimeProxyAllowed: true, reason: "active" },
+    trialOffer: { eligible: false, durationDays: 3 },
   };
 }
 
@@ -104,6 +118,7 @@ function installFetchRouter(options: {
   billing?: ReturnType<typeof billingStatus>;
   provision?: Response;
   journey?: Record<string, unknown>;
+  journeyRetry?: Response;
   checkout?: Response | (() => Response);
 } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -122,7 +137,7 @@ function installFetchRouter(options: {
       });
     }
     if (url === "/api/journey/retry-provision") {
-      return json({ status: "started", journey: { phase: "provisioning" } });
+      return options.journeyRetry ?? json({ status: "started", journey: { phase: "provisioning" } });
     }
     if (url === "/billing/checkout") {
       return typeof options.checkout === "function"
@@ -357,7 +372,6 @@ describe("RuntimeManager", () => {
             planSlug: "matrix_starter",
             interval: "monthly",
             regionSlug: "region_ash",
-            serverType: "cpx21",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             runtimeSlot: "research-lab",
             returnPath: "/?billing=setup&handoff=add-computer",
@@ -463,8 +477,8 @@ describe("RuntimeManager", () => {
           body: JSON.stringify({
             runtime: "research-lab",
             developerTools: [],
-            serverType: "cpx42",
-            location: "fsn1",
+            planSlug: "matrix_builder",
+            regionSlug: "region_fsn1",
           }),
         }),
       );
@@ -495,7 +509,7 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("https://checkout.stripe.test/retry"));
-    expect(JSON.parse(window.sessionStorage.getItem("matrix:add-computer-draft:v1") ?? "null")).toMatchObject({
+    expect(JSON.parse(window.sessionStorage.getItem("matrix:add-computer-draft:v2") ?? "null")).toMatchObject({
       createdAt: 121_001,
     });
     expect(fetchMock.mock.calls.filter(([url]) => url === "/billing/checkout")).toHaveLength(2);
@@ -519,6 +533,23 @@ describe("RuntimeManager", () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.filter(([url]) => url === "/api/auth/provision-runtime")).toHaveLength(2);
     });
+  });
+
+  it("returns rejected billing capabilities to configuration instead of silently retrying installs", async () => {
+    installFetchRouter({
+      billing: billingStatus(3, "override"),
+      provision: json({ error: "payment required" }, 402),
+    });
+    await renderOnboarding();
+    await beginNamedComputer("Research Lab");
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/configuration is no longer available/i);
+    expect(screen.queryByRole("heading", { name: "Default installs" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("group", { name: "Choose your Matrix computer" })).toBeTruthy();
   });
 
   it("retries a failed slot build through the journey contract", async () => {
@@ -549,6 +580,29 @@ describe("RuntimeManager", () => {
     });
   });
 
+  it("returns a journey retry rejected by billing to configuration", async () => {
+    installFetchRouter({
+      billing: billingStatus(3, "override"),
+      journey: {
+        phase: "provisioning_failed",
+        detail: "Build failed",
+        failure: { retryable: true, attempt: 1 },
+      },
+      journeyRetry: json({ error: "payment required" }, 402),
+    });
+    await renderOnboarding();
+    await beginNamedComputer("Research Lab");
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry build" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/configuration is no longer available/i);
+    expect(screen.queryByRole("heading", { name: "Default installs" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("group", { name: "Choose your Matrix computer" })).toBeTruthy();
+  });
+
   it("lets users return to their computers after a non-retryable slot build failure", async () => {
     const navigate = vi.fn();
     installFetchRouter({
@@ -569,7 +623,7 @@ describe("RuntimeManager", () => {
     fireEvent.click(backButton);
 
     expect(navigate).toHaveBeenCalledWith("/runtime");
-    expect(window.sessionStorage.getItem("matrix:add-computer-draft:v1")).toBeNull();
+    expect(window.sessionStorage.getItem("matrix:add-computer-draft:v2")).toBeNull();
   });
 
   it("keeps polling after a malformed journey projection", async () => {
@@ -635,12 +689,12 @@ describe("RuntimeManager", () => {
 
   it("ends billing wait safely when the projection does not change by the deadline", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
-    window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
+    window.sessionStorage.setItem("matrix:add-computer-draft:v2", JSON.stringify({
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
-      serverType: "cpx42",
-      location: "fsn1",
+      planSlug: "matrix_builder",
+      regionSlug: "region_fsn1",
       createdAt: 1_000,
     }));
     let billingReads = 0;
@@ -650,7 +704,11 @@ describe("RuntimeManager", () => {
       if (url === "/billing/status") return json(billingStatus(2));
       if (url.startsWith("/billing/status?runtimeSlot=")) {
         billingReads += 1;
-        return json({ entitlement: null, access: { runtimeProxyAllowed: false, reason: "missing" } });
+        return json({
+          entitlement: null,
+          access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+          trialOffer: { eligible: false, durationDays: 3 },
+        });
       }
       throw new Error(`Unhandled test request: ${url}`);
     });
@@ -668,12 +726,12 @@ describe("RuntimeManager", () => {
   });
 
   it("resumes only after the signed billing projection activates the exact runtime slot", async () => {
-    window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
+    window.sessionStorage.setItem("matrix:add-computer-draft:v2", JSON.stringify({
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
-      serverType: "cpx42",
-      location: "fsn1",
+      planSlug: "matrix_builder",
+      regionSlug: "region_fsn1",
       createdAt: Date.now(),
     }));
     let billingReads = 0;
@@ -685,7 +743,11 @@ describe("RuntimeManager", () => {
         billingReads += 1;
         return billingReads > 1
           ? json(billingStatus(1))
-          : json({ entitlement: null, access: { runtimeProxyAllowed: false, reason: "missing" } });
+          : json({
+            entitlement: null,
+            access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+            trialOffer: { eligible: false, durationDays: 3 },
+          });
       }
       if (url === "/api/auth/provision-runtime") return json({ status: "provisioning" }, 202);
       if (url.startsWith("/api/journey?runtimeSlot=")) {
@@ -709,20 +771,20 @@ describe("RuntimeManager", () => {
         body: JSON.stringify({
           runtime: "research-lab",
           developerTools: ["codex", "claude-code", "opencode", "pi"],
-          serverType: "cpx42",
-          location: "fsn1",
+          planSlug: "matrix_builder",
+          regionSlug: "region_fsn1",
         }),
       }),
     ));
   });
 
   it("returns a canceled checkout to the saved plan selection without polling activation", async () => {
-    window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
+    window.sessionStorage.setItem("matrix:add-computer-draft:v2", JSON.stringify({
       name: "Research Lab",
       slot: "research-lab",
       developerTools: [],
-      serverType: "cpx42",
-      location: "fsn1",
+      planSlug: "matrix_builder",
+      regionSlug: "region_fsn1",
       createdAt: Date.now(),
     }));
     const fetchMock = installFetchRouter();

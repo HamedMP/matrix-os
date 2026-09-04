@@ -7,6 +7,7 @@ import {
   getRuntimeAccessDecision,
   loadRuntimeCatalog,
   loadStripePriceCatalog,
+  projectPublicBillingEntitlement,
   type BillingEntitlement,
   type BillingEntitlementOverride,
 } from '../../packages/platform/src/billing.js';
@@ -142,6 +143,35 @@ describe('platform billing entitlements', () => {
       stripeSubscriptionId: 'sub_123',
       stripePriceId: 'price_builder_monthly',
     });
+  });
+
+  it('projects override capabilities as exact provider-neutral plan and region pairs', () => {
+    const entitlement: BillingEntitlement = {
+      clerkUserId: 'user_123',
+      source: 'override',
+      planSlug: 'internal',
+      status: 'active',
+      maxRuntimeSlots: 2,
+      includedRuntimeSlots: 2,
+      addonRuntimeSlots: 0,
+      defaultServerType: 'cpx42',
+      allowedServerTypes: ['cpx42'],
+      stripeSubscriptionId: null,
+      stripePriceId: null,
+      billingInterval: null,
+      gracePeriodEndsAt: null,
+      effectiveFrom: '2026-05-30T00:00:00.000Z',
+      effectiveUntil: null,
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    };
+
+    const projected = projectPublicBillingEntitlement(entitlement, loadRuntimeCatalog({}));
+
+    expect(projected.allowedSelections).toEqual([
+      { planSlug: 'matrix_builder', regionSlug: 'region_fsn1' },
+      { planSlug: 'matrix_builder', regionSlug: 'region_nbg1' },
+    ]);
+    expect(projected.allowedPlanSlugs).toEqual(['matrix_builder']);
   });
 
   it('never grants capacity from legacy add-on quantities', () => {
