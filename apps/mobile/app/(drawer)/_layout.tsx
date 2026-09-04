@@ -6,8 +6,8 @@ import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
 import { Icon } from "@/components/ui";
 import { MockDrawerContent } from "@/components/mock-shell/MockDrawerContent";
 import { mockColors } from "@/components/mock-shell/theme";
-import { useChatSession } from "@/lib/chat-session-context";
-import { useComputerConversations } from "@/lib/queries/use-computer-conversations";
+import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { semanticColors } from "@/lib/theme";
 
 function triggerDrawerHaptic() {
@@ -22,8 +22,8 @@ function triggerDrawerHaptic() {
 }
 
 export default function DrawerLayout() {
-  const { computer, conversations, isPending: recentChatsLoading } = useComputerConversations();
-  const { activeSessionId, selectConversation, startDraftConversation } = useChatSession();
+  const { computer, chats, isPending: recentChatsLoading } = useCanonicalChats();
+  const { activeChatId, selectChat, startDraftChat } = useCanonicalChatSession();
   const computerName = computer?.handle ?? (recentChatsLoading ? "Loading…" : "Not connected");
 
   return (
@@ -36,11 +36,11 @@ export default function DrawerLayout() {
         <MockDrawerContent
           {...props}
           computerName={computerName}
-          recentChats={conversations}
+          recentChats={chats}
           recentChatsLoading={recentChatsLoading}
-          activeSessionId={activeSessionId}
-          onSelectConversation={selectConversation}
-          onNewConversation={startDraftConversation}
+          activeSessionId={activeChatId}
+          onSelectConversation={selectChat}
+          onNewConversation={startDraftChat}
         />
       )}
       screenOptions={({ navigation }: { navigation: DrawerContentComponentProps["navigation"] }) => ({

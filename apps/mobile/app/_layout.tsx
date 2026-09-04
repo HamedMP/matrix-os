@@ -34,7 +34,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
-import { ChatSessionProvider } from "@/lib/chat-session-context";
+import { CanonicalChatSessionProvider } from "@/lib/canonical-chat-session-context";
 import { mobileQueryClient } from "@/lib/query-client";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
@@ -380,7 +380,7 @@ function GatewayShell() {
   return (
     <GestureHandlerRootView style={styles.flex}>
       <GatewayContext.Provider value={contextValue}>
-        <ChatSessionProvider client={client}>
+        <CanonicalChatSessionProvider>
           <Stack
             screenOptions={{
               headerStyle: { backgroundColor: theme.colors.background },
@@ -425,7 +425,7 @@ function GatewayShell() {
           <NotificationRouter />
           <AnalyticsScreenTracker />
           <StatusBar style="dark" />
-        </ChatSessionProvider>
+        </CanonicalChatSessionProvider>
       </GatewayContext.Provider>
     </GestureHandlerRootView>
   );

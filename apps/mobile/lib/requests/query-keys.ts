@@ -1,18 +1,24 @@
 export const mobileQueryKeys = {
   activeComputer: (userId: string) => ["mobile", "computers", "active", userId] as const,
-  conversations: (userId: string, computerKey: string) => [
+  canonicalChats: (userId: string, computerKey: string) => [
     "mobile",
-    "conversations",
+    "chats",
     userId,
     computerKey,
   ] as const,
-  messages: (userId: string, computerKey: string, conversationId: string) => [
+  canonicalChatDetail: (userId: string, computerKey: string, chatId: string) => [
     "mobile",
-    "conversations",
-    "messages",
+    "chats",
+    "detail",
     userId,
     computerKey,
-    conversationId,
+    chatId,
+  ] as const,
+  chatProviderCatalog: (userId: string, computerKey: string) => [
+    "mobile",
+    "chat-providers",
+    userId,
+    computerKey,
   ] as const,
   files: (userId: string, computerKey: string, path: string) => [
     "mobile",

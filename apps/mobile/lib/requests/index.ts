@@ -7,11 +7,14 @@ export {
 } from "./apps";
 export { fetchActiveComputer, fetchComputers } from "./computers";
 export {
-  fetchConversationHistory,
-  fetchConversations,
-  type ConversationHistoryResponse,
-  type ConversationSummary,
-} from "./conversations";
+  admitChatTurn,
+  canonicalChatRequestId,
+  canonicalChatTitle,
+  createChat,
+  fetchChatDetail,
+  fetchChatProviderCatalog,
+  fetchChats,
+} from "./canonical-chat";
 export {
   createFile,
   createFolder,

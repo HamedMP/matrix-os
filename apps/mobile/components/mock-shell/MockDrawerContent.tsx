@@ -17,8 +17,9 @@ import Animated, {
 } from "react-native-reanimated";
 import { DrawerContentScrollView, type DrawerContentComponentProps } from "expo-router/drawer";
 
+import type { CanonicalChatRecord } from "@matrix-os/contracts";
+
 import { Icon, IconButton, Spacer, Text, type IconData } from "@/components/ui";
-import type { ConversationSummary } from "@/lib/requests";
 import { designShadows, palette, semanticColors } from "@/lib/theme";
 import { mockColors } from "./theme";
 
@@ -31,7 +32,7 @@ const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
 
 interface MockDrawerContentProps extends DrawerContentComponentProps {
   computerName: string;
-  recentChats: ConversationSummary[];
+  recentChats: CanonicalChatRecord[];
   recentChatsLoading: boolean;
   activeSessionId: string | null;
   onSelectConversation: (id: string) => void;
@@ -129,16 +130,18 @@ export function MockDrawerContent({
           <View style={styles.padded}>
             <Text size="muted" tone="subtle">No chats yet</Text>
           </View>
-        ) : recentChats.map((chat, index) => {
-          const label = chat.preview.trim() || "New chat";
-          const active = chat.id === activeSessionId;
+        ) : recentChats.map((record, index) => {
+          const label = record.chat.title.trim()
+            || record.chat.lastMessagePreview?.trim()
+            || "New chat";
+          const active = record.chat.id === activeSessionId;
           return (
-            <Fragment key={chat.id}>
+            <Fragment key={record.chat.id}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ selected: active }}
                 accessibilityLabel={`Open recent chat ${label}`}
-                onPress={() => openChat(chat.id)}
+                onPress={() => openChat(record.chat.id)}
                 style={({ pressed }) => [
                   styles.padded,
                   styles.recentChatRow,
