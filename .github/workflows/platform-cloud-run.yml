@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/platform-cloud-run.yml"
       - "packages/platform/**"
+      - "packages/contracts/**"
       - "packages/observability/**"
       - "packages/clerk-sync/**"
       - "shell/**"

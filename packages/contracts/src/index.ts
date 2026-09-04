@@ -1187,3 +1187,6 @@ export type {
   OsViewWindowGeometry,
   PatchOsViewStateRequest,
 } from "#os-view";
+
+export * from "#client-policy";
+export * from "#client-policy-reader";

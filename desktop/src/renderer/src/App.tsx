@@ -1,3 +1,4 @@
+import { ClientUpgradeGate } from './features/updates/ClientUpgradeGate';
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { useEffect } from "react";
 import { Toaster } from "sonner";
@@ -33,7 +34,7 @@ export default function App() {
         ) : status === "signed-out" ? (
           <SignIn />
         ) : (
-          <MissionControl />
+          <ClientUpgradeGate><MissionControl /></ClientUpgradeGate>
         )}
       </div>
       <DesktopSupportWidget />

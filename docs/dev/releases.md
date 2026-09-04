@@ -4,6 +4,10 @@ Matrix OS production releases are VPS-native host bundles. R2 stores immutable t
 
 For installable CLI releases, use [CLI Release Process](cli-release.md). CLI versions publish `@finnaai/matrix` and use `cli-v<version>` tags; they are intentionally separate from host-bundle versions.
 
+For the managed backend policy, legacy fleet bridge, automatic stable cohorts and
+desktop/mobile minimum versions, see [Managed backend releases](managed-backend.md).
+Fleet automation defaults off until the reviewed bridge rollout is activated.
+
 ## Release Artifact Inventory
 
 Matrix OS has five release lanes. They do not all map to GitHub Packages:

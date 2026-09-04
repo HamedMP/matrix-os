@@ -185,6 +185,12 @@ the web.
 
 ## Over-the-Air Updates (EAS Update)
 
+Installed app support policy is independent of VPS releases. See
+[Managed backend releases](managed-backend.md) for latest/minimum versions, upgrade
+gates, and migration limits for old native runtimes. Never raise the minimum until
+the replacement is available in the relevant store; EAS OTA cannot add missing
+native updater support to a previously shipped binary.
+
 OTA landed in v0.2.1. Builds published before it shipped without `expo-updates`
 and can **never** receive an update.
 

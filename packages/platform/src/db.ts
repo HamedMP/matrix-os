@@ -1,3 +1,5 @@
+import { migrateBackendManagement } from './backend-management-repository.js';
+import type { BackendPolicyTable, BackendMachineTable, BackendAuditTable } from './backend-management-schema.js';
 import { randomUUID } from 'node:crypto';
 import {
   Kysely,
@@ -720,6 +722,9 @@ interface OnboardingJourneyEventsTable {
 }
 
 export interface PlatformDatabase {
+  backend_management_policy: BackendPolicyTable;
+  backend_management_machines: BackendMachineTable;
+  backend_management_audit: BackendAuditTable;
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
@@ -2593,6 +2598,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_follows_follower ON social_follows(follower_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_follows_following ON social_follows(following_id)`.execute(db);
+  await migrateBackendManagement(db);
 }
 
 export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? ''): PlatformDB {

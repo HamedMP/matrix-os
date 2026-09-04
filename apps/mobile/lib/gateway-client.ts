@@ -1,3 +1,4 @@
+import { mobileClientHeaders } from './client-policy';
 import { encodeAppSlugPath } from "@/lib/app-slugs";
 import {
   isSafeShellSessionName,
@@ -599,6 +600,7 @@ export class GatewayClient {
     const token = await this.refreshAuthToken();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...mobileClientHeaders(),
     };
     const authorization = formatAuthorizationHeader(token);
     if (authorization) {

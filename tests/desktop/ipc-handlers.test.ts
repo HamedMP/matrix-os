@@ -39,6 +39,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     setBadgeCount: vi.fn(),
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
+    checkClientCompatibility: vi.fn(async () => ({ version: "1.0.0", schemaVersion: 1, revision: 0, policy: null })),
     checkUpdate: vi.fn(async () => ({ status: "disabled" })),
     getUpdateSnapshot: vi.fn(() => ({ status: "disabled" })),
     installUpdate: vi.fn(() => false),

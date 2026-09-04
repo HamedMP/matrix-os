@@ -1,3 +1,4 @@
+import { ClientUpgradeGate } from '@/components/ClientUpgradeGate';
 import "@/lib/hermes-polyfills";
 import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
@@ -199,6 +200,7 @@ function MissingClerkConfigScreen() {
 
 function GatewayShell() {
   const { theme } = useUnistyles();
+  const pathname = usePathname();
   const { isLoaded, isSignedIn, getToken, userId } = useAuth();
   const [client, setClient] = useState<GatewayClient | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
@@ -360,6 +362,7 @@ function GatewayShell() {
   return (
     <GestureHandlerRootView style={styles.flex}>
       <GatewayContext.Provider value={contextValue}>
+        <ClientUpgradeGate origin={gateway?.url ?? "https://app.matrix-os.com"} allowRecovery={!isSignedIn || pathname === '/sign-in' || pathname === '/runtime'}>
         <Stack
           screenOptions={{
             headerStyle: { backgroundColor: theme.colors.background },
@@ -408,6 +411,7 @@ function GatewayShell() {
             }}
           />
         </Stack>
+        </ClientUpgradeGate>
         <NotificationRouter />
         <AnalyticsScreenTracker />
         <StatusBar style="dark" />

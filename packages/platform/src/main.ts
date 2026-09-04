@@ -1,3 +1,6 @@
+import { clientCompatibilityMiddleware } from './client-compatibility-middleware.js';
+import { readBackendPolicy } from './backend-management-repository.js';
+import { createBackendManagementRoutes, createClientPolicyRoutes } from './backend-management-routes.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -462,6 +465,9 @@ export function createApp(deps: {
   );
 
   app.route('/', platformMetricsRoutes.routes);
+  app.use('*', clientCompatibilityMiddleware(async target => (await readBackendPolicy(db)).config.clients[target] ?? null));
+  app.route('/client-policy', createClientPolicyRoutes({ db }));
+  app.route('/backend-management', createBackendManagementRoutes({ db, platformSecret }));
 
   if (deps.goldenSnapshotService && deps.goldenSnapshotConfig) {
     app.route('/system-bundles', createGoldenSnapshotRoutes({

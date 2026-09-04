@@ -13,6 +13,8 @@ const UPDATE_INSTALL_POLL_MS = 5_000;
 const UPDATE_INSTALL_TIMEOUT_MS = 5 * 60_000;
 
 interface SystemInfo {
+  managedUpdates?: boolean;
+  versionSelectionAllowed?: boolean;
   version?: unknown;
   runningVersion?: unknown;
   image?: string;
@@ -453,7 +455,10 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
         </CardContent>
       </Card>
 
-      <Card>
+      {info.managedUpdates && !info.versionSelectionAllowed ? <Card>
+        <CardHeader><CardTitle>Updates are managed automatically.</CardTitle></CardHeader>
+        <CardContent>Your cloud computer follows the stable backend release. App updates are separate.</CardContent>
+      </Card> : <Card>
         <CardHeader>
           <CardTitle className="text-sm flex items-center gap-2">
             <ArrowUpCircleIcon className="size-4" />
@@ -697,7 +702,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             </div>
           </div>
         </CardContent>
-      </Card>
+      </Card>}
 
       <Card>
         <CardHeader>

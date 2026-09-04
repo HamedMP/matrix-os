@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolated from the sync agent: return success only for explicit platform consent.
+# No credentials in logs, redirects, temporary files, or unbounded response buffers.
+if [[ ! "${MATRIX_MACHINE_ID:-}" =~ ^[A-Za-z0-9_-]{1,128}$ ]] \
+  || [ -z "${PLATFORM_INTERNAL_URL:-}" ] || [ -z "${UPGRADE_TOKEN:-}" ]; then
+  echo 'matrix-sync-agent: passive update policy configuration unavailable' >&2
+  exit 1
+fi
+policy_url="${PLATFORM_INTERNAL_URL%/}/backend-management/machines/$MATRIX_MACHINE_ID/policy"
+if ! policy_protocol="$(python3 - "$policy_url" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+try:
+    url = urlsplit(sys.argv[1])
+    if not url.hostname or url.username or url.password:
+        raise ValueError("invalid policy URL")
+    if url.scheme == "https":
+        print("https")
+    elif url.scheme == "http" and url.hostname.lower() in {"localhost", "127.0.0.1", "::1"}:
+        print("http")
+    else:
+        raise ValueError("unsafe policy transport")
+except ValueError:
+    sys.exit(1)
+PY
+)"; then
+  echo 'matrix-sync-agent: passive update policy transport unavailable' >&2
+  exit 1
+fi
+if ! decision="$(curl --fail --silent --max-time 10 --max-filesize 4096 \
+  --proto "=$policy_protocol" --header "Authorization: Bearer $UPGRADE_TOKEN" \
+  "$policy_url" \
+  | python3 -c '
+import json
+import sys
+try:
+    payload = sys.stdin.buffer.read(4097)
+    if len(payload) > 4096:
+        raise ValueError("oversized policy")
+    policy = json.loads(payload)
+    if not isinstance(policy, dict) or type(policy.get("passiveUpdatesAllowed")) is not bool:
+        raise ValueError("invalid policy")
+    print("allow" if policy["passiveUpdatesAllowed"] else "managed")
+except (ValueError, UnicodeError):
+    sys.exit(1)
+')"; then
+  echo 'matrix-sync-agent: passive update policy unavailable; deferring this poll' >&2
+  exit 1
+fi
+[ "$decision" = allow ]

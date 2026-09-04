@@ -1,3 +1,4 @@
+import { createClientPolicyReader, type ClientTarget } from '@matrix-os/contracts';
 import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
@@ -226,11 +227,13 @@ if (!gotLock) {
         : "null";
       // Renderer session gets origin-scoped bearer injection; embed partitions
       // (separate sessions) never do (lesson L1).
+      const clientTarget: ClientTarget = process.platform === "darwin" ? "desktop-macos" : process.platform === "win32" ? "desktop-windows" : "desktop-linux";
       installHeaderInjection(
         session.defaultSession,
         () => auth.getToken(),
         () => auth.getGatewayOrigin(),
         rendererOrigin,
+        { target: clientTarget, version: app.getVersion() },
       );
       // The renderer is a different origin than the gateway (file:// in prod,
       // localhost in dev), so allow its cross-origin fetches to the gateway.
@@ -304,6 +307,11 @@ if (!gotLock) {
       });
       closeCodingAgentThreadEvents = () => codingAgentThreadEvents.closeAll();
 
+      const clientPolicy = createClientPolicyReader({
+        target: clientTarget,
+        load: () => store.get("clientPolicy"),
+        save: value => store.set("clientPolicy", value),
+      });
       registerIpcHandlers(ipcMain, {
         auth,
         store,
@@ -329,6 +337,7 @@ if (!gotLock) {
           codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
         },
+        checkClientCompatibility: async () => ({ ...await clientPolicy.read(auth.getGatewayOrigin()), version: app.getVersion() }),
         checkUpdate: async () => {
           await updater.check();
           return updater.snapshot();

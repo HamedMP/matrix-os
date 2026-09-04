@@ -1,3 +1,5 @@
+import { reconcileManagedBackend } from './backend-management-worker.js';
+import { createManagedBackendTransport } from './backend-management-transport.js';
 import { serve } from '@hono/node-server';
 import {
   createPostHogErrorTracker,
@@ -497,6 +499,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
   let customerVpsReconciliationInterval: ReturnType<typeof setInterval> | undefined;
+  let managedBackendStopped = false;
   let customerVpsReconciliationPromise: Promise<void> | undefined;
   let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
   let goldenSnapshotPromise: Promise<void> | undefined;
@@ -716,6 +719,13 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
               logPlatformRouteError('billing runtime action reconciliation', err);
             }
             try {
+              await reconcileManagedBackend({ db, shouldStop: () => managedBackendStopped, ...createManagedBackendTransport({
+                platformSecret: customerVpsConfig.platformSecret, dispatcher: customerVpsProxyDispatcher,
+              }) });
+            } catch (err: unknown) {
+              logPlatformRouteError('managed backend reconciliation', err);
+            }
+            try {
               const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
               await sweepStaleCheckoutAttempts(
                 db,
@@ -812,6 +822,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   const shutdown = (signal: NodeJS.Signals): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    managedBackendStopped = true;
     console.log(`[platform] Received ${signal}, shutting down`);
     if (customerVpsReconciliationInterval) {
       clearInterval(customerVpsReconciliationInterval);

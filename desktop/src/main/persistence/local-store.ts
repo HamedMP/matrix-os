@@ -1,3 +1,4 @@
+import { ClientPolicyResponseSchema } from '@matrix-os/contracts';
 // Local UI state (FR-084): only recreatable data lives here — profile pointer,
 // window bounds, panel layouts, appearance. Atomic writes (tmp + rename),
 // schema-validated keys, bounded panel-layout retention.
@@ -72,6 +73,7 @@ const DesktopUpdateReleaseSchema = DesktopReleaseNotesSchema.extend({
 }).strict();
 
 const KEY_SCHEMAS = {
+  clientPolicy: z.object({ origin: z.url().max(2048), response: ClientPolicyResponseSchema }).strict(),
   profile: ProfileSchema,
   windowBounds: WindowBoundsSchema,
   lastProjectSlug: z.string().max(256),

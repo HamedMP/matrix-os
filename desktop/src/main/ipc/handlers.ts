@@ -28,6 +28,7 @@ export interface HandlerContext {
   setBadgeCount: (count: number) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
+  checkClientCompatibility: () => Promise<InvokeResponse<"update:compatibility">>;
   checkUpdate: () => Promise<DesktopUpdateSnapshot>;
   getUpdateSnapshot: () => DesktopUpdateSnapshot;
   installUpdate: () => Promise<boolean> | boolean;
@@ -168,6 +169,7 @@ function toWebContentsViewBounds(
 }
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
+  if (typeof ctx.checkClientCompatibility !== "function") throw new Error("Client compatibility dependency missing");
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
@@ -375,6 +377,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     }
   });
 
+  handle("update:compatibility", () => ctx.checkClientCompatibility());
   handle("update:check", () => ctx.checkUpdate());
   handle("update:get-state", () => ctx.getUpdateSnapshot());
   handle("update:install", async () => ({ ok: await ctx.installUpdate() }));

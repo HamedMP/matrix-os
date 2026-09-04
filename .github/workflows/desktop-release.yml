@@ -242,3 +242,23 @@ jobs:
           channel: ${{ needs.prepare.outputs.channel }}
         env:
           GH_TOKEN: ${{ github.token }}
+
+  sync-client-policy:
+    name: Update desktop compatibility policy
+    needs: [prepare, release]
+    if: ${{ needs.prepare.outputs.mode == 'publish' && needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.prerelease == 'false' && vars.MANAGED_BACKEND_OPERATIONS_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Publish latest macOS client without raising its minimum
+        env:
+          PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+          PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+          DESKTOP_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          node scripts/release/manage-backend.mjs publish-client --target desktop-macos --latest "$DESKTOP_VERSION" --download https://github.com/HamedMP/matrix-os/releases/tag/desktop-stable

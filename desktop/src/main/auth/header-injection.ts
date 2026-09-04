@@ -145,10 +145,15 @@ export function installHeaderInjection(
   getToken: () => string | null,
   getGatewayOrigin: () => string | null,
   rendererOrigin: string,
+  client?: { target: string; version: string },
 ): void {
   rendererSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const gatewayOrigin = getGatewayOrigin();
     const token = getToken();
+    if (client && shouldInjectAuth(details.url, gatewayOrigin)) {
+      details.requestHeaders["x-matrix-client-target"] = client.target;
+      details.requestHeaders["x-matrix-client-version"] = client.version;
+    }
     if (token && shouldInjectAuth(details.url, gatewayOrigin)) {
       details.requestHeaders["Authorization"] = `Bearer ${token}`;
     }

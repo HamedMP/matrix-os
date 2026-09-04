@@ -33,7 +33,9 @@
     "#safe-client-error": "./src/safe-client-error.ts",
     "#support-chat-properties": "./src/support-chat-properties.ts",
     "#terminal-clipboard": "./src/terminal-clipboard.ts",
-    "#terminal-links": "./src/terminal-links.ts"
+    "#terminal-links": "./src/terminal-links.ts",
+    "#client-policy": "./src/client-policy.ts",
+    "#client-policy-reader": "./src/client-policy-reader.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

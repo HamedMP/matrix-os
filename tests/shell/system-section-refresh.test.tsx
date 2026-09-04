@@ -34,6 +34,13 @@ describe("SystemSection release refresh", () => {
     vi.restoreAllMocks();
   });
 
+  it("hides backend version selection for managed customers", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ managedUpdates: true, versionSelectionAllowed: false, channels: {} })));
+    render(<SystemSection />);
+    await waitFor(() => expect(screen.getByText("Updates are managed automatically.")).toBeTruthy());
+    expect(screen.queryByLabelText("Release channel")).toBeNull();
+  });
+
   it("uses the persistent update channel instead of the bundle provenance channel", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);

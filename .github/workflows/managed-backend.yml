@@ -1,0 +1,51 @@
+name: Managed backend operations
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        default: status
+        options: [status, verify, enable, pause, follow-stable, retry]
+      bridge_version:
+        description: Reviewed immutable bridge version (enable only)
+        type: string
+      machine_id:
+        description: Canary machine ID (enable) or quarantined machine ID (retry)
+        type: string
+
+permissions:
+  contents: read
+concurrency:
+  group: managed-backend-operations
+  cancel-in-progress: false
+jobs:
+  operate:
+    # Enable once the bridge platform is deployed; scheduled jobs only observe.
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.MANAGED_BACKEND_OPERATIONS_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply reviewed policy or inspect fleet
+        env:
+          PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+          PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+          ACTION: ${{ github.event_name == 'schedule' && 'verify' || inputs.action }}
+          BRIDGE_VERSION: ${{ inputs.bridge_version }}
+          MACHINE_ID: ${{ inputs.machine_id }}
+        run: |
+          set -euo pipefail
+          args=("${ACTION:-status}")
+          if [ "$ACTION" = enable ]; then
+            args+=(--bridge "$BRIDGE_VERSION" --canary "$MACHINE_ID")
+          elif [ "$ACTION" = retry ]; then
+            args+=(--machine "$MACHINE_ID")
+          fi
+          node scripts/release/manage-backend.mjs "${args[@]}"
