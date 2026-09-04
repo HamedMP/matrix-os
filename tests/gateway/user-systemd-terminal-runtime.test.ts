@@ -536,7 +536,7 @@ describe("user-systemd terminal runtime", () => {
     )).resolves.toContain(RUNTIME_ID);
   });
 
-  it("removes the descriptor only after systemd confirms the exact unit stopped", async () => {
+  it("removes the exact zellij session before deleting the durable descriptor", async () => {
     const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
     const runtime = createUserSystemdTerminalRuntime({
       homePath,
@@ -550,15 +550,46 @@ describe("user-systemd terminal runtime", () => {
 
     await expect(runtime.delete(RUNTIME_ID)).resolves.toEqual({ ok: true });
 
-    expect(runCommand).toHaveBeenLastCalledWith(
-      "systemctl",
-      ["--user", "stop", `matrix-zellij@${RUNTIME_ID}.service`],
-      expect.any(Object),
-    );
+    expect(runCommand.mock.calls.slice(-2)).toEqual([
+      [
+        "systemctl",
+        ["--user", "stop", `matrix-zellij@${RUNTIME_ID}.service`],
+        expect.any(Object),
+      ],
+      [
+        `/opt/matrix/terminal-runtime/generations/${GENERATION}/zellij`,
+        ["delete-session", `matrix-${RUNTIME_ID}`, "--force"],
+        expect.any(Object),
+      ],
+    ]);
     await expect(readFile(
       join(homePath, "system", "terminal-runtimes", `${RUNTIME_ID}.json`),
       "utf8",
     )).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("retains the descriptor when exact zellij session deletion fails", async () => {
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (command, args) => {
+      if (command.endsWith("/zellij") && args[0] === "delete-session") {
+        throw Object.assign(new Error("internal zellij failure"), { code: 1 });
+      }
+      return { stdout: "", stderr: "" };
+    });
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe: vi.fn(async () => true),
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+    await runtime.create({ runtimeId: RUNTIME_ID, scope: "terminal", kind: "shell", displayName: "Main", cwd, layoutPath });
+
+    await expect(runtime.delete(RUNTIME_ID)).rejects.toThrow("Terminal runtime unavailable");
+    await expect(readFile(
+      join(homePath, "system", "terminal-runtimes", `${RUNTIME_ID}.json`),
+      "utf8",
+    )).resolves.toContain(RUNTIME_ID);
   });
 
   it("retains cleanup metadata when a referenced launch snapshot cannot be removed", async () => {
@@ -690,5 +721,45 @@ describe("user-systemd terminal runtime", () => {
       createdAt: "2026-07-31T12:00:00.000Z",
     });
     expect(runCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("sweeps only bounded exited matrix runtimes that have no durable descriptor", async () => {
+    const orphanRuntimeId = "rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => {
+      if (args[0] === "list-sessions") {
+        return {
+          stdout: [
+            `${`matrix-${RUNTIME_ID}`} [Created 1m ago] (EXITED - attach to resurrect)`,
+            `${`matrix-${orphanRuntimeId}`} [Created 2m ago] (EXITED - attach to resurrect)`,
+            "matrix-rt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb [Created 3m ago]",
+            "unrelated-shell [Created 4m ago] (EXITED - attach to resurrect)",
+          ].join("\n"),
+          stderr: "",
+        };
+      }
+      return { stdout: "", stderr: "" };
+    });
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe: vi.fn(async () => true),
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+    await runtime.create({ runtimeId: RUNTIME_ID, scope: "terminal", kind: "shell", displayName: "Main", cwd, layoutPath });
+    runCommand.mockClear();
+
+    await expect(runtime.sweepOrphanedSessions()).resolves.toEqual({ scanned: 1, deleted: 1, failed: 0 });
+    expect(runCommand).toHaveBeenCalledWith(
+      `/opt/matrix/terminal-runtime/generations/${GENERATION}/zellij`,
+      ["delete-session", `matrix-${orphanRuntimeId}`, "--force"],
+      expect.any(Object),
+    );
+    expect(runCommand).not.toHaveBeenCalledWith(
+      expect.any(String),
+      ["delete-session", `matrix-${RUNTIME_ID}`, "--force"],
+      expect.any(Object),
+    );
   });
 });

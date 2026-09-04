@@ -100,6 +100,7 @@ export interface ZellijAdapter {
   getSessionCreatedAt?(name: string): Promise<string | null>;
   focusedPaneRuntime(name: string): Promise<FocusedPaneRuntimeObservation>;
   createSession(options: CreateSessionOptions): Promise<void>;
+  recoverSession?(options: Pick<CreateSessionOptions, "name" | "cwd">): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession(name: string, nextName: string): Promise<void>;
   validateLayout(path: string): Promise<void>;
@@ -459,6 +460,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       }
       return stdout
         .split(/\r?\n/)
+        .filter((line) => !/\bEXITED\b/i.test(line))
         .map((line) => line.trim().split(/\s+/)[0])
         .filter(Boolean);
     },
@@ -573,7 +575,23 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       releaseRetainedCreatePty(name, { kill: true });
       const args = ["delete-session", name];
       if (options.force) args.push("--force");
-      await run(args);
+      try {
+        await run(args);
+      } catch (error: unknown) {
+        if (!options.force) throw error;
+        let sessions: string;
+        try {
+          sessions = await run(["list-sessions", "--no-formatting"]);
+        } catch (listError: unknown) {
+          if (isNoActiveSessionsFailure(listError)) return;
+          throw error;
+        }
+        const runtimeStillExists = sessions
+          .split(/\r?\n/)
+          .map((line) => line.trim().split(/\s+/)[0])
+          .some((sessionName) => sessionName === name);
+        if (runtimeStillExists) throw error;
+      }
     },
     async renameSession(name, nextName) {
       await run(["--session", name, "action", "rename-session", nextName]);

@@ -29,6 +29,7 @@ interface SessionRegistryRoutes {
     agent?: AgentKind;
     exclusive?: boolean;
   }): Promise<unknown>;
+  recover?(name: string, input: { cwd?: string }): Promise<unknown>;
   delete(name: string, options?: { force?: boolean }): Promise<void>;
   rename?(name: string, nextName: string): Promise<unknown>;
   reorder?(order: string[]): Promise<unknown[]>;
@@ -37,6 +38,15 @@ interface SessionRegistryRoutes {
     lastSeenSeq?: number | null;
     visualStatus?: "running" | "finished" | "idle" | "waiting";
   }): Promise<unknown>;
+}
+
+interface ShellSessionLifecycleRoutes {
+  withSessionLifecycleLock<T>(name: string, operation: () => Promise<T>): Promise<T>;
+  beginSessionDeletion(name: string): Promise<void>;
+  completeSessionDeletion(name: string): Promise<void>;
+  deleteSessionReferences(name: string): Promise<void>;
+  clearSessionTombstone(name: string): Promise<void>;
+  listSessionTombstones(): Promise<string[]>;
 }
 
 interface ChatTerminalRoutes {
@@ -105,6 +115,7 @@ export interface ShellRouteDeps {
   commandRunner?: ShellCommandRunner;
   terminalInput?: TerminalInputRoutes;
   sessionCreateRateLimiter?: RateLimiter;
+  sessionLifecycle?: ShellSessionLifecycleRoutes;
   getPrincipal?: (c: Context) => RequestPrincipal;
   listChatBoundSessionIds?: (
     principal: RequestPrincipal,
@@ -174,6 +185,9 @@ const SessionRenameBodySchema = z.object({
 const SessionOrderBodySchema = z.object({
   order: z.array(SafeSessionNameSchema).max(100),
 }).strict();
+const RecoverSessionBodySchema = z.object({
+  cwd: safeCwdSchema().optional(),
+}).strict();
 
 function safeCwdSchema() {
   return z.string().min(1).max(1024)
@@ -199,6 +213,64 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     maxSize: TERMINAL_PASTE_ASSET_BODY_LIMIT,
     onError: bodyTooLarge,
   });
+
+  const withSessionLifecycleLock = <T>(name: string, operation: () => Promise<T>): Promise<T> => (
+    deps.sessionLifecycle
+      ? deps.sessionLifecycle.withSessionLifecycleLock(name, operation)
+      : operation()
+  );
+
+  const rollbackCreatedSession = async (name: string, restoreTombstone: boolean): Promise<void> => {
+    let runtimeCleanupError: unknown;
+    try {
+      await deps.registry.delete(name, { force: true });
+    } catch (cleanupError: unknown) {
+      runtimeCleanupError = cleanupError;
+      console.error(
+        "[shell] Created terminal session cleanup failed:",
+        cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+      );
+    }
+
+    let tombstoneCleanupError: unknown;
+    if ((restoreTombstone || runtimeCleanupError !== undefined) && deps.sessionLifecycle) {
+      try {
+        await deps.sessionLifecycle.deleteSessionReferences(name);
+      } catch (cleanupError: unknown) {
+        tombstoneCleanupError = cleanupError;
+        console.error(
+          "[shell] Terminal session tombstone restoration failed:",
+          cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+        );
+      }
+    }
+
+    if (runtimeCleanupError !== undefined || tombstoneCleanupError !== undefined) {
+      throw new Error("Terminal session creation rollback failed", {
+        cause: tombstoneCleanupError ?? runtimeCleanupError,
+      });
+    }
+  };
+
+  const commitCreatedSession = async (name: string): Promise<void> => {
+    if (!deps.sessionLifecycle) return;
+    try {
+      await deps.sessionLifecycle.clearSessionTombstone(name);
+    } catch (error: unknown) {
+      try {
+        await rollbackCreatedSession(name, false);
+      } catch (rollbackError: unknown) {
+        throw new Error("Terminal session creation could not be committed or rolled back", {
+          cause: rollbackError,
+        });
+      }
+      throw error;
+    }
+  };
+
+  const commitRecoveredSession = async (name: string): Promise<void> => {
+    await deps.sessionLifecycle?.clearSessionTombstone(name);
+  };
 
   app.get("/health", async (c) => {
     if (!deps.shellBackend) {
@@ -241,7 +313,15 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
 
   app.get("/sessions", async (c) => {
     try {
-      const sessions = await deps.registry.list();
+      let sessions = await deps.registry.list();
+      if (deps.sessionLifecycle) {
+        const tombstoned = await deps.sessionLifecycle.listSessionTombstones();
+        sessions = sessions.filter((session) => (
+          !session || typeof session !== "object" || !("name" in session)
+          || typeof (session as { name?: unknown }).name !== "string"
+          || !tombstoned.includes((session as { name: string }).name)
+        ));
+      }
       if (!deps.listChatBoundSessionIds) return c.json({ sessions });
       if (!deps.getPrincipal) throw new Error("Missing shell principal dependency");
       const visible: unknown[] = [];
@@ -292,37 +372,33 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         ...(body.cmd ? { cmd: body.cmd } : {}),
         ...(body.agent ? { agent: body.agent } : {}),
       };
-      const session = await deps.registry.create(sessionInput);
-      const name =
-        typeof session === "object" && session !== null && "name" in session
-          ? String((session as { name: unknown }).name)
-          : body.name;
-      const sessionCreatedAt =
-        typeof session === "object" && session !== null && "createdAt" in session
-          ? z.iso.datetime().parse((session as { createdAt: unknown }).createdAt)
-          : null;
-      if (body.chatId && principal && binding && deps.chatTerminals) {
-        try {
-          if (!sessionCreatedAt) throw new Error("Chat terminal session incarnation unavailable");
-          await deps.chatTerminals.bind(principal, {
-            chatId: body.chatId,
-            ...(binding.runId ? { runId: binding.runId } : {}),
-            sessionId: name,
-            sessionCreatedAt,
-          });
-        } catch (error: unknown) {
+      return await withSessionLifecycleLock(body.name, async () => {
+        const session = await deps.registry.create(sessionInput);
+        const name =
+          typeof session === "object" && session !== null && "name" in session
+            ? String((session as { name: unknown }).name)
+            : body.name;
+        await commitCreatedSession(name);
+        const sessionCreatedAt =
+          typeof session === "object" && session !== null && "createdAt" in session
+            ? z.iso.datetime().parse((session as { createdAt: unknown }).createdAt)
+            : null;
+        if (body.chatId && principal && binding && deps.chatTerminals) {
           try {
-            await deps.registry.delete(name, { force: true });
-          } catch (cleanupError: unknown) {
-            console.error(
-              "[shell] Chat terminal cleanup failed:",
-              cleanupError instanceof Error ? cleanupError.name : "UnknownError",
-            );
+            if (!sessionCreatedAt) throw new Error("Chat terminal session incarnation unavailable");
+            await deps.chatTerminals.bind(principal, {
+              chatId: body.chatId,
+              ...(binding.runId ? { runId: binding.runId } : {}),
+              sessionId: name,
+              sessionCreatedAt,
+            });
+          } catch (error: unknown) {
+            await rollbackCreatedSession(name, true);
+            throw error;
           }
-          throw error;
         }
-      }
-      return c.json({ name, created: true }, 201);
+        return c.json({ name, created: true }, 201);
+      });
     } catch (err) {
       return safeError(c, err);
     }
@@ -340,11 +416,52 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
 
   app.delete("/sessions/:name", deleteBodyLimit, async (c) => {
     try {
-      await deps.registry.delete(SafeSessionNameSchema.parse(c.req.param("name")), {
-        force: new URL(c.req.url).searchParams.get("force") === "1",
+      const name = SafeSessionNameSchema.parse(c.req.param("name"));
+      const sessionLifecycle = deps.sessionLifecycle;
+      if (!sessionLifecycle) throw new Error("Missing terminal session lifecycle dependency");
+      console.info("[terminal-lifecycle]", { event: "terminal.session.delete.requested", name });
+      return await sessionLifecycle.withSessionLifecycleLock(name, async () => {
+        await sessionLifecycle.beginSessionDeletion(name);
+        await deps.registry.delete(name, {
+          force: new URL(c.req.url).searchParams.get("force") === "1",
+        });
+        await sessionLifecycle.completeSessionDeletion(name);
+        console.info("[terminal-lifecycle]", { event: "terminal.session.delete.completed", name });
+        return c.json({ ok: true });
       });
-      return c.json({ ok: true });
     } catch (err) {
+      console.warn("[terminal-lifecycle]", {
+        event: "terminal.session.delete.failed",
+        error: err instanceof Error ? err.name : "UnknownError",
+      });
+      return safeError(c, err);
+    }
+  });
+
+  app.post("/sessions/:name/recover", sessionBodyLimit, async (c) => {
+    try {
+      const name = SafeSessionNameSchema.parse(c.req.param("name"));
+      const body = RecoverSessionBodySchema.parse(await c.req.json());
+      if (!sessionCreateRateLimiter.check("shell-session-create")) {
+        return c.json(
+          { error: { code: "rate_limited", message: "Request failed" } },
+          429,
+          { "Retry-After": String(Math.ceil(SHELL_SESSION_CREATE_RATE_LIMIT.lockoutMs / 1000)) },
+        );
+      }
+      if (!deps.registry.recover) return unavailable(c, "session_recovery_unavailable");
+      console.info("[terminal-lifecycle]", { event: "terminal.session.recover.requested", name });
+      return await withSessionLifecycleLock(name, async () => {
+        const session = await deps.registry.recover!(name, body.cwd ? { cwd: body.cwd } : {});
+        await commitRecoveredSession(name);
+        console.info("[terminal-lifecycle]", { event: "terminal.session.recover.completed", name });
+        return c.json({ session }, 201);
+      });
+    } catch (err: unknown) {
+      console.warn("[terminal-lifecycle]", {
+        event: "terminal.session.recover.failed",
+        error: err instanceof Error ? err.name : "UnknownError",
+      });
       return safeError(c, err);
     }
   });

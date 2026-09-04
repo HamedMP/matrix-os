@@ -59,6 +59,8 @@ const READINESS_INTERVAL_MS = 100;
 const READINESS_STABILITY_MS = 250;
 const INACTIVE_RECOVERY_RETRY_DELAY_MS = 250;
 const MAX_RUNTIME_DESCRIPTORS = 256;
+const MAX_ORPHAN_SWEEP_CANDIDATES = 32;
+const MAX_ORPHAN_SWEEP_CONCURRENCY = 8;
 const MAX_TERMINAL_RUNTIME_ASSET_BYTES = 256 * 1024 * 1024;
 const MAX_USER_UNIT_BYTES = 64 * 1024;
 
@@ -554,6 +556,13 @@ export function createUserSystemdTerminalRuntime(options: {
         throw err;
       }
     }
+    await deleteExactZellijSession(descriptor);
+    await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
+    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
+    await waitUntilReady(descriptor);
+  }
+
+  async function deleteExactZellijSession(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
     const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
     try {
       await runCommand(zellijPath, ["delete-session", descriptor.sessionName, "--force"], {
@@ -567,9 +576,6 @@ export function createUserSystemdTerminalRuntime(options: {
         : undefined;
       if (code !== 2 && code !== "2") throw new TerminalRuntimeUnavailableError(err);
     }
-    await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
-    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
-    await waitUntilReady(descriptor);
   }
 
   return {
@@ -648,10 +654,12 @@ export function createUserSystemdTerminalRuntime(options: {
     },
 
     async start(runtimeId: string): Promise<UserSystemdRuntimeResult> {
-      const descriptor = await readDescriptor(runtimeId);
-      if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
-      await startInterruptedRuntime(descriptor);
-      return { ...descriptor, lifecycle: "running" };
+      return withMutationLock(async () => {
+        const descriptor = await readDescriptor(runtimeId);
+        if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
+        await startInterruptedRuntime(descriptor);
+        return { ...descriptor, lifecycle: "running" };
+      });
     },
 
     get(runtimeId: string): Promise<UserSystemdTerminalDescriptor | null> {
@@ -720,6 +728,7 @@ export function createUserSystemdTerminalRuntime(options: {
         const descriptor = await readDescriptor(parsed.data);
         await runSystemctl(["stop", unitName(parsed.data)]);
         try {
+          if (descriptor) await deleteExactZellijSession(descriptor);
           const generatedLayoutRoot = join(homePath, "system", "zellij", "runtime-layouts");
           const generatedEnvironmentRoot = join(descriptorRoot, "env");
           if (
@@ -744,6 +753,72 @@ export function createUserSystemdTerminalRuntime(options: {
           throw new TerminalRuntimeUnavailableError(err);
         }
         return { ok: true };
+      });
+    },
+
+    async sweepOrphanedSessions(): Promise<{ scanned: number; deleted: number; failed: number }> {
+      return withMutationLock(async () => {
+        const descriptors = await listDescriptors();
+        const retained = new Set(descriptors.map((descriptor) => descriptor.sessionName));
+        const zellijPath = join(terminalRuntimeRoot, "generations", generation, "zellij");
+        let stdout: string;
+        try {
+          const result = await runCommand(zellijPath, ["list-sessions", "--no-formatting"], {
+            cwd: homePath,
+            env: systemdEnv,
+            timeoutMs: SYSTEMCTL_TIMEOUT_MS,
+          });
+          stdout = result.stdout;
+        } catch (err: unknown) {
+          console.warn("[terminal-runtime] orphan sweep list failed:", err instanceof Error ? err.name : "UnknownError");
+          return { scanned: 0, deleted: 0, failed: 1 };
+        }
+        const candidates = stdout
+          .split(/\r?\n/)
+          .filter((line) => /\bEXITED\b/i.test(line))
+          .map((line) => line.trim().split(/\s+/)[0])
+          .filter((name) => /^matrix-rt_[0-9a-f]{32}$/.test(name) && !retained.has(name))
+          .slice(0, MAX_ORPHAN_SWEEP_CANDIDATES);
+        if (candidates.length > 0) {
+          console.info("[terminal-runtime]", {
+            event: "terminal.runtime.orphan.detected",
+            count: candidates.length,
+          });
+        }
+        let deleted = 0;
+        let failed = 0;
+        for (let start = 0; start < candidates.length; start += MAX_ORPHAN_SWEEP_CONCURRENCY) {
+          const outcomes = await Promise.all(
+            candidates.slice(start, start + MAX_ORPHAN_SWEEP_CONCURRENCY).map(async (sessionName) => {
+              try {
+                await runCommand(zellijPath, ["delete-session", sessionName, "--force"], {
+                  cwd: homePath,
+                  env: systemdEnv,
+                  timeoutMs: SYSTEMCTL_TIMEOUT_MS,
+                });
+                console.info("[terminal-runtime]", {
+                  event: "terminal.runtime.orphan.deleted",
+                  sessionName,
+                });
+                return "deleted" as const;
+              } catch (err: unknown) {
+                const code: unknown = err instanceof Error && "code" in err
+                  ? (err as { code?: unknown }).code
+                  : undefined;
+                if (code === 2 || code === "2") return "deleted" as const;
+                console.warn("[terminal-runtime]", {
+                  event: "terminal.runtime.orphan.failed",
+                  sessionName,
+                  error: err instanceof Error ? err.name : "UnknownError",
+                });
+                return "failed" as const;
+              }
+            }),
+          );
+          deleted += outcomes.filter((outcome) => outcome === "deleted").length;
+          failed += outcomes.filter((outcome) => outcome === "failed").length;
+        }
+        return { scanned: candidates.length, deleted, failed };
       });
     },
   };
