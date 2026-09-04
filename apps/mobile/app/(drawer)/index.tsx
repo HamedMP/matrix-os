@@ -23,7 +23,7 @@ import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail"
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { buildTranscript, type TranscriptMessage } from "@/lib/canonical-chat-transcript";
-import { defaultCatalogSelection } from "@/lib/canonical-chat-selection";
+import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon, IconButton } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
@@ -47,6 +47,7 @@ export default function ChatScreen() {
   const selection = selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
+  const turnModes = defaultTurnModes(catalog, selection);
 
   const messages = useMemo(() => buildTranscript(detail), [detail]);
   const busy = sendMessage.isPending || (detail?.runs.some(
@@ -86,19 +87,21 @@ export default function ChatScreen() {
 
   const isConnected = Boolean(isSignedIn);
   const hasDraftText = draft.trim().length > 0;
-  const canSend = hasDraftText && isConnected && Boolean(selection) && !busy;
+  const canSend = hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const send = useCallback(() => {
     const trimmed = draft.trim();
-    if (!trimmed || !selection) return;
+    if (!trimmed || !selection || !turnModes) return;
     setDraft("");
     sendMessage.mutate({
       chatId: activeChatId,
       baseRevision: detail?.record.chat.revision ?? 0,
       text: trimmed,
       selection,
+      interactionMode: turnModes.interactionMode,
+      permissionMode: turnModes.permissionMode,
     });
-  }, [draft, selection, activeChatId, detail?.record.chat.revision, sendMessage]);
+  }, [draft, selection, turnModes, activeChatId, detail?.record.chat.revision, sendMessage]);
 
   const insets = useSafeAreaInsets();
 

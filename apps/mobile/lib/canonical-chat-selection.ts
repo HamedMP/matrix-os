@@ -13,3 +13,27 @@ export function defaultCatalogSelection(
   }
   return null;
 }
+
+/**
+ * Interaction/permission mode for a turn must be one the selected instance
+ * actually declares in its `supports` capabilities (validated server-side by
+ * `supportsRequirements` — anything else is rejected as `capability_mismatch`).
+ * The system/Hermes driver, for example, only supports `["default"]` /
+ * `["full_access"]`, not the "supervised" mode coding-agent drivers use.
+ */
+export function defaultTurnModes(
+  catalog: CanonicalProviderCatalog | null,
+  selection: CanonicalChatModelSelection | null,
+): { interactionMode: string; permissionMode: string } | null {
+  if (!catalog || !selection) return null;
+  const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
+  if (!instance) return null;
+  const interactionMode = instance.supports.interactionModes.includes("default")
+    ? "default"
+    : instance.supports.interactionModes[0];
+  const permissionMode = instance.supports.permissionModes.includes("supervised")
+    ? "supervised"
+    : instance.supports.permissionModes[0];
+  if (!interactionMode || !permissionMode) return null;
+  return { interactionMode, permissionMode };
+}

@@ -19,6 +19,9 @@ interface SendChatMessageInput {
   baseRevision: number;
   text: string;
   selection: CanonicalChatModelSelection;
+  /** Must be modes the selected instance's `supports` actually declares -- see defaultTurnModes. */
+  interactionMode: string;
+  permissionMode: string;
 }
 
 export function useSendChatMessage() {
@@ -27,7 +30,14 @@ export function useSendChatMessage() {
   const { bindDraftChatId } = useCanonicalChatSession();
 
   return useMutation({
-    mutationFn: async ({ chatId, baseRevision, text, selection }: SendChatMessageInput) => {
+    mutationFn: async ({
+      chatId,
+      baseRevision,
+      text,
+      selection,
+      interactionMode,
+      permissionMode,
+    }: SendChatMessageInput) => {
       const token = await getToken();
       if (!token) throw new Error("Not signed in.");
       const computer = await fetchActiveComputer(token);
@@ -56,8 +66,8 @@ export function useSendChatMessage() {
         baseRevision: revision,
         parts: [{ type: "text", text }],
         selection,
-        interactionMode: "default",
-        permissionMode: "supervised",
+        interactionMode,
+        permissionMode,
       });
 
       if (!chatId) {
