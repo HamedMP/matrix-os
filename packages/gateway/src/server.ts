@@ -13,6 +13,12 @@ import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import {
+  createFundedAiCredentialManager,
+  loadFundedAiRuntimeConfig,
+} from "./funded-ai-credential-manager.js";
+import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
@@ -127,6 +133,7 @@ import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
+import { createCodingHarnessCredentialResolver } from "./coding-agents/harness-credentials.js";
 import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
@@ -136,8 +143,10 @@ import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/proje
 import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
+import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
 import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
 import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
+import { createNativeCodingModelCatalogSource } from "./chat/native-coding-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import {
   closeCanonicalChatEventLifecycle,
@@ -148,6 +157,8 @@ import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
+import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
+import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import {
@@ -232,12 +243,26 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { AiProviderService } from "./ai-providers/service.js";
+import { createAiProviderRoutes } from "./ai-providers/routes.js";
+import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
+import { createProviderSettingsRoutes } from "./ai-providers/provider-settings-routes.js";
+import {
+  createProviderGenericHarnessCoordinator,
+  reconcileProviderRuntimeAtStartup,
+} from "./ai-providers/provider-generic-harness-coordinator.js";
+import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
+import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
+import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
   validateHermesDashboardUrl,
 } from "./agent-config/hermes-client.js";
-import { createAgentRuntimeServices } from "./agent-config/runtime-services.js";
+import {
+  createAgentRuntimeServices,
+  createLazyOpenClawRpc,
+} from "./agent-config/runtime-services.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -263,6 +288,11 @@ import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+import {
+  createChatAttachmentCleanupLifecycle,
+} from "./chat/attachment-cleanup.js";
+import { OsViewStateRepository } from "./os-view-state/repository.js";
+import { createOsViewStateRoutes } from "./os-view-state/routes.js";
 import { ChatRepository } from "./chat/repository.js";
 import {
   createGatewayChatTerminalWiring,
@@ -386,6 +416,13 @@ const MAX_MAIN_WS_CLIENTS = 100;
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
+  const fundedAiRuntimeConfig = loadFundedAiRuntimeConfig(process.env);
+  const fundedCredentialProvider = fundedAiRuntimeConfig
+    ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
+    : undefined;
+  const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
+    ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
+    : undefined;
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,
   );
@@ -536,7 +573,7 @@ export async function createGateway(config: GatewayConfig) {
       },
     });
   };
-  // PostHog LLM analytics: one $ai_generation per completed kernel query.
+  // PostHog LLM analytics: one $ai_generation per completed AI run.
   // Reuses the tracker above (already flushed per-capture and shut down on
   // gateway close), so no separate PostHog client or shutdown path is needed.
   const recordAiGeneration = createAiGenerationRecorder({
@@ -548,6 +585,7 @@ export async function createGateway(config: GatewayConfig) {
     maxTurns: config.maxTurns,
     spawnFn: config.spawnFn,
     onAiGeneration: recordAiGeneration,
+    fundedCredentialProvider,
   });
 
   const watcher: Watcher = createWatcher(homePath);
@@ -686,6 +724,13 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
+  let providerSettingsStore: ProviderSettingsStore | undefined;
+  const harnessSettingsReader = {
+    getSnapshot: () => {
+      if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+      return providerSettingsStore.getSnapshot();
+    },
+  };
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
@@ -714,6 +759,22 @@ export async function createGateway(config: GatewayConfig) {
       homePath,
       codexEvents: codexEventBridge,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
+      pi: {
+        resolveCredentialLaunch: createCodingHarnessCredentialResolver({
+          harness: "pi",
+          homePath,
+          settings: harnessSettingsReader,
+          fundedProvider: fundedCredentialProvider,
+        }),
+      },
+      opencode: {
+        resolveCredentialLaunch: createCodingHarnessCredentialResolver({
+          harness: "opencode",
+          homePath,
+          settings: harnessSettingsReader,
+          fundedProvider: fundedCredentialProvider,
+        }),
+      },
     });
     codingAgentApprovalsEnabled = providerSet.approvalsEnabled;
     codingAgentProviders.push(...providerSet.executionProviders);
@@ -740,6 +801,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
+    invalidateCredentialDetection: agentCredentialLauncher.invalidateCredentialDetection,
   });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
   const codingAgentTurnLifecycle = await createCodingAgentTurnLifecycle({
@@ -838,6 +900,7 @@ export async function createGateway(config: GatewayConfig) {
   let appRegistry: AppRegistry | null = null;
   let kyselyInstance: Kysely<any> | null = null;
   let canvasRepository: CanvasRepository | null = null;
+  let osViewStateRepository: OsViewStateRepository | null = null;
 
   // Apps whose Postgres schema we've already ensured this process lifetime.
   // The startup loop pre-registers shipped apps, but apps BUILT in-OS after boot
@@ -907,7 +970,6 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
-
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
@@ -922,6 +984,8 @@ export async function createGateway(config: GatewayConfig) {
       }
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
+      osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
+      await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
       canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
@@ -1037,6 +1101,7 @@ export async function createGateway(config: GatewayConfig) {
       kvStore = null;
       appRegistry = null;
       canvasRepository = null;
+      osViewStateRepository = null;
       canvasService = null;
       canvasSubscriptionHub = null;
       messagingRepository = null;
@@ -2392,6 +2457,7 @@ export async function createGateway(config: GatewayConfig) {
                 }, undefined, abortController, {
                 model: parsed.model,
                 effort: parsed.effort,
+                accessSourceId: parsed.accessSourceId,
                 workingDirectory,
               })
               .catch((err: Error) => {
@@ -4137,13 +4203,54 @@ export async function createGateway(config: GatewayConfig) {
     baseUrl: hermesDashboardUrl,
     authFilePath: join(homePath, "system/agent-runtime/hermes-dashboard.env"),
   });
+  const openClawRpc = createLazyOpenClawRpc(homePath);
+  await cleanupStaleIsolatedProviderProcesses();
   const agentRuntimeServices = createAgentRuntimeServices({
     homePath,
     client: hermesClient,
+    openClawRpc,
   });
   await agentRuntimeServices.controller.reconcile();
+  const aiProviderService = new AiProviderService({
+    homePath,
+    fundedCredentialProvider,
+    driverInventory: createProviderDriverInventoryReader({
+      detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
+      runtimeSource: agentRuntimeServices.source,
+    }),
+  });
+  const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
+    homePath,
+    registry: zellijShellRegistry,
+    enabledHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "codex" | "claude" => agent === "codex" || agent === "claude",
+    ),
+  });
+  const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({
+    homePath,
+    enabledHarnesses: codingAgentWorkspaceAgents,
+  });
+  const providerGenericHarnessCoordinator = createProviderGenericHarnessCoordinator({
+    homePath,
+    runtimeController: agentRuntimeServices.controller,
+    runtimeSource: agentRuntimeServices.source,
+    enabledCodingHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
+    ),
+  });
+  await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
+  providerSettingsStore = new ProviderSettingsStore({
+    homePath,
+    providerSnapshotReader: aiProviderService,
+    loginCoordinator: providerLoginCoordinator,
+    accountLifecycle: providerAccountLifecycle,
+    fundingSummaryReader: fundedAiFundingSummaryReader,
+    runtimeCoordinator: providerGenericHarnessCoordinator,
+  });
   const canonicalExecutableDriverKinds = [
+    "kernel" as const,
     "hermes" as const,
+    "openclaw" as const,
     ...(codingAgentProviders.some((provider) => provider.providerId === "claude")
       ? ["claude_code" as const]
       : []),
@@ -4151,18 +4258,32 @@ export async function createGateway(config: GatewayConfig) {
       && codingAgentProviders.some((provider) => provider.providerId === "codex")
       ? ["codex" as const]
       : []),
+    ...(codingAgentThreadStore
+      && codingAgentProviders.some((provider) => provider.providerId === "pi")
+      ? ["pi" as const]
+      : []),
+    ...(codingAgentThreadStore
+      && codingAgentProviders.some((provider) => provider.providerId === "opencode")
+      ? ["opencode" as const]
+      : []),
   ];
+  const codexModelCatalogSource = codexExecutable
+    ? createCodexModelCatalogSource({ executable: codexExecutable, cwd: homePath })
+    : undefined;
+  const nativeCodingModelCatalogSource = createNativeCodingModelCatalogSource({ homePath });
   const canonicalChatProviderCatalog = createChatProviderCatalogService({
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
+    systemRuntimeSources: agentRuntimeServices.systemRuntimeSources,
+    aiProviderSource: aiProviderService,
+    harnessSettingsSource: providerSettingsStore,
     executableDriverKinds: canonicalExecutableDriverKinds,
+    credentialedDriverKinds: ["pi", "opencode"],
     skillsSource: () => loadSkills(homePath),
-    ...(codexExecutable ? {
-      codingModelCatalogSource: createCodexModelCatalogSource({
-        executable: codexExecutable,
-        cwd: homePath,
-      }),
-    } : {}),
+    codingModelCatalogSource: async (provider) => {
+      const codexModels = await codexModelCatalogSource?.(provider);
+      return codexModels ?? nativeCodingModelCatalogSource(provider);
+    },
   });
   if (chatRepository) {
     canonicalChatExecutionRoots = createChatExecutionRootResolver({
@@ -4171,15 +4292,37 @@ export async function createGateway(config: GatewayConfig) {
       worktrees: codingAgentWorktreeManager,
     });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
+      createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath }),
+      createOpenClawChatProviderAdapter({ rpc: openClawRpc, homePath }),
     ];
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
-      canonicalAdapters.push(createClaudeChatProviderAdapter({ homePath }));
+      canonicalAdapters.push(createClaudeChatProviderAdapter({
+        homePath,
+        resolveCredentialLaunch: () => buildKernelCredentialLaunch(
+          homePath,
+          process.env,
+          undefined,
+          fundedCredentialProvider,
+        ),
+      }));
     }
     if (codingAgentThreadStore) {
       if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
+          threads: codingAgentThreadStore,
+        }));
+      }
+      if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
+        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
+          providerId: "pi",
+          threads: codingAgentThreadStore,
+        }));
+      }
+      if (codingAgentProviders.some((provider) => provider.providerId === "opencode")) {
+        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
+          providerId: "opencode",
           threads: codingAgentThreadStore,
         }));
       }
@@ -4189,6 +4332,7 @@ export async function createGateway(config: GatewayConfig) {
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
       executionRoots: canonicalChatExecutionRoots,
+      onAiGeneration: recordAiGeneration,
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
@@ -4215,6 +4359,14 @@ export async function createGateway(config: GatewayConfig) {
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
+  app.route("/api/ai", createAiProviderRoutes({
+    service: aiProviderService,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
+  app.route("/api/ai", createProviderSettingsRoutes({
+    store: providerSettingsStore,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
 
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
@@ -4222,8 +4374,17 @@ export async function createGateway(config: GatewayConfig) {
     channelManager,
     agentRuntimeSource: agentRuntimeServices.source,
     agentRuntimeController: agentRuntimeServices.controller,
+    aiProviderService,
   });
   app.route("/api/settings", settingsRoutes);
+  if (osViewStateRepository) {
+    app.route("/api/os-view-state", createOsViewStateRoutes({
+      repository: osViewStateRepository,
+      getOwnerId: (c) => requireRequestPrincipal(c).userId,
+    }));
+  } else {
+    app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));
+  }
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
   if (messagingRepository) {
@@ -4474,6 +4635,13 @@ export async function createGateway(config: GatewayConfig) {
 
   const server = serve({ fetch: app.fetch, port });
   injectWebSocket(server);
+  const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
+    homePath,
+    onError: (error) => logBestEffortFailure("Temporary Chat attachment cleanup failed", error),
+  });
+  void chatAttachmentCleanup.runNow().catch((error: unknown) => {
+    logBestEffortFailure("Initial temporary Chat attachment cleanup failed", error);
+  });
 
   return {
     app,
@@ -4488,6 +4656,11 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      chatAttachmentCleanup.close();
+      await chatAttachmentCleanup.waitForIdle().catch((error: unknown) => {
+        logBestEffortFailure("Temporary Chat attachment cleanup shutdown failed", error);
+      });
+
       // T939: Fire gateway_stop hook
       await hookRunner.fireVoidHook("gateway_stop", {}).catch((err: unknown) => {
         logBestEffortFailure("gateway_stop hook failed", err);
@@ -4515,6 +4688,8 @@ export async function createGateway(config: GatewayConfig) {
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       await agentRuntimeServices.controller.close();
+      aiProviderService.close();
+      fundedCredentialProvider?.close();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();

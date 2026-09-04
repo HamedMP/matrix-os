@@ -25,6 +25,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
 import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
 import {
@@ -665,6 +666,7 @@ function ConversationComposer({
   attachments,
   readiness,
   summary,
+  active,
 }: {
   threadId: string;
   projectId?: string;
@@ -674,6 +676,7 @@ function ConversationComposer({
   attachments: ReturnType<typeof useConversationAttachments>;
   readiness?: ProviderReadinessPresentation;
   summary?: RuntimeSummary;
+  active: boolean;
 }) {
   const [message, setMessage] = useState("");
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
@@ -689,7 +692,7 @@ function ConversationComposer({
   const fallbackCatalog = useMemo(() => summary
     ? createLegacyProjectProviderCatalog(summary)
     : { revision: "legacy_empty", drivers: [], instances: [] }, [summary]);
-  const loadedCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const loadedCatalog = useChatProviderCatalog(fallbackCatalog, { active }).catalog;
   const projectCatalog = useMemo(() => summary
     ? filterCatalogForLegacyProject(loadedCatalog, summary)
     : fallbackCatalog, [fallbackCatalog, loadedCatalog, summary]);
@@ -762,7 +765,7 @@ function ConversationComposer({
     <div className="shrink-0 px-6 pb-5">
       {/* Floating composer card: same centered column as the transcript; the
           rounded/shadowed surface itself lives on PromptInput's prompt-card. */}
-      <div className="mx-auto w-full max-w-[46rem]" data-slot="conversation-composer">
+      <div className={cn("mx-auto w-full", CHAT_CONTENT_WIDTH_CLASS)} data-slot="conversation-composer">
         {turnThreadId === threadId && turnError ? (
           <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
         ) : null}
@@ -839,6 +842,7 @@ export function AgentConversationView({
   error,
   canSendTurns,
   summary,
+  active = true,
 }: {
   status: ConversationStatus;
   snapshot: AgentThreadSnapshot | null;
@@ -847,6 +851,7 @@ export function AgentConversationView({
   // When provided, the composer bar shows the thread's provider as a
   // display-only picker (turns cannot change provider or mode).
   summary?: RuntimeSummary;
+  active?: boolean;
 }) {
   const threadRunning = snapshot?.thread.status === "running"
     || snapshot?.thread.status === "starting"
@@ -998,6 +1003,7 @@ export function AgentConversationView({
           attachments={attachments}
           readiness={providerReadiness}
           summary={summary}
+          active={active}
         />
       ) : (
         <p

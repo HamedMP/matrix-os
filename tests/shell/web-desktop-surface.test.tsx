@@ -7,11 +7,17 @@ import {
   desktopAppearanceForApp,
   WebDesktopSurface,
 } from "@/components/desktop/WebDesktopSurface";
+import {
+  OS_VIEW_CORE_APP_FIXTURE,
+  OS_VIEW_FIXED_APP_NAMES,
+} from "../fixtures/os-view-parity";
 
 const apps = [
-  { name: "Terminal", path: "__terminal__", iconUrl: "/icons/terminal.svg" },
-  { name: "Files", path: "__file-browser__", iconUrl: "/icons/files.svg" },
-  { name: "Hermes", path: "__chat__", iconUrl: "/icons/chat.svg" },
+  ...OS_VIEW_CORE_APP_FIXTURE.map((app) => ({
+    name: app.name,
+    path: app.path,
+    iconUrl: `/icons/${app.id}.svg`,
+  })),
   { name: "Browser", path: "apps/browser/index.html", iconUrl: "/icons/browser.svg" },
   { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/notes.svg" },
   { name: "Whiteboard", path: "apps/whiteboard/index.html", iconUrl: "/icons/whiteboard.svg" },
@@ -118,7 +124,7 @@ describe("WebDesktopSurface", () => {
     expect(onRemoveDesktopIcon).toHaveBeenCalledWith("__chat__");
   });
 
-  it("ships the canonical Desktop destinations in parity order and deep-links Plugins to Services", () => {
+  it("ships the Web Desktop fixture in parity order and deep-links Plugins to Services", () => {
     const onOpenSettings = vi.fn();
     const onOpenApp = vi.fn();
     render(
@@ -139,7 +145,7 @@ describe("WebDesktopSurface", () => {
 
     const desktop = screen.getByRole("navigation", { name: "Desktop apps" });
     expect(Array.from(desktop.querySelectorAll("button")).map((button) => button.getAttribute("aria-label")))
-      .toEqual(["Chat", "Terminal", "Files", "Editor", "VS Code", "Settings", "Plugins", "Browser", "Notes", "Whiteboard"]);
+      .toEqual(OS_VIEW_FIXED_APP_NAMES);
     const vscodeIcon = screen.getByRole("button", { name: "VS Code" }).querySelector<HTMLElement>("[data-desktop-app-icon]");
     expect(vscodeIcon?.style.background).toBe("rgb(255, 254, 252)");
     expect(vscodeIcon?.querySelector("img")?.getAttribute("src")).toBe("/vscode.png");
@@ -252,11 +258,11 @@ describe("WebDesktopSurface", () => {
       expect(tile?.className).not.toContain("absolute");
     }
 
-    expect(desktopAppearanceForApp(apps[0])).toMatchObject({
+    expect(desktopAppearanceForApp(apps.find((app) => app.path === "__terminal__")!)).toMatchObject({
       color: "var(--surface-warning-emphasis, #E0AA52)",
       iconColor: "white",
     });
-    expect(desktopAppearanceForApp(apps[1])).toMatchObject({
+    expect(desktopAppearanceForApp(apps.find((app) => app.path === "__file-browser__")!)).toMatchObject({
       color: "var(--surface-brand-emphasis, #748E59)",
       iconColor: "white",
     });

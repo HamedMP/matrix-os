@@ -106,13 +106,20 @@ export interface ConversationWorkPresentationMap {
 export type ConversationWorkPresentation =
   ConversationWorkPresentationMap[keyof ConversationWorkPresentationMap];
 
+export type ConversationTurnTimelinePresentation =
+  | { kind: "work"; item: ConversationWorkPresentation }
+  | { kind: "user-followup"; message: ConversationMessagePresentation };
+
 export interface ConversationTurnPresentation {
   id: string;
   startedAt: number;
   endedAt: number;
   active: boolean;
   user?: ConversationMessagePresentation;
+  userFollowups?: ConversationMessagePresentation[];
   work: ConversationWorkPresentation[];
+  timeline?: ConversationTurnTimelinePresentation[];
+  expandedByDefault?: boolean;
   final?: ConversationMessagePresentation | ConversationNoticePresentation | ConversationRequestPresentation;
 }
 

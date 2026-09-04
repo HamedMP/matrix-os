@@ -7,10 +7,10 @@ import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { SurfaceChromeContext, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 import { useBoard, type Project } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
-import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "@desktop/renderer/src/lib/hugeicons";
 import { expectRenderedIcon } from "../helpers/rendered-icon";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -147,27 +147,34 @@ vi.mock("@desktop/renderer/src/features/work/WorkFilesInspector", () => ({
   },
 }));
 
-const resizeObserverCallbacks: ResizeObserverCallback[] = [];
+const resizeObserverEntries: Array<{
+  callback: ResizeObserverCallback;
+  elements: Set<Element>;
+}> = [];
 let initialWorkWidth = 1_400;
 const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
 const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
 
 class WorkResizeObserver implements ResizeObserver {
+  private readonly entry: (typeof resizeObserverEntries)[number];
   constructor(callback: ResizeObserverCallback) {
-    resizeObserverCallbacks.push(callback);
+    this.entry = { callback, elements: new Set() };
+    resizeObserverEntries.push(this.entry);
   }
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  observe(element: Element) { this.entry.elements.add(element); }
+  unobserve(element: Element) { this.entry.elements.delete(element); }
+  disconnect() { this.entry.elements.clear(); }
   takeRecords() { return []; }
 }
 
 function resizeWork(width: number) {
   initialWorkWidth = width;
-  const callback = resizeObserverCallbacks.at(-1);
-  if (!callback) throw new Error("Work ResizeObserver was not registered");
+  const observer = resizeObserverEntries.find((entry) => (
+    [...entry.elements].some((element) => element.hasAttribute("data-layout"))
+  ));
+  if (!observer) throw new Error("Work ResizeObserver was not registered");
   const entry = { contentRect: { width } } as unknown as ResizeObserverEntry;
-  act(() => callback([entry], {} as ResizeObserver));
+  act(() => observer.callback([entry], {} as ResizeObserver));
 }
 
 const alpha: Project = {
@@ -204,7 +211,7 @@ function activeWorkTab() {
 
 describe("WorkTab rail integration", () => {
   beforeEach(() => {
-    resizeObserverCallbacks.length = 0;
+    resizeObserverEntries.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
     eventSourceProps.rail = [];
@@ -325,6 +332,7 @@ describe("WorkTab rail integration", () => {
     render(<WorkTab route="projects" active />);
     await screen.findByRole("button", { name: "Global chat" });
 
+    const previousFocusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(activeWorkTab()).toMatchObject({
       kind: "work",
@@ -333,6 +341,7 @@ describe("WorkTab rail integration", () => {
       chatId: undefined,
       projectSlug: undefined,
     });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(previousFocusRequestId + 1);
 
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
     expect(useUi.getState().createProjectOpen).toBe(true);
@@ -469,6 +478,29 @@ describe("WorkTab rail integration", () => {
     expect(inspectorProps.active.at(-1)).toBe(false);
   });
 
+  it("shows only the inspector below a 740px main pane and docks it at 740px", async () => {
+    render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
+    await screen.findByRole("button", { name: "Global chat" });
+
+    resizeWork(739);
+    fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+
+    const exclusiveInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement as HTMLElement;
+    expect(screen.getByRole("main", { hidden: true }).getAttribute("aria-hidden")).toBe("true");
+    expect(exclusiveInspector.className).toContain("w-full");
+    expect(exclusiveInspector.style.width).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
+    resizeWork(740);
+    fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+
+    const sideBySideInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement as HTMLElement;
+    expect(screen.getByRole("main").getAttribute("aria-hidden")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
+    expect(sideBySideInspector.className).toContain("shrink-0");
+    expect(sideBySideInspector.style.width).toBe("380px");
+  });
+
   it.each([
     ["draft", { route: "chat" as const, initialChatId: undefined, initialChatView: "draft" as const }, true],
     ["index", { route: "chat" as const, initialChatId: undefined, initialChatView: "index" as const }, true],
@@ -501,22 +533,21 @@ describe("WorkTab rail integration", () => {
     expect(useProjectView.getState().viewFor("alpha")).toBe("chats");
   });
 
-  it("resizes both sidebars with keyboard-accessible separators", async () => {
+  it("keeps the Chat sidebar fixed while the inspector remains keyboard-resizable", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
     await screen.findByRole("button", { name: "Global chat" });
 
-    const navigationSeparator = screen.getByRole("separator", { name: "Resize Chat navigation" });
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
-    expect(navigationSeparator.getAttribute("aria-valuenow")).toBe("260");
-    expect(inspectorSeparator.getAttribute("aria-valuenow")).toBe("640");
-    expect(navigationSeparator.querySelector("span")?.style.background).toBe("var(--border-subtle)");
+    expect(screen.queryByRole("separator", { name: "Resize Chat navigation" })).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Chat navigation" }).className).not.toContain("border-r-0");
+    expect(inspectorSeparator.getAttribute("aria-valuemin")).toBe("240");
+    expect(inspectorSeparator.getAttribute("aria-valuemax")).toBe("380");
+    expect(inspectorSeparator.getAttribute("aria-valuenow")).toBe("380");
     expect(inspectorSeparator.querySelector("span")?.style.background).toBe("transparent");
 
-    fireEvent.keyDown(navigationSeparator, { key: "ArrowRight" });
-    fireEvent.keyDown(inspectorSeparator, { key: "ArrowLeft" });
+    fireEvent.keyDown(inspectorSeparator, { key: "ArrowRight" });
 
-    expect(screen.getByRole("separator", { name: "Resize Chat navigation" }).getAttribute("aria-valuenow")).toBe("276");
-    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("656");
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("364");
   });
 
   it("stops resizing the Chat inspector when an extreme pointer drag is cancelled", async () => {
@@ -526,27 +557,26 @@ describe("WorkTab rail integration", () => {
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
     fireEvent.pointerDown(inspectorSeparator, { button: 0, clientX: 760, pointerId: 17 });
     fireEvent.pointerMove(window, { clientX: 700, pointerId: 17 });
-    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("380");
 
     fireEvent.pointerCancel(window, { pointerId: 17 });
     fireEvent.pointerMove(window, { clientX: -1_000, pointerId: 17 });
 
-    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("380");
   });
 
-  it("collapses both sidebars when their dividers move past the minimum", async () => {
+  it("keeps navigation visible while the inspector divider collapses past its minimum", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
     await screen.findByRole("button", { name: "Global chat" });
 
-    const navigationSeparator = screen.getByRole("separator", { name: "Resize Chat navigation" });
-    for (let step = 0; step < 4; step += 1) fireEvent.keyDown(navigationSeparator, { key: "ArrowLeft" });
-    expect(screen.queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Show Chat navigation" })).toBeTruthy();
+    expect(screen.queryByRole("separator", { name: "Resize Chat navigation" })).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
 
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
-    for (let step = 0; step < 12; step += 1) fireEvent.keyDown(inspectorSeparator, { key: "ArrowRight" });
+    for (let step = 0; step < 20; step += 1) fireEvent.keyDown(inspectorSeparator, { key: "ArrowRight" });
     expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
   });
 
   it("makes the Files inspector available on a new Global Chat draft", async () => {
@@ -611,7 +641,7 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
   });
 
-  it("registers both pane toggles and the Chat title in the shared surface chrome", async () => {
+  it("leaves the sidebar trigger to OSWindow while registering shared Chat chrome", async () => {
     function HostedWork() {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
       const host = React.useMemo(() => ({ setChrome }), []);
@@ -624,42 +654,75 @@ describe("WorkTab rail integration", () => {
             <output data-testid="left-pane-width">{chrome?.leftPaneWidth}</output>
             <output data-testid="right-pane-width">{chrome?.rightPaneWidth}</output>
           </header>
-          <WorkTab
-            route="chat"
-            active
-            initialChatId="chat_global"
-            initialChatTitle="Global chat"
-            initialChatView="conversation"
-          />
+          <main data-testid="hosted-chat-main">
+            <WorkTab
+              route="chat"
+              active
+              initialChatId="chat_global"
+              initialChatTitle="Global chat"
+              initialChatView="conversation"
+            />
+          </main>
         </SurfaceChromeContext.Provider>
       );
     }
 
     render(<HostedWork />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await screen.findByText("Chat center");
 
-    expect(screen.getByText("Global chat", { selector: "header span" })).toBeTruthy();
-    expect(screen.getByTestId("left-pane-width").textContent).toBe("260");
-    expect(screen.getByTestId("right-pane-width").textContent).toBe("640");
-    const hideNavigation = within(screen.getByRole("banner")).getByRole("button", { name: "Hide Chat navigation" });
+    const chromeTitle = screen.getByText("Global chat", { selector: "header span" });
+    expect(chromeTitle).toBeTruthy();
+    const hostedMainElement = screen.getByTestId("hosted-chat-main");
+    const hostedMain = within(hostedMainElement);
+    expect(hostedMain.queryByRole("heading", { name: "Global chat" })).toBeNull();
+    expect(hostedMain.queryByRole("button", { name: "Toggle Chat sidebar" })).toBeNull();
+    expect(hostedMainElement.querySelector("[data-work-main-header]")?.className).toContain("h-12");
+    expect(screen.getByTestId("left-pane-width").textContent).toBe("240");
+    expect(screen.getByTestId("right-pane-width").textContent).toBe("380");
+    expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     const hideInspector = screen.getByRole("button", { name: "Hide inspector" });
-    expectRenderedIcon(hideNavigation.querySelector("svg"), PanelLeftOpenIcon);
-    expect(hideNavigation.className).toContain("size-4");
-    expect(hideNavigation.className).toContain("rounded-[4.8px]");
-    expect(hideNavigation.querySelector("svg")?.getAttribute("width")).toBe("11.2");
-    expect(hideInspector.className).toContain("size-4");
-    expect(hideInspector.className).toContain("rounded-[4.8px]");
-    expect(hideInspector.querySelector("svg")?.getAttribute("width")).toBe("11.2");
-    expect(within(screen.getByRole("navigation", { name: "Chat navigation" })).queryByRole("button", { name: "Hide Chat navigation" })).toBeNull();
+    expect(within(chromeTitle.closest("header")!).queryByRole("button", { name: /Chat navigation/ })).toBeNull();
+    expect(hideInspector.className).toContain("size-7");
+    expect(hideInspector.className).toContain("rounded-md");
+    expect(hideInspector.className).toContain("pointer-events-auto");
+    expect(hideInspector.className).toContain("hover:bg-[var(--bg-hover)]");
+    expect(hideInspector.style.color).toBe("var(--text-secondary)");
+    expect(hideInspector.style.border).toBe("");
+    expect(hideInspector.querySelector("svg")?.getAttribute("width")).toBe("15");
+    expect(screen.queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     expect(hideInspector).toBeTruthy();
 
-    fireEvent.click(hideNavigation);
-    expectRenderedIcon(screen.getByRole("button", { name: "Show Chat navigation" }).querySelector("svg"), PanelLeftCloseIcon);
     fireEvent.click(hideInspector);
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
   });
 
-  it("omits a top-bar title for a new Chat draft", async () => {
+  it("uses the hosted main-pane width without adding the window sidebar", async () => {
+    initialWorkWidth = 900;
+    function HostedWork() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return (
+        <SurfaceChromeContext.Provider value={host}>
+          <output data-testid="stable-hosted-width">{chrome?.leftPaneWidth}</output>
+          <WorkTab route="projects" active />
+        </SurfaceChromeContext.Provider>
+      );
+    }
+
+    render(<HostedWork />);
+    await screen.findByText("Projects center");
+    expect(screen.getByTestId("stable-hosted-width").textContent).toBe("240");
+
+    resizeWork(739);
+
+    await waitFor(() => expect(document.querySelector('[data-layout="narrow"]')).toBeTruthy());
+
+    resizeWork(740);
+
+    await waitFor(() => expect(document.querySelector('[data-layout="medium"]')).toBeTruthy());
+  });
+
+  it("keeps a new Chat title empty while reserving the shared inspector header row", async () => {
     function HostedDraft() {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
       const host = React.useMemo(() => ({ setChrome }), []);
@@ -672,9 +735,10 @@ describe("WorkTab rail integration", () => {
     }
 
     render(<HostedDraft />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await screen.findByText("Chat center");
 
     expect(screen.getByTestId("draft-chrome").textContent).toBe("");
+    expect(document.querySelector("[data-work-main-header]")?.className).toContain("h-12");
   });
 
   it("returns a stale narrow inspector to Chat when Work becomes inactive", async () => {

@@ -1,16 +1,19 @@
 import {
   CanonicalChatAgentActivityPayloadSchema,
+  CanonicalChatApprovalDecisionSchema,
   CanonicalChatMessagePartSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalOwnerScopeSchema,
   type CanonicalChatMessagePart,
+  type CanonicalChatApprovalDecision,
   type CanonicalChatModelSelection,
   type CanonicalChatSafeError,
   type CanonicalOwnerScope,
   type CanonicalProviderDriverKind,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { AiTokenUsageSchema } from "../ai-analytics.js";
 
 const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 
@@ -61,6 +64,12 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     approvalId: SafeProviderRefSchema,
     title: z.string().trim().min(1).max(160),
     risk: z.enum(["low", "medium", "high"]),
+    allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
+  }).strict(),
+  z.object({
+    type: z.literal("approval.resolved"),
+    approvalId: SafeProviderRefSchema,
+    decision: CanonicalChatApprovalDecisionSchema,
   }).strict(),
   z.object({
     type: z.literal("input.requested"),
@@ -72,6 +81,8 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("run.completed"),
     outcome: z.enum(["completed", "failed", "aborted"]),
     error: CanonicalChatSafeErrorSchema.optional(),
+    provider: SafeProviderRefSchema.optional(),
+    tokenUsage: AiTokenUsageSchema.optional(),
   }).strict(),
 ]);
 
@@ -102,6 +113,25 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   start(input: CanonicalProviderRunInput<State>): AsyncIterable<CanonicalProviderRunEvent>;
   resume?(input: CanonicalProviderRunInput<State> & { resumeState: State }): AsyncIterable<CanonicalProviderRunEvent>;
   cancel?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; state?: State }): Promise<void>;
+  steer?(input: {
+    owner: CanonicalOwnerScope;
+    chatId: string;
+    runId: string;
+    turnId: string;
+    clientRequestId: string;
+    prompt: string;
+    parts: CanonicalChatMessagePart[];
+    state?: State;
+  }): Promise<void>;
+  submitApproval?(input: {
+    owner: CanonicalOwnerScope;
+    chatId: string;
+    runId: string;
+    approvalId: string;
+    decision: CanonicalChatApprovalDecision;
+    clientRequestId: string;
+    state?: State;
+  }): Promise<void>;
 }
 
 export function parseCanonicalProviderRunInput<State>(

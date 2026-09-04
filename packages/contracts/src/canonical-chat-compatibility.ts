@@ -249,6 +249,7 @@ function activityFromEvent(input: {
       approvalId: event.approval.approvalId,
       title: event.approval.title,
       risk: event.approval.risk,
+      allowedDecisions: event.approval.allowedDecisions,
     };
   }
   if (event.type === "approval.resolved") {

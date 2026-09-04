@@ -52,6 +52,8 @@ export interface StartWorkspaceSessionRequest {
   kind: "shell" | "agent";
   agent?: SupportedAgent;
   prompt?: string;
+  /** Gateway-internal native Provider thread used to recover an existing Chat. */
+  providerThreadId?: string;
   attachments?: AgentAttachment[];
   model?: string;
   modelOptions?: AgentModelOption[];

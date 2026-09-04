@@ -162,6 +162,19 @@ describe("InspectorFilesPanel", () => {
     );
 
     const folder = await screen.findByRole("button", { name: "Expand folder workspaces" });
+    const rootFile = screen.getByRole("button", { name: "Open file README.md" });
+    expect(folder.className).toContain("gap-2.5");
+    expect(folder.className).toContain("px-2.5");
+    expect(folder.className).toContain("py-1.5");
+    expect(folder.className).toContain("text-sm");
+    expect(folder.className).not.toContain("hover:bg-");
+    expect(rootFile.className).toContain("gap-2.5");
+    expect(rootFile.className).toContain("px-2.5");
+    expect(rootFile.className).toContain("py-1.5");
+    expect(rootFile.className).toContain("text-sm");
+    expect(rootFile.className).not.toContain("hover:bg-");
+    expect(Array.from(folder.querySelectorAll("svg")).every((icon) => icon.getAttribute("width") === "15")).toBe(true);
+    expect(rootFile.querySelector("img")?.getAttribute("width")).toBe("15");
     fireEvent.click(folder);
     fireEvent.click(await screen.findByRole("button", { name: "Open file workspaces/app.ts" }));
 
@@ -170,6 +183,8 @@ describe("InspectorFilesPanel", () => {
     expect(screen.getByTestId("files-listing").className).not.toContain("h-52");
     expect(screen.queryByRole("group", { name: "View options" })).toBeNull();
     expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+    expect(screen.queryByText("Matrix Home")).toBeNull();
+    expect(screen.queryByText("Browse this computer's files. This view is not limited to the selected project.")).toBeNull();
     expect(folder.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("button", { name: "Open file README.md" })).toBeTruthy();
     expect(onOpenFile).toHaveBeenCalledWith(expect.objectContaining({
@@ -203,6 +218,8 @@ describe("InspectorFilesPanel", () => {
 
     expect(await screen.findByRole("button", { name: "Open file README.md" })).toBeTruthy();
     expect(screen.queryByText("Loading files…")).toBeNull();
+    expect(screen.queryByText("Matrix OS")).toBeNull();
+    expect(screen.queryByText("Project root")).toBeNull();
   });
 
   it("expands Project folders inline without replacing the root listing", async () => {

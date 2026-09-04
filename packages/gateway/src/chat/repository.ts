@@ -11,6 +11,7 @@ import {
   CanonicalOwnerScopeSchema,
   TerminalSessionIdSchema,
   type CanonicalChatMessage,
+  type CanonicalChatQueuedTurn,
   type CanonicalChatModelSelection,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
@@ -50,6 +51,23 @@ import {
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
 import {
+  ChatQueueRepository,
+  type EnqueueQueuedTurnInput,
+  type EnqueuedQueuedTurn,
+  type CancelQueuedTurnInput,
+  type ReorderQueuedTurnsInput,
+  type UpdateQueuedTurnInput,
+  type ClaimNextQueuedTurnInput,
+  type ClaimedQueuedTurn,
+} from "./queue-repository.js";
+import {
+  ChatSteeringRepository,
+  type BeginSteerInput,
+  type BegunSteer,
+  type BeginQueuedTurnSteerInput,
+  type BegunQueuedTurnSteer,
+} from "./steering-repository.js";
+import {
   ChatOutboxDelivery,
   type ChatOutboxSink,
 } from "./outbox-delivery.js";
@@ -65,6 +83,15 @@ export {
   ChatRunNotActiveError,
 } from "./errors.js";
 export type { ChatDetailPage } from "./detail-repository.js";
+export type {
+  EnqueueQueuedTurnInput,
+  EnqueuedQueuedTurn,
+  CancelQueuedTurnInput,
+  ReorderQueuedTurnsInput,
+  ClaimNextQueuedTurnInput,
+  ClaimedQueuedTurn,
+} from "./queue-repository.js";
+export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
@@ -123,6 +150,7 @@ export interface AdmittedRun {
 export interface ChatTurnRunContext {
   chat: ChatRecord;
   message: CanonicalChatMessage;
+  userMessages: CanonicalChatMessage[];
   turn: CanonicalChatTurn;
   latestRun: CanonicalChatRun;
 }
@@ -283,6 +311,8 @@ export class ChatRepository {
   private readonly transactionScoped: boolean;
   private readonly detail: ChatDetailRepository;
   private readonly runLifecycle: ChatRunLifecycleRepository;
+  private readonly queue: ChatQueueRepository;
+  private readonly steering: ChatSteeringRepository;
   private readonly outboxDelivery: ChatOutboxDelivery;
 
   constructor(
@@ -298,6 +328,29 @@ export class ChatRepository {
     this.detail = new ChatDetailRepository(this.kysely, hydrateRecord.bind(null, this.kysely));
     this.runLifecycle = new ChatRunLifecycleRepository(
       this.kysely,
+      (fn) => this.transact(fn),
+      (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
+        executor,
+        owner,
+        chatId,
+        revision,
+        eventType,
+        payload,
+      ),
+    );
+    this.queue = new ChatQueueRepository(
+      this.kysely,
+      (fn) => this.transact(fn),
+      (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
+        executor,
+        owner,
+        chatId,
+        revision,
+        eventType,
+        payload,
+      ),
+    );
+    this.steering = new ChatSteeringRepository(
       (fn) => this.transact(fn),
       (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
         executor,
@@ -925,6 +978,91 @@ export class ChatRepository {
     });
   }
 
+  async enqueueQueuedTurn(
+    owner: ChatOwner,
+    input: EnqueueQueuedTurnInput,
+  ): Promise<EnqueuedQueuedTurn> {
+    return this.queue.enqueue(owner, input);
+  }
+
+  async listQueuedTurns(owner: ChatOwner, chatId: string): Promise<CanonicalChatQueuedTurn[]> {
+    return this.queue.list(owner, chatId);
+  }
+
+  async cancelQueuedTurn(owner: ChatOwner, input: CancelQueuedTurnInput) {
+    return this.queue.cancel(owner, input);
+  }
+
+  async reorderQueuedTurns(owner: ChatOwner, input: ReorderQueuedTurnsInput) {
+    return this.queue.reorder(owner, input);
+  }
+
+  async updateQueuedTurn(owner: ChatOwner, input: UpdateQueuedTurnInput) {
+    return this.queue.update(owner, input);
+  }
+
+  async claimNextQueuedTurn(
+    owner: ChatOwner,
+    input: ClaimNextQueuedTurnInput,
+  ): Promise<ClaimedQueuedTurn | null> {
+    return this.queue.claimNext(owner, input);
+  }
+
+  async listQueuedChatIds(owner: ChatOwner, limit?: number): Promise<string[]> {
+    return this.queue.listQueuedChatIds(owner, limit);
+  }
+
+  async beginSteer(owner: ChatOwner, input: BeginSteerInput): Promise<BegunSteer> {
+    return this.steering.begin(owner, input);
+  }
+
+  async beginQueuedTurnSteer(
+    owner: ChatOwner,
+    input: BeginQueuedTurnSteerInput,
+  ): Promise<BegunQueuedTurnSteer> {
+    return this.steering.beginQueuedTurn(owner, input);
+  }
+
+  async acceptSteer(
+    owner: ChatOwner,
+    input: { chatId: string; runId: string; clientRequestId: string; acceptedAt: string },
+  ): Promise<CanonicalChatMessage> {
+    return this.steering.accept(owner, input);
+  }
+
+  async failSteer(
+    owner: ChatOwner,
+    input: { chatId: string; runId: string; clientRequestId: string; acceptedAt: string },
+  ): Promise<void> {
+    return this.steering.fail(owner, input);
+  }
+
+  async acceptQueuedTurnSteer(
+    owner: ChatOwner,
+    input: {
+      chatId: string;
+      runId: string;
+      queuedTurnId: string;
+      clientRequestId: string;
+      acceptedAt: string;
+    },
+  ): Promise<CanonicalChatMessage> {
+    return this.steering.acceptQueuedTurn(owner, input);
+  }
+
+  async failQueuedTurnSteer(
+    owner: ChatOwner,
+    input: {
+      chatId: string;
+      runId: string;
+      queuedTurnId: string;
+      clientRequestId: string;
+      acceptedAt: string;
+    },
+  ): Promise<void> {
+    return this.steering.failQueuedTurn(owner, input);
+  }
+
   async admitRetry(ownerInput: ChatOwner, input: AdmitRetryInput): Promise<AdmittedRun> {
     const owner = validateOwner(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
@@ -1067,9 +1205,16 @@ export class ChatRepository {
     const turnRow = await this.kysely.selectFrom("chat_turns").selectAll()
       .where("id", "=", parsedTurnId).where("chat_id", "=", parsedChatId).executeTakeFirst();
     if (!turnRow) return null;
-    const [messageRow, runRow] = await Promise.all([
+    const [messageRow, userMessageRows, runRow] = await Promise.all([
       this.kysely.selectFrom("chat_messages").selectAll()
         .where("id", "=", turnRow.input_message_id).where("chat_id", "=", parsedChatId).executeTakeFirst(),
+      this.kysely.selectFrom("chat_messages").selectAll()
+        .where("chat_id", "=", parsedChatId)
+        .where("turn_id", "=", parsedTurnId)
+        .where("role", "=", "user")
+        .where("state", "=", "committed")
+        .orderBy("seq")
+        .execute(),
       this.kysely.selectFrom("chat_runs").selectAll()
         .where("turn_id", "=", parsedTurnId).where("chat_id", "=", parsedChatId)
         .orderBy("attempt", "desc").executeTakeFirst(),
@@ -1078,6 +1223,7 @@ export class ChatRepository {
     return {
       chat,
       message: toMessage(messageRow),
+      userMessages: userMessageRows.map(toMessage),
       turn: toTurn(turnRow),
       latestRun: toRun(runRow),
     };
@@ -1121,6 +1267,14 @@ export class ChatRepository {
     return this.runLifecycle.getAdapterState(ownerInput, input);
   }
 
+  async getPendingApproval(ownerInput: ChatOwner, input: {
+    chatId: string;
+    runId: string;
+    approvalId: string;
+  }): Promise<Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null> {
+    return this.runLifecycle.getPendingApproval(ownerInput, input);
+  }
+
   async getLatestAdapterStateForChat(ownerInput: ChatOwner, input: {
     chatId: string;
     driverKind: string;
@@ -1161,7 +1315,6 @@ export class ChatRepository {
     chatId: string;
     runId: string;
     messageId: string;
-    seq: number;
     delta: string;
     createdAt: string;
   }): Promise<CanonicalChatMessage> {

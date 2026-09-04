@@ -121,6 +121,12 @@ describe("Desktop shell geometry tokens", () => {
 
 describe("Figma semantic surface tokens", () => {
   const tokensCss = readRendererFile("design", "tokens.css");
+  it("defines an extra-soft border from the active subtle border", () => {
+    expect(tokenValue(themeBlock(tokensCss, ":root"), "--border-xsoft")).toBe(
+      "color-mix(in srgb, var(--border-subtle) 50%, transparent)",
+    );
+  });
+
   it("defines the OS window surfaces and success badge tokens in both modes", () => {
     for (const selector of [":root", '[data-theme="dark"]']) {
       const block = themeBlock(tokensCss, selector);

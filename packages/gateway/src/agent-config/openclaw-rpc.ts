@@ -5,6 +5,10 @@ import { AgentConfigError } from "./errors.js";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_REQUEST_BYTES = 16 * 1024;
+const MAX_AGENT_REQUEST_BYTES = 128 * 1024;
+const MAX_AGENT_TIMEOUT_MS = 5 * 60_000;
+const MAX_EVENT_LISTENERS = 32;
+const MAX_CANCELLATION_CORRELATIONS = 8;
 const CONFIG_PATCH_LIMIT = 3;
 const CONFIG_PATCH_WINDOW_MS = 60_000;
 const ALLOWED_METHODS = new Set([
@@ -14,6 +18,10 @@ const ALLOWED_METHODS = new Set([
   "models.authStatus",
   "config.get",
   "config.patch",
+  "agent",
+  "agent.wait",
+  "chat.abort",
+  "sessions.steer",
 ]);
 
 const ChallengeSchema = z.object({
@@ -62,6 +70,35 @@ const ConfigPatchParamsSchema = z.object({
   raw: z.string().min(2).max(MAX_REQUEST_BYTES),
   baseHash: z.string().min(1).max(256),
 }).strict();
+const SafeRpcReferenceSchema = z.string().min(1).max(512);
+const AgentParamsSchema = z.object({
+  message: z.string().min(1).max(96 * 1024),
+  agentId: SafeRpcReferenceSchema.optional(),
+  provider: z.string().min(1).max(128).optional(),
+  model: z.string().min(1).max(512).optional(),
+  sessionId: SafeRpcReferenceSchema.optional(),
+  sessionKey: SafeRpcReferenceSchema.optional(),
+  thinking: z.string().min(1).max(64).optional(),
+  deliver: z.boolean().optional(),
+  timeout: z.number().int().positive().max(300).optional(),
+  idempotencyKey: SafeRpcReferenceSchema,
+}).strict();
+const AgentWaitParamsSchema = z.object({
+  runId: SafeRpcReferenceSchema,
+  timeoutMs: z.number().int().positive().max(MAX_AGENT_TIMEOUT_MS).optional(),
+}).strict();
+const ChatAbortParamsSchema = z.object({
+  sessionKey: SafeRpcReferenceSchema,
+  agentId: SafeRpcReferenceSchema.optional(),
+  runId: SafeRpcReferenceSchema.optional(),
+  preserveSideRuns: z.boolean().optional(),
+}).strict();
+const SessionSteerParamsSchema = z.object({
+  key: SafeRpcReferenceSchema,
+  runId: SafeRpcReferenceSchema.optional(),
+  message: z.string().min(1).max(96 * 1024),
+  idempotencyKey: SafeRpcReferenceSchema,
+}).strict();
 const MethodParamsSchemas: Record<string, z.ZodType> = {
   health: EmptyParamsSchema,
   "channels.status": EmptyParamsSchema,
@@ -69,6 +106,10 @@ const MethodParamsSchemas: Record<string, z.ZodType> = {
   "models.authStatus": ModelsAuthStatusParamsSchema,
   "config.get": EmptyParamsSchema,
   "config.patch": ConfigPatchParamsSchema,
+  agent: AgentParamsSchema,
+  "agent.wait": AgentWaitParamsSchema,
+  "chat.abort": ChatAbortParamsSchema,
+  "sessions.steer": SessionSteerParamsSchema,
 };
 
 const HelloSchema = z.object({
@@ -109,10 +150,33 @@ interface PendingCall {
   timer: ReturnType<typeof setTimeout>;
   signal: AbortSignal;
   onAbort: () => void;
+  expectFinal: boolean;
+  onAccepted?: (payload: unknown) => void;
+  onEvent?: (event: OpenClawRpcEvent) => void;
+}
+
+export interface OpenClawRpcEvent {
+  event: string;
+  payload?: unknown;
+  seq?: number;
+  stateVersion?: Record<string, number>;
+}
+
+export interface OpenClawRpcCallOptions {
+  expectFinal?: boolean;
+  timeoutMs?: number;
+  onAccepted?: (payload: unknown) => void;
+  onEvent?: (event: OpenClawRpcEvent) => void;
 }
 
 export interface OpenClawRpcClient {
-  call(method: string, params: unknown, signal: AbortSignal): Promise<unknown>;
+  call(
+    method: string,
+    params: unknown,
+    signal: AbortSignal,
+    options?: OpenClawRpcCallOptions,
+  ): Promise<unknown>;
+  subscribe?(listener: (event: OpenClawRpcEvent) => void): { dispose(): void };
   close(): Promise<void>;
 }
 
@@ -173,7 +237,8 @@ function serializeRequest(id: string, method: string, params: unknown): string {
   } catch (error) {
     throw new AgentConfigError("agent_config_invalid", error);
   }
-  if (Buffer.byteLength(serialized) > MAX_REQUEST_BYTES) {
+  const maxBytes = method === "agent" ? MAX_AGENT_REQUEST_BYTES : MAX_REQUEST_BYTES;
+  if (Buffer.byteLength(serialized) > maxBytes) {
     throw new AgentConfigError("agent_config_invalid");
   }
   return serialized;
@@ -214,14 +279,21 @@ export function createOpenClawRpcClient(
   let reconnectAfter = 0;
   let configPatchInFlight = false;
   const configPatchWrites: number[] = [];
+  const eventListeners = new Set<(event: OpenClawRpcEvent) => void>();
+  const callEventListeners = new Set<(event: OpenClawRpcEvent) => void>();
+
+  function rejectCall(id: string, error: AgentConfigError): void {
+    const entry = pending.get(id);
+    if (entry === undefined) return;
+    pending.delete(id);
+    clearTimeout(entry.timer);
+    entry.signal.removeEventListener("abort", entry.onAbort);
+    if (entry.onEvent) callEventListeners.delete(entry.onEvent);
+    entry.reject(error);
+  }
 
   function rejectPending(error: AgentConfigError): void {
-    for (const [id, entry] of pending) {
-      pending.delete(id);
-      clearTimeout(entry.timer);
-      entry.signal.removeEventListener("abort", entry.onAbort);
-      entry.reject(error);
-    }
+    for (const id of [...pending.keys()]) rejectCall(id, error);
   }
 
   function failConnection(error: AgentConfigError): void {
@@ -301,9 +373,27 @@ export function createOpenClawRpcClient(
 
     const entry = pending.get(frame.id);
     if (!entry) return;
+    const isAccepted = entry.expectFinal
+      && frame.ok
+      && typeof frame.payload === "object"
+      && frame.payload !== null
+      && !Array.isArray(frame.payload)
+      && (frame.payload as Record<string, unknown>).status === "accepted";
+    if (isAccepted) {
+      try {
+        entry.onAccepted?.(frame.payload);
+      } catch (error) {
+        console.warn(
+          "[agent-config] OpenClaw accepted callback failure:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+      return;
+    }
     pending.delete(frame.id);
     clearTimeout(entry.timer);
     entry.signal.removeEventListener("abort", entry.onAbort);
+    if (entry.onEvent) callEventListeners.delete(entry.onEvent);
     if (frame.ok) entry.resolve(frame.payload);
     else entry.reject(new AgentConfigError("invalid_response"));
   }
@@ -329,7 +419,7 @@ export function createOpenClawRpcClient(
             },
             role: "operator",
             scopes: ["operator.read", "operator.write", "operator.admin"],
-            caps: [],
+            caps: ["tool-events"],
             commands: [],
             permissions: {},
             auth: { token: options.token },
@@ -344,7 +434,36 @@ export function createOpenClawRpcClient(
         handleResponse(response.data);
         return;
       }
-      if (EventSchema.safeParse(raw).success) return;
+      const event = EventSchema.safeParse(raw);
+      if (event.success) {
+        const published: OpenClawRpcEvent = {
+          event: event.data.event,
+          ...(event.data.payload === undefined ? {} : { payload: event.data.payload }),
+          ...(event.data.seq === undefined ? {} : { seq: event.data.seq }),
+          ...(event.data.stateVersion === undefined ? {} : { stateVersion: event.data.stateVersion }),
+        };
+        for (const listener of eventListeners) {
+          try {
+            listener(published);
+          } catch (error) {
+            console.warn(
+              "[agent-config] OpenClaw event listener failure:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+          }
+        }
+        for (const listener of callEventListeners) {
+          try {
+            listener(published);
+          } catch (error) {
+            console.warn(
+              "[agent-config] OpenClaw call event listener failure:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+          }
+        }
+        return;
+      }
       throw new AgentConfigError("invalid_response", response.error);
     } catch (error) {
       console.warn(
@@ -434,31 +553,46 @@ export function createOpenClawRpcClient(
     serialized: string,
     id: string,
     signal: AbortSignal,
+    callOptions: OpenClawRpcCallOptions,
   ): Promise<unknown> {
     await waitForConnection(signal);
     if (closed || socket === null || socket.readyState !== WebSocket.OPEN) {
       throw new AgentConfigError("runtime_unavailable");
     }
-    if (pending.size >= maxPending) {
+    const pendingLimit = method === "chat.abort"
+      ? maxPending + MAX_CANCELLATION_CORRELATIONS
+      : maxPending;
+    if (pending.size >= pendingLimit) {
+      throw new AgentConfigError("agent_config_conflict");
+    }
+    if (callOptions.onEvent && eventListeners.size + callEventListeners.size >= MAX_EVENT_LISTENERS) {
       throw new AgentConfigError("agent_config_conflict");
     }
     if (signal.aborted) throw new AgentConfigError("runtime_unavailable");
     const deferred = Promise.withResolvers<unknown>();
     const onAbort = () => {
-      if (!pending.has(id)) return;
-      failConnection(new AgentConfigError("runtime_unavailable"));
+      rejectCall(id, new AgentConfigError("runtime_unavailable"));
     };
+    const callTimeoutMs = callOptions.timeoutMs ?? timeoutMs;
+    if (!Number.isFinite(callTimeoutMs)
+      || callTimeoutMs < 100
+      || callTimeoutMs > MAX_AGENT_TIMEOUT_MS) {
+      throw new AgentConfigError("agent_config_invalid");
+    }
     const timer = setTimeout(() => {
-      if (!pending.has(id)) return;
-      failConnection(new AgentConfigError("runtime_unavailable"));
-    }, timeoutMs);
+      rejectCall(id, new AgentConfigError("runtime_unavailable"));
+    }, callTimeoutMs);
     pending.set(id, {
       resolve: deferred.resolve,
       reject: deferred.reject,
       timer,
       signal,
       onAbort,
+      expectFinal: callOptions.expectFinal === true,
+      ...(callOptions.onAccepted === undefined ? {} : { onAccepted: callOptions.onAccepted }),
+      ...(callOptions.onEvent === undefined ? {} : { onEvent: callOptions.onEvent }),
     });
+    if (callOptions.onEvent) callEventListeners.add(callOptions.onEvent);
     signal.addEventListener("abort", onAbort, { once: true });
     if (method === "config.patch") configPatchWrites.push(now());
     try {
@@ -467,6 +601,7 @@ export function createOpenClawRpcClient(
       pending.delete(id);
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
+      if (callOptions.onEvent) callEventListeners.delete(callOptions.onEvent);
       const failure = new AgentConfigError("runtime_unavailable", error);
       failConnection(failure);
       throw failure;
@@ -475,14 +610,14 @@ export function createOpenClawRpcClient(
   }
 
   return {
-    async call(method, params, signal) {
+    async call(method, params, signal, callOptions = {}) {
       if (!ALLOWED_METHODS.has(method)) {
         throw new AgentConfigError("agent_config_invalid");
       }
       const id = randomUUID();
       const serialized = serializeRequest(id, method, params);
       if (method !== "config.patch") {
-        return performCall(method, serialized, id, signal);
+        return performCall(method, serialized, id, signal, callOptions);
       }
       pruneConfigPatchWrites();
       if (configPatchInFlight || configPatchWrites.length >= CONFIG_PATCH_LIMIT) {
@@ -490,10 +625,17 @@ export function createOpenClawRpcClient(
       }
       configPatchInFlight = true;
       try {
-        return await performCall(method, serialized, id, signal);
+        return await performCall(method, serialized, id, signal, callOptions);
       } finally {
         configPatchInFlight = false;
       }
+    },
+    subscribe(listener) {
+      if (eventListeners.size >= MAX_EVENT_LISTENERS) {
+        throw new AgentConfigError("agent_config_conflict");
+      }
+      eventListeners.add(listener);
+      return { dispose: () => eventListeners.delete(listener) };
     },
     async close() {
       if (closed) return;
@@ -512,6 +654,8 @@ export function createOpenClawRpcClient(
       connectPromise = null;
       connectId = null;
       configPatchWrites.length = 0;
+      eventListeners.clear();
+      callEventListeners.clear();
     },
   };
 }

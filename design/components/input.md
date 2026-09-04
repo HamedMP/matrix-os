@@ -3,11 +3,11 @@ title: Input
 description: Text inputs, textareas, and select fields.
 status: stable
 tokens:
-  - colors.card
-  - colors.input
-  - colors.foreground
-  - colors.muted-foreground
-  - colors.ring
+  - semanticColors.surface
+  - semanticColors.border
+  - semanticColors.foreground
+  - semanticColors.mutedForeground
+  - semanticColors.focus
   - rounded.lg
 ---
 
@@ -29,7 +29,7 @@ Form inputs for collecting user data.
 
 | Variant   | Background | Border          | Use For                    |
 |-----------|------------|-----------------|----------------------------|
-| Default   | `--card`   | 1px `--input`   | Standard form fields       |
+| Default   | `semanticColors.surface` | 1px `semanticColors.border` | Standard form fields |
 | Ghost     | transparent| none            | Inline editing, search bars|
 
 ## Properties
@@ -37,21 +37,21 @@ Form inputs for collecting user data.
 | Property    | Value                     |
 |-------------|---------------------------|
 | Height      | 40px (md), 32px (sm)      |
-| Radius      | `lg` (14px)               |
+| Radius      | 12px                       |
 | Padding     | 8px vertical, 16px horiz  |
-| Font        | Inter, body-small (0.875rem) |
-| Placeholder | `--muted-foreground`      |
-| Border      | 1px solid `--input`       |
+| Font        | Geist, body-small (0.875rem) |
+| Placeholder | `semanticColors.mutedForeground` |
+| Border      | 1px solid `semanticColors.border` |
 
 ## States
 
 | State    | Change                                          |
 |----------|-------------------------------------------------|
-| Default  | 1px border `--input`                             |
+| Default  | 1px border `semanticColors.border`                |
 | Hover    | Border darkens slightly                          |
-| Focus    | 2px ring in `--ring`, border becomes `--ring`    |
-| Error    | Border and ring become `--destructive`           |
-| Disabled | 50% opacity, `--muted` background                |
+| Focus    | 2px Gold 300 ring; border becomes Gold 500       |
+| Error    | Border and ring become `semanticColors.danger`    |
+| Disabled | 50% opacity, `semanticColors.muted` background    |
 
 ## Input Bar Pattern (Shell)
 
@@ -59,7 +59,7 @@ The main command input uses the glass variant — centered at viewport bottom,
 full-width within constraints:
 
 ```tsx
-<div className="flex items-center gap-2 rounded-xl border bg-white/90
+<div className="flex items-center gap-2 rounded-xl border bg-[rgba(252,252,248,0.90)]
                 backdrop-blur-md px-4 py-2 shadow-lg">
   <Input className="border-0 bg-transparent shadow-none
                     focus-visible:ring-0" />

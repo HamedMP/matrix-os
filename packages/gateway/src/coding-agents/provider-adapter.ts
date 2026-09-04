@@ -11,6 +11,7 @@ import {
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
+import { AiTokenUsageSchema } from "../ai-analytics.js";
 
 const MAX_PROVIDER_EVENTS = 500;
 
@@ -34,6 +35,8 @@ export const CodingAgentProviderEventBatchSchema = z.object({
       }
     }),
   providerThreadId: CodingAgentProviderResumeStateSchema.shape.providerThreadId,
+  resumeState: CodingAgentProviderResumeStateSchema.optional(),
+  tokenUsage: AiTokenUsageSchema.optional(),
 }).strict();
 
 const CodingAgentProviderRunResultSchema = z.object({
@@ -45,9 +48,14 @@ const CodingAgentProviderRunResultSchema = z.object({
 export type CodingAgentProviderResumeState = z.infer<typeof CodingAgentProviderResumeStateSchema>;
 export type CodingAgentProviderRunResult = z.infer<typeof CodingAgentProviderRunResultSchema>;
 export type CodingAgentProviderEventBatch = z.infer<typeof CodingAgentProviderEventBatchSchema>;
+export type CodingAgentProviderEventPublisher = (
+  batch: CodingAgentProviderEventBatch,
+) => Promise<void>;
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
+  /** Long-running initial executions are dispatched after durable thread creation. */
+  initialRunExecution?: "background";
   getSummary?(input: {
     principal: RequestPrincipal;
     now: () => Date;
@@ -67,8 +75,10 @@ export interface CodingAgentProviderAdapter {
     principal: RequestPrincipal;
     thread: AgentThreadSummary;
     request: CreateAgentThreadRequest;
+    signal?: AbortSignal;
     now: () => Date;
     nextEventId: () => string;
+    publishEvents?: CodingAgentProviderEventPublisher;
   }): Promise<AgentThreadEvent[] | CodingAgentProviderRunResult> | AgentThreadEvent[] | CodingAgentProviderRunResult;
   resumeTurn?(input: {
     principal: RequestPrincipal;
@@ -79,12 +89,23 @@ export interface CodingAgentProviderAdapter {
       attachments?: CreateAgentTurnRequest["attachments"];
       model?: CreateAgentTurnRequest["model"];
       modelOptions?: CreateAgentTurnRequest["modelOptions"];
+      approvalPolicy?: CreateAgentTurnRequest["approvalPolicy"];
+      sandboxMode?: CreateAgentTurnRequest["sandboxMode"];
     };
     resumeState: CodingAgentProviderResumeState;
     signal: AbortSignal;
     now: () => Date;
     nextEventId: () => string;
+    publishEvents?: CodingAgentProviderEventPublisher;
   }): Promise<CodingAgentProviderRunResult> | CodingAgentProviderRunResult;
+  steerTurn?(input: {
+    principal: RequestPrincipal;
+    thread: AgentThreadSummary;
+    turnId?: string;
+    message: string;
+    clientRequestId: string;
+    resumeState: CodingAgentProviderResumeState;
+  }): Promise<void> | void;
   abortThread?(input: {
     principal: RequestPrincipal;
     thread: AgentThreadSummary;

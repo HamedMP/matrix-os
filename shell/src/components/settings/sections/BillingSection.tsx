@@ -25,44 +25,33 @@ export function BillingSection({
   const startsNewSubscription = mode === "add-computer" && entitlement?.source !== "override";
 
   return (
-    <div className="mx-auto max-w-5xl space-y-3 p-2 sm:p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold">Billing</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {mode === "device-setup"
-              ? "Choose billing in Settings, then Matrix returns to CLI device approval."
-              : mode === "add-computer"
-              ? "Choose the strength and region for another Matrix computer."
-              : mode === "provisioning"
-              ? "Choose a hosted runtime plan and launch through secure checkout."
-              : "Manage Matrix OS hosted runtime billing and payment details."}
-          </p>
-        </div>
-        <Badge
-          variant="outline"
-          className={
-            startsNewSubscription
-              ? "border-ember/30 bg-ember/10 text-ember"
+    <div className="mx-auto max-w-5xl space-y-4 p-2 font-[family-name:var(--font-geist-sans)] sm:p-4">
+      <div className="flex items-center justify-between gap-3 border-b border-[#E0E1CA] pb-3">
+        <h2 className="font-[family-name:var(--font-bricolage)] text-xl font-semibold tracking-tight text-[#1F2D1D]">
+          Billing
+        </h2>
+        {active !== false || startsNewSubscription ? (
+          <Badge
+            variant="outline"
+            className={
+              startsNewSubscription
+                ? "border-[#BED77B] bg-[#F4F7ED] text-[#0E3422]"
+                : active === true
+                  ? "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]"
+                  : accessIssue === "auth"
+                    ? "border-sky-500/30 bg-sky-500/10 text-sky-700"
+                    : "border-border/30 bg-muted/30 text-muted-foreground"
+            }
+          >
+            {startsNewSubscription
+              ? "New subscription"
               : active === true
-              ? "border-forest/25 bg-forest/8 text-forest"
-              : accessIssue === "auth"
-                ? "border-sky-500/30 bg-sky-500/10 text-sky-700"
-              : active === false
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-700"
-                : "border-border/30 bg-muted/30 text-muted-foreground"
-          }
-        >
-          {startsNewSubscription
-            ? "New subscription"
-            : active === true
-              ? "Active"
-              : accessIssue === "auth"
-                ? "Reconnecting"
-                : active === false
-                  ? "Not active"
+                ? "Active"
+                : accessIssue === "auth"
+                  ? "Reconnecting"
                   : "Checking"}
-        </Badge>
+          </Badge>
+        ) : null}
       </div>
 
       <BillingPanel

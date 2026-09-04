@@ -36,6 +36,8 @@ describe("self-host server installer", () => {
     expect(script).toContain("[[ \"$MATRIX_DOMAIN\" =~ ^[A-Za-z0-9]");
     expect(script).toContain("openssl rand -hex 32");
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret");
+    expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RUNTIME_TOKEN || true");
+    expect(script).toContain("MATRIX_FUNDED_AI_RUNTIME_TOKEN=${funded_ai_runtime_token}");
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret");
     expect(script).toContain("read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret");
     expect(script).toContain("cleanup_install_tmp");

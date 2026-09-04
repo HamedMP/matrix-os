@@ -1,8 +1,13 @@
 import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
+import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { createCredentialStore } from "./auth/credential-store";
-import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
+import {
+  installGatewayCors,
+  installHeaderInjection,
+  installSupportMessageAnalytics,
+} from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
 import { NativeAppBridge, createNativeAppQueryRequester } from "./embeds/native-app-bridge";
 import {
@@ -34,6 +39,7 @@ import {
   updateHermesConfiguration,
 } from "./hermes/configuration-client";
 import { registerIpcHandlers } from "./ipc/handlers";
+import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
 import {
@@ -66,6 +72,8 @@ let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
 let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
+let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) | null = null;
+let completePendingAnalyticsFlush: (() => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
   try {
@@ -203,9 +211,11 @@ if (!gotLock) {
         onAuthChanged: (status) => {
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
-            ...(status.handle ? { handle: status.handle } : {}),
-            ...(status.displayName ? { displayName: status.displayName } : {}),
-            ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
+            ...(status.signedIn ? {
+              handle: status.handle,
+              ...(status.displayName ? { displayName: status.displayName } : {}),
+              ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
+            } : {}),
           });
         },
       });
@@ -225,6 +235,11 @@ if (!gotLock) {
       // The renderer is a different origin than the gateway (file:// in prod,
       // localhost in dev), so allow its cross-origin fetches to the gateway.
       installGatewayCors(session.defaultSession, () => auth.getGatewayOrigin(), rendererOrigin);
+      installSupportMessageAnalytics(
+        session.defaultSession,
+        () => auth.getGatewayOrigin(),
+        (detail) => sendEvent("analytics:capture", detail),
+      );
 
       const nativeAppBridge = new NativeAppBridge({
         gatewayOrigin: () => auth.getGatewayOrigin(),
@@ -274,6 +289,14 @@ if (!gotLock) {
             error instanceof Error ? error.message : String(error),
           );
         },
+      });
+      handleAnalyticsBeforeQuit = createAnalyticsBeforeQuit({
+        requestFlush: () => new Promise<void>((resolve) => {
+          completePendingAnalyticsFlush = resolve;
+          sendEvent("analytics:flush-requested", {});
+        }),
+        quit: () => app.quit(),
+        timeoutMs: 750,
       });
       const codingAgentThreadEvents = createCodingAgentThreadEventStreamer({
         auth,
@@ -329,6 +352,12 @@ if (!gotLock) {
           if (version !== app.getVersion()) return;
           await store.acknowledgeDesktopUpdateRelease(version);
         },
+        getAppVersion: () => app.getVersion(),
+        completeAnalyticsFlush: () => {
+          completePendingAnalyticsFlush?.();
+          completePendingAnalyticsFlush = null;
+        },
+        fetchSupportIdentity: () => fetchDesktopSupportIdentity(auth),
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
         fetchProjectWorkspace: (request) => fetchCodingAgentProjectWorkspace(auth, request),
         fetchNotificationPreferences: () => fetchCodingAgentNotificationPreferences(auth),
@@ -427,6 +456,7 @@ if (!gotLock) {
     });
 
   app.on("before-quit", (event) => {
+    if (handleAnalyticsBeforeQuit?.(event)) return;
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;

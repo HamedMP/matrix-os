@@ -42,14 +42,33 @@ const TurnFrameSchema = z.object({
   modelOptions: z.array(AgentModelOptionSchema).max(32),
   clientRequestId: RequestIdSchema,
 }).strict();
-const ControlFrameSchema = z.discriminatedUnion("type", [TurnFrameSchema, ApprovalFrameSchema, InputFrameSchema]);
+const InterruptFrameSchema = z.object({
+  type: z.literal("interrupt"),
+  clientRequestId: RequestIdSchema,
+}).strict();
+const SteerFrameSchema = z.object({
+  type: z.literal("steer"),
+  prompt: TurnFrameSchema.shape.prompt,
+  clientRequestId: RequestIdSchema,
+}).strict();
+const ControlFrameSchema = z.discriminatedUnion("type", [
+  TurnFrameSchema,
+  SteerFrameSchema,
+  InterruptFrameSchema,
+  ApprovalFrameSchema,
+  InputFrameSchema,
+]);
 const ControlResponseSchema = z.union([
   z.object({ ok: z.literal(true), replayed: z.boolean().optional() }).strict(),
   z.object({ ok: z.literal(false) }).strict(),
 ]);
 
-const DEFAULT_TIMEOUT_MS = 2_000;
-const MAX_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 10_000;
+// A same-turn steer can be admitted at the next provider input boundary while
+// a long-running tool is active. Keep this aligned with the runner's bounded
+// steer RPC and control-socket windows.
+const DEFAULT_STEER_TIMEOUT_MS = 60_000;
+const MAX_TIMEOUT_MS = 60_000;
 const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
@@ -60,6 +79,15 @@ export interface CodexControlClient {
     prompt: string;
     model?: string;
     modelOptions: z.infer<typeof AgentModelOptionSchema>[];
+  }): Promise<void>;
+  interruptTurn(input: {
+    sessionId: string;
+    clientRequestId: string;
+  }): Promise<void>;
+  steerTurn(input: {
+    sessionId: string;
+    prompt: string;
+    clientRequestId: string;
   }): Promise<void>;
   submitApproval(input: {
     sessionId: string;
@@ -89,8 +117,13 @@ export function createCodexControlClient(options: {
   const timeoutMs = Number.isFinite(requestedTimeoutMs)
     ? Math.max(1, Math.min(Math.trunc(requestedTimeoutMs), MAX_TIMEOUT_MS))
     : DEFAULT_TIMEOUT_MS;
+  const steerTimeoutMs = options.timeoutMs === undefined ? DEFAULT_STEER_TIMEOUT_MS : timeoutMs;
 
-  async function send(sessionId: string, input: z.input<typeof ControlFrameSchema>): Promise<void> {
+  async function send(
+    sessionId: string,
+    input: z.input<typeof ControlFrameSchema>,
+    operationTimeoutMs = timeoutMs,
+  ): Promise<void> {
     const frame = ControlFrameSchema.parse(input);
     const path = codexProviderControlPath(homePath, sessionId);
     try {
@@ -100,7 +133,7 @@ export function createCodexControlClient(options: {
       if (Buffer.byteLength(line, "utf8") > MAX_CONTROL_FRAME_BYTES) {
         throw new Error("control_frame_limit");
       }
-      const signal = AbortSignal.timeout(timeoutMs);
+      const signal = AbortSignal.timeout(operationTimeoutMs);
       const response = await new Promise<z.infer<typeof ControlResponseSchema>>((resolve, reject) => {
         const socket = createConnection({ path });
         let responseText = "";
@@ -116,7 +149,7 @@ export function createCodexControlClient(options: {
         const onAbort = () => fail();
         signal.addEventListener("abort", onAbort, { once: true });
         socket.setEncoding("utf8");
-        socket.setTimeout(timeoutMs, fail);
+        socket.setTimeout(operationTimeoutMs, fail);
         socket.once("error", fail);
         socket.once("connect", () => socket.end(line));
         socket.on("data", (chunk) => {
@@ -153,6 +186,19 @@ export function createCodexControlClient(options: {
         modelOptions: input.modelOptions,
         clientRequestId: `req_${input.turnId.slice("turn_".length)}`,
       });
+    },
+    interruptTurn(input) {
+      return send(input.sessionId, {
+        type: "interrupt",
+        clientRequestId: input.clientRequestId,
+      });
+    },
+    steerTurn(input) {
+      return send(input.sessionId, {
+        type: "steer",
+        prompt: input.prompt,
+        clientRequestId: input.clientRequestId,
+      }, steerTimeoutMs);
     },
     submitApproval(input) {
       return send(input.sessionId, {

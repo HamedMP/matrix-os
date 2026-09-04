@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VocalPanel } from "../../shell/src/components/VocalPanel.js";
+import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
 const mocks = vi.hoisted(() => ({
   useVocalSession: vi.fn(),
@@ -52,7 +54,13 @@ describe("transient shell error placement", () => {
   it("renders vocal shell errors in the top-right notification stack", async () => {
     mocks.useVocalSession.mockReturnValue(baseVocalSession("Aoede could not connect"));
 
-    render(<VocalPanel active={true} />);
+    const queryClient = createShellQueryClient();
+    queryClient.setQueryData(["apps", "list"], []);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <VocalPanel active={true} />
+      </QueryClientProvider>,
+    );
 
     const stack = await screen.findByTestId("shell-notification-stack");
     const alert = await screen.findByRole("alert");

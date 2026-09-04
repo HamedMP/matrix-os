@@ -16,7 +16,7 @@ afterEach(async () => {
   await Promise.allSettled(cleanup.splice(0).map((remove) => remove()));
 });
 
-async function listen(homePath: string, sessionId: string, reply?: string) {
+async function listen(homePath: string, sessionId: string, reply?: string, replyDelayMs = 0) {
   const path = codexProviderControlPath(homePath, sessionId);
   await mkdir(dirname(path), { recursive: true });
   const frames: unknown[] = [];
@@ -31,9 +31,10 @@ async function listen(homePath: string, sessionId: string, reply?: string) {
     });
     socket.on("end", () => {
       frames.push(JSON.parse(input));
-      if (reply !== undefined) socket.end(reply);
+      if (reply !== undefined) setTimeout(() => socket.end(reply), replyDelayMs);
     });
   });
+
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(path, resolve);
@@ -47,7 +48,20 @@ async function listen(homePath: string, sessionId: string, reply?: string) {
 }
 
 describe("Codex control client", () => {
-  it("submits bounded Turn, approval, and structured input frames", async () => {
+  it("allows a loaded Codex app-server more than ten seconds to acknowledge steer", async () => {
+    const homePath = await mkdtemp(join(socketTempRoot, "mx-control-delayed-steer-"));
+    const sessionId = "sess_delayed_steer";
+    await listen(homePath, sessionId, '{"ok":true}\n', 10_100);
+    const client = createCodexControlClient({ homePath });
+
+    await expect(client.steerTurn({
+      sessionId,
+      prompt: "Apply this while the current tool is still running.",
+      clientRequestId: "req_delayed_steer_1",
+    })).resolves.toBeUndefined();
+  });
+
+  it("submits bounded Turn, steer, interrupt, approval, and structured input frames", async () => {
     const homePath = await mkdtemp(join(socketTempRoot, "mx-control-"));
     const sessionId = "sess_thread_control_1";
     const frames = await listen(homePath, sessionId, '{"ok":true}\n');
@@ -59,6 +73,15 @@ describe("Codex control client", () => {
       prompt: "Continue with the focused tests.",
       model: "openai/gpt-5.6-sol",
       modelOptions: [{ id: "effort", value: "high" }],
+    });
+    await client.interruptTurn({
+      sessionId,
+      clientRequestId: "req_control_1",
+    });
+    await client.steerTurn({
+      sessionId,
+      prompt: "Use the failing route test as the next constraint.",
+      clientRequestId: "req_control_steer_1",
     });
     await client.submitApproval({
       sessionId,
@@ -82,6 +105,15 @@ describe("Codex control client", () => {
         model: "openai/gpt-5.6-sol",
         modelOptions: [{ id: "effort", value: "high" }],
         clientRequestId: "req_control_1",
+      },
+      {
+        type: "interrupt",
+        clientRequestId: "req_control_1",
+      },
+      {
+        type: "steer",
+        prompt: "Use the failing route test as the next constraint.",
+        clientRequestId: "req_control_steer_1",
       },
       {
         type: "approval",

@@ -3,6 +3,7 @@ import {
   createCanonicalChatClient,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { AppError } from "@desktop/shared/app-error";
 
 const record = {
   chat: {
@@ -36,6 +37,103 @@ function api(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 describe("canonical Chat client", () => {
+  it("tracks a privacy-safe Chat send funnel without message or identity data", async () => {
+    const turnInput = {
+      clientRequestId: "req_client_turn_analytics",
+      baseRevision: 0,
+      parts: [{
+        type: "attachment_reference" as const,
+        attachmentId: "desktop_upload_analytics",
+        kind: "file" as const,
+        label: "private-filename.pdf",
+      }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    };
+    const trackEvent = vi.fn();
+    const client = createCanonicalChatClient(
+      api({ post: vi.fn(async () => admissionResponse(turnInput)) }),
+      { trackEvent },
+    );
+
+    await client.admitTurn(record.chat.id, turnInput, { chatScope: "project" });
+
+    expect(trackEvent).toHaveBeenNthCalledWith(1, {
+      name: "desktop_chat_message_send_attempted",
+      chatScope: "project",
+      hasAttachments: true,
+    });
+    expect(trackEvent).toHaveBeenNthCalledWith(2, {
+      name: "desktop_chat_message_send_succeeded",
+      chatScope: "project",
+      hasAttachments: true,
+      harness: "codex",
+      modelProvider: "openai",
+      model: "gpt-5.6-sol",
+    });
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("private-filename.pdf");
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain(record.chat.id);
+  });
+
+  it("tracks a completed response with routing and length but no response content", async () => {
+    const post = vi.fn(async () => record);
+    const trackEvent = vi.fn();
+    const client = createCanonicalChatClient(api({ post }), { trackEvent });
+
+    await client.acknowledgeCompletion(record.chat.id, "run_client_completed", {
+      chatScope: "global",
+      harness: "hermes",
+      model: "anthropic:claude-opus-5",
+      responseCharacterCount: 37,
+    });
+
+    expect(trackEvent).toHaveBeenCalledWith({
+      name: "desktop_chat_response_completed",
+      chatScope: "global",
+      harness: "hermes",
+      modelProvider: "anthropic",
+      model: "anthropic:claude-opus-5",
+      responseCharacterCount: 37,
+    });
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("private response");
+  });
+
+  it("tracks a coarse Chat send failure and preserves the original error", async () => {
+    const turnInput = {
+      clientRequestId: "req_client_turn_failure",
+      baseRevision: 0,
+      parts: [{ type: "text" as const, text: "private message" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    };
+    const failure = new AppError("offline");
+    const trackEvent = vi.fn();
+    const client = createCanonicalChatClient(
+      api({ post: vi.fn(async () => Promise.reject(failure)) }),
+      { trackEvent },
+    );
+
+    await expect(client.admitTurn(
+      record.chat.id,
+      turnInput,
+      { chatScope: "global" },
+    )).rejects.toBe(failure);
+    expect(trackEvent).toHaveBeenNthCalledWith(1, {
+      name: "desktop_chat_message_send_attempted",
+      chatScope: "global",
+      hasAttachments: false,
+    });
+    expect(trackEvent).toHaveBeenNthCalledWith(2, {
+      name: "desktop_chat_message_send_failed",
+      chatScope: "global",
+      hasAttachments: false,
+      failureKind: "network",
+    });
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toContain("private message");
+  });
+
   it("lists Chats through one filtered Gateway endpoint", async () => {
     const get = vi.fn(async () => ({ items: [record], nextCursor: "chatcur_next" }));
     const client = createCanonicalChatClient(api({ get }));
@@ -209,6 +307,13 @@ describe("canonical Chat client", () => {
       permissionMode: "supervised",
     };
     const post = vi.fn(async (path: string) => {
+      if (path.includes("/approvals/")) {
+        return {
+          approvalId: "appr_command",
+          decision: "approve_for_session",
+          submission: "accepted",
+        };
+      }
       if (path.endsWith("/cancel")) {
         return {
           run: {
@@ -252,6 +357,10 @@ describe("canonical Chat client", () => {
       clientRequestId: "req_client_retry",
       baseRevision: 2,
     });
+    await client.submitApproval(record.chat.id, "run_client", "appr_command", {
+      clientRequestId: "req_client_approval",
+      decision: "approve_for_session",
+    });
 
     expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns", turnInput);
     expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel", {
@@ -261,6 +370,151 @@ describe("canonical Chat client", () => {
       clientRequestId: "req_client_retry",
       baseRevision: 2,
     });
+    expect(post).toHaveBeenNthCalledWith(
+      4,
+      "/api/chats/chat_client_test/runs/run_client/approvals/appr_command",
+      { clientRequestId: "req_client_approval", decision: "approve_for_session" },
+    );
+  });
+
+  it("sends strict Steer and durable Queue lifecycle commands", async () => {
+    const queuedTurn = {
+      id: "qturn_client",
+      chatId: record.chat.id,
+      clientRequestId: "req_client_queue",
+      position: 1,
+      parts: [{ type: "text" as const, text: "Queue this next" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      createdAt: "2026-08-26T00:00:02.000Z",
+      updatedAt: "2026-08-26T00:00:02.000Z",
+    };
+    const steeringMessage = {
+      id: "msg_client_steer",
+      chatId: record.chat.id,
+      seq: 2,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: "cturn_client",
+      runId: "run_client",
+      parts: [{ type: "text" as const, text: "Adjust the active run" }],
+      createdAt: "2026-08-26T00:00:03.000Z",
+    };
+    const post = vi.fn(async (path: string) => path.endsWith("/steer")
+      ? {
+          runId: "run_client",
+          turnId: "cturn_client",
+          message: steeringMessage,
+          steering: "accepted" as const,
+        }
+      : { queuedTurn, queueDepth: 1 });
+    const editedQueuedTurn = {
+      ...queuedTurn,
+      parts: [{ type: "text" as const, text: "Edited queue text" }],
+    };
+    const patch = vi.fn(async (path: string) => path.endsWith("/order")
+      ? { queuedTurns: [queuedTurn] }
+      : { queuedTurn: editedQueuedTurn });
+    const remove = vi.fn(async () => ({
+      queuedTurnId: queuedTurn.id,
+      queueDepth: 0,
+      cancellation: "cancelled" as const,
+    }));
+    const queueInput = {
+      clientRequestId: "req_client_queue",
+      baseRevision: 1,
+      parts: queuedTurn.parts,
+      selection: queuedTurn.selection,
+      interactionMode: queuedTurn.interactionMode,
+      permissionMode: queuedTurn.permissionMode,
+    };
+    const client = createCanonicalChatClient(api({ post, patch, delete: remove }));
+
+    await client.queueTurn(record.chat.id, queueInput);
+    await client.steerRun(record.chat.id, "run_client", {
+      clientRequestId: "req_client_steer",
+      expectedTurnId: "cturn_client",
+      parts: steeringMessage.parts,
+    });
+    await client.reorderQueuedTurns(record.chat.id, {
+      clientRequestId: "req_client_reorder",
+      baseRevision: 2,
+      queuedTurnIds: [queuedTurn.id],
+    });
+    await client.cancelQueuedTurn(record.chat.id, queuedTurn.id, {
+      clientRequestId: "req_client_cancel_queue",
+      baseRevision: 3,
+    });
+    await client.updateQueuedTurn(record.chat.id, queuedTurn.id, {
+      clientRequestId: "req_client_edit_queue",
+      baseRevision: 4,
+      parts: editedQueuedTurn.parts,
+    });
+    await client.steerQueuedTurn(record.chat.id, "run_client", queuedTurn.id, {
+      clientRequestId: "req_client_steer_queue",
+      baseRevision: 5,
+      expectedTurnId: "cturn_client",
+    });
+
+    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/queued-turns", queueInput);
+    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer", {
+      clientRequestId: "req_client_steer",
+      expectedTurnId: "cturn_client",
+      parts: steeringMessage.parts,
+    });
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/queued-turns/order", {
+      clientRequestId: "req_client_reorder",
+      baseRevision: 2,
+      queuedTurnIds: [queuedTurn.id],
+    });
+    expect(remove).toHaveBeenCalledWith(
+      "/api/chats/chat_client_test/queued-turns/qturn_client",
+      { clientRequestId: "req_client_cancel_queue", baseRevision: 3 },
+    );
+    expect(patch).toHaveBeenNthCalledWith(
+      2,
+      "/api/chats/chat_client_test/queued-turns/qturn_client",
+      {
+        clientRequestId: "req_client_edit_queue",
+        baseRevision: 4,
+        parts: editedQueuedTurn.parts,
+      },
+    );
+    expect(post).toHaveBeenNthCalledWith(
+      3,
+      "/api/chats/chat_client_test/runs/run_client/queued-turns/qturn_client/steer",
+      {
+        clientRequestId: "req_client_steer_queue",
+        baseRevision: 5,
+        expectedTurnId: "cturn_client",
+      },
+    );
+  });
+
+  it("admits files accepted by the Desktop 10 MiB attachment picker", async () => {
+    const turnInput = {
+      clientRequestId: "req_client_attachment",
+      baseRevision: 0,
+      parts: [{
+        type: "attachment_reference" as const,
+        attachmentId: "desktop_upload_large_file",
+        kind: "file" as const,
+        label: "research.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 6 * 1024 * 1024,
+        ownerReference: "temporary/desktop-chat/large-research.pdf",
+      }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    };
+    const post = vi.fn(async () => admissionResponse(turnInput));
+    const client = createCanonicalChatClient(api({ post }));
+
+    await client.admitTurn(record.chat.id, turnInput);
+
+    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns", turnInput);
   });
 });
 

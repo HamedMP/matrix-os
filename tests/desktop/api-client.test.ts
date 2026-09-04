@@ -67,6 +67,35 @@ describe("createApiClient", () => {
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("composes a caller cancellation signal with the mandatory timeout", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    const caller = new AbortController();
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+
+    await client.get("/api/apps", { signal: caller.signal });
+
+    const [, init] = fetchFn.mock.calls[0]!;
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+    caller.abort();
+    expect((init as RequestInit).signal!.aborted).toBe(true);
+  });
+
+  it("rejects JSON responses that exceed the configured byte limit", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { value: "x".repeat(128) }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+
+    await expect(client.get("/api/ai/provider-settings", { maxBytes: 32 }))
+      .rejects.toMatchObject({ category: "server" });
+  });
+
   it("maps 401 to unauthorized AppError", async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse(401, {}));
     const client = createApiClient({

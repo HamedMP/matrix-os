@@ -82,8 +82,11 @@ suite("Desktop Add Project compact folder picker", () => {
 
   it("keeps the sticky list header flush with the toolbar while rows scroll beneath it", async () => {
     await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
-    await page.getByRole("button", { name: "Show Chat navigation" }).click();
-    await page.getByRole("navigation", { name: "Chat navigation" }).waitFor();
+    const chatNavigation = page.getByRole("navigation", { name: "Chat navigation" });
+    if (!await chatNavigation.isVisible()) {
+      await page.getByRole("button", { name: /^(Show Chat navigation|Toggle Chat sidebar)$/ }).click();
+    }
+    await chatNavigation.waitFor();
     await page.getByRole("button", { name: "Create project" }).click();
     const dialog = page.getByRole("dialog", { name: "Create a project" });
     await dialog.waitFor();

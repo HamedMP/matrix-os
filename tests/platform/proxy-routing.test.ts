@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
+import { runInNewContext } from "node:vm";
 import { fonts, lightFg, palette, radii } from "@matrix-os/brand/tokens";
 import {
   type PlatformDB,
@@ -2073,6 +2074,73 @@ describe("platform proxy routing", () => {
     }, DETACHED_PROVISION_OPTIONS);
   });
 
+  it("uses the paid checkout machine, region, and agents as the provisioning source of truth", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertCheckoutAttempt(db, {
+      id: "attempt_authoritative_configuration",
+      clerkUserId: "user_paid_configuration",
+      stripeSessionId: "cs_paid_configuration",
+      runtimeSlot: "research-lab",
+      planSlug: "matrix_builder",
+      billingInterval: "monthly",
+      regionSlug: "region_ash",
+      serverType: "cpx31",
+      status: "paid",
+      createdAt: "2026-08-30T12:00:00.000Z",
+      developerTools: ["claude-code"],
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      username: "newuser",
+      first_name: "New",
+      last_name: "User",
+      primary_email_address_id: "email_1",
+      email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+    }));
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff160",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_paid_configuration" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        runtime: "research-lab",
+        developerTools: ["codex"],
+        serverType: "cpx22",
+        location: "fsn1",
+      }),
+    });
+
+    expect(provision.status).toBe(202);
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "newuser",
+      clerkUserId: "user_paid_configuration",
+      runtimeSlot: "research-lab",
+      developerTools: ["claude-code"],
+      serverType: "cpx31",
+      location: "ash",
+    }, DETACHED_PROVISION_OPTIONS);
+  });
+
   it("converges an old post-payment provision request onto the checkout-bound intent", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
@@ -2816,6 +2884,15 @@ describe("platform proxy routing", () => {
     expect(html).toContain("method: 'DELETE'");
     expect(html).not.toContain("Loading your Matrix computer");
     expect(html).not.toContain("function pollProvisioningSession()");
+    expect(html).toContain("showLoadingState('Finishing your Matrix computer...');");
+    expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
+    expect(html).toContain("var passiveRuntimeContinuation = passiveCheckoutContinuation || Boolean(deviceReturnTarget);");
+    expect(html).toContain("function normalizeRuntimeSlot(value) {");
+    expect(html).toContain("var requestedRuntime = normalizeRuntimeSlot(");
+    expect(html).toContain("function isRetryableAppSessionStatus(status) {");
+    expect(html).toContain("passiveRuntimeContinuation && isRetryableAppSessionStatus(res.status)");
+    expect(html).toContain("waitForAppSession(provisioningAccepted);");
+    expect(html).not.toContain("if (checkoutJustCompleted) {\n              showDefaultInstallsState();");
     expect(html).toContain("continueWithClerkSession(true);");
     expect(html).toContain("if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {");
     expect(html).toContain("billingConfirmationPolls = 0;\n            continueWithClerkSession(true);\n            return;");
@@ -2842,7 +2919,8 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("if (res.status === 402) {\n            if (afterProvision) showProvisionRetryError();\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("if (res.status === 402) {\n            if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
@@ -3303,7 +3381,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var billingSetupTarget = ");
     expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
-    expect(html).toContain("window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
+    expect(html).toContain("window.location.replace(provisioningAccepted ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toBe("auth shell");
@@ -5208,10 +5286,56 @@ describe("platform proxy routing", () => {
       expect(res.headers.get("cdn-cache-control")).toBe("no-store");
       expect(res.headers.get("service-worker-allowed")).toBe("/");
       const body = await res.text();
-      expect(body).not.toContain("registration.unregister()");
-      expect(body).toContain('p.startsWith("/api/")');
-      expect(body).toContain('p.startsWith("/files/apps/")');
-      expect(body).toContain('p.startsWith("/_next/static/")');
+      type FetchHandler = (event: {
+        request: Request;
+        respondWith(response: Promise<Response>): void;
+      }) => void;
+      let fetchHandler: FetchHandler | undefined;
+      const cachedResponse = new Response("cached asset");
+      const cache = {
+        match: vi.fn(async () => cachedResponse),
+        put: vi.fn(async () => undefined),
+      };
+      const cacheStorage = {
+        delete: vi.fn(async () => true),
+        keys: vi.fn(async () => []),
+        open: vi.fn(async () => cache),
+      };
+
+      runInNewContext(body, {
+        AbortSignal,
+        Response,
+        URL,
+        caches: cacheStorage,
+        console,
+        fetch: vi.fn(),
+        self: {
+          clients: { claim: vi.fn(async () => undefined) },
+          location: new URL("https://app.matrix-os.com/"),
+          skipWaiting: vi.fn(),
+          addEventListener: (type: string, handler: FetchHandler) => {
+            if (type === "fetch") fetchHandler = handler;
+          },
+        },
+      });
+
+      expect(fetchHandler).toBeTypeOf("function");
+      const dispatchFetch = (path: string) => {
+        const respondWith = vi.fn();
+        fetchHandler!({
+          request: new Request(`https://app.matrix-os.com${path}`),
+          respondWith,
+        });
+        return respondWith;
+      };
+
+      expect(dispatchFetch("/api/session")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/files/apps/notes/index.js")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/_next/static/chunks/app.js")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/_next/static/css/app.css")).not.toHaveBeenCalled();
+      const safeImageFetch = dispatchFetch("/icons/notes.png");
+      expect(safeImageFetch).toHaveBeenCalledOnce();
+      await expect(safeImageFetch.mock.calls[0]?.[0]).resolves.toBe(cachedResponse);
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {

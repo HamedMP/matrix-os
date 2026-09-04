@@ -29,17 +29,28 @@ Primary sources:
 
 ### Kernel and Agent SDK
 
-- `packages/kernel/package.json` declares `@anthropic-ai/claude-agent-sdk` `^0.2.74`; the lockfile resolves `0.2.79`. The npm registry reports `0.3.251` as current on 2026-08-29.
+- Production pins `@anthropic-ai/claude-agent-sdk` `0.3.240`. The npm registry
+  reports `0.3.251` as current, but its 2026-08-28 publication date keeps it
+  quarantined by the workspace's seven-day `minimumReleaseAge` policy as of
+  2026-08-30. The exact-version compatibility job remains the upgrade gate;
+  production must not bypass the release-age policy.
 - Matrix uses the supported V1 `query()` plus `resume` path. This is the correct base: the Agent SDK changelog says the experimental V2 interface was removed in `0.3.142`.
-- The SDK upgrade is not a mechanical version bump. Newer releases change first-turn MCP connection behavior, deprecate `Skill` in `allowedTools` in favor of the `skills` option, improve canonical model/provider usage reporting, add structured refusals, and change task-tool defaults. Matrix must spike all of these against the real in-process MCP server, hooks, permissions, resume, cancellation, and subagents before updating the lockfile.
-- `packages/kernel/src/options.ts` currently explicitly allows `Task`, `TaskOutput`, and `Skill`. The upgrade should migrate the deprecated skill configuration and make task/subagent capability tests explicit.
+- The SDK upgrade is not a mechanical version bump. The exact `0.3.251`
+  compatibility harness verifies first-turn MCP, explicit skills, canonical usage,
+  structured refusals, hooks, permissions, resume, cancellation, and subagents
+  before production may update the lockfile.
+- `packages/kernel/src/options.ts` uses the supported `skills: "all"` option;
+  the deprecated `Skill` allowlist entry has been removed. Task/subagent
+  capability remains covered by the exact-version compatibility harness.
 
 Source: [Claude Agent SDK TypeScript changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md).
 
 ### Models
 
-- `packages/gateway/src/kernel-settings.ts` currently hard-codes Claude Opus 4.6, Sonnet 4.5, and Haiku 4.5.
 - The current Anthropic family is Claude Fable 5, Opus 5, Sonnet 5, and Haiku 4.5. Anthropic documents material Sonnet 5 request-behavior differences, so controls cannot be copied blindly from older models.
+- Claude Fable 5 is generally available as `claude-fable-5`, with a 1M-token
+  context window, up to 128K output tokens, and $10/$50 per million input/output
+  tokens. Invitation-only Mythos is deliberately absent from the Matrix catalog.
 - Recommended Matrix-funded default: **Claude Sonnet 5**, with Haiku 4.5 available for low-cost/background classifications once quality tests pass. Opus 5 is owner-funded/add-on at launch. Fable 5 is not included by default because its documented retention posture requires a deliberate policy and user disclosure.
 - Model data should move from duplicated arrays to a bounded, validated catalog with a shipped fallback. Existing Chats keep their bound model ID; a retired model becomes non-runnable until the user explicitly selects a compatible model.
 

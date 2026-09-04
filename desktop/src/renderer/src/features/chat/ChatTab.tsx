@@ -1,6 +1,8 @@
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
+import { cn } from "../../lib/cn";
 import type { CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { Button } from "../../design/primitives";
@@ -13,6 +15,7 @@ import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { ChatStarterCards } from "./ChatStarterCards";
+import { chatSendFailureMessage } from "./chat-send-error";
 import {
   SharedChatComposer,
   type ComposerReferenceToken,
@@ -52,7 +55,7 @@ export function canSubmitChatDraft(
     && !contextBlocksSend;
 }
 
-export function HermesPane() {
+export function HermesPane({ active = true }: { active?: boolean } = {}) {
   const api = useConnection((state) => state.api);
   const messages = useHermesChat((state) => state.messages);
   const sessionId = useHermesChat((state) => state.sessionId);
@@ -73,6 +76,7 @@ export function HermesPane() {
   const [draft, setDraft] = useState("");
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachments = useConversationAttachments(sessionId);
   const projects = useBoard((state) => state.projects);
@@ -80,7 +84,7 @@ export function HermesPane() {
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const canonicalProviderCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const canonicalProviderCatalog = useChatProviderCatalog(fallbackCatalog, { active }).catalog;
   const providerCatalog = useMemo(
     () => filterCatalogForLegacyGlobal(canonicalProviderCatalog),
     [canonicalProviderCatalog],
@@ -122,6 +126,10 @@ export function HermesPane() {
     void useProviderPreferences.getState().hydrate();
   }, []);
 
+  useEffect(() => {
+    setSubmissionError(null);
+  }, [sessionId]);
+
   const turns = hermesConversationPresentation(messages, status, activeRequestId);
   const copyText = useCallback(async (text: string) => {
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
@@ -147,7 +155,6 @@ export function HermesPane() {
     if (
       uploadingAttachments
       || !legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
-      || (attachments.items.length > 0 && !supportsNativeAttachments)
       || !canSubmitChatDraft(
         draft,
         status,
@@ -156,11 +163,27 @@ export function HermesPane() {
         referenceTokens.length,
       )
     ) return;
+    if (attachments.items.length > 0 && !supportsNativeAttachments) {
+      setSubmissionError(chatSendFailureMessage(
+        "The selected provider does not support file attachments.",
+      ));
+      return;
+    }
+    setSubmissionError(null);
     setUploadingAttachments(true);
     try {
       const uploaded = await attachments.uploadAll();
-      if (!uploaded.ok) return;
-      send(appendHermesAttachmentPaths(submission.agentPrompt, uploaded.paths));
+      if (!uploaded.ok) {
+        setSubmissionError(chatSendFailureMessage(uploaded.error));
+        return;
+      }
+      const sent = send(appendHermesAttachmentPaths(submission.agentPrompt, uploaded.paths));
+      if (!sent) {
+        setSubmissionError(chatSendFailureMessage(
+          "Can't reach Matrix OS. Check your connection.",
+        ));
+        return;
+      }
       setDraft("");
       setReferenceTokens([]);
       attachments.clear();
@@ -238,7 +261,10 @@ export function HermesPane() {
             setCanonicalSelection(selection);
           }}
           onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
-          onNewChat={newChat}
+          onNewChat={() => {
+            setSubmissionError(null);
+            newChat();
+          }}
           instanceLocked={providerInstanceLocked}
           resources={projects.map((project) => ({
             kind: "project" as const,
@@ -263,9 +289,10 @@ export function HermesPane() {
     </>
   );
 
-  const loadErrorBanner = loadError ? (
-    <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[868px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-      {loadError}
+  const visibleError = submissionError ?? loadError;
+  const errorBanner = visibleError ? (
+    <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+      {visibleError}
     </div>
   ) : null;
 
@@ -275,9 +302,9 @@ export function HermesPane() {
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
       {...attachments.paneProps}
     >
-      {loadErrorBanner}
+      {errorBanner}
       {empty ? (
-        <div data-testid="chat-empty-content" className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center gap-[26px] px-5 py-8">
+        <div data-testid="chat-empty-content" className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center gap-[26px] px-5 py-8", CHAT_CONTENT_WIDTH_CLASS)}>
           <div className="flex shrink-0 flex-col items-center gap-[26px] text-center">
             <h1
               className="text-[32px] font-semibold leading-tight tracking-[-0.02em]"
@@ -292,7 +319,7 @@ export function HermesPane() {
       ) : (
         <>
           <ConversationTranscript turns={turns} callbacks={{ copyText, openFile: openFileInDesktopEditor }} />
-          <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
+          <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>
             {renderComposer("Reply to Hermes…")}
           </div>
         </>
@@ -301,7 +328,7 @@ export function HermesPane() {
   );
 }
 
-function LegacyChatTab() {
+function LegacyChatTab({ active }: { active: boolean }) {
   const api = useConnection((state) => state.api);
   const conversationView = useHermesChat((state) => state.view);
   const indexStatus = useHermesChat((state) => state.indexStatus);
@@ -334,7 +361,7 @@ function LegacyChatTab() {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-      {conversationView === "index" ? <HermesConversationIndex api={api} /> : <HermesPane />}
+      {conversationView === "index" ? <HermesConversationIndex api={api} /> : <HermesPane active={active} />}
     </div>
   );
 }
@@ -395,7 +422,7 @@ export default function ChatTab({
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}
       fallback={allowLegacyFallback
-        ? <LegacyChatTab />
+        ? <LegacyChatTab active={active} />
         : <ChatUnavailableState onRetry={() => setRouteAttempt((attempt) => attempt + 1)} />}
     />
   );

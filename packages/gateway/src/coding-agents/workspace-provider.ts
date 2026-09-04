@@ -13,6 +13,10 @@ import {
 import { SupportedAgentSchema, type SupportedAgent } from "../agent-launcher.js";
 import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
 import { createPiCodingAgentProvider, type PiCodingAgentProviderOptions } from "./pi-provider.js";
+import {
+  createOpenCodeCodingAgentProvider,
+  type OpenCodeCodingAgentProviderOptions,
+} from "./opencode-provider.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
@@ -48,6 +52,7 @@ export interface WorkspaceCodingAgentProviderSetOptions {
   codexControl?: CodexControlClient;
   homePath?: string;
   pi?: Omit<PiCodingAgentProviderOptions, "homePath">;
+  opencode?: Omit<OpenCodeCodingAgentProviderOptions, "homePath">;
 }
 
 export interface WorkspaceCodingAgentProviderSet {
@@ -78,6 +83,16 @@ function providerKind(agent: SupportedAgent): AgentProviderSummary["kind"] {
   if (agent === "codex") return "codex";
   if (agent === "opencode") return "opencode";
   return "custom";
+}
+
+function safeRecoveryErrorName(error: unknown): string {
+  const name = error instanceof Error ? error.name : "UnknownError";
+  if (name === "Error" || name === "AbortError" || name === "TimeoutError"
+    || name === "CodexControlUnavailableError" || name === "CodexControlTransportError"
+    || name === "CodexControlRejectedError") {
+    return name;
+  }
+  return "UnknownError";
 }
 
 function shellQuote(value: string): string {
@@ -317,13 +332,42 @@ export function createWorkspaceCodingAgentProvider(
           sessionId,
           startAtEnd: true,
         });
-        await options.codexControl.submitTurn({
-          sessionId,
-          turnId: turn.turnId,
-          prompt: workspaceTurnPrompt(turn.message, turn.attachments),
-          ...(turn.model ? { model: turn.model } : {}),
-          modelOptions: turn.modelOptions ?? [],
-        });
+        const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
+        try {
+          await options.codexControl.submitTurn({
+            sessionId,
+            turnId: turn.turnId,
+            prompt,
+            ...(turn.model ? { model: turn.model } : {}),
+            modelOptions: turn.modelOptions ?? [],
+          });
+        } catch (error: unknown) {
+          console.warn(
+            "[coding-agents] Codex turn control failed; restarting session",
+            { errorName: safeRecoveryErrorName(error) },
+          );
+          const restarted = await options.runtime.startSession({
+            ownerScope: { type: "user", id: principal.userId },
+            request: {
+              sessionId,
+              ...(resumeState.providerThreadId
+                ? { providerThreadId: resumeState.providerThreadId }
+                : {}),
+              kind: "agent",
+              agent,
+              prompt,
+              attachments: turn.attachments,
+              model: turn.model,
+              modelOptions: turn.modelOptions,
+              projectSlug: thread.projectId,
+              taskId: thread.taskId,
+              approvalPolicy: turn.approvalPolicy ?? "on_request",
+              sandboxMode: turn.sandboxMode ?? "workspace_write",
+              runtimePreference: "zellij",
+            },
+          });
+          if (!restarted.ok) throw new Error("Workspace provider turn recovery failed");
+        }
         return { events: [], outcome: "delivered", resumeState };
       }
       if (!options.runtime.sendInput) {
@@ -337,12 +381,27 @@ export function createWorkspaceCodingAgentProvider(
       if (!result.ok) throw new Error("Workspace provider turn resume failed");
       return { events: [], outcome: "delivered", resumeState };
     },
-    async abortThread({ thread, now, nextEventId }) {
-      const result = await options.runtime.stopSession(sessionIdForThread(thread.id));
-      if (!result.ok) {
-        throw new Error("Workspace provider abort failed");
+    async steerTurn({ thread, turnId, message, clientRequestId, resumeState }) {
+      if (agent !== "codex" || !options.codexControl) {
+        throw new Error("Workspace provider steering unavailable");
       }
-      options.codexEvents?.markStopped(sessionIdForThread(thread.id));
+      const sessionId = sessionIdForThread(thread.id);
+      if (resumeState.conversationId !== sessionId) {
+        throw new Error("Workspace provider steering target changed");
+      }
+      await options.codexControl.steerTurn({ sessionId, prompt: message, clientRequestId });
+    },
+    async abortThread({ thread, clientRequestId, now, nextEventId }) {
+      const sessionId = sessionIdForThread(thread.id);
+      if (agent === "codex" && options.codexControl) {
+        await options.codexControl.interruptTurn({ sessionId, clientRequestId });
+      } else {
+        const result = await options.runtime.stopSession(sessionId);
+        if (!result.ok) {
+          throw new Error("Workspace provider abort failed");
+        }
+        options.codexEvents?.markStopped(sessionId);
+      }
       return [
         statusEvent({
           threadId: thread.id,
@@ -390,11 +449,23 @@ export function createWorkspaceCodingAgentProviderSet(
 ): WorkspaceCodingAgentProviderSet {
   const agents = SupportedAgentSchema.array().max(4).parse(options.agents);
   const registryProviders = agents.map((agent) => {
-    // pi runs as a direct-spawn JSON-stream adapter, not a terminal session.
+    // Pi and OpenCode run as direct-spawn JSON-stream adapters, not terminal sessions.
     if (agent === "pi") {
+      if (!options.pi?.resolveCredentialLaunch) {
+        throw new Error("Pi credential resolver is required");
+      }
       return createPiCodingAgentProvider({
         homePath: options.homePath ?? defaultMatrixHome(),
-        ...(options.pi ?? {}),
+        ...options.pi,
+      });
+    }
+    if (agent === "opencode") {
+      if (!options.opencode?.resolveCredentialLaunch) {
+        throw new Error("OpenCode credential resolver is required");
+      }
+      return createOpenCodeCodingAgentProvider({
+        homePath: options.homePath ?? defaultMatrixHome(),
+        ...options.opencode,
       });
     }
     return createWorkspaceCodingAgentProvider({

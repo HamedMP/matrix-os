@@ -9,6 +9,7 @@ import {
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
 import { safePublishedText } from "../chat/safe-activity-projection.js";
+import { AiTokenUsageSchema, type AiTokenUsage } from "../ai-analytics.js";
 
 const MAX_CODEX_JSON_LINE_BYTES = 64 * 1024;
 const MAX_ASSISTANT_DELTA_CHARS = 4_000;
@@ -89,7 +90,8 @@ const CodexItemSchema = z.discriminatedUnion("type", [
 const CodexExecEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread.started"), thread_id: CodexProviderThreadIdSchema }).passthrough(),
   z.object({ type: z.literal("turn.started") }).passthrough(),
-  z.object({ type: z.literal("turn.completed") }).passthrough(),
+  z.object({ type: z.literal("turn.completed"), usage: z.unknown().optional() }).passthrough(),
+  z.object({ type: z.literal("turn.aborted") }).passthrough(),
   z.object({ type: z.literal("turn.failed") }).passthrough(),
   z.object({ type: z.literal("item.started"), item: CodexItemSchema }).passthrough(),
   z.object({ type: z.literal("item.updated"), item: CodexItemSchema }).passthrough(),
@@ -157,7 +159,28 @@ export interface CodexEventContext {
 export interface CodexEventParseResult {
   events: AgentThreadEvent[];
   providerThreadId?: string;
-  outcome?: "completed" | "failed";
+  outcome?: "completed" | "failed" | "aborted";
+  tokenUsage?: AiTokenUsage;
+}
+
+const CodexTokenUsageSchema = z.object({
+  input_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  output_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  cached_input_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  reasoning_output_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+}).passthrough();
+
+function codexTokenUsage(value: unknown): AiTokenUsage | undefined {
+  const parsed = CodexTokenUsageSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  return AiTokenUsageSchema.parse({
+    inputTokens: parsed.data.input_tokens,
+    outputTokens: parsed.data.output_tokens,
+    ...(parsed.data.cached_input_tokens === undefined
+      ? {} : { cachedInputTokens: parsed.data.cached_input_tokens }),
+    ...(parsed.data.reasoning_output_tokens === undefined
+      ? {} : { reasoningOutputTokens: parsed.data.reasoning_output_tokens }),
+  });
 }
 
 function event(context: CodexEventContext, input: Record<string, unknown>): AgentThreadEvent {
@@ -414,7 +437,11 @@ export function parseCodexExecJsonLine(
   if (codexEvent.type === "turn.started") {
     return { events: [event(context, { type: "thread.status", status: "running" })] };
   }
-  if (codexEvent.type === "turn.completed") return { events: [], outcome: "completed" };
+  if (codexEvent.type === "turn.completed") {
+    const tokenUsage = codexTokenUsage(codexEvent.usage);
+    return { events: [], outcome: "completed", ...(tokenUsage ? { tokenUsage } : {}) };
+  }
+  if (codexEvent.type === "turn.aborted") return { events: [], outcome: "aborted" };
   if (codexEvent.type === "turn.failed") return { events: [], outcome: "failed" };
   if (codexEvent.type === "item.started") {
     return { events: startedItemEvents(context, codexEvent.item) };

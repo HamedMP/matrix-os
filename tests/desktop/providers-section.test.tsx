@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProvidersSection from "../../desktop/src/renderer/src/features/settings/sections/ProvidersSection";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
@@ -90,7 +91,7 @@ describe("ProvidersSection", () => {
       activeTabId: "home",
       tabs: [{ id: "home", kind: "home", title: "Home", closable: false }],
     });
-    useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
+    resetProviderPreferences();
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "runtime:get-summary") return summaryResult();
@@ -238,7 +239,7 @@ describe("ProvidersSection", () => {
   });
 
   it("resets the default provider back to automatic", async () => {
-    useProviderPreferences.setState({ defaultProviderId: "codex", composerSelections: {}, hydrated: true });
+    resetProviderPreferences({ defaultProviderId: "codex", hydrated: true });
     render(<ProvidersSection />);
     expect((await screen.findAllByText("Codex")).length).toBeGreaterThan(0);
 

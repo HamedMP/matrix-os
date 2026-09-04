@@ -6,11 +6,12 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { DesktopReleaseNotes, DesktopUpdateSnapshot } from "../../shared/desktop-update";
-import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
+import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse, SupportIdentityResponse } from "@matrix-os/contracts";
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 import { clampZoomFactor, DEFAULT_ZOOM_FACTOR } from "../platform/zoom";
+import { AppError, categoryMessage, type AppErrorCategory } from "../../shared/app-error";
 
 interface IpcMainLike {
   handle(
@@ -36,6 +37,9 @@ export interface HandlerContext {
     shouldOpen: boolean;
   }>;
   acknowledgeWhatsNew: (version: string) => Promise<void>;
+  getAppVersion: () => string;
+  completeAnalyticsFlush: () => void;
+  fetchSupportIdentity: () => Promise<SupportIdentityResponse>;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
   fetchProjectWorkspace: (
     request: CodingAgentProjectWorkspaceRequest,
@@ -102,6 +106,33 @@ type Handler<C extends InvokeChannel> = (
 
 const PUBLIC_IPC_ERRORS = new Set(["invalid request", "internal error", "embed unavailable"]);
 
+const THREAD_CREATE_ERROR_CODES: Record<AppErrorCategory, string> = {
+  unauthorized: "thread_create_unauthorized",
+  offline: "thread_create_offline",
+  timeout: "thread_create_timeout",
+  notFound: "thread_create_not_found",
+  server: "thread_create_server",
+  misconfigured: "thread_create_misconfigured",
+  fatalSession: "thread_create_fatal_session",
+};
+
+function threadCreateFailure(error: unknown): InvokeResponse<"runtime:create-thread"> {
+  const category: AppErrorCategory = error instanceof AppError ? error.category : "server";
+  return {
+    ok: false,
+    error: {
+      code: THREAD_CREATE_ERROR_CODES[category],
+      safeMessage: categoryMessage(category),
+      retryable: category !== "unauthorized" && category !== "fatalSession",
+      recoveryActions: category === "unauthorized" || category === "fatalSession"
+        ? ["sign_in"]
+        : category === "misconfigured"
+          ? ["select_runtime"]
+          : ["retry"],
+    },
+  };
+}
+
 // The sender's webContents is the only zoom target; anything else (tests,
 // malformed events) degrades to a no-op instead of throwing.
 interface ZoomTarget {
@@ -166,6 +197,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     });
   }
 
+  handle("analytics:flush-complete", () => {
+    ctx.completeAnalyticsFlush();
+    return { ok: true };
+  });
   handle("auth:start-device-flow", () => ctx.auth.startDeviceFlow());
   handle("auth:poll", () => ctx.auth.poll());
   handle("auth:status", () => ctx.auth.getStatus());
@@ -177,6 +212,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     await ctx.auth.expireSession();
     return { ok: true };
   });
+  handle("support:get-identity", () => ctx.fetchSupportIdentity());
+
+  handle("app:get-version", () => ({ version: ctx.getAppVersion() }));
 
   handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
   handle("runtime:select", async ({ slot }) => {
@@ -212,7 +250,17 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
-  handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
+  handle("runtime:create-thread", async (request) => {
+    try {
+      return { ok: true, snapshot: await ctx.createAgentThread(request) };
+    } catch (error: unknown) {
+      console.warn(
+        "[ipc] runtime:create-thread failed:",
+        error instanceof AppError ? error.category : error instanceof Error ? error.name : "UnknownError",
+      );
+      return threadCreateFailure(error);
+    }
+  });
   handle("runtime:create-turn", (request) => ctx.createAgentTurn(request));
   handle("runtime:abort-thread", (request) => ctx.abortAgentThread(request));
 

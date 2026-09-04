@@ -4,6 +4,7 @@ import {
   type AgentProviderDescriptor,
   type AgentRuntimeSelection,
   type AgentSettingsView,
+  type AiProviderSnapshotV3,
 } from "@matrix-os/contracts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +24,7 @@ interface BuildAgentSettingsViewInput {
   claudeLoginAvailable: boolean;
   platformCredentialAvailable: boolean;
   runtimeSnapshot?: AgentRuntimeSettingsSnapshot;
+  providerSnapshot?: AiProviderSnapshotV3;
 }
 
 export interface AgentRuntimeSettingsSnapshot {
@@ -90,21 +92,52 @@ export function buildAgentSettingsView(
   const savedEffort = normalizeKernelEffort(kernelConfig.effort);
   const hasByokCredential = typeof kernelConfig.anthropicApiKey === "string"
     && kernelConfig.anthropicApiKey.trim().length > 0;
-  const authKind = hasByokCredential
+  const canonicalOwnerAccount = input.providerSnapshot?.accounts.find(
+    (account) => account.id === "owner_anthropic",
+  );
+  const canonicalActive = input.providerSnapshot?.active;
+  const canonicalSourceId = canonicalActive?.accessSourceId
+    ?? (canonicalOwnerAccount?.authMethod === "api_key"
+      ? "owner_anthropic_key"
+      : canonicalOwnerAccount?.authMethod === "provider_profile"
+        ? "owner_anthropic_profile"
+        : "matrix_included");
+  const canonicalSource = input.providerSnapshot?.accessSources.find(
+    (source) => source.id === canonicalSourceId,
+  );
+  const authKind = canonicalSourceId === "owner_anthropic_key"
+    ? "api_key" as const
+    : canonicalSourceId === "owner_anthropic_profile"
+      ? "oauth_login" as const
+      : hasByokCredential
     ? "api_key" as const
     : input.claudeLoginAvailable
       ? "oauth_login" as const
       : "platform" as const;
-  const model = savedModel ?? KERNEL_DEFAULTS.model;
+  const chatProviderId = input.providerSnapshot && canonicalSourceId === "matrix_included"
+    ? "matrix_ai"
+    : "anthropic";
+  const model = input.providerSnapshot
+    ? canonicalActive?.modelId ?? null
+    : savedModel ?? KERNEL_DEFAULTS.model;
   const effort = savedEffort ?? KERNEL_DEFAULTS.effort;
-  const chat = {
-    provider: "anthropic",
-    model,
-    effort,
-    source: savedModel === null ? "default" as const : "saved" as const,
-    authKind,
-  };
-  const authStatus = hasByokCredential
+  const chat = model === null
+    ? null
+    : {
+        provider: chatProviderId,
+        model,
+        effort,
+        source: savedModel === model ? "saved" as const : "default" as const,
+        authKind,
+      };
+  const canonicalAuthStatus = canonicalSource?.state === "ready"
+    ? { state: "ready" as const, authenticated: true, action: "none" as const }
+    : canonicalSource?.state === "unavailable"
+      ? { state: "unavailable" as const, authenticated: false, action: "none" as const }
+      : canonicalSource
+        ? { state: "unknown" as const, authenticated: false, action: "none" as const }
+        : null;
+  const authStatus = canonicalAuthStatus ?? (hasByokCredential
     || input.claudeLoginAvailable
     || input.platformCredentialAvailable
     ? { state: "ready" as const, authenticated: true, action: "none" as const }
@@ -112,7 +145,7 @@ export function buildAgentSettingsView(
         state: "action_required" as const,
         authenticated: false,
         action: "contact_owner" as const,
-      };
+      });
   const agentConfig = typeof input.config.agent === "object"
     && input.config.agent !== null
     && !Array.isArray(input.config.agent)
@@ -127,6 +160,12 @@ export function buildAgentSettingsView(
     && !KERNEL_MODELS.some((entry) => entry.id === savedModel)
     ? [...KERNEL_MODELS, resolveKernelModelOption(savedModel)]
     : KERNEL_MODELS;
+  const canonicalInstance = input.providerSnapshot?.instances.find(
+    (instance) => instance.accessSourceId === canonicalSourceId,
+  );
+  const providerModels = input.providerSnapshot
+    ? availableModels.filter((entry) => canonicalInstance?.modelIds.includes(entry.id) === true)
+    : availableModels;
 
   return AgentSettingsViewSchema.parse({
     identity: input.identity,
@@ -168,13 +207,13 @@ export function buildAgentSettingsView(
       transition: null,
     },
     providers: [{
-      id: "anthropic",
-      displayName: "Anthropic",
+      id: chatProviderId,
+      displayName: chatProviderId === "matrix_ai" ? "Matrix AI" : "Anthropic",
       runtime: null,
       scopes: ["chat"],
       authKind,
       supportedAuthKinds: ["platform", "api_key", "oauth_login"],
-      models: availableModels.map((entry) => ({
+      models: providerModels.map((entry) => ({
         id: entry.id,
         displayName: entry.label,
         description: entry.tier,

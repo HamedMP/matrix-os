@@ -79,7 +79,7 @@ export function TabPane({
     case "chat":
       return <WorkTab tabId={tab.id} route="chat" active={active} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} />;
     case "terminals":
-      return <TerminalsTab active={active} visible={visible} />;
+      return <TerminalsTab active={active} visible={visible} visualScale={visualScale} />;
     case "files":
       return <FilesWorkspace />;
     case "editor":
@@ -101,7 +101,9 @@ export function TabPane({
     case "task":
       return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":
-      return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
+      return tab.sessionName
+        ? <TerminalView sessionName={tab.sessionName} active={active} visualScale={visualScale} />
+        : null;
     case "settings":
       return <SettingsView section={settingsSection} onSectionChange={onSettingsSectionChange} />;
     default:

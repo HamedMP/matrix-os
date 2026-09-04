@@ -15,6 +15,81 @@ export interface WorkRailModel {
   recents: CanonicalChatRecord[];
 }
 
+export interface WorkRailSearchResult {
+  record: CanonicalChatRecord;
+  project?: Project;
+  contextLabel: string;
+}
+
+const MAX_WORK_RAIL_SEARCH_RESULTS = 50;
+
+function providerLabel(driverKind: string): string {
+  return driverKind
+    .split("_")
+    .map((part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+export function buildWorkRailSearchResults(
+  records: readonly CanonicalChatRecord[],
+  projects: readonly Project[],
+  query: string,
+): WorkRailSearchResult[] {
+  const projectByReference = new Map<string, Project>();
+  for (const project of projects) {
+    projectByReference.set(project.slug, project);
+    if (project.id) projectByReference.set(project.id, project);
+  }
+  const normalized = query.trim().toLocaleLowerCase();
+  const seen = new Set<string>();
+  const results: WorkRailSearchResult[] = [];
+  const newestFirst = [...records].sort((left, right) => (
+    right.chat.updatedAt.localeCompare(left.chat.updatedAt)
+  ));
+  for (const record of newestFirst) {
+    if (seen.has(record.chat.id)) continue;
+    seen.add(record.chat.id);
+    const project = record.projectId ? projectByReference.get(record.projectId) : undefined;
+    if (record.projectId && !project) continue;
+    const driverKind = record.providerBinding?.driverKind;
+    const safeSearchText = [
+      record.chat.title,
+      project?.name,
+      project?.slug,
+      driverKind,
+      driverKind ? providerLabel(driverKind) : undefined,
+    ].filter((value): value is string => Boolean(value)).join("\n").toLocaleLowerCase();
+    if (normalized && !safeSearchText.includes(normalized)) continue;
+    const contextLabel = [
+      project?.name ?? "Global",
+      driverKind ? providerLabel(driverKind) : undefined,
+    ].filter(Boolean).join(" · ");
+    results.push({ record, ...(project ? { project } : {}), contextLabel });
+    if (results.length === MAX_WORK_RAIL_SEARCH_RESULTS) break;
+  }
+  const duplicateCounts = new Map<string, number>();
+  for (const result of results) {
+    const key = `${result.record.chat.title.toLocaleLowerCase()}\0${result.contextLabel}`;
+    duplicateCounts.set(key, (duplicateCounts.get(key) ?? 0) + 1);
+  }
+  return results.map((result) => {
+    const key = `${result.record.chat.title.toLocaleLowerCase()}\0${result.contextLabel}`;
+    if ((duplicateCounts.get(key) ?? 0) < 2) return result;
+    const updatedLabel = `${result.record.chat.updatedAt.slice(0, 19).replace("T", " ")} UTC`;
+    const sameTimestampPeers = results.filter((candidate) => (
+      `${candidate.record.chat.title.toLocaleLowerCase()}\0${candidate.contextLabel}` === key
+      && candidate.record.chat.updatedAt === result.record.chat.updatedAt
+    ));
+    const collisionLabel = sameTimestampPeers.length > 1
+      ? ` · ${sameTimestampPeers.findIndex((candidate) => candidate.record.chat.id === result.record.chat.id) + 1}`
+      : "";
+    return {
+      ...result,
+      contextLabel: `${result.contextLabel} · ${updatedLabel}${collisionLabel}`,
+    };
+  });
+}
+
 export type WorkRailAgentState =
   | "approval_required"
   | "input_required"

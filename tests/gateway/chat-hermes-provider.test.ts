@@ -37,12 +37,16 @@ function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly st
             respond(request, { status: "streaming" });
           } else if (request.method === "session.interrupt") {
             respond(request, { status: "interrupted" });
+          } else if (request.method === "session.steer") {
+            respond(request, { status: "queued", text: request.params.text });
           } else if (request.method === "config.set" && request.params.key === "yolo") {
             respond(request, { key: "yolo", value: "1", scope: "session" });
           } else if (request.method === "config.set" && request.params.key === "model") {
             respond(request, { key: "model", value: request.params.value, confirm_required: false });
           } else if (request.method === "session.cwd.set") {
             respond(request, { cwd: request.params.cwd });
+          } else if (request.method === "approval.respond") {
+            respond(request, { resolved: true });
           } else {
             respond(request, {});
           }
@@ -67,6 +71,7 @@ function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly st
   return {
     process,
     requests,
+    respond,
     spawnFn,
     sendRaw(value: string) {
       stdout.emit("data", Buffer.from(value));
@@ -98,10 +103,134 @@ const baseInput = {
 async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
   const events = [];
   for await (const event of iterable) events.push(event);
+  // Most adapter behavior tests predate the early durable-state checkpoint and
+  // assert the visible Provider timeline. Keep their legacy checkpoint position
+  // stable; the cancellation regression below uses collectRaw to verify that
+  // the real stream publishes state before a Run can be aborted.
+  const stateIndex = events.findIndex((event) => (
+    typeof event === "object" && event !== null && "type" in event
+    && event.type === "state.updated"
+  ));
+  if (stateIndex >= 0) {
+    const [state] = events.splice(stateIndex, 1);
+    const terminalIndex = events.findIndex((event) => (
+      typeof event === "object" && event !== null && "type" in event
+      && event.type === "run.completed"
+    ));
+    const terminal = terminalIndex < 0 ? undefined : events[terminalIndex];
+    if (typeof terminal === "object" && terminal !== null && "outcome" in terminal
+      && terminal.outcome === "completed") {
+      events.splice(terminalIndex, 0, state);
+    }
+  }
+  return events;
+}
+
+async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
+  const events = [];
+  for await (const event of iterable) events.push(event);
   return events;
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("steers only the exact active Hermes session without starting another prompt", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    await expect(adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_hermes_steer_1",
+      prompt: "Focus on the failing test.",
+      parts: [{ type: "text", text: "Focus on the failing test." }],
+    })).resolves.toBeUndefined();
+    expect(gateway.requests).toContainEqual(expect.objectContaining({
+      method: "session.steer",
+      params: { session_id: "live_session", text: "Focus on the failing test." },
+    }));
+    expect(gateway.requests.filter(({ method }) => method === "prompt.submit")).toHaveLength(1);
+
+    gateway.event("message.complete", { text: "Done", status: "complete" });
+    await eventsPromise;
+    await expect(adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_hermes_steer_terminal",
+      prompt: "Too late.",
+      parts: [{ type: "text", text: "Too late." }],
+    })).rejects.toThrow("steering Run unavailable");
+  });
+
+  it("projects a large official Hermes vision result before the final assistant message", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    const privateVisionPayload = "vision-private-sentinel".repeat(19_000);
+    gateway.event("tool.start", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      args: { path: "/home/matrix/home/private/screenshot.png" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      result: { success: true, output: privateVisionPayload },
+    });
+    gateway.event("message.complete", { text: "The game is ready.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_browser_vision",
+        status: "running",
+      }),
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_browser_vision",
+        status: "completed",
+      }),
+      { type: "assistant.delta", delta: "The game is ready." },
+      { type: "run.completed", outcome: "completed" },
+    ]));
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toContain("vision-private-sentinel");
+    expect(JSON.stringify(events)).not.toContain("/home/matrix/home/private/screenshot.png");
+  });
+
+  it("reports an oversized Hermes response as a Run failure instead of a connection failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.complete", {
+      tool_id: "tool_browser_vision",
+      name: "browser_vision",
+      result: { success: true, output: "oversized-private-sentinel".repeat(25_000) },
+    });
+
+    expect(await eventsPromise).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "run_failed",
+        safeMessage: "The agent returned a response that was too large to process.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }]);
+    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("projects official Hermes tool frames without leaking provider payloads", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
@@ -153,7 +282,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
         outcome: "failed",
         error: {
           code: "run_failed",
-          safeMessage: "A command failed during this Run.",
+          safeMessage: "Hermes could not complete this Run.",
           retryable: true,
           recoveryActions: ["retry"],
         },
@@ -241,7 +370,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
         outcome: "failed",
         error: {
           code: "run_failed",
-          safeMessage: "A command failed during this Run.",
+          safeMessage: "Hermes could not complete this Run.",
           retryable: true,
           recoveryActions: ["retry"],
         },
@@ -322,6 +451,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       request_id: "approval_1",
       command: "deploy --token secret-value",
       description: "contains secret-value",
+      choices: ["once", "session", "always", "deny"],
     });
     gateway.event("clarify.request", {
       request_id: "input_1",
@@ -338,13 +468,247 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "agent.activity", activityId: "tool_search", kind: "web_search", label: "Search the web", status: "completed", summary: "Web search completed." },
       { type: "agent.activity", activityId: "subagent_worker_1", kind: "delegation", label: "Delegated task", status: "running" },
       { type: "agent.activity", activityId: "subagent_worker_1", kind: "delegation", label: "Delegated task", status: "completed", summary: "Delegated work completed." },
-      { type: "approval.requested", approvalId: "approval_1", title: "Command approval required", risk: "high" },
+      {
+        type: "approval.requested",
+        approvalId: "approval_1",
+        title: "Command approval required",
+        risk: "high",
+        allowedDecisions: ["approve", "approve_for_session", "decline"],
+      },
       { type: "input.requested", requestId: "input_1", title: "Hermes needs input" },
       { type: "agent.activity", activityId: "status_planning", kind: "plan", label: "Planning", status: "completed" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
     expect(JSON.stringify(events)).not.toMatch(/secret-value|\/safe\/project|API_TOKEN|Authorization|raw page|raw delegated|private query/);
+  });
+
+  it("submits one idempotent approval response to the owning live Hermes session", async () => {
+    const gateway = fakeGateway({ ignoreMethods: ["approval.respond"] });
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const iterator = adapter.start(baseInput)[Symbol.asyncIterator]();
+    const stateEvent = iterator.next();
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    await expect(stateEvent).resolves.toEqual({
+      done: false,
+      value: { type: "state.updated", state: { sessionId: "durable_session" } },
+    });
+
+    gateway.event("approval.request", {
+      request_id: "approval_session",
+      command: "deploy --token secret-value",
+      choices: ["once", "session", "always", "deny"],
+    });
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: {
+        type: "approval.requested",
+        approvalId: "approval_session",
+        title: "Command approval required",
+        risk: "high",
+        allowedDecisions: ["approve", "approve_for_session", "decline"],
+      },
+    });
+
+    const submission = {
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      approvalId: "approval_session",
+      decision: "approve_for_session" as const,
+      clientRequestId: "request_approval_session",
+      state: { sessionId: "durable_session" },
+    };
+    const firstSubmission = adapter.submitApproval?.(submission);
+    const duplicateSubmission = adapter.submitApproval?.(submission);
+    await vi.waitFor(() => expect(gateway.requests.filter(({ method }) => method === "approval.respond")).toHaveLength(1));
+
+    const approvalRequests = gateway.requests.filter(({ method }) => method === "approval.respond");
+    expect(approvalRequests).toEqual([
+      expect.objectContaining({
+        method: "approval.respond",
+        params: {
+          session_id: "live_session",
+          request_id: "approval_session",
+          choice: "session",
+        },
+      }),
+    ]);
+    gateway.respond(approvalRequests[0]!, { resolved: true });
+    await expect(Promise.all([firstSubmission, duplicateSubmission])).resolves.toEqual([undefined, undefined]);
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: {
+        type: "approval.resolved",
+        approvalId: "approval_session",
+        decision: "approve_for_session",
+      },
+    });
+
+    gateway.event("message.complete", { text: "Done.", status: "complete" });
+    const remaining = [];
+    for await (const event of { [Symbol.asyncIterator]: () => iterator }) remaining.push(event);
+    expect(remaining).toEqual([
+      { type: "assistant.delta", delta: "Done." },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+  });
+
+  it("keeps official Hermes process status advisory when its raw notification is unsafe", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("status.update", {
+      kind: "process",
+      text: [
+        "[IMPORTANT: Background process proc_preview completed normally (exit code 0).",
+        "Command: inspect .ssh/config",
+        "Output:",
+        "Preview ready.]",
+      ].join("\n"),
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      { type: "agent.activity", activityId: "status_process", kind: "phase", label: "Working", status: "running" },
+      { type: "agent.activity", activityId: "status_process", kind: "phase", label: "Working", status: "completed" },
+      { type: "assistant.delta", delta: "Created the app." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/proc_preview|\.ssh|Preview ready/);
+  });
+
+  it("preserves a safe Hermes process status that identifies the active model", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("status.update", {
+      kind: "process",
+      text: "Current model: gpt-5.6-luna",
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      {
+        type: "agent.activity",
+        activityId: "status_process",
+        kind: "phase",
+        label: "Working",
+        status: "running",
+        summary: "Current model: gpt-5.6-luna",
+      },
+      {
+        type: "agent.activity",
+        activityId: "status_process",
+        kind: "phase",
+        label: "Working",
+        status: "completed",
+        summary: "Current model: gpt-5.6-luna",
+      },
+      { type: "assistant.delta", delta: "Created the app." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+  });
+
+  it("normalizes provider-native Hermes tool identifiers without ending the Run", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    const providerToolId = "tool/process/preview server";
+    gateway.event("tool.start", {
+      tool_id: providerToolId,
+      name: "process",
+      args: { action: "poll", session_id: "proc_preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: providerToolId,
+      name: "process",
+      args: { action: "poll", session_id: "proc_preview" },
+      result: { success: true, output: "private process output" },
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    const toolEvents = events.filter((event) => event.type === "agent.activity" && event.kind === "dynamic_tool");
+    expect(toolEvents).toHaveLength(2);
+    expect(toolEvents[0]).toMatchObject({ label: "Use process", status: "running" });
+    expect(toolEvents[1]).toMatchObject({ activityId: toolEvents[0]?.activityId, label: "Use process", status: "completed" });
+    expect(toolEvents[0]?.activityId).not.toBe(providerToolId);
+    expect(events).toContainEqual({ type: "run.completed", outcome: "completed" });
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toMatch(/proc_preview|private process output/);
+  });
+
+  it("keeps provider-native Hermes tool notices advisory when their metadata is not display-safe", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: 42,
+      name: null,
+      args: { session_id: "proc_preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: 42,
+      name: null,
+      result: { success: true, output: "private process output" },
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual([
+      { type: "agent.activity", activityId: "42", kind: "dynamic_tool", label: "Use tool", status: "running" },
+      { type: "agent.activity", activityId: "42", kind: "dynamic_tool", label: "Use tool", status: "completed", summary: "Tool completed." },
+      { type: "assistant.delta", delta: "Created the app." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toMatch(/proc_preview|private process output/);
+  });
+
+  it("falls back to a minimal activity when a Hermes tool projection is not canonical-safe", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    const providerToolId = "tool..preview";
+    gateway.event("tool.start", {
+      tool_id: providerToolId,
+      name: "terminal",
+      args: { command: "inspect .ssh/config" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: providerToolId,
+      name: "terminal",
+      result: { success: true, output: "private process output" },
+    });
+    gateway.event("message.complete", { text: "Created the app.", status: "complete" });
+
+    const events = await eventsPromise;
+    const commandEvents = events.filter((event) => event.type === "agent.activity" && event.kind === "command");
+    expect(commandEvents).toHaveLength(2);
+    expect(commandEvents[0]).toMatchObject({ label: "Run command", status: "running" });
+    expect(commandEvents[1]).toMatchObject({ activityId: commandEvents[0]?.activityId, label: "Run command", status: "completed" });
+    expect(commandEvents[0]?.activityId).not.toBe(providerToolId);
+    expect(events).toContainEqual({ type: "run.completed", outcome: "completed" });
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toMatch(/\.ssh|private process output/);
   });
 
   it("projects safe Hermes command, file, and published reasoning details without raw payloads", async () => {
@@ -449,9 +813,15 @@ describe("Hermes canonical Chat Provider adapter", () => {
     const firstEvent = iterator.next();
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
 
+    await expect(firstEvent).resolves.toEqual({
+      done: false,
+      value: { type: "state.updated", state: { sessionId: "durable_session" } },
+    });
+
     gateway.event("message.delta", { text: "first live fragment" });
+    const firstVisibleEvent = iterator.next();
     const observed = await Promise.race([
-      firstEvent,
+      firstVisibleEvent,
       new Promise<"not-streamed">((resolve) => setTimeout(() => resolve("not-streamed"), 50)),
     ]);
 
@@ -468,7 +838,6 @@ describe("Hermes canonical Chat Provider adapter", () => {
       remaining.push(next.value);
     }
     expect(remaining).toEqual([
-      { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
   });
@@ -486,7 +855,8 @@ describe("Hermes canonical Chat Provider adapter", () => {
     gateway.event("message.complete", { text: "# Result\n\n- Completed\n", status: "complete" });
 
     expect(await eventsPromise).toEqual([
-      { type: "assistant.delta", delta: "# Result\n\n- Completed\n" },
+      { type: "assistant.delta", delta: "# Result\n\n- Completed" },
+      { type: "assistant.delta", delta: "\n" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
@@ -556,8 +926,8 @@ describe("Hermes canonical Chat Provider adapter", () => {
     gateway.event("message.complete", { text: "hello from hermes", status: "complete" });
 
     expect(await eventsPromise).toEqual([
-      { type: "assistant.delta", delta: "hello " },
-      { type: "assistant.delta", delta: "from hermes" },
+      { type: "assistant.delta", delta: "hello" },
+      { type: "assistant.delta", delta: " from hermes" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
@@ -669,16 +1039,467 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
+  it("keeps a recovered Hermes Run alive when an already-streamed interim normalizes whitespace", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_failed_build",
+      name: "terminal",
+      args: { command: "pnpm build" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_failed_build",
+      name: "terminal",
+      result: { exit_code: 1, output: "build failed" },
+    });
+    gateway.event("message.delta", { text: "Checking the preview.\n" });
+    gateway.event("message.interim", { text: "Checking the preview.", already_streamed: true });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 0, output: "ready" },
+    });
+    gateway.event("message.complete", { text: "The preview is ready.", status: "complete" });
+
+    const events = await eventsPromise;
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_failed_build",
+        status: "failed",
+      }),
+      expect.objectContaining({
+        type: "agent.activity",
+        activityId: "tool_preview",
+        status: "completed",
+      }),
+      { type: "run.completed", outcome: "completed" },
+    ]));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "run.completed",
+      outcome: "failed",
+    }));
+    expect(events.filter((event) => (event as { type?: string }).type === "assistant.delta")).toEqual([
+      { type: "assistant.delta", delta: "Checking the preview." },
+      { type: "assistant.delta", delta: "\n\nThe preview is ready." },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("seals an already-streamed prefix with the remaining Hermes interim text", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking" });
+    gateway.event("message.interim", {
+      text: "Checking the preview.",
+      already_streamed: true,
+    });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 0, output: "ready" },
+    });
+    gateway.event("message.complete", { text: "The preview is ready.", status: "complete" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "assistant.delta", delta: " the preview." },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "assistant.delta", delta: "\n\nThe preview is ready." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate boundary whitespace when sealing an already-streamed Hermes prefix", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking " });
+    gateway.event("message.interim", {
+      text: "Checking the preview.",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Checking the preview.",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "assistant.delta", delta: " the preview." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("seals a whitespace-only streamed Hermes segment", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: " \n" });
+    gateway.event("message.interim", {
+      text: " \n",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: " \n",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: " \n" },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("preserves authoritative whitespace beyond an already-streamed Hermes boundary", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking " });
+    gateway.event("message.interim", {
+      text: "Checking  the preview.",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Checking  the preview.",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "assistant.delta", delta: "  the preview." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an interim rewrites already-published internal Hermes whitespace", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Hello  world" });
+    gateway.event("message.interim", {
+      text: "Hello world again",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Hello world again",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Hello  world" },
+      expect.objectContaining({ type: "run.completed", outcome: "failed" }),
+    ]);
+    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("does not publish excess Hermes stream whitespace before the authoritative seal", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking  " });
+    gateway.event("message.interim", {
+      text: "Checking the preview.",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Checking the preview.",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "assistant.delta", delta: " the preview." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unsealed Hermes stream boundary deferred across tool activity", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking  " });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 0, output: "ready" },
+    });
+    gateway.event("message.interim", {
+      text: "Checking the preview.",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Checking the preview.",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "assistant.delta", delta: " the preview." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unsealed Hermes boundary when the following tool fails", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking  " });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 1, output: "preview failed" },
+    });
+    gateway.event("message.complete", {
+      text: "Checking  the preview.",
+      status: "complete",
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "assistant.delta", delta: "  the preview." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a failed-tool boundary once when the Hermes interim was not streamed", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Hello " });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 1, output: "preview failed" },
+    });
+    gateway.event("message.interim", {
+      text: "Hello world",
+      already_streamed: false,
+    });
+    gateway.event("message.complete", {
+      text: "Hello world",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Hello" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "assistant.delta", delta: " world" },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("keeps the first Hermes recovery checkpoint across repeated tool failures", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking " });
+    gateway.event("tool.start", {
+      tool_id: "tool_build",
+      name: "terminal",
+      args: { command: "pnpm build" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_build",
+      name: "terminal",
+      result: { exit_code: 1, output: "build failed" },
+    });
+    gateway.event("message.delta", { text: "the preview " });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 1, output: "preview failed" },
+    });
+    gateway.event("message.complete", {
+      text: "Checking the preview is ready.",
+      status: "complete",
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "agent.activity", activityId: "tool_build", kind: "command", label: "Run command", status: "running", preview: "pnpm build", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_build", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm build", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "assistant.delta", delta: " the preview is ready." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("does not republish an interim after a later recoverable Hermes tool failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_build",
+      name: "terminal",
+      args: { command: "pnpm build" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_build",
+      name: "terminal",
+      result: { exit_code: 1, output: "build failed" },
+    });
+    gateway.event("message.delta", { text: "Checking the preview." });
+    gateway.event("message.interim", {
+      text: "Checking the preview.",
+      already_streamed: true,
+    });
+    gateway.event("tool.start", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      args: { command: "pnpm preview" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_preview",
+      name: "terminal",
+      result: { exit_code: 1, output: "preview failed" },
+    });
+    gateway.event("message.delta", { text: "The preview is ready." });
+    gateway.event("message.interim", {
+      text: "The preview is ready.",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "The preview is ready.",
+      status: "complete",
+    });
+
+    const events = await eventsPromise;
+    expect(events.filter((event) => event.type === "assistant.delta")).toEqual([
+      { type: "assistant.delta", delta: "Checking the preview." },
+      { type: "assistant.delta", delta: "\n\nThe preview is ready." },
+    ]);
+    expect(events).toContainEqual({ type: "run.completed", outcome: "completed" });
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
+  it("publishes authoritative trailing Hermes whitespace when sealing a streamed segment", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: "Checking  " });
+    gateway.event("message.interim", {
+      text: "Checking  ",
+      already_streamed: true,
+    });
+    gateway.event("message.complete", {
+      text: "Checking  ",
+      status: "complete",
+      response_previewed: true,
+    });
+
+    expect(await eventsPromise).toEqual([
+      { type: "assistant.delta", delta: "Checking" },
+      { type: "assistant.delta", delta: "  " },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
+    expect(gateway.process.kill).not.toHaveBeenCalled();
+  });
+
   it("interrupts the live Hermes session before closing an aborted Run", async () => {
     const gateway = fakeGateway();
     const abortController = new AbortController();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
-    const eventsPromise = collect(adapter.start({ ...baseInput, signal: abortController.signal }));
+    const eventsPromise = collectRaw(adapter.start({ ...baseInput, signal: abortController.signal }));
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
 
     abortController.abort();
 
-    expect(await eventsPromise).toEqual([{ type: "run.completed", outcome: "aborted" }]);
+    expect(await eventsPromise).toEqual([
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "aborted" },
+    ]);
     expect(gateway.requests).toContainEqual(expect.objectContaining({
       method: "session.interrupt",
       params: { session_id: "live_session" },
@@ -707,6 +1528,24 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("records a bounded protocol category when an official Hermes event is rejected", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("message.delta", { text: 42 });
+
+    await eventsPromise;
+    expect(warn).toHaveBeenCalledWith(
+      "[chat/hermes] Provider Run failed:",
+      "HermesGatewayProtocolError:event_invalid:message.delta",
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("42");
+    warn.mockRestore();
+  });
+
   it("reports a Hermes Run failure without mislabeling it as a transport failure", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
@@ -727,6 +1566,94 @@ describe("Hermes canonical Chat Provider adapter", () => {
           recoveryActions: ["retry"],
         },
       },
+    ]);
+  });
+
+  it("does not attribute an independent terminal failure to an earlier recovered tool failure", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_search_failure",
+      name: "web_search",
+      args: { query: "recoverable lookup" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_search_failure",
+      name: "web_search",
+      result: { success: false, error: "lookup unavailable" },
+    });
+    gateway.event("tool.start", {
+      tool_id: "tool_command_success",
+      name: "terminal",
+      args: { command: "printf recovered" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_command_success",
+      name: "terminal",
+      result: { output: "recovered", exit_code: 0, error: null },
+    });
+    gateway.event("message.delta", { text: "Useful partial after recovery." });
+    gateway.event("message.complete", { text: "Useful partial after recovery.", status: "error" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "running" },
+      { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "failed", summary: "Web search failed." },
+      { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "running", preview: "printf recovered", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "printf recovered", previewKind: "command" },
+      { type: "assistant.delta", delta: "Useful partial after recovery." },
+      {
+        type: "run.completed",
+        outcome: "failed",
+        error: {
+          code: "run_failed",
+          safeMessage: "Hermes could not complete this Run.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        },
+      },
+    ]);
+  });
+
+  it("keeps an active Hermes turn alive after an advisory error event", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.event("tool.start", {
+      tool_id: "tool_search_failure",
+      name: "web_search",
+      args: { query: "recoverable lookup" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_search_failure",
+      name: "web_search",
+      result: { success: false, error: "lookup unavailable" },
+    });
+    gateway.event("error", { message: "recoverable tool error" });
+    gateway.event("tool.start", {
+      tool_id: "tool_command_success",
+      name: "terminal",
+      args: { command: "printf recovered" },
+    });
+    gateway.event("tool.complete", {
+      tool_id: "tool_command_success",
+      name: "terminal",
+      result: { output: "recovered", exit_code: 0, error: null },
+    });
+    gateway.event("message.complete", { text: "Recovered and completed.", status: "complete" });
+
+    expect(await eventsPromise).toEqual([
+      { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "running" },
+      { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "failed", summary: "Web search failed." },
+      { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "running", preview: "printf recovered", previewKind: "command" },
+      { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "printf recovered", previewKind: "command" },
+      { type: "assistant.delta", delta: "Recovered and completed." },
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "completed" },
     ]);
   });
 

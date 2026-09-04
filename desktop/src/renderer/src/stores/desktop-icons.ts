@@ -1,6 +1,17 @@
 import { create } from "zustand";
 import type { ApiClient } from "../lib/api";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
+import {
+  OsViewStateConflictExhaustedError,
+  patchNativeOsViewState,
+  primeNativeOsViewState,
+  resetNativeOsViewStateClientForTests,
+} from "../lib/os-view-state-client";
+import {
+  createDefaultOsViewDocument,
+  normalizeOsViewDesktopAppPath,
+  OsViewStateResponseSchema,
+} from "@matrix-os/contracts";
 
 export interface DesktopIconPlacement {
   path: string;
@@ -15,6 +26,7 @@ const GRID_Y = 92;
 const GRID_COLUMNS = 2;
 const START_X = 20;
 const START_Y = 20;
+const ICON_CONFLICT_RETRY_MS = 2_000;
 
 function validPlacement(value: unknown): value is DesktopIconPlacement {
   if (!value || typeof value !== "object") return false;
@@ -35,9 +47,11 @@ export function parseDesktopIcons(value: unknown): DesktopIconPlacement[] | null
   const icons: DesktopIconPlacement[] = [];
   const seen = new Set<string>();
   for (const raw of value.slice(0, MAX_DESKTOP_ICONS)) {
-    if (!validPlacement(raw) || seen.has(raw.path)) continue;
-    seen.add(raw.path);
-    icons.push({ path: raw.path, x: raw.x, y: raw.y });
+    if (!validPlacement(raw)) continue;
+    const path = normalizeOsViewDesktopAppPath(raw.path);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    icons.push({ path, x: raw.x, y: raw.y });
   }
   return icons;
 }
@@ -91,6 +105,7 @@ function copyIcons(icons: readonly DesktopIconPlacement[]): DesktopIconPlacement
 }
 
 export function resetDesktopIconsRuntime(): void {
+  resetNativeOsViewStateClientForTests();
   loadSequence += 1;
   mutationSequence += 1;
   stateEpoch += 1;
@@ -114,13 +129,42 @@ function persist(api: ApiClient, icons: DesktopIconPlacement[]): Promise<void> {
   const snapshot = icons.map((icon) => ({ ...icon }));
   const write = async () => {
     if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-    await api.patch("/api/settings/desktop", { desktopIcons: snapshot });
+    await patchNativeOsViewState(api, { desktop: { icons: snapshot } });
   };
   const pending = persistQueue.then(write, write);
   persistQueue = pending.catch((error: unknown) => {
     console.warn("[desktop-icons] persist queue recovered:", error instanceof Error ? error.name : typeof error);
   });
   return pending;
+}
+
+function waitForIconConflictRetry(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ICON_CONFLICT_RETRY_MS));
+}
+
+async function retryCurrentIconsAfterConflict(input: {
+  api: ApiClient;
+  sequence: number;
+  epoch: number;
+  runtimeGeneration: number;
+}): Promise<DesktopIconPlacement[] | null> {
+  while (input.epoch === stateEpoch
+    && input.sequence === mutationSequence
+    && isCurrentRuntimeGeneration(input.runtimeGeneration)) {
+    await waitForIconConflictRetry();
+    if (input.epoch !== stateEpoch
+      || input.sequence !== mutationSequence
+      || !isCurrentRuntimeGeneration(input.runtimeGeneration)) return null;
+    const latest = copyIcons(useDesktopIcons.getState().icons);
+    try {
+      await persist(input.api, latest);
+      return latest;
+    } catch (error: unknown) {
+      console.warn("[desktop-icons] conflict retry failed:", error instanceof Error ? error.name : typeof error);
+      if (!(error instanceof OsViewStateConflictExhaustedError)) throw error;
+    }
+  }
+  return null;
 }
 
 async function applyOptimisticMutation(
@@ -155,6 +199,29 @@ async function applyOptimisticMutation(
     }
   } catch (error: unknown) {
     console.warn("[desktop-icons] persist failed:", error instanceof Error ? error.name : typeof error);
+    if (error instanceof OsViewStateConflictExhaustedError
+      && epoch === stateEpoch
+      && sequence === mutationSequence
+      && isCurrentRuntimeGeneration(runtimeGeneration)) {
+      const persistedIcons = await retryCurrentIconsAfterConflict({
+        api,
+        sequence,
+        epoch,
+        runtimeGeneration,
+      });
+      if (persistedIcons
+        && epoch === stateEpoch
+        && sequence === mutationSequence
+        && isCurrentRuntimeGeneration(runtimeGeneration)) {
+        confirmedIcons = copyIcons(persistedIcons);
+        hasConfirmedIcons = true;
+        unconfirmedHydrationRevision = null;
+        unconfirmedRollbackIcons = null;
+        deferredHydrationIcons = null;
+        replayableHydrationRange = null;
+      }
+      return;
+    }
     if (epoch === stateEpoch && sequence === mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
       if (deferredHydrationIcons !== null) {
         const icons = copyIcons(deferredHydrationIcons);
@@ -234,10 +301,20 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     const expectedHydrationRevision = hydrationRevision;
     const runtimeGeneration = captureRuntimeGeneration();
     try {
-      const config = await api.get<{ desktopIcons?: unknown }>("/api/settings/desktop");
+      const config = await api.get<unknown>("/api/os-view-state");
       if (sequence !== loadSequence
         || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
-      const icons = parseDesktopIcons(config.desktopIcons) ?? copyIcons(defaults);
+      const parsedState = OsViewStateResponseSchema.safeParse(config);
+      const legacyIcons = config && typeof config === "object"
+        ? (config as { desktopIcons?: unknown }).desktopIcons
+        : undefined;
+      const icons = parseDesktopIcons(parsedState.success ? parsedState.data.document.desktop.icons : legacyIcons)
+        ?? copyIcons(defaults);
+      primeNativeOsViewState(api, parsedState.success ? parsedState.data : {
+        revision: 1,
+        document: { ...createDefaultOsViewDocument(), desktop: { windows: [], icons } },
+        updatedAt: new Date(0).toISOString(),
+      });
       const replayable = replayableHydrationRange !== null
         && expectedHydrationRevision >= replayableHydrationRange.min
         && expectedHydrationRevision <= replayableHydrationRange.max;

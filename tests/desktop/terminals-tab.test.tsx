@@ -33,9 +33,11 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
   default: ({
     sessionName,
     active,
+    visualScale,
   }: {
     sessionName: string;
     active?: boolean;
+    visualScale?: number;
   }) => {
     const themeMode = useAppearance((state) => state.mode);
     const terminalThemeId = useTerminalAppearance((state) => state.themeId);
@@ -49,6 +51,7 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
       <div
         data-testid={`terminal-view-${sessionName}`}
         data-active={active ? "true" : "false"}
+        data-visual-scale={visualScale}
         data-theme-mode={themeMode}
         data-terminal-theme-id={terminalThemeId}
       >
@@ -58,10 +61,10 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
   },
 }));
 
-function renderTab(active = true) {
+function renderTab(active = true, visualScale = 1) {
   return render(
     <Tooltip.Provider>
-      <TerminalsTab active={active} />
+      <TerminalsTab active={active} visualScale={visualScale} />
     </Tooltip.Provider>,
   );
 }
@@ -376,6 +379,30 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
+  it("forwards Canvas visual scale without remounting retained terminal sessions", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    const { rerender } = renderTab(true, 0.5);
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+    const terminal = screen.getByTestId("terminal-view-matrix-main");
+
+    expect(terminal.getAttribute("data-visual-scale")).toBe("0.5");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+
+    for (const visualScale of [1, 2]) {
+      rerender(
+        <Tooltip.Provider>
+          <TerminalsTab active visualScale={visualScale} />
+        </Tooltip.Provider>,
+      );
+      expect(screen.getByTestId("terminal-view-matrix-main")).toBe(terminal);
+      expect(terminal.getAttribute("data-visual-scale")).toBe(String(visualScale));
+      expect(terminalMounts.get("matrix-main")).toBe(1);
+    }
+  });
+
   it("keeps a background Terminal window painted while releasing interaction and its live attachment", () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
@@ -650,7 +677,7 @@ describe("TerminalsTab", () => {
 
     fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api, {
-      cmd: "codex",
+      cmd: "codex --no-alt-screen",
       agent: "codex",
     }));
   });

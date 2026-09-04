@@ -15,6 +15,15 @@ import {
   saveShellSnapshot,
   type ShellSnapshotScope,
 } from "@/lib/shell-snapshot-cache";
+import {
+  importWebLegacyDesktopConfig,
+  loadWebOsViewState,
+  patchWebOsViewState,
+} from "@/lib/os-view-state-client";
+import {
+  legacyDesktopImportFromConfig,
+  type LegacyDesktopImport,
+} from "@matrix-os/contracts";
 export type { DockConfig };
 
 export interface DesktopConfig {
@@ -42,6 +51,9 @@ export type DesktopConfigPatch = Omit<Partial<DesktopConfig>, "dock"> & {
 };
 
 export const BUNDLED_WALLPAPERS = new Set([
+  "matrix-dawn.webp",
+  "matrix-dusk.webp",
+  "matrix-night.webp",
   "moraine-lake.jpg",
   "xp-bliss.jpg",
   "win11-bloom.jpg",
@@ -58,7 +70,7 @@ export function wallpaperUrl(name: string, gatewayUrl: string): string {
 }
 
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
-  background: { type: "wallpaper", name: "moraine-lake.jpg" },
+  background: { type: "wallpaper", name: "matrix-dusk.webp" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: [...DEFAULT_PINNED_APPS],
 };
@@ -160,7 +172,9 @@ function applyDesktopConfigSnapshot(
   setters.setDock(cfg.dock);
   setters.setPinnedApps(cfg.pinnedApps);
   setters.setDockOrder(cfg.dockOrder);
-  setters.setDesktopIcons(cfg.desktopIcons, desktopIconsHydrationRevision);
+  if (cfg.desktopIcons !== undefined) {
+    setters.setDesktopIcons(cfg.desktopIcons, desktopIconsHydrationRevision);
+  }
   applyBackground(cfg.background, gatewayUrl);
 }
 
@@ -184,7 +198,7 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
   useEffect(() => {
     const controller = new AbortController();
     const desktopIconsHydrationRevision = captureWebDesktopIconsHydrationRevision();
-    fetchDesktopConfig(gatewayUrl, controller.signal).then((cfg) => {
+    fetchDesktopConfig(gatewayUrl, controller.signal).then(({ config: cfg, legacyImport }) => {
       if (controller.signal.aborted) return;
       setConfig(cfg);
       applyDesktopConfigSnapshot(
@@ -193,7 +207,32 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
         { setDock, setPinnedApps, setDockOrder, setDesktopIcons },
         desktopIconsHydrationRevision,
       );
-      saveShellSnapshot(cacheScope, { desktopConfig: cfg });
+      const currentIcons = useDesktopConfigStore.getState().desktopIcons;
+      saveShellSnapshot(cacheScope, {
+        desktopConfig: cfg.desktopIcons !== undefined || currentIcons === undefined
+          ? cfg
+          : { ...cfg, desktopIcons: currentIcons },
+      });
+      const durableHydrationRevision = captureWebDesktopIconsHydrationRevision();
+      const durableState = legacyImport === null
+        ? loadWebOsViewState(gatewayUrl, controller.signal)
+        : importWebLegacyDesktopConfig(gatewayUrl, legacyImport, controller.signal);
+      void durableState.then((osViewState) => {
+        if (controller.signal.aborted) return;
+        const durableConfig: DesktopConfig = {
+          ...cfg,
+          pinnedApps: osViewState.document.pinnedApps,
+          desktopIcons: osViewState.document.desktop.icons,
+        };
+        setConfig(durableConfig);
+        setPinnedApps(durableConfig.pinnedApps);
+        setDesktopIcons(durableConfig.desktopIcons, durableHydrationRevision);
+        saveShellSnapshot(cacheScope, { desktopConfig: durableConfig });
+      }).catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          console.warn("[desktop-config] Durable import/hydration failed:", error instanceof Error ? error.name : "UnknownError");
+        }
+      });
     });
 
     return () => controller.abort();
@@ -207,13 +246,20 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
   useFileWatcher((path, event) => {
     if (path === "system/desktop.json" && event !== "unlink") {
       const desktopIconsHydrationRevision = captureWebDesktopIconsHydrationRevision();
-      fetchDesktopConfig(gatewayUrl).then((cfg) => {
+      fetchDesktopConfig(gatewayUrl).then(({ config: cfg }) => {
         setConfig(cfg);
         setDock(cfg.dock);
         setPinnedApps(cfg.pinnedApps);
         setDockOrder(cfg.dockOrder);
-        setDesktopIcons(cfg.desktopIcons, desktopIconsHydrationRevision);
-        saveShellSnapshot(cacheScope, { desktopConfig: cfg });
+        if (cfg.desktopIcons !== undefined) {
+          setDesktopIcons(cfg.desktopIcons, desktopIconsHydrationRevision);
+        }
+        const currentIcons = useDesktopConfigStore.getState().desktopIcons;
+        saveShellSnapshot(cacheScope, {
+          desktopConfig: cfg.desktopIcons !== undefined || currentIcons === undefined
+            ? cfg
+            : { ...cfg, desktopIcons: currentIcons },
+        });
       });
     }
   });
@@ -226,22 +272,34 @@ function settingsFetchSignal(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
-async function fetchDesktopConfig(gatewayUrl: string, signal?: AbortSignal): Promise<DesktopConfig> {
+interface DesktopConfigFetchResult {
+  config: DesktopConfig;
+  legacyImport: LegacyDesktopImport | null;
+}
+
+async function fetchDesktopConfig(gatewayUrl: string, signal?: AbortSignal): Promise<DesktopConfigFetchResult> {
   try {
     const res = await fetch(`${gatewayUrl}/api/settings/desktop`, {
       signal: settingsFetchSignal(signal),
     });
     if (res.ok) {
       const data = await res.json();
-      const merged = { ...DEFAULT_DESKTOP_CONFIG, ...data };
+      const configData = typeof data === "object" && data !== null && !Array.isArray(data)
+        ? { ...data } as Record<string, unknown>
+        : {};
+      delete configData.legacyDesktopImport;
+      const merged = {
+        ...DEFAULT_DESKTOP_CONFIG,
+        ...configData,
+      } as DesktopConfig;
       merged.dock = { ...merged.dock, autoHide: false };
-      return merged;
+      return { config: merged, legacyImport: legacyDesktopImportFromConfig(data) };
     }
   } catch (err) {
-    if (signal?.aborted) return DEFAULT_DESKTOP_CONFIG;
+    if (signal?.aborted) return { config: DEFAULT_DESKTOP_CONFIG, legacyImport: null };
     console.warn("[desktop-config] failed to load desktop config:", err instanceof Error ? err.message : String(err));
   }
-  return DEFAULT_DESKTOP_CONFIG;
+  return { config: DEFAULT_DESKTOP_CONFIG, legacyImport: null };
 }
 
 export function saveDesktopConfig(config: DesktopConfig): Promise<void>;
@@ -258,9 +316,19 @@ export async function saveDesktopConfig(
     body: JSON.stringify(config),
   });
   if (res.ok) {
-    saveShellSnapshot(options.cacheScope, { desktopConfig: config });
+    const normalizedConfig: DesktopConfig = {
+      ...config,
+      pinnedApps: config.pinnedApps ?? useDesktopConfigStore.getState().pinnedApps ?? DEFAULT_DESKTOP_CONFIG.pinnedApps,
+    };
+    await patchWebOsViewState(gatewayUrl, {
+      pinnedApps: normalizedConfig.pinnedApps,
+      ...(normalizedConfig.desktopIcons !== undefined
+        ? { desktop: { icons: normalizedConfig.desktopIcons } }
+        : {}),
+    });
+    saveShellSnapshot(options.cacheScope, { desktopConfig: normalizedConfig });
     const store = useDesktopConfigStore.getState();
-    applyDesktopConfigSnapshot(config, gatewayUrl, store);
+    applyDesktopConfigSnapshot(normalizedConfig, gatewayUrl, store);
   }
 }
 
@@ -296,6 +364,15 @@ export async function saveDesktopConfigPatch(
       ? nextConfig.pinnedApps.filter((value): value is string => typeof value === "string")
       : DEFAULT_DESKTOP_CONFIG.pinnedApps,
   } as DesktopConfig;
+  const durablePatch = {
+    ...(patch.pinnedApps !== undefined ? { pinnedApps: normalizedConfig.pinnedApps } : {}),
+    ...(patch.desktopIcons !== undefined ? {
+      desktop: { icons: normalizedConfig.desktopIcons ?? [] },
+    } : {}),
+  };
+  if (Object.keys(durablePatch).length > 0) {
+    await patchWebOsViewState(gatewayUrl, durablePatch);
+  }
   saveShellSnapshot(options.cacheScope, { desktopConfig: normalizedConfig });
   const store = useDesktopConfigStore.getState();
   applyDesktopConfigSnapshot(normalizedConfig, gatewayUrl, store);

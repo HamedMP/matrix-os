@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -41,6 +41,25 @@ function runProcess(command: string, args: string[], cwd: string, input = ""): P
 }
 
 describe("Codex structured event runtime", () => {
+  it("ships every plain-Node Codex runtime module in the gateway build", async () => {
+    const sourceDirectory = join(process.cwd(), "packages/gateway/src/coding-agents");
+    const sourceModules = (await readdir(sourceDirectory))
+      .filter((entry) => entry.endsWith(".mjs"));
+    const packageJson = JSON.parse(await readFile(
+      join(process.cwd(), "packages/gateway/package.json"),
+      "utf8",
+    )) as { scripts?: { build?: string } };
+    const buildScript = packageJson.scripts?.build ?? "";
+
+    for (const moduleName of sourceModules) {
+      expect(
+        buildScript.includes("src/coding-agents/*.mjs") ||
+          buildScript.includes(`src/coding-agents/${moduleName}`),
+        `${moduleName} is omitted from the packaged gateway runtime`,
+      ).toBe(true);
+    }
+  });
+
   it("launches coding threads through the Matrix control-capable app-server runner", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
@@ -289,12 +308,30 @@ describe("Codex structured event runtime", () => {
   it("retries failed ingestion with stable event ids then advances the transcript cursor", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-"));
     const eventPath = codexProviderEventPath(homePath, "sess_bridge_1");
-    const batches: Array<{ events: Array<{ eventId: string; type: string }>; providerThreadId?: string }> = [];
+    const batches: Array<{
+      events: Array<{ eventId: string; type: string }>;
+      providerThreadId?: string;
+      tokenUsage?: {
+        inputTokens: number;
+        outputTokens: number;
+        cachedInputTokens?: number;
+        reasoningOutputTokens?: number;
+      };
+    }> = [];
     let shouldFail = true;
     const ingestProviderEvents = vi.fn(async (
       _principal: RequestPrincipal,
       _threadId: string,
-      batch: { events: Array<{ eventId: string; type: string }>; providerThreadId?: string },
+      batch: {
+        events: Array<{ eventId: string; type: string }>;
+        providerThreadId?: string;
+        tokenUsage?: {
+          inputTokens: number;
+          outputTokens: number;
+          cachedInputTokens?: number;
+          reasoningOutputTokens?: number;
+        };
+      },
     ) => {
       batches.push(batch);
       if (shouldFail) throw new Error("temporary store failure");
@@ -318,7 +355,15 @@ describe("Codex structured event runtime", () => {
           type: "item.completed",
           item: { id: "item_1", type: "agent_message", text: "A real response." },
         }),
-        JSON.stringify({ type: "turn.completed" }),
+        JSON.stringify({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 32,
+            output_tokens: 24,
+            reasoning_output_tokens: 8,
+          },
+        }),
         "",
       ].join("\n"), "utf-8");
 
@@ -334,6 +379,12 @@ describe("Codex structured event runtime", () => {
       expect(batches).toEqual(expect.arrayContaining([
         expect.objectContaining({ providerThreadId: "019f-bridge-thread" }),
         expect.objectContaining({
+          tokenUsage: {
+            inputTokens: 100,
+            outputTokens: 24,
+            cachedInputTokens: 32,
+            reasoningOutputTokens: 8,
+          },
           events: expect.arrayContaining([
             expect.objectContaining({ type: "assistant.text.delta" }),
             expect.objectContaining({ type: "assistant.text.completed" }),

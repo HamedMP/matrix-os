@@ -168,6 +168,38 @@ export class ChatRunLifecycleRepository {
     };
   }
 
+  async getPendingApproval(ownerInput: ChatOwner, input: {
+    chatId: string;
+    runId: string;
+    approvalId: string;
+  }): Promise<Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.runId, input.approvalId].forEach(requireSafeRef);
+    const rows = await this.kysely.selectFrom("chat_run_events")
+      .innerJoin("chat_runs", "chat_runs.id", "chat_run_events.run_id")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select(["chat_run_events.event"])
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId)
+      .where("chat_runs.id", "=", input.runId)
+      .where("chat_runs.status", "in", [...ACTIVE_RUNS])
+      .orderBy("chat_run_events.run_seq")
+      .limit(500)
+      .execute();
+    let pending: Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null = null;
+    for (const row of rows) {
+      const activity = CanonicalChatRunActivitySchema.safeParse(row.event);
+      if (!activity.success) continue;
+      if (activity.data.type !== "approval.requested" && activity.data.type !== "approval.resolved") continue;
+      if (activity.data.approvalId !== input.approvalId) continue;
+      if (activity.data.type === "approval.requested") pending = activity.data;
+      if (activity.data.type === "approval.resolved") pending = null;
+    }
+    return pending;
+  }
+
   async markRunRunning(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;
@@ -388,7 +420,6 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     runId: string;
     messageId: string;
-    seq: number;
     delta: string;
     createdAt: string;
   }): Promise<CanonicalChatMessage> {
@@ -421,7 +452,7 @@ export class ChatRunLifecycleRepository {
           : undefined;
         if (current.chatId !== chatId || current.runId !== input.runId
           || current.turnId !== run.turn_id || current.role !== "assistant"
-          || current.state !== "pending" || current.seq !== input.seq || !textParts?.length) {
+          || current.state !== "pending" || !textParts?.length) {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const last = textParts.at(-1)!;
@@ -446,13 +477,11 @@ export class ChatRunLifecycleRepository {
           .select(({ fn }) => fn.max("seq").as("seq"))
           .where("chat_id", "=", chatId)
           .executeTakeFirst();
-        if (input.seq !== Number(latest?.seq ?? 0) + 1) {
-          throw new ChatConflictError(chatId, Number(chat.revision));
-        }
+        const seq = Number(latest?.seq ?? 0) + 1;
         next = CanonicalChatMessageSchema.parse({
           id: input.messageId,
           chatId,
-          seq: input.seq,
+          seq,
           role: "assistant",
           state: "pending",
           turnId: run.turn_id,

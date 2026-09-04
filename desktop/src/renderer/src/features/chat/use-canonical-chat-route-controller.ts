@@ -1,7 +1,11 @@
 import type {
   CanonicalChatDetailResponse,
+  CanonicalChatApprovalDecision,
   CanonicalChatRecord,
   CanonicalCreateChatTurnRequest,
+  CanonicalQueueChatTurnRequest,
+  CanonicalSteerChatRunRequest,
+  CanonicalUpdateQueuedChatTurnRequest,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
@@ -9,7 +13,9 @@ import type {
   CanonicalChatEventSource,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
+import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
+import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const ACTIVE_RUN_POLL_MS = 200;
@@ -73,7 +79,10 @@ export function useCanonicalChatRouteController({
     runId: string;
   } | null>(null);
 
-  const loadDetail = useCallback(async (chatId: string) => {
+  const loadDetail = useCallback(async (
+    chatId: string,
+    options: { background?: boolean } = {},
+  ) => {
     const sequence = ++detailRequestSequence.current;
     try {
       const loaded = await client.getDetail(chatId, { limit: 200 });
@@ -85,26 +94,26 @@ export function useCanonicalChatRouteController({
       }
       detailRef.current = loaded;
       setDetail(loaded);
-      setError(null);
+      if (!options.background) setError(null);
       return loaded;
     } catch (error: unknown) {
       console.warn("[canonical-chat] detail load failed:", diagnosticErrorKind(error));
       if (sequence !== detailRequestSequence.current) return null;
-      setError("Chat could not be loaded. Try again.");
+      if (!options.background) setError("Chat could not be loaded. Try again.");
       return null;
     }
   }, [client]);
 
-  const load = useCallback(async (query = "") => {
+  const load = useCallback(async (query = "", options: { background?: boolean } = {}) => {
     const sequence = ++listRequestSequence.current;
-    setStatus("loading");
+    if (!options.background) setStatus("loading");
     try {
       const page = query.trim()
         ? await client.search(query, { projectId, limit: 100 })
         : await client.list({ projectId, limit: 100 });
       if (sequence !== listRequestSequence.current) return;
       setItems(page.items);
-      setError(null);
+      if (!options.background) setError(null);
       setStatus("ready");
       setActiveChatId((current) => {
         const next = current && page.items.some((record) => record.chat.id === current)
@@ -120,8 +129,8 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] list load failed:", diagnosticErrorKind(error));
       if (sequence !== listRequestSequence.current) return;
-      setStatus("error");
-      setError("Chats could not be loaded. Try again.");
+      if (!options.background) setStatus("error");
+      if (!options.background) setError("Chats could not be loaded. Try again.");
     }
   }, [autoSelectFirst, client, projectId]);
 
@@ -161,7 +170,7 @@ export function useCanonicalChatRouteController({
       do {
         detailRefreshPending = false;
         const selectedChatId = activeChatIdRef.current;
-        if (selectedChatId) await loadDetail(selectedChatId);
+        if (selectedChatId) await loadDetail(selectedChatId, { background: true });
       } while (current && detailRefreshPending);
       detailRefreshInFlight = false;
     };
@@ -173,7 +182,7 @@ export function useCanonicalChatRouteController({
       listRefreshInFlight = true;
       do {
         listRefreshPending = false;
-        await load();
+        await load("", { background: true });
       } while (current && listRefreshPending);
       listRefreshInFlight = false;
     };
@@ -233,7 +242,11 @@ export function useCanonicalChatRouteController({
     const routeScope = routeScopeRef.current;
     const attempt = { client, chatId: activeChatId, runId: completion.runId };
     acknowledgementAttemptRef.current = attempt;
-    void client.acknowledgeCompletion(activeChatId, completion.runId).then((record) => {
+    const analytics = completedResponseAnalytics(detail, completion.runId);
+    const acknowledgement = analytics
+      ? client.acknowledgeCompletion(activeChatId, completion.runId, analytics)
+      : client.acknowledgeCompletion(activeChatId, completion.runId);
+    void acknowledgement.then((record) => {
       if (!routeScope?.active || routeScopeRef.current !== routeScope
         || activeChatIdRef.current !== attempt.chatId) {
         return;
@@ -274,7 +287,7 @@ export function useCanonicalChatRouteController({
     let consecutiveFailures = 0;
     const poll = (delay = ACTIVE_RUN_POLL_MS) => {
       timeout = window.setTimeout(async () => {
-        const loaded = await loadDetail(activeChatId);
+        const loaded = await loadDetail(activeChatId, { background: true });
         if (cancelled) return;
         if (!loaded) {
           consecutiveFailures += 1;
@@ -367,6 +380,8 @@ export function useCanonicalChatRouteController({
         ...input,
         clientRequestId: canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
+      }, {
+        chatScope: current.record.projectId ? "project" : "global",
       });
       if (!isCurrentScope()) return null;
       const next: CanonicalChatDetailResponse = {
@@ -389,7 +404,7 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error));
       if (!isCurrentScope()) return null;
-      setError("The message could not be sent. Try again.");
+      setError(canonicalChatSubmitFailureMessage(error));
       return null;
     }
   }, [client, detail, projectId]);
@@ -411,6 +426,308 @@ export function useCanonicalChatRouteController({
       setError("The active Run could not be stopped. Try again.");
     }
   }, [client, detail, loadDetail]);
+
+  const steerActiveRun = useCallback(async (parts: CanonicalSteerChatRunRequest["parts"]) => {
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    const run = activeRun
+      ? current?.runs.find((candidate) => candidate.id === activeRun.runId)
+      : undefined;
+    if (!current || !activeRun || run?.capabilitySnapshot.steering !== "same_run") return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.steerRun(current.record.chat.id, activeRun.runId, {
+        clientRequestId: canonicalChatRequestId(),
+        expectedTurnId: activeRun.turnId,
+        parts,
+      });
+      if (!isCurrentScope()) return null;
+      detailRequestSequence.current += 1;
+      setDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        const messages = currentDetail.messages.some((message) => message.id === response.message.id)
+          ? currentDetail.messages
+          : [...currentDetail.messages, response.message];
+        const next = {
+          ...currentDetail,
+          record: response.steering === "accepted" ? {
+            ...currentDetail.record,
+            chat: {
+              ...currentDetail.record.chat,
+              revision: currentDetail.record.chat.revision + 2,
+              messageCount: currentDetail.record.chat.messageCount + 1,
+              updatedAt: response.message.createdAt,
+            },
+          } : currentDetail.record,
+          messages,
+        };
+        detailRef.current = next;
+        return next;
+      });
+      setError(null);
+      return response;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] steer failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      setError("The active Run could not be steered. Try Queue next instead.");
+      await loadDetail(current.record.chat.id);
+      return null;
+    }
+  }, [client, loadDetail]);
+
+  const queueTurn = useCallback(async (
+    input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision">,
+  ) => {
+    const current = detailRef.current;
+    if (!current?.record.activeRun) return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.queueTurn(current.record.chat.id, {
+        ...input,
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+      });
+      if (!isCurrentScope()) return null;
+      detailRequestSequence.current += 1;
+      setDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        const existing = currentDetail.queuedTurns ?? [];
+        const queuedTurns = existing.some((turn) => turn.id === response.queuedTurn.id)
+          ? existing.map((turn) => turn.id === response.queuedTurn.id ? response.queuedTurn : turn)
+          : [...existing, response.queuedTurn];
+        const next = {
+          ...currentDetail,
+          record: {
+            ...currentDetail.record,
+            chat: {
+              ...currentDetail.record.chat,
+              revision: currentDetail.record.chat.revision + 1,
+              updatedAt: response.queuedTurn.updatedAt,
+            },
+          },
+          queuedTurns,
+        };
+        detailRef.current = next;
+        return next;
+      });
+      setError(null);
+      return response;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queue failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      await loadDetail(current.record.chat.id);
+      setError("The message could not be queued. Refresh and try again.");
+      return null;
+    }
+  }, [client, loadDetail]);
+
+  const updateQueuedTurn = useCallback(async (
+    queuedTurnId: string,
+    parts: CanonicalUpdateQueuedChatTurnRequest["parts"],
+  ) => {
+    const current = detailRef.current;
+    if (!current) return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.updateQueuedTurn(current.record.chat.id, queuedTurnId, {
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+        parts,
+      });
+      if (!isCurrentScope()) return null;
+      detailRequestSequence.current += 1;
+      setDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        const next = {
+          ...currentDetail,
+          record: {
+            ...currentDetail.record,
+            chat: {
+              ...currentDetail.record.chat,
+              revision: currentDetail.record.chat.revision + 1,
+              updatedAt: response.queuedTurn.updatedAt,
+            },
+          },
+          queuedTurns: (currentDetail.queuedTurns ?? []).map((turn) => (
+            turn.id === queuedTurnId ? response.queuedTurn : turn
+          )),
+        };
+        detailRef.current = next;
+        return next;
+      });
+      setError(null);
+      return response;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queue update failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      setError("The queued message could not be saved. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return null;
+    }
+  }, [client, loadDetail]);
+
+  const steerQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    const run = activeRun
+      ? current?.runs.find((candidate) => candidate.id === activeRun.runId)
+      : undefined;
+    if (!current || !activeRun || run?.capabilitySnapshot.steering !== "same_run") return null;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.steerQueuedTurn(
+        current.record.chat.id,
+        activeRun.runId,
+        queuedTurnId,
+        {
+          clientRequestId: canonicalChatRequestId(),
+          baseRevision: current.record.chat.revision,
+          expectedTurnId: activeRun.turnId,
+        },
+      );
+      if (!isCurrentScope()) return null;
+      detailRequestSequence.current += 1;
+      setDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        const messages = currentDetail.messages.some((message) => message.id === response.message.id)
+          ? currentDetail.messages
+          : [...currentDetail.messages, response.message];
+        const next = {
+          ...currentDetail,
+          record: response.steering === "accepted" ? {
+            ...currentDetail.record,
+            chat: {
+              ...currentDetail.record.chat,
+              revision: currentDetail.record.chat.revision + 2,
+              messageCount: currentDetail.record.chat.messageCount + 1,
+              updatedAt: response.message.createdAt,
+            },
+          } : currentDetail.record,
+          messages,
+          queuedTurns: (currentDetail.queuedTurns ?? []).filter((turn) => turn.id !== queuedTurnId),
+        };
+        detailRef.current = next;
+        return next;
+      });
+      setError(null);
+      return response;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queued steer failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return null;
+      await loadDetail(current.record.chat.id);
+      setError("The queued message could not steer this Run. It remains in Queue.");
+      return null;
+    }
+  }, [client, loadDetail]);
+
+  const reorderQueuedTurns = useCallback(async (queuedTurnIds: string[]) => {
+    const current = detailRef.current;
+    if (!current) return false;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.reorderQueuedTurns(current.record.chat.id, {
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+        queuedTurnIds,
+      });
+      if (!isCurrentScope()) return false;
+      detailRequestSequence.current += 1;
+      setDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        const next = {
+          ...currentDetail,
+          record: {
+            ...currentDetail.record,
+            chat: {
+              ...currentDetail.record.chat,
+              revision: currentDetail.record.chat.revision + 1,
+            },
+          },
+          queuedTurns: response.queuedTurns,
+        };
+        detailRef.current = next;
+        return next;
+      });
+      setError(null);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queue reorder failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return false;
+      setError("The Queue order could not be saved. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return false;
+    }
+  }, [client, loadDetail]);
+
+  const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    const current = detailRef.current;
+    if (!current) return false;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      const response = await client.cancelQueuedTurn(current.record.chat.id, queuedTurnId, {
+        clientRequestId: canonicalChatRequestId(),
+        baseRevision: current.record.chat.revision,
+      });
+      if (!isCurrentScope()) return false;
+      detailRequestSequence.current += 1;
+      setDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        const next = {
+          ...currentDetail,
+          record: response.cancellation === "cancelled" ? {
+            ...currentDetail.record,
+            chat: {
+              ...currentDetail.record.chat,
+              revision: currentDetail.record.chat.revision + 1,
+            },
+          } : currentDetail.record,
+          queuedTurns: (currentDetail.queuedTurns ?? []).filter((turn) => turn.id !== queuedTurnId),
+        };
+        detailRef.current = next;
+        return next;
+      });
+      setError(null);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] queue cancellation failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return false;
+      setError("The queued message could not be cancelled. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return false;
+    }
+  }, [client, loadDetail]);
+
+  const submitApproval = useCallback(async (
+    approvalId: string,
+    decision: CanonicalChatApprovalDecision,
+  ) => {
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    if (!current || !activeRun) return false;
+    const routeScope = routeScopeRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    try {
+      await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, {
+        clientRequestId: canonicalChatRequestId(),
+        decision,
+      });
+      if (!isCurrentScope()) return false;
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] approval failed:", diagnosticErrorKind(error));
+      if (!isCurrentScope()) return false;
+      setError("The approval could not be submitted. Refresh and try again.");
+      await loadDetail(current.record.chat.id);
+      return false;
+    }
+  }, [client, loadDetail]);
 
   const retryTurn = useCallback(async (turnId: string) => {
     const current = detailRef.current;
@@ -479,6 +796,13 @@ export function useCanonicalChatRouteController({
     moveProject,
     submitTurn,
     cancelActiveRun,
+    steerActiveRun,
+    queueTurn,
+    updateQueuedTurn,
+    steerQueuedTurn,
+    reorderQueuedTurns,
+    cancelQueuedTurn,
+    submitApproval,
     retryTurn,
     deleteChat,
     startNewChat: () => selectChat(null),

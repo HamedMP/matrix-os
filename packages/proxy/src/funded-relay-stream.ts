@@ -19,10 +19,26 @@ export function boundedBody(
   lease: AdmissionLease,
   abortUpstream: (reason?: unknown) => void,
   lifetimeSignal: AbortSignal,
+  observer?: {
+    push(chunk: Uint8Array): void;
+    complete(): void;
+    ambiguous(): void;
+  },
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let seen = 0;
   let settled = false;
+  let terminalReported = false;
+  const reportComplete = (): void => {
+    if (terminalReported) return;
+    terminalReported = true;
+    observer?.complete();
+  };
+  const reportAmbiguous = (): void => {
+    if (terminalReported) return;
+    terminalReported = true;
+    observer?.ambiguous();
+  };
   const settle = (): void => {
     if (settled) return;
     settled = true;
@@ -30,6 +46,7 @@ export function boundedBody(
     lease.release();
   };
   const onLifetimeAbort = (): void => {
+    reportAmbiguous();
     void reader.cancel("request lifetime ended").catch((error: unknown) => {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI response cancellation failed", { errorName });
@@ -47,6 +64,7 @@ export function boundedBody(
       try {
         const result = await reader.read();
         if (result.done) {
+          reportComplete();
           settle();
           reader.releaseLock();
           controller.close();
@@ -54,14 +72,17 @@ export function boundedBody(
         }
         seen += result.value.byteLength;
         if (seen > maxBytes) {
+          reportAmbiguous();
           abortUpstream("response limit exceeded");
           await reader.cancel("response limit exceeded");
           settle();
           controller.error(new Error("AI response exceeded the configured limit"));
           return;
         }
+        observer?.push(result.value);
         controller.enqueue(result.value);
       } catch (error) {
+        reportAmbiguous();
         settle();
         if (!lifetimeSignal.aborted) {
           const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -71,6 +92,7 @@ export function boundedBody(
       }
     },
     async cancel(reason) {
+      reportAmbiguous();
       abortUpstream(reason);
       try {
         await reader.cancel(reason);

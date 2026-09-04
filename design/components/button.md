@@ -1,13 +1,14 @@
 ---
 title: Button
-description: Buttons trigger actions. Four variants with clear hierarchy.
+description: Buttons trigger actions with one clear visual hierarchy.
 status: stable
 tokens:
-  - colors.primary
-  - colors.accent
-  - colors.foreground
-  - colors.border
-  - rounded.xl
+  - semanticColors.primary
+  - semanticColors.primaryForeground
+  - semanticColors.surface
+  - semanticColors.foreground
+  - semanticColors.border
+  - rounded.lg
   - rounded.full
 ---
 
@@ -28,12 +29,14 @@ Buttons are the primary way users trigger actions.
 
 ## Variants
 
-| Variant   | Background       | Text Color       | Border           | Use For                       |
-|-----------|------------------|------------------|------------------|-------------------------------|
-| Primary   | `--primary`      | `--primary-fg`   | none             | Main action in a section      |
-| Accent    | `--accent`       | `--accent-fg`    | none             | CTAs: sign up, get started    |
-| Secondary | transparent      | `--foreground`   | `--border`       | Secondary actions             |
-| Ghost     | transparent      | `--foreground`   | none             | Tertiary, toolbar, icon-only  |
+| Variant     | Background       | Text Color       | Border           | Use For                       |
+|-------------|------------------|------------------|------------------|-------------------------------|
+| Primary     | Teal 800         | Paper            | none             | The single main action        |
+| Secondary   | Paper            | Ink              | Border           | Alternative actions           |
+| Quiet/Ghost | transparent      | Ink              | none             | Toolbars and tertiary actions |
+| Destructive | Coral 500        | Paper or Ink*     | none             | Confirmed destructive actions |
+
+*Choose the text color that passes WCAG contrast at the rendered token value.
 
 ## Sizes
 
@@ -51,20 +54,20 @@ Buttons are the primary way users trigger actions.
 | Default  | As specified per variant                       |
 | Hover    | Darken background 8%, elevate shadow to `sm`   |
 | Active   | Scale to 0.98, shadow to `xs`                  |
-| Focus    | 2px ring in `--ring` color, offset 2px         |
+| Focus    | 2px Gold 300 ring, offset 2px                   |
 | Disabled | 40% opacity, `pointer-events: none`            |
 | Loading  | Replace label with spinner, maintain width     |
 
 ## Shape
 
-- Default radius: `rounded-xl` (20px)
+- Default radius: 12px
 - Pill variant: `rounded-full` for chips, tags, and compact actions
 - Never use sharp corners on buttons
 
 ## Usage Rules
 
-1. **One accent button per view.** Accent (Ember) is the loudest — use it only
-   for the single most important CTA.
+1. **One primary button per decision area.** Use it only for the action that
+   advances the user.
 2. **Primary for section-level actions.** "Save", "Create", "Send" — the main
    thing the user came to do.
 3. **Secondary for alternatives.** "Cancel", "Back", "Export" — present but
@@ -76,7 +79,7 @@ Buttons are the primary way users trigger actions.
 
 ```tsx
 <Button>Save Changes</Button>
-<Button variant="accent">Get Started</Button>
+<Button>Get Started</Button>
 <Button variant="secondary">Cancel</Button>
 <Button variant="ghost" size="icon"><Settings /></Button>
 ```
@@ -89,6 +92,6 @@ Buttons are the primary way users trigger actions.
 - Show loading state when the action is async
 
 **Don't:**
-- Put two accent buttons next to each other
+- Put two primary buttons next to each other
 - Use long labels — keep to 1-3 words
 - Disable without explanation (use a tooltip on the disabled button)

@@ -3,7 +3,67 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 
 describe("canonical Chat presentation adapter", () => {
-  it("caps transcript projection collections at the public activity-page boundary", () => {
+  it("shows the canonical selected model first while a Run is active", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+
+    expect(presented?.work).toEqual([
+      {
+        kind: "activity-group",
+        id: `${run.id}:selected-model`,
+        timestamp: Date.parse(run.createdAt),
+        sequence: 0,
+        activities: [{
+          id: `${run.id}:selected-model`,
+          kind: "phase",
+          state: "running",
+          label: "Working",
+          preview: "Current model: gpt-5.6-sol",
+          previewKind: "text",
+        }],
+      },
+    ]);
+  });
+
+  it("deduplicates a provider model status against the canonical selected model", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [{
+        id: "activity_provider_model_status",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "agent.activity",
+        activityId: "provider_model_status",
+        kind: "phase",
+        label: "Working",
+        summary: "Current model: gpt-5.6-sol",
+        status: "running",
+        occurredAt: run.createdAt,
+      }],
+    });
+
+    expect(presented?.work).toEqual([
+      expect.objectContaining({
+        kind: "activity-group",
+        id: `${run.id}:selected-model`,
+      }),
+    ]);
+  });
+
+  it("caps active transcript projection while preserving the newest server-ordered activity", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;
     const occurredAt = run.startedAt ?? run.createdAt;
@@ -29,7 +89,45 @@ describe("canonical Chat presentation adapter", () => {
     const projectedActivities = presented?.work.filter((item) => item.kind === "activity-group") ?? [];
 
     expect(projectedActivities).toHaveLength(500);
-    expect(projectedActivities.at(-1)?.id).toContain("activity_bounded_499");
+    expect(projectedActivities[0]?.id).toBe(`${run.id}:selected-model`);
+    expect(projectedActivities.some((item) => item.id.endsWith("activity_bounded_1"))).toBe(false);
+    expect(projectedActivities.at(-1)?.id).toContain("activity_bounded_500");
+  });
+
+  it("retains a newest server update when it reuses the oldest activity id", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const occurredAt = run.startedAt ?? run.createdAt;
+    const activities = Array.from({ length: 500 }, (_, index) => ({
+      id: `activity_reused_${index}`,
+      chatId: snapshot.chat.id,
+      runId: run.id,
+      sequence: index + 1,
+      type: "agent.activity" as const,
+      activityId: `reused_${index}`,
+      kind: "phase" as const,
+      label: `Phase ${index}`,
+      status: "running" as const,
+      occurredAt,
+    }));
+
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [
+        ...activities,
+        { ...activities[0]!, sequence: 501, label: "Phase 0 updated" },
+      ],
+    });
+    const projectedActivities = presented?.work.filter((item) => item.kind === "activity-group") ?? [];
+
+    expect(projectedActivities).toHaveLength(500);
+    expect(projectedActivities.some((item) => item.id.endsWith("activity_reused_1"))).toBe(false);
+    expect(projectedActivities.at(-1)).toMatchObject({
+      id: expect.stringContaining("activity_reused_0"),
+      activities: [expect.objectContaining({ label: "Phase 0 updated" })],
+    });
   });
 
   it("projects canonical messages into the shared provider-neutral transcript", () => {
@@ -59,6 +157,145 @@ describe("canonical Chat presentation adapter", () => {
       user: { role: "user" },
       final: { role: "assistant" },
     });
+  });
+
+  it("projects accepted same-Run steer messages as user follow-ups", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const steerMessage = {
+      id: "msg_fixture_steer",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: snapshot.runs[0]!.id,
+      parts: [{ type: "text" as const, text: "Change the final answer." }],
+      createdAt: snapshot.runs[0]!.updatedAt,
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, steerMessage],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+
+    expect(presented?.userFollowups).toEqual([
+      expect.objectContaining({
+        id: steerMessage.id,
+        role: "user",
+        markdown: "Change the final answer.",
+      }),
+    ]);
+  });
+
+  it("segments same-Run work around accepted steer messages in timeline order", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const run = snapshot.runs[0]!;
+    const turn = snapshot.turns[0]!;
+    const assistant = (id: string, seq: number, text: string, createdAt: string) => ({
+      id,
+      chatId: snapshot.chat.id,
+      seq,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: turn.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text }],
+      createdAt,
+    });
+    const steer = {
+      id: "msg_segment_steer",
+      chatId: snapshot.chat.id,
+      seq: 3,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: turn.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text: "Do the second task instead." }],
+      createdAt: "2026-08-26T00:00:03.000Z",
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [
+        snapshot.messages[0]!,
+        assistant("msg_before_steer", 2, "I’ll do the first task.", "2026-08-26T00:00:01.000Z"),
+        steer,
+        assistant("msg_after_steer", 4, "Switching to the second task.", "2026-08-26T00:00:04.000Z"),
+        assistant("msg_segment_final", 5, "Second task complete.", "2026-08-26T00:00:05.000Z"),
+      ],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [{
+        id: "activity_before_steer",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "agent.activity",
+        activityId: "tool_before_steer",
+        kind: "command",
+        label: "Run first command",
+        status: "completed",
+        occurredAt: "2026-08-26T00:00:02.000Z",
+      }, {
+        id: "activity_after_steer",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 2,
+        type: "agent.activity",
+        activityId: "tool_after_steer",
+        kind: "command",
+        label: "Run second command",
+        status: "completed",
+        occurredAt: "2026-08-26T00:00:04.500Z",
+      }],
+    });
+
+    expect(presented?.expandedByDefault).toBe(true);
+    expect(presented?.timeline?.map((item) => (
+      item.kind === "user-followup" ? item.message.id : item.item.id
+    ))).toEqual([
+      "msg_before_steer",
+      `${run.id}:activities:activity_before_steer`,
+      steer.id,
+      "msg_after_steer",
+      `${run.id}:activities:activity_after_steer`,
+    ]);
+    expect(presented?.final).toMatchObject({ id: "msg_segment_final" });
+  });
+
+  it("projects live approval decisions into actionable transcript controls", () => {
+    const { snapshot } = createCanonicalChatFixture("approval_required");
+
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [...snapshot.activities, {
+        id: "activity_approval",
+        chatId: snapshot.chat.id,
+        runId: snapshot.runs[0]!.id,
+        occurredAt: snapshot.runs[0]!.updatedAt,
+        type: "approval.requested",
+        approvalId: "approval_fixture",
+        title: "Run command",
+        risk: "medium",
+        allowedDecisions: ["approve", "decline"],
+      }],
+    });
+
+    expect(presented?.work).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "request",
+        requestKind: "approval",
+        requestId: "approval_fixture",
+        state: "waiting",
+        actions: [
+          { kind: "approval", requestId: "approval_fixture", decision: "approve", label: "Approve" },
+          { kind: "approval", requestId: "approval_fixture", decision: "decline", label: "Decline" },
+        ],
+      }),
+    ]));
   });
 
   it("reassembles adjacent durable text parts without changing assistant output", () => {
@@ -276,7 +513,7 @@ describe("canonical Chat presentation adapter", () => {
     expect(presented?.final).toBeUndefined();
   });
 
-  it("uses generic Thinking only as a live placeholder until visible process text arrives", () => {
+  it("shows the model first and removes generic Thinking when visible work arrives", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;
     const reasoning = {
@@ -301,7 +538,8 @@ describe("canonical Chat presentation adapter", () => {
     expect(placeholderOnly?.work).toEqual([
       expect.objectContaining({
         kind: "activity-group",
-        activities: [expect.objectContaining({ kind: "reasoning", label: "Thinking" })],
+        id: `${run.id}:selected-model`,
+        activities: [expect.objectContaining({ preview: "Current model: gpt-5.6-sol" })],
       }),
     ]);
 
@@ -321,6 +559,10 @@ describe("canonical Chat presentation adapter", () => {
       }],
     });
     expect(withVisibleProcessText?.work).toEqual([
+      expect.objectContaining({
+        kind: "activity-group",
+        id: `${run.id}:selected-model`,
+      }),
       expect.objectContaining({
         kind: "message",
         id: "msg_visible_process",
@@ -354,6 +596,10 @@ describe("canonical Chat presentation adapter", () => {
       }],
     });
     expect(withRealActivity?.work).toEqual([
+      expect.objectContaining({
+        kind: "activity-group",
+        id: `${run.id}:selected-model`,
+      }),
       expect.objectContaining({
         kind: "activity-group",
         activities: [expect.objectContaining({ kind: "command", label: "Run command" })],
@@ -445,6 +691,11 @@ describe("canonical Chat presentation adapter", () => {
     expect(presented?.work).toEqual([
       expect.objectContaining({
         kind: "activity-group",
+        id: `${run.id}:selected-model`,
+        activities: [expect.objectContaining({ preview: "Current model: gpt-5.6-sol" })],
+      }),
+      expect.objectContaining({
+        kind: "activity-group",
         id: `${run.id}:activities:activity_reasoning`,
         activities: [expect.objectContaining({ id: "activity_reasoning", kind: "reasoning", state: "partial" })],
       }),
@@ -503,6 +754,11 @@ describe("canonical Chat presentation adapter", () => {
       id: turn.id,
       active: true,
       work: [
+        expect.objectContaining({
+          kind: "activity-group",
+          id: `${run.id}:selected-model`,
+          activities: [expect.objectContaining({ preview: "Current model: gpt-5.6-sol" })],
+        }),
         expect.objectContaining({
           kind: "activity-group",
           activities: [expect.objectContaining({ label: "Reading project files", state: "running" })],

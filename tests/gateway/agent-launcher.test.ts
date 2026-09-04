@@ -17,6 +17,10 @@ describe("agent-launcher", () => {
     return JSON.parse(args[settingsIndex + 1]!) as Record<string, unknown>;
   }
 
+  function codexAppServerSettings(args: string[]): Record<string, unknown> {
+    return JSON.parse(Buffer.from(args.at(-1)!, "base64").toString("utf8")) as Record<string, unknown>;
+  }
+
   it("starts all four installation probes before any finishes and keeps stable order", async () => {
     const started: string[] = [];
     let release!: () => void;
@@ -320,6 +324,34 @@ describe("agent-launcher", () => {
     expect(runCommand).toHaveBeenCalledTimes(8);
   });
 
+  it("invalidates cached credential probes after a foreground Terminal login", async () => {
+    let codexAuthenticated = false;
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (args[0] === "--version") {
+        return {
+          stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+          stderr: "",
+        };
+      }
+      if (command === "codex" && args.join(" ") === "login status" && !codexAuthenticated) {
+        throw Object.assign(new Error("not authenticated"), { code: 1 });
+      }
+      return { stdout: "ok\n", stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand, now: () => 1_000 });
+
+    const before = await launcher.detectAgentCredentials();
+    expect(before.agents.find((agent) => agent.id === "codex"))
+      .toMatchObject({ authState: "required" });
+
+    codexAuthenticated = true;
+    launcher.invalidateCredentialDetection();
+
+    const after = await launcher.detectAgentCredentials();
+    expect(after.agents.find((agent) => agent.id === "codex"))
+      .toMatchObject({ authState: "ok" });
+  });
+
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
@@ -449,6 +481,21 @@ describe("agent-launcher", () => {
       "--",
       "review only",
     ]);
+  });
+
+  it("passes the persisted native Codex thread to the app-server runner", () => {
+    const launch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "continue the task",
+      providerThreadId: "native_thread_persisted_1",
+      providerEventPath: "/tmp/codex-events.jsonl",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [] },
+    });
+
+    expect(codexAppServerSettings(launch.args)).toMatchObject({
+      providerThreadId: "native_thread_persisted_1",
+    });
   });
 
   it("maps Codex review and plan modes into launch controls", () => {

@@ -18,3 +18,18 @@ export function timingSafeTokenEquals(actual: string | undefined, expected: stri
 export function buildPlatformVerificationToken(handle: string, platformSecret: string): string {
   return createHmac("sha256", platformSecret).update(handle).digest("hex");
 }
+
+export function buildPlatformRuntimeVerificationToken(
+  identity: { handle: string; machineId: string; runtimeSlot: string },
+  platformSecret: string,
+): string {
+  return createHmac("sha256", platformSecret)
+    .update(JSON.stringify([
+      "matrix-funded-ai-runtime",
+      1,
+      identity.handle,
+      identity.machineId,
+      identity.runtimeSlot,
+    ]))
+    .digest("hex");
+}

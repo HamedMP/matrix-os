@@ -3,7 +3,7 @@ import { Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Search, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
-import { appIconUrl, useApps } from "../../stores/apps";
+import { appIconUrl, useAppsQuery } from "../apps/apps.api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
@@ -146,9 +146,7 @@ export default function CommandPalette() {
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const shellSessions = useShellSessions((s) => s.sessions);
   const loadShellSessions = useShellSessions((s) => s.load);
-  const apps = useApps((s) => s.apps);
-  const appsError = useApps((s) => s.error);
-  const loadApps = useApps((s) => s.load);
+  const { data: apps = [], isError: appsError, refetch: refetchApps } = useAppsQuery();
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
@@ -158,8 +156,8 @@ export default function CommandPalette() {
 
   // Make sure apps are available the first time the palette opens.
   useEffect(() => {
-    if (open && api) void loadApps(api, Boolean(appsError));
-  }, [open, api, appsError, loadApps]);
+    if (open && api && appsError) void refetchApps();
+  }, [open, api, appsError, refetchApps]);
 
   useEffect(() => {
     if (open && api) void loadShellSessions(api);

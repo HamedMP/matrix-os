@@ -460,7 +460,7 @@ function LegacyProjectChatsView({ projectId, active }: { projectId: string; acti
   const conversationColumn = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {selectedHermesConversationId ? (
-        <HermesPane />
+        <HermesPane active={active} />
       ) : selectedThreadId ? (
         <AgentConversationView
           status={activeThreadId === selectedThreadId ? threadSnapshotStatus : "loading"}
@@ -468,6 +468,7 @@ function LegacyProjectChatsView({ projectId, active }: { projectId: string; acti
           error={activeThreadId === selectedThreadId ? threadSnapshotError : null}
           canSendTurns={canSendTurns}
           summary={summary}
+          active={active}
         />
       ) : projectWorkspaceEnabled ? (
         <ProjectChatDraft

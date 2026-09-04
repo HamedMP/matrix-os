@@ -2,6 +2,10 @@
 // store; this only tracks ephemeral open/closed flags.
 import { create } from "zustand";
 
+function normalizeRequestedSettingsSection(section: string): string {
+  return section === "agent" || section === "providers" ? "agents-providers" : section;
+}
+
 interface UiState {
   createProjectOpen: boolean;
   composerOpen: boolean;
@@ -59,6 +63,8 @@ export const useUi = create<UiState>()((set) => ({
   requestDesktopBackgroundRefresh: () => set((state) => ({
     desktopBackgroundRefreshRequest: (state.desktopBackgroundRefreshRequest + 1) % 1_000_000,
   })),
-  requestSettingsSection: (section) => set({ requestedSettingsSection: section }),
+  requestSettingsSection: (section) => set({
+    requestedSettingsSection: normalizeRequestedSettingsSection(section),
+  }),
   clearRequestedSettingsSection: () => set({ requestedSettingsSection: null }),
 }));

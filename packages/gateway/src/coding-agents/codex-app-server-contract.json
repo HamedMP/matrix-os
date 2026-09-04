@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.151.0",
+  "latestVerifiedVersion": "0.153.0",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -35,6 +35,15 @@
     },
     "0.151.0": {
       "schemaSha256": "31ae67beb2c94cc9509f6a71968600062dc8c6d7fe45437ed3a9129838f4d2d9"
+    },
+    "0.152.0": {
+      "schemaSha256": "65ce2db95109ebedc995d0ff74cc8bcefaa69fc3270f65b4fc69c1877c651f4e"
+    },
+    "0.152.1": {
+      "schemaSha256": "65ce2db95109ebedc995d0ff74cc8bcefaa69fc3270f65b4fc69c1877c651f4e"
+    },
+    "0.153.0": {
+      "schemaSha256": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978"
     }
   },
   "requiredServerMethods": [
@@ -48,6 +57,7 @@
     "item/completed",
     "item/agentMessage/delta",
     "item/commandExecution/outputDelta",
+    "thread/tokenUsage/updated",
     "turn/completed"
   ]
 }

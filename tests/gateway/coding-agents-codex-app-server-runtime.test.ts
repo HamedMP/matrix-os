@@ -45,6 +45,124 @@ async function sendControl(path: string, payload: unknown): Promise<unknown> {
 }
 
 describe("Codex app-server control runtime", () => {
+  it("reuses a session approval for the next command approval request", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-session-appr-"));
+    const fakeCodexPath = join(homePath, "fake-codex-session-approval.mjs");
+    const responsesPath = join(homePath, "responses.jsonl");
+    const eventPath = codexProviderEventPath(homePath, "sess_appr_session_1");
+    const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { appendFile } from 'node:fs/promises';",
+      "import { createInterface } from 'node:readline';",
+      `const responsesPath = ${JSON.stringify(responsesPath)};`,
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-session-approval' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-session-approval' } } }));",
+      "    console.log(JSON.stringify({ id: 41, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-1', availableDecisions: ['accept', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['mkdir'] } }, 'decline', 'cancel'] } }));",
+      "  } else if (message.id === 41) {",
+      "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
+      "    console.log(JSON.stringify({ id: 42, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-2', availableDecisions: ['accept', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['rmdir'] } }, 'decline', 'cancel'] } }));",
+      "  } else if (message.id === 42) {",
+      "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-session-approval', status: 'completed', items: [] } } }));",
+      "    process.exit(0);",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "Run two commands.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      const requested = await waitForTranscript(eventPath, /matrix\.codex\.approval\.requested/);
+      const approval = requested.trim().split("\n").map((line) => JSON.parse(line))
+        .find((event) => event.type === "matrix.codex.approval.requested");
+      await expect(sendControl(controlPath, {
+        type: "approval",
+        approvalId: approval.approvalId,
+        decision: "approve_for_session",
+        clientRequestId: "req_session_approval_1",
+      })).resolves.toEqual({ ok: true });
+      await expect(waitForExit(child)).resolves.toBe(0);
+
+      const responses = (await readFile(responsesPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      expect(responses).toEqual([
+        { id: 41, result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["mkdir"] } } } },
+        { id: 42, result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["rmdir"] } } } },
+      ]);
+      const transcript = await readFile(eventPath, "utf8");
+      expect(transcript.match(/matrix\.codex\.approval\.requested/g)).toHaveLength(1);
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a persisted native thread instead of starting an empty one", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-thread-resume-"));
+    const fakeCodexPath = join(homePath, "fake-codex-thread-resume.mjs");
+    const requestsPath = join(homePath, "requests.jsonl");
+    const eventPath = codexProviderEventPath(homePath, "sess_thread_resume_1");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { appendFile } from 'node:fs/promises';",
+      "import { createInterface } from 'node:readline';",
+      `const requestsPath = ${JSON.stringify(requestsPath)};`,
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start' || message.method === 'thread/resume') {",
+      "    await appendFile(requestsPath, JSON.stringify({ method: message.method, params: message.params }) + '\\n');",
+      "    console.log(JSON.stringify({ id: message.id, result: { thread: { id: message.params.threadId ?? 'unexpected-new-thread' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  } else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-resumed' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-resumed', itemId: 'native-message-resumed', delta: 'Context preserved.' } }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-resumed', status: 'completed', items: [] } } }));",
+      "    process.exit(0);",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "Continue the task.",
+      providerThreadId: "native-thread-persisted",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await expect(waitForExit(child)).resolves.toBe(0);
+      const requests = (await readFile(requestsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      expect(requests).toEqual([expect.objectContaining({
+        method: "thread/resume",
+        params: expect.objectContaining({ threadId: "native-thread-persisted" }),
+      })]);
+      expect(await readFile(eventPath, "utf8")).toContain("Context preserved.");
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("durably publishes a safe approval before accepting one idempotent decision", async () => {
     const homePath = await mkdtemp(join("/tmp", "codex-appr-"));
     const fakeCodexPath = join(homePath, "fake-codex-app-server.mjs");
@@ -326,6 +444,7 @@ describe("Codex app-server control runtime", () => {
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-final-item', type: 'agentMessage', text: '', phase: 'final_answer' } } }));",
       "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-final-item', delta: 'The repository is ready.' } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-final-item', type: 'agentMessage', text: 'The repository is ready.', phase: 'final_answer' } } }));",
+      "    console.log(JSON.stringify({ method: 'thread/tokenUsage/updated', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', tokenUsage: { total: { inputTokens: 120, cachedInputTokens: 40, outputTokens: 36, reasoningOutputTokens: 12, totalTokens: 156 }, last: { inputTokens: 120, cachedInputTokens: 40, outputTokens: 36, reasoningOutputTokens: 12, totalTokens: 156 }, modelContextWindow: 200000 } } }));",
       "    console.log(JSON.stringify({ method: 'turn/completed', params: { threadId: 'native-thread-items', turn: { id: 'native-turn-items', status: 'completed', items: [] } } }));",
       "  }",
       "}",
@@ -351,11 +470,18 @@ describe("Codex app-server control runtime", () => {
       expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output|secret-mcp-token|private result/);
 
       let sequence = 0;
-      const events = transcript.trim().split("\n").flatMap((line) => parseCodexExecJsonLine(line, {
+      const parsedTranscript = transcript.trim().split("\n").map((line) => parseCodexExecJsonLine(line, {
         threadId: "thread_matrix_1",
         now: () => new Date("2026-08-21T10:00:00.000Z"),
         nextEventId: () => `evt_${++sequence}`,
-      }).events);
+      }));
+      expect(parsedTranscript.at(-1)?.tokenUsage).toEqual({
+        inputTokens: 120,
+        outputTokens: 36,
+        cachedInputTokens: 40,
+        reasoningOutputTokens: 12,
+      });
+      const events = parsedTranscript.flatMap((parsed) => parsed.events);
       expect(events.map((event) => event.type)).toEqual([
         "assistant.text.delta",
         "assistant.text.completed",
@@ -583,6 +709,208 @@ describe("Codex app-server control runtime", () => {
         /"type":"turn\.completed"[\s\S]*"type":"turn\.completed"/,
       );
       expect(transcript.match(/"type":"turn.completed"/g)).toHaveLength(2);
+    } finally {
+      child.kill("SIGTERM");
+      await waitForExit(child).catch(() => undefined);
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("steers the exact active native Turn without starting a second Turn", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-control-steer-"));
+    const fakeCodexPath = join(homePath, "fake-codex-control-steer.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_control_steer_1");
+    const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "let turnStarts = 0;",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-steer' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    turnStarts += 1;",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-steer' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-steer', itemId: 'native-message-steer', delta: 'before-steer-' + 'x'.repeat(200) } }));",
+      "  } else if (message.method === 'turn/steer') {",
+      "    const exact = message.params.threadId === 'native-thread-steer' && message.params.expectedTurnId === 'native-turn-steer' && message.params.clientUserMessageId === 'req_control_steer_1' && message.params.input?.[0]?.text === 'Focus on the failing test.' && turnStarts === 1;",
+      "    if (!exact) console.log(JSON.stringify({ id: message.id, error: { code: -32600, message: 'mismatch' } }));",
+      "    else {",
+      "      console.log(JSON.stringify({ id: message.id, result: { turnId: 'native-turn-steer' } }));",
+      "      console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-steer', itemId: 'native-message-steer', delta: '-after-steer' } }));",
+      "      console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-steer', status: 'completed', items: [] } } }));",
+      "    }",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "First turn.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await waitForTranscript(eventPath, /before-steer/);
+      await expect(sendControl(controlPath, {
+        type: "steer",
+        prompt: "Focus on the failing test.",
+        clientRequestId: "req_control_steer_1",
+      })).resolves.toEqual({ ok: true });
+      const transcript = await waitForTranscript(eventPath, /"type":"turn\.completed"/);
+      expect(transcript).toContain("before-steer");
+      expect(transcript).toContain("after-steer");
+      expect(transcript.match(/"type":"turn\.completed"/g)).toHaveLength(1);
+      expect(child.exitCode).toBeNull();
+    } finally {
+      child.kill("SIGTERM");
+      await waitForExit(child).catch(() => undefined);
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("retries a busy native Turn steer at the next completed tool boundary", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-control-busy-steer-"));
+    const fakeCodexPath = join(homePath, "fake-codex-control-busy-steer.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_control_busy_steer_1");
+    const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "let steerAttempts = 0;",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-busy-steer' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-busy-steer' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn-busy-steer', item: { id: 'native-tool-busy-steer', type: 'commandExecution', status: 'inProgress', command: '/bin/sleep' } } }));",
+      "  } else if (message.method === 'turn/steer') {",
+      "    steerAttempts += 1;",
+      "    if (steerAttempts === 1) {",
+      "      console.log(JSON.stringify({ id: message.id, error: { code: -32600, message: 'no active turn to steer' } }));",
+      "      setTimeout(() => console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-busy-steer', item: { id: 'native-tool-busy-steer', type: 'commandExecution', status: 'completed', command: '/bin/sleep' } } })), 20);",
+      "    } else {",
+      "      console.log(JSON.stringify({ id: message.id, result: { turnId: 'native-turn-busy-steer' } }));",
+      "      console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-busy-steer', itemId: 'native-message-busy-steer', delta: 'busy-steer-retried' } }));",
+      "      console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-busy-steer', status: 'completed', items: [] } } }));",
+      "    }",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "First turn.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await waitForTranscript(eventPath, /"type":"matrix\.codex\.tool\.started"/);
+      await expect(sendControl(controlPath, {
+        type: "steer",
+        prompt: "Focus on the correction.",
+        clientRequestId: "req_control_busy_steer_1",
+      })).resolves.toEqual({ ok: true });
+      const transcript = await waitForTranscript(eventPath, /busy-steer-retried/);
+      expect(transcript).toContain('"type":"turn.completed"');
+      expect(child.exitCode).toBeNull();
+    } finally {
+      child.kill("SIGTERM");
+      await waitForExit(child).catch((error: unknown) => {
+        console.warn("Busy steer test runner cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+      });
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("interrupts only the active native Turn and keeps the runner available for the next Turn", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-control-interrupt-"));
+    const fakeCodexPath = join(homePath, "fake-codex-control-interrupt.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_control_interrupt_1");
+    const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "let turn = 0;",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-interrupt' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    turn += 1;",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: `native-turn-${turn}` } } }));",
+      "    if (turn === 1) console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-1', itemId: 'native-message-1', delta: 'before-interrupt' } }));",
+      "    else if (turn === 2) {",
+      "      console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-2', itemId: 'native-message-2', delta: 'after-interrupt' } }));",
+      "      console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-2', status: 'completed', items: [] } } }));",
+      "    }",
+      "  } else if (message.method === 'turn/interrupt') {",
+      "    console.log(JSON.stringify({ id: message.id, result: {} }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: message.params.turnId, status: 'interrupted', items: [] } } }));",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "First turn.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await waitForTranscript(eventPath, /before-interrupt/);
+      await expect(sendControl(controlPath, {
+        type: "interrupt",
+        clientRequestId: "req_control_interrupt_1",
+      })).resolves.toEqual({ ok: true });
+      await expect(sendControl(controlPath, {
+        type: "turn",
+        prompt: "Second turn.",
+        modelOptions: [],
+        clientRequestId: "req_control_interrupt_2",
+      })).resolves.toEqual({ ok: true });
+      const transcript = await waitForTranscript(
+        eventPath,
+        /after-interrupt[\s\S]*"type":"turn\.completed"/,
+      );
+      expect(transcript).toContain('"type":"turn.aborted"');
+      expect(transcript).toContain('"type":"turn.completed"');
+      expect(child.exitCode).toBeNull();
     } finally {
       child.kill("SIGTERM");
       await waitForExit(child).catch(() => undefined);

@@ -8,12 +8,15 @@ import NavigationHeader from "@desktop/renderer/src/features/mission-control/Nav
 import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "@desktop/renderer/src/design/layering";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
-import { useApps } from "@desktop/renderer/src/stores/apps";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { useDesktopAppDrawer } from "@desktop/renderer/src/stores/desktop-app-drawer";
 import { useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
+import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
+import { seedDesktopApps } from "./apps-query-test-utils";
+import { createDefaultOsViewDocument } from "@matrix-os/contracts";
+import { DESKTOP_ANALYTICS_EVENT } from "@desktop/renderer/src/lib/desktop-analytics";
 
 const createObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const revokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
@@ -43,12 +46,20 @@ vi.mock("@desktop/renderer/src/features/mission-control/TabContent", () => ({
     tab,
     layoutRevision,
     settingsSection,
+    visualScale,
   }: {
     tab: { title: string };
     layoutRevision?: string;
     settingsSection?: string;
+    visualScale?: number;
   }) => (
-    <div data-layout-revision={layoutRevision} data-settings-section={settingsSection}>{tab.title} content</div>
+    <div
+      data-layout-revision={layoutRevision}
+      data-settings-section={settingsSection}
+      data-visual-scale={visualScale}
+    >
+      {tab.title} content
+    </div>
   ),
   TabErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));
@@ -61,16 +72,19 @@ vi.mock("@desktop/renderer/src/features/mission-control/AccountMenu", () => ({
 vi.mock("@desktop/renderer/src/features/updates/DesktopUpdateButton", () => ({
   default: () => null,
 }));
+vi.mock("@desktop/renderer/src/features/onboarding/GettingStartedPopover", () => ({
+  default: () => null,
+}));
 
 beforeEach(() => {
   useTabs.setState(useTabs.getInitialState(), true);
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
   useConnection.setState(useConnection.getInitialState(), true);
-  useApps.setState(useApps.getInitialState(), true);
   useUi.setState(useUi.getInitialState(), true);
   useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
   useDesktopAppDrawer.setState(useDesktopAppDrawer.getInitialState(), true);
   useDesktopIcons.setState(useDesktopIcons.getInitialState(), true);
+  desktopQueryClient.clear();
   useNativeDesktopMode.setState({ hydrated: true });
   window.operator = {
     invoke: vi.fn(async (channel: string) => channel === "state:get"
@@ -213,10 +227,18 @@ describe("native desktop shell", () => {
     const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const backgrounds = [
+      { background: { type: "wallpaper", name: "moraine-lake.jpg" } },
+      { background: { type: "solid", color: "#123456" } },
+    ];
     const api = {
-      get: vi.fn()
-        .mockResolvedValueOnce({ background: { type: "wallpaper", name: "moraine-lake.jpg" } })
-        .mockResolvedValueOnce({ background: { type: "solid", color: "#123456" } }),
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/apps") return { apps: [] };
+        if (path === "/api/os-view-state") {
+          return { revision: 1, document: createDefaultOsViewDocument(), updatedAt: "2026-08-30T12:00:00.000Z" };
+        }
+        return backgrounds.shift();
+      }),
       getBlob: vi.fn(async () => new Blob(["wallpaper"], { type: "image/jpeg" })),
     };
     useConnection.setState({ api: api as never });
@@ -231,15 +253,23 @@ describe("native desktop shell", () => {
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundColor).toBe("rgb(18, 52, 86)");
     });
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get.mock.calls.filter(([path]) => path === "/api/settings/desktop")).toHaveLength(2);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:first-wallpaper");
   });
 
   it("refreshes the background after returning from the hosted Browser to Desktop", async () => {
+    const backgrounds = [
+      { background: { type: "solid", color: "#111111" } },
+      { background: { type: "solid", color: "#223344" } },
+    ];
     const api = {
-      get: vi.fn()
-        .mockResolvedValueOnce({ background: { type: "solid", color: "#111111" } })
-        .mockResolvedValueOnce({ background: { type: "solid", color: "#223344" } }),
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/apps") return { apps: [] };
+        if (path === "/api/os-view-state") {
+          return { revision: 1, document: createDefaultOsViewDocument(), updatedAt: "2026-08-30T12:00:00.000Z" };
+        }
+        return backgrounds.shift();
+      }),
     };
     useConnection.setState({ api: api as never });
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
@@ -254,7 +284,7 @@ describe("native desktop shell", () => {
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundColor).toBe("rgb(34, 51, 68)");
     });
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get.mock.calls.filter(([path]) => path === "/api/settings/desktop")).toHaveLength(2);
   });
 
   it.each([
@@ -278,7 +308,7 @@ describe("native desktop shell", () => {
 
     expect(screen.getByRole("dialog", { name: "Chat window" })).toBeTruthy();
     expect(screen.getByText("Chat content")).toBeTruthy();
-    expect(document.querySelector("[data-os-window-chrome-placement]")?.textContent).toBe("Chat");
+    expect(document.querySelector("[data-os-window-chrome-placement]")?.textContent).toBe("");
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
@@ -409,6 +439,20 @@ describe("native desktop shell", () => {
     expect(document.querySelector("[data-native-desktop-shell]")).toBeTruthy();
   });
 
+  it("forwards native Canvas zoom to terminal surfaces without replacing the surface", () => {
+    useNativeDesktopMode.setState({ mode: "canvas", hydrated: true, zoom: 0.5 });
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+    const terminalContent = screen.getByText("Terminal content");
+    expect(terminalContent.getAttribute("data-visual-scale")).toBe("0.5");
+
+    act(() => useNativeDesktopMode.setState({ zoom: 2 }));
+
+    expect(screen.getByText("Terminal content")).toBe(terminalContent);
+    expect(terminalContent.getAttribute("data-visual-scale")).toBe("2");
+  });
+
   it("puts minimize and close controls inside each maximized tab", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
@@ -425,9 +469,15 @@ describe("native desktop shell", () => {
   });
 
   it("opens Chat as a floating window and only adds it to the tab strip when maximized", () => {
+    const events: unknown[] = [];
+    const capture = (event: Event) => events.push((event as CustomEvent).detail);
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
+
+    expect(events).toContainEqual({ name: "desktop_app_opened", appKind: "chat" });
+    window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
 
     const tab = useTabs.getState().tabs.find((candidate) => candidate.kind === "work");
     expect(tab).toBeTruthy();
@@ -440,6 +490,27 @@ describe("native desktop shell", () => {
 
     expect(useDesktopSurfaces.getState().surfaces[tab!.id]?.mode).toBe("tab");
     expect(screen.getByRole("tab", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("tracks Create app and user-installed app launches without app identity", () => {
+    const events: unknown[] = [];
+    const capture = (event: Event) => events.push((event as CustomEvent).detail);
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    seedDesktopApps([{ slug: "customer-roadmap", name: "Customer Roadmap" }]);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Customer Roadmap" }));
+    expect(events).toContainEqual({ name: "desktop_app_opened", appKind: "installed_app" });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Create app" }));
+    expect(events).toContainEqual({ name: "desktop_app_creation_started" });
+    expect(JSON.stringify(events)).not.toContain("customer-roadmap");
+    expect(JSON.stringify(events)).not.toContain("Customer Roadmap");
+    window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
   });
 
   it("opens Apps as a transient launcher instead of a desktop app surface", () => {
@@ -467,14 +538,82 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
   });
 
+  it("keeps cached apps visible while refreshing the catalog when the launcher opens", async () => {
+    let resolveApps!: (value: unknown) => void;
+    const appsResponse = new Promise<unknown>((resolve) => {
+      resolveApps = resolve;
+    });
+    const api = {
+      get: vi.fn((path: string) => path === "/api/apps"
+        ? appsResponse
+        : Promise.resolve({ background: { type: "solid", color: "#111111" } })),
+    };
+    useConnection.setState({
+      api: api as never,
+      platformHost: "https://runtime.example.com",
+      authGeneration: 1,
+      runtimeSlot: "primary",
+    });
+    seedDesktopApps([{ slug: "cached", name: "Cached App" }]);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+
+    expect(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Cached App" })).toBeTruthy();
+    expect(api.get).toHaveBeenCalledWith("/api/apps", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+
+    await act(async () => {
+      resolveApps({ apps: [{ slug: "fresh", name: "Fresh App" }] });
+      await appsResponse;
+    });
+
+    await waitFor(() => {
+      const launcher = within(screen.getByRole("dialog", { name: "App launcher" }));
+      expect(launcher.getByRole("button", { name: "Fresh App" })).toBeTruthy();
+      expect(launcher.queryByRole("button", { name: "Cached App" })).toBeNull();
+    });
+  });
+
+  it("switches Electron Desktop to Canvas and back without replacing shared apps or geometry", () => {
+    seedDesktopApps([]);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
+    const chatTab = useTabs.getState().tabs.find((tab) => tab.kind === "work")!;
+    const desktopBounds = useDesktopSurfaces.getState().surfaces[chatTab.id]!.bounds;
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Canvas" }));
+
+    expect(useNativeDesktopMode.getState().mode).toBe("canvas");
+    expect(screen.getByTestId("native-desktop-canvas")).toBeTruthy();
+    expect(screen.getByText("Chat content")).toBeTruthy();
+    expect(useTabs.getState().tabs.find((tab) => tab.id === chatTab.id)).toEqual(chatTab);
+
+    act(() => useDesktopSurfaces.getState().setSurfaceBounds(
+      chatTab.id,
+      { x: 2_000, y: -600, width: 900, height: 700 },
+      { width: 1_200, height: 720 },
+      false,
+    ));
+    const canvasBounds = useDesktopSurfaces.getState().surfaces[chatTab.id]!.bounds;
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Desktop" }));
+    expect(useNativeDesktopMode.getState().mode).toBe("desktop");
+    expect(useDesktopSurfaces.getState().surfaces[chatTab.id]!.bounds).toEqual(desktopBounds);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+      .getByRole("button", { name: "Canvas" }));
+    expect(useDesktopSurfaces.getState().surfaces[chatTab.id]!.bounds).toEqual(canvasBounds);
+  });
+
   it("retains launcher icon elements after closing so reopening does not download them again", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
-    useApps.setState({
-      apps: [{ slug: "notes", name: "Notes" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
@@ -494,12 +633,7 @@ describe("native desktop shell", () => {
 
   it("keeps the fixed header sidebar tab inert beside maximized workspace tabs", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
-    useApps.setState({
-      apps: [{ slug: "notes", name: "Notes" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
@@ -586,12 +720,7 @@ describe("native desktop shell", () => {
 
   it("uses the same icon-and-name tile treatment for first-party and user apps", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
-    useApps.setState({
-      apps: [{ slug: "notes", name: "Notes" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
@@ -608,12 +737,7 @@ describe("native desktop shell", () => {
 
   it("opens launcher apps as windows after returning from retained tabs to the Desktop", () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
-    useApps.setState({
-      apps: [{ slug: "notes", name: "Notes" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
@@ -818,7 +942,8 @@ describe("native desktop shell", () => {
     const terminalWindow = screen.getByRole("dialog", { name: "Terminal window" });
     const workChrome = workWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
     const terminalChrome = terminalWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
-    expect(workChrome).toBeNull();
+    expect(workChrome?.style.width).toBe("280px");
+    expect(workChrome?.textContent).not.toContain("Chat");
     expect(terminalChrome?.style.width).toBe("280px");
     expect(terminalChrome?.textContent).not.toContain("Terminal");
     expect((terminalWindow.querySelector("[data-os-window-gesture-layer]") as HTMLElement).className).toContain("inset-0");

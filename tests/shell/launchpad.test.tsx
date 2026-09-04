@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MissionControl } from "../../shell/src/components/MissionControl.js";
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
@@ -9,6 +10,8 @@ import {
   computeLaunchpadRows,
 } from "../../shell/src/components/launchpad/launchpad-utils.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
+import { createShellQueryClient } from "../../shell/src/api/query-client.js";
+import { appKeys } from "../../shell/src/api/apps.js";
 
 vi.mock("@/hooks/useTaskBoard", () => ({
   useTaskBoard: () => ({
@@ -50,15 +53,25 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
     ...handlers,
   };
   let result!: ReturnType<typeof render>;
+  const queryClient = createShellQueryClient();
+  queryClient.setDefaultOptions({ queries: { retry: false } });
   await act(async () => {
-    result = render(<MissionControl open={false} {...props} />);
+    result = render(
+      <QueryClientProvider client={queryClient}>
+        <MissionControl open={false} {...props} />
+      </QueryClientProvider>,
+    );
     await Promise.resolve();
   });
   await act(async () => {
-    result.rerender(<MissionControl open {...props} />);
+    result.rerender(
+      <QueryClientProvider client={queryClient}>
+        <MissionControl open {...props} />
+      </QueryClientProvider>,
+    );
     await Promise.resolve();
   });
-  return { ...result, handlers };
+  return { ...result, handlers, queryClient };
 }
 
 function setDesign(style: string) {
@@ -83,12 +96,44 @@ describe("Launchpad (macos-glass launcher)", () => {
       cb(0);
       return 0;
     });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     document.body.style.overflow = "";
     act(() => useWindowManager.setState({ appLaunchTimes: {} }));
+  });
+
+  it("keeps current apps visible until the launcher refresh completes", async () => {
+    let resolveResponse!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(() => response));
+
+    const { queryClient } = await renderLauncher();
+
+    expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
+
+    await act(async () => {
+      resolveResponse(new Response(JSON.stringify([{
+        name: "Fresh App",
+        path: "/files/apps/fresh/index.html",
+        slug: "fresh",
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+      await response;
+    });
+
+    await waitFor(() => expect(queryClient.getQueryData(appKeys.list())).toEqual([{
+      name: "Fresh App",
+      path: "/files/apps/fresh/index.html",
+      slug: "fresh",
+    }]));
   });
 
   it.each(["flat", "macos-glass"])(
@@ -156,6 +201,49 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(screen.queryByRole("button", { name: /go to page/i })).toBeNull();
   });
 
+  it("matches Electron Desktop's fixed launcher icon treatment", async () => {
+    setDesign("macos-glass");
+    const apps: TestApp[] = [
+      { name: "Chat", path: "__chat__" },
+      { name: "Terminal", path: "__terminal__" },
+      { name: "Files", path: "__file-browser__" },
+      { name: "Editor", path: "__editor__" },
+      { name: "Settings", path: "__settings__" },
+      { name: "Plugins", path: "__plugins__" },
+      { name: "Browser", path: "apps/browser/dist/index.html", iconUrl: "/icons/browser.png" },
+      { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/notes.png" },
+    ];
+
+    await renderLauncher({ apps });
+
+    const expectedBackgrounds = new Map([
+      ["Chat", "var(--surface-error-emphasis, #BA5236)"],
+      ["Terminal", "var(--surface-warning-emphasis, #E0AA52)"],
+      ["Files", "var(--surface-brand-emphasis, #748E59)"],
+      ["Editor", "rgb(77, 127, 168)"],
+      ["Settings", "var(--surface-neutral-emphasis, #6B7280)"],
+      ["Plugins", "rgb(124, 109, 180)"],
+      ["Browser", "var(--surface-info-emphasis, #3B85BA)"],
+    ]);
+
+    for (const [name, background] of expectedBackgrounds) {
+      const tile = screen.getByRole("button", { name });
+      const icon = tile.querySelector<HTMLElement>("[data-launchpad-built-in-icon]");
+      expect(icon).toBeTruthy();
+      expect(icon?.style.background).toBe(background);
+      expect(icon?.querySelector("svg")).toBeTruthy();
+      expect(icon?.textContent).toBe("");
+    }
+
+    const createIcon = screen.getByRole("button", { name: "Create app" })
+      .querySelector<HTMLElement>("[data-launchpad-create-icon]");
+    expect(createIcon?.style.background).toBe("var(--accent)");
+    expect(createIcon?.style.color).toBe("white");
+    expect(screen.getByRole("button", { name: "Browser" }).querySelector("img")).toBeNull();
+    expect(screen.getByRole("button", { name: "Notes" }).querySelector("img")?.getAttribute("src"))
+      .toBe("/icons/notes.png");
+  });
+
   it("launches Create app through the dedicated first tile", async () => {
     setDesign("macos-glass");
     const { handlers, container } = await renderLauncher();
@@ -176,6 +264,29 @@ describe("Launchpad (macos-glass launcher)", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
 
     expect(handlers.onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html");
+  });
+
+  it("keeps OS-view destinations launcher-only", async () => {
+    setDesign("macos-glass");
+    const { handlers } = await renderLauncher({
+      apps: [{ name: "Web Canvas", path: "__os-view-canvas__", iconUrl: "/icons/canvas.svg" }],
+    });
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Web Canvas" }));
+
+    expect(screen.queryByRole("menuitem", { name: "Add Web Canvas to Desktop" })).toBeNull();
+    expect(handlers.onAddToDesktop).not.toHaveBeenCalled();
+  });
+
+  it("renders Web Canvas with a bundled vector instead of a letter fallback", async () => {
+    setDesign("macos-glass");
+    await renderLauncher({
+      apps: [{ name: "Web Canvas", path: "__os-view-canvas__", iconUrl: "/icons/canvas.svg" }],
+    });
+
+    const canvas = screen.getByRole("button", { name: "Web Canvas" });
+    expect(canvas.querySelector("img")).toBeNull();
+    expect(canvas.querySelector("[data-launchpad-built-in-icon] svg")).toBeTruthy();
   });
 
   it("reserves the grid padding and gaps so launchpad stays centered in the viewport", () => {

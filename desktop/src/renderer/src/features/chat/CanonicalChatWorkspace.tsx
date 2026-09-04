@@ -7,11 +7,14 @@ import type {
   CanonicalChatMessagePart,
   CanonicalChatDetailResponse,
   CanonicalProviderCatalog,
+  CanonicalChatQueuedTurn,
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
 import { MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
+import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import type { ApiClient } from "../../lib/api";
@@ -26,10 +29,7 @@ import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
 import { canonicalChatInputParts, canonicalChatTitle } from "./canonical-chat-submission";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
-import {
-  createCanonicalComposerSelection,
-  type CanonicalComposerSelection,
-} from "./canonical-composer-state";
+import { chatSendFailureMessage } from "./chat-send-error";
 import { failClosedProviderCatalog, useChatProviderCatalog } from "./chat-provider-catalog";
 import { searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
@@ -40,26 +40,14 @@ import {
   type SharedChatComposerSubmission,
 } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
+import { QueuedTurnsPanel, type QueuedTurnAction } from "./QueuedTurnsPanel";
 import { useCanonicalChatRouteController } from "./use-canonical-chat-route-controller";
+import { useCanonicalComposerSelection } from "./use-canonical-composer-selection";
 import { useProviderSetup } from "./use-provider-setup";
 import { useCreateAppRequest } from "../../stores/create-app-request";
+import { useChatComposerDrafts } from "./use-chat-composer-drafts";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
-
-function rememberedOptions(
-  catalog: CanonicalProviderCatalog,
-  selection: CanonicalComposerSelection,
-) {
-  const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
-  if (!instance) return [];
-  return selection.options.filter((selected) => {
-    const descriptor = instance.options.find((candidate) => candidate.id === selected.id);
-    if (!descriptor) return false;
-    if (descriptor.kind === "boolean") return typeof selected.value === "boolean";
-    return typeof selected.value === "string"
-      && descriptor.values?.some((candidate) => candidate.value === selected.value) === true;
-  });
-}
 
 function projectContext(
   projectId: string | undefined,
@@ -117,7 +105,7 @@ export function CanonicalChatWorkspace({
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const liveCatalog = useChatProviderCatalog(fallbackCatalog, api ?? null, active);
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog, { api: api ?? null, active });
   const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
   const providerCatalog = catalog ?? (
     liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
@@ -130,14 +118,38 @@ export function CanonicalChatWorkspace({
     autoSelectFirst: false,
     eventSource,
   });
-  const [draft, setDraft] = useState("");
-  const [query, setQuery] = useState("");
-  const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
-  const [draftProjectId, setDraftProjectId] = useState<string | null>(projectId);
-  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
+  const routedComposerChatId = externalNavigation
+    ? initialChatId ?? controller.activeChatId
+    : controller.activeChatId ?? initialChatId;
+  const {
+    text: draft,
+    referenceTokens,
+    draftProjectId,
+    setText: setDraft,
+    setReferenceTokens,
+    setDraftProjectId,
+    prepareNewChatDraft,
+    removeChatDraft,
+  } = useChatComposerDrafts({
+    clientIdentity: client,
+    chatId: routedComposerChatId,
+    projectId,
+    conversation: globalView === "conversation",
+  });
+  const [query, setQuery] = useState("");
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [composerAction, setComposerAction] = useState<"queue" | "edit" | null>(null);
+  const [queuePendingAction, setQueuePendingAction] = useState<{
+    queuedTurnId: string;
+    action: QueuedTurnAction;
+  } | null>(null);
+  const [optimisticQueuedTurns, setOptimisticQueuedTurns] = useState<CanonicalChatQueuedTurn[] | null>(null);
+  const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const submissionSequence = useRef(0);
@@ -145,15 +157,21 @@ export function CanonicalChatWorkspace({
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
   const runtimeSummary = useCodingAgentWorkspace((state) => state.summary);
   const runtimeStatus = useCodingAgentWorkspace((state) => state.status);
+  const composerFocusRequestId = useCodingAgentWorkspace((state) => state.composerFocusRequestId);
   const refreshRuntimeSummary = useCodingAgentWorkspace((state) => state.refresh);
   const handleProviderSetup = useProviderSetup(
     runtimeSummary?.providers ?? EMPTY_PROVIDER_SUMMARIES,
     refreshRuntimeSummary,
     api ?? null,
   );
-  const [selection, setSelection] = useState<CanonicalComposerSelection | null>(() => (
-    catalog ? createCanonicalComposerSelection(providerCatalog) : null
-  ));
+  const { selection, onSelectionChange } = useCanonicalComposerSelection({
+    catalog: providerCatalog,
+    catalogReady: Boolean(catalog || liveCatalog.status === "ready"),
+    initializeImmediately: Boolean(catalog),
+    chatId: controller.detail?.record.chat.id ?? null,
+    currentSelection: controller.detail?.record.chat.currentSelection,
+    boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
+  });
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -164,11 +182,10 @@ export function CanonicalChatWorkspace({
 
   useEffect(() => {
     if (!active || !createAppRequest) return;
-    setDraft(createAppRequest.prompt);
-    setDraftProjectId(projectId);
+    prepareNewChatDraft({ text: createAppRequest.prompt });
     setGlobalView("draft");
     clearCreateAppRequest(createAppRequest.id);
-  }, [active, clearCreateAppRequest, createAppRequest, projectId]);
+  }, [active, clearCreateAppRequest, createAppRequest, prepareNewChatDraft]);
 
   useLayoutEffect(() => {
     const workspace = workspaceRef.current;
@@ -203,38 +220,16 @@ export function CanonicalChatWorkspace({
   useLayoutEffect(() => {
     submissionSequence.current += 1;
     setUploadingAttachments(false);
+    setComposerAction(null);
+    setQueuePendingAction(null);
+    setOptimisticQueuedTurns(null);
+    setEditingQueuedTurn(null);
+    setSubmissionError(null);
   }, [client]);
 
   useEffect(() => {
-    setSelection((current) => {
-      if (!catalog && liveCatalog.status !== "ready") return null;
-      const boundInstance = controller.detail?.record.providerBinding?.instanceId;
-      const currentInstance = providerCatalog.instances.find((instance) => instance.id === current?.instanceId);
-      const requiredInstance = boundInstance
-        ? providerCatalog.instances.find((instance) => instance.id === boundInstance)
-        : currentInstance;
-      const next = requiredInstance
-        ? createCanonicalComposerSelection(providerCatalog, requiredInstance.id)
-        : createCanonicalComposerSelection(providerCatalog);
-      if (!next) return null;
-      const currentSelection = controller.detail?.record.chat.currentSelection;
-      const rememberedModel = currentSelection && currentSelection.instanceId === next.instanceId
-        ? requiredInstance?.models.find((model) => (
-            model.id === currentSelection.model && model.availability === "available"
-          ))
-        : undefined;
-      return currentSelection && rememberedModel
-        ? {
-            ...next,
-            model: currentSelection.model,
-            options: rememberedOptions(providerCatalog, {
-              ...next,
-              options: currentSelection.options ?? next.options,
-            }),
-          }
-        : next;
-    });
-  }, [catalog, controller.detail?.record.chat.currentSelection, controller.detail?.record.providerBinding, liveCatalog.status, providerCatalog]);
+    setOptimisticQueuedTurns(null);
+  }, [controller.activeChatId]);
 
   useEffect(() => {
     const record = controller.detail?.record;
@@ -256,19 +251,44 @@ export function CanonicalChatWorkspace({
     projectLabel,
   );
   const activeRun = controller.detail?.record.activeRun;
+  const activeRunRecord = activeRun
+    ? controller.detail?.runs.find((run) => run.id === activeRun.runId)
+    : undefined;
+  const canSteerActiveRun = activeRunRecord?.capabilitySnapshot.steering === "same_run";
+  const serverQueuedTurns = controller.detail?.queuedTurns ?? [];
+  const queuedTurns = optimisticQueuedTurns ?? serverQueuedTurns;
+  const composerHasInput = Boolean(
+    draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
+  );
   const transcript = controller.detail ? canonicalChatPresentation(controller.detail) : [];
+
+  useEffect(() => {
+    if (!editingQueuedTurn || !controller.detail) return;
+    const editStillExists = controller.detail.record.chat.id === editingQueuedTurn.chatId
+      && queuedTurns.some((turn) => turn.id === editingQueuedTurn.id);
+    if (!editStillExists) setEditingQueuedTurn(null);
+  }, [controller.detail, editingQueuedTurn, queuedTurns]);
   const copyText = useCallback(async (text: string) => {
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
     await navigator.clipboard.writeText(text);
   }, []);
   const retryTurn = controller.retryTurn;
+  const submitApproval = controller.submitApproval;
   const performTranscriptAction = useCallback(async (action: ConversationActionPresentation) => {
-    if (action.kind !== "retry") throw new Error("UnsupportedConversationAction");
-    const admitted = await retryTurn(action.turnId);
-    if (!admitted) throw new Error("RetryUnavailable");
-  }, [retryTurn]);
+    if (action.kind === "retry") {
+      const admitted = await retryTurn(action.turnId);
+      if (!admitted) throw new Error("RetryUnavailable");
+      return;
+    }
+    if (action.kind === "approval") {
+      const submitted = await submitApproval(action.requestId, action.decision);
+      if (!submitted) throw new Error("ApprovalUnavailable");
+      return;
+    }
+    throw new Error("UnsupportedConversationAction");
+  }, [retryTurn, submitApproval]);
   const canPerformTranscriptAction = useCallback((action: ConversationActionPresentation) => (
-    action.kind === "retry"
+    action.kind === "retry" || action.kind === "approval"
   ), []);
   const activeProjectSlug = projects.find((project) => (
     project.id === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
@@ -295,14 +315,47 @@ export function CanonicalChatWorkspace({
     ) onProjectChanged?.(moved.chat.id, targetProjectId, moved.chat.title);
   };
 
+  const resolveSubmissionParts = async (
+    submission: SharedChatComposerSubmission,
+    isCurrentSubmission: () => boolean,
+  ): Promise<CanonicalChatMessagePart[] | null> => {
+    const uploaded = await attachments.uploadAll();
+    if (!isCurrentSubmission()) return null;
+    if (!uploaded.ok) {
+      setSubmissionError(chatSendFailureMessage(uploaded.error));
+      return null;
+    }
+    const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
+      attachment.path
+        ? [{
+            type: "attachment_reference" as const,
+            attachmentId: attachment.id,
+            kind: attachment.kind === "image" ? "image" as const : "file" as const,
+            label: attachment.label,
+            ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+            ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
+            ownerReference: attachment.path,
+          }]
+        : []
+    ));
+    const parts = [...canonicalChatInputParts(submission), ...uploadedParts];
+    return parts.length > 0 ? parts : null;
+  };
+
   const submit = async (submission: SharedChatComposerSubmission) => {
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       !selection
       || activeRun
       || uploadingAttachments
-      || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
     ) return;
+    if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) {
+      setSubmissionError(chatSendFailureMessage(
+        "The selected provider does not support file attachments.",
+      ));
+      return;
+    }
+    setSubmissionError(null);
     const runtimeGeneration = captureRuntimeGeneration();
     const sequence = ++submissionSequence.current;
     const isCurrentSubmission = () => (
@@ -311,23 +364,8 @@ export function CanonicalChatWorkspace({
     );
     setUploadingAttachments(true);
     try {
-      const uploaded = await attachments.uploadAll();
-      if (!uploaded.ok || !isCurrentSubmission()) return;
-      const uploadedParts: CanonicalChatMessagePart[] = uploaded.attachments.flatMap((attachment) => (
-        attachment.path
-          ? [{
-              type: "attachment_reference" as const,
-              attachmentId: attachment.id,
-              kind: attachment.kind === "image" ? "image" as const : "file" as const,
-              label: attachment.label,
-              ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
-              ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
-              ownerReference: attachment.path,
-            }]
-          : []
-      ));
-      const parts = [...canonicalChatInputParts(submission), ...uploadedParts];
-      if (parts.length === 0) return;
+      const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
+      if (!parts) return;
       const admitted = await controller.submitTurn({
         parts,
         selection: {
@@ -356,15 +394,135 @@ export function CanonicalChatWorkspace({
     }
   };
 
+  const submitQueueAction = async (submission: SharedChatComposerSubmission) => {
+    const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
+    if (
+      (!activeRun && !editingQueuedTurn)
+      || !controller.detail
+      || !selection
+      || composerAction
+      || uploadingAttachments
+      || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
+    ) return;
+    const runtimeGeneration = captureRuntimeGeneration();
+    const sequence = ++submissionSequence.current;
+    const isCurrentSubmission = () => (
+      sequence === submissionSequence.current
+      && isCurrentRuntimeGeneration(runtimeGeneration)
+    );
+    setComposerAction(editingQueuedTurn ? "edit" : "queue");
+    setUploadingAttachments(true);
+    try {
+      const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
+      if (!parts) return;
+      const submittedDraft = draft;
+      const submittedReferenceTokens = referenceTokens;
+      const updatedParts = editingQueuedTurn
+        ? [
+            ...editingQueuedTurn.parts.filter((part) => part.type !== "text"),
+            ...parts,
+          ]
+        : parts;
+      setDraft("");
+      setReferenceTokens([]);
+      const response = editingQueuedTurn
+        ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts)
+        : await controller.queueTurn({
+            parts: updatedParts,
+            selection: {
+              instanceId: selection.instanceId,
+              model: selection.model,
+              ...(selection.options.length > 0 ? { options: selection.options } : {}),
+            },
+            interactionMode: selection.interactionMode,
+            permissionMode: selection.permissionMode,
+          });
+      if (!isCurrentSubmission()) return;
+      if (!response) {
+        setDraft(submittedDraft);
+        setReferenceTokens(submittedReferenceTokens);
+        return;
+      }
+      attachments.clear();
+      setEditingQueuedTurn(null);
+    } finally {
+      if (sequence === submissionSequence.current) {
+        setComposerAction(null);
+        setUploadingAttachments(false);
+      }
+    }
+  };
+
+  const reorderQueuedTurns = async (queuedTurnIds: string[], movedQueuedTurnId: string) => {
+    if (queuePendingAction || editingQueuedTurn) return;
+    const ordered = [...queuedTurns].sort((left, right) => left.position - right.position);
+    if (queuedTurnIds.length !== ordered.length
+      || queuedTurnIds.some((queuedTurnId) => !ordered.some((turn) => turn.id === queuedTurnId))) return;
+    const byId = new Map(ordered.map((turn) => [turn.id, turn]));
+    setOptimisticQueuedTurns(queuedTurnIds.map((queuedTurnId, index) => ({
+      ...byId.get(queuedTurnId)!,
+      position: index + 1,
+    })));
+    setQueuePendingAction({ queuedTurnId: movedQueuedTurnId, action: "move" });
+    try {
+      await controller.reorderQueuedTurns(queuedTurnIds);
+    } finally {
+      setOptimisticQueuedTurns(null);
+      setQueuePendingAction(null);
+    }
+  };
+
+  const cancelQueuedTurn = async (queuedTurnId: string) => {
+    if (queuePendingAction || editingQueuedTurn) return;
+    setQueuePendingAction({ queuedTurnId, action: "cancel" });
+    try {
+      await controller.cancelQueuedTurn(queuedTurnId);
+    } finally {
+      setQueuePendingAction(null);
+    }
+  };
+
+  const steerQueuedTurn = async (queuedTurnId: string) => {
+    if (queuePendingAction || editingQueuedTurn || !canSteerActiveRun || !activeRun) return;
+    const queuedTurn = serverQueuedTurns.find((turn) => turn.id === queuedTurnId);
+    if (!queuedTurn) return;
+    setQueuePendingAction({ queuedTurnId, action: "steer" });
+    try {
+      await controller.steerQueuedTurn(queuedTurnId);
+    } finally {
+      setQueuePendingAction(null);
+    }
+  };
+
+  const editQueuedTurn = (queuedTurnId: string) => {
+    if (queuePendingAction || composerAction || uploadingAttachments || composerHasInput) return;
+    const queuedTurn = queuedTurns.find((turn) => turn.id === queuedTurnId);
+    if (!queuedTurn) return;
+    const text = queuedTurn.parts
+      .flatMap((part) => part.type === "text" ? [part.text] : [])
+      .join("\n");
+    setEditingQueuedTurn(queuedTurn);
+    setReferenceTokens([]);
+    attachments.clear();
+    setDraft(text);
+  };
+
   const startNewChat = () => {
+    setEditingQueuedTurn(null);
+    setOptimisticQueuedTurns(null);
+    setSubmissionError(null);
     controller.startNewChat();
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
-    setDraftProjectId(projectId);
+    prepareNewChatDraft();
     setGlobalView("draft");
+    setLocalComposerFocusRequestId((requestId) => requestId + 1);
   };
 
   const selectChat = (chatId: string) => {
+    setEditingQueuedTurn(null);
+    setOptimisticQueuedTurns(null);
+    setSubmissionError(null);
     controller.selectChat(chatId);
     const selected = controller.items.find((item) => item.chat.id === chatId);
     reportedChatId.current = chatId;
@@ -385,21 +543,35 @@ export function CanonicalChatWorkspace({
           event.currentTarget.value = "";
         }}
       />
+      <QueuedTurnsPanel
+        turns={queuedTurns}
+        disabled={Boolean(editingQueuedTurn) || composerAction !== null || uploadingAttachments}
+        canSteer={canSteerActiveRun}
+        pendingAction={queuePendingAction}
+        editingQueuedTurnId={editingQueuedTurn?.id ?? null}
+        onSteer={(queuedTurnId) => void steerQueuedTurn(queuedTurnId)}
+        onEdit={editQueuedTurn}
+        onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
+        onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
+      />
       <SharedChatComposer
         value={draft}
         onChange={setDraft}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
-        onSubmit={(submission) => void submit(submission)}
+        onSubmit={(submission) => void (
+          editingQueuedTurn || activeRun ? submitQueueAction(submission) : submit(submission)
+        )}
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
+        submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(selection && !activeRun && !uploadingAttachments && (
+        canSubmit={Boolean(selection && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
         selection={selection}
-        onSelectionChange={setSelection}
+        onSelectionChange={onSelectionChange}
         onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
         instanceLocked={controller.detail?.record.providerBinding !== undefined}
         resources={resources}
@@ -414,7 +586,10 @@ export function CanonicalChatWorkspace({
           />
         )}
         onNewChat={startNewChat}
-        placeholder={globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
+        focusRequestId={active ? composerFocusRequestId + localComposerFocusRequestId : 0}
+        placeholder={editingQueuedTurn
+          ? "Edit queued message…"
+          : globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
         ariaLabel={globalView === "conversation" ? "Reply to chat" : "Start a chat"}
         leadingControls={(
           <ConversationContextPicker
@@ -541,12 +716,16 @@ export function CanonicalChatWorkspace({
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
         aria-hidden={inspectorExclusive || undefined}
         inert={inspectorExclusive || undefined}
-        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        hidden={inspectorExclusive}
+        className={cn(
+          "relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+          inspectorExclusive ? "hidden" : "flex",
+        )}
         {...attachments.paneProps}
       >
-        {controller.error ? (
-          <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[868px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-            {controller.error}
+        {submissionError || controller.error ? (
+          <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            {submissionError ?? controller.error}
           </div>
         ) : null}
         {controller.detail && globalView === "conversation" ? (
@@ -558,7 +737,7 @@ export function CanonicalChatWorkspace({
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
             }} />
-            <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">{composer}</div>
+            <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div
@@ -579,7 +758,10 @@ export function CanonicalChatWorkspace({
               className={`flex min-h-0 flex-1 justify-center ${workspaceLayout === "narrow" ? "items-start overflow-y-auto px-3 py-3" : "items-center px-5 py-8"}`}
               style={workspaceLayout === "narrow" ? { scrollbarGutter: "stable" } : undefined}
             >
-              <div className="w-full max-w-[480px]">
+              <div
+                data-slot="chat-starter-stack"
+                className={`w-full max-w-[480px] ${workspaceLayout === "narrow" ? "my-auto" : ""}`}
+              >
                 <ChatStarterCards
                   layout="two-by-two"
                   density={workspaceLayout === "narrow" ? "compact" : "regular"}
@@ -587,12 +769,12 @@ export function CanonicalChatWorkspace({
                 />
               </div>
             </div>
-            <div className={`mx-auto w-full max-w-[868px] shrink-0 ${workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5"}`}>
+            <div className={cn("mx-auto w-full shrink-0", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5")}>
               {composer}
             </div>
           </div>
         ) : (
-          <div className={`mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center ${workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8"}`}>
+          <div className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8")}>
             <div className="flex flex-col items-center gap-3 text-center">
               <MessageSquare size={28} aria-hidden style={{ color: "var(--text-tertiary)" }} />
               <h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>
@@ -624,6 +806,7 @@ export function CanonicalChatWorkspace({
             setDeleting(true);
             void controller.deleteChat(deleteTarget.id).then((deleted) => {
               if (deleted) {
+                removeChatDraft(deleteTarget.id);
                 setDeleteTarget(null);
                 setDeleteError(null);
               } else {
