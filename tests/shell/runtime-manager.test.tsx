@@ -118,6 +118,7 @@ function installFetchRouter(options: {
   billing?: ReturnType<typeof billingStatus>;
   provision?: Response;
   journey?: Record<string, unknown>;
+  journeyRetry?: Response;
   checkout?: Response | (() => Response);
 } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -136,7 +137,7 @@ function installFetchRouter(options: {
       });
     }
     if (url === "/api/journey/retry-provision") {
-      return json({ status: "started", journey: { phase: "provisioning" } });
+      return options.journeyRetry ?? json({ status: "started", journey: { phase: "provisioning" } });
     }
     if (url === "/billing/checkout") {
       return typeof options.checkout === "function"
@@ -577,6 +578,29 @@ describe("RuntimeManager", () => {
         }),
       );
     });
+  });
+
+  it("returns a journey retry rejected by billing to configuration", async () => {
+    installFetchRouter({
+      billing: billingStatus(3, "override"),
+      journey: {
+        phase: "provisioning_failed",
+        detail: "Build failed",
+        failure: { retryable: true, attempt: 1 },
+      },
+      journeyRetry: json({ error: "payment required" }, 402),
+    });
+    await renderOnboarding();
+    await beginNamedComputer("Research Lab");
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry build" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/configuration is no longer available/i);
+    expect(screen.queryByRole("heading", { name: "Default installs" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("group", { name: "Choose your Matrix computer" })).toBeTruthy();
   });
 
   it("lets users return to their computers after a non-retryable slot build failure", async () => {
