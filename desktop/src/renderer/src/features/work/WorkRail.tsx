@@ -17,9 +17,25 @@ import { WorkRailHeader } from "./work-rail/WorkRailHeader";
 import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
 import { WorkRailSection } from "./work-rail/WorkRailSection";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
+import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
+
+function applyProjectedChats(
+  records: CanonicalChatRecord[],
+  projections: CanonicalChatTitleProjection[] | undefined,
+): CanonicalChatRecord[] {
+  if (!projections?.length) return records;
+  return records.map((record) => {
+    const projection = projections.find((candidate) => candidate.chatId === record.chat.id);
+    if (!projection || record.chat.revision >= projection.revision) return record;
+    return {
+      ...record,
+      chat: { ...record.chat, title: projection.title, revision: projection.revision },
+    };
+  });
+}
 
 async function loadWorkRailChats(client: CanonicalChatClient): Promise<CanonicalChatRecord[]> {
   const records: CanonicalChatRecord[] = [];
@@ -36,6 +52,7 @@ async function loadWorkRailChats(client: CanonicalChatClient): Promise<Canonical
 export function WorkRail({
   client,
   eventSource,
+  projectedChatTitles,
   projects,
   active,
   activeChatId,
@@ -45,12 +62,14 @@ export function WorkRail({
   onNewProjectChat,
   onSelectChat,
   onChatDeleted,
+  onChatRenamed,
   onCollapse,
   showCollapseControl = true,
   className = "w-[240px]",
 }: {
   client: CanonicalChatClient | null;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
+  projectedChatTitles?: CanonicalChatTitleProjection[];
   projects: Project[];
   active: boolean;
   activeChatId?: string;
@@ -60,6 +79,7 @@ export function WorkRail({
   onNewProjectChat: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project?: Project) => void;
   onChatDeleted?: (record: CanonicalChatRecord, project?: Project) => void;
+  onChatRenamed?: (record: CanonicalChatRecord, project?: Project) => void;
   onCollapse: () => void;
   showCollapseControl?: boolean;
   className?: string;
@@ -77,10 +97,15 @@ export function WorkRail({
   const [deleteChatTarget, setDeleteChatTarget] = useState<CanonicalChatRecord | null>(null);
   const [deletingChat, setDeletingChat] = useState(false);
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
+  const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renamePending, setRenamePending] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
+  const projectedChatTitlesRef = useRef(projectedChatTitles);
+  projectedChatTitlesRef.current = projectedChatTitles;
   if (routeScopeRef.current.key !== routeScope || routeScopeRef.current.client !== client) {
     routeScopeRef.current = {
       client,
@@ -104,6 +129,9 @@ export function WorkRail({
     setDeleteChatTarget(null);
     setDeletingChat(false);
     setDeleteChatError(null);
+    setRenamingChatId(null);
+    setRenamePending(false);
+    setRenameError(null);
     setStatus("loading");
     const refresh = async () => {
       if (refreshInFlight) {
@@ -116,7 +144,7 @@ export function WorkRail({
         try {
           const loaded = await loadWorkRailChats(client);
           if (!current) return;
-          setRecords(loaded);
+          setRecords(applyProjectedChats(loaded, projectedChatTitlesRef.current));
           setStatus("ready");
         } catch (error: unknown) {
           if (!current) return;
@@ -137,6 +165,11 @@ export function WorkRail({
       subscription?.dispose();
     };
   }, [active, activeChatId, activeProjectSlug, client, eventSource]);
+
+  useEffect(() => {
+    if (!projectedChatTitles?.length) return;
+    setRecords((current) => applyProjectedChats(current, projectedChatTitles));
+  }, [projectedChatTitles]);
 
   const toggleSection = (key: SectionKey) => {
     setSections((current) => ({ ...current, [key]: !current[key] }));
@@ -201,6 +234,36 @@ export function WorkRail({
     }
   };
 
+  const renameChat = async (record: CanonicalChatRecord, title: string) => {
+    if (!client || renamePending) return;
+    const requestRouteGeneration = routeScopeRef.current.generation;
+    const targetProject = model.projects.find((group) => (
+      group.id === record.projectId || group.slug === record.projectId
+    ))?.project;
+    setRenamePending(true);
+    setRenameError(null);
+    try {
+      const updated = await client.updateTitle(record.chat.id, {
+        baseRevision: record.chat.revision,
+        title,
+      });
+      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
+      setRecords((current) => current.map((candidate) => (
+        candidate.chat.id === updated.chat.id ? updated : candidate
+      )));
+      setRenamingChatId(null);
+      onChatRenamed?.(updated, targetProject);
+    } catch (error: unknown) {
+      console.warn("[work] Chat rename failed:", error instanceof Error ? error.name : "UnknownError");
+      if (routeScopeRef.current.generation === requestRouteGeneration) {
+        setRenameError("The Chat could not be renamed. Try again.");
+        setRenamingChatId(null);
+      }
+    } finally {
+      if (routeScopeRef.current.generation === requestRouteGeneration) setRenamePending(false);
+    }
+  };
+
   return (
     <nav
       aria-label="Chat navigation"
@@ -226,6 +289,16 @@ export function WorkRail({
               placement="pinned"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
+              renaming={renamingChatId === record.chat.id}
+              renamePending={renamePending && renamingChatId === record.chat.id}
+              renameDisabled={renamePending}
+              onRenameStart={() => {
+                if (renamePending) return;
+                setRenameError(null);
+                setRenamingChatId(record.chat.id);
+              }}
+              onRenameCommit={(title) => { void renameChat(record, title); }}
+              onRenameCancel={() => setRenamingChatId(null)}
               onSelect={() => onSelectChat(
                 record,
                 model.projects.find((group) => (
@@ -268,6 +341,15 @@ export function WorkRail({
                 activeProjectSlug={activeProjectSlug}
                 activeChatId={activeChatId}
                 pinning={pinning}
+                renamingChatId={renamingChatId}
+                renamePending={renamePending}
+                onRenameChat={(record) => {
+                  if (renamePending) return;
+                  setRenameError(null);
+                  setRenamingChatId(record.chat.id);
+                }}
+                onRenameCommit={(record, title) => { void renameChat(record, title); }}
+                onRenameCancel={() => setRenamingChatId(null)}
                 onToggle={() => setExpandedProjects((current) => ({
                   ...current,
                   [group.id]: !current[group.id],
@@ -299,6 +381,16 @@ export function WorkRail({
               placement="recent"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
+              renaming={renamingChatId === record.chat.id}
+              renamePending={renamePending && renamingChatId === record.chat.id}
+              renameDisabled={renamePending}
+              onRenameStart={() => {
+                if (renamePending) return;
+                setRenameError(null);
+                setRenamingChatId(record.chat.id);
+              }}
+              onRenameCommit={(title) => { void renameChat(record, title); }}
+              onRenameCancel={() => setRenamingChatId(null)}
               onSelect={() => onSelectChat(record)}
               onPin={() => updatePinned(record)}
               onDelete={() => {
@@ -316,6 +408,9 @@ export function WorkRail({
         ) : null}
         {pinError ? (
           <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>{pinError}</p>
+        ) : null}
+        {renameError ? (
+          <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger)" }}>{renameError}</p>
         ) : null}
       </div>
       <DeleteConversationDialog

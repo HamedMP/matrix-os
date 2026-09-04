@@ -613,6 +613,8 @@ function MobileAppFrame({
         conversations={chat.conversations}
         onNewChat={() => void chat.newChat()}
         onSwitchConversation={chat.switchConversation}
+        activeConversationTitle={chat.activeConversationTitle}
+        onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
         onSubmitApproval={chat.submitApproval}
         providerSelection={chat.providerSelection}

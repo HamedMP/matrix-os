@@ -39,6 +39,7 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
     <WorkRail
       client={runtime?.client ?? null}
       eventSource={runtime?.eventSource ?? undefined}
+      projectedChatTitles={runtime?.projectedChatTitles}
       projects={projects}
       active={active}
       activeChatId={tab.chatId}
@@ -50,6 +51,9 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       onCreateProject={() => useUi.getState().openCreateProject()}
       onNewProjectChat={openWorkProject}
       onSelectChat={selectChat}
+      onChatRenamed={(record) => {
+        useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
+      }}
       onChatDeleted={(record, project) => {
         if (record.chat.id !== tab.chatId) return;
         if (project) openWorkProject(project);

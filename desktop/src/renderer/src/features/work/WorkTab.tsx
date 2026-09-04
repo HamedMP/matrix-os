@@ -25,6 +25,7 @@ import type { WorkRoute } from "../../stores/tabs";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import ChatTab from "../chat/ChatTab";
+import { ChatTitleEditor } from "../chat/ChatTitleEditor";
 import ProjectChatsView from "../project/ProjectChatsView";
 import ProjectsIndex from "../project/ProjectsIndex";
 import { WorkRail } from "./WorkRail";
@@ -237,6 +238,10 @@ export default function WorkTab({
     chatId: string;
     session: TerminalSessionSummary;
   } | null>(null);
+  const [activeChatTitle, setActiveChatTitle] = useState(initialChatTitle ?? "Chat");
+  const [editingChatTitle, setEditingChatTitle] = useState(false);
+  const [renamingChatTitle, setRenamingChatTitle] = useState(false);
+  const [renameChatError, setRenameChatError] = useState<string | null>(null);
   const { layout, navigationOpen, inspectorOpen } = responsive;
   const localClient = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
   const localEventSource = useMemo<CanonicalChatEventSource | null>(() => {
@@ -254,6 +259,8 @@ export default function WorkTab({
   }, [active, api, authGeneration, hostedRuntime, runtimeSlot]);
   const client = hostedRuntime?.client ?? localClient;
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
+  const activeChatScopeRef = useRef({ client, chatId: initialChatId });
+  activeChatScopeRef.current = { client, chatId: initialChatId };
   const routeKey = `${active}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
   const hasInspector = Boolean(active && (route === "chat" || route === "project"));
   const narrowPane = effectiveNarrowPane(responsive, routeKey, hasInspector);
@@ -291,6 +298,13 @@ export default function WorkTab({
       && initialChatTitle !== "New chat"
     ) setDraftTerminalLaunch(null);
   }, [draftTerminalLaunch, initialChatId, initialChatTitle]);
+
+  useEffect(() => {
+    setActiveChatTitle(initialChatTitle ?? "Chat");
+    setEditingChatTitle(false);
+    setRenamingChatTitle(false);
+    setRenameChatError(null);
+  }, [initialChatId, initialChatTitle]);
 
   useLayoutEffect(() => {
     if (!active || route !== "project" || !projectSlug) return;
@@ -474,6 +488,42 @@ export default function WorkTab({
     }
     openGlobalDraft();
   }, [initialChatId, layout, openGlobalDraft, showChat]);
+  const applyRenamedChat = useCallback((record: CanonicalChatRecord) => {
+    useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
+    hostedRuntime?.projectChat(record);
+    if (record.chat.id === activeChatScopeRef.current.chatId) {
+      setActiveChatTitle(record.chat.title);
+    }
+  }, [hostedRuntime]);
+  const renameActiveChat = useCallback(async (title: string) => {
+    const scope = activeChatScopeRef.current;
+    if (!scope.client || !scope.chatId || renamingChatTitle) return;
+    setRenamingChatTitle(true);
+    setRenameChatError(null);
+    try {
+      const detail = await scope.client.getDetail(scope.chatId, { limit: 200 });
+      const updated = await scope.client.updateTitle(scope.chatId, {
+        baseRevision: detail.record.chat.revision,
+        title,
+      });
+      if (activeChatScopeRef.current.client !== scope.client
+        || activeChatScopeRef.current.chatId !== scope.chatId) return;
+      applyRenamedChat(updated);
+      setEditingChatTitle(false);
+    } catch (error: unknown) {
+      console.warn("[work] active Chat rename failed:", error instanceof Error ? error.name : "UnknownError");
+      if (activeChatScopeRef.current.client === scope.client
+        && activeChatScopeRef.current.chatId === scope.chatId) {
+        setRenameChatError("The Chat could not be renamed. Try again.");
+        setEditingChatTitle(false);
+      }
+    } finally {
+      if (activeChatScopeRef.current.client === scope.client
+        && activeChatScopeRef.current.chatId === scope.chatId) {
+        setRenamingChatTitle(false);
+      }
+    }
+  }, [applyRenamedChat, renamingChatTitle]);
   const collapseRail = useCallback(() => {
     if (layout === "narrow") showChat(true);
     else hideRail();
@@ -602,11 +652,38 @@ export default function WorkTab({
       onNewProjectChat={openProjectDraft}
       onSelectChat={selectRailChat}
       onChatDeleted={handleRailChatDeleted}
+      onChatRenamed={applyRenamedChat}
     />
-  ), [active, client, collapseRail, eventSource, handleRailChatDeleted, initialChatId, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat]);
-  const chromeTitle = initialChatId && initialChatId !== draftTerminalLaunch?.chatId
-    ? initialChatTitle ?? "Chat"
-    : route === "projects" ? "Chat" : undefined;
+  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, initialChatId, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat]);
+  const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
+    ? editingChatTitle ? (
+        <ChatTitleEditor
+          title={activeChatTitle}
+          disabled={renamingChatTitle}
+          className="w-[min(360px,40vw)]"
+          onCommit={(title) => { void renameActiveChat(title); }}
+          onCancel={() => setEditingChatTitle(false)}
+        />
+      ) : (
+        <button
+          type="button"
+          aria-label={`Rename ${activeChatTitle}`}
+          title="Rename chat"
+          className="no-drag pointer-events-auto min-w-0 truncate rounded px-1.5 py-0.5 text-left outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          onClick={() => { setRenameChatError(null); setEditingChatTitle(true); }}
+        >
+          {activeChatTitle}
+        </button>
+      )
+    : route === "projects" ? "Chat" : undefined, [
+      activeChatTitle,
+      draftTerminalLaunch?.chatId,
+      editingChatTitle,
+      initialChatId,
+      renameActiveChat,
+      renamingChatTitle,
+      route,
+    ]);
   const chromeSpec = useMemo(() => ({
     title: chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
@@ -646,6 +723,11 @@ export default function WorkTab({
           aria-hidden="true"
           className="h-12 shrink-0"
         />
+      ) : null}
+      {renameChatError ? (
+        <div role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+          {renameChatError}
+        </div>
       ) : null}
       {!hostedChrome && layout === "narrow" && narrowPane === "chat" ? (
         <header

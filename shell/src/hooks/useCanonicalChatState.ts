@@ -24,6 +24,7 @@ function requestId(): string {
 function conversationMeta(record: CanonicalChatRecord) {
   return {
     id: record.chat.id,
+    title: record.chat.title,
     preview: record.chat.lastMessagePreview ?? record.chat.title,
     messageCount: record.chat.messageCount,
     createdAt: Date.parse(record.chat.createdAt),
@@ -278,6 +279,45 @@ export function useCanonicalChatState(): ChatState {
     }
   }, [client, loadDetail]);
 
+  const renameConversation = useCallback(async (chatId: string, title: string) => {
+    const current = detailRef.current?.record.chat.id === chatId
+      ? detailRef.current.record
+      : records.find((record) => record.chat.id === chatId);
+    if (!current) {
+      setSafeError("The Chat could not be renamed. Refresh and try again.");
+      return false;
+    }
+    try {
+      const updated = await client.updateTitle(chatId, {
+        baseRevision: current.chat.revision,
+        title,
+      });
+      const projectTitle = (record: CanonicalChatRecord) => (
+        record.chat.revision > updated.chat.revision
+          ? record
+          : {
+            ...record,
+            chat: {
+              ...record.chat,
+              title: updated.chat.title,
+              revision: updated.chat.revision,
+              updatedAt: updated.chat.updatedAt,
+            },
+          }
+      );
+      setRecords((existing) => existing.map((record) => record.chat.id === chatId ? projectTitle(record) : record));
+      setDetail((existing) => existing?.record.chat.id === chatId
+        ? { ...existing, record: projectTitle(existing.record) }
+        : existing);
+      setSafeError(null);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell rename failed:", error instanceof Error ? error.name : "UnknownError");
+      setSafeError("The Chat could not be renamed. Try again.");
+      return false;
+    }
+  }, [client, records]);
+
   const messages = detail ? projectCanonicalMessages(detail.messages) : [];
   if (safeError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: safeError, timestamp: Date.now() });
@@ -295,6 +335,8 @@ export function useCanonicalChatState(): ChatState {
     queue: [],
     providerSelection: activeRecord?.chat.currentSelection,
     conversations: records.map(conversationMeta),
+    activeConversationTitle: activeRecord?.chat.title,
+    renameConversation,
     composerDraftRequest,
     requestComposerDraft: (text) => setComposerDraftRequest({ id: ++composerDraftSequence.current, text }),
     consumeComposerDraft: (id) => setComposerDraftRequest((current) => current?.id === id ? null : current),
