@@ -119,6 +119,7 @@ export function verifyCodexProviderContracts({
       throw new Error(`Codex app-server notification is unavailable: ${notification}`);
     }
   }
+  const semanticMismatches = [];
   for (const [method, expectedDigest] of Object.entries(
     appServerContract.requiredServerProtocolSchemaSha256 ?? {},
   )) {
@@ -127,9 +128,10 @@ export function verifyCodexProviderContracts({
       : "ServerNotification";
     const actualDigest = codexProtocolMethodDigest(appServerSchema, definitionName, method);
     if (actualDigest !== expectedDigest) {
-      throw new Error(
-        `Codex app-server payload schema changed for ${method}; received ${actualDigest}`,
-      );
+      semanticMismatches.push(`${method}: received ${actualDigest}`);
     }
+  }
+  if (semanticMismatches.length > 0) {
+    throw new Error(`Codex app-server payload schema changed for ${semanticMismatches.join("; ")}`);
   }
 }
