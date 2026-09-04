@@ -150,6 +150,7 @@ export function isOsViewDestinationPath(path: string): boolean {
 const OsViewPathSchema = z.string().min(1).max(2048);
 const OsViewCoordinateSchema = z.number().finite().min(-16_384).max(16_384);
 const OsViewDimensionSchema = z.number().finite().min(1).max(16_384);
+const OsViewTerminalLayoutIdSchema = z.string().regex(/^term-layout_[0-9a-f]{32}$/);
 
 export const OsViewAppStateSchema = z.object({
   path: OsViewPathSchema,
@@ -164,6 +165,7 @@ export const OsViewWindowGeometrySchema = z.object({
   y: OsViewCoordinateSchema,
   width: OsViewDimensionSchema,
   height: OsViewDimensionSchema,
+  terminalLayoutId: OsViewTerminalLayoutIdSchema.optional(),
 }).strict();
 
 export const OsViewDesktopIconSchema = z.object({

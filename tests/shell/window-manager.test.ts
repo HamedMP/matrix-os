@@ -338,6 +338,40 @@ describe("Window Manager Store", () => {
       );
     });
 
+    it("persists a stable layout id for an ordinary Terminal window", async () => {
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      const opened = useWindowManager.getState().windows[0];
+      expect(opened.terminalLayoutId).toMatch(/^term-layout_[0-9a-f]{32}$/);
+
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body) as {
+        patch: { desktop: { windows: LayoutWindow[] } };
+      };
+      expect(body.patch.desktop.windows[0]?.terminalLayoutId).toBe(opened.terminalLayoutId);
+    });
+
+    it("keeps setup terminals separate, ephemeral, and out of desktop persistence", async () => {
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80, {
+        terminalPersistence: "ephemeral",
+      });
+
+      const ordinary = useWindowManager.getState().windows.find((win) => win.terminalPersistence !== "ephemeral");
+      const setup = useWindowManager.getState().windows.find((win) => win.terminalPersistence === "ephemeral");
+      expect(ordinary?.path).toBe("__terminal__");
+      expect(setup?.path).toBe("__terminal__");
+      expect(ordinary?.terminalLayoutId).toMatch(/^term-layout_[0-9a-f]{32}$/);
+      expect(setup?.terminalLayoutId).toBeUndefined();
+
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body) as {
+        patch: { desktop: { windows: LayoutWindow[] } };
+      };
+      expect(body.patch.desktop.windows.map((win) => win.path)).toEqual(["__terminal__"]);
+    });
+
     it("does not save layout on the pre-VPS billing setup route", () => {
       window.history.pushState(null, "", "/?billing=setup");
       useWindowManager.getState().openWindow("Settings", "__settings__", 80);
@@ -394,6 +428,22 @@ describe("Window Manager Store", () => {
   });
 
   describe("loadLayout", () => {
+    it("restores the same Terminal layout id across shell reloads", () => {
+      const terminalLayoutId = "term-layout_0123456789abcdef0123456789abcdef";
+      useWindowManager.getState().loadLayout([{
+        path: "__terminal__",
+        title: "Terminal",
+        x: 100,
+        y: 100,
+        width: 1040,
+        height: 680,
+        state: "open",
+        terminalLayoutId,
+      }]);
+
+      expect(useWindowManager.getState().windows[0]?.terminalLayoutId).toBe(terminalLayoutId);
+    });
+
     it("restores windows from saved layout", () => {
       const saved: LayoutWindow[] = [
         {
