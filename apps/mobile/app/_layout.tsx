@@ -34,6 +34,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
+import { ChatSessionProvider } from "@/lib/chat-session-context";
 import { mobileQueryClient } from "@/lib/query-client";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
@@ -379,50 +380,52 @@ function GatewayShell() {
   return (
     <GestureHandlerRootView style={styles.flex}>
       <GatewayContext.Provider value={contextValue}>
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: theme.colors.background },
-            headerTintColor: theme.colors.foreground,
-            headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
-            contentStyle: { backgroundColor: theme.colors.background },
-          }}
-        >
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-          <Stack.Screen name="file-browser" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-          <Stack.Screen name="terminal-session" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-          <Stack.Screen name="app-preview" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-          <Stack.Screen name="integrations-installed" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-          <Stack.Screen name="integration-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-          <Stack.Screen name="settings-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-          <Stack.Screen
-            name="computers"
-            options={{
-              title: "Computers",
-              headerBackButtonDisplayMode: "minimal",
+        <ChatSessionProvider client={client}>
+          <Stack
+            screenOptions={{
               headerStyle: { backgroundColor: theme.colors.background },
+              headerTintColor: theme.colors.foreground,
+              headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
+              contentStyle: { backgroundColor: theme.colors.background },
             }}
-          />
-          <Stack.Screen
-            name="connect"
-            options={{
-              title: "Gateway",
-              presentation: "modal",
-              headerStyle: { backgroundColor: theme.colors.background },
-            }}
-          />
-          <Stack.Screen
-            name="sign-in"
-            options={{
-              title: "Sign In",
-              presentation: "modal",
-              headerStyle: { backgroundColor: theme.colors.background },
-            }}
-          />
-        </Stack>
-        <NotificationRouter />
-        <AnalyticsScreenTracker />
-        <StatusBar style="dark" />
+          >
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+            <Stack.Screen name="file-browser" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="terminal-session" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="app-preview" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="integrations-installed" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="integration-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="settings-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen
+              name="computers"
+              options={{
+                title: "Computers",
+                headerBackButtonDisplayMode: "minimal",
+                headerStyle: { backgroundColor: theme.colors.background },
+              }}
+            />
+            <Stack.Screen
+              name="connect"
+              options={{
+                title: "Gateway",
+                presentation: "modal",
+                headerStyle: { backgroundColor: theme.colors.background },
+              }}
+            />
+            <Stack.Screen
+              name="sign-in"
+              options={{
+                title: "Sign In",
+                presentation: "modal",
+                headerStyle: { backgroundColor: theme.colors.background },
+              }}
+            />
+          </Stack>
+          <NotificationRouter />
+          <AnalyticsScreenTracker />
+          <StatusBar style="dark" />
+        </ChatSessionProvider>
       </GatewayContext.Provider>
     </GestureHandlerRootView>
   );

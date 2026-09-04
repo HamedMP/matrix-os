@@ -7,6 +7,7 @@ let mockConversationsQueryOptions: Record<string, unknown> | undefined;
 const mockGetToken = jest.fn().mockResolvedValue("clerk-token");
 const mockFetchActiveComputer = jest.fn();
 const mockFetchConversations = jest.fn();
+const mockCreateConversation = jest.fn();
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn() }),
@@ -31,11 +32,17 @@ jest.mock("@tanstack/react-query", () => ({
     mockActiveComputerQueryOptions = options;
     return { data: { handle: "studio-mac", runtimeSlot: "primary", gatewayPath: "/vm/studio-mac" } };
   },
+  useMutation: (options: { mutationFn: (...args: unknown[]) => Promise<unknown> }) => ({
+    mutateAsync: (...args: unknown[]) => options.mutationFn(...args),
+    isPending: false,
+  }),
+  useQueryClient: () => ({ invalidateQueries: jest.fn() }),
 }));
 
 jest.mock("@/lib/requests", () => ({
   fetchActiveComputer: (...args: unknown[]) => mockFetchActiveComputer(...args),
   fetchConversations: (...args: unknown[]) => mockFetchConversations(...args),
+  createConversation: (...args: unknown[]) => mockCreateConversation(...args),
   mobileQueryKeys: {
     activeComputer: (userId: string) => ["mobile", "computers", "active", userId],
     conversations: (userId: string, computerKey: string) => [
@@ -182,7 +189,11 @@ describe("authenticated drawer layout", () => {
             { id: "chat-2", preview: "Ship the mobile sidebar", updatedAt: 20 },
             { id: "chat-1", preview: "Review the launch plan", updatedAt: 10 },
           ],
-        } as never)}
+          activeSessionId: "chat-1",
+          onSelectConversation: jest.fn(),
+          onNewConversation: jest.fn().mockResolvedValue("chat-3"),
+          isCreatingConversation: false,
+        } as unknown as React.ComponentProps<typeof MockDrawerContent>)}
       />,
     );
 
@@ -249,7 +260,11 @@ describe("authenticated drawer layout", () => {
           computerName: "Studio Mac",
           recentChats: [],
           recentChatsLoading: true,
-        } as never)}
+          activeSessionId: null,
+          onSelectConversation: jest.fn(),
+          onNewConversation: jest.fn().mockResolvedValue(null),
+          isCreatingConversation: false,
+        } as unknown as React.ComponentProps<typeof MockDrawerContent>)}
       />,
     );
 

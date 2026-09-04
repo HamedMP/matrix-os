@@ -33,17 +33,33 @@ interface MockDrawerContentProps extends DrawerContentComponentProps {
   computerName: string;
   recentChats: ConversationSummary[];
   recentChatsLoading: boolean;
+  activeSessionId: string | null;
+  onSelectConversation: (id: string) => void;
+  onNewConversation: () => void;
 }
 
 export function MockDrawerContent({
   computerName,
   recentChats,
   recentChatsLoading,
+  activeSessionId,
+  onSelectConversation,
+  onNewConversation,
   ...props
 }: MockDrawerContentProps) {
   function navigate(route: string) {
     props.navigation.navigate(route);
     props.navigation.closeDrawer();
+  }
+
+  function openChat(id: string) {
+    onSelectConversation(id);
+    navigate("index");
+  }
+
+  function newChat() {
+    onNewConversation();
+    navigate("index");
   }
 
   return (
@@ -109,15 +125,26 @@ export function MockDrawerContent({
         </View>
         <Spacer size="sm" />
 
-        {recentChatsLoading ? <RecentChatsSkeleton /> : recentChats.map((chat, index) => {
+        {recentChatsLoading ? <RecentChatsSkeleton /> : recentChats.length === 0 ? (
+          <View style={styles.padded}>
+            <Text size="muted" tone="subtle">No chats yet</Text>
+          </View>
+        ) : recentChats.map((chat, index) => {
           const label = chat.preview.trim() || "New chat";
+          const active = chat.id === activeSessionId;
           return (
             <Fragment key={chat.id}>
               <Pressable
                 accessibilityRole="button"
+                accessibilityState={{ selected: active }}
                 accessibilityLabel={`Open recent chat ${label}`}
-                onPress={() => navigate("index")}
-                style={({ pressed }) => [styles.padded, pressed && styles.pressed]}
+                onPress={() => openChat(chat.id)}
+                style={({ pressed }) => [
+                  styles.padded,
+                  styles.recentChatRow,
+                  active && styles.recentChatRowActive,
+                  pressed && styles.pressed,
+                ]}
               >
                 <View style={styles.itemContainer}>
                   <Icon
@@ -139,7 +166,7 @@ export function MockDrawerContent({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="New chat"
-        onPress={() => navigate("index")}
+        onPress={newChat}
         style={({ pressed }) => [styles.newChat, pressed && styles.pressed]}
       >
         <Spacer size="sm" />
@@ -225,6 +252,13 @@ const styles = StyleSheet.create({
   },
   itemIcon: {
     marginRight: 8,
+  },
+  recentChatRow: {
+    borderRadius: 10,
+    paddingVertical: 6,
+  },
+  recentChatRowActive: {
+    backgroundColor: palette.neutral[200],
   },
   skeletonRow: {
     flexDirection: "row",

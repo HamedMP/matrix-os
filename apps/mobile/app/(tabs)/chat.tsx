@@ -38,19 +38,7 @@ import {
   type QueuedMessage,
 } from "@/lib/offline";
 import { AnalyticsMask, capture } from "@/lib/analytics";
-
-export interface Message {
-  id: string;
-  role: "user" | "assistant" | "system" | "tool";
-  content: string;
-  tool?: string;
-  timestamp: number;
-}
-
-let messageCounter = 0;
-function nextId(): string {
-  return `msg-${Date.now()}-${++messageCounter}`;
-}
+import { nextMessageId as nextId, type Message } from "@/lib/chat-message";
 
 function TypingIndicator() {
   const opacity = useSharedValue(0.3);

@@ -6,7 +6,12 @@ export {
   type InstalledApp,
 } from "./apps";
 export { fetchActiveComputer, fetchComputers } from "./computers";
-export { fetchConversations, type ConversationSummary } from "./conversations";
+export {
+  fetchConversationHistory,
+  fetchConversations,
+  type ConversationHistoryResponse,
+  type ConversationSummary,
+} from "./conversations";
 export {
   createFile,
   createFolder,

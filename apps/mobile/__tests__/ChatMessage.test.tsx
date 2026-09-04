@@ -11,7 +11,7 @@ jest.mock("expo-image", () => {
 import React from "react";
 import { act, render, screen, waitFor } from "@testing-library/react-native";
 import { ChatMessage } from "../components/ChatMessage";
-import type { Message } from "../app/(tabs)/chat";
+import type { Message } from "../lib/chat-message";
 import type { GatewayClient } from "../lib/gateway-client";
 
 function imageClient(overrides: Partial<Record<"homeFileUrl" | "getAuthorizationHeader" | "onStateChange", unknown>> = {}) {

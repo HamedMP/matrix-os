@@ -1,6 +1,4 @@
 import Menu01Icon from "@hugeicons/core-free-icons/Menu01Icon";
-import { useAuth } from "@clerk/clerk-expo";
-import { useQuery } from "@tanstack/react-query";
 import { Pressable, StyleSheet } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
@@ -8,8 +6,8 @@ import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
 import { Icon } from "@/components/ui";
 import { MockDrawerContent } from "@/components/mock-shell/MockDrawerContent";
 import { mockColors } from "@/components/mock-shell/theme";
-import { fetchActiveComputer, fetchConversations, mobileQueryKeys } from "@/lib/requests";
-import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { useChatSession } from "@/lib/chat-session-context";
+import { useComputerConversations } from "@/lib/queries/use-computer-conversations";
 import { semanticColors } from "@/lib/theme";
 
 function triggerDrawerHaptic() {
@@ -24,39 +22,9 @@ function triggerDrawerHaptic() {
 }
 
 export default function DrawerLayout() {
-  const { getToken, isLoaded, isSignedIn, userId } = useAuth();
-  const queryEnabled = Boolean(isLoaded && isSignedIn && userId);
-  const activeComputer = useQuery({
-    queryKey: mobileQueryKeys.activeComputer(userId ?? "signed-out"),
-    enabled: queryEnabled,
-    queryFn: async () => {
-      const token = await getToken();
-      if (!token) throw new Error("Computer unavailable.");
-      return fetchActiveComputer(token);
-    },
-  });
-  const computerName = activeComputer.data?.handle
-    ?? (queryEnabled && activeComputer.isPending ? "Loading…" : "Not connected");
-  const selectedComputer = activeComputer.data;
-  const conversations = useQuery({
-    queryKey: mobileQueryKeys.conversations(
-      userId ?? "signed-out",
-      selectedComputer
-        ? `${selectedComputer.handle}:${selectedComputer.runtimeSlot}`
-        : "none",
-    ),
-    enabled: queryEnabled && Boolean(selectedComputer),
-    queryFn: async () => {
-      const token = await getToken();
-      if (!token || !selectedComputer) throw new Error("Chats unavailable.");
-      return fetchConversations(token, `${HOSTED_GATEWAY_URL}${selectedComputer.gatewayPath}`);
-    },
-    select: (items) => [...items].sort((left, right) => right.updatedAt - left.updatedAt),
-  });
-  const recentChatsLoading = queryEnabled && (
-    activeComputer.isPending
-    || (Boolean(selectedComputer) && conversations.isPending)
-  );
+  const { computer, conversations, isPending: recentChatsLoading } = useComputerConversations();
+  const { activeSessionId, selectConversation, startDraftConversation } = useChatSession();
+  const computerName = computer?.handle ?? (recentChatsLoading ? "Loading…" : "Not connected");
 
   return (
     <Drawer
@@ -68,8 +36,11 @@ export default function DrawerLayout() {
         <MockDrawerContent
           {...props}
           computerName={computerName}
-          recentChats={conversations.data ?? []}
+          recentChats={conversations}
           recentChatsLoading={recentChatsLoading}
+          activeSessionId={activeSessionId}
+          onSelectConversation={selectConversation}
+          onNewConversation={startDraftConversation}
         />
       )}
       screenOptions={({ navigation }: { navigation: DrawerContentComponentProps["navigation"] }) => ({

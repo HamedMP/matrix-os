@@ -6,7 +6,7 @@ import Animated, { FadeInLeft, FadeInRight } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { fonts } from "@/lib/theme";
-import type { Message } from "@/app/(tabs)/chat";
+import type { Message } from "@/lib/chat-message";
 import type { GatewayClient } from "@/lib/gateway-client";
 
 // Role styling lives in the Unistyles sheet below so bubbles follow the active

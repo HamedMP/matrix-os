@@ -6,6 +6,14 @@ export const mobileQueryKeys = {
     userId,
     computerKey,
   ] as const,
+  messages: (userId: string, computerKey: string, conversationId: string) => [
+    "mobile",
+    "conversations",
+    "messages",
+    userId,
+    computerKey,
+    conversationId,
+  ] as const,
   files: (userId: string, computerKey: string, path: string) => [
     "mobile",
     "files",
