@@ -106,6 +106,14 @@ function eventHarness() {
   };
 }
 
+function chatChanged(
+  chatId: string,
+  cursor: number,
+  eventType: Extract<CanonicalChatInvalidation, { type: "chat.changed" }>["eventType"] = "chat.updated",
+): CanonicalChatInvalidation {
+  return { type: "chat.changed", chatId, cursor, revision: cursor, eventType };
+}
+
 function renderRail(client: CanonicalChatClient, eventSource?: Pick<CanonicalChatEventSource, "subscribe">) {
   const EventAwareWorkRail = WorkRail as ComponentType<
     ComponentProps<typeof WorkRail> & { eventSource?: Pick<CanonicalChatEventSource, "subscribe"> }
@@ -199,24 +207,54 @@ describe("WorkRail", () => {
     expect(await screen.findByLabelText("Agent running for Parallel A")).toBeTruthy();
     expect(screen.queryByLabelText("Unseen completion for Parallel B")).toBeNull();
 
-    act(() => events.emit({ type: "chat.changed", chatId: "chat_parallel_b", cursor: 2 }));
+    act(() => events.emit(chatChanged("chat_parallel_b", 2)));
     await waitFor(() => expect(screen.getByLabelText("Unseen completion for Parallel B")).toBeTruthy());
     expect(screen.getByLabelText("Agent running for Parallel A")).toBeTruthy();
 
-    act(() => events.emit({ type: "chat.changed", chatId: "chat_parallel_b", cursor: 3 }));
+    act(() => events.emit(chatChanged("chat_parallel_b", 3)));
     await waitFor(() => expect(screen.queryByLabelText("Unseen completion for Parallel B")).toBeNull());
     expect(screen.getByLabelText("Agent running for Parallel A")).toBeTruthy();
 
-    act(() => events.emit({ type: "chat.changed", chatId: "chat_parallel_a", cursor: 4 }));
+    act(() => events.emit(chatChanged("chat_parallel_a", 4)));
     await waitFor(() => expect(screen.getByLabelText("Agent failed for Parallel A")).toBeTruthy());
 
-    act(() => events.emit({ type: "chat.changed", chatId: "chat_parallel_a", cursor: 5 }));
+    act(() => events.emit(chatChanged("chat_parallel_a", 5)));
     await waitFor(() => expect(screen.queryByLabelText("Agent failed for Parallel A")).toBeNull());
     expect(screen.queryByLabelText("Unseen completion for Parallel A")).toBeNull();
 
     act(() => events.emit({ type: "chat.full_refresh", cursor: 5 }));
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(6));
     expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 200);
+  });
+
+  it("does not reload the full rail for message-only stream invalidations", async () => {
+    const events = eventHarness();
+    const running = record("chat_streaming", "Streaming", {
+      updatedAt: "2026-08-29T02:00:00.000Z",
+      activeRunStatus: "running",
+    });
+    const completed = record("chat_streaming", "Streaming", {
+      updatedAt: "2026-08-29T02:01:00.000Z",
+      unacknowledged: true,
+    });
+    const client = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ items: [running] })
+        .mockResolvedValueOnce({ items: [completed] }),
+    } as unknown as CanonicalChatClient;
+    renderRail(client, events.eventSource);
+    await screen.findByLabelText("Agent running for Streaming");
+    expect(client.list).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      events.emit(chatChanged(running.chat.id, 1, "run.message"));
+      await Promise.resolve();
+    });
+    expect(client.list).toHaveBeenCalledTimes(1);
+
+    act(() => events.emit(chatChanged(running.chat.id, 2, "run.completed")));
+    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+    expect(await screen.findByLabelText("Unseen completion for Streaming")).toBeTruthy();
   });
 
   it("coalesces a burst of shared Chat events into one in-flight and one pending canonical refresh", async () => {
@@ -237,7 +275,7 @@ describe("WorkRail", () => {
     renderRail(client, events.eventSource);
     await screen.findByRole("button", { name: "Burst chat" });
 
-    act(() => { for (const cursor of [1, 2, 3]) events.emit({ type: "chat.changed", chatId: initial.chat.id, cursor }); });
+    act(() => { for (const cursor of [1, 2, 3]) events.emit(chatChanged(initial.chat.id, cursor)); });
     expect(client.list).toHaveBeenCalledTimes(2);
 
     await act(async () => {

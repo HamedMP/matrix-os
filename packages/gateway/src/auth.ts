@@ -98,7 +98,6 @@ const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = [
   "/ws",
-  "/ws/chats/events",
   "/ws/voice",
   "/ws/terminal",
   "/ws/terminal/session",

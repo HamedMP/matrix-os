@@ -19,6 +19,30 @@ const record = {
 };
 
 describe("canonical shell Chat client", () => {
+  it("opens the canonical HTTP event stream with lifecycle cancellation and resume cursor", async () => {
+    const response = new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } });
+    const fetchFn = vi.fn(async () => response);
+    const caller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+    const opened = await client.openEventStream({ cursor: 12, signal: caller.signal });
+
+    expect(opened).toBe(response);
+    expect(opened.bodyUsed).toBe(false);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://matrix.test/api/chats/events",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Accept: "text/event-stream", "Last-Event-ID": "12" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(timeout).toHaveBeenCalledWith(5 * 60 * 1000);
+    caller.abort();
+    expect((fetchFn.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
   it("lists and creates global Chats through the canonical routes with strict responses", async () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?")) return Response.json({ items: [record] });

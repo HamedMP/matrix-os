@@ -326,6 +326,7 @@ function runPresentation(
   activities: CanonicalChatRunActivity[],
   hasFinalAssistantMessage: boolean,
   turnId: string,
+  allowRetry: boolean,
 ): {
   work: ConversationWorkPresentation[];
   streamingFinal?: ConversationMessagePresentation;
@@ -539,7 +540,7 @@ function runPresentation(
         label: stopped ? "Agent work stopped" : "Agent work failed",
         markdown: stopped ? "Run was cancelled." : runError?.error.safeMessage ?? "The agent run failed.",
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
-        ...(!stopped && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
+        ...(!stopped && allowRetry && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
           ? { actions: [{ kind: "retry" as const, turnId, label: "Retry" }] }
           : {}),
       }
@@ -557,6 +558,13 @@ export function canonicalChatPresentation(input: {
   runs: CanonicalChatRun[];
   activities: CanonicalChatRunActivity[];
 }): ConversationTurnPresentation[] {
+  const latestTurnId = input.turns.reduce<CanonicalChatTurn | undefined>((latest, turn) => (
+    latest === undefined
+      || turn.baseMessageSeq > latest.baseMessageSeq
+      || (turn.baseMessageSeq === latest.baseMessageSeq && turn.createdAt > latest.createdAt)
+      ? turn
+      : latest
+  ), undefined)?.id;
   return input.turns.map((turn) => {
     const userMessage = input.messages.find((message) => message.id === turn.inputMessageId);
     const userFollowups = input.messages.filter((message) => (
@@ -575,7 +583,13 @@ export function canonicalChatPresentation(input: {
     const terminalFailure = run?.status === "failed" || run?.status === "aborted"
       || run?.outcome === "failed" || run?.outcome === "aborted";
     const finalMessage = terminalFailure || isActiveRun(run) ? undefined : assistantMessages.at(-1);
-    const live = runPresentation(run, input.activities, Boolean(finalMessage), turn.id);
+    const live = runPresentation(
+      run,
+      input.activities,
+      Boolean(finalMessage),
+      turn.id,
+      turn.id === latestTurnId,
+    );
     const modelStatus = activeModelStatus(run);
     const unsortedWork = [
       ...(modelStatus ? [modelStatus] : []),

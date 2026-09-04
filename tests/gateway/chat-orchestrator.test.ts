@@ -1449,6 +1449,55 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("rejects retrying a failed Turn after a newer user Turn has been admitted", async () => {
+    await repository.create(owner, {
+      id: "chat_superseded_retry",
+      clientRequestId: "req_create_superseded_retry",
+      title: "Superseded retry",
+    });
+    let attempt = 0;
+    const provider = adapter(async function* () {
+      attempt += 1;
+      yield { type: "run.completed", outcome: attempt === 1 ? "failed" : "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+      now: () => new Date("2026-08-26T00:00:00.000Z"),
+    });
+
+    const first = await orchestrator.admitTurn(principal, owner, "chat_superseded_retry", {
+      clientRequestId: "req_superseded_first",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "first" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+    const afterFirst = await repository.get(owner, "chat_superseded_retry");
+    await orchestrator.admitTurn(principal, owner, "chat_superseded_retry", {
+      clientRequestId: "req_superseded_second",
+      baseRevision: afterFirst!.chat.revision,
+      parts: [{ type: "text", text: "second" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await orchestrator.drain();
+    const afterSecond = await repository.get(owner, "chat_superseded_retry");
+
+    await expect(orchestrator.retryTurn(
+      principal,
+      owner,
+      "chat_superseded_retry",
+      first.turn.id,
+      { clientRequestId: "req_superseded_retry", baseRevision: afterSecond!.chat.revision },
+    )).rejects.toMatchObject({ status: 409 });
+    expect(attempt).toBe(2);
+  });
+
   it("retries a failed steered Turn with the committed steering instruction", async () => {
     await repository.create(owner, {
       id: "chat_retried_steer",

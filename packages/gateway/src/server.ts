@@ -153,7 +153,7 @@ import {
   createCanonicalChatRoutes,
 } from "./chat/routes.js";
 import { createCanonicalChatEventStream } from "./chat/event-stream.js";
-import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
+import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
@@ -4338,6 +4338,13 @@ export async function createGateway(config: GatewayConfig) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
   }
+  if (canonicalChatEventStream) {
+    registerCanonicalChatEventHttpRoute({
+      app,
+      getPrincipal: (context) => requireRequestPrincipal(context as Context),
+      stream: canonicalChatEventStream,
+    });
+  }
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
@@ -4347,14 +4354,6 @@ export async function createGateway(config: GatewayConfig) {
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
-  if (canonicalChatEventStream) {
-    registerCanonicalChatEventWebSocketRoute({
-      app,
-      upgradeWebSocket,
-      getPrincipal: (context) => requireRequestPrincipal(context as Context),
-      stream: canonicalChatEventStream,
-    });
-  }
   app.route("/", createChatProviderRoutes({
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),

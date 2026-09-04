@@ -32,6 +32,40 @@ describe("buildGatewayUrl", () => {
 });
 
 describe("createApiClient", () => {
+  it("opens an authenticated runtime stream without consuming its response body", async () => {
+    const response = new Response("data: {}\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    });
+    const fetchFn = vi.fn().mockResolvedValue(response);
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const caller = new AbortController();
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => "computer-b",
+      fetchFn,
+    });
+
+    const opened = await client.openStream("/api/chats/events", {
+      accept: "text/event-stream",
+      headers: { "last-event-id": "12" },
+      signal: caller.signal,
+      timeoutMs: 300_000,
+    });
+
+    expect(opened).toBe(response);
+    expect(opened.bodyUsed).toBe(false);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/chats/events?runtime=computer-b",
+      expect.objectContaining({
+        method: "GET",
+        headers: { accept: "text/event-stream", "last-event-id": "12" },
+      }),
+    );
+    expect(timeout).toHaveBeenCalledWith(300_000);
+    caller.abort();
+    expect((fetchFn.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
   it("can pin requests to the original runtime", async () => {
     let runtimeSlot = "computer-a";
     const fetchFn = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {

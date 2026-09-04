@@ -6,6 +6,10 @@ import type {
   CanonicalChatDetailResponse,
   CanonicalChatRecord,
 } from "@matrix-os/contracts";
+import {
+  createSharedCanonicalChatEventSource,
+  type CanonicalChatEventConnectionState,
+} from "@matrix-os/ui";
 import { useSocket } from "@/hooks/useSocket";
 import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -15,7 +19,8 @@ import {
   projectCanonicalMessages,
 } from "@/lib/canonical-chat-client";
 
-const ACTIVE_RUN_POLL_MS = 500;
+const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
+const EVENT_INVALIDATION_COALESCE_MS = 200;
 
 function requestId(): string {
   return `req_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
@@ -33,15 +38,25 @@ function conversationMeta(record: CanonicalChatRecord) {
 
 export function useCanonicalChatState(): ChatState {
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl: getGatewayUrl() }), []);
+  const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
+    openStream: (input) => client.openEventStream(input),
+  }), [client]);
   const { connected } = useSocket();
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string>();
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [safeError, setSafeError] = useState<string | null>(null);
+  const [eventConnectionState, setEventConnectionState] = useState<CanonicalChatEventConnectionState>(
+    eventSource.connectionState(),
+  );
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
   const composerDraftSequence = useRef(0);
   const detailRequestGeneration = useRef(0);
+  const pendingEventSourceDisposalRef = useRef<{
+    source: typeof eventSource;
+    cancelled: boolean;
+  } | null>(null);
   const detailRef = useRef(detail);
   const activeChatIdRef = useRef(activeChatId);
   detailRef.current = detail;
@@ -88,6 +103,51 @@ export function useCanonicalChatState(): ChatState {
   }, [loadList]);
 
   useEffect(() => {
+    const pendingDisposal = pendingEventSourceDisposalRef.current;
+    if (pendingDisposal?.source === eventSource) {
+      pendingDisposal.cancelled = true;
+      pendingEventSourceDisposalRef.current = null;
+    }
+    const stateSubscription = eventSource.subscribeConnectionState(() => {
+      setEventConnectionState(eventSource.connectionState());
+    });
+    void eventSource.start();
+    return () => {
+      stateSubscription.dispose();
+      const disposal = { source: eventSource, cancelled: false };
+      pendingEventSourceDisposalRef.current = disposal;
+      queueMicrotask(() => {
+        if (!disposal.cancelled) disposal.source.dispose();
+        if (pendingEventSourceDisposalRef.current === disposal) {
+          pendingEventSourceDisposalRef.current = null;
+        }
+      });
+    };
+  }, [eventSource]);
+
+  useEffect(() => {
+    let timer: number | undefined;
+    let refreshSelected = false;
+    const subscription = eventSource.subscribe((event) => {
+      const selectedChatId = activeChatIdRef.current;
+      refreshSelected ||= event.type === "chat.full_refresh" || event.chatId === selectedChatId;
+      if (timer !== undefined) return;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        const shouldRefreshSelected = refreshSelected;
+        refreshSelected = false;
+        void loadList();
+        const currentChatId = activeChatIdRef.current;
+        if (shouldRefreshSelected && currentChatId) void loadDetail(currentChatId);
+      }, EVENT_INVALIDATION_COALESCE_MS);
+    });
+    return () => {
+      subscription.dispose();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [eventSource, loadDetail, loadList]);
+
+  useEffect(() => {
     let cancelled = false;
     let refreshing = false;
     let pending = false;
@@ -128,21 +188,21 @@ export function useCanonicalChatState(): ChatState {
   }, [activeChatId, loadDetail]);
 
   useEffect(() => {
-    if (!activeChatId || !detail?.record.activeRun) return;
+    if (!activeChatId || !detail?.record.activeRun || eventConnectionState === "open") return;
     let cancelled = false;
     let timer: number | undefined;
     const poll = () => {
       timer = window.setTimeout(async () => {
         await loadDetail(activeChatId);
         if (!cancelled) poll();
-      }, ACTIVE_RUN_POLL_MS);
+      }, ACTIVE_RUN_FALLBACK_POLL_MS);
     };
     poll();
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [activeChatId, Boolean(detail?.record.activeRun), loadDetail]);
+  }, [activeChatId, Boolean(detail?.record.activeRun), eventConnectionState, loadDetail]);
 
   const submitMessage = useCallback((
     text: string,

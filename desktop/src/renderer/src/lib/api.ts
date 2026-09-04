@@ -44,10 +44,16 @@ export interface JsonRequestOptions extends RequestTimeoutOptions {
   maxBytes?: number;
 }
 
+export interface StreamRequestOptions extends RequestTimeoutOptions {
+  accept: "text/event-stream";
+  headers?: Record<string, string>;
+}
+
 export interface ApiClient {
   get<T>(path: string, options?: JsonRequestOptions): Promise<T>;
   getText(path: string, options?: BoundedReadOptions): Promise<string>;
   getBlob(path: string, options?: BoundedReadOptions): Promise<Blob>;
+  openStream(path: string, options: StreamRequestOptions): Promise<Response>;
   post<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
   postBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
   patch<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
@@ -190,6 +196,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     get: (path, requestOptions) => request(path, { method: "GET" }, requestOptions),
     getText: (path, boundedOptions) => requestText(path, { method: "GET" }, boundedOptions),
     getBlob: (path, boundedOptions) => requestBlob(path, { method: "GET" }, boundedOptions),
+    openStream: (path, streamOptions) => send(path, {
+      method: "GET",
+      headers: { accept: streamOptions.accept, ...streamOptions.headers },
+    }, streamOptions),
     post: (path, body, requestOptions) =>
       request(path, {
         method: "POST",

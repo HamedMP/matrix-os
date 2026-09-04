@@ -155,7 +155,7 @@ describe("CanonicalChatWorkspace send failures", () => {
       expect(vi.mocked(routeClient.getDetail).mock.calls.length).toBeGreaterThan(
         detailCallsWhenErrorAppeared,
       );
-    });
+    }, { timeout: 3_000 });
     expect(screen.getByRole("alert")).toBe(alert);
     expect(screen.getByRole("alert").textContent).toBe(
       "The message could not be queued. Refresh and try again.",
