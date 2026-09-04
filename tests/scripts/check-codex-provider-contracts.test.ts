@@ -12,14 +12,14 @@ const scriptPath = fileURLToPath(
 );
 
 describe("Codex provider contract checker", () => {
-  it("trusts the reviewed Codex 0.153.0 provider schemas", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.153.0");
-    expect(contract.verifiedVersions["0.153.0"]).toEqual({
+  it("trusts the reviewed Codex 0.153.3 provider schemas", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.153.3");
+    expect(contract.verifiedVersions["0.153.3"]).toEqual({
       schemaSha256: "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32",
     });
-    expect(appServerContract.latestVerifiedVersion).toBe("0.153.0");
-    expect(appServerContract.verifiedVersions["0.153.0"]).toEqual({
-      schemaSha256: "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
+    expect(appServerContract.latestVerifiedVersion).toBe("0.153.3");
+    expect(appServerContract.verifiedVersions["0.153.3"]).toEqual({
+      schemaSha256: "e8284c5cb8157554a3dd1e035aadbd4325aea501af56887e9c2e12eb1b9b9448",
     });
   });
 
