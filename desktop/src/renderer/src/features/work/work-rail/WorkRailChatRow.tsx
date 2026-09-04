@@ -23,6 +23,7 @@ export function WorkRailChatRow({
   onSelect,
   renaming,
   renamePending,
+  renameDisabled,
   onRenameStart,
   onRenameCommit,
   onRenameCancel,
@@ -36,6 +37,7 @@ export function WorkRailChatRow({
   onSelect: () => void;
   renaming: boolean;
   renamePending: boolean;
+  renameDisabled: boolean;
   onRenameStart: () => void;
   onRenameCommit: (title: string) => void;
   onRenameCancel: () => void;
@@ -48,7 +50,7 @@ export function WorkRailChatRow({
     <ContextMenu items={[
       {
         label: "Rename",
-        disabled: renamePending,
+        disabled: renameDisabled,
         onSelect: () => window.setTimeout(onRenameStart, 20),
       },
       {
@@ -88,7 +90,7 @@ export function WorkRailChatRow({
           onDoubleClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            window.setTimeout(onRenameStart, 0);
+            if (!renameDisabled) window.setTimeout(onRenameStart, 0);
           }}
         >
           <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />

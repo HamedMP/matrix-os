@@ -746,6 +746,36 @@ describe("WorkTab rail integration", () => {
     expect(await screen.findByRole("button", { name: "Rename Release plan" })).toBeTruthy();
   });
 
+  it("cancels a header rename with Escape without dismissing the medium inspector", async () => {
+    initialWorkWidth = 900;
+    function HostedWork() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return (
+        <SurfaceChromeContext.Provider value={host}>
+          <header>{chrome?.title}{chrome?.rightActions}</header>
+          <WorkTab
+            tabId="work-chat"
+            route="chat"
+            active
+            initialChatId="chat_global"
+            initialChatTitle="Global chat"
+            initialChatView="conversation"
+          />
+        </SurfaceChromeContext.Provider>
+      );
+    }
+
+    render(<HostedWork />);
+    fireEvent.click(await screen.findByRole("button", { name: "Show inspector" }));
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Rename Global chat" }));
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Rename Global chat" }), { key: "Escape" });
+
+    expect(screen.getByRole("button", { name: "Rename Global chat" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
+  });
+
   it("uses the hosted main-pane width without adding the window sidebar", async () => {
     initialWorkWidth = 900;
     function HostedWork() {

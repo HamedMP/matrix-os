@@ -94,6 +94,7 @@ export function WorkRailProjectGroup({
               pinning={Boolean(pinning[record.chat.id])}
               renaming={renamingChatId === record.chat.id}
               renamePending={renamePending && renamingChatId === record.chat.id}
+              renameDisabled={renamePending}
               onRenameStart={() => onRenameChat(record)}
               onRenameCommit={(title) => onRenameCommit(record, title)}
               onRenameCancel={onRenameCancel}

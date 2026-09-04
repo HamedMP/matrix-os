@@ -1079,6 +1079,37 @@ describe("WorkRail", () => {
     expect(screen.getByRole("button", { name: "Blurred title" })).toBeTruthy();
   });
 
+  it("blocks a second row from entering rename while the first rename is pending", async () => {
+    let resolveRename!: (value: CanonicalChatRecord) => void;
+    const pendingRename = new Promise<CanonicalChatRecord>((resolve) => {
+      resolveRename = resolve;
+    });
+    const { client } = setup();
+    const updateTitle = client.updateTitle as ReturnType<typeof vi.fn>;
+    updateTitle.mockImplementationOnce(() => pendingRename);
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Recent global" }));
+    const input = await screen.findByRole("textbox", { name: "Rename Recent global" });
+    fireEvent.change(input, { target: { value: "Pending title" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(updateTitle).toHaveBeenCalledTimes(1));
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Pinned global" }));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+    expect(screen.queryByRole("textbox", { name: "Rename Pinned global" })).toBeNull();
+
+    await act(async () => {
+      resolveRename({
+        ...recent,
+        chat: { ...recent.chat, title: "Pending title", revision: 2 },
+      });
+      await pendingRename;
+    });
+    expect(await screen.findByRole("button", { name: "Pending title" })).toBeTruthy();
+  });
+
   it("deletes a Chat from its hover action after confirmation", async () => {
     const { client } = setup();
     await screen.findByRole("button", { name: "Recent global" });

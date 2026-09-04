@@ -266,7 +266,12 @@ export function WorkRail({
               pinning={Boolean(pinning[record.chat.id])}
               renaming={renamingChatId === record.chat.id}
               renamePending={renamePending && renamingChatId === record.chat.id}
-              onRenameStart={() => { setRenameError(null); setRenamingChatId(record.chat.id); }}
+              renameDisabled={renamePending}
+              onRenameStart={() => {
+                if (renamePending) return;
+                setRenameError(null);
+                setRenamingChatId(record.chat.id);
+              }}
               onRenameCommit={(title) => { void renameChat(record, title); }}
               onRenameCancel={() => setRenamingChatId(null)}
               onSelect={() => onSelectChat(
@@ -313,7 +318,11 @@ export function WorkRail({
                 pinning={pinning}
                 renamingChatId={renamingChatId}
                 renamePending={renamePending}
-                onRenameChat={(record) => { setRenameError(null); setRenamingChatId(record.chat.id); }}
+                onRenameChat={(record) => {
+                  if (renamePending) return;
+                  setRenameError(null);
+                  setRenamingChatId(record.chat.id);
+                }}
                 onRenameCommit={(record, title) => { void renameChat(record, title); }}
                 onRenameCancel={() => setRenamingChatId(null)}
                 onToggle={() => setExpandedProjects((current) => ({
@@ -349,7 +358,12 @@ export function WorkRail({
               pinning={Boolean(pinning[record.chat.id])}
               renaming={renamingChatId === record.chat.id}
               renamePending={renamePending && renamingChatId === record.chat.id}
-              onRenameStart={() => { setRenameError(null); setRenamingChatId(record.chat.id); }}
+              renameDisabled={renamePending}
+              onRenameStart={() => {
+                if (renamePending) return;
+                setRenameError(null);
+                setRenamingChatId(record.chat.id);
+              }}
               onRenameCommit={(title) => { void renameChat(record, title); }}
               onRenameCancel={() => setRenamingChatId(null)}
               onSelect={() => onSelectChat(record)}

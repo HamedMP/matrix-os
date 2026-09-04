@@ -51,9 +51,11 @@ export function ChatTitleEditor({
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           event.preventDefault();
+          event.stopPropagation();
           commit();
         } else if (event.key === "Escape") {
           event.preventDefault();
+          event.stopPropagation();
           settledRef.current = true;
           onCancel();
         }
