@@ -31,6 +31,7 @@ describe("Matrix MCP gateway client", () => {
       "https://app.matrix-os.com/vm/neo-review/api/terminal/sessions?runtime=review",
       expect.objectContaining({
         headers: { authorization: "Bearer scoped-token" },
+        redirect: "error",
         signal: expect.any(AbortSignal),
       }),
     );
@@ -72,6 +73,10 @@ describe("Matrix MCP gateway client", () => {
     }));
     await expect(createMcpGatewayClient(runtime, { fetch: actualFetcher }).downloadFile("large.bin"))
       .rejects.toMatchObject({ code: "payload_too_large" });
+    expect(actualFetcher).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/neo-review/api/files/blob?runtime=review&path=large.bin",
+      expect.objectContaining({ redirect: "error", signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("uploads bytes with explicit overwrite and secret flags", async () => {

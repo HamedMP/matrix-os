@@ -237,6 +237,7 @@ export function createMcpGatewayClient(
       response = await fetchImpl(urlFor(apiPath, options.query), {
         ...init,
         headers: Object.fromEntries(headers.entries()),
+        redirect: "error",
         signal: AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS),
       });
     } catch (err: unknown) {
@@ -254,6 +255,7 @@ export function createMcpGatewayClient(
     try {
       response = await fetchImpl(urlFor(apiPath, options.query), {
         headers: { Authorization: `Bearer ${runtime.token}` },
+        redirect: "error",
         signal: AbortSignal.timeout(options.timeoutMs),
       });
     } catch (err: unknown) {

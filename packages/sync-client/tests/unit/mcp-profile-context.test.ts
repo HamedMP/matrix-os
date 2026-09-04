@@ -85,6 +85,7 @@ describe("Matrix MCP profile context", () => {
       "https://app.matrix-os.com/api/auth/computers",
       expect.objectContaining({
         headers: { Authorization: "Bearer owner-token" },
+        redirect: "error",
         signal: expect.any(AbortSignal),
       }),
     );
@@ -129,6 +130,7 @@ describe("Matrix MCP profile context", () => {
       expect(url).toBe("https://api.matrix-os.com/api/auth/runtime-selection");
       expect(init).toMatchObject({
         method: "POST",
+        redirect: "error",
         headers: {
           Authorization: "Bearer owner-token",
           "Content-Type": "application/json",

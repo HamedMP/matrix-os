@@ -1,145 +1,61 @@
 # MCP Tool Contract: Matrix Remote Computer
 
-All tool names are exposed under the MCP server namespace chosen by the coding-agent host. JSON examples omit the outer MCP protocol envelope.
+All scoped inputs require `computer`, the `runtimeSlot` returned by `list_computers`. Results include `ok`; failures expose only allowlisted codes/messages, never credentials or upstream bodies.
 
-Every computer-scoped input requires `computer`, the `runtimeSlot` returned by `list_computers`. Every result includes a machine-readable `ok` boolean. Failures use a safe code and message; credentials and raw upstream bodies are never returned.
+| Tool | Required input | Result | Semantics |
+|---|---|---|---|
+| `list_computers` | none | computers, selected slot, pagination flag | read-only |
+| `run_command` | computer, argv | bounded output/exit metadata | state-changing |
+| `list_terminals` | computer | bounded session metadata | read-only |
+| `create_terminal` | computer, name | created session | state-changing |
+| `list_terminal_tabs` | computer, terminal | stable IDs, positions, names/focus | read-only |
+| `create_terminal_tab` | computer, terminal | stable tab ID/name | state-changing |
+| `select_terminal_tab` | computer, terminal, stable tab ID | selection acknowledgement | state-changing |
+| `send_terminal_input` | computer, terminal, data | accepted byte count | state-changing |
+| `list_files` | computer, path | at most 500 entries | read-only |
+| `read_file` | computer, path | UTF-8 content, metadata | read-only |
+| `download_file` | computer, path | base64 content, metadata | read-only |
+| `upload_file` | computer, path, encoding/content | path and size | state-changing |
+| `list_chats` | computer | bounded summaries/cursor | read-only |
+| `search_chats` | computer, query | bounded summaries/cursor | read-only |
+| `get_chat` | computer, chat ID | record, up to 100 messages/cursor | read-only |
 
-## Discovery
+Every tool is open-world because it contacts Matrix. `run_command` is state-changing regardless of argv. Upload overwrite defaults false; all chat tools are read-only.
 
-### `list_computers`
-
-Input: `{}`
-
-Output:
-
-```json
-{"ok":true,"computers":[{"runtimeSlot":"primary","handle":"neo","label":"Main Computer","availability":"available","kind":"customer","versionLabel":"stable","capabilities":[]}],"selectedSlot":"primary","hasMore":false}
-```
-
-Annotation: read-only, open-world.
-
-## Commands
-
-### `run_command`
-
-Input:
+## Representative messages
 
 ```json
 {"computer":"primary","command":["git","status","--short"],"cwd":"projects/repo","timeoutMs":60000}
 ```
 
-Output:
-
 ```json
 {"ok":true,"computer":{"runtimeSlot":"primary","handle":"neo"},"stdout":"","stderr":"","exitCode":0,"signal":null,"timedOut":false,"truncated":false,"durationMs":18}
 ```
 
-Annotation: state-changing, open-world. Although commands may be read-only, their effect is determined by argv, so this tool is never marked read-only.
+```json
+{"computer":"primary","terminal":"agent-task-4f2a","name":"tests","cwd":"projects/repo"}
+```
 
-## Persistent terminals
+```json
+{"ok":true,"tab":{"id":41,"name":"tests"}}
+```
 
-### `list_terminals`
+`id` is the stable Zellij tab ID; `idx` from listing is only its current display position. Callers select by `id` before sending input when identity matters. The gateway returns the ID emitted by `zellij action new-tab` and accepts it at `POST /api/terminal/sessions/:name/tabs/by-id/:tabId/go`; the position route stays compatible. The stable-ID route uses existing computer-scoped auth, bounded-body middleware, and validated path parameters.
 
-Input: `{"computer":"primary"}`
-
-Output: `{"ok":true,"terminals":[...bounded safe terminal metadata...]}`
-
-### `create_terminal`
-
-Input: `{"computer":"primary","name":"agent-task-4f2a","cwd":"projects/repo"}`
-
-Output: `{"ok":true,"terminal":{"name":"agent-task-4f2a","created":true}}`
-
-### `list_terminal_tabs`
-
-Input: `{"computer":"primary","terminal":"agent-task-4f2a"}`
-
-Output: `{"ok":true,"tabs":[{"id":17,"idx":0,"name":"shell"}]}`
-
-### `create_terminal_tab`
-
-Input: `{"computer":"primary","terminal":"agent-task-4f2a","name":"tests","cwd":"projects/repo"}`
-
-Output: `{"ok":true,"tab":{"id":41,"name":"tests"}}`
-
-### `select_terminal_tab`
-
-Input: `{"computer":"primary","terminal":"agent-task-4f2a","tabId":41}`
-
-Output: `{"ok":true,"terminal":"agent-task-4f2a","tabId":41}`
-
-### `send_terminal_input`
-
-Input: `{"computer":"primary","terminal":"agent-task-4f2a","data":"bun run test\n"}`
-
-Output: `{"ok":true,"terminal":"agent-task-4f2a","bytes":13}`
-
-Terminal listing is read-only. Create/select/input operations are state-changing and open-world. `id` is the stable Zellij tab ID; `idx` is the current display position. Input is sent to the currently active tab, so callers pass the stable `id` to `select_terminal_tab` first when tab identity matters.
-
-The gateway returns the ID emitted by `zellij action new-tab` and accepts it at `POST /api/terminal/sessions/:name/tabs/by-id/:tabId/go`. The existing position-based tab route remains unchanged for current shell clients. Both routes use the same computer-scoped gateway authentication boundary; the stable-ID route has bounded-body middleware and validates both path parameters.
-
-## Files
-
-### `list_files`
-
-Input: `{"computer":"primary","path":"projects/repo"}`
-
-Output: `{"ok":true,"path":"projects/repo","entries":[...up to 500...]}`
-
-### `read_file`
-
-Input: `{"computer":"primary","path":"projects/repo/README.md"}`
-
-Output: `{"ok":true,"path":"projects/repo/README.md","encoding":"utf8","content":"...","size":1234,"mediaType":"text/markdown"}`
-
-### `download_file`
-
-Input: `{"computer":"primary","path":"artifacts/report.pdf"}`
-
-Output: `{"ok":true,"path":"artifacts/report.pdf","filename":"report.pdf","encoding":"base64","content":"JVBERi0...","size":8192,"mediaType":"application/pdf"}`
-
-### `upload_file`
-
-UTF-8 input:
+File transfer is content-only:
 
 ```json
 {"computer":"primary","path":"projects/repo/notes.txt","encoding":"utf8","content":"hello\n","overwrite":false,"secret":false}
 ```
 
-Binary input uses `"encoding":"base64"`. Output is `{"ok":true,"path":"...","size":6}`.
+Binary upload/download uses base64. Text reads cap at 256 KiB, binary at 1 MiB, terminal input at 60,000 characters, command output at 1 MiB combined, directories at 500 entries, and chat pages at 100.
 
-List/read/download are read-only and open-world. Upload is state-changing and open-world; overwrite defaults to false.
-
-## Chats
-
-### `list_chats`
-
-Input: `{"computer":"primary","limit":20,"lifecycle":"active","cursor":"optional-cursor"}`
-
-Output: `{"ok":true,"items":[...],"nextCursor":"optional-cursor"}`
-
-### `search_chats`
-
-Input: `{"computer":"primary","query":"terminal bug","limit":20}`
-
-Output follows `list_chats`.
-
-### `get_chat`
-
-Input: `{"computer":"primary","chatId":"chat_...","limit":100,"cursor":"optional-cursor"}`
-
-Output: `{"ok":true,"record":{...},"messages":[...up to 100...],"nextCursor":"optional-cursor"}`
-
-All chat tools are read-only and open-world.
-
-## Safe error shape
+## Safe errors and transport
 
 ```json
 {"ok":false,"error":{"code":"auth_required","message":"Authenticate with the Matrix CLI and try again.","retryable":false}}
 ```
 
-Allowed public codes: `invalid_input`, `auth_required`, `computer_not_found`, `computer_unavailable`, `not_found`, `conflict`, `payload_too_large`, `request_timeout`, and `request_failed`.
+Allowed codes: `invalid_input`, `auth_required`, `computer_not_found`, `computer_unavailable`, `not_found`, `conflict`, `payload_too_large`, `request_timeout`, `request_failed`.
 
-## Transport lifecycle
-
-The command `matrix mcp serve [--profile <name>]` starts one stdio server, loads no owner data merely for protocol initialization, and exits when stdin closes or the transport disconnects. It never emits human-readable text on stdout.
+`matrix mcp serve [--profile <name>]` starts one stdio server, performs no owner-data read during protocol initialization, emits protocol data only on stdout, and exits when stdin or transport disconnects.

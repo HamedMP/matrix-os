@@ -173,6 +173,7 @@ export function createMcpProfileContext(options: McpProfileContextOptions = {}):
     try {
       response = await fetchImpl(url, {
         headers: { Authorization: `Bearer ${context.auth.accessToken}` },
+        redirect: "error",
         signal: AbortSignal.timeout(PROFILE_REQUEST_TIMEOUT_MS),
       });
     } catch (err: unknown) {
@@ -214,6 +215,7 @@ export function createMcpProfileContext(options: McpProfileContextOptions = {}):
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ slot }),
+        redirect: "error",
         signal: AbortSignal.timeout(PROFILE_REQUEST_TIMEOUT_MS),
       });
     } catch (err: unknown) {

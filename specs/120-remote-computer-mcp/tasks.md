@@ -146,7 +146,7 @@
 
 ## Graphite Stack Plan
 
-This feature is planned as one structured-review PR, not a stack: it changes one published CLI boundary plus its existing plugin, introduces no endpoint or migration, and is expected to remain in the repository's 1,000-3,000-addition / 20-50-file single-PR band. If implementation exceeds 3,000 additions or 50 files, stop before commit and split with Graphite into:
+This feature is planned as one structured-review PR, not a stack: it changes one published CLI boundary, its existing plugin, and one narrow terminal tab-selection route; it adds no persistence and remains in the repository's 1,000-3,000-addition / 20-50-file single-PR band. If implementation exceeds 3,000 additions or 50 files, split with Graphite into:
 
 1. CLI MCP foundation + computers/commands/terminals.
 2. Files/chats + plugin packaging/documentation.

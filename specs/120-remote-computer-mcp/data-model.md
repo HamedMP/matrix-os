@@ -1,139 +1,39 @@
 # Data Model: Remote Computer MCP
 
-This feature adds no persisted entities. The model below defines validated request/response projections held only for one MCP tool call.
+No entity is persisted. These are validated, per-call projections.
 
-## CLI Principal
+## CLI principal and runtime
 
-Fields:
+- **CLI principal**: profile name; trusted platform/gateway origins; process-private owner token and expiry; authenticated user, handle, and runtime slot.
+- **Computer reference**: safe handle; stable `runtimeSlot`; label, availability, kind, version, capabilities; inventory-derived `gatewayPath` that must match handle and slot.
+- **Scoped runtime**: one computer, validated gateway base, and current or freshly minted non-persisted token.
 
-- `profileName`: active or explicitly configured CLI profile name.
-- `platformUrl`: trusted platform origin from the profile.
-- `gatewayUrl`: current gateway origin from the profile.
-- `accessToken`: existing owner bearer, held process-private.
-- `expiresAt`: absolute expiry used before network access.
-- `userId`, `handle`, `runtimeSlot`: authenticated identity metadata; never returned wholesale.
-
-Rules:
-
-- Missing or expired auth transitions directly to `auth_required`.
-- Tokens never appear in tool input, tool output, logs, or persisted MCP state.
-
-## Computer Reference
-
-Fields:
-
-- `handle`: safe display/routing handle.
-- `runtimeSlot`: stable tool-facing identifier, 1-32 safe characters.
-- `label`, `availability`, `kind`, `versionLabel`, `capabilities`.
-- `gatewayPath`: inventory-derived relative path that must exactly match handle and slot.
-
-Relationships:
-
-- Many computer references belong to one CLI principal.
-- One scoped tool call targets exactly one computer reference.
-
-State transitions:
+Missing/expired auth becomes `auth_required`. Tokens never enter tool inputs, outputs, logs, or MCP persistence. Every scoped call targets exactly one inventory member; unknown/unavailable targets fail safely. No token cache or unbounded in-memory collection is added.
 
 ```text
-unknown -> inventory member -> available -> scoped runtime access
+unknown -> inventory member -> available -> scoped call
                          \-> unavailable -> safe rejection
 ```
 
-## Scoped Runtime Access
+## Terminal session and tab
 
-Fields:
-
-- `computer`: resolved computer reference.
-- `gatewayBase`: trusted origin plus validated inventory path.
-- `accessToken`: current token if already scoped, otherwise a non-persisted replacement.
-- `expiresAt`: replacement expiry when minted.
-
-Rules:
-
-- Created for one operation; no token cache is introduced, avoiding a new in-memory collection and eviction lifecycle.
-
-## Terminal Session
-
-Fields are projected from the gateway response and include a validated name plus safe status/metadata fields. Unknown server fields are discarded.
-
-Relationships:
-
-- Belongs to one computer.
-- Owns zero or more terminal tabs.
-
-State transitions:
+A terminal belongs to one computer and owns zero or more tabs. Session responses keep bounded names and known status/metadata while discarding unknown fields. A tab exposes stable numeric `id`, current display position `idx`, optional name, and focus state.
 
 ```text
-absent --create--> active
-active --list/read/input--> active
+session: absent --create--> active --list/input--> active
+tab:     absent --create--> present --select by id--> focused
 ```
 
-Deletion is outside scope.
+Deletion is outside scope. Input targets the selected tab.
 
-## Terminal Tab
+## Captured command
 
-Fields:
+Input: computer slot, 1-64 argv items (1-4096 characters each), optional Matrix-home-relative `cwd`, and 1 second-to-30 minute timeout. Result: selected computer, bounded stdout/stderr, exit code, signal, timeout/truncation flags, and duration. Its lifetime is one request.
 
-- `index`: non-negative safe integer supplied by zellij/Matrix.
-- `name`: bounded display name when available.
-- `active`: boolean when available.
+## Remote file payload
 
-State transitions:
+Fields: computer, normalized Matrix-home-relative path, filename, media type, size, `utf8|base64` encoding/content, and explicit overwrite/secret flags. Absolute/traversal paths are invalid; text is capped at 256 KiB and binary transfer at 1 MiB. Existing files require `overwrite=true`. Downloads never accept a local destination.
 
-```text
-absent --create--> present
-present --select--> active
-active --send input--> active
-```
+## Chat page
 
-## Captured Command
-
-Input:
-
-- `computer`: runtime slot.
-- `command`: 1-64 argv items, each 1-4096 characters.
-- `cwd`: optional normalized Matrix-home-relative path.
-- `timeoutMs`: optional, 1 second through 30 minutes.
-
-Result:
-
-- `computer`: selected runtime slot/handle.
-- `stdout`, `stderr`: bounded strings.
-- `exitCode`, `signal`, `timedOut`, `truncated`, `durationMs`.
-
-Lifecycle is one request; no record is persisted.
-
-## Remote File Payload
-
-Fields:
-
-- `computer`, `path`, `filename`, `mediaType`, `size`.
-- `encoding`: `utf8` or `base64`.
-- `content`: bounded data matching encoding.
-- `overwrite`, `secret`: explicit upload flags.
-
-Rules:
-
-- Paths normalize within Matrix home; absolute and traversal paths are invalid.
-- Text read is at most 256 KiB; binary transfer is at most 1 MiB.
-- Existing files remain unchanged unless `overwrite=true`.
-- Download never gains a local destination field.
-
-## Chat Page
-
-Inputs:
-
-- `computer`.
-- `limit`: 1-100.
-- optional safe `cursor`, `lifecycle`, `projectId`, `query`.
-- detail additionally requires canonical `chatId`.
-
-Result:
-
-- projected canonical chat records and, for detail, at most 100 messages.
-- `nextCursor` when another page exists.
-
-Rules:
-
-- Data is read-only.
-- Unknown/cross-owner ids are indistinguishable as `not_found`.
+Inputs: computer, limit 1-100, optional bounded cursor/lifecycle/project/query, and canonical chat ID for detail. Results contain projected canonical records, at most 100 messages, and an optional cursor. Chats are read-only; unknown and cross-owner IDs both map to `not_found`.
