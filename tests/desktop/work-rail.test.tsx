@@ -129,6 +129,78 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("applies a direct canonical projection without waiting for a stream refresh", async () => {
+    const client = { list: vi.fn(async () => ({ items: [recent] })) } as unknown as CanonicalChatClient;
+    const actions = {
+      onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(), onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(), onCollapse: vi.fn(),
+    };
+    const { rerender } = render(<WorkRail client={client} projects={[]} active {...actions} />);
+    expect(await screen.findByRole("button", { name: "Recent global" })).toBeTruthy();
+    const projected = {
+      ...recent,
+      chat: { ...recent.chat, title: "Projected title", revision: recent.chat.revision + 1 },
+    };
+
+    rerender(<WorkRail client={client} projectedChatTitle={{
+      chatId: projected.chat.id, title: projected.chat.title, revision: projected.chat.revision,
+    }} projects={[]} active {...actions} />);
+
+    expect(await screen.findByRole("button", { name: "Projected title" })).toBeTruthy();
+    expect(client.list).toHaveBeenCalledOnce();
+  });
+
+  it("does not let a delayed stale list response overwrite a newer direct projection", async () => {
+    let resolveRefresh!: (value: { items: CanonicalChatRecord[] }) => void;
+    const client = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ items: [recent] })
+        .mockImplementationOnce(() => new Promise<{ items: CanonicalChatRecord[] }>((resolve) => { resolveRefresh = resolve; })),
+    } as unknown as CanonicalChatClient;
+    const events = eventHarness();
+    const actions = {
+      onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(), onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(), onCollapse: vi.fn(),
+    };
+    const projected = {
+      ...recent,
+      chat: { ...recent.chat, title: "Newest projected title", revision: recent.chat.revision + 1 },
+    };
+    const { rerender } = render(<WorkRail client={client} eventSource={events.eventSource} projects={[]} active {...actions} />);
+    expect(await screen.findByRole("button", { name: "Recent global" })).toBeTruthy();
+    act(() => events.emit({ type: "chat.changed", chatId: recent.chat.id, cursor: 2 }));
+    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+
+    rerender(<WorkRail client={client} eventSource={events.eventSource} projectedChatTitle={{
+      chatId: projected.chat.id, title: projected.chat.title, revision: projected.chat.revision,
+    }} projects={[]} active {...actions} />);
+    expect(await screen.findByRole("button", { name: "Newest projected title" })).toBeTruthy();
+    await act(async () => resolveRefresh({ items: [recent] }));
+
+    expect(screen.getByRole("button", { name: "Newest projected title" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Recent global" })).toBeNull();
+  });
+
+  it("lets an authoritative equal-revision list or omission retire a title projection", async () => {
+    const client = { list: vi.fn(async () => ({ items: [recent] })) } as unknown as CanonicalChatClient;
+    const actions = {
+      onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(), onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(), onCollapse: vi.fn(),
+    };
+    const { rerender } = render(<WorkRail client={client} projects={[]} active {...actions} />);
+    expect(await screen.findByRole("button", { name: "Recent global" })).toBeTruthy();
+
+    rerender(<WorkRail client={client} projectedChatTitle={{
+      chatId: recent.chat.id, title: "Stale projection", revision: recent.chat.revision,
+    }} projects={[]} active {...actions} />);
+    expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
+
+    rerender(<WorkRail client={client} projectedChatTitle={{
+      chatId: "chat_deleted", title: "Deleted elsewhere", revision: 99,
+    }} projects={[]} active {...actions} />);
+    expect(screen.queryByRole("button", { name: "Deleted elsewhere" })).toBeNull();
+  });
+
   it("matches the Settings sidebar title, groups, and item styling", async () => {
     setup();
     const rail = screen.getByRole("navigation", { name: "Chat navigation" });
@@ -1029,7 +1101,9 @@ describe("WorkRail", () => {
     const { client, actions } = setup();
     const recentChat = await screen.findByRole("button", { name: "Recent global" });
 
-    fireEvent.doubleClick(recentChat);
+    fireEvent.click(recentChat, { detail: 1 });
+    fireEvent.click(recentChat, { detail: 2 });
+    fireEvent.doubleClick(recentChat, { detail: 2 });
     const input = await screen.findByRole("textbox", { name: "Rename Recent global" });
     expect((input as HTMLInputElement).selectionStart).toBe(0);
     expect((input as HTMLInputElement).selectionEnd).toBe("Recent global".length);

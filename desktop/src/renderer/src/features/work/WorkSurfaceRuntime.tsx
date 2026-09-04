@@ -6,11 +6,20 @@ import {
   type DesktopCanonicalChatWebSocket,
 } from "../../lib/canonical-chat-client";
 import { useConnection } from "../../stores/connection";
-import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
+import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 interface WorkSurfaceRuntime {
   client: CanonicalChatClient | null;
   eventSource: CanonicalChatEventSource | null;
+  projectedChatTitle: CanonicalChatTitleProjection | null;
+  projectChat: (record: CanonicalChatRecord) => void;
+}
+
+export interface CanonicalChatTitleProjection {
+  chatId: string;
+  title: string;
+  revision: number;
 }
 
 const WorkSurfaceRuntimeContext = createContext<WorkSurfaceRuntime | null>(null);
@@ -19,6 +28,10 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
+  const [projection, setProjection] = useState<{
+    client: CanonicalChatClient | null;
+    title: CanonicalChatTitleProjection;
+  } | null>(null);
   const pendingDisposalRef = useRef<{ source: CanonicalChatEventSource; cancelled: boolean } | null>(null);
   const client = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
   const eventSource = useMemo<CanonicalChatEventSource | null>(() => {
@@ -53,7 +66,21 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
     };
   }, [eventSource]);
 
-  const value = useMemo(() => ({ client, eventSource }), [client, eventSource]);
+  const projectChat = useCallback((record: CanonicalChatRecord) => {
+    setProjection({
+      client,
+      title: {
+        chatId: record.chat.id,
+        title: record.chat.title,
+        revision: record.chat.revision,
+      },
+    });
+  }, [client]);
+  const projectedChatTitle = projection?.client === client ? projection.title : null;
+  const value = useMemo(
+    () => ({ client, eventSource, projectedChatTitle, projectChat }),
+    [client, eventSource, projectChat, projectedChatTitle],
+  );
   return <WorkSurfaceRuntimeContext.Provider value={value}>{children}</WorkSurfaceRuntimeContext.Provider>;
 }
 

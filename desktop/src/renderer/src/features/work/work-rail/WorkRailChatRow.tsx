@@ -14,6 +14,7 @@ import {
   resolveWorkRailAgentState,
   type WorkRailAgentState,
 } from "../work-rail-model";
+import { useEffect, useRef } from "react";
 
 export function WorkRailChatRow({
   record,
@@ -44,6 +45,19 @@ export function WorkRailChatRow({
   onPin: () => void;
   onDelete: () => void;
 }) {
+  const selectTimerRef = useRef<number | null>(null);
+  const renameTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (selectTimerRef.current !== null) window.clearTimeout(selectTimerRef.current);
+    if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
+  }, []);
+  const scheduleRename = (delay: number) => {
+    if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
+    renameTimerRef.current = window.setTimeout(() => {
+      renameTimerRef.current = null;
+      onRenameStart();
+    }, delay);
+  };
   const pinned = Boolean(record.chat.userState?.pinned);
   const agentState = resolveWorkRailAgentState(record);
   return (
@@ -51,7 +65,7 @@ export function WorkRailChatRow({
       {
         label: "Rename",
         disabled: renameDisabled,
-        onSelect: () => window.setTimeout(onRenameStart, 20),
+        onSelect: () => scheduleRename(20),
       },
       {
         label: pinned ? "Unpin" : "Pin",
@@ -86,11 +100,25 @@ export function WorkRailChatRow({
           aria-current={active ? "page" : undefined}
           className="flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
           style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
-          onClick={onSelect}
+          onClick={(event) => {
+            if (event.detail === 0) {
+              onSelect();
+              return;
+            }
+            if (selectTimerRef.current !== null) window.clearTimeout(selectTimerRef.current);
+            selectTimerRef.current = window.setTimeout(() => {
+              selectTimerRef.current = null;
+              onSelect();
+            }, 250);
+          }}
           onDoubleClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            if (!renameDisabled) window.setTimeout(onRenameStart, 0);
+            if (selectTimerRef.current !== null) {
+              window.clearTimeout(selectTimerRef.current);
+              selectTimerRef.current = null;
+            }
+            if (!renameDisabled) scheduleRename(0);
           }}
         >
           <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />

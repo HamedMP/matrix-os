@@ -51,6 +51,11 @@ import {
   canonicalApproval,
 } from "./chat/CanonicalApprovalMessage";
 import {
+  ChatTitleEditor,
+  RenameableConversationRow,
+  type RenameableConversation,
+} from "./chat/ChatTitleRename";
+import {
   PlusIcon,
   SendIcon,
   MicIcon,
@@ -63,12 +68,7 @@ import {
   Settings2Icon,
 } from "@/lib/hugeicons";
 
-interface ConversationMeta {
-  id: string;
-  preview: string;
-  messageCount: number;
-  updatedAt: number;
-}
+type ConversationMeta = RenameableConversation;
 
 const HERMES_SETUP_STORAGE_KEY = "matrix:hermes-setup";
 
@@ -107,6 +107,8 @@ interface ChatAppProps {
   conversations: ConversationMeta[];
   onNewChat: () => void;
   onSwitchConversation: (id: string) => void;
+  activeConversationTitle?: string;
+  onRenameConversation?: (id: string, title: string) => Promise<boolean>;
   onSubmit: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -170,6 +172,8 @@ export function ChatApp({
   conversations,
   onNewChat,
   onSwitchConversation,
+  activeConversationTitle,
+  onRenameConversation,
   onSubmit,
   providerSelection,
   onSubmitApproval,
@@ -184,6 +188,8 @@ export function ChatApp({
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
   const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
+  const [editingChat, setEditingChat] = useState<{ id: string; source: "header" | "rail" } | null>(null);
+  const [renamePending, setRenamePending] = useState(false);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
   const getInitialHermesSetup = () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower the `??=` logical-assignment operator (BuildHIR Todo); this lazy one-time ref cache is a deliberate first-render localStorage read and rewriting it would not change behavior.
@@ -223,7 +229,7 @@ export function ChatApp({
   const filteredConversations = !trimmedSearch
     ? conversations
     : conversations.filter((c) =>
-        c.preview?.toLowerCase().includes(searchQuery.toLowerCase()),
+        `${c.title ?? ""}\n${c.preview ?? ""}`.toLowerCase().includes(searchQuery.toLowerCase()),
       );
 
   const timeGroups = groupConversationsByTime(filteredConversations);
@@ -314,22 +320,25 @@ export function ChatApp({
                   {group.label}
                 </div>
                 {group.items.map((conv) => (
-                  <button
+                  <RenameableConversationRow
                     key={conv.id}
-                    type="button"
-                    onClick={() => onSwitchConversation(conv.id)}
-                    className={`group flex w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors ${mobile ? "py-3" : "py-2"} ${
-                      conv.id === sessionId
-                        ? "bg-accent/50 text-foreground"
-                        : "text-foreground/70 hover:bg-accent/30 hover:text-foreground"
-                    }`}
-                  >
-                    <span className="flex-1 truncate">
-                      {conv.preview
-                        ? conv.preview.slice(0, 40) + (conv.preview.length > 40 ? "..." : "")
-                        : "New chat"}
-                    </span>
-                  </button>
+                    conversation={conv}
+                    active={conv.id === sessionId}
+                    mobile={mobile}
+                    editing={editingChat?.source === "rail" && editingChat.id === conv.id}
+                    renamePending={renamePending && editingChat?.id === conv.id}
+                    onSelect={() => onSwitchConversation(conv.id)}
+                    onRenameStart={!mobile && onRenameConversation && !renamePending ? () => setEditingChat({ id: conv.id, source: "rail" }) : undefined}
+                    onRenameCancel={() => setEditingChat(null)}
+                    onRenameCommit={(title) => {
+                      if (!onRenameConversation || renamePending) return;
+                      setRenamePending(true);
+                      void onRenameConversation(conv.id, title).finally(() => {
+                        setRenamePending(false);
+                        setEditingChat(null);
+                      });
+                    }}
+                  />
                 ))}
               </div>
             ))}
@@ -375,10 +384,32 @@ export function ChatApp({
               <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <BotIcon className="size-3.5" aria-hidden="true" />
               </span>
-              <div className="min-w-0 text-center">
-                <p className="truncate text-sm font-semibold leading-4 text-foreground">
-                  {providerState.activeInstance?.displayName ?? "Matrix Agent"}
-                </p>
+              <div className="min-w-0 flex-1 text-center">
+                {editingChat?.source === "header" && editingChat.id === sessionId && activeConversationTitle ? (
+                  <ChatTitleEditor
+                    title={activeConversationTitle}
+                    pending={renamePending}
+                    onCancel={() => setEditingChat(null)}
+                    onCommit={(title) => {
+                      if (!sessionId || !onRenameConversation || renamePending) return;
+                      setRenamePending(true);
+                      void onRenameConversation(sessionId, title).finally(() => {
+                        setRenamePending(false);
+                        setEditingChat(null);
+                      });
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    aria-label={activeConversationTitle ? `Rename ${activeConversationTitle}` : undefined}
+                    disabled={!sessionId || !activeConversationTitle || !onRenameConversation || renamePending}
+                    className={`max-w-full truncate rounded px-1 text-sm font-semibold leading-4 text-foreground outline-none enabled:hover:bg-accent/40 enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
+                    onClick={() => sessionId && activeConversationTitle && setEditingChat({ id: sessionId, source: "header" })}
+                  >
+                    {activeConversationTitle ?? providerState.activeInstance?.displayName ?? "Matrix Agent"}
+                  </button>
+                )}
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
                   {providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>

@@ -490,10 +490,11 @@ export default function WorkTab({
   }, [initialChatId, layout, openGlobalDraft, showChat]);
   const applyRenamedChat = useCallback((record: CanonicalChatRecord) => {
     useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
+    hostedRuntime?.projectChat(record);
     if (record.chat.id === activeChatScopeRef.current.chatId) {
       setActiveChatTitle(record.chat.title);
     }
-  }, []);
+  }, [hostedRuntime]);
   const renameActiveChat = useCallback(async (title: string) => {
     const scope = activeChatScopeRef.current;
     if (!scope.client || !scope.chatId || renamingChatTitle) return;
