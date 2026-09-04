@@ -1,6 +1,6 @@
 {
   "name": "@finnaai/matrix",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "description": "Matrix OS command-line client — login, sync, and peer management for matrix-os.com",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -57,6 +57,7 @@
     "build:binaries": "node ./scripts/build-binaries.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chokidar": "^4.0.0",
     "citty": "^0.2.2",
     "node-diff3": "^3.2.0",
