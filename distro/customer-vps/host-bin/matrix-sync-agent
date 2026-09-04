@@ -962,6 +962,10 @@ apply_update() {
       sudo systemctl start --no-block matrix-developer-tools.service || true
       log "Developer tools runtime service enabled"
     fi
+    if [ -f "$extract_dir/systemd/matrix-vps-registration.service" ]; then
+      sudo systemctl enable matrix-vps-registration.service
+      log "VPS registration service enabled"
+    fi
     if [ -f "$extract_dir/systemd/matrix-integrations-agents.service" ]; then
       sudo systemctl enable matrix-integrations-agents.service
       sudo systemctl restart --no-block matrix-integrations-agents.service || true
@@ -1004,6 +1008,7 @@ apply_update() {
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
+  sudo systemctl start --no-block matrix-vps-registration.service || true
   log "Running health check..."
   write_update_phase health || return 1
   local healthy=false gateway_reached=false observed_running_version=""

@@ -86,6 +86,7 @@ describe('customer VPS host bundle', () => {
 
     expect(script).toContain('matrix-host-bundle.tar.gz');
     expect(script).toContain('matrix-gateway');
+    expect(script).toContain('matrix-register-vps');
     expect(script).toContain('matrix-shell');
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
@@ -1272,6 +1273,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
     expect(syncAgent).toContain('sudo systemctl enable matrix-developer-tools.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-developer-tools.service || true');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-vps-registration.service');
+    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-vps-registration.service || true');
     expect(syncAgent).toContain('Code-server runtime service enabled');
     expect(syncAgent).toContain('sudo systemctl enable matrix-code.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code.service || true');
@@ -1736,16 +1739,14 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(syncAgent).not.toContain('sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \\;');
   });
 
-  it('gateway launcher performs the customer VPS registration callback', () => {
+  it('gateway launcher leaves registration to the independent host service', () => {
     const root = process.cwd();
     const launcher = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
 
-    expect(launcher).toContain('MATRIX_PLATFORM_REGISTER_URL');
-    expect(launcher).toContain('/hetzner/v1/metadata/instance-id');
-    expect(launcher).toContain('/hetzner/v1/metadata/public-ipv4');
-    expect(launcher).toContain('/vps/register');
-    expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
-    expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(launcher).not.toContain('MATRIX_PLATFORM_REGISTER_URL');
+    expect(launcher).not.toContain('MATRIX_REGISTER_CLIENT');
+    expect(launcher).not.toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(launcher).not.toContain('registration.env');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');

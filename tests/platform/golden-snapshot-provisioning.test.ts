@@ -63,6 +63,8 @@ describe('golden snapshot provisioning activation', () => {
     await insertUserMachine(db, {
       machineId: '30000000-0000-4000-8000-000000000001', clerkUserId: 'user_1', handle: 'alice',
       runtimeSlot: 'primary', developerTools: [], status: 'provisioning', imageVersion: 'v2',
+      registrationTokenHash: hashRegistrationToken('registration-token'),
+      registrationTokenExpiresAt: '2026-08-01T00:00:00.000Z',
       provisionedAt: '2026-07-03T00:00:00.000Z',
     });
     await insertProvisioningJob(db, {

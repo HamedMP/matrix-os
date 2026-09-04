@@ -428,6 +428,7 @@ write_files:
     permissions: "0640"
     content: |
       MATRIX_REGISTRATION_TOKEN={{registrationToken}}
+      MATRIX_REGISTRATION_TOKEN_EXPIRES_AT={{registrationTokenExpiresAt}}
 
 runcmd:
   - |
@@ -667,7 +668,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
+    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-register-vps matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
     for optional_bin in matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
@@ -711,11 +712,11 @@ runcmd:
     matrix_uid="$(id -u matrix)"
     runuser -u matrix -- env HOME=/home/matrix/home XDG_RUNTIME_DIR="/run/user/${matrix_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" systemctl --user daemon-reload
     systemctl disable matrix-openclaw-gateway.service || true
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     if [ -f /etc/systemd/system/matrix-integrations-agents.service ] && [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
       systemctl enable matrix-integrations-agents.service
     fi
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
+    systemctl start matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
     log_bootstrap_phase core_services_started
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2

@@ -98,6 +98,14 @@ function jsonError(c: import('hono').Context, err: unknown, fallback: string) {
   return c.json({ error: 'Provisioning failed' }, 500);
 }
 
+function registrationJsonError(c: import('hono').Context, err: unknown) {
+  if (err instanceof CustomerVpsError) {
+    return c.json({ error: err.publicMessage, failure_code: err.code }, err.status as never);
+  }
+  logCustomerVpsError('/vps/register', err);
+  return c.json({ error: 'Provisioning failed', failure_code: 'unknown' }, 500);
+}
+
 async function readJson(c: import('hono').Context): Promise<unknown> {
   try {
     return await c.req.json();
@@ -278,7 +286,7 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
           machine_id: machineId,
         },
       });
-      return jsonError(c, err, '/vps/register');
+      return registrationJsonError(c, err);
     }
   });
 

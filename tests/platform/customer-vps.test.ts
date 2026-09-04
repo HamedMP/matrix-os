@@ -1569,6 +1569,24 @@ describe('platform/customer-vps', () => {
     expect(systemStore.writtenMeta).toHaveLength(1);
   });
 
+  it('distinguishes a completed registration from other invalid states', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    const registration = {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    };
+
+    await service.register('registration-token', registration);
+
+    await expect(service.register('registration-token', registration)).rejects.toMatchObject({
+      status: 409,
+      code: 'already_registered',
+    });
+  });
+
   it('completes registration after an already-authorized create when entitlement later changes', async () => {
     const resolveBillingEntitlement = vi.fn().mockResolvedValue(activeEntitlement());
     const { service } = createService({ resolveBillingEntitlement });

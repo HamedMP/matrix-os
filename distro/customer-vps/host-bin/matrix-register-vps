@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REGISTER_FLAG="${MATRIX_REGISTER_FLAG:-/opt/matrix/register-complete}"
+REGISTER_LOCK="${MATRIX_REGISTER_LOCK:-${REGISTER_FLAG}.lock}"
+MAX_ATTEMPTS="${MATRIX_REGISTRATION_MAX_ATTEMPTS:-30}"
+INSTANCE_ID_URL="${MATRIX_METADATA_INSTANCE_ID_URL:-http://169.254.169.254/hetzner/v1/metadata/instance-id}"
+PUBLIC_IPV4_URL="${MATRIX_METADATA_PUBLIC_IPV4_URL:-http://169.254.169.254/hetzner/v1/metadata/public-ipv4}"
+GATEWAY_HEALTH_URL="${MATRIX_GATEWAY_HEALTH_URL:-http://127.0.0.1:${PORT:-4000}/health}"
+REGISTRATION_ENV_FILE="${MATRIX_REGISTRATION_ENV_FILE:-/opt/matrix/env/registration.env}"
+
+registration_deadline_epoch() {
+  if [ -n "${MATRIX_REGISTRATION_TOKEN_EXPIRES_AT:-}" ]; then
+    date --date "$MATRIX_REGISTRATION_TOKEN_EXPIRES_AT" +%s 2>/dev/null || return 1
+    return 0
+  fi
+  if [ -f "$REGISTRATION_ENV_FILE" ] && [ ! -L "$REGISTRATION_ENV_FILE" ]; then
+    printf '%s\n' "$(( $(stat -c %Y "$REGISTRATION_ENV_FILE") + 3600 ))"
+    return 0
+  fi
+  printf '%s\n' "$(( $(date +%s) + 3600 ))"
+}
+
+registration_expired() {
+  [ "$(date +%s)" -ge "$registration_deadline" ]
+}
+
+mark_registration_complete() {
+  local incoming="${REGISTER_FLAG}.incoming.$$"
+  install -m 0640 /dev/null "$incoming"
+  mv -f "$incoming" "$REGISTER_FLAG"
+}
+
+[ ! -f "$REGISTER_FLAG" ] || exit 0
+[ -n "${MATRIX_PLATFORM_REGISTER_URL:-}" ] || exit 0
+[ -n "${MATRIX_REGISTRATION_TOKEN:-}" ] || exit 0
+case "$MATRIX_PLATFORM_REGISTER_URL" in
+  */vps/register) ;;
+  *) echo "matrix-register-vps: registration URL must end with /vps/register" >&2; exit 64 ;;
+esac
+
+if ! registration_deadline="$(registration_deadline_epoch)"; then
+  echo "matrix-register-vps: invalid registration deadline; stopping retries" >&2
+  exit 64
+fi
+if registration_expired; then
+  echo "matrix-register-vps: registration deadline expired; stopping retries" >&2
+  exit 64
+fi
+
+exec 9>"$REGISTER_LOCK"
+if ! flock -w 30 9; then
+  echo "matrix-register-vps: registration lock is busy; deferring" >&2
+  exit 75
+fi
+[ ! -f "$REGISTER_FLAG" ] || exit 0
+
+response_file="$(mktemp)"
+cleanup_response() {
+  rm -f "$response_file"
+}
+trap cleanup_response EXIT
+
+gateway_healthy=false
+for _ in $(seq 1 90); do
+  if curl --fail --silent --show-error --max-time 2 "$GATEWAY_HEALTH_URL" >/dev/null; then
+    gateway_healthy=true
+    break
+  fi
+  if registration_expired; then
+    echo "matrix-register-vps: registration deadline expired while waiting for gateway" >&2
+    exit 64
+  fi
+  sleep 2
+done
+if [ "$gateway_healthy" != true ]; then
+  echo "matrix-register-vps: gateway health check retry budget exhausted" >&2
+  exit 75
+fi
+
+instance_id="$(curl --fail --silent --show-error --max-time 10 "$INSTANCE_ID_URL")"
+public_ipv4="$(curl --fail --silent --show-error --max-time 10 "$PUBLIC_IPV4_URL")"
+if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ]; then
+  payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s","bundleSha256":"%s","healthy":true}' \
+    "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION" "$MATRIX_TARGET_BUNDLE_SHA256")"
+else
+  payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s"}' \
+    "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION")"
+fi
+
+for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+  if registration_expired; then
+    echo "matrix-register-vps: registration deadline expired; stopping retries" >&2
+    exit 64
+  fi
+  http_status=""
+  if http_status="$(curl --silent --show-error --max-time 10 \
+    --output "$response_file" \
+    --write-out '%{http_code}' \
+    -X POST \
+    -H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}" \
+    -H "content-type: application/json" \
+    --data "$payload" \
+    "$MATRIX_PLATFORM_REGISTER_URL")"; then
+    case "$http_status" in
+      2??)
+        mark_registration_complete
+        exit 0
+        ;;
+      409)
+        if grep -Eq '"failure_code"[[:space:]]*:[[:space:]]*"already_registered"' "$response_file"; then
+          echo "matrix-register-vps: platform reports registration already finalized; stopping retries" >&2
+          mark_registration_complete
+          exit 0
+        fi
+        echo "matrix-register-vps: platform rejected registration with non-terminal HTTP 409" >&2
+        exit 64
+        ;;
+      408|425|429) ;;
+      4??)
+        echo "matrix-register-vps: platform rejected registration with non-retryable HTTP ${http_status}" >&2
+        exit 64
+        ;;
+      5??) ;;
+      *)
+        echo "matrix-register-vps: platform returned unexpected HTTP ${http_status}; stopping retries" >&2
+        exit 64
+        ;;
+    esac
+  fi
+
+  sleep "$((attempt < 10 ? attempt : 10))"
+done
+
+echo "matrix-register-vps: transient registration retry budget exhausted" >&2
+exit 75
