@@ -17,6 +17,10 @@ const electronMock = vi.hoisted(() => {
     }),
     setWindowOpenHandler: vi.fn(),
     loadURL: vi.fn(async () => {}),
+    capturePage: vi.fn(async () => ({
+      isEmpty: () => false,
+      toJPEG: () => Buffer.from("retained-frame"),
+    })),
     isDestroyed: vi.fn(() => false),
     close: vi.fn(),
   };
@@ -44,6 +48,7 @@ beforeEach(() => {
   electronMock.shell.openExternal.mockClear();
   electronMock.webContents.setWindowOpenHandler.mockClear();
   electronMock.webContents.loadURL.mockClear();
+  electronMock.webContents.capturePage.mockClear();
   electronMock.webContents.isDestroyed.mockReset();
   electronMock.webContents.isDestroyed.mockReturnValue(false);
   electronMock.webContents.close.mockClear();
@@ -52,6 +57,72 @@ beforeEach(() => {
 });
 
 describe("createWebContentsView", () => {
+  it("captures a bounded JPEG frame for the detached renderer fallback", async () => {
+    const view = createWebContentsView({
+      window: {
+        isDestroyed: () => false,
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:browser",
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+    });
+
+    await expect(view.captureSnapshot?.()).resolves.toBe(
+      `data:image/jpeg;base64,${Buffer.from("retained-frame").toString("base64")}`,
+    );
+  });
+
+  it("downscales an oversized frame instead of dropping the retained content", async () => {
+    const resized = {
+      isEmpty: () => false,
+      toJPEG: () => Buffer.from("bounded-frame"),
+      getSize: () => ({ width: 1344, height: 840 }),
+      resize: vi.fn(),
+    };
+    electronMock.webContents.capturePage.mockResolvedValueOnce({
+      isEmpty: () => false,
+      toJPEG: () => Buffer.alloc(3_000_001),
+      getSize: () => ({ width: 1920, height: 1200 }),
+      resize: vi.fn(() => resized),
+    });
+    const view = createWebContentsView({
+      window: {
+        isDestroyed: () => false,
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:browser",
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+    });
+
+    await expect(view.captureSnapshot?.()).resolves.toBe(
+      `data:image/jpeg;base64,${Buffer.from("bounded-frame").toString("base64")}`,
+    );
+  });
+
+  it("falls back to the warmed frame when a later native capture is empty", async () => {
+    const view = createWebContentsView({
+      window: {
+        isDestroyed: () => false,
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:browser",
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+    });
+    electronMock.handlers.get("did-finish-load")?.();
+    await vi.waitFor(() => expect(electronMock.webContents.capturePage).toHaveBeenCalledOnce());
+    electronMock.webContents.capturePage.mockResolvedValueOnce({
+      isEmpty: () => true,
+      toJPEG: vi.fn(),
+    });
+
+    await expect(view.captureSnapshot?.()).resolves.toBe(
+      `data:image/jpeg;base64,${Buffer.from("retained-frame").toString("base64")}`,
+    );
+  });
+
   it("detaches safely after the parent window has already been destroyed", () => {
     let windowDestroyed = false;
     const removeChildView = vi.fn(() => {

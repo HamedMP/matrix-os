@@ -97,6 +97,64 @@ describe("EmbedHost", () => {
     });
   });
 
+  it("keeps a retained native frame visible after an embed moves behind another window", async () => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "browser-1", state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:deactivate") {
+        return Promise.resolve({
+          ok: true,
+          snapshotDataUrl: "data:image/jpeg;base64,cGVyc2lzdGVkLWJyb3dzZXI=",
+        }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    const view = render(<EmbedHost kind="browser" url="https://example.com" active />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "browser-1", active: true },
+    ));
+
+    view.rerender(<EmbedHost kind="browser" url="https://example.com" active={false} />);
+
+    const retainedFrame = await screen.findByTestId("embed-retained-frame");
+    expect(retainedFrame.getAttribute("src")).toBe("data:image/jpeg;base64,cGVyc2lzdGVkLWJyb3dzZXI=");
+    expect(invoke).toHaveBeenCalledWith("embed:deactivate", { embedId: "browser-1" });
+  });
+
+  it.each([
+    ["Home", (active: boolean) => <EmbedHost kind="hosted-shell" active={active} />],
+    ["VS Code", (active: boolean) => <EmbedHost kind="code-editor" active={active} />],
+    ["installed web apps", (active: boolean) => (
+      <EmbedHost kind="app" slug="whiteboard" active={active} />
+    )],
+  ])("uses the same retained-frame lifecycle for %s", async (_label, renderEmbed) => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "embed-1", state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:deactivate") {
+        return Promise.resolve({
+          ok: true,
+          snapshotDataUrl: "data:image/jpeg;base64,cmV0YWluZWQ=",
+        }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+    const view = render(renderEmbed(true));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "embed-1", active: true },
+    ));
+
+    view.rerender(renderEmbed(false));
+
+    expect(await screen.findByTestId("embed-retained-frame")).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith("embed:deactivate", { embedId: "embed-1" });
+  });
+
   it("resynchronizes native bounds and page scale when the Canvas transform changes", async () => {
     const view = render(<EmbedHost kind="app" slug="notes" layoutRevision="canvas:0:0:1" visualScale={1} />);
     await act(async () => {
