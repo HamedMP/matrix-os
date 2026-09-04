@@ -69,6 +69,16 @@ describe("current desktop tab panes", () => {
     expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: false, visualScale: 1 }, undefined);
   });
 
+  it("keeps a visible background Chat live without giving it keyboard ownership", () => {
+    const tab: Tab = { id: "chat", kind: "chat", title: "Chat", closable: false };
+    render(<TabPane tab={tab} active={false} visible />);
+
+    expect(workTabMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active: false, visible: true }),
+      undefined,
+    );
+  });
+
   it.each(["desktop", "canvas"] as const)("detaches native embeds under overlays in %s", (presentation) => {
     const tab: Tab = { id: "browser", kind: "home", title: "Browser", closable: false };
     const props = {

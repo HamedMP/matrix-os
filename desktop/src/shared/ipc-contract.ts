@@ -372,6 +372,16 @@ export const INVOKE_CHANNELS = {
     request: z.object({ embedId: z.string().min(1).max(64), active: z.boolean() }).strict(),
     response: Ok,
   },
+  "embed:deactivate": {
+    request: z.object({ embedId: z.string().min(1).max(64) }).strict(),
+    response: z.strictObject({
+      ok: z.boolean(),
+      snapshotDataUrl: z.string()
+        .max(4_000_023)
+        .regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]*={0,2}$/)
+        .nullable(),
+    }),
+  },
   "embed:suspend-all": {
     request: Empty,
     response: Ok,

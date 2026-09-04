@@ -249,7 +249,7 @@ export default function DesktopSurfaceFrame({
       sidebar={tab.kind === "settings" ? (
         <SettingsSidebar section={settingsSection} onSectionChange={setSettingsSection} />
       ) : isWorkSurface ? (
-        <HostedWorkSidebar tab={tab} active={paneActive} />
+        <HostedWorkSidebar tab={tab} active={visible} />
       ) : undefined}
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBarReservesSafeArea={isWindow || !isWorkSurface}
@@ -321,6 +321,6 @@ export default function DesktopSurfaceFrame({
     </SurfaceChromeContext.Provider>
   );
   return isWorkSurface ? (
-    <WorkSurfaceRuntimeProvider active={paneActive}>{frame}</WorkSurfaceRuntimeProvider>
+    <WorkSurfaceRuntimeProvider active={visible}>{frame}</WorkSurfaceRuntimeProvider>
   ) : frame;
 }

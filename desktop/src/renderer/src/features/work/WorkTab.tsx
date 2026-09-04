@@ -194,6 +194,7 @@ export default function WorkTab({
   route,
   projectSlug,
   active,
+  visible = active,
   initialChatId,
   initialChatView,
   initialChatTitle,
@@ -202,6 +203,7 @@ export default function WorkTab({
   route: WorkRoute;
   projectSlug?: string;
   active: boolean;
+  visible?: boolean;
   initialChatId?: string;
   initialChatView?: "index" | "draft" | "conversation";
   initialChatTitle?: string;
@@ -245,7 +247,7 @@ export default function WorkTab({
   const { layout, navigationOpen, inspectorOpen } = responsive;
   const localClient = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
   const localEventSource = useMemo<CanonicalChatEventSource | null>(() => {
-    if (hostedRuntime || !api || !active) return null;
+    if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
       gatewayOrigin: api.baseUrl,
       runtimeSlot,
@@ -256,7 +258,7 @@ export default function WorkTab({
       },
       createWebSocket: (url) => new WebSocket(url) as unknown as DesktopCanonicalChatWebSocket,
     });
-  }, [active, api, authGeneration, hostedRuntime, runtimeSlot]);
+  }, [api, authGeneration, hostedRuntime, runtimeSlot, visible]);
   const client = hostedRuntime?.client ?? localClient;
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
   const activeChatScopeRef = useRef({ client, chatId: initialChatId });
@@ -628,11 +630,11 @@ export default function WorkTab({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab tabId={tabId} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug
-        ? <ProjectChatsView projectId={projectSlug} active={active} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
+        ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
         : null;
 
   const navigationVisible = layout === "narrow" ? narrowPane === "rail" : navigationOpen;

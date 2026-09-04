@@ -22,6 +22,7 @@ export function CanonicalChatRoute({
   initialView,
   projectLabel,
   active,
+  live = active,
   externalNavigation = false,
   fallback,
   inspector,
@@ -36,6 +37,7 @@ export function CanonicalChatRoute({
   initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
   active: boolean;
+  live?: boolean;
   externalNavigation?: boolean;
   fallback: ReactNode;
   inspector?: ReactNode;
@@ -101,7 +103,7 @@ export function CanonicalChatRoute({
       setAvailability({ routeKey: null, value: "unavailable" });
       return () => { current = false; };
     }
-    if (!active) return () => { current = false; };
+    if (!live) return () => { current = false; };
     if (
       provenRoute.current?.client === client
       && provenRoute.current.projectId === canonicalProjectId
@@ -121,7 +123,7 @@ export function CanonicalChatRoute({
       setAvailability({ routeKey, value: "unavailable" });
     });
     return () => { current = false; };
-  }, [active, canonicalProjectId, client, routeKey]);
+  }, [canonicalProjectId, client, live, routeKey]);
 
   if (!client || currentAvailability === "unavailable") return fallback;
   if (currentAvailability === "checking") {
@@ -145,6 +147,7 @@ export function CanonicalChatRoute({
       initialView={initialView}
       projectLabel={projectLabel}
       active={active}
+      live={live}
       eventSource={eventSource}
       externalNavigation={externalNavigation}
       inspector={inspector}

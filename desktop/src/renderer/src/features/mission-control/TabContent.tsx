@@ -72,12 +72,13 @@ export function TabPane({
         route={tab.workRoute ?? "chat"}
         projectSlug={tab.projectSlug}
         active={active}
+        visible={visible}
         initialChatId={tab.chatId}
         initialChatView={tab.chatView}
         initialChatTitle={tab.chatTitle}
       />;
     case "chat":
-      return <WorkTab tabId={tab.id} route="chat" active={active} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} />;
+      return <WorkTab tabId={tab.id} route="chat" active={active} visible={visible} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} />;
     case "terminals":
       return <TerminalsTab active={active} visible={visible} visualScale={visualScale} />;
     case "files":
@@ -91,13 +92,13 @@ export function TabPane({
     case "apps":
       return <AppLauncher />;
     case "projects":
-      return <WorkTab route="projects" active={active} />;
+      return <WorkTab route="projects" active={active} visible={visible} />;
     case "app":
       return tab.slug
         ? <EmbedHost kind="app" slug={tab.slug} appIdentity={tab.appIdentity} active={active} layoutRevision={layoutRevision} visualScale={visualScale} />
         : null;
     case "project":
-      return <WorkTab route="project" projectSlug={tab.projectSlug} active={active} initialChatId={tab.chatId} initialChatTitle={tab.chatTitle} />;
+      return <WorkTab route="project" projectSlug={tab.projectSlug} active={active} visible={visible} initialChatId={tab.chatId} initialChatTitle={tab.chatTitle} />;
     case "task":
       return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":

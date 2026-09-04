@@ -2,7 +2,7 @@
 // in its own isolated partition. Hosted-shell views have no preload/IPC
 // exposure; app views may receive the narrow database-only preload. Navigation
 // is gated by an origin allowlist; external links open in the system browser.
-import { WebContentsView, shell, type BaseWindow } from "electron";
+import { WebContentsView, shell, type BaseWindow, type NativeImage } from "electron";
 import { isNavigationAllowed } from "./origin-policy";
 import type { Bounds, EmbedViewLike } from "./embed-manager";
 import { safeExternalHttpUrl } from "../external-url";
@@ -10,6 +10,36 @@ import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-brow
 import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 
 const MAX_PUBLIC_BROWSER_ORIGINS = 64;
+const MAX_EMBED_SNAPSHOT_BYTES = 3_000_000;
+const MAX_EMBED_SNAPSHOT_EDGE = 2_048;
+const EMBED_SNAPSHOT_QUALITIES = [72, 54, 36, 24] as const;
+
+function encodeBoundedSnapshot(source: NativeImage): string | null {
+  const sourceSize = source.getSize();
+  const longestEdge = Math.max(sourceSize.width, sourceSize.height);
+  const initialScale = Math.min(1, MAX_EMBED_SNAPSHOT_EDGE / longestEdge);
+  let image = initialScale < 1
+    ? source.resize({
+        width: Math.max(1, Math.round(sourceSize.width * initialScale)),
+        height: Math.max(1, Math.round(sourceSize.height * initialScale)),
+      })
+    : source;
+  for (let resizeAttempt = 0; resizeAttempt < 4; resizeAttempt += 1) {
+    for (const quality of EMBED_SNAPSHOT_QUALITIES) {
+      const jpeg = image.toJPEG(quality);
+      if (jpeg.byteLength <= MAX_EMBED_SNAPSHOT_BYTES) {
+        return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+      }
+    }
+    const { width, height } = image.getSize();
+    if (width <= 320 || height <= 200) break;
+    image = image.resize({
+      width: Math.max(320, Math.floor(width * 0.7)),
+      height: Math.max(200, Math.floor(height * 0.7)),
+    });
+  }
+  return null;
+}
 
 export function createWebContentsView(options: {
   window: BaseWindow;
@@ -41,6 +71,37 @@ export function createWebContentsView(options: {
   });
 
   const contents = view.webContents;
+  let retainedSnapshotDataUrl: string | null = null;
+  let snapshotContentGeneration = 0;
+  let snapshotCaptureInFlight: {
+    generation: number;
+    promise: Promise<string | null>;
+  } | null = null;
+  const captureSnapshot = (): Promise<string | null> => {
+    const generation = snapshotContentGeneration;
+    if (snapshotCaptureInFlight?.generation === generation) {
+      return snapshotCaptureInFlight.promise;
+    }
+    const capture = (async (): Promise<string | null> => {
+      if (contents.isDestroyed()) return retainedSnapshotDataUrl;
+      const image = await contents.capturePage();
+      if (generation !== snapshotContentGeneration) return retainedSnapshotDataUrl;
+      if (image.isEmpty()) return retainedSnapshotDataUrl;
+      retainedSnapshotDataUrl = encodeBoundedSnapshot(image) ?? retainedSnapshotDataUrl;
+      return retainedSnapshotDataUrl;
+    })();
+    const inFlight = { generation, promise: capture };
+    snapshotCaptureInFlight = inFlight;
+    void capture.then(
+      () => {
+        if (snapshotCaptureInFlight === inFlight) snapshotCaptureInFlight = null;
+      },
+      () => {
+        if (snapshotCaptureInFlight === inFlight) snapshotCaptureInFlight = null;
+      },
+    );
+    return capture;
+  };
   const publicOrigins = new Map<string, true>();
   for (const origin of options.allowedOrigins) publicOrigins.set(origin, true);
   const rememberPublicOrigin = (origin: string) => {
@@ -136,8 +197,22 @@ export function createWebContentsView(options: {
     if (externalUrl) void shell.openExternal(externalUrl);
     return { action: "deny" };
   });
-  contents.on("did-start-loading", () => options.onState("loading"));
-  contents.on("did-finish-load", () => options.onState("ready"));
+  contents.on("did-start-loading", () => {
+    snapshotContentGeneration += 1;
+    retainedSnapshotDataUrl = null;
+    options.onState("loading");
+  });
+  contents.on("did-finish-load", () => {
+    options.onState("ready");
+    // Warm the first retained frame while the view is definitely paintable so
+    // an immediate z-order change can fall back if the next capture is late.
+    void captureSnapshot().catch((error: unknown) => {
+      console.warn(
+        "[embeds] retained frame warm-up failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    });
+  });
   contents.on("did-fail-load", (_e, errorCode, _description, _validatedUrl, isMainFrame) => {
     if (isMainFrame === false) return;
     // -3 is ERR_ABORTED (e.g. a redirect); not a real failure.
@@ -166,6 +241,7 @@ export function createWebContentsView(options: {
     async loadUrl(url: string) {
       await contents.loadURL(url);
     },
+    captureSnapshot,
     attach() {
       if (attached) return;
       options.window.contentView.addChildView(view);

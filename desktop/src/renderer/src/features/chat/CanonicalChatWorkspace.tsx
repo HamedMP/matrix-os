@@ -75,6 +75,7 @@ export function CanonicalChatWorkspace({
   initialView,
   projectLabel,
   active,
+  live = active,
   externalNavigation = false,
   catalog,
   inspector,
@@ -91,6 +92,7 @@ export function CanonicalChatWorkspace({
   initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
   active: boolean;
+  live?: boolean;
   externalNavigation?: boolean;
   catalog?: CanonicalProviderCatalog;
   inspector?: ReactNode;
@@ -105,7 +107,7 @@ export function CanonicalChatWorkspace({
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const liveCatalog = useChatProviderCatalog(fallbackCatalog, { api: api ?? null, active });
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog, { api: api ?? null, active: live });
   const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
   const providerCatalog = catalog ?? (
     liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
@@ -113,7 +115,7 @@ export function CanonicalChatWorkspace({
   const controller = useCanonicalChatRouteController({
     client,
     projectId,
-    active,
+    active: live,
     initialChatId,
     autoSelectFirst: false,
     eventSource,
