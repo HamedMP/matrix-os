@@ -1,6 +1,7 @@
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
+  CanonicalCancelQueuedChatTurnRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatEventCursorSchema,
   CanonicalChatDetailResponseSchema,
@@ -9,15 +10,26 @@ import {
   CanonicalChatRecordSchema,
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
+  CanonicalChatQueueAdmissionResponseSchema,
+  CanonicalChatQueueCancellationResponseSchema,
+  CanonicalChatQueueReorderResponseSchema,
+  CanonicalChatQueueUpdateResponseSchema,
+  CanonicalChatQueuedTurnIdSchema,
   CanonicalChatTurnIdSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalQueueChatTurnRequestSchema,
+  CanonicalReorderQueuedChatTurnsRequestSchema,
+  CanonicalUpdateQueuedChatTurnRequestSchema,
+  CanonicalSteerQueuedChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
@@ -25,13 +37,24 @@ import {
   type CanonicalChatRecord,
   type CanonicalChatApprovalSubmissionResponse,
   type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunSteeringResponse,
   type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatQueueAdmissionResponse,
+  type CanonicalChatQueueCancellationResponse,
+  type CanonicalChatQueueReorderResponse,
+  type CanonicalChatQueueUpdateResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
+  type CanonicalCancelQueuedChatTurnRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalQueueChatTurnRequest,
+  type CanonicalReorderQueuedChatTurnsRequest,
+  type CanonicalUpdateQueuedChatTurnRequest,
+  type CanonicalSteerQueuedChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalSteerChatRunRequest,
   type CanonicalUpdateChatProjectRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
@@ -122,6 +145,42 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
   ): Promise<CanonicalChatTurnAdmissionResponse>;
+  enqueueQueuedTurn(
+    principal: RequestPrincipal,
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalQueueChatTurnRequest,
+  ): Promise<CanonicalChatQueueAdmissionResponse>;
+  cancelQueuedTurn(
+    owner: ChatOwner,
+    chatId: string,
+    queuedTurnId: string,
+    input: CanonicalCancelQueuedChatTurnRequest,
+  ): Promise<CanonicalChatQueueCancellationResponse>;
+  reorderQueuedTurns(
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalReorderQueuedChatTurnsRequest,
+  ): Promise<CanonicalChatQueueReorderResponse>;
+  updateQueuedTurn(
+    owner: ChatOwner,
+    chatId: string,
+    queuedTurnId: string,
+    input: CanonicalUpdateQueuedChatTurnRequest,
+  ): Promise<CanonicalChatQueueUpdateResponse>;
+  steerQueuedTurn(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    queuedTurnId: string,
+    input: CanonicalSteerQueuedChatTurnRequest,
+  ): Promise<CanonicalChatRunSteeringResponse>;
+  steerRun(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    input: CanonicalSteerChatRunRequest,
+  ): Promise<CanonicalChatRunSteeringResponse>;
   cancelRun(
     owner: ChatOwner,
     chatId: string,
@@ -421,6 +480,118 @@ export function createCanonicalChatRoutes(options: {
       return handleError(context, error);
     }
   });
+
+  routes.post("/api/chats/:chatId/queued-turns", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalQueueChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const principal = options.getPrincipal(context);
+      const result = await options.service.enqueueQueuedTurn(
+        principal,
+        ownerFromPrincipal(principal),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueAdmissionResponseSchema.parse(result), 201);
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/queued-turns/order", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalReorderQueuedChatTurnsRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.reorderQueuedTurns(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueReorderResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/queued-turns/:queuedTurnId", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(context.req.param("queuedTurnId"));
+      const parsed = CanonicalUpdateQueuedChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.updateQueuedTurn(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        queuedTurnId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueUpdateResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.delete("/api/chats/:chatId/queued-turns/:queuedTurnId", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(context.req.param("queuedTurnId"));
+      const parsed = CanonicalCancelQueuedChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.cancelQueuedTurn(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        queuedTurnId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueCancellationResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/runs/:runId/steer", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+      const parsed = CanonicalSteerChatRunRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.steerRun(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        runId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatRunSteeringResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post(
+    "/api/chats/:chatId/runs/:runId/queued-turns/:queuedTurnId/steer",
+    cancelBodyLimit,
+    async (context) => {
+      try {
+        const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+        const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+        const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(context.req.param("queuedTurnId"));
+        const parsed = CanonicalSteerQueuedChatTurnRequestSchema.safeParse(await context.req.json());
+        if (!parsed.success) return validationError(context);
+        const result = await options.service.steerQueuedTurn(
+          ownerFromPrincipal(options.getPrincipal(context)),
+          chatId,
+          runId,
+          queuedTurnId,
+          parsed.data,
+        );
+        return context.json(CanonicalChatRunSteeringResponseSchema.parse(result));
+      } catch (error: unknown) {
+        return handleError(context, error);
+      }
+    },
+  );
 
   routes.post("/api/chats/:chatId/runs/:runId/cancel", cancelBodyLimit, async (context) => {
     try {

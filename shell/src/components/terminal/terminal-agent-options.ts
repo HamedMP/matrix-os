@@ -1,4 +1,4 @@
-import { CODEX_VERIFIED_NPM_PACKAGE } from "@matrix-os/contracts";
+import { CODEX_TERMINAL_LAUNCH_COMMAND, CODEX_VERIFIED_NPM_PACKAGE } from "@matrix-os/contracts";
 
 export type TerminalAgentId = "claude" | "codex" | "opencode" | "pi";
 export type TerminalAgentInstallState = "installed" | "missing" | "unknown";
@@ -37,7 +37,7 @@ export const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     color: "#465243",
     logoSrc: "/agent-logos/codex.png",
     shortcut: "⌘⇧X",
-    launchCommand: "codex",
+    launchCommand: CODEX_TERMINAL_LAUNCH_COMMAND,
     installPackage: CODEX_VERIFIED_NPM_PACKAGE,
   },
   {

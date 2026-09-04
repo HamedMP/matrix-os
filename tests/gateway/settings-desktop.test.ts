@@ -54,7 +54,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const data = await res.json();
       expect(data.background).toEqual({
         type: "wallpaper",
-        name: "moraine-lake.jpg",
+        name: "matrix-dusk.webp",
       });
       expect(data.dock).toEqual({
         position: "left",
@@ -63,6 +63,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
         autoHide: false,
       });
       expect(data.pinnedApps).toEqual(["__terminal__", "__file-browser__", "__chat__"]);
+      expect(data.legacyDesktopImport).toEqual({});
     });
 
     it("returns saved config merged with defaults when desktop.json exists", async () => {
@@ -81,6 +82,22 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(data.background.type).toBe("solid");
       expect(data.dock.position).toBe("bottom");
       expect(data.pinnedApps).toEqual(["__terminal__", "apps/notes/index.html"]);
+      expect(data.legacyDesktopImport).toEqual({
+        pinnedApps: ["__terminal__", "apps/notes/index.html"],
+      });
+    });
+
+    it("reports an explicitly empty legacy icon layout without inventing absent pins", async () => {
+      writeFileSync(
+        join(homePath, "system/desktop.json"),
+        JSON.stringify({ desktopIcons: [] }),
+      );
+
+      const res = await app.request("/api/settings/desktop");
+      const data = await res.json();
+
+      expect(data.pinnedApps).toEqual(["__terminal__", "__file-browser__", "__chat__"]);
+      expect(data.legacyDesktopImport).toEqual({ desktopIcons: [] });
     });
   });
 
@@ -112,6 +129,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const config = {
         background: { type: "gradient", from: "#000", to: "#fff" },
         dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+        legacyDesktopImport: { pinnedApps: ["__chat__"] },
       };
       const res = await app.request("/api/settings/desktop", {
         method: "PUT",
@@ -126,6 +144,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
         readFileSync(join(homePath, "system/desktop.json"), "utf-8"),
       );
       expect(saved.background.type).toBe("gradient");
+      expect(saved.legacyDesktopImport).toBeUndefined();
     });
 
     it("rejects invalid JSON body", async () => {

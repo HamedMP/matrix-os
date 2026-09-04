@@ -103,6 +103,12 @@ const MAX_ACTIVE_TOOL_ACTIVITIES = 128;
 const MAX_ACTIVE_STATUS_ACTIVITIES = 16;
 const MAX_UNSAFE_TOOL_FRAGMENTS = 128;
 const MAX_UNSAFE_TOOL_FRAGMENT_CHARS = 4_000;
+const MAX_ACTIVE_STEER_RUNS = 64;
+const STEER_TIMEOUT_MS = 10_000;
+const HermesSteerResponseSchema = z.object({
+  status: z.enum(["queued", "rejected"]),
+  text: z.string().max(96 * 1024),
+}).passthrough();
 
 function selection(value: string): { provider: string; model: string } {
   const separator = value.indexOf(":");
@@ -285,6 +291,13 @@ export function createHermesChatProviderAdapter(options: {
 }): CanonicalChatProviderAdapter<HermesChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const approvals = createHermesApprovalController();
+  const activeSteerRuns = new Map<string, {
+    ownerId: string;
+    chatId: string;
+    turnId: string;
+    client: ReturnType<typeof createHermesStdioClient>;
+    liveSessionId: string;
+  }>();
 
   async function* execute(
     inputValue: CanonicalProviderRunInput<HermesChatState>,
@@ -316,6 +329,7 @@ export function createHermesChatProviderAdapter(options: {
     const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label" | "summary">>();
     let activeDelegationId: string | undefined;
     let releaseApprovalRun: (() => void) | undefined;
+    let releaseSteerRun: (() => void) | undefined;
 
     const emitAgentActivity = (activity: Omit<HermesActivity, "type">) => {
       const canonical = CanonicalProviderRunEventSchema.safeParse({ type: "agent.activity", ...activity });
@@ -649,6 +663,12 @@ export function createHermesChatProviderAdapter(options: {
         liveSessionId = session.session_id;
         durableSessionId = session.stored_session_id ?? session.session_key ?? resumeState?.sessionId;
         if (!durableSessionId) throw new Error("Hermes did not return a durable session");
+        if (durableSessionId !== resumeState?.sessionId) {
+          queue.push(CanonicalProviderRunEventSchema.parse({
+            type: "state.updated",
+            state: { sessionId: durableSessionId },
+          }));
+        }
         releaseApprovalRun = approvals.registerRun({
           owner: input.owner,
           chatId: input.chatId,
@@ -657,6 +677,20 @@ export function createHermesChatProviderAdapter(options: {
           liveSessionId,
           emit: (event) => queue.push(event),
         });
+        if (!activeSteerRuns.has(input.runId) && activeSteerRuns.size >= MAX_ACTIVE_STEER_RUNS) {
+          throw new Error("Hermes steering registry exceeded");
+        }
+        const activeSteerRun = {
+          ownerId: input.owner.ownerId,
+          chatId: input.chatId,
+          turnId: input.turnId,
+          client,
+          liveSessionId,
+        };
+        activeSteerRuns.set(input.runId, activeSteerRun);
+        releaseSteerRun = () => {
+          if (activeSteerRuns.get(input.runId) === activeSteerRun) activeSteerRuns.delete(input.runId);
+        };
         if (resumeState) {
           const modelConfig = HermesModelConfigResponseSchema.parse(await withinRun(client.request("config.set", {
             session_id: liveSessionId,
@@ -715,12 +749,6 @@ export function createHermesChatProviderAdapter(options: {
         if (final.status === "interrupted" && !input.signal.aborted) {
           throw new HermesRunFailure("interrupted", "Hermes Run was interrupted");
         }
-        if (durableSessionId && durableSessionId !== resumeState?.sessionId) {
-          queue.push(CanonicalProviderRunEventSchema.parse({
-            type: "state.updated",
-            state: { sessionId: durableSessionId },
-          }));
-        }
         queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "completed" }));
       } catch (error: unknown) {
         flushVisibleText(true);
@@ -765,6 +793,7 @@ export function createHermesChatProviderAdapter(options: {
           }),
         }));
       } finally {
+        releaseSteerRun?.();
         releaseApprovalRun?.();
         if (deltaFlushTimer) clearTimeout(deltaFlushTimer);
         if (totalTimer) clearTimeout(totalTimer);
@@ -784,6 +813,18 @@ export function createHermesChatProviderAdapter(options: {
     serializeState: (value) => HermesChatStateSchema.parse(value),
     start: (input) => execute(input),
     resume: (input) => execute(input, HermesChatStateSchema.parse(input.resumeState)),
+    async steer(input) {
+      const active = activeSteerRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId
+        || active.turnId !== input.turnId) {
+        throw new Error("Hermes steering Run unavailable");
+      }
+      const response = HermesSteerResponseSchema.parse(await active.client.request("session.steer", {
+        session_id: active.liveSessionId,
+        text: input.prompt,
+      }, STEER_TIMEOUT_MS));
+      if (response.status !== "queued") throw new Error("Hermes steering rejected");
+    },
     submitApproval: (input) => approvals.submit(input),
   };
 }

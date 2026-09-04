@@ -47,15 +47,15 @@ export function ConversationActivity({
   const accessibleLabel = activity.preview ? `${activity.label}: ${activity.preview}` : activity.label;
 
   return (
-    <div className="group/activity flex min-w-0 flex-col">
-      <div className="flex min-w-0 items-center gap-1">
+    <div className="group/activity flex w-fit max-w-full min-w-0 flex-col">
+      <div className="flex w-fit max-w-full min-w-0 items-center gap-1">
         <Marker asChild>
           <button
             type="button"
             onClick={() => activity.detail && setOpen((value) => !value)}
             aria-expanded={open}
             aria-label={accessibleLabel}
-            className="min-w-0 flex-1 rounded-md px-1 py-0.5 hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+            className="w-fit max-w-full min-w-0 rounded-md px-1 py-0.5 hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
           >
             <MarkerIcon>
               <Icon className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
@@ -129,7 +129,7 @@ export function ConversationActivityGroup({
   const previous = activities.slice(0, -1);
   const visible = showPrevious ? activities : activities.slice(-1);
   return (
-    <div className="flex min-w-0 flex-col gap-1.5">
+    <div className="flex w-fit max-w-full min-w-0 flex-col gap-1.5">
       {previous.length > 0 ? (
         <button
           type="button"

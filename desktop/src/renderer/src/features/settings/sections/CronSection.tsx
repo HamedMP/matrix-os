@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useConnection } from "../../../stores/connection";
 import { Card, Empty, SettingsSectionHeader } from "./section-kit";
@@ -10,10 +10,19 @@ export default function CronSection() {
   const authGeneration = useConnection((s) => s.authGeneration);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const scope = useMemo(() => ({ platformHost, authGeneration, runtimeSlot }), [platformHost, authGeneration, runtimeSlot]);
-  const { data: jobs = [], isError, isPending } = useQuery({
+  const previousApiRef = useRef(api);
+  const { data: jobs = [], isError, isPending, refetch } = useQuery({
     ...cronQueryOptions(api ?? { get: async () => [] } as never, scope),
     enabled: api !== null,
   });
+
+  useEffect(() => {
+    const previousApi = previousApiRef.current;
+    previousApiRef.current = api;
+    if (previousApi !== null && api !== null && previousApi !== api) {
+      void refetch();
+    }
+  }, [api, refetch]);
 
   return (
     <>

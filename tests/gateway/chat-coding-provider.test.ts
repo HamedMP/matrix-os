@@ -84,6 +84,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
   }));
   const getThread = vi.fn(async () => snapshot(initialEvents));
   const abortThread = vi.fn(async () => snapshot([]));
+  const steerTurn = vi.fn(async () => undefined);
   const submitApproval = vi.fn(async () => snapshot([]));
   const registerEventSink = vi.fn((candidate: Sink) => {
     sink = candidate;
@@ -94,6 +95,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     acceptTurn,
     getThread,
     abortThread,
+    steerTurn,
     submitApproval,
     registerEventSink,
   } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
@@ -103,14 +105,98 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     acceptTurn,
     getThread,
     abortThread,
+    steerTurn,
     submitApproval,
-    publish(events: AgentThreadEvent[]) {
-      sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events });
+    publish(events: AgentThreadEvent[], tokenUsage?: {
+      inputTokens: number;
+      outputTokens: number;
+      cachedInputTokens?: number;
+      reasoningOutputTokens?: number;
+    }) {
+      sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events, tokenUsage });
     },
   };
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it("routes Pi through the shared coding seam with its exact model and enforceable sandbox", async () => {
+    const createThread = vi.fn(async () => ({
+      snapshot: {
+        ...snapshot([event({ type: "thread.completed", eventId: "evt_pi_complete", outcome: "completed" })]),
+        thread: { ...snapshot([]).thread, providerId: "pi" },
+      },
+      existing: false,
+    }));
+    const store = {
+      createThread,
+      acceptTurn: vi.fn(),
+      getThread: vi.fn(),
+      abortThread: vi.fn(),
+      submitApproval: vi.fn(),
+      registerEventSink: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "pi", threads: store });
+
+    for await (const _event of adapter.start(input({
+      selection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" },
+    }))) {
+      // Consume completed run.
+    }
+
+    expect(adapter.driverKind).toBe("pi");
+    expect(createThread).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }),
+      expect.objectContaining({
+        providerId: "pi",
+        model: "anthropic:claude-sonnet-5",
+        approvalPolicy: "on_request",
+        sandboxMode: "read_only",
+      }),
+    );
+  });
+
+  it.each([
+    ["pi", "pi_default", "pi"],
+    ["opencode", "opencode_default", "opencode"],
+  ] as const)(
+    "routes %s through the shared coding seam with its exact model and enforceable sandbox",
+    async (providerId, instanceId, driverKind) => {
+    const createThread = vi.fn(async () => ({
+      snapshot: {
+        ...snapshot([event({ type: "thread.completed", eventId: "evt_pi_complete", outcome: "completed" })]),
+        thread: { ...snapshot([]).thread, providerId },
+      },
+      existing: false,
+    }));
+    const store = {
+      createThread,
+      acceptTurn: vi.fn(),
+      getThread: vi.fn(),
+      abortThread: vi.fn(),
+      submitApproval: vi.fn(),
+      registerEventSink: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId, threads: store });
+
+    for await (const _event of adapter.start(input({
+      selection: { instanceId, model: "anthropic:claude-sonnet-5" },
+    }))) {
+      // Consume completed run.
+    }
+
+    expect(adapter.driverKind).toBe(driverKind);
+    expect(createThread).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }),
+      expect.objectContaining({
+        providerId,
+        model: "anthropic:claude-sonnet-5",
+        approvalPolicy: "on_request",
+        sandboxMode: "read_only",
+      }),
+    );
+    },
+  );
+
   it.each([
     ["supervised", "on_request", "workspace_write"],
     ["auto", "on_failure", "workspace_write"],
@@ -220,7 +306,12 @@ describe("canonical coding Chat Provider adapter", () => {
       event({ type: "assistant.text.delta", eventId: "evt_delta", messageId: "msg_native", delta: "done" }),
       event({ type: "file.changed", eventId: "evt_file", path: "src/index.ts", changeKind: "updated" }),
       event({ type: "thread.completed", eventId: "evt_complete", outcome: "completed" }),
-    ]));
+    ], {
+      inputTokens: 100,
+      outputTokens: 24,
+      cachedInputTokens: 32,
+      reasoningOutputTokens: 8,
+    }));
 
     const events = [];
     for await (const candidate of adapter.start(input())) events.push(candidate);
@@ -230,7 +321,17 @@ describe("canonical coding Chat Provider adapter", () => {
       { type: "terminal.bound", terminalSessionId: "terminal_native", terminalSessionCreatedAt: occurredAt },
       { type: "assistant.delta", messageId: "msg_native", delta: "done" },
       expect.objectContaining({ type: "resource.changed", resourceKind: "file", changeKind: "updated" }),
-      { type: "run.completed", outcome: "completed" },
+      {
+        type: "run.completed",
+        outcome: "completed",
+        provider: "openai",
+        tokenUsage: {
+          inputTokens: 100,
+          outputTokens: 24,
+          cachedInputTokens: 32,
+          reasoningOutputTokens: 8,
+        },
+      },
     ]);
     expect(fake.createThread).toHaveBeenCalledTimes(1);
   });
@@ -356,6 +457,59 @@ describe("canonical coding Chat Provider adapter", () => {
       "thread_native",
       "req_coding",
     );
+  });
+
+  it("steers only the registered active canonical Run through the legacy thread seam", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const iterator = adapter.start(input())[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "state.updated", state: { conversationId: "thread_native" } },
+    });
+    await expect(adapter.steer!({
+      owner,
+      chatId: "chat_coding",
+      runId: "run_coding",
+      turnId: "cturn_coding",
+      clientRequestId: "req_coding_steer",
+      prompt: "Focus on the failing test.",
+      parts: [{ type: "text", text: "Focus on the failing test." }],
+    })).resolves.toBeUndefined();
+    expect(fake.steerTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }),
+      "thread_native",
+      {
+        message: "Focus on the failing test.",
+        clientRequestId: "req_coding_steer",
+      },
+    );
+    await expect(adapter.steer!({
+      owner,
+      chatId: "chat_coding",
+      runId: "run_other",
+      turnId: "cturn_other",
+      clientRequestId: "req_coding_steer_other",
+      prompt: "Stale.",
+      parts: [{ type: "text", text: "Stale." }],
+    })).rejects.toThrow("steering Run unavailable");
+
+    fake.publish([event({ type: "thread.completed", eventId: "evt_steer_complete", outcome: "completed" })]);
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "run.completed", outcome: "completed" },
+    });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+    await expect(adapter.steer!({
+      owner,
+      chatId: "chat_coding",
+      runId: "run_coding",
+      turnId: "cturn_coding",
+      clientRequestId: "req_coding_steer_terminal",
+      prompt: "Too late.",
+      parts: [{ type: "text", text: "Too late." }],
+    })).rejects.toThrow("steering Run unavailable");
   });
 
   it("submits canonical approval decisions through the same persisted coding thread", async () => {
@@ -490,18 +644,59 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
   });
 
-  it("surfaces event overflow even when the shared thread store isolates sink failures", async () => {
+  it("coalesces a burst of assistant deltas so a healthy steered Run reaches completion", async () => {
     let sink: Sink | undefined;
-    const overflow = Array.from({ length: 501 }, (_, index) => event({
+    const burst = Array.from({ length: 501 }, (_, index) => event({
       type: "assistant.text.delta",
       eventId: `evt_overflow_${index}`,
       messageId: "msg_native",
       delta: "x",
     }));
+    burst.push(event({
+      type: "thread.completed",
+      eventId: "evt_burst_completed",
+      outcome: "completed",
+    }));
     const store = {
       createThread: vi.fn(async () => {
         setTimeout(() => {
-          sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: overflow });
+          sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: burst });
+        }, 0);
+        return { snapshot: snapshot([]), existing: false };
+      }),
+      acceptTurn: vi.fn(),
+      getThread: vi.fn(),
+      abortThread: vi.fn(),
+      registerEventSink: vi.fn((candidate: Sink) => {
+        sink = candidate;
+        return { dispose: vi.fn() };
+      }),
+    } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store });
+
+    const events = [];
+    for await (const candidate of adapter.start(input({ signal: AbortSignal.timeout(1_000) }))) {
+      events.push(candidate);
+    }
+
+    expect(events.filter((candidate) => candidate.type === "assistant.delta")
+      .map((candidate) => candidate.type === "assistant.delta" ? candidate.delta : "")
+      .join("")).toBe("x".repeat(501));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
+  it("still fails closed when an undrained Provider event backlog exceeds the byte cap", async () => {
+    let sink: Sink | undefined;
+    const oversized = Array.from({ length: 600 }, (_, index) => event({
+      type: "assistant.text.delta",
+      eventId: `evt_oversized_${index}`,
+      messageId: "msg_native",
+      delta: "x".repeat(4_000),
+    }));
+    const store = {
+      createThread: vi.fn(async () => {
+        setTimeout(() => {
+          sink?.({ ownerId: owner.ownerId, threadId: "thread_native", events: oversized });
         }, 0);
         return { snapshot: snapshot([]), existing: false };
       }),
@@ -516,7 +711,7 @@ describe("canonical coding Chat Provider adapter", () => {
     const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store });
 
     await expect(async () => {
-      for await (const _event of adapter.start(input({ signal: AbortSignal.timeout(100) }))) {
+      for await (const _event of adapter.start(input({ signal: AbortSignal.timeout(1_000) }))) {
         // consume
       }
     }).rejects.toThrow("event buffer exceeded");

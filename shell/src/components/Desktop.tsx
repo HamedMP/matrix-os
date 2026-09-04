@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { appKeys, appsQueryOptions, type ApiAppEntry } from "@/api/apps";
+import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -21,7 +21,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { SettingsIcon, MessageSquareIcon, LayoutGridIcon } from "@/lib/hugeicons";
+import { SettingsIcon, LayoutGridIcon } from "@/lib/hugeicons";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
@@ -30,16 +30,15 @@ import { useThemeStyle } from "./window/useThemeStyle";
 import { OsSessionHost } from "./os-session/OsSessionHost";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
-import { getGatewayUrl } from "@/lib/gateway";
+import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
-import { ChatPopover } from "./ChatPopover";
-import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
-import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   buildWebDesktopLauncherApps,
   buildWebDesktopIconApps,
@@ -49,6 +48,10 @@ import {
   createOsViewLayoutMemory,
   transitionOsViewLayout,
 } from "@/lib/os-view-layout-memory";
+import {
+  loadWebOsViewPresentation,
+} from "@/lib/os-view-state-client";
+import { useCanvasTransformPersistence } from "@/hooks/useOsViewStatePersistence";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
@@ -56,6 +59,12 @@ import {
   TERMINAL_SETUP_WINDOW_PATH,
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
+import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
+import {
+  OPEN_PROVIDER_SETTINGS_EVENT,
+  OPEN_PROVIDER_TERMINAL_EVENT,
+  providerTerminalSessionFromEvent,
+} from "@/lib/canonical-provider-setup";
 import {
   loadShellSnapshot,
   saveShellSnapshot,
@@ -102,8 +111,9 @@ interface DesktopProps {
   cacheScope?: ShellSnapshotScope | null;
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, minimizingIds, firstRunStatus, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
+  useCanvasTransformPersistence(GATEWAY_URL);
   const windows = useWindowManager((s) => s.windows);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
   const wmMinimizeWindow = useWindowManager((s) => s.minimizeWindow);
@@ -120,10 +130,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const wmToggleFullscreen = useWindowManager((s) => s.toggleFullscreen);
   const wmExitFullscreen = useWindowManager((s) => s.exitFullscreen);
   const queryClient = useQueryClient();
-  const cachedApps = useMemo(
-    () => loadShellSnapshot(cacheScope)?.bootstrap?.apps,
-    [cacheScope],
-  );
+  const cachedApps = useMemo(() => {
+    const bootstrap = loadShellSnapshot(cacheScope)?.bootstrap;
+    return hydrateAppIconUrls(bootstrap?.apps, bootstrap?.icons, gatewayAssetUrl);
+  }, [cacheScope]);
   const { data: apiApps = [], refetch: refetchApps } = useQuery({
     ...appsQueryOptions(),
     initialData: cachedApps,
@@ -142,19 +152,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDefaultSection, setSettingsDefaultSection] = useState<SettingsSectionId>("appearance");
-  // Chat popup is now fully controlled here so the dock button can toggle
-  // it on click (open if closed, close if open). ChatPopover used to wrap
-  // the button in Radix Dialog.Trigger, which only opened — clicking the
-  // dock to dismiss never worked, especially obvious while the agent was
-  // busy because the popup auto-opens then resists close.
-  const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
   // Shell hydration always uses the shared Matrix brand surface. Theme-specific
   // OS boot screens are reserved for actual OS-session transitions so this
   // account → journey → Desktop handoff cannot visually swap designs.
   const launchPathConsumedRef = useRef<string | null>(null);
-  const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? EMPTY_PINNED_APPS;
@@ -419,7 +422,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
   }, [apps, focusOrOpen]);
 
-  const openSetupTerminal = (action: TerminalLaunchAction) => {
+  const focusTerminalForHandoff = useCallback((handoff: (targetId?: string) => void) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
     const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
@@ -452,9 +455,37 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           );
         }
       }
-      enqueueTerminalLaunch(action, win?.id);
+      handoff(win?.id);
     });
+  }, [dockXOffset, wmOpenWindow, wmRestoreAndFocusWindow]);
+
+  const openSetupTerminal = (action: TerminalLaunchAction) => {
+    focusTerminalForHandoff((targetId) => enqueueTerminalLaunch(action, targetId));
   };
+
+  const openExistingProviderTerminal = useCallback((sessionId: string) => {
+    focusTerminalForHandoff((targetId) => {
+      if (targetId) enqueueExistingTerminalSession(sessionId, targetId);
+    });
+  }, [focusTerminalForHandoff]);
+
+  useEffect(() => {
+    const openProviderSettings = () => {
+      setSettingsDefaultSection("agents-providers");
+      setSettingsOpen(true);
+      setTaskBoardOpen(false);
+    };
+    const openProviderTerminal = (event: Event) => {
+      const sessionId = providerTerminalSessionFromEvent(event);
+      if (sessionId) openExistingProviderTerminal(sessionId);
+    };
+    window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
+    window.addEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
+    return () => {
+      window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
+      window.removeEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
+    };
+  }, [openExistingProviderTerminal]);
 
   // Vocal mode's open_app tool and auto-open-after-build both go through
   // this. Fuzzy-matches `query` against the current apps list and focuses
@@ -622,6 +653,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (bootstrapRes === null) return;
       const bootstrap = bootstrapRes?.ok ? await readJsonForLoad<ShellBootstrap>(bootstrapRes) : {};
       if (bootstrap === null) return;
+      if (!isPreVpsBillingSetupRoute()) {
+        const presentation = await loadWebOsViewPresentation(GATEWAY_URL, useDesktopMode.getState().mode, signal);
+        if (presentation) {
+          bootstrap.layout = { windows: presentation.windows };
+          useCanvasTransform.getState().setTransform(
+            presentation.transform.zoom,
+            presentation.transform.panX,
+            presentation.transform.panY,
+          );
+        }
+      }
       if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
       await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
     } catch (err) {
@@ -993,10 +1035,20 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
+  const openWebSettings = useCallback((section: WebDesktopSettingsSection) => {
+    setSettingsDefaultSection(section);
+    setSettingsOpen(true);
+    setTaskBoardOpen(false);
+  }, []);
+
+  const openGettingStartedWork = useCallback(() => {
+    openAppOrFocus("__chat__", "Chat");
+  }, [openAppOrFocus]);
+
   const canvasToolbarChild = desktopMode === "canvas" ? (
     <CanvasToolbar
-      guideVisible={manualSetupVisible}
-      onOpenGuide={() => setManualSetupVisible(true)}
+      onOpenSettings={openWebSettings}
+      onOpenFirstWork={openGettingStartedWork}
     />
   ) : null;
 
@@ -1010,7 +1062,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       setSettingsDefaultSection(path === "__plugins__" ? "integrations" : "appearance");
       setSettingsOpen(true);
       setTaskBoardOpen(false);
-      setChatOpen(false);
       return;
     }
     openAppOrFocus(path, name);
@@ -1042,14 +1093,22 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           onOpenApp={openAppOrFocus}
           onFocusWindow={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
           onMinimizeWindow={animateMinimize}
-          onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}
+          onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); }}
           onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
         >
           {canvasToolbarChild}
         </WindowsTaskbar>
-      ) : canvasToolbarChild)}
+      ) : canvasToolbarChild ? (
+        <header
+          data-testid="canvas-toolbar"
+          className="relative flex h-[38px] shrink-0 items-center justify-center gap-0.5 border-b border-white/30 bg-card/70 px-3 text-xs leading-none text-foreground/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] backdrop-blur-xl"
+          style={{ zIndex: SHELL_Z_INDEX.menuBar }}
+        >
+          {canvasToolbarChild}
+        </header>
+      ) : null)}
       <OsSessionHost />
-      <div className="relative flex-1 flex flex-col md:flex-row">
+      <div className="relative min-h-0 flex-1 flex flex-col md:flex-row">
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
         {desktopMode !== "desktop" && !isWindowsDesign && <div
           className={[
@@ -1263,7 +1322,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       <button
                         type="button"
                         data-testid="dock-tasks"
-                        onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                        onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
                         className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                           taskBoardOpen
                             ? "bg-primary text-primary-foreground border-primary"
@@ -1297,33 +1356,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                     />
                   );
                 })()}
-                {!HERMES_CHAT_HIDDEN && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-chat"
-                      onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
-                      className={`relative flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                        chatOpen
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card border-border/60"
-                      }`}
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                      aria-label={chatOpen ? "Close Hermes" : "Open Hermes"}
-                    >
-                      <MessageSquareIcon className="size-4" />
-                      {chat?.busy && (
-                        <span
-                          className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
-                          aria-hidden
-                        />
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
-                </Tooltip>
-                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1344,7 +1376,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                     <button
                       type="button"
                       data-testid="dock-settings"
-                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
+                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
                       className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                         settingsOpen
                           ? "bg-primary text-primary-foreground border-primary"
@@ -1387,31 +1419,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         {/* Mobile dock (bottom tab bar) */}
         {desktopMode !== "desktop" && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
-            {!HERMES_CHAT_HIDDEN && (
-            <button
-              type="button"
-              data-testid="dock-chat-mobile"
-              onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
-              className={`relative flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
-                chatOpen
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card border-border/60"
-              }`}
-              aria-label={chatOpen ? "Close Hermes" : "Open Hermes"}
-            >
-              <MessageSquareIcon className="size-4" />
-              {chat?.busy && (
-                <span
-                  className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
-                  aria-hidden
-                />
-              )}
-            </button>
-            )}
             {(
               <button
                 type="button"
-                onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
                 className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                   taskBoardOpen
                     ? "bg-primary text-primary-foreground border-primary"
@@ -1422,7 +1433,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               </button>
             )}            <button
               type="button"
-              onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
+              onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 settingsOpen
                   ? "bg-primary text-primary-foreground border-primary"
@@ -1473,25 +1484,19 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               onOpenLauncher={() => {
                 setTaskBoardOpen((open) => !open);
                 setSettingsOpen(false);
-                setChatOpen(false);
               }}
               headerActions={(
                 <WebDesktopControls
                   onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
                   onOpenSupport={() => void openShellSupport()}
-                  onOpenSettings={(section) => {
-                    setSettingsDefaultSection(section);
-                    setSettingsOpen(true);
-                    setTaskBoardOpen(false);
-                    setChatOpen(false);
-                  }}
+                  onOpenSettings={openWebSettings}
+                  onOpenFirstWork={openGettingStartedWork}
                 />
               )}
               onOpenSettings={(section: WebDesktopSettingsSection) => {
                 setSettingsDefaultSection(section);
                 setSettingsOpen(true);
                 setTaskBoardOpen(false);
-                setChatOpen(false);
               }}
               onActivateWindow={(id) => wmRestoreAndFocusWindow(id)}
               onCloseWindow={wmCloseWindow}
@@ -1533,20 +1538,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             onAddToDesktop={addDesktopIcon}
           />
 
-          {desktopMode === "canvas" && (
-            <CanvasRenderer apps={apps}>
-              {manualSetupVisible && (
-                <SetupChecklist onOpenTerminal={openSetupTerminal} />
-              )}
-            </CanvasRenderer>
-          )}
+          {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
 
           {vocalMounted && (
             <VocalPanel
               active={vocalActive}
               chat={chat}
               onOpenApp={openAppByName}
-              onDismissChat={() => setChatOpen(false)}
             />
           )}
 
@@ -1597,12 +1595,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           setSettingsOpen(false);
           openSetupTerminal(action);
         }}
+        onOpenProviderTerminalSession={(sessionId) => {
+          setSettingsOpen(false);
+          openExistingProviderTerminal(sessionId);
+        }}
       />
-      {/* Single ChatPopover instance shared by desktop + mobile dock
-          buttons. Lives outside both dock-orientation branches so it
-          isn't unmounted when the viewport orientation flips. */}
-      <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
-
       {/* No fullscreen exit pill: every maximized window keeps its own header
           (Desktop CardHeader / Canvas in-window title bar) with traffic lights,
           and Escape still exits fullscreen as a keyboard fallback. */}

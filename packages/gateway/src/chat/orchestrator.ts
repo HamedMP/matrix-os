@@ -3,26 +3,36 @@ import {
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
   CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatTurnSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalQueueChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
+  CanonicalSteerChatRunRequestSchema,
+  CanonicalSteerQueuedChatTurnRequestSchema,
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
   type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunSteeringResponse,
   type CanonicalChatSafeError,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalQueueChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalSubmitChatApprovalRequest,
+  type CanonicalSteerChatRunRequest,
+  type CanonicalSteerQueuedChatTurnRequest,
   type CanonicalChatApprovalSubmissionResponse,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
+import type { AiGenerationInput } from "../ai-analytics.js";
 import type {
   ChatExecutionRootProvenance,
   ChatExecutionRootResolver,
@@ -49,10 +59,15 @@ import {
   type ChatRepository,
 } from "./repository.js";
 import type { ChatOwner } from "./records.js";
+import {
+  CanonicalQueueAdmissionError,
+  enqueueCanonicalQueuedTurn,
+} from "./queue-admission.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
 const MAX_ASSISTANT_TEXT = 96 * 1024;
+const STEER_FINALIZE_ATTEMPTS = 2;
 
 export class CanonicalChatOrchestrationError extends Error {
   constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
@@ -71,8 +86,56 @@ interface ActiveRun {
   completion: Promise<void>;
 }
 
-function id(prefix: "cturn_" | "run_" | "msg_" | "activity_"): string {
+function id(prefix: "cturn_" | "run_" | "msg_" | "activity_" | "steer_"): string {
   return `${prefix}${randomUUID().replaceAll("-", "")}`;
+}
+
+function analyticsProvider(model: string, driverKind: CanonicalChatRun["driverKind"]): string {
+  const qualified = /^([a-z0-9_-]+)[:/]/i.exec(model)?.[1]?.toLowerCase();
+  if (qualified === "openai-codex") return "openai";
+  if (qualified) return qualified;
+  if (driverKind === "codex") return "openai";
+  if (driverKind === "claude_code" || driverKind === "kernel") return "anthropic";
+  return "unknown";
+}
+
+async function finalizeAcceptedSteer<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= STEER_FINALIZE_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error: unknown) {
+      if (error instanceof ChatNotFoundError
+        || error instanceof ChatRunNotActiveError
+        || error instanceof ChatConflictError) {
+        throw error;
+      }
+      lastError = error;
+      if (attempt < STEER_FINALIZE_ATTEMPTS) {
+        console.warn(
+          "[chat/orchestrator] Steering finalization failed; retrying:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+    }
+  }
+  throw lastError;
+}
+
+function mapSteerFinalizationError(error: unknown): never {
+  if (error instanceof ChatNotFoundError
+    || error instanceof ChatRunNotActiveError
+    || error instanceof ChatConflictError) {
+    return mapRepositoryError(error);
+  }
+  console.warn(
+    "[chat/orchestrator] Accepted steering could not be finalized:",
+    error instanceof Error ? error.name : "UnknownError",
+  );
+  throw new CanonicalChatOrchestrationError(
+    safeError("run_unavailable", "The steering request is still resolving. Try again.", true, ["retry"]),
+    503,
+  );
 }
 
 function activityPersistenceId(runId: string, event: Record<string, unknown>): string {
@@ -131,6 +194,10 @@ function promptFor(parts: CanonicalCreateChatTurnRequest["parts"]): string {
   return prompt;
 }
 
+function retryPromptFor(messages: CanonicalChatMessage[]): string {
+  return messages.map((message) => promptFor(message.parts)).join("\n\n");
+}
+
 function shellQuotedOwnerReference(ownerReference: string): string {
   return `"$MATRIX_HOME"/'${ownerReference.replaceAll("'", "'\\''")}'`;
 }
@@ -170,6 +237,12 @@ export function mapRepositoryError(error: unknown): never {
       "Only a successful completed Run can be acknowledged.",
     ), 409);
   }
+  if (error instanceof ChatRunNotActiveError) {
+    throw new CanonicalChatOrchestrationError(
+      safeError("run_unavailable", "The Run is no longer active."),
+      409,
+    );
+  }
   if (error instanceof ChatConflictError) {
     throw new CanonicalChatOrchestrationError(safeError("chat_conflict", "Chat changed. Refresh and try again.", true, ["retry"]), 409);
   }
@@ -179,6 +252,7 @@ export function mapRepositoryError(error: unknown): never {
 export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
   private readonly pendingDispatch = new Set<string>();
+  private readonly queueDispatches = new Set<string>();
   private readonly reconciliation = new Map<string, Promise<number>>();
   private readonly shutdownDrainMs: number;
   private closing = false;
@@ -187,6 +261,15 @@ export class CanonicalChatOrchestrator {
     repository: Pick<ChatRepository,
       | "get"
       | "admitTurn"
+      | "enqueueQueuedTurn"
+      | "claimNextQueuedTurn"
+      | "listQueuedChatIds"
+      | "beginSteer"
+      | "acceptSteer"
+      | "failSteer"
+      | "beginQueuedTurnSteer"
+      | "acceptQueuedTurnSteer"
+      | "failQueuedTurnSteer"
       | "markRunRunning"
       | "appendRunActivities"
       | "appendAssistantDelta"
@@ -202,6 +285,7 @@ export class CanonicalChatOrchestrator {
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     executionRoots?: ChatExecutionRootResolver;
+    onAiGeneration?: (input: AiGenerationInput) => void;
     now?: () => Date;
     shutdownDrainMs?: number;
   }) {
@@ -365,6 +449,7 @@ export class CanonicalChatOrchestrator {
         userInput: validated.instance.supports.userInput,
         resume: validated.instance.supports.resume,
         cancellation: validated.instance.supports.cancellation,
+        steering: validated.instance.supports.steering ?? "none",
         worktrees: validated.instance.supports.worktrees,
         interactionModes: validated.instance.supports.interactionModes,
         permissionModes: validated.instance.supports.permissionModes,
@@ -408,7 +493,6 @@ export class CanonicalChatOrchestrator {
           admitted.message,
           admitted.run,
           adapter,
-          admitted.chat.chat.messageCount + 1,
           resolvedRoot,
           resumeState,
         );
@@ -422,6 +506,33 @@ export class CanonicalChatOrchestrator {
       });
     } finally {
       this.pendingDispatch.delete(run.id);
+    }
+  }
+
+  async enqueueQueuedTurn(
+    principal: RequestPrincipal,
+    owner: ChatOwner,
+    chatId: string,
+    inputValue: CanonicalQueueChatTurnRequest,
+  ): Promise<CanonicalChatQueueAdmissionResponse> {
+    this.assertOpen();
+    try {
+      return await enqueueCanonicalQueuedTurn({
+        principal,
+        owner,
+        chatId,
+        input: CanonicalQueueChatTurnRequestSchema.parse(inputValue),
+        repository: this.options.repository,
+        catalog: this.options.catalog,
+        adapters: this.options.adapters,
+        ...(this.options.executionRoots ? { executionRoots: this.options.executionRoots } : {}),
+        now: this.options.now ?? (() => new Date()),
+      });
+    } catch (error: unknown) {
+      if (error instanceof CanonicalQueueAdmissionError) {
+        throw new CanonicalChatOrchestrationError(error.safeError, error.status);
+      }
+      return mapRepositoryError(error);
     }
   }
 
@@ -516,6 +627,7 @@ export class CanonicalChatOrchestrator {
         userInput: validated.instance.supports.userInput,
         resume: validated.instance.supports.resume,
         cancellation: validated.instance.supports.cancellation,
+        steering: validated.instance.supports.steering ?? "none",
         worktrees: validated.instance.supports.worktrees,
         interactionModes: validated.instance.supports.interactionModes,
         permissionModes: validated.instance.supports.permissionModes,
@@ -558,9 +670,9 @@ export class CanonicalChatOrchestrator {
           context.message,
           admitted.run,
           adapter,
-          admitted.chat.chat.messageCount + 1,
           resolvedRoot,
           resumeState,
+          retryPromptFor(context.userMessages),
         );
       }
       return CanonicalChatRunAdmissionResponseSchema.parse({
@@ -579,16 +691,27 @@ export class CanonicalChatOrchestrator {
     message: CanonicalChatMessage,
     run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter,
-    outputSeq: number,
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
+    promptOverride?: string,
   ): void {
     const controller = new AbortController();
-    const completion = this.dispatch(owner, message, run, adapter, outputSeq, controller, resolvedRoot, resumeState)
+    const completion = this.dispatch(owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride)
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       })
-      .finally(() => this.active.delete(run.id));
+      .finally(async () => {
+        this.active.delete(run.id);
+        if (this.closing) return;
+        try {
+          await this.dispatchNextQueued(owner, run.chatId);
+        } catch (error: unknown) {
+          console.error(
+            "[chat/orchestrator] Queued Run dispatch failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      });
     this.active.set(run.id, {
       controller,
       adapter,
@@ -600,15 +723,84 @@ export class CanonicalChatOrchestrator {
     });
   }
 
+  private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
+    if (this.closing || this.atCapacity(owner)) return;
+    for (const entry of this.active.values()) {
+      if (entry.chatId === chatId && entry.owner.type === owner.type
+        && entry.owner.ownerId === owner.ownerId) return;
+    }
+    const key = `${owner.type}:${owner.ownerId}:${chatId}`;
+    if (this.queueDispatches.has(key) || this.queueDispatches.size >= MAX_ACTIVE_RUNS_GLOBAL) return;
+    this.queueDispatches.add(key);
+    try {
+      for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(owner); offset += 1) {
+        const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+        const claimed = await this.options.repository.claimNextQueuedTurn(owner, {
+          chatId,
+          turnId: id("cturn_"),
+          runId: id("run_"),
+          messageId: id("msg_"),
+          claimedAt: timestamp,
+        });
+        if (!claimed) return;
+        const adapter = this.options.adapters.get(claimed.run.driverKind);
+        let resolvedRoot: ResolvedChatExecutionRoot | undefined;
+        let resumeState: unknown;
+        try {
+          if (!adapter) throw new Error("Queued Provider adapter unavailable");
+          if (claimed.run.executionRoot) {
+            if (!this.options.executionRoots) throw new Error("Queued execution root resolver unavailable");
+            resolvedRoot = await this.options.executionRoots.resolve(owner, claimed.run.executionRoot);
+            if (resolvedRoot.fingerprint !== claimed.run.executionRootFingerprint) {
+              throw new Error("Queued execution root provenance changed");
+            }
+          }
+          const previousState = await this.options.repository.getLatestAdapterStateForChat(owner, {
+            chatId,
+            driverKind: claimed.run.driverKind,
+            instanceId: claimed.run.instanceId,
+          });
+          resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
+            && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
+            ? adapter.parseState(previousState.state)
+            : undefined;
+        } catch (error: unknown) {
+          console.warn(
+            "[chat/orchestrator] Queued Run preparation failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          await this.options.repository.finishRun(owner, {
+            chatId,
+            runId: claimed.run.id,
+            outcome: "failed",
+            completedAt: timestamp,
+          });
+          continue;
+        }
+        this.startDispatch(
+          owner,
+          claimed.message,
+          claimed.run,
+          adapter,
+          resolvedRoot,
+          resumeState,
+        );
+        return;
+      }
+    } finally {
+      this.queueDispatches.delete(key);
+    }
+  }
+
   private async dispatch(
     owner: ChatOwner,
     message: CanonicalChatMessage,
     run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter,
-    outputSeq: number,
     controller: AbortController,
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
+    promptOverride?: string,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     try {
@@ -631,7 +823,7 @@ export class CanonicalChatOrchestrator {
         chatId: run.chatId,
         turnId: run.turnId,
         runId: run.id,
-        prompt: promptFor(message.parts),
+        prompt: promptOverride ?? promptFor(message.parts),
         parts: message.parts,
         selection: run.selection,
         interactionMode: run.interactionMode,
@@ -643,8 +835,6 @@ export class CanonicalChatOrchestrator {
         signal: controller.signal,
       };
       let text = "";
-      const assistantMessageSequences = new Map<string, number>();
-      let nextOutputSeq = outputSeq;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
@@ -671,17 +861,10 @@ export class CanonicalChatOrchestrator {
           }
           text += event.delta;
           const messageId = assistantMessageId(run.id, event.messageId);
-          let messageSeq = assistantMessageSequences.get(messageId);
-          if (messageSeq === undefined) {
-            messageSeq = nextOutputSeq;
-            nextOutputSeq += 1;
-            assistantMessageSequences.set(messageId, messageSeq);
-          }
           await this.options.repository.appendAssistantDelta(owner, {
             chatId: run.chatId,
             runId: run.id,
             messageId,
-            seq: messageSeq,
             delta: event.delta,
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
@@ -712,9 +895,39 @@ export class CanonicalChatOrchestrator {
         outcome: terminal.outcome,
         completedAt,
       });
+      try {
+        this.options.onAiGeneration?.({
+          traceId: run.id,
+          distinctId: owner.ownerId,
+          provider: terminal.provider ?? analyticsProvider(run.selection.model, run.driverKind),
+          harness: run.driverKind,
+          model: run.selection.model,
+          latencyMs: Math.max(0, Date.parse(completedAt) - Date.parse(startedAt)),
+          tokensIn: terminal.tokenUsage?.inputTokens,
+          tokensOut: terminal.tokenUsage?.outputTokens,
+          cachedInputTokens: terminal.tokenUsage?.cachedInputTokens,
+          reasoningOutputTokens: terminal.tokenUsage?.reasoningOutputTokens,
+          responseCharacterCount: text.length,
+          productEvent: "gateway_chat_response_completed",
+          ...(terminal.outcome === "failed" ? { error: new Error("CanonicalProviderRunError") } : {}),
+        });
+      } catch (analyticsError: unknown) {
+        console.warn(
+          "[chat/orchestrator] AI generation capture failed:",
+          analyticsError instanceof Error ? analyticsError.name : "UnknownError",
+        );
+      }
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
-      const outcome = controller.signal.aborted ? "aborted" as const : "failed" as const;
+      const wasAborted = controller.signal.aborted;
+      if (!wasAborted) controller.abort();
+      if (!wasAborted) {
+        console.warn(
+          "[chat/orchestrator] Provider Run failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+      const outcome = wasAborted ? "aborted" as const : "failed" as const;
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
       const canonicalError = safeError(
         outcome === "aborted" ? "run_unavailable" : "run_failed",
@@ -813,6 +1026,218 @@ export class CanonicalChatOrchestrator {
     } catch (error: unknown) {
       return mapRepositoryError(error);
     }
+  }
+
+  async steerRun(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    inputValue: CanonicalSteerChatRunRequest,
+  ): Promise<CanonicalChatRunSteeringResponse> {
+    this.assertOpen();
+    const input = CanonicalSteerChatRunRequestSchema.parse(inputValue);
+    const active = this.active.get(runId);
+    if (!active || active.chatId !== chatId || active.owner.type !== owner.type
+      || active.owner.ownerId !== owner.ownerId || !active.adapter.steer) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This Run cannot be steered."),
+        409,
+      );
+    }
+    const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+    let begun;
+    try {
+      begun = await this.options.repository.beginSteer(owner, {
+        chatId,
+        runId,
+        expectedTurnId: input.expectedTurnId,
+        steerId: id("steer_"),
+        messageId: id("msg_"),
+        clientRequestId: input.clientRequestId,
+        parts: input.parts,
+        createdAt: timestamp,
+      });
+    } catch (error: unknown) {
+      return mapRepositoryError(error);
+    }
+    if (begun.status === "accepted") {
+      return CanonicalChatRunSteeringResponseSchema.parse({
+        runId,
+        turnId: input.expectedTurnId,
+        message: begun.message,
+        steering: "already_accepted",
+      });
+    }
+    if (begun.alreadyRequested || begun.status === "failed") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The steering request is still resolving. Try again.", true, ["retry"]),
+        409,
+      );
+    }
+    const state = await this.options.repository.getAdapterState(owner, {
+      runId,
+      driverKind: active.adapter.driverKind,
+      instanceId: active.instanceId,
+    });
+    try {
+      await active.adapter.steer({
+        owner,
+        chatId,
+        runId,
+        turnId: input.expectedTurnId,
+        clientRequestId: input.clientRequestId,
+        prompt: promptFor(input.parts),
+        parts: input.parts,
+        ...(state ? { state: active.adapter.parseState(state.state) } : {}),
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[chat/orchestrator] Provider steering callback failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      try {
+        await this.options.repository.failSteer(owner, {
+          chatId,
+          runId,
+          clientRequestId: input.clientRequestId,
+          acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+        });
+      } catch (finishError: unknown) {
+        console.warn(
+          "[chat/orchestrator] Steering failure could not be persisted:",
+          finishError instanceof Error ? finishError.name : "UnknownError",
+        );
+      }
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The Run could not be steered. Try again.", true, ["retry"]),
+        503,
+      );
+    }
+    let message;
+    try {
+      message = await finalizeAcceptedSteer(() => this.options.repository.acceptSteer(owner, {
+        chatId,
+        runId,
+        clientRequestId: input.clientRequestId,
+        acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+      }));
+    } catch (error: unknown) {
+      return mapSteerFinalizationError(error);
+    }
+    return CanonicalChatRunSteeringResponseSchema.parse({
+      runId,
+      turnId: input.expectedTurnId,
+      message,
+      steering: "accepted",
+    });
+  }
+
+  async steerQueuedTurn(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    queuedTurnId: string,
+    inputValue: CanonicalSteerQueuedChatTurnRequest,
+  ): Promise<CanonicalChatRunSteeringResponse> {
+    this.assertOpen();
+    const input = CanonicalSteerQueuedChatTurnRequestSchema.parse(inputValue);
+    const active = this.active.get(runId);
+    if (!active || active.chatId !== chatId || active.owner.type !== owner.type
+      || active.owner.ownerId !== owner.ownerId || !active.adapter.steer) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This Run cannot be steered."),
+        409,
+      );
+    }
+    const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+    let begun;
+    try {
+      begun = await this.options.repository.beginQueuedTurnSteer(owner, {
+        chatId,
+        runId,
+        expectedTurnId: input.expectedTurnId,
+        queuedTurnId,
+        steerId: id("steer_"),
+        messageId: id("msg_"),
+        clientRequestId: input.clientRequestId,
+        baseRevision: input.baseRevision,
+        createdAt: timestamp,
+      });
+    } catch (error: unknown) {
+      return mapRepositoryError(error);
+    }
+    if (begun.status === "accepted") {
+      return CanonicalChatRunSteeringResponseSchema.parse({
+        runId,
+        turnId: input.expectedTurnId,
+        message: begun.message,
+        steering: "already_accepted",
+      });
+    }
+    if (begun.alreadyRequested || begun.status === "failed") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The steering request is still resolving. Try again.", true, ["retry"]),
+        409,
+      );
+    }
+    const state = await this.options.repository.getAdapterState(owner, {
+      runId,
+      driverKind: active.adapter.driverKind,
+      instanceId: active.instanceId,
+    });
+    try {
+      await active.adapter.steer({
+        owner,
+        chatId,
+        runId,
+        turnId: input.expectedTurnId,
+        clientRequestId: input.clientRequestId,
+        prompt: promptFor(begun.parts),
+        parts: begun.parts,
+        ...(state ? { state: active.adapter.parseState(state.state) } : {}),
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[chat/orchestrator] Provider queued steering callback failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      try {
+        await this.options.repository.failQueuedTurnSteer(owner, {
+          chatId,
+          runId,
+          queuedTurnId,
+          clientRequestId: input.clientRequestId,
+          acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+        });
+      } catch (finishError: unknown) {
+        console.warn(
+          "[chat/orchestrator] Queued steering failure could not be persisted:",
+          finishError instanceof Error ? finishError.name : "UnknownError",
+        );
+      }
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "The Run could not be steered. Try again.", true, ["retry"]),
+        503,
+      );
+    }
+    let message;
+    try {
+      message = await finalizeAcceptedSteer(() => this.options.repository.acceptQueuedTurnSteer(owner, {
+        chatId,
+        runId,
+        queuedTurnId,
+        clientRequestId: input.clientRequestId,
+        acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+      }));
+    } catch (error: unknown) {
+      return mapSteerFinalizationError(error);
+    }
+    return CanonicalChatRunSteeringResponseSchema.parse({
+      runId,
+      turnId: input.expectedTurnId,
+      message,
+      steering: "accepted",
+    });
   }
 
   async submitApproval(
@@ -914,11 +1339,17 @@ export class CanonicalChatOrchestrator {
         if (!(reconcileError instanceof ChatRunNotActiveError)) throw reconcileError;
       }
     }
+    const queuedChatIds = await this.options.repository.listQueuedChatIds(owner, 20);
+    for (const chatId of queuedChatIds) {
+      await this.dispatchNextQueued(owner, chatId);
+    }
     return reconciled;
   }
 
   async drain(): Promise<void> {
-    await Promise.allSettled([...this.active.values()].map((entry) => entry.completion));
+    while (this.active.size > 0) {
+      await Promise.allSettled([...this.active.values()].map((entry) => entry.completion));
+    }
   }
 
   async close(): Promise<void> {

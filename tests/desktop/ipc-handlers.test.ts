@@ -44,6 +44,9 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     toggleWindowMaximize: vi.fn(),
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
     acknowledgeWhatsNew: vi.fn(async () => undefined),
+    getAppVersion: vi.fn(() => "1.4.0-canary.2"),
+    completeAnalyticsFlush: vi.fn(),
+    fetchSupportIdentity: vi.fn(async () => ({ status: "unavailable" })),
     fetchRuntimeSummary: vi.fn(),
     fetchHermesConfiguration: vi.fn(),
     fetchHermesEnvironment: vi.fn(),
@@ -106,6 +109,42 @@ describe("registerIpcHandlers", () => {
     await expect(harness.invoke("shell:open-external", { url: "file:///tmp/secret" })).rejects.toThrow(
       "invalid request",
     );
+  });
+
+  it("returns the trusted native app version", async () => {
+    const getAppVersion = vi.fn(() => "1.4.0-canary.2");
+    const harness = makeHarness({ getAppVersion });
+
+    await expect(harness.invoke("app:get-version")).resolves.toEqual({
+      version: "1.4.0-canary.2",
+    });
+    expect(getAppVersion).toHaveBeenCalledOnce();
+  });
+
+  it("resolves Support identity through the trusted main-process client", async () => {
+    const fetchSupportIdentity = vi.fn(async () => ({
+      status: "verified" as const,
+      distinctId: "user_alice",
+      identityHash: "ab".repeat(32),
+    }));
+    const harness = makeHarness({ fetchSupportIdentity });
+
+    await expect(harness.invoke("support:get-identity")).resolves.toEqual({
+      status: "verified",
+      distinctId: "user_alice",
+      identityHash: "ab".repeat(32),
+    });
+    expect(fetchSupportIdentity).toHaveBeenCalledOnce();
+  });
+
+  it("acknowledges renderer analytics flush without accepting payload data", async () => {
+    const completeAnalyticsFlush = vi.fn();
+    const harness = makeHarness({ completeAnalyticsFlush });
+
+    await expect(harness.invoke("analytics:flush-complete")).resolves.toEqual({ ok: true });
+    expect(completeAnalyticsFlush).toHaveBeenCalledOnce();
+    await expect(harness.invoke("analytics:flush-complete", { event: "private" }))
+      .rejects.toThrow("invalid request");
   });
 
   it("returns the public embed unavailable error when embed open fails", async () => {

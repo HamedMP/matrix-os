@@ -147,7 +147,8 @@ describe("Work Files inspector composition", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Show inspector" }));
     expect(await screen.findByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Files" })).toBeTruthy();
-    expect(screen.getByText("Matrix Home")).toBeTruthy();
+    expect(await screen.findByTestId("files-listing")).toBeTruthy();
+    expect(screen.queryByText("Matrix Home")).toBeNull();
   });
 
   it("forwards the selected Project Chat detail and worktree through the actual Work composition", async () => {
@@ -166,7 +167,9 @@ describe("Work Files inspector composition", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "Show inspector" }));
-    expect(await screen.findByText("Matrix OS worktree")).toBeTruthy();
+    expect(await screen.findByTestId("files-listing")).toBeTruthy();
+    expect(screen.queryByText("Matrix OS worktree")).toBeNull();
+    expect(screen.queryByText("Project root")).toBeNull();
     await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("runtime:browse-files", {
       projectId: "matrix-os",
       worktreeId: "wt_selected",

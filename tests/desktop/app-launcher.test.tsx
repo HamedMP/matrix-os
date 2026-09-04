@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLauncher from "../../desktop/src/renderer/src/features/embeds/AppLauncher";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { OS_VIEW_FIXED_APP_NAMES } from "../fixtures/os-view-parity";
 import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
 
 describe("AppLauncher", () => {
@@ -89,7 +90,7 @@ describe("AppLauncher", () => {
     });
   });
 
-  it("puts Create app and the other OS view first, then every first-class Electron Desktop app", () => {
+  it("puts Create app and the other OS view first, then the Electron Desktop parity fixture", () => {
     const onCreateApp = vi.fn();
     const onSwitchOsView = vi.fn();
     render(
@@ -104,25 +105,33 @@ describe("AppLauncher", () => {
     const launcher = screen.getByTestId("desktop-launcher-grid");
     const names = Array.from(launcher.querySelectorAll("button"))
       .map((button) => button.getAttribute("aria-label"));
-    expect(names.slice(0, 12)).toEqual([
-      "Create app",
-      "Canvas",
-      "Chat",
-      "Terminal",
-      "Files",
-      "Editor",
-      "VS Code",
-      "Settings",
-      "Plugins",
-      "Browser",
-      "Notes",
-      "Whiteboard",
-    ]);
+    expect(names.slice(0, 12)).toEqual(["Create app", "Canvas", ...OS_VIEW_FIXED_APP_NAMES]);
 
     fireEvent.click(screen.getByRole("button", { name: "Create app" }));
     expect(onCreateApp).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Canvas" }));
     expect(onSwitchOsView).toHaveBeenCalledWith("canvas");
+
+    const canvas = screen.getByRole("button", { name: "Canvas" });
+    expect(canvas.querySelector("img")).toBeNull();
+    expect(canvas.querySelector("svg")).toBeTruthy();
+  });
+
+  it("keeps core system vectors while allowing app artwork for Notes", () => {
+    clearDesktopApps();
+    seedDesktopApps([
+      { slug: "chat", name: "Chat" },
+      { slug: "notes", name: "Notes" },
+    ]);
+
+    render(<AppLauncher presentation="launchpad" />);
+
+    const chat = screen.getByRole("button", { name: "Chat" });
+    expect(chat.querySelector("svg")).toBeTruthy();
+    expect(chat.querySelector("img")).toBeNull();
+
+    const notes = screen.getByRole("button", { name: "Notes" });
+    expect(notes.querySelector("img")?.getAttribute("src")).toContain("/icons/notes.png");
   });
 
   it("offers Desktop from Canvas and keeps the OS-view destination launcher-only", () => {
@@ -151,7 +160,7 @@ describe("AppLauncher", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
 
-    expect(onAddToDesktop).toHaveBeenCalledWith("__notes__");
+    expect(onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html");
   });
 
   it("keeps the focused launcher search field free of a nested focus ring", () => {

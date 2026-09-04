@@ -17,17 +17,22 @@
  * full TerminalPane (which requires WebSocket + xterm async imports).
  */
 
+import { classifyTerminalPointerEvent } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
+import {
+  correctTerminalPointerCoordinates,
+  shouldCorrectTerminalPointerCoordinates,
+} from "../../shell/src/components/terminal/terminal-soft-grid";
 
-/**
- * Reproduces the correction formula from TerminalPane.tsx.
- */
-function applyZoomCorrection(
-  clientX: number,
-  rectLeft: number,
-  zoom: number,
-): number {
-  return rectLeft + (clientX - rectLeft) / zoom;
+function applyZoomCorrection(clientX: number, rectLeft: number, zoom: number): number {
+  return correctTerminalPointerCoordinates({
+    clientX,
+    clientY: 0,
+    rectLeft,
+    rectTop: 0,
+    canvasZoom: zoom,
+    gridScale: 1,
+  }).clientX;
 }
 
 /**
@@ -147,4 +152,43 @@ describe("synthetic event marker (_xtermZoomCorrected)", () => {
     Object.defineProperty(e, "_xtermZoomCorrected", { value: true });
     expect((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected).toBe(true);
   });
+
+  it.each([0.25, 0.5, 1, 1.5, 3])(
+    "keeps contextmenu at raw screen coordinates at zoom %s",
+    (zoom) => {
+      expect(shouldCorrectTerminalPointerCoordinates({
+        type: "contextmenu",
+        alreadyCorrected: false,
+        visualScale: zoom,
+      })).toBe(false);
+    },
+  );
+
+  it.each([0.25, 0.5, 1.5, 3])(
+    "corrects xterm cell events exactly once at zoom %s",
+    (zoom) => {
+      expect(shouldCorrectTerminalPointerCoordinates({
+        type: "mousedown",
+        alreadyCorrected: false,
+        visualScale: zoom,
+      })).toBe(true);
+      expect(shouldCorrectTerminalPointerCoordinates({
+        type: "mousedown",
+        alreadyCorrected: true,
+        visualScale: zoom,
+      })).toBe(false);
+    },
+  );
+
+  it.each([0.25, 0.5, 1, 1.5, 3])(
+    "preserves a completed selection against passive motion at zoom %s",
+    () => {
+      expect(classifyTerminalPointerEvent({
+        type: "mousemove",
+        button: 0,
+        buttons: 0,
+        hasSelection: true,
+      })).toBe("shield-selection");
+    },
+  );
 });

@@ -175,6 +175,7 @@ function Harness({
   initialValue = "",
   initialReferenceTokens = [],
   onNewChat,
+  disabled = false,
 }: {
   locked?: boolean;
   onSubmit?: (submission: SharedChatComposerSubmission) => void;
@@ -185,6 +186,7 @@ function Harness({
   initialValue?: string;
   initialReferenceTokens?: ComposerReferenceToken[];
   onNewChat?: () => void;
+  disabled?: boolean;
 }) {
   const catalog = catalogFixture();
   const [value, setValue] = useState(initialValue);
@@ -200,6 +202,7 @@ function Harness({
       onReferenceTokensChange={setReferenceTokens}
       onSubmit={onSubmit}
       busy={false}
+      disabled={disabled}
       catalog={catalog}
       selection={selection}
       onSelectionChange={setSelection}
@@ -225,7 +228,7 @@ describe("SharedChatComposer", () => {
 
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("GPT-5.6-Sol");
-    expect(screen.getByRole("button", { name: "Add files and more" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByLabelText("Reasoning")).toBeTruthy();
     expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     expect(screen.getByLabelText("Permission mode")).toBeTruthy();
@@ -246,6 +249,15 @@ describe("SharedChatComposer", () => {
       .toBeNull();
   });
 
+  it("does not open a fallback model catalog while the composer is loading", () => {
+    render(<Harness disabled />);
+
+    const picker = screen.getByRole("button", { name: "Choose model and provider" });
+    expect(picker.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(picker);
+    expect(screen.queryByRole("listbox", { name: "Models and providers" })).toBeNull();
+  });
+
   it("uses a compact inline harness glyph for each model row", () => {
     render(<Harness />);
 
@@ -257,15 +269,48 @@ describe("SharedChatComposer", () => {
     expect(glyph?.parentElement?.getAttribute("data-slot")).toBe("model-provider-glyph");
   });
 
-  it("opens a Codex-style attachment menu before choosing files and folders", () => {
+  it.each([
+    ["Pi", "pi"],
+    ["OpenCode", "opencode"],
+    ["OpenClaw", "openclaw"],
+  ] as const)("opens the native file picker directly for file-capable %s", (_label, driverKind) => {
+    const catalog = catalogFixture();
+    const template = catalog.instances[2]!;
+    const instanceId = `${driverKind}_file_capable`;
+    catalog.drivers = catalog.drivers.filter((driver) => driver.kind === driverKind);
+    catalog.instances = [{
+      ...template,
+      id: instanceId,
+      driverKind,
+      displayName: _label,
+      supports: { ...template.supports, attachments: ["file"] },
+      defaultSelection: { instanceId, model: template.models[0]!.id },
+    }];
+    const selection = createCanonicalComposerSelection(catalog, instanceId)!;
     const onAttach = vi.fn();
-    render(<Harness onAttach={onAttach} />);
+    const { container } = render(
+      <SharedChatComposer
+        value=""
+        onChange={() => undefined}
+        onSubmit={() => undefined}
+        busy={false}
+        catalog={catalog}
+        selection={selection}
+        onSelectionChange={() => undefined}
+        instanceLocked={false}
+        onAttach={onAttach}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files and more" }));
-    expect(onAttach).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("option", { name: "Files and folders" }));
+    const attachmentButton = screen.getByRole("button", { name: "Attach files" });
+    expect(attachmentButton.getAttribute("aria-haspopup")).toBeNull();
+    expect(attachmentButton.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeTruthy();
+    fireEvent.click(attachmentButton);
 
     expect(onAttach).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeTruthy();
+    expect(screen.queryByRole("listbox", { name: "Add" })).toBeNull();
+    expect(screen.queryByText("Files and folders")).toBeNull();
   });
 
   it("does not expose the native picker for structured-reference-only harnesses", () => {
@@ -293,28 +338,19 @@ describe("SharedChatComposer", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Add files and more" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
   });
 
-  it("uses the same Add palette for @ and the paperclip", async () => {
+  it("keeps resource references in the @ Add palette without routing the paperclip through it", async () => {
     const resourceSearch = vi.fn(async (query: string) => query === ""
       ? [{ kind: "file" as const, id: "readme", label: "README.md" }]
       : []);
-    render(<Harness resourceSearch={resourceSearch} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Add files and more" }));
-    const paperclipPalette = await screen.findByRole("listbox", { name: "Add" });
-    expect(paperclipPalette.className).toContain("left-0");
-    expect(paperclipPalette.className).toContain("right-0");
-    expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
-
-    cleanup();
     render(<Harness resourceSearch={resourceSearch} initialValue="@" />);
 
     const mentionPalette = await screen.findByRole("listbox", { name: "Add" });
     expect(mentionPalette.className).toContain("left-0");
     expect(mentionPalette.className).toContain("right-0");
-    expect(screen.getByRole("option", { name: "Files and folders" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
   });
 
@@ -330,7 +366,6 @@ describe("SharedChatComposer", () => {
   });
 
   it.each([
-    { label: "paperclip", initialValue: "", open: () => fireEvent.click(screen.getByRole("button", { name: "Add files and more" })), menu: "Add" },
     { label: "resource mention", initialValue: "@", open: () => undefined, menu: "Add" },
     { label: "slash command", initialValue: "/", open: () => undefined, menu: "Skills and commands" },
   ])("dismisses the $label menu when the user clicks outside the composer", async ({ initialValue, open, menu }) => {
@@ -354,8 +389,9 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
 
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
-    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
+    expect(screen.getByRole("menuitemradio", { name: "Supervised" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
   });
 
   it("opens all Project Chat composer menus below the top composer", () => {
@@ -467,7 +503,7 @@ describe("SharedChatComposer", () => {
 
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("Claude Opus 4.6");
-    expect(screen.queryByRole("button", { name: "Add files and more" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
   });
 
   it("keeps unauthenticated harnesses dimmed but exposes setup inside the selector", () => {

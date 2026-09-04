@@ -10,11 +10,15 @@ import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 const appViewerRender = vi.hoisted(() => vi.fn());
 const terminalRender = vi.hoisted(() => vi.fn());
 const terminalChildPointerFocusRecorder = vi.hoisted(() => vi.fn());
+const terminalMountStarts = vi.hoisted(() => vi.fn());
 const originalFocusWindow = useWindowManager.getState().focusWindow;
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: (props: unknown) => {
     terminalRender(props);
+    React.useEffect(() => {
+      terminalMountStarts();
+    }, []);
     return (
       <>
         <button
@@ -79,6 +83,7 @@ describe("CanvasWindow terminal interactivity", () => {
     appViewerRender.mockClear();
     terminalRender.mockClear();
     terminalChildPointerFocusRecorder.mockReset();
+    terminalMountStarts.mockReset();
     document.getElementById("matrix-canvas-window-motion-styles")?.remove();
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
     useWindowManager.setState({
@@ -227,6 +232,34 @@ describe("CanvasWindow terminal interactivity", () => {
       launchTargetId: "win-terminal",
       suspended: false,
     }));
+  });
+
+  it("forwards every interactive Canvas zoom and survives a preview round trip without remounting", () => {
+    useCanvasTransform.setState({ zoom: 0.25, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
+    render(<CanvasWindow win={terminalWindow} />);
+
+    expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({ canvasZoom: 0.25 }));
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+
+    for (const zoom of [0.5, 1, 1.5, 3]) {
+      act(() => useCanvasTransform.setState({ zoom }));
+      expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({ canvasZoom: zoom }));
+      expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+    }
+
+    act(() => useCanvasTransform.setState({ zoom: 0.2 }));
+    expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({
+      canvasZoom: 0.2,
+      suspended: true,
+    }));
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+
+    act(() => useCanvasTransform.setState({ zoom: 0.25 }));
+    expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({
+      canvasZoom: 0.25,
+      suspended: false,
+    }));
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
   });
 
   it("moves terminal Canvas windows through the delegated Terminal chrome drag handle", () => {

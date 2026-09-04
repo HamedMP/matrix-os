@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
 import { appKeys, appsQueryOptions, listApps } from "../../shell/src/api/apps";
 
 describe("web app catalog query", () => {
@@ -25,5 +26,57 @@ describe("web app catalog query", () => {
     expect(options.queryKey).toEqual(appKeys.list());
     await options.queryFn?.({ signal: controller.signal } as never);
     expect(loader).toHaveBeenCalledWith({ signal: controller.signal });
+  });
+
+  it("keeps a regenerated icon URL only while the icon identity is unchanged", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(appKeys.list(), [{
+      name: "Notes",
+      path: "/files/apps/notes/index.html",
+      slug: "notes",
+      icon: "notes",
+      iconUrl: "/icons/notes.png?v=generated",
+    }]);
+
+    await queryClient.fetchQuery(appsQueryOptions(async () => [{
+      name: "Fresh Notes",
+      path: "/files/apps/notes/index.html",
+      slug: "notes",
+      icon: "notes",
+    }]));
+
+    expect(queryClient.getQueryData(appKeys.list())).toEqual([{
+      name: "Fresh Notes",
+      path: "/files/apps/notes/index.html",
+      slug: "notes",
+      icon: "notes",
+      iconUrl: "/icons/notes.png?v=generated",
+    }]);
+
+    await queryClient.fetchQuery(appsQueryOptions(async () => [{
+      name: "Fresh Notes",
+      path: "/files/apps/notes/index.html",
+      slug: "notes",
+      icon: "notes-redesign",
+    }]));
+
+    expect(queryClient.getQueryData(appKeys.list())).toEqual([{
+      name: "Fresh Notes",
+      path: "/files/apps/notes/index.html",
+      slug: "notes",
+      icon: "notes-redesign",
+    }]);
+
+    await queryClient.fetchQuery(appsQueryOptions(async () => [{
+      name: "Fresh Notes",
+      path: "/files/apps/notes/index.html",
+      slug: "notes",
+      icon: "notes-redesign",
+      iconUrl: "/icons/notes.png?v=server",
+    }]));
+
+    expect(queryClient.getQueryData(appKeys.list())).toEqual([expect.objectContaining({
+      iconUrl: "/icons/notes.png?v=server",
+    })]);
   });
 });

@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.151.0",
+  "latestVerifiedVersion": "0.153.0",
   "verifiedVersions": {
     "0.144.3": {
       "schemaSha256": "fa46724c54076701d04d29415f22398eb1e8c45abc60b54abd95fad0ecbfe201"
@@ -33,6 +33,15 @@
       "schemaSha256": "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32"
     },
     "0.151.0": {
+      "schemaSha256": "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32"
+    },
+    "0.152.0": {
+      "schemaSha256": "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32"
+    },
+    "0.152.1": {
+      "schemaSha256": "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32"
+    },
+    "0.153.0": {
       "schemaSha256": "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32"
     }
   },

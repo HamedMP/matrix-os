@@ -21,7 +21,8 @@ import DesktopBackgroundMenu from "./DesktopBackgroundMenu";
 import DesktopAppDrawer from "./DesktopAppDrawer";
 import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import { useConnection } from "../../stores/connection";
-import { defaultDesktopIcons, useDesktopIcons } from "../../stores/desktop-icons";
+import { useDesktopIcons } from "../../stores/desktop-icons";
+import { createDefaultOsViewDesktopIcons } from "@matrix-os/contracts";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
 import { appIconUrl, useAppsQuery } from "../apps/apps.api";
 import { LayoutGrid } from "@renderer/lib/hugeicons";
@@ -30,6 +31,9 @@ import {
   createNativeOsViewLayoutMemory,
   transitionNativeOsViewLayout,
 } from "./native-os-view-layout-memory";
+import { nativeTabOsViewPath } from "./native-os-view-persistence";
+import { useNativeOsViewPersistence } from "./use-native-os-view-persistence";
+import { analyticsKindForTab, FIXED_APP_ANALYTICS_KINDS } from "./desktop-app-analytics";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
@@ -89,9 +93,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const [viewport, setViewport] = useState(currentViewport);
   const previousDesktopModeRef = useRef(desktopMode);
   const osViewLayoutsRef = useRef(createNativeOsViewLayoutMemory());
+  const durableOpenedPathsRef = useRef<Record<string, true>>({});
   const tabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
   const defaultIconLayout = useMemo(
-    () => defaultDesktopIcons(FIXED_DESKTOP_APPS.map((app) => app.path)),
+    createDefaultOsViewDesktopIcons,
     [],
   );
 
@@ -102,6 +107,23 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const effectiveDesktopIcons = desktopIcons.length > 0 || useDesktopIcons.getState().loaded
     ? desktopIcons
     : defaultIconLayout;
+  const {
+    durableState,
+    recordCanonicalBounds,
+    schedulePersist: scheduleDurablePersist,
+  } = useNativeOsViewPersistence({
+    api,
+    tabs,
+    surfaces,
+    installedApps,
+    mode: desktopMode,
+    viewport,
+    defaultIconLayout,
+  });
+
+  useEffect(() => {
+    durableOpenedPathsRef.current = {};
+  }, [api]);
 
   useEffect(() => {
     const resize = () => setViewport(currentViewport());
@@ -158,8 +180,9 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     focusTab(tabId);
     activateSurface(tabId);
     const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
-    trackDesktopEvent({ name: "desktop_app_focused", appKind: tab?.kind });
-  }, [activateSurface, focusTab]);
+    trackDesktopEvent({ name: "desktop_app_focused", appKind: analyticsKindForTab(tab) });
+    scheduleDurablePersist();
+  }, [activateSurface, focusTab, scheduleDurablePersist]);
 
   const reconcileAndActivateCurrent = useCallback(() => {
     const state = useTabs.getState();
@@ -168,7 +191,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       focusTab(state.activeTabId);
       activateSurface(state.activeTabId);
     }
-  }, [activateSurface, desktopMode, focusTab, reconcileTabs, viewport]);
+    scheduleDurablePersist();
+  }, [activateSurface, desktopMode, focusTab, reconcileTabs, scheduleDurablePersist, viewport]);
 
   const openRoot = useCallback((open: () => void) => {
     open();
@@ -239,7 +263,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     const fixed = FIXED_DESKTOP_APPS.map((app) => ({
       ...app,
       open: () => {
-        trackDesktopEvent({ name: "desktop_app_opened", appKind: app.id });
+        trackDesktopEvent({ name: "desktop_app_opened", appKind: FIXED_APP_ANALYTICS_KINDS[app.id] });
         openers[app.id]();
       },
     }));
@@ -255,7 +279,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         name: app.name,
         color: "var(--bg-surface)",
         open: () => {
-          trackDesktopEvent({ name: "desktop_app_opened", appKind: "app" });
+          trackDesktopEvent({ name: "desktop_app_opened", appKind: "installed_app" });
           openRoot(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}) }));
         },
       }];
@@ -263,12 +287,33 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     return [...fixed, ...generated];
   }, [installedApps, openRoot, openTab, platformHost, runtimeSlot]);
 
+  useEffect(() => {
+    const state = durableState;
+    if (!state) return;
+    const currentPaths = new Set(useTabs.getState().tabs.flatMap((tab) => {
+      const path = nativeTabOsViewPath(tab, installedApps);
+      return path ? [path] : [];
+    }));
+    for (const app of state.document.apps) {
+      if (app.state === "closed" || durableOpenedPathsRef.current[app.path] || currentPaths.has(app.path)) continue;
+      const destinationPath = app.path.startsWith("__terminal__:") ? "__terminal__" : app.path;
+      const destination = destinations.find((candidate) => candidate.path === destinationPath);
+      durableOpenedPathsRef.current[app.path] = true;
+      if (!destination) continue;
+      destination.open();
+      if (app.path.startsWith("__terminal__:") && app.path.length > "__terminal__:".length) {
+        useTabs.getState().requestTerminalSession(app.path.slice("__terminal__:".length));
+      }
+    }
+  }, [destinations, durableState, installedApps]);
+
   const openDesktopApp = useCallback((app: (typeof FIXED_DESKTOP_APPS)[number]) => {
     destinations.find((destination) => destination.id === app.id)?.open();
     setLauncherOpen(false);
   }, [destinations, setLauncherOpen]);
 
   const createApp = useCallback(() => {
+    trackDesktopEvent({ name: "desktop_app_creation_started" });
     useCreateAppRequest.getState().requestDraft();
     destinations.find((destination) => destination.id === "work")?.open();
     setLauncherOpen(false);
@@ -309,8 +354,9 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     if (minimizedTab?.kind === "home" || minimizedTab?.kind === "browser") {
       requestBackgroundRefresh();
     }
-    trackDesktopEvent({ name: "desktop_app_minimized", appKind: minimizedTab?.kind });
-  }, [focusFallback, minimizeSurface, requestBackgroundRefresh]);
+    trackDesktopEvent({ name: "desktop_app_minimized", appKind: analyticsKindForTab(minimizedTab) });
+    scheduleDurablePersist();
+  }, [focusFallback, minimizeSurface, requestBackgroundRefresh, scheduleDurablePersist]);
 
   const close = useCallback((tab: Tab) => {
     const wasActive = useTabs.getState().activeTabId === tab.id;
@@ -318,8 +364,9 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     else closeSurface(tab.id);
     if (wasActive) focusFallback(tab.id);
     if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
-    trackDesktopEvent({ name: "desktop_app_closed", appKind: tab.kind });
-  }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
+    trackDesktopEvent({ name: "desktop_app_closed", appKind: analyticsKindForTab(tab) });
+    scheduleDurablePersist();
+  }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh, scheduleDurablePersist]);
 
   const activateFromDrawer = useCallback((tabId: string) => {
     activate(tabId);
@@ -381,7 +428,11 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
                 focusTab(tab.id);
                 if (desktopMode === "canvas") setDesktopMode("desktop");
               }}
-              onBoundsChange={(bounds) => setSurfaceBounds(tab.id, bounds, viewport, desktopMode !== "canvas")}
+              onBoundsChange={(bounds) => {
+                recordCanonicalBounds(tab, desktopMode, bounds);
+                setSurfaceBounds(tab.id, bounds, viewport, desktopMode !== "canvas");
+                scheduleDurablePersist();
+              }}
             />
           );
           })}

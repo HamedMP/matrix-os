@@ -290,6 +290,16 @@ function createIcon(icon: IconSvgElement): LucideIcon {
   };
 }
 
+const DiscordIconData: IconSvgElement = [[
+  "path",
+  {
+    d: "M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515 14.9 14.9 0 0 0-.626 1.284 18.27 18.27 0 0 0-5.61 0 12.64 12.64 0 0 0-.634-1.284A19.74 19.74 0 0 0 3.678 4.37C.59 8.965-.246 13.45.172 17.886a19.9 19.9 0 0 0 5.993 3.028 14.3 14.3 0 0 0 1.272-1.67 12.9 12.9 0 0 1-2.003-.957c.168-.122.33-.247.488-.373 3.862 1.787 8.05 1.787 11.866 0 .159.13.324.256.487.373-.635.375-1.305.695-2.002.957.372.464.785.987 1.271 1.67a19.85 19.85 0 0 0 6.002-3.028c.493-5.197-.844-9.708-3.549-13.697ZM8.02 15.331c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.419 0 1.333-.955 2.419-2.157 2.419Zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.419 0 1.333-.946 2.419-2.157 2.419Z",
+    fill: "currentColor",
+    stroke: "none",
+    key: "discord",
+  },
+]];
+
 export const Activity: LucideIcon = createIcon(ActivityData);
 export const ActivityIcon: LucideIcon = createIcon(ActivityIconData);
 export const AlertCircle: LucideIcon = createIcon(AlertCircleData);
@@ -371,6 +381,7 @@ export const CpuIcon: LucideIcon = createIcon(CpuIconData);
 export const CreditCard: LucideIcon = createIcon(CreditCardData);
 export const CreditCardIcon: LucideIcon = createIcon(CreditCardIconData);
 export const DatabaseIcon: LucideIcon = createIcon(DatabaseIconData);
+export const DiscordIcon: LucideIcon = createIcon(DiscordIconData);
 export const Download: LucideIcon = createIcon(DownloadData);
 export const DownloadIcon: LucideIcon = createIcon(DownloadIconData);
 export const Edit3: LucideIcon = createIcon(Edit3Data);

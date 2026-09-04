@@ -2,9 +2,15 @@
 
 import React, { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
+import type {
+  CanonicalChatEventSource,
+  CanonicalChatInvalidation,
+} from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import {
@@ -330,6 +336,7 @@ describe("CanonicalChatWorkspace", () => {
     const index = screen.getByRole("complementary", { name: "Global chats" }).parentElement;
     const starters = document.querySelector<HTMLElement>('[data-slot="chat-starter-cards"]');
     const starterScroll = document.querySelector<HTMLElement>('[data-slot="chat-starter-scroll"]');
+    const starterStack = document.querySelector<HTMLElement>('[data-slot="chat-starter-stack"]');
     const composer = document.querySelector<HTMLElement>('[data-slot="shared-chat-composer"] .prompt-card');
     const newChatContent = document.querySelector<HTMLElement>('[data-slot="chat-new-chat-content"]');
     expect(workspace?.getAttribute("data-layout")).toBe("narrow");
@@ -339,6 +346,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toContain("min-h-20");
     expect(starterScroll?.className).toContain("overflow-y-auto");
     expect(starterScroll?.className).toContain("items-start");
+    expect(starterStack?.className).toContain("my-auto");
     expect(starterScroll?.style.scrollbarGutter).toBe("stable");
     expect(newChatContent?.className).toContain("overflow-hidden");
     expect(composer?.getAttribute("data-layout")).toBe("narrow");
@@ -389,6 +397,58 @@ describe("CanonicalChatWorkspace", () => {
     expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
     expect(existingChat.getAttribute("aria-current")).toBe("true");
     expect(existingChat.style.background).toBe("var(--bg-selected)");
+  });
+
+  it("focuses the prompt when the surrounding Chat shell requests it", async () => {
+    act(() => useCodingAgentWorkspace.getState().requestComposerFocus());
+    render(
+      <CanonicalChatWorkspace
+        client={client()}
+        projectId={null}
+        initialView="draft"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+    const prompt = await screen.findByRole("textbox", { name: "Start a chat" });
+
+    await waitFor(() => expect(document.activeElement).toBe(prompt));
+  });
+
+  it("keeps the focused prompt editable during a background full refresh", async () => {
+    let listener: ((event: CanonicalChatInvalidation) => void) | undefined;
+    const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
+      subscribe(next) {
+        listener = next;
+        return { dispose: () => { listener = undefined; } };
+      },
+    };
+    let resolveRefresh!: (value: { items: typeof record[] }) => void;
+    const refresh = new Promise<{ items: typeof record[] }>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const routeClient = client();
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        initialChatId={record.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+        eventSource={eventSource}
+      />,
+    );
+    const prompt = await screen.findByRole("textbox", { name: "Reply to chat" });
+    prompt.focus();
+    vi.mocked(routeClient.list).mockImplementationOnce(() => refresh);
+
+    act(() => listener?.({ type: "chat.full_refresh", cursor: 2 }));
+    await waitFor(() => expect(routeClient.list).toHaveBeenCalledTimes(2));
+
+    expect(prompt.getAttribute("contenteditable")).toBe("true");
+    expect(document.activeElement).toBe(prompt);
+    await act(async () => resolveRefresh({ items: [record] }));
   });
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
@@ -631,6 +691,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(chat).toBeTruthy();
     expect(chat?.getAttribute("aria-hidden")).toBe("true");
     expect(chat?.hasAttribute("inert")).toBe(true);
+    expect(chat?.hidden).toBe(true);
     expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
   });
 
@@ -745,6 +806,94 @@ describe("CanonicalChatWorkspace", () => {
     await waitFor(() => expect(reportedIds).toContain(secondChatId));
     expect(reportedIds).not.toContain(firstChatId);
     expect(vi.mocked(routeClient.getDetail).mock.calls.at(-1)?.[0]).toBe(secondChatId);
+  });
+
+  it("keeps an independent unsent prompt for each Chat", async () => {
+    const firstChatId = snapshot.chat.id;
+    const secondChatId = "chat_with_independent_draft";
+    const secondRecord = {
+      ...record,
+      chat: { ...record.chat, id: secondChatId, title: "Independent draft chat" },
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [record, secondRecord] });
+    vi.mocked(routeClient.getDetail).mockImplementation(async (chatId) => ({
+      record: chatId === secondChatId ? secondRecord : record,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    }));
+    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+      record: { ...record, chat: { ...record.chat, revision: record.chat.revision + 1 } },
+      message: { ...snapshot.messages[0]!, id: "message_independent_draft" },
+      turn: {
+        ...snapshot.turns[0]!,
+        id: "turn_independent_draft",
+        userMessageId: "message_independent_draft",
+      },
+      run: {
+        ...snapshot.runs[0]!,
+        id: "run_independent_draft",
+        turnId: "turn_independent_draft",
+      },
+      admission: "accepted",
+    });
+
+    const view = render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={firstChatId}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    await setSharedComposerText(editor, "1");
+    fireEvent.click(screen.getByRole("button", { name: secondRecord.chat.title }));
+    await waitFor(() => expect(routeClient.getDetail).toHaveBeenCalledWith(secondChatId, { limit: 200 }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe(""));
+
+    await setSharedComposerText(screen.getByRole("textbox", { name: "Reply to chat" }), "2");
+    fireEvent.click(screen.getByRole("button", { name: record.chat.title }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe("1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Start a chat" }).textContent).toBe(""));
+    fireEvent.click(screen.getByRole("button", { name: record.chat.title }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe("1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe(""));
+    fireEvent.click(screen.getByRole("button", { name: secondRecord.chat.title }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe("2"));
+
+    const replacementClient = client();
+    vi.mocked(replacementClient.list).mockResolvedValue({ items: [record, secondRecord] });
+    vi.mocked(replacementClient.getDetail).mockResolvedValue({
+      record: secondRecord,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+    view.rerender(
+      <CanonicalChatWorkspace
+        client={replacementClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={secondChatId}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe(""));
   });
 
   it("does not let stale Global Chat detail overwrite a requested New Chat draft", async () => {
@@ -1006,6 +1155,536 @@ describe("CanonicalChatWorkspace", () => {
     expect(request.parts).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "resource_reference" }),
     ]));
+  });
+
+  it("uses Codex-style Stop/Send queueing with an attached compact queue card", async () => {
+    const running = createCanonicalChatFixture("running").snapshot;
+    const activeRunRecord = {
+      ...running.runs[0]!,
+      capabilitySnapshot: {
+        ...running.runs[0]!.capabilitySnapshot,
+        steering: "same_run" as const,
+      },
+    };
+    const runningRecord = {
+      chat: {
+        id: running.chat.id,
+        ownerScope: running.chat.ownerScope,
+        title: running.chat.title,
+        lifecycle: running.chat.lifecycle,
+        attention: running.chat.attention,
+        revision: running.chat.revision,
+        messageCount: running.chat.messageCount,
+        lastMessagePreview: running.chat.lastMessagePreview,
+        currentSelection: running.chat.currentSelection,
+        createdAt: running.chat.createdAt,
+        updatedAt: running.chat.updatedAt,
+      },
+      projectId: "matrix-os",
+      providerBinding: running.chat.providerBinding,
+      activeRun: running.chat.activeRun,
+    };
+    const queuedTurn = (id: string, position: number, text: string) => ({
+      id,
+      chatId: running.chat.id,
+      clientRequestId: `req_${id}`,
+      position,
+      parts: [{ type: "text" as const, text }],
+      selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project" as const, projectId: "matrix-os" },
+      createdAt: "2026-08-31T02:00:00.000Z",
+      updatedAt: "2026-08-31T02:00:00.000Z",
+    });
+    const first = queuedTurn("qturn_workspace_1", 1, "First queued turn");
+    const second = queuedTurn("qturn_workspace_2", 2, "Second queued turn");
+    const editedSecond = { ...second, parts: [{ type: "text" as const, text: "Edited second queued turn" }] };
+    const third = queuedTurn("qturn_workspace_3", 3, "Third queued turn");
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [runningRecord] });
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record: runningRecord,
+      messages: running.messages,
+      turns: running.turns,
+      runs: [activeRunRecord],
+      activities: running.activities,
+      queuedTurns: [first, second],
+    });
+    let finishSteer!: (value: Awaited<ReturnType<CanonicalChatClient["steerQueuedTurn"]>>) => void;
+    const steering = new Promise<Awaited<ReturnType<CanonicalChatClient["steerQueuedTurn"]>>>((resolve) => {
+      finishSteer = resolve;
+    });
+    vi.mocked(routeClient.steerQueuedTurn).mockReturnValue(steering);
+    const steered = {
+      runId: activeRunRecord.id,
+      turnId: activeRunRecord.turnId,
+      message: {
+        id: "msg_workspace_steer",
+        chatId: running.chat.id,
+        seq: 2,
+        role: "user",
+        state: "committed",
+        turnId: activeRunRecord.turnId,
+        runId: activeRunRecord.id,
+        parts: first.parts,
+        createdAt: "2026-08-31T02:00:01.000Z",
+      },
+      steering: "accepted" as const,
+    };
+    let finishQueue!: (value: Awaited<ReturnType<CanonicalChatClient["queueTurn"]>>) => void;
+    const queueMutation = new Promise<Awaited<ReturnType<CanonicalChatClient["queueTurn"]>>>((resolve) => {
+      finishQueue = resolve;
+    });
+    vi.mocked(routeClient.queueTurn).mockReturnValue(queueMutation);
+    vi.mocked(routeClient.updateQueuedTurn).mockResolvedValue({
+      queuedTurn: editedSecond,
+    });
+    let finishReorder!: (value: Awaited<ReturnType<CanonicalChatClient["reorderQueuedTurns"]>>) => void;
+    const reorderMutation = new Promise<Awaited<ReturnType<CanonicalChatClient["reorderQueuedTurns"]>>>((resolve) => {
+      finishReorder = resolve;
+    });
+    vi.mocked(routeClient.reorderQueuedTurns).mockReturnValue(reorderMutation);
+    vi.mocked(routeClient.cancelQueuedTurn).mockResolvedValue({
+      queuedTurnId: second.id,
+      queueDepth: 2,
+      cancellation: "cancelled",
+    });
+
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={running.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    const queuePanel = await screen.findByRole("region", { name: "Queued turns" });
+    expect(queuePanel.getAttribute("data-attached-to-composer")).toBe("true");
+    expect(queuePanel.getAttribute("data-queue-card-style")).toBe("codex");
+    expect(queuePanel.getAttribute("data-queue-density")).toBe("compact");
+    expect(within(queuePanel).getAllByRole("listitem")[0]?.className).toContain("min-h-10");
+    expect(screen.queryByText("Up next")).toBeNull();
+    expect(screen.queryByText("2 turns")).toBeNull();
+    expect(screen.getByText("First queued turn")).toBeTruthy();
+    expect(screen.getByText("Second queued turn")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Steer current run" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Queue next" })).toBeNull();
+
+    await setSharedComposerText(editor, "Third queued turn");
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.queueTurn).toHaveBeenCalledWith(
+      running.chat.id,
+      expect.objectContaining({ parts: [{ type: "text", text: "Third queued turn" }] }),
+    ));
+    expect(editor.textContent).toBe("");
+    expect(within(queuePanel).queryByText("Third queued turn")).toBeNull();
+    finishQueue({ queuedTurn: third, queueDepth: 3 });
+    await waitFor(() => expect(within(queuePanel).getByText("Third queued turn")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Second queued turn" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit Second queued turn" }));
+    await waitFor(() => expect(editor.textContent).toContain("Second queued turn"));
+    await setSharedComposerText(editor, "Edited second queued turn");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.updateQueuedTurn).toHaveBeenCalledWith(
+      running.chat.id,
+      second.id,
+      expect.objectContaining({ parts: [{ type: "text", text: "Edited second queued turn" }] }),
+    ));
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Edited second queued turn" }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole("menuitem", { name: "Edit Edited second queued turn" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /Move .* (up|down)/ })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    const firstDragHandle = screen.getByRole("button", { name: "Reorder First queued turn" });
+    const secondRow = screen.getByText("Edited second queued turn").closest("li");
+    if (!secondRow) throw new Error("Second queued turn row not found");
+    const dataTransfer = {
+      dropEffect: "none",
+      effectAllowed: "none",
+      setData: vi.fn(),
+    } as unknown as DataTransfer;
+    fireEvent.dragStart(firstDragHandle, { dataTransfer });
+    fireEvent.dragOver(secondRow, { dataTransfer });
+    fireEvent.drop(secondRow, { dataTransfer });
+    expect(within(queuePanel).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Edited second queued turn"),
+      expect.stringContaining("First queued turn"),
+      expect.stringContaining("Third queued turn"),
+    ]);
+    await waitFor(() => expect(routeClient.reorderQueuedTurns).toHaveBeenCalledWith(
+      running.chat.id,
+      expect.objectContaining({ queuedTurnIds: [second.id, first.id, third.id] }),
+    ));
+    finishReorder({ queuedTurns: [editedSecond, first, third] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reorder First queued turn" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Edited second queued turn" }));
+    await waitFor(() => expect(routeClient.cancelQueuedTurn).toHaveBeenCalledWith(
+      running.chat.id,
+      second.id,
+      expect.objectContaining({ baseRevision: running.chat.revision + 3 }),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Steer First queued turn" }));
+    expect(within(queuePanel).getByText("First queued turn")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Steering First queued turn" })).toBeTruthy();
+    expect(within(screen.getByRole("log")).queryByText("First queued turn")).toBeNull();
+    expect(routeClient.steerQueuedTurn).toHaveBeenCalledTimes(1);
+    finishSteer(steered);
+    await waitFor(() => expect(routeClient.steerQueuedTurn).toHaveBeenCalledWith(
+      running.chat.id,
+      activeRunRecord.id,
+      first.id,
+      expect.objectContaining({ expectedTurnId: activeRunRecord.turnId }),
+    ));
+    await waitFor(() => expect(within(queuePanel).queryByText("First queued turn")).toBeNull());
+    await waitFor(() => expect(within(screen.getByRole("log")).getByText("First queued turn")).toBeTruthy());
+  });
+
+  it("keeps Steer visible for a queued turn when no steerable Run is currently loaded", async () => {
+    const queuedTurn = {
+      id: "qturn_workspace_waiting",
+      chatId: snapshot.chat.id,
+      clientRequestId: "req_qturn_workspace_waiting",
+      position: 1,
+      parts: [{ type: "text" as const, text: "Waiting queued turn" }],
+      selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project" as const, projectId: "matrix-os" },
+      createdAt: "2026-08-31T02:00:00.000Z",
+      updatedAt: "2026-08-31T02:00:00.000Z",
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+      queuedTurns: [queuedTurn],
+    });
+
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const steer = await screen.findByRole("button", { name: "Steer Waiting queued turn" });
+    expect((steer as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("saves an edited queued turn even after its active Run has ended", async () => {
+    const queuedTurn = {
+      id: "qturn_workspace_edit_after_run",
+      chatId: snapshot.chat.id,
+      clientRequestId: "req_qturn_workspace_edit_after_run",
+      position: 1,
+      parts: [{ type: "text" as const, text: "Original queued turn" }],
+      selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project" as const, projectId: "matrix-os" },
+      createdAt: "2026-08-31T02:00:00.000Z",
+      updatedAt: "2026-08-31T02:00:00.000Z",
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+      queuedTurns: [queuedTurn],
+    });
+    vi.mocked(routeClient.updateQueuedTurn).mockResolvedValue({
+      queuedTurn: {
+        ...queuedTurn,
+        parts: [{ type: "text", text: "Edited after Run" }],
+      },
+    });
+
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Original queued turn" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit Original queued turn" }));
+    await setSharedComposerText(editor, "Edited after Run");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(routeClient.updateQueuedTurn).toHaveBeenCalledWith(
+      snapshot.chat.id,
+      queuedTurn.id,
+      expect.objectContaining({ parts: [{ type: "text", text: "Edited after Run" }] }),
+    ));
+    expect(routeClient.admitTurn).not.toHaveBeenCalled();
+  });
+
+  it("leaves queued-edit mode when a failed save reloads a Queue that no longer contains the turn", async () => {
+    const queuedTurn = {
+      id: "qturn_workspace_removed_during_edit",
+      chatId: snapshot.chat.id,
+      clientRequestId: "req_qturn_workspace_removed_during_edit",
+      position: 1,
+      parts: [{ type: "text" as const, text: "Original queued turn" }],
+      selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project" as const, projectId: "matrix-os" },
+      createdAt: "2026-08-31T02:00:00.000Z",
+      updatedAt: "2026-08-31T02:00:00.000Z",
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.getDetail)
+      .mockResolvedValueOnce({
+        record,
+        messages: snapshot.messages,
+        turns: snapshot.turns,
+        runs: snapshot.runs,
+        activities: snapshot.activities,
+        queuedTurns: [queuedTurn],
+      })
+      .mockResolvedValue({
+        record,
+        messages: snapshot.messages,
+        turns: snapshot.turns,
+        runs: snapshot.runs,
+        activities: snapshot.activities,
+        queuedTurns: [],
+      });
+    vi.mocked(routeClient.updateQueuedTurn).mockRejectedValue(new Error("QueueRevisionConflict"));
+
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Original queued turn" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit Original queued turn" }));
+    await setSharedComposerText(editor, "Keep this text as a normal draft");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Queued turns" })).toBeNull());
+    await waitFor(() => expect(
+      screen.getByRole("textbox", { name: "Reply to chat" }).getAttribute("aria-placeholder"),
+    ).toBe("Reply to chat…"));
+    const reloadedEditor = screen.getByRole("textbox", { name: "Reply to chat" });
+    expect(reloadedEditor.textContent).toContain("Keep this text as a normal draft");
+  });
+
+  it("leaves queued-edit mode when the user starts a new Chat", async () => {
+    const queuedTurn = {
+      id: "qturn_workspace_edit_then_new",
+      chatId: snapshot.chat.id,
+      clientRequestId: "req_qturn_workspace_edit_then_new",
+      position: 1,
+      parts: [{ type: "text" as const, text: "Edit before new Chat" }],
+      selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project" as const, projectId: "matrix-os" },
+      createdAt: "2026-08-31T02:00:00.000Z",
+      updatedAt: "2026-08-31T02:00:00.000Z",
+    };
+    const routeClient = client();
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+      queuedTurns: [queuedTurn],
+    });
+
+    render(
+      <CanonicalChatWorkspace
+        client={routeClient}
+        projectId={null}
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={providerCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Edit before new Chat" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit Edit before new Chat" }));
+    expect(editor.getAttribute("aria-placeholder")).toBe("Edit queued message…");
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    const newChatEditor = await screen.findByRole("textbox", { name: "Start a chat" });
+    expect(newChatEditor.getAttribute("aria-placeholder")).toBe("How can I help you today?");
+  });
+  it("uses the file capability to attach, preview, retry, remove, and submit multiple files", async () => {
+    const instanceId = "openclaw_file_capable";
+    const fileCatalog: CanonicalProviderCatalog = {
+      ...providerCatalog,
+      drivers: [{
+        ...providerCatalog.drivers[0]!,
+        kind: "openclaw",
+        displayName: "OpenClaw",
+        capabilityClass: "system_agent",
+      }],
+      instances: [{
+        ...providerCatalog.instances[0]!,
+        id: instanceId,
+        driverKind: "openclaw",
+        displayName: "OpenClaw",
+        supports: { ...providerCatalog.instances[0]!.supports, attachments: ["file"] },
+        defaultSelection: { instanceId, model: providerCatalog.instances[0]!.models[0]!.id },
+      }],
+    };
+    const fileRecord = {
+      ...record,
+      chat: {
+        ...record.chat,
+        currentSelection: { instanceId, model: providerCatalog.instances[0]!.models[0]!.id },
+      },
+      providerBinding: {
+        ...record.providerBinding,
+        driverKind: "openclaw" as const,
+        instanceId,
+      },
+    };
+    let retryFailed = false;
+    const api = {
+      baseUrl: "https://matrix.test",
+      get: vi.fn(),
+      getText: vi.fn(),
+      getBlob: vi.fn(),
+      post: vi.fn(),
+      postBytes: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      putBytes: vi.fn(async (url: string, file: File) => {
+        if (file.name === "retry.txt" && !retryFailed) {
+          retryFailed = true;
+          throw new Error("temporary upload failure");
+        }
+        return {
+          ok: true,
+          path: decodeURIComponent(url.split("path=")[1] ?? ""),
+          size: file.size,
+        };
+      }),
+      delete: vi.fn(),
+      putText: vi.fn(),
+    } as never;
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [fileRecord] });
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record: fileRecord,
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+      record: fileRecord,
+      message: { ...snapshot.messages[0]!, id: "msg_attachment", turnId: "turn_attachment" },
+      turn: {
+        ...snapshot.turns[0]!,
+        id: "turn_attachment",
+        inputMessageId: "msg_attachment",
+        clientRequestId: "req_attachment",
+      },
+      run: { ...snapshot.runs[0]!, id: "run_attachment", turnId: "turn_attachment" },
+      admission: "accepted",
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    render(
+      <CanonicalChatWorkspace
+        api={api}
+        client={routeClient}
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        initialChatId={snapshot.chat.id}
+        initialView="conversation"
+        active
+        catalog={fileCatalog}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    const input = screen.getByLabelText("Choose files") as HTMLInputElement;
+    const inputClick = vi.spyOn(input, "click");
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    expect(inputClick).toHaveBeenCalledOnce();
+    expect(input.multiple).toBe(true);
+    const contextButton = screen.getByRole("button", { name: "Project Matrix OS" });
+    expect(contextButton).toBeTruthy();
+    expect(contextButton.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeNull();
+
+    const keep = new File(["keep"], "keep.txt", { type: "text/plain" });
+    const remove = new File(["remove"], "remove.txt", { type: "text/plain" });
+    const retry = new File(["retry"], "retry.txt", { type: "text/plain" });
+    fireEvent.change(input, { target: { files: [keep, remove, retry] } });
+
+    expect(screen.getByRole("group", { name: "Attachments" })).toBeTruthy();
+    expect(screen.getByText("keep.txt")).toBeTruthy();
+    expect(screen.getByText("remove.txt")).toBeTruthy();
+    expect(screen.getByText("retry.txt")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove remove.txt" }));
+    expect(screen.queryByText("remove.txt")).toBeNull();
+
+    await setSharedComposerText(editor, "Inspect these files");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const retryButton = await screen.findByRole("button", { name: "Retry retry.txt" });
+    expect(routeClient.admitTurn).not.toHaveBeenCalled();
+
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry retry.txt" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledOnce());
+    const request = vi.mocked(routeClient.admitTurn).mock.calls[0]![1];
+    expect(request.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text", text: "Inspect these files" }),
+      expect.objectContaining({ type: "attachment_reference", kind: "file", label: "keep.txt" }),
+      expect.objectContaining({ type: "attachment_reference", kind: "file", label: "retry.txt" }),
+    ]));
+    expect(request.parts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "remove.txt" }),
+      expect.objectContaining({ type: "resource_reference" }),
+    ]));
+    warn.mockRestore();
   });
 
 });

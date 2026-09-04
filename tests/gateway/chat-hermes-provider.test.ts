@@ -37,6 +37,8 @@ function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly st
             respond(request, { status: "streaming" });
           } else if (request.method === "session.interrupt") {
             respond(request, { status: "interrupted" });
+          } else if (request.method === "session.steer") {
+            respond(request, { status: "queued", text: request.params.text });
           } else if (request.method === "config.set" && request.params.key === "yolo") {
             respond(request, { key: "yolo", value: "1", scope: "session" });
           } else if (request.method === "config.set" && request.params.key === "model") {
@@ -101,10 +103,70 @@ const baseInput = {
 async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
   const events = [];
   for await (const event of iterable) events.push(event);
+  // Most adapter behavior tests predate the early durable-state checkpoint and
+  // assert the visible Provider timeline. Keep their legacy checkpoint position
+  // stable; the cancellation regression below uses collectRaw to verify that
+  // the real stream publishes state before a Run can be aborted.
+  const stateIndex = events.findIndex((event) => (
+    typeof event === "object" && event !== null && "type" in event
+    && event.type === "state.updated"
+  ));
+  if (stateIndex >= 0) {
+    const [state] = events.splice(stateIndex, 1);
+    const terminalIndex = events.findIndex((event) => (
+      typeof event === "object" && event !== null && "type" in event
+      && event.type === "run.completed"
+    ));
+    const terminal = terminalIndex < 0 ? undefined : events[terminalIndex];
+    if (typeof terminal === "object" && terminal !== null && "outcome" in terminal
+      && terminal.outcome === "completed") {
+      events.splice(terminalIndex, 0, state);
+    }
+  }
+  return events;
+}
+
+async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
+  const events = [];
+  for await (const event of iterable) events.push(event);
   return events;
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("steers only the exact active Hermes session without starting another prompt", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    await expect(adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_hermes_steer_1",
+      prompt: "Focus on the failing test.",
+      parts: [{ type: "text", text: "Focus on the failing test." }],
+    })).resolves.toBeUndefined();
+    expect(gateway.requests).toContainEqual(expect.objectContaining({
+      method: "session.steer",
+      params: { session_id: "live_session", text: "Focus on the failing test." },
+    }));
+    expect(gateway.requests.filter(({ method }) => method === "prompt.submit")).toHaveLength(1);
+
+    gateway.event("message.complete", { text: "Done", status: "complete" });
+    await eventsPromise;
+    await expect(adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_hermes_steer_terminal",
+      prompt: "Too late.",
+      parts: [{ type: "text", text: "Too late." }],
+    })).rejects.toThrow("steering Run unavailable");
+  });
+
   it("projects a large official Hermes vision result before the final assistant message", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
@@ -425,8 +487,13 @@ describe("Hermes canonical Chat Provider adapter", () => {
     const gateway = fakeGateway({ ignoreMethods: ["approval.respond"] });
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
     const iterator = adapter.start(baseInput)[Symbol.asyncIterator]();
-    const approvalEvent = iterator.next();
+    const stateEvent = iterator.next();
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    await expect(stateEvent).resolves.toEqual({
+      done: false,
+      value: { type: "state.updated", state: { sessionId: "durable_session" } },
+    });
 
     gateway.event("approval.request", {
       request_id: "approval_session",
@@ -434,7 +501,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       choices: ["once", "session", "always", "deny"],
     });
 
-    await expect(approvalEvent).resolves.toEqual({
+    await expect(iterator.next()).resolves.toEqual({
       done: false,
       value: {
         type: "approval.requested",
@@ -485,7 +552,6 @@ describe("Hermes canonical Chat Provider adapter", () => {
     for await (const event of { [Symbol.asyncIterator]: () => iterator }) remaining.push(event);
     expect(remaining).toEqual([
       { type: "assistant.delta", delta: "Done." },
-      { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
   });
@@ -747,9 +813,15 @@ describe("Hermes canonical Chat Provider adapter", () => {
     const firstEvent = iterator.next();
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
 
+    await expect(firstEvent).resolves.toEqual({
+      done: false,
+      value: { type: "state.updated", state: { sessionId: "durable_session" } },
+    });
+
     gateway.event("message.delta", { text: "first live fragment" });
+    const firstVisibleEvent = iterator.next();
     const observed = await Promise.race([
-      firstEvent,
+      firstVisibleEvent,
       new Promise<"not-streamed">((resolve) => setTimeout(() => resolve("not-streamed"), 50)),
     ]);
 
@@ -766,7 +838,6 @@ describe("Hermes canonical Chat Provider adapter", () => {
       remaining.push(next.value);
     }
     expect(remaining).toEqual([
-      { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
     ]);
   });
@@ -1420,12 +1491,15 @@ describe("Hermes canonical Chat Provider adapter", () => {
     const gateway = fakeGateway();
     const abortController = new AbortController();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
-    const eventsPromise = collect(adapter.start({ ...baseInput, signal: abortController.signal }));
+    const eventsPromise = collectRaw(adapter.start({ ...baseInput, signal: abortController.signal }));
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
 
     abortController.abort();
 
-    expect(await eventsPromise).toEqual([{ type: "run.completed", outcome: "aborted" }]);
+    expect(await eventsPromise).toEqual([
+      { type: "state.updated", state: { sessionId: "durable_session" } },
+      { type: "run.completed", outcome: "aborted" },
+    ]);
     expect(gateway.requests).toContainEqual(expect.objectContaining({
       method: "session.interrupt",
       params: { session_id: "live_session" },

@@ -421,7 +421,7 @@ describe("ChatTab", () => {
 
     expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Add files and more" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Choose project for chat" }).closest(".prompt-card"))
       .not.toBeNull();
     expect(screen.queryByRole("button", { name: "Resources" })).toBeNull();
@@ -743,7 +743,7 @@ describe("ChatTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
 
     expect(useProviderPreferences.getState().composerSelections.hermes_default).toEqual({
       model: "provider-default",

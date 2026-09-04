@@ -35,21 +35,26 @@ export interface BoundedReadOptions {
 export interface RequestTimeoutOptions {
   /** Internal operation-specific timeout. Every request remains bounded. */
   timeoutMs?: number;
-  /** Cancellation propagated from the owning UI lifecycle. */
+  /** Caller lifecycle cancellation, always composed with the internal timeout. */
   signal?: AbortSignal;
 }
 
+export interface JsonRequestOptions extends RequestTimeoutOptions {
+  /** Hard cap on JSON response bytes before parsing. */
+  maxBytes?: number;
+}
+
 export interface ApiClient {
-  get<T>(path: string, options?: RequestTimeoutOptions): Promise<T>;
+  get<T>(path: string, options?: JsonRequestOptions): Promise<T>;
   getText(path: string, options?: BoundedReadOptions): Promise<string>;
   getBlob(path: string, options?: BoundedReadOptions): Promise<Blob>;
-  post<T>(path: string, body: unknown, options?: RequestTimeoutOptions): Promise<T>;
+  post<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
   postBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
-  patch<T>(path: string, body: unknown, options?: RequestTimeoutOptions): Promise<T>;
-  put<T>(path: string, body: unknown, options?: RequestTimeoutOptions): Promise<T>;
+  patch<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
+  put<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
   putBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
-  delete<T>(path: string, options?: RequestTimeoutOptions): Promise<T>;
-  putText<T>(path: string, body: string, options?: RequestTimeoutOptions): Promise<T>;
+  delete<T>(path: string, body?: unknown, options?: JsonRequestOptions): Promise<T>;
+  putText<T>(path: string, body: string, options?: JsonRequestOptions): Promise<T>;
   /** Returns a client whose requests remain bound to one runtime slot. */
   forRuntime(runtimeSlot: string): ApiClient;
   baseUrl: string;
@@ -58,7 +63,7 @@ export interface ApiClient {
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const fetchFn: FetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
 
-  function signalWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  function signalWithTimeout(signal: AbortSignal | null | undefined, timeoutMs: number): AbortSignal {
     const timeout = AbortSignal.timeout(timeoutMs);
     return signal ? AbortSignal.any([signal, timeout]) : timeout;
   }
@@ -69,11 +74,19 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     requestOptions?: RequestTimeoutOptions,
   ): Promise<Response> {
     const url = buildGatewayUrl(options.baseUrl, path, options.getRuntimeSlot());
+    const callerSignals = [init.signal, requestOptions?.signal].filter(
+      (signal): signal is AbortSignal => signal !== null && signal !== undefined,
+    );
+    const callerSignal = callerSignals.length === 0
+      ? undefined
+      : callerSignals.length === 1
+        ? callerSignals[0]
+        : AbortSignal.any(callerSignals);
     let response: Response;
     try {
       response = await fetchFn(url, {
         ...init,
-        signal: signalWithTimeout(requestOptions?.signal, requestOptions?.timeoutMs ?? API_TIMEOUT_MS),
+        signal: signalWithTimeout(callerSignal, requestOptions?.timeoutMs ?? API_TIMEOUT_MS),
       });
     } catch (err: unknown) {
       throw new AppError(classifyTransportError(err), { cause: err });
@@ -95,9 +108,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return response;
   }
 
-  async function request<T>(path: string, init: RequestInit, options?: RequestTimeoutOptions): Promise<T> {
+  async function request<T>(path: string, init: RequestInit, options?: JsonRequestOptions): Promise<T> {
     const response = await send(path, init, options);
     try {
+      if (options?.maxBytes !== undefined) {
+        const chunks = await readBoundedBytes(response, options.maxBytes);
+        const decoder = new TextDecoder();
+        const text = chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
+        return JSON.parse(text) as T;
+      }
       return (await response.json()) as T;
     } catch (err: unknown) {
       throw new AppError("server", { cause: err });
@@ -195,11 +214,11 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       request(path, { method: "PUT", headers, body }, requestOptions),
     // The gateway task DELETE route parses the JSON body unconditionally, so a
     // body-less DELETE 400s; always send an empty JSON object.
-    delete: (path, requestOptions) =>
+    delete: (path, body = {}, requestOptions) =>
       request(path, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
-        body: "{}",
+        body: JSON.stringify(body),
       }, requestOptions),
     putText: (path, body, requestOptions) =>
       request(path, {

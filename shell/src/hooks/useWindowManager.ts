@@ -5,6 +5,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";
 import { useDesktopMode } from "@/stores/desktop-mode";
+import { patchWebOsViewState, resetWebOsViewStateClientForTests } from "@/lib/os-view-state-client";
 
 export interface AppWindow {
   id: string;
@@ -39,7 +40,8 @@ const MIN_HEIGHT = 200;
 const DESKTOP_WINDOW_MARGIN = 20;
 const DESKTOP_HEADER_HEIGHT = 38;
 const MAX_CLOSED_ENTRIES = 50;
-const LAYOUT_FETCH_TIMEOUT_MS = 10_000;
+const LAYOUT_SAVE_DEBOUNCE_MS = 500;
+const LAYOUT_SAVE_RETRY_MS = 2_000;
 
 function isTerminalWindowPath(path: string): boolean {
   return path === "__terminal__" || path.startsWith("__terminal__:");
@@ -153,6 +155,7 @@ function markUserLayoutMutation(): void {
 }
 
 export function resetWindowManagerLayoutPersistenceForTests(): void {
+  resetWebOsViewStateClientForTests();
   layoutPersistenceArmed = false;
   clearTimeout(saveTimer);
   saveTimer = undefined;
@@ -160,6 +163,7 @@ export function resetWindowManagerLayoutPersistenceForTests(): void {
 
 function debouncedSave(
   state: Pick<WindowManagerState, "windows" | "closedPaths" | "closedLayouts">,
+  delayMs = LAYOUT_SAVE_DEBOUNCE_MS,
 ) {
   if (!layoutPersistenceArmed) return;
   clearTimeout(saveTimer);
@@ -192,17 +196,20 @@ function debouncedSave(
       }
     }
 
-    fetch(`${gatewayUrl}/api/layout`, {
-      signal: AbortSignal.timeout(LAYOUT_FETCH_TIMEOUT_MS),
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ windows: layoutWindows }),
+    const geometry = layoutWindows.map(({ path, x, y, width, height }) => ({ path, x, y, width, height }));
+    const mode = useDesktopMode.getState().mode;
+    patchWebOsViewState(gatewayUrl, {
+      apps: layoutWindows.map(({ path, title, state }) => ({ path, title, state })),
+      ...(mode === "canvas"
+        ? { canvas: { windows: geometry } }
+        : { desktop: { windows: geometry } }),
     }).catch((err: unknown) => {
       if (process.env.NODE_ENV !== "production") {
         console.debug("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));
       }
+      debouncedSave(useWindowManager.getState(), LAYOUT_SAVE_RETRY_MS);
     });
-  }, 500);
+  }, delayMs);
 }
 
 function computeDefaultWindowSize(path: string): { width: number; height: number } {

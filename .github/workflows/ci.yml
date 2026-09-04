@@ -28,6 +28,7 @@ jobs:
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
       should_run: ${{ steps.changed.outputs.should_run }}
       docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
+      os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}
     steps:
       - name: Checkout with bounded retry
         env:
@@ -79,6 +80,7 @@ jobs:
           # automatically absorbed by the next run.
           if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
             node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"
+            echo "os_view_parity_tests=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -86,6 +88,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
+            echo "os_view_parity_tests=true" >> "$GITHUB_OUTPUT"
             echo "CI relevant changes: true ($GITHUB_EVENT_NAME always runs)"
             exit 0
           fi
@@ -101,12 +104,14 @@ jobs:
           if [ "$should_run_trigger" != "true" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
+            echo "os_view_parity_tests=false" >> "$GITHUB_OUTPUT"
             echo "CI trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually."
             exit 0
           fi
 
           git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
           changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
+          os_view_parity_tests="$(printf '%s\n' "$changed_files" | node scripts/ci/os-view-parity-plan.mjs)"
 
           should_run=false
           docs_contract_tests=false
@@ -122,8 +127,10 @@ jobs:
 
           echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
           echo "docs_contract_tests=$docs_contract_tests" >> "$GITHUB_OUTPUT"
+          echo "os_view_parity_tests=$os_view_parity_tests" >> "$GITHUB_OUTPUT"
           echo "CI relevant changes: $should_run"
           echo "Docs contract tests: $docs_contract_tests"
+          echo "OS-view parity tests: $os_view_parity_tests"
 
   # ── Gate 1: Mechanical checks ──
   typecheck:
@@ -469,11 +476,51 @@ jobs:
         if: needs.changes.outputs.docs_contract_tests == 'true'
         run: pnpm exec vitest run tests/repository/site-extraction.test.ts
 
+  os-view-parity:
+    name: OS View Parity
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Skip OS-view parity tests
+        if: needs.changes.outputs.os_view_parity_tests != 'true'
+        run: echo "No shared OS-view surface changes detected; skipping parity tests."
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: needs.changes.outputs.os_view_parity_tests == 'true'
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        if: needs.changes.outputs.os_view_parity_tests == 'true'
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.os_view_parity_tests == 'true'
+
+      - name: Run shared OS-view parity contract
+        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        run: |
+          pnpm exec vitest run \
+            tests/contracts/os-view.test.ts \
+            tests/shell/desktop-mode-parity.test.ts \
+            tests/shell/desktop-launcher-mode.test.tsx \
+            tests/shell/web-desktop-surface.test.tsx \
+            tests/shell/os-view-state-client.test.ts \
+            tests/desktop/app-launcher.test.tsx \
+            tests/desktop/native-desktop-shell.test.tsx \
+            tests/desktop/os-view-state-client.test.ts \
+            tests/desktop/native-os-view-persistence.test.ts \
+            tests/gateway/os-view-state-repository.test.ts
+
   e2e:
     name: E2E Tests
     needs: [changes, sync-client, unit]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Skip expensive CI for docs-only changes
         if: needs.changes.outputs.should_run != 'true'
@@ -517,6 +564,12 @@ jobs:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts
 
+      - name: Run required Desktop terminal clipboard regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-clipboard.e2e.test.ts
+
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v7
@@ -527,7 +580,7 @@ jobs:
 
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -544,6 +597,7 @@ jobs:
           AGENT_SDK_COMPATIBILITY_RESULT: ${{ needs.agent-sdk-compatibility.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
+          OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           set -euo pipefail
@@ -566,11 +620,12 @@ jobs:
             echo "| Agent SDK 0.3.251 Compatibility | $AGENT_SDK_COMPATIBILITY_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
+            echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;

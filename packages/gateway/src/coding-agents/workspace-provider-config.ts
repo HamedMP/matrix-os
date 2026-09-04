@@ -2,9 +2,9 @@ import { z } from "zod/v4";
 import type { SupportedAgent } from "../agent-launcher.js";
 import { codexExecutableFromEnv } from "./codex-executable.js";
 
-const WorkspaceProviderAgentSchema = z.enum(["claude", "codex", "pi"]);
+const WorkspaceProviderAgentSchema = z.enum(["claude", "codex", "pi", "opencode"]);
 const WorkspaceProviderAgentsSchema = z.array(WorkspaceProviderAgentSchema)
-  .max(3)
+  .max(4)
   .superRefine((agents, ctx) => {
     if (agents.some((agent, index) => agents.indexOf(agent) !== index)) {
       ctx.addIssue({ code: "custom", message: "Duplicate provider" });

@@ -27,11 +27,13 @@ const MAX_COMPLETED_REQUESTS = 100;
 const MAX_CONTROL_SOCKETS = 20;
 const MAX_TRACKED_ITEMS = 500;
 const MAX_PENDING_TURNS = 20;
+const MAX_STEER_RETRIES = 20;
 const MAX_TURN_FRAME_BYTES = 128 * 1024;
 const ASSISTANT_DELTA_FLUSH_CHARS = 16;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const RPC_TIMEOUT_MS = 30 * 1000;
-const CONTROL_SOCKET_TIMEOUT_MS = 2_000;
+const STEER_RPC_TIMEOUT_MS = 60 * 1000;
+const CONTROL_SOCKET_TIMEOUT_MS = 60 * 1000;
 const PROVIDER_STOP_TIMEOUT_MS = 5_000;
 const SHUTDOWN_REPLAY_GRACE_MS = 250;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
@@ -210,11 +212,50 @@ const TurnCompletedSchema = z.object({
     }).passthrough(),
   }).passthrough(),
 }).passthrough();
+const TokenUsageBreakdownSchema = z.object({
+  inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  cachedInputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  reasoningOutputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).passthrough();
+const TokenUsageUpdatedSchema = z.object({
+  method: z.literal("thread/tokenUsage/updated"),
+  params: z.object({
+    threadId: NativeReferenceSchema,
+    turnId: NativeReferenceSchema,
+    tokenUsage: z.object({
+      last: TokenUsageBreakdownSchema,
+    }).passthrough(),
+  }).passthrough(),
+}).passthrough();
 const RpcResponseSchema = z.object({
   id: NativeRequestIdSchema,
   result: z.unknown().optional(),
   error: z.unknown().optional(),
 }).passthrough();
+const RpcErrorSchema = z.object({
+  code: z.number().int(),
+  message: z.string().max(512),
+}).passthrough();
+
+class ProviderRpcError extends Error {
+  constructor(reason = "rejected") {
+    super("provider_request_failed");
+    this.name = "ProviderRpcError";
+    this.reason = reason;
+  }
+}
+
+function providerRpcError(raw) {
+  const parsed = RpcErrorSchema.safeParse(raw);
+  return new ProviderRpcError(
+    parsed.success
+      && parsed.data.code === -32600
+      && parsed.data.message === "no active turn to steer"
+      ? "turn_not_idle"
+      : "rejected",
+  );
+}
 const ApprovalControlSchema = z.object({
   type: z.literal("approval"),
   approvalId: z.string().regex(/^appr_codex_[a-f0-9]{32}$/),
@@ -243,8 +284,14 @@ const InterruptControlSchema = z.object({
   type: z.literal("interrupt"),
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
+const SteerControlSchema = z.object({
+  type: z.literal("steer"),
+  prompt: PendingTurnSchema.shape.prompt,
+  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
+}).strict();
 const ControlSchema = z.discriminatedUnion("type", [
   TurnControlSchema,
+  SteerControlSchema,
   InterruptControlSchema,
   ApprovalControlSchema,
   InputControlSchema,
@@ -312,6 +359,7 @@ let activeTurn = false;
 let activeTurnOutcome;
 let nativeThreadId;
 let activeNativeTurnId;
+let activeTurnTokenUsage;
 let terminalEventCount = 0;
 let stdinClosed = false;
 let wakeTurn;
@@ -327,6 +375,41 @@ const assistantItemsWithDelta = new Set();
 const assistantDeltaBuffers = new Map();
 const startedToolItems = new Set();
 const toolItemsWithOutput = new Set();
+const toolBoundaryWaiters = new Set();
+let toolBoundaryVersion = 0;
+
+function settleToolBoundaryWaiters(reachedBoundary) {
+  for (const waiter of toolBoundaryWaiters) {
+    clearTimeout(waiter.timeout);
+    waiter.resolve(reachedBoundary);
+  }
+  toolBoundaryWaiters.clear();
+}
+
+function publishToolBoundary(nativeTurnId) {
+  if (nativeTurnId !== activeNativeTurnId) return;
+  toolBoundaryVersion += 1;
+  settleToolBoundaryWaiters(true);
+}
+
+function waitForToolBoundary(afterVersion, expectedTurnId, timeoutMs) {
+  if (toolBoundaryVersion > afterVersion) return Promise.resolve(true);
+  if (!activeTurn || activeNativeTurnId !== expectedTurnId || timeoutMs <= 0) {
+    return Promise.resolve(false);
+  }
+  if (toolBoundaryWaiters.size >= MAX_CONTROL_SOCKETS) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const waiter = {
+      resolve,
+      timeout: setTimeout(() => {
+        toolBoundaryWaiters.delete(waiter);
+        resolve(false);
+      }, timeoutMs),
+    };
+    waiter.timeout.unref();
+    toolBoundaryWaiters.add(waiter);
+  });
+}
 
 function digest(parts) {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 32);
@@ -490,7 +573,7 @@ function sendProvider(value) {
   child.stdin.write(`${JSON.stringify(value)}\n`);
 }
 
-function request(method, params) {
+function request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
   if (pendingRpc.size >= MAX_PENDING_REQUESTS) {
     return Promise.reject(new Error("provider_request_limit"));
   }
@@ -499,7 +582,7 @@ function request(method, params) {
     const timeout = setTimeout(() => {
       pendingRpc.delete(id);
       reject(new Error("provider_request_timeout"));
-    }, RPC_TIMEOUT_MS);
+    }, timeoutMs);
     timeout.unref();
     pendingRpc.set(id, { resolve, reject, timeout });
     sendProvider({ id, method, params });
@@ -706,6 +789,7 @@ async function handleItemLifecycle(raw) {
   });
   startedToolItems.delete(matrixItemId);
   toolItemsWithOutput.delete(matrixItemId);
+  publishToolBoundary(parsed.data.params.turnId);
   return true;
 }
 
@@ -715,7 +799,7 @@ async function handleProviderMessage(raw) {
     const pending = pendingRpc.get(response.data.id);
     pendingRpc.delete(response.data.id);
     clearTimeout(pending.timeout);
-    if (response.data.error !== undefined) pending.reject(new Error("provider_request_failed"));
+    if (response.data.error !== undefined) pending.reject(providerRpcError(response.data.error));
     else pending.resolve(response.data.result);
     return;
   }
@@ -738,6 +822,23 @@ async function handleProviderMessage(raw) {
     assertTrackedItemCapacity(assistantItemsWithDelta, messageId);
     await bufferAssistantDelta(messageId, delta.data.params.delta);
     assistantItemsWithDelta.add(messageId);
+    return;
+  }
+  const usage = TokenUsageUpdatedSchema.safeParse(raw);
+  if (usage.success) {
+    if (
+      activeTurn &&
+      usage.data.params.threadId === nativeThreadId &&
+      usage.data.params.turnId === activeNativeTurnId
+    ) {
+      const last = usage.data.params.tokenUsage.last;
+      activeTurnTokenUsage = {
+        input_tokens: last.inputTokens,
+        output_tokens: last.outputTokens,
+        cached_input_tokens: last.cachedInputTokens,
+        reasoning_output_tokens: last.reasoningOutputTokens,
+      };
+    }
     return;
   }
   const completed = TurnCompletedSchema.safeParse(raw);
@@ -795,6 +896,46 @@ function controlResponse(socket, value) {
   socket.end(`${JSON.stringify(value)}\n`);
 }
 
+async function steerActiveTurn(control) {
+  const expectedThreadId = nativeThreadId;
+  const expectedTurnId = activeNativeTurnId;
+  if (!expectedThreadId || !expectedTurnId) return false;
+  const deadline = Date.now() + STEER_RPC_TIMEOUT_MS;
+
+  for (let attempt = 0; attempt < MAX_STEER_RETRIES; attempt += 1) {
+    if (!activeTurn || nativeThreadId !== expectedThreadId || activeNativeTurnId !== expectedTurnId) {
+      return false;
+    }
+    const boundaryBeforeRequest = toolBoundaryVersion;
+    const toolWasActive = startedToolItems.size > 0;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
+    try {
+      await request("turn/steer", {
+        threadId: expectedThreadId,
+        expectedTurnId,
+        clientUserMessageId: control.clientRequestId,
+        input: [{ type: "text", text: control.prompt, text_elements: [] }],
+      }, remainingMs);
+      return true;
+    } catch (error) {
+      if (!(error instanceof ProviderRpcError) || error.reason !== "turn_not_idle") throw error;
+      if (!activeTurn || activeNativeTurnId !== expectedTurnId) return false;
+      const boundaryAlreadyReached = toolBoundaryVersion > boundaryBeforeRequest;
+      if (!toolWasActive && startedToolItems.size === 0 && !boundaryAlreadyReached) return false;
+      if (!boundaryAlreadyReached) {
+        const reachedBoundary = await waitForToolBoundary(
+          boundaryBeforeRequest,
+          expectedTurnId,
+          deadline - Date.now(),
+        );
+        if (!reachedBoundary) return false;
+      }
+    }
+  }
+  return false;
+}
+
 async function applyControl(control) {
   const replay = completedControls.get(control.clientRequestId);
   if (replay) {
@@ -803,6 +944,8 @@ async function applyControl(control) {
   }
   if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
+  } else if (control.type === "steer") {
+    if (!await steerActiveTurn(control)) return { ok: false };
   } else if (control.type === "interrupt") {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
@@ -1009,8 +1152,11 @@ async function finishTurn(outcome) {
     }
     return;
   }
+  const tokenUsage = activeTurnTokenUsage;
   activeTurn = false;
   activeNativeTurnId = undefined;
+  activeTurnTokenUsage = undefined;
+  settleToolBoundaryWaiters(false);
   for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
     await persist({ type: "matrix.codex.assistant.completed", messageId });
@@ -1029,6 +1175,7 @@ async function finishTurn(outcome) {
   toolItemsWithOutput.clear();
   await persist({
     type: outcome === "completed" ? "turn.completed" : outcome === "aborted" ? "turn.aborted" : "turn.failed",
+    ...(outcome === "completed" && tokenUsage ? { usage: tokenUsage } : {}),
   });
   terminalEventCount += 1;
   activeTurnOutcome?.(outcome);
@@ -1041,6 +1188,7 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
+  activeTurnTokenUsage = undefined;
   try {
     const started = await request("turn/start", turnStartParams(threadId, turn));
     activeNativeTurnId = z.object({
@@ -1049,6 +1197,7 @@ async function runTurn(threadId, turn) {
   } catch (error) {
     activeTurn = false;
     activeNativeTurnId = undefined;
+    activeTurnTokenUsage = undefined;
     activeTurnOutcome = undefined;
     throw error;
   }

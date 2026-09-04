@@ -410,8 +410,8 @@ describe("draft chat replaces the selected thread", () => {
 
     const permission = await screen.findByRole("button", { name: "Permission mode" });
     fireEvent.click(permission);
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "full access" }));
-    await waitFor(() => expect(permission.textContent).toContain("full access"));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
+    await waitFor(() => expect(permission.textContent).toContain("Full Access"));
     await waitFor(() => expect(useDraftChat.getState().draftFor("matrix-os")?.sandboxMode).toBe("full_access"));
     expect(screen.getByLabelText("Message new chat").textContent).toBe("");
 
@@ -419,7 +419,7 @@ describe("draft chat replaces the selected thread", () => {
     expect(await screen.findByRole("region", { name: "Conversation Plan the auth work" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access"));
     expect(screen.getByLabelText("Message new chat").textContent).toBe("");
   });
 

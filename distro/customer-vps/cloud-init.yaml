@@ -88,7 +88,7 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       Environment=SYMPHONY_PORT=4766
-      Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex
+      Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode
       WorkingDirectory=/opt/matrix
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
@@ -396,7 +396,10 @@ write_files:
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
+      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
+      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}
+      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
       POSTHOG_TOKEN={{posthogToken}}
       POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}

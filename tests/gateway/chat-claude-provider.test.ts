@@ -4,7 +4,7 @@ import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat
 
 class FakeStream extends EventEmitter {}
 
-function child(lines: string[], exitCode = 0) {
+function child(lines: string[], exitCode = 0, stderrLines: string[] = []) {
   const stdout = new FakeStream();
   const stderr = new FakeStream();
   const process = new EventEmitter() as EventEmitter & {
@@ -17,6 +17,7 @@ function child(lines: string[], exitCode = 0) {
   process.kill = vi.fn();
   queueMicrotask(() => {
     for (const line of lines) stdout.emit("data", Buffer.from(`${line}\n`));
+    for (const line of stderrLines) stderr.emit("data", Buffer.from(`${line}\n`));
     process.emit("exit", exitCode, null);
   });
   return process;
@@ -41,6 +42,57 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
+  it("resumes the active Claude session with a steering prompt", async () => {
+    const firstStdout = new FakeStream();
+    const firstStderr = new FakeStream();
+    const firstProcess = new EventEmitter() as EventEmitter & {
+      stdout: FakeStream;
+      stderr: FakeStream;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    firstProcess.stdout = firstStdout;
+    firstProcess.stderr = firstStderr;
+    firstProcess.kill = vi.fn(() => queueMicrotask(() => firstProcess.emit("exit", null, "SIGTERM")));
+    const spawnFn = vi.fn()
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => firstStdout.emit("data", Buffer.from(`${JSON.stringify({
+          type: "system",
+          subtype: "init",
+          session_id: "claude_steer_session",
+          model: "claude-sonnet-4-6",
+        })}\n`)));
+        return firstProcess;
+      })
+      .mockImplementationOnce(() => child([
+        JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "222", session_id: "claude_steer_session" }),
+      ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events: unknown[] = [];
+    const runPromise = (async () => {
+      for await (const event of adapter.start(baseInput)) events.push(event);
+    })();
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "state.updated" })));
+
+    await adapter.steer!({
+      owner: baseInput.owner,
+      chatId: baseInput.chatId,
+      runId: baseInput.runId,
+      turnId: baseInput.turnId,
+      clientRequestId: "req_claude_steer",
+      prompt: "Reply 222",
+      parts: [{ type: "text", text: "Reply 222" }],
+    });
+    await runPromise;
+
+    expect(firstProcess.kill).toHaveBeenCalled();
+    expect(spawnFn).toHaveBeenCalledTimes(2);
+    expect(spawnFn.mock.calls[1]?.[1]).toEqual(expect.arrayContaining([
+      "--resume", "claude_steer_session", "--", "Reply 222",
+    ]));
+    expect(events).toContainEqual({ type: "assistant.delta", delta: "222" });
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("runs the selected model, effort, permission and streams native deltas", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({
@@ -155,6 +207,87 @@ describe("Claude canonical Chat Provider adapter", () => {
       }),
     ]));
     expect(JSON.stringify(events)).not.toMatch(/secret-value|Authorization|\/home\/matrix\/home|Inspecting the manifest/);
+  });
+
+  it("drops a completed tool preview that is unsafe for canonical Chat instead of failing the Run", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "tool_database_check", name: "Bash", input: {} },
+        },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "input_json_delta",
+            partial_json: JSON.stringify({ command: "psql postgresql://example.invalid/database" }),
+          },
+        },
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "completed after the database check",
+        session_id: "claude_unsafe_preview_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toContainEqual({
+      type: "agent.activity",
+      activityId: "tool_database_check",
+      kind: "command",
+      label: "Run command",
+      status: "completed",
+    });
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(JSON.stringify(events)).not.toContain("postgresql://");
+  });
+
+  it("uses unique activity ids when Claude restarts content block indexes", async () => {
+    const thinkingBlock = [
+      JSON.stringify({
+        type: "stream_event",
+        event: { type: "content_block_start", index: 0, content_block: { type: "thinking" } },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: { type: "content_block_stop", index: 0 },
+      }),
+    ];
+    const spawnFn = vi.fn(() => child([
+      ...thinkingBlock,
+      ...thinkingBlock,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "done",
+        session_id: "claude_restarted_indexes",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events.filter((event) => event.type === "agent.activity")).toEqual([
+      expect.objectContaining({ activityId: "reasoning_0", status: "running" }),
+      expect.objectContaining({ activityId: "reasoning_0", status: "completed" }),
+      expect.objectContaining({ activityId: "reasoning_1", status: "running" }),
+      expect.objectContaining({ activityId: "reasoning_1", status: "completed" }),
+    ]);
   });
 
   it("keeps official Claude text blocks and completed command detail in provider order", async () => {
@@ -306,6 +439,72 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
   });
 
+  it("accepts a healthy long Claude stream beyond the legacy one-megabyte total cap", async () => {
+    const progressLines = Array.from({ length: 540 }, (_, index) => JSON.stringify({
+      type: "user",
+      tool_use_result: {
+        sequence: index,
+        content: "x".repeat(2_000),
+      },
+    }));
+    const spawnFn = vi.fn(() => child([
+      ...progressLines,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "completed after a long healthy stream",
+        session_id: "claude_long_stream_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
+  it("discards an oversized Claude tool-input fragment without failing the Run", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "tool_large_input", name: "Bash", input: {} },
+        },
+      }),
+      JSON.stringify({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: "x".repeat(20_000) },
+        },
+      }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "completed after ignoring oversized tool input",
+        session_id: "claude_large_tool_input_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "agent.activity",
+      activityId: "tool_large_input",
+      status: "completed",
+    }));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("executes with the owner Claude credential environment", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "authenticated", session_id: "claude_session" }),
@@ -327,6 +526,51 @@ describe("Claude canonical Chat Provider adapter", () => {
       ANTHROPIC_API_KEY: "owner-key",
       HOME: "/home/matrix/home",
       MATRIX_HOME: "/home/matrix/home",
+    });
+  });
+
+  it("uses the rotating funded credential and its shorter run deadline", async () => {
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const process = new EventEmitter() as EventEmitter & {
+      stdout: FakeStream;
+      stderr: FakeStream;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    process.stdout = stdout;
+    process.stderr = stderr;
+    process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
+    const spawnFn = vi.fn(() => process);
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn,
+      timeoutMs: 60_000,
+      resolveCredentialLaunch: vi.fn(async () => ({
+        env: {
+          ANTHROPIC_API_KEY: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
+          ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
+        },
+        fundedRunTimeoutMs: 10,
+      })),
+    });
+
+    const events = [];
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(spawnFn.mock.calls[0]![2].env).toMatchObject({
+      ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
+      ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
+    });
+    expect(process.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(events.at(-1)).toEqual({
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "service_unavailable",
+        safeMessage: "Claude took too long to respond. Try the Run again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
     });
   });
 
@@ -372,11 +616,269 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "run_failed",
-        safeMessage: "The Claude Run failed. Check Claude setup and try again.",
+        safeMessage: "Claude returned an invalid response. Try the Run again.",
         retryable: true,
         recoveryActions: ["retry"],
       },
     });
+  });
+
+  it("classifies an unsupported Claude model without exposing Provider output", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "error",
+        is_error: true,
+        result: "API Error: model claude-retired is not available for /home/matrix/private/token.txt",
+        session_id: "claude_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events.at(-1)).toEqual({
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "model_unavailable",
+        safeMessage: "The selected Claude model is unavailable. Choose another model and try again.",
+        retryable: false,
+        recoveryActions: ["select_provider"],
+      },
+    });
+    expect(JSON.stringify(events)).not.toMatch(/claude-retired|private|token\.txt/);
+  });
+
+  it("turns a Claude authentication failure into a safe setup action", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "error",
+        is_error: true,
+        result: "Authentication failed: invalid API key sk-ant-secret-value. Please run /login.",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "authorization_failed",
+        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        retryable: false,
+        recoveryActions: ["open_setup_terminal"],
+      },
+    }]);
+    expect(JSON.stringify(events)).not.toContain("sk-ant-secret-value");
+  });
+
+  it("classifies a Claude permission failure without presenting it as a connection failure", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "error",
+        is_error: true,
+        result: "Permission denied while using Bash in /safe/project/private.sh",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "authorization_failed",
+        safeMessage: "Claude was blocked by its current permissions. Review the permission mode and try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }]);
+    expect(JSON.stringify(events)).not.toContain("private.sh");
+  });
+
+  it("offers setup when the Claude executable cannot start", async () => {
+    const spawnFn = vi.fn(() => {
+      throw new Error("spawn /private/bin/claude ENOENT with ANTHROPIC_API_KEY=secret");
+    });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "provider_unavailable",
+        safeMessage: "Claude is not available on this runtime. Open setup and install or reconnect Claude.",
+        retryable: false,
+        recoveryActions: ["open_setup_terminal"],
+      },
+    }]);
+    expect(JSON.stringify(events)).not.toMatch(/private|ANTHROPIC|secret/);
+  });
+
+  it("classifies malformed Claude stream output as a safe protocol failure", async () => {
+    const spawnFn = vi.fn(() => child(["{malformed provider payload with /private/path"]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "run_failed",
+        safeMessage: "Claude returned an invalid response. Try the Run again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }]);
+    expect(JSON.stringify(events)).not.toMatch(/malformed|private/);
+  });
+
+  it("uses bounded Claude stderr as private evidence for an authentication category", async () => {
+    const spawnFn = vi.fn(() => child([], 1, [
+      `Authentication required. Run /login. secret=${"x".repeat(16_000)}`,
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "authorization_failed",
+        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        retryable: false,
+        recoveryActions: ["open_setup_terminal"],
+      },
+    }]);
+    expect(JSON.stringify(events)).not.toMatch(/Authentication required|secret|xxxx/);
+  });
+
+  it("handles Claude success-subtype error results as an opaque safe failure", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        total_cost_usd: 0,
+        modelUsage: {},
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "run_failed",
+        safeMessage: "Claude reported a failure before completing this Run. Try again, or open Claude setup if it continues.",
+        retryable: true,
+        recoveryActions: ["retry", "open_setup_terminal"],
+      },
+    }]);
+  });
+
+  it("keeps an unclassified Claude process exit generic and safe", async () => {
+    const spawnFn = vi.fn(() => child([], 17, [
+      "Unexpected provider detail at /private/runtime with credential=secret-value",
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toEqual([{
+      type: "run.completed",
+      outcome: "failed",
+      error: {
+        code: "run_failed",
+        safeMessage: "Claude could not complete this Run. Check its connection and retry.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }]);
+    expect(JSON.stringify(events)).not.toMatch(/private|credential|secret-value/);
+  });
+
+  it("preserves cancellation as aborted without a failure reason", async () => {
+    const controller = new AbortController();
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const process = new EventEmitter() as EventEmitter & {
+      stdout: FakeStream;
+      stderr: FakeStream;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    process.stdout = stdout;
+    process.stderr = stderr;
+    process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
+    const spawnFn = vi.fn(() => {
+      queueMicrotask(() => controller.abort());
+      return process;
+    });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start({ ...baseInput, signal: controller.signal })) events.push(event);
+
+    expect(process.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(events).toEqual([{ type: "run.completed", outcome: "aborted" }]);
+  });
+
+  it("keeps the native Claude session checkpoint when a running turn is cancelled", async () => {
+    const controller = new AbortController();
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const process = new EventEmitter() as EventEmitter & {
+      stdout: FakeStream;
+      stderr: FakeStream;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    process.stdout = stdout;
+    process.stderr = stderr;
+    process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
+    const spawnFn = vi.fn(() => process);
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const iterator = adapter.start({ ...baseInput, signal: controller.signal })[Symbol.asyncIterator]();
+    const stateEvent = iterator.next();
+    await vi.waitFor(() => expect(spawnFn).toHaveBeenCalledOnce());
+    stdout.emit("data", Buffer.from(`${JSON.stringify({
+      type: "system",
+      session_id: "claude_cancel_session",
+    })}\n`));
+
+    await expect(stateEvent).resolves.toEqual({
+      done: false,
+      value: {
+        type: "state.updated",
+        state: { sessionId: "claude_cancel_session" },
+      },
+    });
+    controller.abort();
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "run.completed", outcome: "aborted" },
+    });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+    expect(process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("trusts a successful result event even when Claude exits non-zero afterward", async () => {

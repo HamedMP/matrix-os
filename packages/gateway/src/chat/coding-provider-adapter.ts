@@ -11,6 +11,7 @@ import type {
   CodingAgentThreadStore,
   CodingAgentTurnStore,
 } from "../coding-agents/thread-store.js";
+import type { AiTokenUsage } from "../ai-analytics.js";
 import { CodingAgentProviderResumeStateSchema } from "../coding-agents/provider-adapter.js";
 import {
   CanonicalProviderRunEventSchema,
@@ -20,20 +21,24 @@ import {
   type CanonicalProviderRunInput,
 } from "./provider-adapter.js";
 
-const MAX_BUFFERED_EVENTS = 500;
+const MAX_BUFFERED_EVENTS = 10_000;
+const MAX_BUFFERED_EVENT_BYTES = 2 * 1024 * 1024;
 const MAX_RECENT_EVENT_IDS = MAX_BUFFERED_EVENTS * 2;
 const MAX_ACTIVE_TOOL_ACTIVITIES = 128;
+const MAX_ACTIVE_STEER_RUNS = 64;
 
 type CodingThreads = Pick<
   CodingAgentThreadStore & CodingAgentTurnStore,
-  "createThread" | "acceptTurn" | "getThread" | "abortThread" | "submitApproval" | "registerEventSink"
+  "createThread" | "acceptTurn" | "steerTurn" | "getThread" | "abortThread" | "submitApproval" | "registerEventSink"
 >;
 
 type CodingState = { conversationId: string; providerThreadId?: string };
 
-function driverKind(providerId: string): "codex" | "claude_code" {
+function driverKind(providerId: string): "codex" | "claude_code" | "opencode" | "pi" {
   if (providerId === "codex") return "codex";
   if (providerId === "claude") return "claude_code";
+  if (providerId === "opencode") return "opencode";
+  if (providerId === "pi") return "pi";
   throw new Error("Unsupported canonical coding Provider");
 }
 
@@ -45,7 +50,16 @@ function principal(ownerId: string) {
   return { userId: ownerId, source: "configured-container" as const };
 }
 
-function permissions(permissionMode: string): Pick<CreateAgentThreadRequest, "approvalPolicy" | "sandboxMode"> {
+function permissions(
+  permissionMode: string,
+  providerId: "codex" | "claude" | "opencode" | "pi",
+): Pick<CreateAgentThreadRequest, "approvalPolicy" | "sandboxMode"> {
+  if (providerId === "pi" || providerId === "opencode") {
+    if (permissionMode !== "supervised") {
+      throw new Error(`Unsupported ${providerId === "pi" ? "Pi" : "OpenCode"} permission mode`);
+    }
+    return { approvalPolicy: "on_request", sandboxMode: "read_only" };
+  }
   if (permissionMode === "full_access") return { approvalPolicy: "never", sandboxMode: "full_access" };
   if (permissionMode === "auto" || permissionMode === "auto_accept_edits") {
     return { approvalPolicy: "on_failure", sandboxMode: "workspace_write" };
@@ -233,20 +247,32 @@ function attachments(input: CanonicalProviderRunInput) {
 
 class ThreadEventInbox {
   private readonly queued: AgentThreadEvent[] = [];
+  private queuedBytes = 0;
   private failure: Error | undefined;
   private wake: (() => void) | undefined;
+  private tokenUsage: AiTokenUsage | undefined;
 
   constructor(private readonly signal: AbortSignal) {}
 
-  push(events: AgentThreadEvent[]): void {
+  push(events: AgentThreadEvent[], tokenUsage?: AiTokenUsage): void {
     if (this.signal.aborted || this.failure) return;
-    if (this.queued.length + events.length > MAX_BUFFERED_EVENTS) {
+    const incomingBytes = Buffer.byteLength(JSON.stringify(events), "utf8");
+    if (this.queued.length + events.length > MAX_BUFFERED_EVENTS
+      || this.queuedBytes + incomingBytes > MAX_BUFFERED_EVENT_BYTES) {
       this.fail(new Error("Canonical coding Provider event buffer exceeded"));
       return;
     }
     this.queued.push(...events);
+    this.queuedBytes += incomingBytes;
+    if (tokenUsage) this.tokenUsage = tokenUsage;
     this.wake?.();
     this.wake = undefined;
+  }
+
+  takeTokenUsage(): AiTokenUsage | undefined {
+    const tokenUsage = this.tokenUsage;
+    this.tokenUsage = undefined;
+    return tokenUsage;
   }
 
   fail(error: Error): void {
@@ -257,7 +283,11 @@ class ThreadEventInbox {
   }
 
   async next(): Promise<AgentThreadEvent[] | null> {
-    if (this.queued.length > 0) return this.queued.splice(0);
+    if (this.queued.length > 0) {
+      const events = this.queued.splice(0);
+      this.queuedBytes = 0;
+      return events;
+    }
     if (this.failure) throw this.failure;
     if (this.signal.aborted) return null;
     await new Promise<void>((resolve) => {
@@ -271,7 +301,11 @@ class ThreadEventInbox {
         resolve();
       };
     });
-    if (this.queued.length > 0) return this.queued.splice(0);
+    if (this.queued.length > 0) {
+      const events = this.queued.splice(0);
+      this.queuedBytes = 0;
+      return events;
+    }
     if (this.failure) throw this.failure;
     return null;
   }
@@ -280,20 +314,55 @@ class ThreadEventInbox {
 async function* normalizedEvents(
   initial: AgentThreadEvent[],
   inbox: ThreadEventInbox,
+  providerId: "codex" | "claude" | "opencode" | "pi",
 ): AsyncGenerator<CanonicalProviderRunEvent> {
   const recentEventIds = new Set<string>();
   const toolActivities = new Map<string, ToolActivity>();
   let batch: AgentThreadEvent[] | null = initial;
   while (batch !== null) {
-    for (const event of batch) {
+    for (let index = 0; index < batch.length; index += 1) {
+      const event = batch[index]!;
       if (recentEventIds.has(event.eventId)) continue;
       if (recentEventIds.size >= MAX_RECENT_EVENT_IDS) {
         const oldest = recentEventIds.values().next().value;
         if (oldest !== undefined) recentEventIds.delete(oldest);
       }
       recentEventIds.add(event.eventId);
+      if (event.type === "assistant.text.delta") {
+        let delta = event.delta;
+        while (index + 1 < batch.length) {
+          const next = batch[index + 1]!;
+          if (next.type !== "assistant.text.delta" || next.messageId !== event.messageId
+            || delta.length + next.delta.length > 4_000) break;
+          index += 1;
+          if (recentEventIds.has(next.eventId)) continue;
+          if (recentEventIds.size >= MAX_RECENT_EVENT_IDS) {
+            const oldest = recentEventIds.values().next().value;
+            if (oldest !== undefined) recentEventIds.delete(oldest);
+          }
+          recentEventIds.add(next.eventId);
+          delta += next.delta;
+        }
+        yield CanonicalProviderRunEventSchema.parse({
+          type: "assistant.delta",
+          messageId: event.messageId,
+          delta,
+        });
+        continue;
+      }
       for (const normalized of normalizeEvent(event, toolActivities)) {
-        yield normalized;
+        if (normalized.type === "run.completed") {
+          const tokenUsage = inbox.takeTokenUsage();
+          yield CanonicalProviderRunEventSchema.parse({
+            ...normalized,
+            ...(tokenUsage ? {
+              tokenUsage,
+              ...(providerId === "codex" ? { provider: "openai" } : {}),
+            } : {}),
+          });
+        } else {
+          yield normalized;
+        }
         if (normalized.type === "run.completed") return;
       }
     }
@@ -312,10 +381,28 @@ function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string):
 }
 
 export function createCanonicalCodingChatProviderAdapter(options: {
-  providerId: "codex" | "claude";
+  providerId: "codex" | "claude" | "opencode" | "pi";
   threads: CodingThreads;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);
+  const activeSteerRuns = new Map<string, {
+    ownerId: string;
+    threadId: string;
+    legacyTurnId?: string;
+  }>();
+
+  function registerSteerRun(
+    runId: string,
+    value: { ownerId: string; threadId: string; legacyTurnId?: string },
+  ): () => void {
+    if (!activeSteerRuns.has(runId) && activeSteerRuns.size >= MAX_ACTIVE_STEER_RUNS) {
+      throw new Error("Canonical coding steering registry exceeded");
+    }
+    activeSteerRuns.set(runId, value);
+    return () => {
+      if (activeSteerRuns.get(runId) === value) activeSteerRuns.delete(runId);
+    };
+  }
 
   function validate(inputValue: CanonicalProviderRunInput<CodingState>) {
     const input = parseCanonicalProviderRunInput(inputValue);
@@ -332,23 +419,33 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     async *start(inputValue) {
       const { input, mode } = validate(inputValue);
       const inbox = new ThreadEventInbox(input.signal);
-      const buffered: Array<{ threadId: string; events: AgentThreadEvent[] }> = [];
+      const buffered: Array<{ threadId: string; events: AgentThreadEvent[]; tokenUsage?: AiTokenUsage }> = [];
       let bufferedEventCount = 0;
+      let bufferedEventBytes = 0;
       let targetThreadId: string | undefined;
+      let releaseSteerRun: (() => void) | undefined;
       const sink = options.threads.registerEventSink((published) => {
         if (published.ownerId !== input.owner.ownerId) return;
         if (targetThreadId === undefined) {
-          if (bufferedEventCount + published.events.length > MAX_BUFFERED_EVENTS) {
+          const incomingBytes = Buffer.byteLength(JSON.stringify(published.events), "utf8");
+          if (bufferedEventCount + published.events.length > MAX_BUFFERED_EVENTS
+            || bufferedEventBytes + incomingBytes > MAX_BUFFERED_EVENT_BYTES) {
             inbox.fail(new Error("Canonical coding Provider event buffer exceeded"));
             return;
           }
           bufferedEventCount += published.events.length;
-          buffered.push({ threadId: published.threadId, events: published.events });
+          bufferedEventBytes += incomingBytes;
+          buffered.push({
+            threadId: published.threadId,
+            events: published.events,
+            ...(published.tokenUsage ? { tokenUsage: published.tokenUsage } : {}),
+          });
         } else if (published.threadId === targetThreadId) {
-          inbox.push(published.events);
+          inbox.push(published.events, published.tokenUsage);
         }
       });
       try {
+        const requestId = legacyRequestId(input.runId);
         const created = await options.threads.createThread(principal(input.owner.ownerId), {
           providerId: options.providerId,
           prompt: input.prompt,
@@ -357,17 +454,22 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           mode,
           model: input.selection.model,
           modelOptions: input.selection.options ?? [],
-          ...permissions(input.permissionMode),
+          ...permissions(input.permissionMode, options.providerId),
           attachments: attachments(input),
-          clientRequestId: legacyRequestId(input.runId),
+          clientRequestId: requestId,
         });
         targetThreadId = created.snapshot.thread.id;
+        releaseSteerRun = registerSteerRun(input.runId, {
+          ownerId: input.owner.ownerId,
+          threadId: targetThreadId,
+        });
         for (const published of buffered) {
-          if (published.threadId === targetThreadId) inbox.push(published.events);
+          if (published.threadId === targetThreadId) inbox.push(published.events, published.tokenUsage);
         }
         yield { type: "state.updated", state: { conversationId: targetThreadId } };
-        yield* normalizedEvents(created.snapshot.events.items, inbox);
+        yield* normalizedEvents(created.snapshot.events.items, inbox, options.providerId);
       } finally {
+        releaseSteerRun?.();
         sink.dispose();
       }
     },
@@ -376,26 +478,48 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       const state = CodingAgentProviderResumeStateSchema.parse(input.resumeState);
       const targetThreadId = state.conversationId;
       const inbox = new ThreadEventInbox(input.signal);
+      let releaseSteerRun: (() => void) | undefined;
       const sink = options.threads.registerEventSink((published) => {
         if (published.ownerId === input.owner.ownerId && published.threadId === targetThreadId) {
-          inbox.push(published.events);
+          inbox.push(published.events, published.tokenUsage);
         }
       });
       try {
         const requestId = legacyRequestId(input.runId);
-        await options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
+        const accepted = await options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
           message: input.prompt,
           attachments: attachments(input),
           model: input.selection.model,
           modelOptions: input.selection.options ?? [],
-          ...permissions(input.permissionMode),
+          ...permissions(input.permissionMode, options.providerId),
           clientRequestId: requestId,
         });
+        releaseSteerRun = registerSteerRun(input.runId, {
+          ownerId: input.owner.ownerId,
+          threadId: targetThreadId,
+          legacyTurnId: accepted.turnId,
+        });
         const current = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId);
-        yield* normalizedEvents(eventsForAcceptedRun(current, requestId), inbox);
+        yield* normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId);
       } finally {
+        releaseSteerRun?.();
         sink.dispose();
       }
+    },
+    async steer(input) {
+      const active = activeSteerRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId) {
+        throw new Error("Canonical coding Provider steering Run unavailable");
+      }
+      await options.threads.steerTurn(
+        principal(input.owner.ownerId),
+        active.threadId,
+        {
+          ...(active.legacyTurnId ? { expectedTurnId: active.legacyTurnId } : {}),
+          message: input.prompt,
+          clientRequestId: input.clientRequestId,
+        },
+      );
     },
     async cancel(input) {
       if (!input.state) return;

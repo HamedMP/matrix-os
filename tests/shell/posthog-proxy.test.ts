@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
+
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import nextConfig from "../../shell/next.config";
 
 const posthogMock = vi.hoisted(() => ({
@@ -11,6 +13,9 @@ const posthogMock = vi.hoisted(() => ({
   init: vi.fn(),
   capture: vi.fn(),
   identify: vi.fn(),
+  register: vi.fn(),
+  unregister: vi.fn(),
+  setPersonProperties: vi.fn(),
   reset: vi.fn(),
   captureException: vi.fn(),
 }));
@@ -29,6 +34,13 @@ async function getRewrites(): Promise<RewriteRule[]> {
 }
 
 describe("shell PostHog same-origin proxy", () => {
+  afterEach(() => {
+    document.getElementById("ph-conversations-widget-container")?.remove();
+    document.getElementById("unrelated-close")?.remove();
+    posthogMock.conversations.show.mockReset();
+    vi.unstubAllGlobals();
+  });
+
   it("rewrites the same-origin health probe to the gateway", async () => {
     const rewrites = await getRewrites();
     const healthRule = rewrites.find((rule) => rule.source === "/health");
@@ -71,13 +83,14 @@ describe("shell PostHog same-origin proxy", () => {
   it("initializes posthog-js with a relative api_host", async () => {
     const { initializeShellPostHog } = await import("../../shell/src/lib/posthog-client");
 
-    initializeShellPostHog("US", { token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" });
+    initializeShellPostHog({ token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" });
 
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [token, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
     expect(token).toBe("phc_test");
     expect(options.api_host).toBe("/relay");
     expect(options.ui_host).toBe("https://eu.posthog.com");
+    expect(options).not.toHaveProperty("cookieless_mode");
   });
 
   it("only resets identity for provably identified sessions", async () => {
@@ -85,7 +98,7 @@ describe("shell PostHog same-origin proxy", () => {
       "../../shell/src/lib/posthog-client"
     );
     const config = { token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" };
-    initializeShellPostHog("US", config);
+    initializeShellPostHog(config);
     const mock = posthogMock as typeof posthogMock & { _isIdentified?: () => boolean };
 
     // Identity check unavailable: never reset (would rotate anonymous ids).
@@ -105,6 +118,32 @@ describe("shell PostHog same-origin proxy", () => {
   });
 
   it("opens PostHog Conversations from the shell navbar", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        version: "v2026.08.31-installed",
+        runningVersion: "v2026.09.02-running",
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const unrelatedClose = document.createElement("button");
+    unrelatedClose.id = "unrelated-close";
+    unrelatedClose.setAttribute("aria-label", "Close");
+    document.body.appendChild(unrelatedClose);
+    const launcherClick = vi.fn(() => {
+      const close = document.createElement("button");
+      close.setAttribute("aria-label", "Close");
+      document.getElementById("ph-conversations-widget-container")?.replaceChildren(close);
+    });
+    posthogMock.conversations.show.mockImplementation(() => {
+      const container = document.createElement("div");
+      container.id = "ph-conversations-widget-container";
+      const launcher = document.createElement("button");
+      launcher.setAttribute("aria-label", "Open chat");
+      launcher.addEventListener("click", launcherClick);
+      container.appendChild(launcher);
+      document.body.appendChild(container);
+    });
     const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
     const opened = await openShellSupport({
       token: "phc_test",
@@ -114,6 +153,49 @@ describe("shell PostHog same-origin proxy", () => {
 
     expect(opened).toBe(true);
     expect(posthogMock.conversations.show).toHaveBeenCalledOnce();
+    expect(launcherClick).toHaveBeenCalledOnce();
+    expect(
+      document.querySelector('#ph-conversations-widget-container button[aria-label="Close"]'),
+    ).not.toBeNull();
+    expect(posthogMock.capture).toHaveBeenCalledWith("shell_support_chat_opened", {
+      matrix_client: "web",
+      matrix_bundle_version: "v2026.09.02-running",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/system\/info$/),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(posthogMock.register).toHaveBeenCalledWith({
+      matrix_client: "web",
+      matrix_bundle_version: "v2026.09.02-running",
+    });
+    expect(posthogMock.setPersonProperties).toHaveBeenCalledWith({
+      matrix_client: "web",
+      matrix_bundle_version: "v2026.09.02-running",
+    });
+  });
+
+  it("opens support without version properties when runtime metadata is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    posthogMock.conversations.show.mockImplementation(() => {
+      const container = document.createElement("div");
+      container.id = "ph-conversations-widget-container";
+      const close = document.createElement("button");
+      close.setAttribute("aria-label", "Close");
+      container.appendChild(close);
+      document.body.appendChild(container);
+    });
+    const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
+
+    await expect(openShellSupport({
+      token: "phc_test",
+      apiHost: "/relay",
+      uiHost: "https://eu.posthog.com",
+    })).resolves.toBe(true);
+
+    expect(posthogMock.register).toHaveBeenCalledWith({ matrix_client: "web" });
+    expect(posthogMock.unregister).toHaveBeenCalledWith("matrix_bundle_version");
+    expect(posthogMock.unregister).toHaveBeenCalledWith("matrix_desktop_version");
     expect(posthogMock.capture).toHaveBeenCalledWith("shell_support_chat_opened", {
       matrix_client: "web",
     });

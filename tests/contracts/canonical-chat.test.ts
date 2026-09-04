@@ -427,6 +427,24 @@ describe("canonical Chat contracts", () => {
       ...instance,
       availability: "auth_required",
     }).success).toBe(false);
+    expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
+      ...instance,
+      unavailabilityReason: "disabled_in_settings",
+    }).success).toBe(false);
+    expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
+      ...instance,
+      availability: "unavailable",
+      defaultSelection: undefined,
+      models: [],
+      unavailabilityReason: "disabled_in_settings",
+    }).success).toBe(true);
+    expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
+      ...instance,
+      availability: "unavailable",
+      defaultSelection: undefined,
+      models: [],
+      unavailabilityReason: "arbitrary_internal_error",
+    }).success).toBe(false);
     expect(CanonicalChatSummarySchema.safeParse({
       id: "chat_bound",
       ownerScope: { type: "personal", ownerId: "user_demo" },

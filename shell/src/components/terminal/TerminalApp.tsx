@@ -10,6 +10,11 @@ import { TerminalDesignTabStrip } from "./TerminalDesignTabStrip";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
+import {
+  drainExistingTerminalSessionQueueWithRetry,
+  hasQueuedExistingTerminalSession,
+  PROVIDER_TERMINAL_SESSION_EVENT,
+} from "@/lib/provider-terminal-session";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { isShellThemeId } from "@/stores/terminal-defaults";
 import { getTerminalThemePreset } from "./terminal-themes";
@@ -114,45 +119,36 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
   });
 }
 
-async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
+type SavedShellSessionsStatus = "active" | "stale" | "unavailable";
+
+async function getSavedShellSessionsStatus(sessionNames: string[]): Promise<SavedShellSessionsStatus> {
   const requestedNames = Array.from(new Set(
     sessionNames.filter((name) => isCanonicalShellSessionId(name)),
   ));
   if (requestedNames.length === 0) {
-    return true;
+    return "active";
   }
 
   try {
     const sessions = await listShellSessions();
+    if (sessions === null) {
+      return "unavailable";
+    }
     const existingNames = new Set<string>();
-    if (sessions) {
-      for (const session of sessions) {
-        if (typeof session.name === "string") {
-          existingNames.add(session.name);
-        }
+    for (const session of sessions) {
+      if (typeof session.name === "string") {
+        existingNames.add(session.name);
       }
     }
 
-    for (const name of requestedNames) {
-      if (existingNames.has(name)) {
-        continue;
-      }
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- ordered repair: each missing saved zellij session is recreated once before layout restore; these are user-visible session names, not a fan-out workload.
-      const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cwd: DEFAULT_CWD }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!createRes.ok && createRes.status !== 409) {
-        return false;
-      }
-    }
-
-    return true;
+    // A saved layout is only a UI reference. Missing runtimes can be stopped or
+    // intentionally interrupted, so mounting Terminal must never relaunch them.
+    // Falling back to the first active session also prevents a stale layout from
+    // producing one expected 409 response per missing pane on every app mount.
+    return requestedNames.every((name) => existingNames.has(name)) ? "active" : "stale";
   } catch (err: unknown) {
-    console.warn("Failed to ensure terminal sessions:", err instanceof Error ? err.message : err);
-    return false;
+    console.warn("Failed to validate saved terminal sessions:", err instanceof Error ? err.message : err);
+    return "unavailable";
   }
 }
 
@@ -290,6 +286,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of `sidebarOpen`, read synchronously inside the layout-persistence callback that must not re-subscribe when the sidebar toggles
   sidebarOpenRef.current = sidebarOpen;
   const mountedRef = useRef(false);
+  const providerDrainInflightRef = useRef<Promise<void> | null>(null);
+  const providerDrainRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingPaneSessionsRef = useRef<Map<string, string> | null>(null);
   if (pendingPaneSessionsRef.current === null) pendingPaneSessionsRef.current = new Map();
   const closingPaneIdsRef = useRef<Set<string> | null>(null);
@@ -577,8 +575,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessionReady = await ensureShellSessions(getCanonicalShellSessionIds(data));
-              if (!cancelled && sessionReady) {
+              const sessionStatus = await getSavedShellSessionsStatus(getCanonicalShellSessionIds(data));
+              // A failed catalog request does not prove that a runtime stopped.
+              // Preserve the saved layout so a transient outage cannot overwrite
+              // the user's tabs and panes; only an authoritative stale result falls back.
+              if (!cancelled && sessionStatus !== "stale") {
                 const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
                 const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
                 setTabs(applyCompatModeToTabs(data.tabs));
@@ -643,6 +644,57 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     drainLaunches();
     window.addEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
     return () => window.removeEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
+  }, [initialized, launchTargetId]);
+
+  const drainProviderSessions = useEffectEvent((event?: Event): Promise<void> => {
+    const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
+    if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return Promise.resolve();
+    if (providerDrainInflightRef.current) return providerDrainInflightRef.current;
+    if (providerDrainRetryTimerRef.current) {
+      clearTimeout(providerDrainRetryTimerRef.current);
+      providerDrainRetryTimerRef.current = null;
+    }
+    const operation = (async () => {
+      const sessionIds = await drainExistingTerminalSessionQueueWithRetry(launchTargetId);
+      if (!mountedRef.current) return;
+      for (const sessionId of sessionIds) {
+        const existingTab = tabsRef.current.find((tab) => getSessionIds(tab.paneTree).includes(sessionId));
+        if (existingTab) {
+          setActiveTabId(existingTab.id);
+          requestPaneFocus(getPaneIdsForSession(existingTab.paneTree, sessionId)[0] ?? getFirstPaneId(existingTab.paneTree));
+        } else {
+          addSessionTab(formatShellDisplayName(sessionId), sessionId);
+        }
+      }
+    })();
+    providerDrainInflightRef.current = operation;
+    void operation.finally(() => {
+      if (providerDrainInflightRef.current === operation) providerDrainInflightRef.current = null;
+      if (mountedRef.current && hasQueuedExistingTerminalSession(launchTargetId)
+        && providerDrainRetryTimerRef.current === null) {
+        providerDrainRetryTimerRef.current = setTimeout(() => {
+          providerDrainRetryTimerRef.current = null;
+          void drainProviderSessions();
+        }, 5_000);
+      }
+    });
+    return operation;
+  });
+
+  useEffect(() => {
+    if (!initialized) return;
+    const handleProviderSession = (event: Event) => {
+      void drainProviderSessions(event);
+    };
+    void drainProviderSessions();
+    window.addEventListener(PROVIDER_TERMINAL_SESSION_EVENT, handleProviderSession);
+    return () => {
+      window.removeEventListener(PROVIDER_TERMINAL_SESSION_EVENT, handleProviderSession);
+      if (providerDrainRetryTimerRef.current) {
+        clearTimeout(providerDrainRetryTimerRef.current);
+        providerDrainRetryTimerRef.current = null;
+      }
+    };
   }, [initialized, launchTargetId]);
 
   const flushLayout = useEffectEvent(() => {

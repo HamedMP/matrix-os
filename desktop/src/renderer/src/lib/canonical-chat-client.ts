@@ -1,6 +1,7 @@
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
+  CanonicalCancelQueuedChatTurnRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
@@ -8,6 +9,12 @@ import {
   CanonicalChatRecordSchema,
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatQueueAdmissionResponseSchema,
+  CanonicalChatQueueCancellationResponseSchema,
+  CanonicalChatQueueReorderResponseSchema,
+  CanonicalChatQueueUpdateResponseSchema,
+  CanonicalChatQueuedTurnIdSchema,
+  CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
   CanonicalChatStreamServerFrameSchema,
@@ -15,6 +22,11 @@ import {
   CanonicalChatTurnIdSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalQueueChatTurnRequestSchema,
+  CanonicalReorderQueuedChatTurnsRequestSchema,
+  CanonicalUpdateQueuedChatTurnRequestSchema,
+  CanonicalSteerQueuedChatTurnRequestSchema,
+  CanonicalSteerChatRunRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
@@ -25,11 +37,22 @@ import {
   type CanonicalChatRecord,
   type CanonicalChatApprovalSubmissionResponse,
   type CanonicalChatRunCancellationResponse,
+  type CanonicalChatQueueAdmissionResponse,
+  type CanonicalChatQueueCancellationResponse,
+  type CanonicalChatQueueReorderResponse,
+  type CanonicalChatQueueUpdateResponse,
+  type CanonicalChatRunSteeringResponse,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalQueueChatTurnRequest,
+  type CanonicalCancelQueuedChatTurnRequest,
+  type CanonicalReorderQueuedChatTurnsRequest,
+  type CanonicalUpdateQueuedChatTurnRequest,
+  type CanonicalSteerQueuedChatTurnRequest,
+  type CanonicalSteerChatRunRequest,
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalUpdateChatProjectRequest,
@@ -37,6 +60,17 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { ApiClient } from "./api";
+import { AppError } from "../../../shared/app-error";
+import {
+  trackDesktopEvent,
+  type DesktopAnalyticsDetail,
+} from "./desktop-analytics";
+import {
+  desktopChatModelProvider,
+  type CanonicalChatResponseAnalytics,
+} from "./canonical-chat-analytics";
+
+export type { CanonicalChatResponseAnalytics } from "./canonical-chat-analytics";
 
 const CanonicalChatListInputSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
@@ -59,6 +93,8 @@ const CanonicalChatWebSocketTokenSchema = z.string().min(1).max(4096);
 const DEFAULT_MAX_CHAT_EVENT_CONSUMERS = 16;
 const DEFAULT_MAX_SEEN_CHAT_EVENT_CURSORS = 500;
 const DEFAULT_MAX_RECONNECT_DELAY_MS = 10_000;
+const DEFAULT_CHAT_EVENT_HEARTBEAT_MS = 10_000;
+const MAX_CHAT_EVENT_HEARTBEAT_MS = 60_000;
 const MAX_CHAT_EVENT_FRAME_CHARS = 16 * 1024;
 
 export type CanonicalChatInvalidation =
@@ -147,6 +183,9 @@ export function createCanonicalChatEventSource(options: {
   maxReconnectDelayMs?: number;
   setTimeoutFn?: (callback: () => void, delay: number) => unknown;
   clearTimeoutFn?: (timer: unknown) => void;
+  heartbeatIntervalMs?: number;
+  setIntervalFn?: (callback: () => void, delay: number) => unknown;
+  clearIntervalFn?: (timer: unknown) => void;
 }): CanonicalChatEventSource {
   const seenCursors = new Map<number, true>();
   const maxConsumers = Math.max(1, Math.min(
@@ -175,8 +214,17 @@ export function createCanonicalChatEventSource(options: {
   ));
   const setTimeoutFn = options.setTimeoutFn ?? ((callback, delay) => globalThis.setTimeout(callback, delay));
   const clearTimeoutFn = options.clearTimeoutFn ?? ((timer) => globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>));
+  const heartbeatIntervalMs = Math.max(1_000, Math.min(
+    options.heartbeatIntervalMs ?? DEFAULT_CHAT_EVENT_HEARTBEAT_MS,
+    MAX_CHAT_EVENT_HEARTBEAT_MS,
+  ));
+  const setIntervalFn = options.setIntervalFn ?? ((callback, delay) => globalThis.setInterval(callback, delay));
+  const clearIntervalFn = options.clearIntervalFn
+    ?? ((timer) => globalThis.clearInterval(timer as ReturnType<typeof setInterval>));
   let socket: DesktopCanonicalChatWebSocket | null = null;
   let reconnectTimer: unknown;
+  let heartbeatTimer: unknown;
+  let awaitingHeartbeatPong = false;
   let reconnectAttempt = 0;
   let lastCursor: number | undefined;
   let replayGap = false;
@@ -222,7 +270,14 @@ export function createCanonicalChatEventSource(options: {
     }
   };
 
-  const scheduleReconnect = () => {
+  const clearHeartbeat = () => {
+    awaitingHeartbeatPong = false;
+    if (heartbeatTimer === undefined) return;
+    clearIntervalFn(heartbeatTimer);
+    heartbeatTimer = undefined;
+  };
+
+  function scheduleReconnect() {
     if (disposed || reconnectTimer !== undefined) return;
     setConnectionState("reconnecting");
     const delay = Math.min(250 * (2 ** reconnectAttempt), maxReconnectDelayMs);
@@ -231,6 +286,41 @@ export function createCanonicalChatEventSource(options: {
       reconnectTimer = undefined;
       void connect();
     }, delay);
+  }
+
+  const closeHeartbeatSocket = (target: DesktopCanonicalChatWebSocket) => {
+    clearHeartbeat();
+    try {
+      target.close();
+    } catch (error: unknown) {
+      console.warn(
+        "[canonical-chat] event socket close failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
+    scheduleReconnect();
+  };
+
+  const startHeartbeat = (target: DesktopCanonicalChatWebSocket) => {
+    clearHeartbeat();
+    heartbeatTimer = setIntervalFn(() => {
+      if (disposed || socket !== target || target.readyState !== 1) return;
+      if (awaitingHeartbeatPong) {
+        console.warn("[canonical-chat] event stream heartbeat timed out");
+        closeHeartbeatSocket(target);
+        return;
+      }
+      try {
+        target.send(JSON.stringify({ type: "ping" }));
+        awaitingHeartbeatPong = true;
+      } catch (error: unknown) {
+        console.warn(
+          "[canonical-chat] event stream heartbeat failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        closeHeartbeatSocket(target);
+      }
+    }, heartbeatIntervalMs);
   };
 
   const connect = async (): Promise<void> => {
@@ -282,7 +372,15 @@ export function createCanonicalChatEventSource(options: {
       closeSocket(nextSocket);
       return;
     }
+    let replayComplete = false;
+    let replaySawEvent = false;
+    replayGap = false;
     socket = nextSocket;
+    nextSocket.onopen = () => {
+      if (socket !== nextSocket) return;
+      reconnectAttempt = 0;
+      startHeartbeat(nextSocket);
+    };
     nextSocket.onmessage = (message) => {
       if (socket !== nextSocket || typeof message.data !== "string") return;
       if (message.data.length > MAX_CHAT_EVENT_FRAME_CHARS) {
@@ -305,6 +403,7 @@ export function createCanonicalChatEventSource(options: {
         return;
       }
       const frame = parsed.data;
+      awaitingHeartbeatPong = false;
       if (frame.type === "chat.stream.attached") {
         reconnectAttempt = 0;
         setConnectionState("open");
@@ -317,16 +416,20 @@ export function createCanonicalChatEventSource(options: {
       if (frame.type === "chat.replay.end") {
         lastCursor = frame.nextCursor;
         reconnectAttempt = 0;
-        emit({
-          type: "chat.full_refresh",
-          ...(frame.nextCursor === undefined ? {} : { cursor: frame.nextCursor }),
-        });
+        if (replayGap || replaySawEvent) {
+          emit({
+            type: "chat.full_refresh",
+            ...(frame.nextCursor === undefined ? {} : { cursor: frame.nextCursor }),
+          });
+        }
+        replayComplete = true;
         replayGap = false;
         return;
       }
       if (frame.type === "chat.event") {
         lastCursor = frame.event.cursor;
         if (!rememberCursor(frame.event.cursor)) return;
+        if (!replayComplete) replaySawEvent = true;
         emit({
           type: "chat.changed",
           chatId: frame.event.chatId,
@@ -355,6 +458,7 @@ export function createCanonicalChatEventSource(options: {
     };
     nextSocket.onclose = () => {
       if (socket !== nextSocket) return;
+      clearHeartbeat();
       scheduleReconnect();
     };
   };
@@ -383,6 +487,7 @@ export function createCanonicalChatEventSource(options: {
         clearTimeoutFn(reconnectTimer);
         reconnectTimer = undefined;
       }
+      clearHeartbeat();
       const currentSocket = socket;
       socket = null;
       closeSocket(currentSocket);
@@ -404,13 +509,47 @@ export interface CanonicalChatClient {
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
   updateUserState(chatId: string, input: CanonicalUpdateChatUserStateRequest): Promise<CanonicalChatRecord>;
-  acknowledgeCompletion(chatId: string, runId: string): Promise<CanonicalChatRecord>;
+  acknowledgeCompletion(
+    chatId: string,
+    runId: string,
+    analytics?: CanonicalChatResponseAnalytics,
+  ): Promise<CanonicalChatRecord>;
   delete(chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   getDetail(
     chatId: string,
     input?: z.input<typeof CanonicalChatDetailInputSchema>,
   ): Promise<CanonicalChatDetailResponse>;
-  admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
+  admitTurn(
+    chatId: string,
+    input: CanonicalCreateChatTurnRequest,
+    analytics?: { chatScope: "global" | "project" },
+  ): Promise<CanonicalChatTurnAdmissionResponse>;
+  queueTurn(chatId: string, input: CanonicalQueueChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
+  steerRun(
+    chatId: string,
+    runId: string,
+    input: CanonicalSteerChatRunRequest,
+  ): Promise<CanonicalChatRunSteeringResponse>;
+  steerQueuedTurn(
+    chatId: string,
+    runId: string,
+    queuedTurnId: string,
+    input: CanonicalSteerQueuedChatTurnRequest,
+  ): Promise<CanonicalChatRunSteeringResponse>;
+  updateQueuedTurn(
+    chatId: string,
+    queuedTurnId: string,
+    input: CanonicalUpdateQueuedChatTurnRequest,
+  ): Promise<CanonicalChatQueueUpdateResponse>;
+  cancelQueuedTurn(
+    chatId: string,
+    queuedTurnId: string,
+    input: CanonicalCancelQueuedChatTurnRequest,
+  ): Promise<CanonicalChatQueueCancellationResponse>;
+  reorderQueuedTurns(
+    chatId: string,
+    input: CanonicalReorderQueuedChatTurnsRequest,
+  ): Promise<CanonicalChatQueueReorderResponse>;
   cancelRun(
     chatId: string,
     runId: string,
@@ -440,7 +579,11 @@ function withQuery(path: string, values: Record<string, string | number | undefi
 
 export function createCanonicalChatClient(
   api: Pick<ApiClient, "get" | "post" | "patch" | "delete">,
+  options: {
+    trackEvent?: (detail: DesktopAnalyticsDetail) => unknown;
+  } = {},
 ): CanonicalChatClient {
+  const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
     async list(input = {}) {
       const parsed = CanonicalChatListInputSchema.parse(input);
@@ -489,14 +632,25 @@ export function createCanonicalChatClient(
       ));
     },
 
-    async acknowledgeCompletion(chatId, runId) {
+    async acknowledgeCompletion(chatId, runId, analytics) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
       const request = CanonicalAcknowledgeChatCompletionRequestSchema.parse({});
-      return CanonicalChatRecordSchema.parse(await api.post(
+      const response = CanonicalChatRecordSchema.parse(await api.post(
         `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/acknowledge`,
         request,
       ));
+      if (analytics) {
+        trackEvent({
+          name: "desktop_chat_response_completed",
+          chatScope: analytics.chatScope,
+          harness: analytics.harness,
+          modelProvider: desktopChatModelProvider(analytics.model, analytics.harness),
+          model: analytics.model,
+          responseCharacterCount: analytics.responseCharacterCount,
+        });
+      }
+      return response;
     },
 
     async delete(chatId, clientRequestId) {
@@ -517,11 +671,110 @@ export function createCanonicalChatClient(
       return CanonicalChatDetailResponseSchema.parse(response);
     },
 
-    async admitTurn(chatId, input) {
+    async admitTurn(chatId, input, analytics) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const request = CanonicalCreateChatTurnRequestSchema.parse(input);
-      return CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
-        `/api/chats/${encodeURIComponent(parsedChatId)}/turns`,
+      const hasAttachments = request.parts.some((part) => (
+        part.type === "attachment_reference" || part.type === "resource_reference"
+      ));
+      if (analytics) {
+        trackEvent({
+          name: "desktop_chat_message_send_attempted",
+          chatScope: analytics.chatScope,
+          hasAttachments,
+        });
+      }
+      try {
+        const response = CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
+          `/api/chats/${encodeURIComponent(parsedChatId)}/turns`,
+          request,
+        ));
+        if (analytics) {
+          trackEvent({
+            name: "desktop_chat_message_send_succeeded",
+            chatScope: analytics.chatScope,
+            hasAttachments,
+            harness: response.run.driverKind,
+            modelProvider: desktopChatModelProvider(response.run.selection.model, response.run.driverKind),
+            model: response.run.selection.model,
+          });
+        }
+        return response;
+      } catch (error: unknown) {
+        if (analytics) {
+          const failureKind = error instanceof AppError
+            ? error.category === "offline" || error.category === "timeout"
+              ? "network"
+              : error.category === "unauthorized" || error.category === "notFound"
+                ? "client"
+                : "server"
+            : "unknown";
+          trackEvent({
+            name: "desktop_chat_message_send_failed",
+            chatScope: analytics.chatScope,
+            hasAttachments,
+            failureKind,
+          });
+        }
+        throw error;
+      }
+    },
+
+    async queueTurn(chatId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const request = CanonicalQueueChatTurnRequestSchema.parse(input);
+      return CanonicalChatQueueAdmissionResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/queued-turns`,
+        request,
+      ));
+    },
+
+    async steerRun(chatId, runId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const request = CanonicalSteerChatRunRequestSchema.parse(input);
+      return CanonicalChatRunSteeringResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/steer`,
+        request,
+      ));
+    },
+
+    async steerQueuedTurn(chatId, runId, queuedTurnId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const parsedQueuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(queuedTurnId);
+      const request = CanonicalSteerQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatRunSteeringResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}/steer`,
+        request,
+      ));
+    },
+
+    async updateQueuedTurn(chatId, queuedTurnId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedQueuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(queuedTurnId);
+      const request = CanonicalUpdateQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatQueueUpdateResponseSchema.parse(await api.patch(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}`,
+        request,
+      ));
+    },
+
+    async cancelQueuedTurn(chatId, queuedTurnId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedQueuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(queuedTurnId);
+      const request = CanonicalCancelQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatQueueCancellationResponseSchema.parse(await api.delete(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}`,
+        request,
+      ));
+    },
+
+    async reorderQueuedTurns(chatId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const request = CanonicalReorderQueuedChatTurnsRequestSchema.parse(input);
+      return CanonicalChatQueueReorderResponseSchema.parse(await api.patch(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/queued-turns/order`,
         request,
       ));
     },

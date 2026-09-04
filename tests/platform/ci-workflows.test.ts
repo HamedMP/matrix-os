@@ -113,12 +113,25 @@ fi
 
 describe('CI workflows', () => {
   const stripePriceSecrets = [
-    ['STRIPE_PRICE_MATRIX_STARTER_MONTHLY', 'stripe-price-matrix-starter-monthly'],
-    ['STRIPE_PRICE_MATRIX_STARTER_ANNUAL', 'stripe-price-matrix-starter-annual'],
-    ['STRIPE_PRICE_MATRIX_BUILDER_MONTHLY', 'stripe-price-matrix-builder-monthly'],
-    ['STRIPE_PRICE_MATRIX_BUILDER_ANNUAL', 'stripe-price-matrix-builder-annual'],
-    ['STRIPE_PRICE_MATRIX_MAX_MONTHLY', 'stripe-price-matrix-max-monthly'],
-    ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
+    [
+      'STRIPE_PRICE_MATRIX_STARTER_MONTHLY',
+      'stripe-price-matrix-starter-monthly-2026-08-31',
+      '1',
+    ],
+    ['STRIPE_PRICE_MATRIX_STARTER_ANNUAL', 'stripe-price-matrix-starter-annual', 'latest'],
+    [
+      'STRIPE_PRICE_MATRIX_BUILDER_MONTHLY',
+      'stripe-price-matrix-builder-monthly-2026-08-31',
+      '1',
+    ],
+    ['STRIPE_PRICE_MATRIX_BUILDER_ANNUAL', 'stripe-price-matrix-builder-annual', 'latest'],
+    [
+      'STRIPE_PRICE_MATRIX_MAX_MONTHLY',
+      'stripe-price-matrix-max-monthly-2026-08-31',
+      '1',
+    ],
+    ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual', 'latest'],
+    ['STRIPE_LEGACY_PRICE_CATALOG_JSON', 'stripe-legacy-price-catalog-json', 'latest'],
   ] as const;
 
   it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
@@ -150,7 +163,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -160,8 +173,9 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.agent-sdk-compatibility.result');
     expect(workflow).toContain('needs.unit.result');
     expect(workflow).toContain('needs.docs-contract.result');
+    expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
@@ -483,10 +497,43 @@ describe('CI workflows', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
-    for (const [envName, secretName] of stripePriceSecrets) {
-      expect(workflow).toContain(`${envName}=${secretName}:latest`);
+    for (const [envName, secretName, secretVersion] of stripePriceSecrets) {
+      expect(workflow).toContain(`${envName}=${secretName}:${secretVersion}`);
       expect(workflow).toContain(`${envName}=${secretName}`);
     }
+
+    expect(workflow).toContain('required_stripe_price_secret_bindings=(');
+    expect(workflow).toContain('.valueFrom.secretKeyRef.name // empty');
+    expect(workflow).toContain('.valueFrom.secretKeyRef.key // empty');
+  });
+
+  it('wires the isolated legacy Stripe catalog into platform previews', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(workflow).toContain(
+      'STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest',
+    );
+    expect(workflow).not.toContain(
+      'STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest',
+    );
+  });
+
+  it('builds platform previews with the real Clerk key and preview origin', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(workflow).toContain(
+      'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}',
+    );
+    expect(workflow).toContain(
+      "PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}",
+    );
+    expect(workflow).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required.');
+    expect(workflow).toContain(
+      '_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
+    );
+    expect(workflow).toContain('_NEXT_PUBLIC_MATRIX_APP_URL=$PREVIEW_PUBLIC_URL');
   });
 
   it('deploys the card-trial rollout flag and verifies every trial lifecycle webhook', () => {
@@ -551,6 +598,27 @@ describe('CI workflows', () => {
     expect(production).toContain('MATRIX_PREBILLING_PROVISIONING_ENABLED=true');
     expect(production).toContain('MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=100');
     expect(production).toContain('--to-revisions "$PRODUCTION_REVISION=100"');
+  });
+
+  it('binds production customer provisioning to the stable host-bundle channel', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const candidateContract = production.slice(
+      production.indexOf('      - name: Verify deployed provisioning contract'),
+      production.indexOf('      - name: Smoke candidate revision'),
+    );
+    const productionContract = production.slice(
+      production.indexOf('      - name: Verify production provisioning contract'),
+      production.indexOf('      - name: Promote revision'),
+    );
+
+    expect(production).toContain("CUSTOMER_VPS_IMAGE_VERSION: 'stable'");
+    expect(production).not.toContain('CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}');
+    expect(production).toContain('CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}');
+    expect(candidateContract).toContain('CUSTOMER_VPS_IMAGE_VERSION');
+    expect(productionContract).toContain('"CUSTOMER_VPS_IMAGE_VERSION=stable"');
+    expect(production).toContain('channels/${CUSTOMER_VPS_IMAGE_VERSION}.json');
+    expect(production).not.toContain('channels/dev.json');
   });
 
   it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {

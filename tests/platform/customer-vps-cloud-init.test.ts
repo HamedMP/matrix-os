@@ -33,6 +33,7 @@ describe('platform/customer-vps-cloud-init', () => {
         'https://app.matrix-os.com/system-bundles/0.0.0-pr10000.abcdef012345/matrix-host-bundle.tar.gz',
       registrationToken: 'r'.repeat(64),
       platformVerificationToken: 'v'.repeat(64),
+      fundedAiRuntimeToken: 'f'.repeat(64),
       postgresPassword: 'p'.repeat(48),
     };
     const template = await loadCustomerVpsCloudInitTemplate();
@@ -54,6 +55,7 @@ describe('platform/customer-vps-cloud-init', () => {
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
+    fundedAiRuntimeToken: 'funded-runtime-verification-secret',
     registrationToken: 'registration-secret',
     postgresPassword: 'postgres-secret',
     posthogToken: 'phc_public',
@@ -61,6 +63,8 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogHost: 'https://eu.i.posthog.com',
     posthogPublicHost: 'https://eu.posthog.com',
     posthogApiHost: '/relay',
+    fundedAiEnabled: 'true',
+    fundedAiRelayUrl: 'https://relay.matrix-os.com',
   };
 
   function runRestoreWithFakeMatrixctl(
@@ -213,6 +217,7 @@ exit 99
     expect(rendered).toContain('UPGRADE_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_AUTH_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_CODE_PROXY_TOKEN=platform-verification-secret');
+    expect(rendered).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=funded-runtime-verification-secret');
     expect(rendered).toContain('PLATFORM_INTERNAL_URL=https://platform.example');
     expect(rendered).toContain('path: /opt/matrix/env/symphony.env');
     expect(rendered).toContain('MATRIX_HANDLE=alice');
@@ -220,7 +225,12 @@ exit 99
     expect(rendered).not.toContain('UPGRADE_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_AUTH_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');
+    expect(rendered).not.toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=\n');
     expect(rendered).not.toContain('PLATFORM_INTERNAL_URL=\n');
+    expect(rendered).toContain('MATRIX_FUNDED_AI_ENABLED=true');
+    expect(rendered).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.matrix-os.com');
+    expect(rendered).not.toContain('AI_RELAY_CONTROL_TOKEN');
+    expect(rendered).not.toContain('CF_AIG_AUTHORIZATION');
   });
 
   it('never renders shared R2 credentials into customer cloud-init', () => {
@@ -377,6 +387,7 @@ exit 99
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_AUTH_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
+    expect(cloudInit).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
     expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');
@@ -697,7 +708,7 @@ exit 99
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nfunded={{fundedAiRuntimeToken}}\n',
       input,
     );
 
@@ -706,6 +717,7 @@ exit 99
     expect(redacted).not.toContain('registration-secret');
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).not.toContain('platform-verification-secret');
+    expect(redacted).not.toContain('funded-runtime-verification-secret');
     expect(redacted).toContain('[redacted]');
   });
 
@@ -718,7 +730,7 @@ exit 99
     expect(gateway).toContain('Requires=matrix-restore.service');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/bin/matrix-gateway');
-    expect(gateway).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex');
+    expect(gateway).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode');
     expect(gateway).not.toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(shell).toContain('After=matrix-gateway.service');
     expect(shell).toContain('ConditionPathExists=/opt/matrix/bin/matrix-shell');

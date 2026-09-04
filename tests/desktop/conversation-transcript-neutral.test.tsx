@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscript } from "../../desktop/src/renderer/src/components/conversation/transcript";
+import { MessageResponse } from "../../desktop/src/renderer/src/components/conversation/message";
 import type { ConversationTurnPresentation } from "../../desktop/src/renderer/src/components/conversation/presentation";
 import {
   adaptProjectLikeConversation,
@@ -23,6 +24,65 @@ describe("provider-neutral conversation transcript", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps code block Copy and Wrap actions alive while streamed markdown rerenders", async () => {
+    let finishCopy: (() => void) | undefined;
+    const copyText = vi.fn(() => new Promise<void>((resolve) => {
+      finishCopy = resolve;
+    }));
+    const firstMarkdown = "```sh\npwd && git status --short\n```";
+    const rendered = render(<MessageResponse copyText={copyText}>{firstMarkdown}</MessageResponse>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Wrap code block" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy code block" }));
+    rendered.rerender(
+      <MessageResponse copyText={copyText}>{`${firstMarkdown}\n\nStill working…`}</MessageResponse>,
+    );
+
+    expect(screen.getByRole("button", { name: "Disable code wrapping" })).toBeTruthy();
+    expect(screen.getByText("pwd && git status --short").closest("pre")?.className)
+      .toContain("whitespace-pre-wrap");
+    await act(async () => finishCopy?.());
+    expect(copyText).toHaveBeenCalledWith("pwd && git status --short");
+    expect(screen.getByRole("button", { name: "Copied code block" })).toBeTruthy();
+  });
+
+  it("contains an unwrapped long code line inside the shared Chat message width", () => {
+    const longLine = `const customer = { ${"accountIdentifier: 'matrix-os', ".repeat(20)} };`;
+    const markdown = `\`\`\`ts\n${longLine}\n\`\`\``;
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-long-code-line",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: false,
+      work: [],
+      final: {
+        kind: "message",
+        id: "message-long-code-line",
+        role: "assistant",
+        phase: "final",
+        markdown,
+        copyText: markdown,
+        timestamp: 2_000,
+      },
+    }];
+
+    const { container } = render(
+      <ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />,
+    );
+
+    const code = container.querySelector("pre code") as HTMLElement;
+    expect(code.textContent).toBe(longLine);
+    const codeBlock = code.closest("pre")?.parentElement as HTMLElement;
+    const assistantBubbleContent = code.closest('[data-slot="bubble-content"]') as HTMLElement;
+    expect(assistantBubbleContent.className).toContain("w-full");
+    expect(assistantBubbleContent.className).toContain("max-w-full");
+    expect(assistantBubbleContent.className).not.toContain("max-w-[64rem]");
+    expect(codeBlock.className).toContain("w-full");
+    expect(codeBlock.className).toContain("max-w-full");
+    expect(codeBlock.className).toContain("min-w-0");
+    expect(code.closest("pre")?.className).toContain("overflow-x-auto");
   });
 
   it("renders typed non-Hermes adapter output without importing a provider store", () => {
@@ -59,15 +119,121 @@ describe("provider-neutral conversation transcript", () => {
     render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
 
     const receipt = screen.getByRole("button", { name: "Worked for 5s" });
+    const receiptMarker = receipt.closest('[data-slot="marker"]') as HTMLElement;
+    const receiptRow = receipt.closest('[data-slot="message-scroller-item"]') as HTMLElement;
+    expect(receiptMarker.className).toContain("pb-1");
+    expect(receiptMarker.className).not.toContain("pb-2");
+    expect(receiptMarker.className).toContain("border-[var(--border-xsoft)]");
+    expect(receiptMarker.className).not.toContain("border-[var(--border-subtle)]");
+    expect(receiptRow.className).toContain("-mb-1");
     expect(screen.getByText("Inspect the workspace")).toBeTruthy();
-    expect(screen.getByText("The workspace is clean.")).toBeTruthy();
+    const assistantText = screen.getByText("The workspace is clean.");
+    expect(assistantText).toBeTruthy();
+    const assistantResponse = assistantText.closest("[data-selectable]") as HTMLElement;
+    const assistantBubble = assistantText.closest('[data-slot="bubble"]') as HTMLElement;
+    const assistantMessageContent = assistantText.closest('[data-slot="message-content"]') as HTMLElement;
+    const assistantRow = assistantText.closest('[data-slot="message-scroller-item"]') as HTMLElement;
+    expect(assistantResponse.className).toContain("text-md");
+    expect(assistantResponse.className).toContain("leading-relaxed");
+    expect(assistantResponse.className).toContain("[&_p]:my-2");
+    expect(assistantResponse.className).not.toContain("leading-[16px]");
+    expect(assistantResponse.className).not.toContain("[&_p]:my-0");
+    expect(assistantBubble.className).toContain("*:data-[slot=bubble-content]:px-0");
+    expect(assistantBubble.className).toContain("*:data-[slot=bubble-content]:py-px");
+    expect(assistantBubble.className).not.toContain("*:data-[slot=bubble-content]:p-0");
+    expect(assistantMessageContent.className).toContain("gap-0");
+    expect(assistantRow.className).toContain("mt-4");
+    expect(assistantRow.className).not.toContain("mt-2");
     expect(screen.queryByText("I’ll inspect the repository first.")).toBeNull();
     expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
 
     fireEvent.click(receipt);
 
     expect(screen.getByText("I’ll inspect the repository first.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
+    const activity = screen.getByRole("button", { name: "Ran command: git status --short" });
+    expect(activity.className).toContain("w-fit");
+    expect(activity.className).not.toContain("flex-1");
+    const workItems = activity.closest("[data-work-items]") as HTMLElement;
+    expect(workItems).toBeTruthy();
+    expect(workItems.className).toContain("gap-0.5");
+  });
+
+  it("keeps a steered Run expanded and renders post-steer work below the user steer message", () => {
+    const before = "I will inspect the first target.";
+    const steer = "Inspect the second target instead.";
+    const after = "Switching to the second target.";
+    const message = (id: string, role: "user" | "assistant", markdown: string, timestamp: number) => ({
+      kind: "message" as const,
+      id,
+      role,
+      phase: "commentary" as const,
+      markdown,
+      copyText: markdown,
+      timestamp,
+    });
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-steered",
+      startedAt: 1_000,
+      endedAt: 5_000,
+      active: false,
+      work: [message("before", "assistant", before, 2_000), message("after", "assistant", after, 4_000)],
+      userFollowups: [message("steer", "user", steer, 3_000)],
+      timeline: [
+        { kind: "work", item: message("before", "assistant", before, 2_000) },
+        { kind: "user-followup", message: message("steer", "user", steer, 3_000) },
+        { kind: "work", item: message("after", "assistant", after, 4_000) },
+      ],
+      expandedByDefault: true,
+      final: { ...message("final", "assistant", "Done.", 5_000), phase: "final" },
+    }];
+
+    render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
+
+    const receipt = screen.getByRole("button", { name: "Worked for 4s" });
+    expect(receipt.getAttribute("aria-expanded")).toBe("true");
+    const beforeNode = screen.getByText(before);
+    const steerNode = screen.getByText(steer);
+    const afterNode = screen.getByText(after);
+    expect(beforeNode.compareDocumentPosition(steerNode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(steerNode.compareDocumentPosition(afterNode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps multiline assistant paragraphs and inline code chips comfortably spaced", () => {
+    const markdown = "Run `pnpm test` before release.\n\nThen inspect `git status`.";
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-inline-code-spacing",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      active: false,
+      work: [],
+      final: {
+        kind: "message",
+        id: "message-inline-code-spacing",
+        role: "assistant",
+        phase: "final",
+        markdown,
+        copyText: markdown,
+        timestamp: 2_000,
+      },
+    }];
+
+    const { container } = render(
+      <ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />,
+    );
+
+    const response = container.querySelector('[data-selectable]') as HTMLElement;
+    const paragraphs = response.querySelectorAll("p");
+    const inlineCode = response.querySelectorAll("p code");
+    expect(paragraphs).toHaveLength(2);
+    expect(inlineCode).toHaveLength(2);
+    expect(response.className).toContain("leading-relaxed");
+    expect(response.className).toContain("[&_p]:my-2");
+    expect(response.className).toContain("[&_code]:py-0.5");
+    expect(response.className).not.toContain("leading-[16px]");
+    expect(response.className).not.toContain("[&_p]:my-0");
+    for (const chip of inlineCode) {
+      expect(chip.className).toContain("border-[var(--border-subtle)]");
+    }
   });
 
   it("expands a long user message accessibly and keeps structured references and metadata", async () => {
@@ -98,6 +264,22 @@ describe("provider-neutral conversation transcript", () => {
     render(<ConversationTranscript turns={turns} callbacks={{ copyText }} />);
 
     const expand = screen.getByRole("button", { name: "Show full message" });
+    const userBubbleContent = expand.closest('[data-slot="bubble-content"]') as HTMLElement;
+    const userBubble = userBubbleContent.closest('[data-slot="bubble"]') as HTMLElement;
+    const userMessageContent = userBubbleContent.closest('[data-slot="message-content"]') as HTMLElement;
+    expect(userBubble.getAttribute("data-variant")).toBe("plain");
+    expect(userBubble.className).toContain("bg-transparent");
+    expect(userBubbleContent.className).toContain("px-0");
+    expect(userBubbleContent.className).toContain("py-px");
+    expect(userBubbleContent.className).not.toContain("p-0");
+    expect(userBubbleContent.className).toContain("rounded-none");
+    expect(userBubbleContent.className).not.toContain("rounded-xl");
+    expect(userBubbleContent.className).not.toContain("px-3");
+    expect(userBubbleContent.className).not.toContain("py-2");
+    expect(userBubbleContent.className).toContain("text-md");
+    expect(userBubbleContent.className).toContain("leading-[16px]");
+    expect(userBubbleContent.className).not.toContain("font-");
+    expect(userMessageContent.className).toContain("gap-0");
     expect(expand.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(longMessage)).toBeNull();
     expect(screen.getByText("run.log")).toBeTruthy();
@@ -278,7 +460,8 @@ describe("provider-neutral conversation transcript", () => {
     const transcript = screen.getByRole("log");
     expect(transcript.className).toContain("max-w-[868px]");
     expect(transcript.className).not.toContain("max-w-[72rem]");
-    expect(transcript.className).toContain("gap-3");
+    expect(transcript.className).toContain("gap-2");
+    expect(transcript.className).not.toContain("gap-3");
     const rows = transcript.querySelectorAll('[data-slot="message-scroller-item"]');
     expect(rows[1]?.textContent).toContain("I’ll inspect the project first.");
     expect(rows[2]?.textContent).toContain("Run command");

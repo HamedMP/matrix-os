@@ -2,18 +2,28 @@ import {
   CanonicalProviderCatalogSchema,
   type AgentProviderSummary,
   type CanonicalProviderCatalog,
+  type ProviderAccessSource,
+  type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentRuntimeSource } from "../../packages/gateway/src/agent-config/service.js";
+import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
+import { ProviderSettingsStoreError } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 import {
   ProviderCatalogUnavailableError,
   createChatProviderCatalogService,
   validateChatProviderSelection,
 } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provider-routes.js";
+import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src/chat/native-coding-model-catalog.js";
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 const principal: RequestPrincipal = { userId: "owner_1", source: "jwt" };
 
@@ -88,6 +98,38 @@ function runtimeSource(): AgentRuntimeSource {
   });
 }
 
+function runtimeSourceWithOpenClawSelected(): AgentRuntimeSource {
+  return async () => {
+    const snapshot = await runtimeSource()(AbortSignal.timeout(1_000));
+    return {
+      ...snapshot,
+      runtime: {
+        ...snapshot.runtime,
+        selected: "openclaw" as const,
+        options: snapshot.runtime.options.map((runtime) => runtime.id === "hermes"
+          ? {
+              ...runtime,
+              health: "stopped" as const,
+              selectionState: "available" as const,
+              configured: false,
+            }
+          : {
+              ...runtime,
+              health: "healthy" as const,
+              selectionState: "active" as const,
+            }),
+      },
+      providers: [],
+      messaging: {
+        runtime: "openclaw" as const,
+        provider: null,
+        model: null,
+        configured: false,
+      },
+    };
+  };
+}
+
 function codingRegistry(
   providers: AgentProviderSummary[] = [codingProvider()],
 ): CodingAgentProviderRegistry {
@@ -97,7 +139,675 @@ function codingRegistry(
   };
 }
 
+function fundedProvider(): MatrixFundedCredentialProvider {
+  return {
+    enabled: true,
+    maxRunMs: 600_000,
+    getCredential: async () => { throw new Error("catalog must not acquire a credential"); },
+    invalidate: () => {},
+    close: () => {},
+  };
+}
+
+function harnessSettings(
+  harnesses: ProviderSettingsSnapshot["harnesses"],
+): Pick<{ getSnapshot(): Promise<ProviderSettingsSnapshot> }, "getSnapshot"> {
+  const accessSources = harnesses.flatMap((harness, index, all) => {
+    if (harness.accessSourceId === null
+      || all.findIndex((candidate) => candidate.accessSourceId === harness.accessSourceId) !== index) return [];
+    const ownerSource = harness.accessSourceId !== "matrix_included";
+    return [{
+      id: harness.accessSourceId,
+      kind: ownerSource ? "provider_account" as const : "matrix_gateway" as const,
+      fundingKind: harness.accessSourceId === "matrix_included"
+        ? "matrix_included" as const
+        : harness.accessSourceId === "owner_anthropic_key"
+          ? "owner_api_key" as const
+          : "owner_subscription" as const,
+      providerId: harness.route.providerId,
+      accountId: ownerSource ? "owner_anthropic" : null,
+      displayName: ownerSource ? "Owner provider" : "Matrix AI",
+      readiness: {
+        state: "ready" as const,
+        checkedAt: "2026-08-30T00:00:00.000Z",
+        staleAfter: "2026-08-30T00:05:00.000Z",
+        action: "none" as const,
+        safeReason: null,
+      },
+      eligibleModelIds: [harness.route.modelId],
+      usage: {
+        kind: "unavailable" as const,
+        authority: "unavailable" as const,
+        state: "not_applicable" as const,
+        scope: ownerSource ? "account" as const : "owner_entitlement" as const,
+        reason: "provider_does_not_report" as const,
+        asOf: null,
+      },
+    } satisfies ProviderAccessSource];
+  });
+  return {
+    getSnapshot: async () => ({
+      contractVersion: 1,
+      projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: "providers_test" },
+      revision: 1,
+      refreshedAt: "2026-08-30T00:00:00.000Z",
+      access: { mode: "writable" },
+      supportedActions: [],
+      harnessCatalog: [
+        { harness: "hermes", displayName: "Hermes", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+        { harness: "openclaw", displayName: "OpenClaw", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+        { harness: "pi", displayName: "Pi", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+        { harness: "opencode", displayName: "OpenCode", installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+      ],
+      modelProviders: [],
+      accessSources,
+      accounts: [],
+      harnesses,
+      gatewayPolicy: null,
+    }),
+  };
+}
+
+function configuredHarness(
+  harness: "hermes" | "openclaw" | "pi" | "opencode" | "codex" | "claude",
+  enabled: boolean,
+): ProviderSettingsSnapshot["harnesses"][number] {
+  return {
+    id: `harness_${harness}`,
+    harness,
+    displayName: harness === "opencode" ? "OpenCode" : harness[0]!.toUpperCase() + harness.slice(1),
+    accentColor: null,
+    enabled,
+    version: null,
+    installState: "installed",
+    authState: "authenticated",
+    loginMethods: ["terminal"],
+    recommendedLoginMethod: "terminal",
+    connectivity: "online",
+    accountIds: [],
+    selectedAccountId: null,
+    accessSourceId: "matrix_included",
+    route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" },
+    activeChatCount: 0,
+  };
+}
+
 describe("canonical Chat Provider catalog", () => {
+  it("fails Pi closed until the selected access source is wired into execution", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider({
+          id: "pi",
+          displayName: "Pi",
+          kind: "pi",
+          supportedModes: ["default"],
+          defaultModel: undefined,
+          setupActions: [],
+        }),
+        codingProvider({
+          id: "opencode",
+          displayName: "OpenCode",
+          kind: "opencode",
+          supportedModes: ["default"],
+          defaultModel: undefined,
+          setupActions: [],
+        }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([
+        configuredHarness("hermes", false),
+        configuredHarness("pi", true),
+        configuredHarness("opencode", true),
+      ]),
+      executableDriverKinds: ["pi"],
+    });
+
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "hermes_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
+    expect(catalog.instances.find((instance) => instance.id === "pi_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
+    expect(catalog.instances.find((instance) => instance.id === "opencode_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
+  });
+
+  it.each([
+    ["pi", "Pi work"],
+    ["opencode", "OpenCode work"],
+  ] as const)("projects %s's exact route only when credential wiring is explicit", async (kind, displayName) => {
+    const configured = { ...configuredHarness(kind, true), displayName };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: kind, displayName, kind, supportedModes: ["default"],
+        defaultModel: undefined, setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([configured]),
+      executableDriverKinds: [kind],
+      credentialedDriverKinds: [kind],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === `${kind}_default`))
+      .toMatchObject({
+        availability: "available",
+        displayName,
+        models: [{ id: "anthropic:claude-sonnet-5", displayName: "Claude Sonnet 5" }],
+        defaultSelection: { instanceId: `${kind}_default`, model: "anthropic:claude-sonnet-5" },
+      });
+  });
+
+  it.each(["pi", "opencode"] as const)(
+    "projects terminal-authenticated %s without requiring a duplicate Settings row",
+    async (kind) => {
+      const displayName = kind === "pi" ? "Pi" : "OpenCode";
+      const service = createChatProviderCatalogService({
+        codingProviders: codingRegistry([codingProvider({
+          id: kind,
+          displayName,
+          kind,
+          availability: "available",
+          installStatus: "installed",
+          authStatus: "authenticated",
+          supportedModes: ["default"],
+          defaultModel: undefined,
+          setupActions: [],
+        })]),
+        agentRuntimeSource: runtimeSource(),
+        harnessSettingsSource: harnessSettings([]),
+        executableDriverKinds: [kind],
+        credentialedDriverKinds: [kind],
+      });
+
+      expect((await service.getCatalog(principal)).instances.find((instance) => (
+        instance.id === `${kind}_default`
+      ))).toMatchObject({
+        availability: "available",
+        models: [],
+      });
+      expect((await service.getCatalog(principal)).instances.find((instance) => (
+        instance.id === `${kind}_default`
+      ))).not.toHaveProperty("defaultSelection");
+    },
+  );
+
+  it.each(["pi", "opencode"] as const)(
+    "keeps %s unavailable when its selected Claude OAuth profile is not portable",
+    async (kind) => {
+      const configured = { ...configuredHarness(kind, true), accessSourceId: "owner_anthropic_profile" };
+      const service = createChatProviderCatalogService({
+        codingProviders: codingRegistry([codingProvider({
+          id: kind, displayName: configured.displayName, kind, supportedModes: ["default"],
+          defaultModel: undefined, setupActions: [],
+        })]),
+        agentRuntimeSource: runtimeSource(),
+        aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+        harnessSettingsSource: harnessSettings([configured]),
+        executableDriverKinds: [kind],
+        credentialedDriverKinds: [kind],
+      });
+
+      expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === `${kind}_default`))
+        .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
+    },
+  );
+
+  it("publishes native Pi and OpenCode model discovery instead of a synthetic default", async () => {
+    const runCommand = vi.fn(async (command: string) => ({
+      stdout: command === "pi"
+        ? [
+            "provider   model            context  max-out  thinking  images",
+            "anthropic  claude-sonnet-5  200K     64K      yes       yes",
+          ].join("\n")
+        : "opencode/big-pickle\n",
+      stderr: "",
+    }));
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider({
+          id: "pi", displayName: "Pi", kind: "pi", defaultModel: undefined,
+          supportedModes: ["default"], setupActions: [],
+        }),
+        codingProvider({
+          id: "opencode", displayName: "OpenCode", kind: "opencode", defaultModel: undefined,
+          supportedModes: ["default"], setupActions: [],
+        }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([]),
+      executableDriverKinds: ["pi", "opencode"],
+      credentialedDriverKinds: ["pi", "opencode"],
+      codingModelCatalogSource: createNativeCodingModelCatalogSource({
+        homePath: "/home/matrix/home",
+        runCommand,
+      }),
+    });
+
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "pi_default")).toMatchObject({
+      models: [{ id: "anthropic:claude-sonnet-5" }],
+      defaultSelection: { model: "anthropic:claude-sonnet-5" },
+    });
+    expect(catalog.instances.find((instance) => instance.id === "opencode_default")).toMatchObject({
+      models: [{ id: "opencode:big-pickle" }],
+      defaultSelection: { model: "opencode:big-pickle" },
+    });
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["pi", "opencode"] as const)(
+    "keeps %s unavailable when an owner subscription is mislabeled as portable access",
+    async (kind) => {
+      const configured = {
+        ...configuredHarness(kind, true),
+        accessSourceId: "owner_anthropic_subscription",
+      };
+      const service = createChatProviderCatalogService({
+        codingProviders: codingRegistry([codingProvider({
+          id: kind, displayName: configured.displayName, kind, supportedModes: ["default"],
+          defaultModel: undefined, setupActions: [],
+        })]),
+        agentRuntimeSource: runtimeSource(),
+        aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+        harnessSettingsSource: harnessSettings([configured]),
+        executableDriverKinds: [kind],
+        credentialedDriverKinds: [kind],
+      });
+
+      expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === `${kind}_default`))
+        .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
+    },
+  );
+
+  it("fails a credentialed Pi route closed when its exact model leaves the canonical inventory", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "pi", displayName: "Pi", kind: "pi", supportedModes: ["default"],
+        defaultModel: undefined, setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([configuredHarness("pi", true)]),
+      executableDriverKinds: ["pi"],
+      credentialedDriverKinds: ["pi"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "pi_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_unavailable" });
+  });
+
+  it("reports missing runtimes before disabled settings", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([configuredHarness("pi", false)]),
+      executableDriverKinds: ["pi"],
+      credentialedDriverKinds: ["pi"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "pi_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "not_installed" });
+  });
+
+  it("fails only settings-routed generic coding runtimes closed when owner harness settings cannot be read", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "pi",
+        displayName: "Pi",
+        kind: "pi",
+        supportedModes: ["default"],
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: { getSnapshot: async () => { throw new Error("private path"); } },
+      executableDriverKinds: ["hermes", "pi", "codex"],
+    });
+
+    const catalog = await service.getCatalog(principal);
+    for (const kind of ["pi", "opencode"] as const) {
+      expect(catalog.instances.find((instance) => instance.driverKind === kind))
+        .toMatchObject({ availability: "unavailable", unavailabilityReason: "settings_unavailable" });
+    }
+    expect(catalog.instances.find((instance) => instance.driverKind === "hermes"))
+      .toMatchObject({ availability: "available" });
+    expect(catalog.instances.find((instance) => instance.driverKind === "codex"))
+      .toMatchObject({ availability: "setup_required" });
+    expect(JSON.stringify(catalog)).not.toContain("private path");
+  });
+
+  it("keeps terminal-authenticated Codex and Claude independent from owner harness settings", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider(),
+        codingProvider({
+          id: "claude",
+          displayName: "Claude",
+          kind: "claude",
+          defaultModel: "opus",
+        }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([
+        configuredHarness("codex", false),
+        configuredHarness("claude", false),
+      ]),
+    });
+
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "codex_default"))
+      .toMatchObject({ availability: "available", displayName: "Codex" });
+    expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
+      .toMatchObject({ availability: "available", displayName: "Claude" });
+  });
+
+  it("does not let the default Matrix harness shadow terminal-authenticated Claude Code", async () => {
+    const matrixHarness = {
+      ...configuredHarness("claude", true),
+      id: "harness_kernel",
+      displayName: "Matrix Agent",
+      authState: "unauthenticated" as const,
+      connectivity: "offline" as const,
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "claude",
+        displayName: "Claude",
+        kind: "claude",
+        defaultModel: "opus",
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([matrixHarness]),
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "claude_code_default"
+    ))).toMatchObject({ availability: "available", displayName: "Claude" });
+  });
+
+  it("keeps a configured Hermes runtime available without a duplicate settings row", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([]),
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({ availability: "available", displayName: "Hermes" });
+  });
+
+  it("keeps the active Hermes inventory authoritative over a stale settings route", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([configuredHarness("hermes", true)]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({
+      availability: "available",
+      models: [{ id: "anthropic:claude-opus-4-6" }],
+      defaultSelection: {
+        instanceId: "hermes_default",
+        model: "anthropic:claude-opus-4-6",
+      },
+    });
+  });
+
+  it("keeps terminal-configured Hermes available while OpenClaw owns messaging", async () => {
+    const hermes = configuredHarness("hermes", true);
+    hermes.authState = "unknown";
+    hermes.connectivity = "unknown";
+    const hermesRuntimeSource: AgentRuntimeSource = async () => ({
+      runtime: {
+        selected: "hermes",
+        options: [{
+          id: "hermes",
+          displayName: "Hermes",
+          installState: "installed",
+          health: "degraded",
+          selectionState: "active",
+          configured: true,
+          capabilities: ["provider_catalog", "model_selection", "authentication"],
+        }],
+        transition: null,
+      },
+      providers: [{
+        id: "openai-codex",
+        displayName: "OpenAI Codex",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "gpt-5.6-sol",
+          displayName: "gpt-5.6-sol",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }, {
+          id: "gpt-5.6-sol-pro",
+          displayName: "gpt-5.6-sol-pro",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }, {
+          id: "gpt-5.6-sol-disabled",
+          displayName: "gpt-5.6-sol-disabled",
+          capabilities: ["tools"],
+          efforts: [],
+          available: false,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      }, {
+        id: "github-copilot",
+        displayName: "GitHub Copilot",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "gpt-4.1",
+          displayName: "gpt-4.1",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      }, {
+        id: "opencode-free",
+        displayName: "OpenCode Free",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "minimax-m2.5-free",
+          displayName: "minimax-m2.5-free",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      }, {
+        id: "stale-oauth",
+        displayName: "Stale OAuth",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "gpt-stale",
+          displayName: "gpt-stale",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: false, action: "login" },
+      }],
+      messaging: {
+        runtime: "hermes",
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        configured: true,
+      },
+    });
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSourceWithOpenClawSelected(),
+      systemRuntimeSources: { hermes: hermesRuntimeSource },
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([hermes]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    const instance = (await service.getCatalog(principal)).instances.find((candidate) => (
+      candidate.id === "hermes_default"
+    ));
+    expect(instance).toMatchObject({
+      availability: "available",
+      displayName: "Hermes",
+      defaultSelection: {
+        instanceId: "hermes_default",
+        model: "openai-codex:gpt-5.6-sol",
+      },
+    });
+    expect(instance?.models.map((model) => model.id)).toEqual([
+      "openai-codex:gpt-5.6-sol",
+      "github-copilot:gpt-4.1",
+      "opencode-free:minimax-m2.5-free",
+    ]);
+  });
+
+  it("keeps an explicitly unauthenticated inactive Hermes runtime unavailable", async () => {
+    const hermes = configuredHarness("hermes", true);
+    hermes.authState = "unauthenticated";
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSourceWithOpenClawSelected(),
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([hermes]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "authentication_required",
+    });
+  });
+
+  it("does not replace an unavailable native Hermes catalog with one settings route", async () => {
+    const hermes = configuredHarness("hermes", true);
+    hermes.authState = "unknown";
+    hermes.connectivity = "unknown";
+    const unavailableHermesSource: AgentRuntimeSource = async () => ({
+      runtime: {
+        selected: "hermes",
+        options: [{
+          id: "hermes",
+          displayName: "Hermes",
+          installState: "unknown",
+          health: "unreachable",
+          selectionState: "action_required",
+          configured: false,
+          capabilities: ["provider_catalog", "model_selection", "authentication"],
+        }],
+        transition: null,
+      },
+      providers: [],
+      messaging: {
+        runtime: "hermes",
+        provider: null,
+        model: null,
+        configured: false,
+      },
+    });
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSourceWithOpenClawSelected(),
+      systemRuntimeSources: { hermes: unavailableHermesSource },
+      aiProviderSource: { getSnapshot: async () => providerSettingsCanonicalFixture() },
+      harnessSettingsSource: harnessSettings([hermes]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "runtime_unavailable",
+      models: [],
+    });
+  });
+
+  it("does not silently choose between concurrent enabled CLI profiles", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "pi", displayName: "Pi", kind: "pi", supportedModes: ["default"], setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([
+        configuredHarness("pi", true),
+        { ...configuredHarness("pi", true), id: "harness_pi_second", displayName: "Pi work" },
+      ]),
+      executableDriverKinds: ["pi"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "pi_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "multiple_profiles_unsupported" });
+  });
+
+  it("does not expose an enabled generic route whose selected access source is unauthenticated", async () => {
+    const unauthenticated = configuredHarness("pi", true);
+    unauthenticated.authState = "unauthenticated";
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "pi", displayName: "Pi", kind: "pi", supportedModes: ["default"], setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([unauthenticated]),
+      executableDriverKinds: ["pi"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "pi_default"))
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "authentication_required" });
+  });
+
+  it("hides every Matrix Agent driver and instance while Matrix AI is not release-ready", async () => {
+    const homePath = mkdtempSync(join(tmpdir(), "chat-provider-kernel-"));
+    mkdirSync(join(homePath, "system"), { recursive: true });
+    writeFileSync(join(homePath, "system/config.json"), "{}");
+    const aiProviderSource = new AiProviderService({
+      homePath,
+      env: {
+        ANTHROPIC_API_KEY: "platform-secret",
+        MATRIX_FUNDED_AI_ENABLED: "1",
+      },
+      fundedCredentialProvider: fundedProvider(),
+    });
+    try {
+      const service = createChatProviderCatalogService({
+        codingProviders: codingRegistry([]),
+        agentRuntimeSource: runtimeSource(),
+        aiProviderSource,
+        executableDriverKinds: ["kernel"],
+      });
+
+      const catalog = await service.getCatalog(principal);
+
+      expect(catalog.drivers.some((driver) => driver.kind === "kernel")).toBe(false);
+      expect(catalog.instances.some((instance) => instance.driverKind === "kernel")).toBe(false);
+      expect(JSON.stringify(catalog)).not.toContain("platform-secret");
+    } finally {
+      aiProviderSource.close();
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("preserves namespaced system model ids in the canonical catalog", async () => {
     const source: AgentRuntimeSource = async () => {
       const snapshot = await runtimeSource()();
@@ -163,14 +873,20 @@ describe("canonical Chat Provider catalog", () => {
         ["opencode", "coding_agent"],
         ["pi", "coding_agent"],
       ]);
+    expect(catalog.instances.filter((instance) => [
+      "hermes", "openclaw", "codex", "claude_code", "opencode", "pi",
+    ].includes(instance.driverKind)).every((instance) => (
+      instance.supports.steering === "same_run"
+    ))).toBe(true);
     expect(catalog.instances.find((instance) => instance.id === "hermes_default"))
       .toMatchObject({
         driverKind: "hermes",
         availability: "available",
         setupActions: [{
-          id: "hermes_settings",
-          kind: "open_settings",
-          label: "Configure Hermes",
+          id: "hermes_connect",
+          kind: "foreground_terminal",
+          label: "Connect Hermes",
+          command: expect.stringContaining("hermes"),
         }],
         defaultSelection: {
           instanceId: "hermes_default",
@@ -190,11 +906,19 @@ describe("canonical Chat Provider catalog", () => {
         availability: "unavailable",
         models: [],
         setupActions: [{
-          id: "openclaw_settings",
-          kind: "open_settings",
-          label: "Configure OpenClaw",
+          id: "openclaw_connect",
+          kind: "foreground_terminal",
+          label: "Connect OpenClaw",
+          command: expect.stringContaining("openclaw"),
         }],
       });
+    const openClawConnect = catalog.instances.find((instance) => instance.id === "openclaw_default")
+      ?.setupActions.find((action) => action.id === "openclaw_connect");
+    expect(openClawConnect?.command).toContain("openclaw models auth login");
+    expect(openClawConnect?.command).toContain("--provider openai");
+    expect(openClawConnect?.command).toContain("--device-code");
+    expect(openClawConnect?.command).toContain("--set-default");
+    expect(openClawConnect?.command).not.toMatch(/OPENCLAW_GATEWAY_TOKEN=[^;$'\" ]+/);
     expect(catalog.instances.filter((instance) =>
       ["claude_code", "opencode", "pi"].includes(instance.driverKind)
     )).toEqual(expect.arrayContaining([
@@ -230,6 +954,95 @@ describe("canonical Chat Provider catalog", () => {
       .toEqual(new Set([catalog.revision]));
   });
 
+  it("offers the pinned host installer when OpenClaw is missing", async () => {
+    const source: AgentRuntimeSource = async () => {
+      const snapshot = await runtimeSource()();
+      return {
+        ...snapshot,
+        runtime: {
+          ...snapshot.runtime,
+          options: snapshot.runtime.options.map((runtime) => runtime.id === "openclaw"
+            ? { ...runtime, installState: "missing" as const }
+            : runtime),
+        },
+      };
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: source,
+    });
+
+    const openclaw = (await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "openclaw_default"
+    ));
+    expect(openclaw).toMatchObject({
+      availability: "setup_required",
+      setupActions: [{
+        id: "openclaw_install",
+        kind: "foreground_terminal",
+        label: "Install OpenClaw",
+        command: expect.stringContaining("matrix-agent-runtime-control install openclaw"),
+      }],
+    });
+    expect(openclaw?.setupActions.some((action) => action.id === "openclaw_connect")).toBe(false);
+  });
+
+  it("preserves long Skill descriptions within the canonical byte bound", async () => {
+    const description = "A".repeat(941);
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      skillsSource: () => [{ name: "animate", description }],
+    });
+
+    const catalog = await service.getCatalog(principal);
+    const codex = catalog.instances.find((instance) => instance.id === "codex_default")!;
+
+    expect(codex.skills).toEqual([{
+      id: "animate",
+      displayName: "animate",
+      description,
+      invocation: "/animate",
+    }]);
+    expect(CanonicalProviderCatalogSchema.parse(catalog)).toEqual(catalog);
+  });
+
+  it("omits invalid Skill metadata without failing the Provider catalog", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      skillsSource: () => [{
+        name: "valid-skill",
+        description: "A safe Skill description",
+      }, {
+        name: "too-large",
+        description: "A".repeat(1_601),
+      }, {
+        name: "unsafe-skill",
+        description: "Read /home/owner/.ssh/id_rsa",
+      }, {
+        name: "VALID-SKILL",
+        description: "Duplicate normalized identifier",
+      }],
+    });
+
+    const catalog = await service.getCatalog(principal);
+    const codex = catalog.instances.find((instance) => instance.id === "codex_default")!;
+
+    expect(codex.skills).toEqual([{
+      id: "valid-skill",
+      displayName: "valid-skill",
+      description: "A safe Skill description",
+      invocation: "/valid-skill",
+    }]);
+    expect(CanonicalProviderCatalogSchema.parse(catalog)).toEqual(catalog);
+    expect(warning).toHaveBeenCalledWith(
+      "[chat-providers] Omitted 3 invalid or duplicate Skill catalog entries",
+    );
+    warning.mockRestore();
+  });
+
   it("fails a system harness closed until its own provider authentication is configured", async () => {
     const source: AgentRuntimeSource = async () => {
       const snapshot = await runtimeSource()();
@@ -255,7 +1068,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.options).toEqual([]);
   });
 
-  it("restores visible Terminal setup actions when an unavailable coding Provider omits them", async () => {
+  it("replaces Settings-only coding setup with visible Terminal actions", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({
         id: "opencode",
@@ -265,7 +1078,11 @@ describe("canonical Chat Provider catalog", () => {
         installStatus: "installed",
         authStatus: "unknown",
         defaultModel: undefined,
-        setupActions: [],
+        setupActions: [{
+          id: "opencode_settings",
+          kind: "open_settings",
+          label: "Configure OpenCode",
+        }],
       })]),
       agentRuntimeSource: runtimeSource(),
     });
@@ -278,9 +1095,10 @@ describe("canonical Chat Provider catalog", () => {
       expect.objectContaining({ id: "opencode_install", kind: "foreground_terminal" }),
       expect.objectContaining({ id: "opencode_connect", kind: "foreground_terminal" }),
     ]));
+    expect(opencode.setupActions.some((action) => action.kind === "open_settings")).toBe(false);
   });
 
-  it("does not advertise an installed harness without a canonical execution adapter", async () => {
+  it("offers a host repair when an installed system harness is not runnable", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({
         id: "opencode",
@@ -306,8 +1124,16 @@ describe("canonical Chat Provider catalog", () => {
       availability: "unavailable",
       models: [],
       options: [],
-      setupActions: [],
+      unavailabilityReason: "runtime_not_runnable",
+      setupActions: [{
+        id: "openclaw_repair",
+        kind: "foreground_terminal",
+        label: "Repair OpenClaw",
+        command: expect.stringContaining("matrix-agent-runtime-control install openclaw"),
+      }],
     });
+    expect(openclaw.setupActions.some((action) => action.id === "openclaw_connect")).toBe(false);
+    expect(openclaw.setupActions.some((action) => action.id === "openclaw_install")).toBe(false);
   });
 
   it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
@@ -405,19 +1231,23 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.supports.permissionModes).toEqual(["full_access"]);
   });
 
-  it("invalidates both live inventories before an explicit refresh", async () => {
+  it("invalidates unified and native runtime inventories before an explicit refresh", async () => {
     const registry = codingRegistry();
     const source = runtimeSource();
     source.invalidate = vi.fn();
+    const hermesSource = runtimeSource();
+    hermesSource.invalidate = vi.fn();
     const service = createChatProviderCatalogService({
       codingProviders: registry,
       agentRuntimeSource: source,
+      systemRuntimeSources: { hermes: hermesSource },
     });
 
     await service.refresh(principal);
 
     expect(registry.invalidate).toHaveBeenCalledWith(principal.userId);
     expect(source.invalidate).toHaveBeenCalledOnce();
+    expect(hermesSource.invalidate).toHaveBeenCalledOnce();
   });
 
   it("fails closed per readiness source without hiding the healthy domain", async () => {
@@ -476,7 +1306,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(hermes.defaultSelection?.model).toBe("openai:gpt-5");
   });
 
-  it("marks live-probed unavailable OpenCode Free models unavailable", async () => {
+  it("omits live-probed unavailable OpenCode Free models from the selector", async () => {
     const source: AgentRuntimeSource = async () => {
       const snapshot = await runtimeSource()(AbortSignal.timeout(1_000));
       return {
@@ -521,19 +1351,14 @@ describe("canonical Chat Provider catalog", () => {
     const hermes = (await service.getCatalog(principal)).instances
       .find((instance) => instance.id === "hermes_default")!;
 
-    expect(hermes.models.filter((model) => model.availability === "available").map((model) => model.id))
-      .toEqual([
+    expect(hermes.models.map((model) => model.id)).toEqual([
         "opencode-free:laguna-s-2.1-free",
         "opencode-free:ling-3.0-flash-fin-free",
         "opencode-free:mimo-v2.5-free",
         "opencode-free:muse-spark-1.2-contributor-free",
         "opencode-free:nemotron-3.5-lightning-free",
       ]);
-    expect(hermes.models.filter((model) => model.availability === "unavailable").map((model) => model.id))
-      .toEqual([
-        "opencode-free:deepseek-v4-flash-free",
-        "opencode-free:nemotron-3-ultra-free",
-      ]);
+    expect(hermes.models.every((model) => model.availability === "available")).toBe(true);
   });
 
   it("preserves a bounded provider-owned model path in the canonical catalog", async () => {
@@ -612,23 +1437,57 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject([{ id: "provider-default", displayName: "Codex default" }]);
   });
 
-  it("advertises only attachment kinds the Pi adapter forwards", async () => {
+  it("advertises file attachments forwarded by native Pi and OpenCode adapters", async () => {
     const service = createChatProviderCatalogService({
-      codingProviders: codingRegistry([codingProvider({
-        id: "pi",
-        displayName: "Pi",
-        kind: "pi",
-        supportedModes: ["default"],
-        defaultModel: undefined,
-        setupActions: [],
-      })]),
+      codingProviders: codingRegistry([
+        codingProvider({
+          id: "pi",
+          displayName: "Pi",
+          kind: "pi",
+          supportedModes: ["default"],
+          defaultModel: undefined,
+          setupActions: [],
+        }),
+        codingProvider({
+          id: "opencode",
+          displayName: "OpenCode",
+          kind: "opencode",
+          supportedModes: ["default"],
+          defaultModel: undefined,
+          setupActions: [],
+        }),
+      ]),
       agentRuntimeSource: runtimeSource(),
+      credentialedDriverKinds: ["pi", "opencode"],
+      codingModelCatalogSource: vi.fn(async (provider) => ({
+        models: [{
+          id: provider.id === "pi" ? "anthropic:claude-sonnet-5" : "opencode:big-pickle",
+          displayName: provider.id === "pi" ? "Claude Sonnet 5" : "Big Pickle",
+          capabilities: ["tools"],
+          supportsVision: false,
+          supportsToolUse: true,
+        }],
+        options: [],
+      })),
     });
 
     const catalog = await service.getCatalog(principal);
     const pi = catalog.instances.find((instance) => instance.id === "pi_default")!;
+    const opencode = catalog.instances.find((instance) => instance.id === "opencode_default")!;
 
-    expect(pi.supports.attachments).toEqual(["structured_ref"]);
+    expect([pi, opencode].map((instance) => instance.supports.attachments)).toEqual([
+      ["file", "structured_ref"],
+      ["file", "structured_ref"],
+    ]);
+    expect([pi, opencode].map((instance) => instance.supports.steering)).toEqual([
+      "same_run",
+      "same_run",
+    ]);
+    expect(validateChatProviderSelection({
+      catalog,
+      selection: pi.defaultSelection!,
+      requirements: { attachments: ["file"] },
+    })).toMatchObject({ ok: true });
     expect(validateChatProviderSelection({
       catalog,
       selection: pi.defaultSelection!,
@@ -831,6 +1690,36 @@ describe("GET /api/chat-providers", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "service_unavailable", retryable: true },
     });
+  });
+
+  it("propagates blocked provider-settings recovery as a retryable catalog outage", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: {
+        getSnapshot: async () => {
+          throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        },
+      },
+    });
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: service,
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers");
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "service_unavailable",
+        safeMessage: "Provider catalog is temporarily unavailable.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    warning.mockRestore();
   });
 
   it("does not recommend retrying a deterministic projection failure", async () => {
