@@ -20,6 +20,8 @@ const electronMock = vi.hoisted(() => {
     capturePage: vi.fn(async () => ({
       isEmpty: () => false,
       toJPEG: () => Buffer.from("retained-frame"),
+      getSize: () => ({ width: 1_280, height: 720 }),
+      resize: vi.fn(),
     })),
     isDestroyed: vi.fn(() => false),
     close: vi.fn(),
@@ -97,6 +99,8 @@ describe("createWebContentsView", () => {
     resolveCapture?.({
       isEmpty: () => false,
       toJPEG: () => Buffer.from("shared-frame"),
+      getSize: () => ({ width: 1_280, height: 720 }),
+      resize: vi.fn(),
     });
 
     await expect(Promise.all([first, second])).resolves.toEqual([
@@ -105,7 +109,20 @@ describe("createWebContentsView", () => {
     ]);
   });
 
-  it("caps the native capture rectangle before allocating a retained frame", async () => {
+  it("captures the full viewport before proportionally bounding a retained frame", async () => {
+    const resized = {
+      isEmpty: () => false,
+      toJPEG: () => Buffer.from("bounded-full-frame"),
+      getSize: () => ({ width: 2_048, height: 1_024 }),
+      resize: vi.fn(),
+    };
+    const resize = vi.fn(() => resized);
+    electronMock.webContents.capturePage.mockResolvedValueOnce({
+      isEmpty: () => false,
+      toJPEG: () => Buffer.from("full-frame"),
+      getSize: () => ({ width: 16_384, height: 8_192 }),
+      resize,
+    });
     const view = createWebContentsView({
       window: {
         isDestroyed: () => false,
@@ -119,11 +136,10 @@ describe("createWebContentsView", () => {
 
     await view.captureSnapshot?.();
 
-    expect(electronMock.webContents.capturePage).toHaveBeenCalledWith({
-      x: 0,
-      y: 0,
+    expect(electronMock.webContents.capturePage).toHaveBeenCalledWith();
+    expect(resize).toHaveBeenCalledWith({
       width: 2_048,
-      height: 2_048,
+      height: 1_024,
     });
   });
 

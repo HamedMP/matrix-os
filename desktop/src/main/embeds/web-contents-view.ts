@@ -11,11 +11,19 @@ import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 
 const MAX_PUBLIC_BROWSER_ORIGINS = 64;
 const MAX_EMBED_SNAPSHOT_BYTES = 3_000_000;
-const MAX_EMBED_SNAPSHOT_CAPTURE_EDGE = 2_048;
+const MAX_EMBED_SNAPSHOT_EDGE = 2_048;
 const EMBED_SNAPSHOT_QUALITIES = [72, 54, 36, 24] as const;
 
 function encodeBoundedSnapshot(source: NativeImage): string | null {
-  let image = source;
+  const sourceSize = source.getSize();
+  const longestEdge = Math.max(sourceSize.width, sourceSize.height);
+  const initialScale = Math.min(1, MAX_EMBED_SNAPSHOT_EDGE / longestEdge);
+  let image = initialScale < 1
+    ? source.resize({
+        width: Math.max(1, Math.round(sourceSize.width * initialScale)),
+        height: Math.max(1, Math.round(sourceSize.height * initialScale)),
+      })
+    : source;
   for (let resizeAttempt = 0; resizeAttempt < 4; resizeAttempt += 1) {
     for (const quality of EMBED_SNAPSHOT_QUALITIES) {
       const jpeg = image.toJPEG(quality);
@@ -65,7 +73,6 @@ export function createWebContentsView(options: {
   const contents = view.webContents;
   let retainedSnapshotDataUrl: string | null = null;
   let snapshotContentGeneration = 0;
-  let snapshotCaptureBounds: Bounds | undefined;
   let snapshotCaptureInFlight: {
     generation: number;
     promise: Promise<string | null>;
@@ -77,7 +84,7 @@ export function createWebContentsView(options: {
     }
     const capture = (async (): Promise<string | null> => {
       if (contents.isDestroyed()) return retainedSnapshotDataUrl;
-      const image = await contents.capturePage(snapshotCaptureBounds);
+      const image = await contents.capturePage();
       if (generation !== snapshotContentGeneration) return retainedSnapshotDataUrl;
       if (image.isEmpty()) return retainedSnapshotDataUrl;
       retainedSnapshotDataUrl = encodeBoundedSnapshot(image) ?? retainedSnapshotDataUrl;
@@ -227,12 +234,6 @@ export function createWebContentsView(options: {
   return {
     setBounds(bounds: Bounds) {
       view.setBounds(bounds);
-      snapshotCaptureBounds = {
-        x: 0,
-        y: 0,
-        width: Math.min(bounds.width, MAX_EMBED_SNAPSHOT_CAPTURE_EDGE),
-        height: Math.min(bounds.height, MAX_EMBED_SNAPSHOT_CAPTURE_EDGE),
-      };
     },
     setScale(factor: number) {
       contents.setZoomFactor(factor);
