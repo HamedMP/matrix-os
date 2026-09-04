@@ -25,6 +25,7 @@ import {
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   CanonicalCreateChatRequestSchema,
   type CanonicalChatDetailResponse,
@@ -51,6 +52,7 @@ import {
   type CanonicalSteerChatRunRequest,
   type CanonicalChatApprovalSubmissionResponse,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -183,6 +185,18 @@ export function createCanonicalChatService(
         owner,
         CanonicalChatIdSchema.parse(chatId),
         request,
+      ));
+    },
+
+    async updateTitle(
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalUpdateChatTitleRequest,
+    ): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.update(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalUpdateChatTitleRequestSchema.parse(input),
       ));
     },
 
@@ -445,6 +459,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
   return {
     create: unavailable,
     updateProject: unavailable,
+    updateTitle: unavailable,
     updateUserState: unavailable,
     acknowledgeCompletion: unavailable,
     delete: unavailable,

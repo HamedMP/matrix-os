@@ -31,6 +31,7 @@ import {
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
@@ -56,6 +57,7 @@ import {
   type CanonicalRetryChatTurnRequest,
   type CanonicalSteerChatRunRequest,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -112,6 +114,11 @@ export interface CanonicalChatRouteService {
     owner: ChatOwner,
     chatId: string,
     input: CanonicalUpdateChatProjectRequest,
+  ): Promise<CanonicalChatRecord>;
+  updateTitle(
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalUpdateChatTitleRequest,
   ): Promise<CanonicalChatRecord>;
   updateUserState(
     owner: ChatOwner,
@@ -394,6 +401,22 @@ export function createCanonicalChatRoutes(options: {
       const parsed = CanonicalUpdateChatProjectRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
       const result = await options.service.updateProject(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatRecordSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/title", updateBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalUpdateChatTitleRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.updateTitle(
         ownerFromPrincipal(options.getPrincipal(context)),
         chatId,
         parsed.data,

@@ -10,6 +10,7 @@ import {
   type CanonicalChatRecord,
   type CanonicalCreateChatRequest,
   type CanonicalUpdateChatUserStateRequest,
+  type CanonicalUpdateChatTitleRequest,
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
@@ -45,6 +46,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
   return {
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
+    updateTitle: vi.fn(async () => record),
     updateUserState: vi.fn(async () => record),
     acknowledgeCompletion: vi.fn(async () => record),
     delete: vi.fn(async () => ({ chatId: record.chat.id, deletedAt: record.chat.updatedAt })),
@@ -181,6 +183,44 @@ describe("canonical Chat routes", () => {
       body: JSON.stringify({ baseRevision: 0, projectId: null, ownerId: "other" }),
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("renames a Chat with owner-derived identity, validation, and a body limit", async () => {
+    const renamed = { ...record, chat: { ...record.chat, title: "Release plan", revision: 1 } };
+    const updateTitle = vi.fn(async (
+      _owner: ChatOwner,
+      _chatId: string,
+      _input: CanonicalUpdateChatTitleRequest,
+    ) => renamed);
+    const app = appFor(routeService({ updateTitle }));
+
+    const response = await app.request("/api/chats/chat_route_test/title", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 0, title: "  Release plan  " }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(renamed);
+    expect(updateTitle).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      { baseRevision: 0, title: "Release plan" },
+    );
+
+    const invalid = await app.request("/api/chats/chat_route_test/title", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 0, title: "   " }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const oversized = await app.request("/api/chats/chat_route_test/title", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 0, title: "x".repeat(5 * 1024) }),
+    });
+    expect(oversized.status).toBe(413);
   });
 
   it("updates only the authenticated principal's bounded Chat user state", async () => {

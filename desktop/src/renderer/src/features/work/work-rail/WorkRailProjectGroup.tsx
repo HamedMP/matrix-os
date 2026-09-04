@@ -15,6 +15,11 @@ export function WorkRailProjectGroup({
   onNewChat,
   onDeleteProject,
   onSelectChat,
+  renamingChatId,
+  renamePending,
+  onRenameChat,
+  onRenameCommit,
+  onRenameCancel,
   onPinChat,
   onDeleteChat,
 }: {
@@ -27,6 +32,11 @@ export function WorkRailProjectGroup({
   onNewChat: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project: Project) => void;
+  renamingChatId: string | null;
+  renamePending: boolean;
+  onRenameChat: (record: CanonicalChatRecord) => void;
+  onRenameCommit: (record: CanonicalChatRecord, title: string) => void;
+  onRenameCancel: () => void;
   onPinChat: (record: CanonicalChatRecord) => void;
   onDeleteChat: (record: CanonicalChatRecord) => void;
 }) {
@@ -82,6 +92,11 @@ export function WorkRailProjectGroup({
               placement="project"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
+              renaming={renamingChatId === record.chat.id}
+              renamePending={renamePending && renamingChatId === record.chat.id}
+              onRenameStart={() => onRenameChat(record)}
+              onRenameCommit={(title) => onRenameCommit(record, title)}
+              onRenameCancel={onRenameCancel}
               onSelect={() => onSelectChat(record, group.project)}
               onPin={() => onPinChat(record)}
               onDelete={() => onDeleteChat(record)}

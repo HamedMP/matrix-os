@@ -155,7 +155,7 @@ export function TopBar({
   onMaximize,
   onDragStart,
 }: {
-  title?: string;
+  title?: ReactNode;
   icon?: ReactNode;
   leftActions?: ReactNode;
   rightActions?: ReactNode;
@@ -233,7 +233,7 @@ export function TopBar({
                 <div className={`flex min-w-0 items-center justify-start text-[15px] font-medium ${showSidebarTrigger ? "gap-1" : "gap-1.5"}`}>
                   {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
                   {icon}
-                  <span className="truncate">{title}</span>
+                  <span className="min-w-0 truncate">{title}</span>
                 </div>
               ) : null}
             </div>
@@ -256,7 +256,7 @@ export function TopBar({
                 <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
                   {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
                   {icon}
-                  <span className="truncate">{title}</span>
+                  <span className="min-w-0 truncate">{title}</span>
                 </div>
                 <div className="w-28" aria-hidden="true" />
               </>

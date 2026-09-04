@@ -235,7 +235,7 @@ export default function DesktopSurfaceFrame({
     boxShadow: "none",
   };
   const workChatTitle = isWorkSurface && tab.chatId
-    ? tab.chatTitle ?? surfaceChrome?.title ?? "Chat"
+    ? surfaceChrome?.title ?? tab.chatTitle ?? "Chat"
     : undefined;
   const showsSurfaceTopBar = isWindow
     || Boolean(workChatTitle)

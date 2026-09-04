@@ -80,6 +80,13 @@ function setup() {
         },
       };
     }),
+    updateTitle: vi.fn(async (chatId: string, input: { title: string }) => {
+      const current = records.find((candidate) => candidate.chat.id === chatId)!;
+      return {
+        ...current,
+        chat: { ...current.chat, title: input.title, revision: current.chat.revision + 1 },
+      };
+    }),
   } as unknown as CanonicalChatClient;
   const actions = {
     onNewGlobalChat: vi.fn(),
@@ -1007,14 +1014,69 @@ describe("WorkRail", () => {
     expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("shows Pin and Delete in the Chat context menu", async () => {
+  it("shows Rename, Pin, and Delete in the Chat context menu", async () => {
     setup();
     const recentChat = await screen.findByRole("button", { name: "Recent global" });
 
     fireEvent.contextMenu(recentChat, { clientX: 120, clientY: 160 });
 
-    expect(await screen.findByRole("menuitem", { name: "Pin" })).toBeTruthy();
+    expect(await screen.findByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Pin" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
+  });
+
+  it("renames a Chat from a rail double-click and updates the visible projection", async () => {
+    const { client, actions } = setup();
+    const recentChat = await screen.findByRole("button", { name: "Recent global" });
+
+    fireEvent.doubleClick(recentChat);
+    const input = await screen.findByRole("textbox", { name: "Rename Recent global" });
+    expect((input as HTMLInputElement).selectionStart).toBe(0);
+    expect((input as HTMLInputElement).selectionEnd).toBe("Recent global".length);
+    fireEvent.change(input, { target: { value: "  Release plan  " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(client.updateTitle).toHaveBeenCalledWith("chat_recent", {
+      baseRevision: 1,
+      title: "Release plan",
+    }));
+    expect(await screen.findByRole("button", { name: "Release plan" })).toBeTruthy();
+    expect(actions.onSelectChat).not.toHaveBeenCalled();
+  });
+
+  it("opens the same rename editor from the context menu and Escape restores the title", async () => {
+    const { client } = setup();
+    const recentChat = await screen.findByRole("button", { name: "Recent global" });
+    fireEvent.contextMenu(recentChat);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+
+    const input = await screen.findByRole("textbox", { name: "Rename Recent global" });
+    fireEvent.change(input, { target: { value: "Discard me" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
+    expect(client.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it("commits a changed title on blur and restores the old title after a safe failure", async () => {
+    const { client } = setup();
+    const updateTitle = client.updateTitle as ReturnType<typeof vi.fn>;
+    const recentChat = await screen.findByRole("button", { name: "Recent global" });
+
+    fireEvent.doubleClick(recentChat);
+    const input = await screen.findByRole("textbox", { name: "Rename Recent global" });
+    fireEvent.change(input, { target: { value: "Blurred title" } });
+    fireEvent.blur(input);
+    expect(await screen.findByRole("button", { name: "Blurred title" })).toBeTruthy();
+
+    updateTitle.mockRejectedValueOnce(new Error("private gateway detail"));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Blurred title" }));
+    const retryInput = await screen.findByRole("textbox", { name: "Rename Blurred title" });
+    fireEvent.change(retryInput, { target: { value: "Will fail" } });
+    fireEvent.keyDown(retryInput, { key: "Enter" });
+
+    expect((await screen.findByRole("alert")).textContent).toBe("The Chat could not be renamed. Try again.");
+    expect(screen.getByRole("button", { name: "Blurred title" })).toBeTruthy();
   });
 
   it("deletes a Chat from its hover action after confirmation", async () => {

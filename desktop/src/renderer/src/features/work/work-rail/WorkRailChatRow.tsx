@@ -9,6 +9,7 @@ import {
 } from "@renderer/lib/hugeicons";
 import { ContextMenu } from "../../../design/primitives";
 import { OverflowingChatTitle } from "../OverflowingChatTitle";
+import { ChatTitleEditor } from "../../chat/ChatTitleEditor";
 import {
   resolveWorkRailAgentState,
   type WorkRailAgentState,
@@ -20,6 +21,11 @@ export function WorkRailChatRow({
   pinning,
   placement,
   onSelect,
+  renaming,
+  renamePending,
+  onRenameStart,
+  onRenameCommit,
+  onRenameCancel,
   onPin,
   onDelete,
 }: {
@@ -28,6 +34,11 @@ export function WorkRailChatRow({
   pinning: boolean;
   placement: "pinned" | "project" | "recent";
   onSelect: () => void;
+  renaming: boolean;
+  renamePending: boolean;
+  onRenameStart: () => void;
+  onRenameCommit: (title: string) => void;
+  onRenameCancel: () => void;
   onPin: () => void;
   onDelete: () => void;
 }) {
@@ -35,6 +46,11 @@ export function WorkRailChatRow({
   const agentState = resolveWorkRailAgentState(record);
   return (
     <ContextMenu items={[
+      {
+        label: "Rename",
+        disabled: renamePending,
+        onSelect: () => window.setTimeout(onRenameStart, 20),
+      },
       {
         label: pinned ? "Unpin" : "Pin",
         disabled: pinning,
@@ -51,19 +67,35 @@ export function WorkRailChatRow({
         className="group/chat relative flex min-w-0 items-center rounded-md transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-within:bg-[var(--bg-hover)]"
         style={{ background: active ? "var(--bg-selected)" : undefined }}
       >
-        <button
+        {renaming ? (
+          <div className="flex w-full min-w-0 items-center gap-2.5 px-2.5 py-1.5 text-sm font-medium">
+            <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />
+            <ChatTitleEditor
+              title={record.chat.title}
+              disabled={renamePending}
+              className="w-full"
+              onCommit={onRenameCommit}
+              onCancel={onRenameCancel}
+            />
+          </div>
+        ) : <button
           type="button"
           aria-label={record.chat.title}
           aria-current={active ? "page" : undefined}
           className="flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
           style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
           onClick={onSelect}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            window.setTimeout(onRenameStart, 0);
+          }}
         >
           <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />
           <OverflowingChatTitle title={record.chat.title} />
           <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
-        </button>
-        <div
+        </button>}
+        {!renaming ? <div
           className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:pointer-events-auto group-hover/chat:opacity-100 group-focus-within/chat:pointer-events-auto group-focus-within/chat:opacity-100"
           style={{
             background: active
@@ -92,7 +124,7 @@ export function WorkRailChatRow({
           >
             <Trash2 size={13} aria-hidden />
           </button>
-        </div>
+        </div> : null}
       </div>
     </ContextMenu>
   );
