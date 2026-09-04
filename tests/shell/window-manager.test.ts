@@ -338,17 +338,20 @@ describe("Window Manager Store", () => {
       );
     });
 
-    it("persists a stable layout id for an ordinary Terminal window", () => {
+    it("persists a stable layout id for an ordinary Terminal window", async () => {
       useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
       const opened = useWindowManager.getState().windows[0];
       expect(opened.terminalLayoutId).toMatch(/^term-layout_[0-9a-f]{32}$/);
 
       vi.advanceTimersByTime(500);
-      const body = JSON.parse(fetchSpy.mock.calls[0][1].body) as { windows: LayoutWindow[] };
-      expect(body.windows[0]?.terminalLayoutId).toBe(opened.terminalLayoutId);
+      await Promise.resolve();
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body) as {
+        patch: { desktop: { windows: LayoutWindow[] } };
+      };
+      expect(body.patch.desktop.windows[0]?.terminalLayoutId).toBe(opened.terminalLayoutId);
     });
 
-    it("keeps setup terminals separate, ephemeral, and out of desktop persistence", () => {
+    it("keeps setup terminals separate, ephemeral, and out of desktop persistence", async () => {
       useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
       useWindowManager.getState().openWindow("Terminal", "__terminal__", 80, {
         terminalPersistence: "ephemeral",
@@ -362,8 +365,11 @@ describe("Window Manager Store", () => {
       expect(setup?.terminalLayoutId).toBeUndefined();
 
       vi.advanceTimersByTime(500);
-      const body = JSON.parse(fetchSpy.mock.calls[0][1].body) as { windows: LayoutWindow[] };
-      expect(body.windows.map((win) => win.path)).toEqual(["__terminal__"]);
+      await Promise.resolve();
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body) as {
+        patch: { desktop: { windows: LayoutWindow[] } };
+      };
+      expect(body.patch.desktop.windows.map((win) => win.path)).toEqual(["__terminal__"]);
     });
 
     it("does not save layout on the pre-VPS billing setup route", () => {

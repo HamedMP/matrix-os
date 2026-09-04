@@ -134,6 +134,44 @@ describe("shared OS-view contract", () => {
     }).success).toBe(false);
   });
 
+  it("preserves validated terminal layout identity in window geometry", () => {
+    const request = PatchOsViewStateRequestSchema.parse({
+      baseRevision: 1,
+      mutationId: `osvm_${"a".repeat(32)}`,
+      patch: {
+        desktop: {
+          windows: [{
+            path: "__terminal__",
+            x: 20,
+            y: 30,
+            width: 900,
+            height: 640,
+            terminalLayoutId: "term-layout_0123456789abcdef0123456789abcdef",
+          }],
+        },
+      },
+    });
+
+    expect(request.patch.desktop?.windows?.[0]?.terminalLayoutId)
+      .toBe("term-layout_0123456789abcdef0123456789abcdef");
+    expect(PatchOsViewStateRequestSchema.safeParse({
+      baseRevision: 1,
+      mutationId: `osvm_${"b".repeat(32)}`,
+      patch: {
+        desktop: {
+          windows: [{
+            path: "__terminal__",
+            x: 20,
+            y: 30,
+            width: 900,
+            height: 640,
+            terminalLayoutId: "unsafe-layout-id",
+          }],
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it("rebases stale collection snapshots without losing concurrent entity or field edits", () => {
     const base = mergeOsViewStatePatch(createDefaultOsViewDocument(), {
       apps: [{ path: "__chat__", title: "Chat", state: "open" }],

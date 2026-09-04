@@ -226,7 +226,14 @@ function debouncedSave(
       }
     }
 
-    const geometry = layoutWindows.map(({ path, x, y, width, height }) => ({ path, x, y, width, height }));
+    const geometry = layoutWindows.map(({ path, x, y, width, height, terminalLayoutId }) => ({
+      path,
+      x,
+      y,
+      width,
+      height,
+      ...(terminalLayoutId ? { terminalLayoutId } : {}),
+    }));
     const mode = useDesktopMode.getState().mode;
     patchWebOsViewState(gatewayUrl, {
       apps: layoutWindows.map(({ path, title, state }) => ({ path, title, state })),
