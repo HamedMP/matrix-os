@@ -172,11 +172,14 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
   const parsedModel = provider.defaultModel === undefined
     ? null
     : CanonicalChatModelSelectionSchema.shape.model.safeParse(provider.defaultModel);
-  if (parsedModel?.success !== true
-    && (codingDriverKind(provider) === "pi" || codingDriverKind(provider) === "opencode")) {
-    return [];
-  }
-  const id = parsedModel?.success === true ? parsedModel.data : "provider-default";
+  // Without a real, parseable model id there is nothing safe to offer: a
+  // synthetic placeholder id (e.g. "provider-default") is not a model this
+  // driver's CLI actually recognizes, and sending it would fail the turn
+  // silently. Report no models instead, exactly like Pi and OpenCode already
+  // do -- this only affects Codex, since Claude Code returns its own fixed
+  // model list above and never reaches this branch.
+  if (parsedModel?.success !== true) return [];
+  const id = parsedModel.data;
   const availability = provider.availability === "available"
     ? "available" as const
     : provider.availability === "auth_required"
@@ -184,7 +187,7 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
       : "unavailable" as const;
   return [{
     id,
-    displayName: parsedModel?.success === true ? parsedModel.data : `${provider.displayName} default`,
+    displayName: id,
     availability,
     capabilities: ["reasoning", "tools"],
     supportsVision: false,
