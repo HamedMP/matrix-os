@@ -44,8 +44,11 @@ export function verifyCodexProviderContracts({
   }
 
   const expectedAppServerDigest = appServerContract.verifiedVersions?.[version]?.schemaSha256;
-  if (!expectedAppServerDigest || sha256(appServerSchemaBytes) !== expectedAppServerDigest) {
-    throw new Error("Codex app-server schema digest changed; update protocol fixtures before accepting it");
+  const actualAppServerDigest = sha256(appServerSchemaBytes);
+  if (!expectedAppServerDigest || actualAppServerDigest !== expectedAppServerDigest) {
+    throw new Error(
+      `Codex app-server schema digest changed; received ${actualAppServerDigest}; update protocol fixtures before accepting it`,
+    );
   }
   let appServerSchema;
   try {

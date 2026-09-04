@@ -56,6 +56,17 @@ describe("Codex provider contract checker", () => {
 
     expect(() => verifyCodexProviderContracts({
       version,
+      execContract,
+      appServerContract: {
+        ...appServerContract,
+        verifiedVersions: { [version]: { schemaSha256: "0".repeat(64) } },
+      },
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: appServerSchema,
+    })).toThrow(`received ${digest(appServerSchema)}`);
+
+    expect(() => verifyCodexProviderContracts({
+      version,
       execContract: { ...execContract, requiredEventTypes: ["turn.failed"] },
       appServerContract,
       execSchemaBytes: execSchema,
