@@ -30,6 +30,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
   list(): Promise<CanonicalChatListResponse>;
+  openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
@@ -119,6 +120,18 @@ export function createCanonicalShellChatClient(options: {
   }).then(jsonResponse);
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   return {
+    async openEventStream({ cursor, signal }) {
+      const response = await fetchFn(`${options.gatewayUrl}/api/chats/events`, {
+        method: "GET",
+        headers: {
+          Accept: "text/event-stream",
+          ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }),
+        },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60 * 1000)]),
+      });
+      if (!response.ok) throw new CanonicalShellChatRequestError(response.status);
+      return response;
+    },
     async list() {
       return CanonicalChatListResponseSchema.parse(await request("/api/chats?limit=100&scope=global"));
     },

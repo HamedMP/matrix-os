@@ -8,6 +8,7 @@ import {
   CanonicalChatDetailResponseSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatStreamServerFrameSchema,
   CanonicalCreateChatRequestSchema,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
@@ -76,6 +77,20 @@ const run = {
 } as const;
 
 describe("canonical Chat API contracts", () => {
+  it("rejects WebSocket-only pong frames from the server event contract", () => {
+    expect(CanonicalChatStreamServerFrameSchema.safeParse({ type: "pong" }).success).toBe(false);
+    expect(CanonicalChatStreamServerFrameSchema.parse({
+      type: "chat.event",
+      event: {
+        cursor: 4,
+        chatId: "chat_4",
+        revision: 4,
+        eventType: "run.message",
+        createdAt: "2026-08-25T12:00:00.000Z",
+      },
+    })).toMatchObject({ type: "chat.event" });
+  });
+
   it("accepts bounded create requests without client-controlled ownership or Chat ids", () => {
     expect(CanonicalCreateChatRequestSchema.parse({
       clientRequestId: "req_create_api_test",

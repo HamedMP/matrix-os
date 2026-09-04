@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
+import React, { StrictMode, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
 
@@ -34,6 +35,107 @@ beforeEach(() => {
 });
 
 describe("canonical shell Chat state", () => {
+  it("uses streamed invalidations without polling an active Run while attached", async () => {
+    vi.useFakeTimers();
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const streamResponse = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller; },
+    }), { headers: { "content-type": "text/event-stream" } });
+    const runningRecord = {
+      ...record("chat_stream", "Before"),
+      activeRun: { runId: "run_stream", turnId: "cturn_stream", status: "running" as const },
+    };
+    let detailCalls = 0;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/chats/events")) return streamResponse;
+      if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
+      if (url.includes("/api/chats/chat_stream?")) {
+        detailCalls += 1;
+        return Response.json({
+          ...detail("chat_stream", detailCalls === 1 ? "Before" : "After", detailCalls),
+          record: { ...runningRecord, chat: { ...runningRecord.chat, revision: detailCalls } },
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+
+    try {
+      const { result } = renderHook(() => useCanonicalChatState(), {
+        wrapper: ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>,
+      });
+      await act(async () => {
+        for (let index = 0; index < 10; index += 1) await Promise.resolve();
+      });
+      expect(result.current.messages[0]?.content).toBe("Before");
+
+      streamController.enqueue(new TextEncoder().encode([
+        'data: {"type":"chat.stream.attached"}',
+        "",
+        'id: 2',
+        'data: {"type":"chat.event","event":{"cursor":2,"chatId":"chat_stream","revision":2,"eventType":"run.message","createdAt":"2026-09-04T00:00:00.000Z"}}',
+        "",
+        'id: 3',
+        'data: {"type":"chat.event","event":{"cursor":3,"chatId":"chat_stream","revision":3,"eventType":"run.message","createdAt":"2026-09-04T00:00:01.000Z"}}',
+        "",
+        'id: 4',
+        'data: {"type":"chat.event","event":{"cursor":4,"chatId":"chat_stream","revision":4,"eventType":"run.message","createdAt":"2026-09-04T00:00:02.000Z"}}',
+        "",
+        "",
+      ].join("\n")));
+      await act(async () => {
+        for (let index = 0; index < 10; index += 1) await Promise.resolve();
+      });
+      expect(detailCalls).toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(199); });
+      expect(detailCalls).toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(result.current.messages[0]?.content).toBe("After");
+      expect(detailCalls).toBe(2);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_100); });
+      expect(detailCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses a two-second snapshot fallback while the event stream is still attaching", async () => {
+    vi.useFakeTimers();
+    const streamResponse = new Response(new ReadableStream<Uint8Array>(), {
+      headers: { "content-type": "text/event-stream" },
+    });
+    const runningRecord = {
+      ...record("chat_fallback", "Fallback"),
+      activeRun: { runId: "run_fallback", turnId: "cturn_fallback", status: "running" as const },
+    };
+    let detailCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/api/chats/events")) return streamResponse;
+      if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
+      if (url.includes("/api/chats/chat_fallback?")) {
+        detailCalls += 1;
+        return Response.json({ ...detail("chat_fallback", "Fallback", detailCalls), record: runningRecord });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    try {
+      const { unmount } = renderHook(() => useCanonicalChatState());
+      await act(async () => {
+        for (let index = 0; index < 10; index += 1) await Promise.resolve();
+      });
+      expect(detailCalls).toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_900); });
+      expect(detailCalls).toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      expect(detailCalls).toBe(2);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores an out-of-order detail response after switching chats", async () => {
     let resolveA: ((response: Response) => void) | undefined;
     const detailA = new Promise<Response>((resolve) => { resolveA = resolve; });

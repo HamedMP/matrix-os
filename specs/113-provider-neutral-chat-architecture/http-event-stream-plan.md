@@ -17,7 +17,8 @@
 - `Last-Event-ID` is primary; bounded `cursor` query input is the compatibility fallback.
 - Application frames and incomplete client parser state are capped at 16 KiB.
 - Preserve existing global/per-owner subscriber caps, replay limit, attach buffer, stale eviction, failed-sender isolation, and shutdown drain.
-- The SSE response queue is bounded; slow consumers are evicted.
+- The SSE response queue is bounded at 320 chunks so the bounded initial replay
+  fits while genuinely slow live consumers are evicted.
 - Heartbeat interval is 15 seconds; client inactivity timeout is 45 seconds; connection rotation is 5 minutes.
 - Client reconnect backoff remains exponential from 250 ms through 10 seconds.
 - Active-Run snapshot fallback remains 2-10 seconds and runs only while the stream is not server-attached.
@@ -271,6 +272,8 @@ Expected: FAIL because the HTTP route does not exist and the old query-token exc
 Create `event-http-route.ts` with:
 
 - strict `Accept` and cursor/header validation;
+- an immediate HTTP response whose hub attachment and replay continue
+  asynchronously after the request handshake;
 - `ReadableStream<Uint8Array>` using a `CountQueuingStrategy` with a hard queue cap;
 - `TextEncoder` output in `id: ...\ndata: ...\n\n` form;
 - 15-second `: heartbeat\n\n` comments;

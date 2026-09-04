@@ -111,8 +111,9 @@ data: {"type":"chat.event","event":{"cursor":42,...}}
 ## Gateway Data Flow
 
 1. Authenticate and validate the request before creating the response stream.
-2. Create a bounded per-response SSE sink and register it with the canonical
-   Chat event hub.
+2. Return the HTTP response immediately, then register its bounded SSE sink
+   with the canonical Chat event hub so repository replay never delays the
+   response handshake.
 3. Subscribe before replay so committed events cannot fall between replay and
    live delivery.
 4. Send `chat.stream.attached`, the replay window or replay-gap signal,
@@ -131,7 +132,8 @@ data: {"type":"chat.event","event":{"cursor":42,...}}
 - Preserve the existing global and per-owner subscriber caps.
 - Preserve the existing attach buffer and replay limit.
 - Preserve the existing 16 KiB application-frame bound.
-- Use a bounded response queue. A slow consumer is evicted instead of growing
+- Use a 320-chunk response queue. It accommodates the bounded initial replay
+  and attach buffer, while a slow live consumer is evicted instead of growing
   memory without limit.
 - Bound the shared client parser's incomplete-event buffer to 16 KiB.
 - Bound each client connection lifetime to five minutes and reconnect with
@@ -151,8 +153,9 @@ data: {"type":"chat.event","event":{"cursor":42,...}}
    chunk boundaries.
 5. Validate each `data` value with the existing canonical server-frame schema.
 6. Mark connection state `open` only after `chat.stream.attached`.
-7. Preserve the latest canonical cursor from event frames and replay-end
-   control frames.
+7. Preserve the highest confirmed canonical cursor from event frames and
+   replay-end control frames; missing or out-of-order metadata cannot clear or
+   regress the reconnect checkpoint.
 8. Abort on disposal, invalid/oversized frames, retryable stream errors,
    inactivity, or the five-minute connection rotation.
 9. Reconnect with exponential backoff capped at 10 seconds and send

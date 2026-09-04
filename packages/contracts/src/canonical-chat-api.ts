@@ -60,11 +60,6 @@ export const CanonicalChatStreamEventSchema = z.object({
   createdAt: IsoTimestampSchema,
 }).strict();
 
-export const CanonicalChatStreamClientFrameSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("ping") }).strict(),
-  z.object({ type: z.literal("detach") }).strict(),
-]);
-
 export const CanonicalChatStreamServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("chat.stream.attached") }).strict(),
   z.object({
@@ -87,7 +82,6 @@ export const CanonicalChatStreamServerFrameSchema = z.discriminatedUnion("type",
     type: z.literal("chat.stream.closing"),
     reason: z.literal("server_shutdown"),
   }).strict(),
-  z.object({ type: z.literal("pong") }).strict(),
 ]);
 
 export const CanonicalCreateChatRequestSchema = z.object({
@@ -330,7 +324,6 @@ export type CanonicalCreateChatRequest = z.infer<typeof CanonicalCreateChatReque
 export type CanonicalChatEventCursor = z.infer<typeof CanonicalChatEventCursorSchema>;
 export type CanonicalChatOutboxEventType = z.infer<typeof CanonicalChatOutboxEventTypeSchema>;
 export type CanonicalChatStreamEvent = z.infer<typeof CanonicalChatStreamEventSchema>;
-export type CanonicalChatStreamClientFrame = z.infer<typeof CanonicalChatStreamClientFrameSchema>;
 export type CanonicalChatStreamServerFrame = z.infer<typeof CanonicalChatStreamServerFrameSchema>;
 export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateChatProjectRequestSchema>;
 export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdateChatUserStateRequestSchema>;
