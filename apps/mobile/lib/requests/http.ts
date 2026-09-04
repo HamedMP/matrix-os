@@ -76,13 +76,35 @@ export async function fetchAuthenticatedResponse<T>(
       body,
       signal: timeout.signal,
     });
-    if (!response.ok) throw new Error("Request failed");
+    if (!response.ok) {
+      // Dev-only diagnostic: the response body can carry a validation/error
+      // code that "Request failed" alone can't tell you. Never surface this
+      // text to the UI — only the generic errorMessage below is thrown.
+      let bodyPreview = "";
+      try {
+        bodyPreview = (await response.clone().text()).slice(0, 500);
+      } catch {
+        // best-effort only
+      }
+      console.warn(
+        "[mobile] authenticated request failed",
+        method ?? "GET",
+        url,
+        response.status,
+        bodyPreview,
+      );
+      throw new Error("Request failed");
+    }
     return await read(response);
   } catch (error) {
-    console.warn(
-      "[mobile] authenticated request failed",
-      error instanceof Error ? error.name : typeof error,
-    );
+    if (!(error instanceof Error && error.message === "Request failed")) {
+      console.warn(
+        "[mobile] authenticated request failed",
+        method ?? "GET",
+        url,
+        error instanceof Error ? `${error.name}: ${error.message}` : typeof error,
+      );
+    }
     throw new Error(errorMessage);
   } finally {
     timeout.cancel();
