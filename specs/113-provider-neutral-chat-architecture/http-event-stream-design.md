@@ -7,11 +7,12 @@
 ## Purpose
 
 Canonical Chat already persists owner-scoped state in PostgreSQL and publishes
-safe invalidations through its transactional outbox. Desktop currently opens a
-raw WebSocket for those invalidations, but still needs canonical HTTP snapshots
-for transcript content. The transport should converge on normal authenticated
-HTTP streaming while preserving outbox replay, owner isolation, bounded
-resources, and reconnect parity.
+safe invalidations through its transactional outbox. Electron Desktop currently
+opens a raw WebSocket for those invalidations, while Web Desktop and Web Canvas
+poll active Runs every 500 ms. Every surface still needs canonical HTTP snapshots
+for transcript content. The transport should converge on one shared, normally
+authenticated HTTP stream while preserving outbox replay, owner isolation,
+bounded resources, reconnect parity, and OS-view parity.
 
 This is an HTTP event stream, not an MCP endpoint. MCP Streamable HTTP requires
 MCP JSON-RPC messages, POST/GET behavior, protocol initialization, and optional
@@ -29,16 +30,17 @@ for client mutations, and needs only a server-to-client invalidation stream.
 4. Keep the transactional outbox, monotonic cursor, attach buffering, replay
    gap, subscriber caps, failed-sender eviction, and shutdown drain.
 5. Use the standard request-principal bearer path. Remove the Chat WebSocket
-   query-token exception and the Desktop WebSocket-token request.
+   query-token exception and the Electron Desktop WebSocket-token request.
 6. Resume with `Last-Event-ID`; accept the bounded `cursor` query parameter as
    a compatibility fallback when the header is absent. A valid
    `Last-Event-ID` takes precedence.
 7. Add SSE comment heartbeats without exposing a new application frame.
 8. Remove the Chat client `ping`/`detach` frames and server `pong` frame. HTTP
    cancellation owns detach; SSE heartbeats own idle liveness.
-9. Preserve the Desktop connection-state contract: only
+9. Share one client event-source implementation across Electron Desktop, Web
+   Desktop, and Web Canvas. Only
    `chat.stream.attached` marks the stream healthy.
-10. Preserve bounded 2-10 second active-Run snapshot polling only while the
+10. Preserve bounded 2-10 second active-Run snapshot polling on every surface only while the
     stream is unavailable, attaching, or reconnecting.
 
 ## Alternatives Rejected
@@ -53,8 +55,8 @@ adding interoperability.
 ### WebSocket and HTTP dual transport
 
 Rejected because it doubles auth, replay, shutdown, and test surfaces. During
-a rolling version mismatch, an older Desktop can continue through its existing
-polling fallback, while a newer Desktop connected to an older Gateway can do
+a rolling version mismatch, an older client can continue through its existing
+polling fallback, while a newer client connected to an older Gateway can do
 the same until both sides update.
 
 ### Transcript content streaming in this change
@@ -131,18 +133,19 @@ data: {"type":"chat.event","event":{"cursor":42,...}}
 - Preserve the existing 16 KiB application-frame bound.
 - Use a bounded response queue. A slow consumer is evicted instead of growing
   memory without limit.
-- Bound the Desktop parser's incomplete-event buffer to 16 KiB.
-- Bound each Desktop connection lifetime to five minutes and reconnect with
+- Bound the shared client parser's incomplete-event buffer to 16 KiB.
+- Bound each client connection lifetime to five minutes and reconnect with
   its last cursor. This gives the long-lived fetch an explicit timeout while
   preserving continuous service.
 - Abort and reconnect if no frame or heartbeat arrives for 45 seconds.
 
-## Desktop Data Flow
+## Client Data Flow
 
 1. Build `/api/chats/events` through the active runtime URL and open a streaming
    `fetch` with `Accept: text/event-stream` and an abort signal.
-2. Rely on the trusted Desktop network layer to inject the existing bearer
-   credential, exactly like other authenticated API requests.
+2. Electron Desktop relies on its trusted network layer to inject the existing
+   bearer credential; Web Desktop and Web Canvas use their existing authenticated
+   same-origin request path.
 3. Validate HTTP status and content type before reading the body.
 4. Incrementally decode UTF-8 bytes and parse SSE records across arbitrary
    chunk boundaries.
@@ -163,7 +166,7 @@ data: {"type":"chat.event","event":{"cursor":42,...}}
   errors where the response has already begun.
 - Pre-attachment validation and auth failures use normal bounded HTTP errors.
 - One subscriber failure never prevents delivery to another subscriber.
-- Desktop logs allowlisted diagnostic categories, never credentials, response
+- Clients log allowlisted diagnostic categories, never credentials, response
   bodies, transcript content, provider names, or filesystem paths.
 - A replay gap forces a full canonical list/detail refresh.
 - Malformed SSE or invalid canonical frames close the response and enter the
@@ -171,10 +174,11 @@ data: {"type":"chat.event","event":{"cursor":42,...}}
 
 ## Compatibility
 
-- New Desktop plus old Gateway: HTTP stream receives `404`; Desktop uses the
+- New client plus old Gateway: HTTP stream receives `404`; the client uses the
   bounded polling fallback until the Gateway updates.
-- Old Desktop plus new Gateway: WebSocket connection fails; old Desktop uses
-  its existing polling fallback until the Desktop updates.
+- Old Electron Desktop plus new Gateway: WebSocket connection fails; old Electron
+  Desktop uses its existing polling fallback until it updates. Older Web clients
+  continue their existing active-Run polling until their bundle updates.
 - Matching versions: HTTP invalidations are primary and active polling stops
   once `chat.stream.attached` is received.
 
@@ -193,7 +197,7 @@ rewrite is required.
   isolation;
 - removal of the Chat WebSocket query-token path.
 
-### Desktop
+### Clients and OS views
 
 - headers, runtime routing, and no WebSocket-token request;
 - fragmented and combined SSE chunks;
@@ -203,10 +207,12 @@ rewrite is required.
   exponential backoff;
 - no active polling while attached and 2-10 second fallback otherwise;
 - coalesced message invalidations and Work rail message-only filtering.
+- Web Desktop and Web Canvas consume the same shared event-source implementation
+  and stop 500 ms active-Run polling while server-attached.
 
 ### Gates
 
-- focused Gateway and Desktop tests;
+- focused Gateway, Electron Desktop, Web Desktop, and Web Canvas tests;
 - full repository typecheck;
 - changed-area pattern scan;
 - full test suite with unrelated baseline failures reported separately;

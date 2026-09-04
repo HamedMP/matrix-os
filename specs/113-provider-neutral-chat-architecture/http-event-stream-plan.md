@@ -4,7 +4,7 @@
 
 **Goal:** Replace the canonical Chat WebSocket invalidation path with a bearer-authenticated HTTP SSE stream while preserving outbox replay and bounded polling fallback.
 
-**Architecture:** The owner-scoped outbox hub remains transport-neutral and writes validated canonical frames into a bounded sink. A Hono GET route adapts that sink to SSE with heartbeats, cursor IDs, cancellation cleanup, and normal request-principal auth. Desktop opens the stream through its typed API client, incrementally parses bounded SSE records, and keeps the existing connection-state and fallback-polling behavior.
+**Architecture:** The owner-scoped outbox hub remains transport-neutral and writes validated canonical frames into a bounded sink. A Hono GET route adapts that sink to SSE with heartbeats, cursor IDs, cancellation cleanup, and normal request-principal auth. A shared `@matrix-os/ui` event source incrementally parses bounded SSE records for Electron Desktop, Web Desktop, and Web Canvas; each surface keeps the same connection-state and fallback-polling behavior.
 
 **Tech Stack:** Node.js 24, TypeScript strict, Hono, Web `ReadableStream`, React 19, Zod 4, Vitest, pnpm/bun through Flox.
 
@@ -15,11 +15,11 @@
 - PostgreSQL snapshots remain the canonical Chat source of truth; SSE carries invalidation metadata only.
 - `GET /api/chats/events` uses the existing verified bearer principal and never accepts a user-supplied owner ID.
 - `Last-Event-ID` is primary; bounded `cursor` query input is the compatibility fallback.
-- Application frames and incomplete Desktop parser state are capped at 16 KiB.
+- Application frames and incomplete client parser state are capped at 16 KiB.
 - Preserve existing global/per-owner subscriber caps, replay limit, attach buffer, stale eviction, failed-sender isolation, and shutdown drain.
 - The SSE response queue is bounded; slow consumers are evicted.
-- Heartbeat interval is 15 seconds; Desktop inactivity timeout is 45 seconds; connection rotation is 5 minutes.
-- Desktop reconnect backoff remains exponential from 250 ms through 10 seconds.
+- Heartbeat interval is 15 seconds; client inactivity timeout is 45 seconds; connection rotation is 5 minutes.
+- Client reconnect backoff remains exponential from 250 ms through 10 seconds.
 - Active-Run snapshot fallback remains 2-10 seconds and runs only while the stream is not server-attached.
 - Do not add MCP JSON-RPC, MCP initialization, MCP session IDs, provider payloads, transcript content, or changes to non-Chat WebSockets.
 - Use TDD for every behavior change and keep the working tree scoped to this plan.
@@ -36,9 +36,15 @@
 - `packages/gateway/src/auth.ts`: remove only `/ws/chats/events` from the WebSocket query-token allowlist.
 - `packages/gateway/src/server.ts`: register the HTTP event route instead of the Chat WebSocket route.
 - `desktop/src/renderer/src/lib/api.ts`: expose a typed long-lived authenticated streaming GET that preserves runtime routing and unauthorized handling.
-- `desktop/src/renderer/src/lib/canonical-chat-sse.ts`: bounded incremental SSE parser with no React or transport state.
-- `desktop/src/renderer/src/lib/canonical-chat-client.ts`: replace WebSocket construction/token acquisition with streaming fetch consumption.
+- `packages/ui/src/canonical-chat-event-source.ts`: shared bounded SSE parser, connection lifecycle, replay, and invalidation source.
+- `packages/ui/src/index.ts`: export the shared event source contract.
+- `desktop/src/renderer/src/lib/canonical-chat-client.ts`: remove its WebSocket implementation and re-export the shared event-source contract.
 - `desktop/src/renderer/src/features/work/WorkTab.tsx`: inject `ApiClient.openStream`; remove Chat WebSocket token and constructor wiring.
+- `desktop/src/renderer/src/features/work/WorkSurfaceRuntime.tsx`: use the same streaming request injection for the hosted Work surface.
+- `shell/src/lib/canonical-chat-client.ts`: expose an authenticated streaming GET with a bounded connection lifetime.
+- `shell/src/hooks/useCanonicalChatState.ts`: share one event source across Web Desktop/Web Canvas and use polling only as fallback.
+- `tests/ui/canonical-chat-event-source.test.ts`: shared parser, lifecycle, replay, reconnect, and bounds coverage.
+- `tests/shell/canonical-chat-state.test.tsx`: Web Desktop/Web Canvas invalidation-primary and fallback coverage.
 - `tests/gateway/chat-event-stream.test.ts`: transport-neutral hub tests and HTTP route/auth/SSE regression coverage.
 - `tests/desktop/canonical-chat-event-source.test.ts`: streaming response, parsing, reconnect, health, cursor, and disposal coverage.
 - `tests/desktop/api-client.test.ts`: authenticated stream URL/runtime/status/timeout behavior.
@@ -302,15 +308,21 @@ git commit -m "feat(chat): stream invalidations over authenticated http"
 
 ---
 
-### Task 4: Replace the Desktop WebSocket with streaming fetch
+### Task 4: Use one HTTP event source across all Chat surfaces
 
 **Files:**
-- Create: `desktop/src/renderer/src/lib/canonical-chat-sse.ts`
+- Create: `packages/ui/src/canonical-chat-event-source.ts`
+- Modify: `packages/ui/src/index.ts`
 - Modify: `desktop/src/renderer/src/lib/api.ts`
 - Modify: `desktop/src/renderer/src/lib/canonical-chat-client.ts`
 - Modify: `desktop/src/renderer/src/features/work/WorkTab.tsx`
+- Modify: `desktop/src/renderer/src/features/work/WorkSurfaceRuntime.tsx`
+- Modify: `shell/src/lib/canonical-chat-client.ts`
+- Modify: `shell/src/hooks/useCanonicalChatState.ts`
 - Modify: `tests/desktop/api-client.test.ts`
-- Rewrite: `tests/desktop/canonical-chat-event-source.test.ts`
+- Create: `tests/ui/canonical-chat-event-source.test.ts`
+- Rewrite: `tests/desktop/canonical-chat-event-source.test.ts` as the Electron adapter coverage
+- Modify: `tests/shell/canonical-chat-state.test.tsx`
 - Verify: `tests/desktop/canonical-chat-route-controller.test.tsx`
 - Verify: `tests/desktop/work-rail.test.tsx`
 - Verify: `tests/desktop/work-tab.test.tsx`
@@ -327,7 +339,7 @@ export interface StreamRequestOptions extends RequestTimeoutOptions {
 openStream(path: string, options: StreamRequestOptions): Promise<Response>;
 ```
 
-- Produces from `canonical-chat-sse.ts`:
+- Produces from `packages/ui/src/canonical-chat-event-source.ts`:
 
 ```ts
 export function createCanonicalChatSseParser(options: {
@@ -343,9 +355,9 @@ export function createCanonicalChatSseParser(options: {
 openStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
 ```
 
-- [ ] **Step 1: Write failing parser tests**
+- [ ] **Step 1: Write failing shared parser and event-source tests**
 
-In `canonical-chat-event-source.test.ts`, exercise the pure parser with:
+In `tests/ui/canonical-chat-event-source.test.ts`, exercise the pure parser and source with:
 
 - one event split across UTF-8 and line boundaries;
 - multiple events in one chunk;
@@ -365,13 +377,13 @@ expect(frames).toEqual([{ id: "8", data: '{"type":"chat.stream.attached"}' }]);
 
 - [ ] **Step 2: Run the Desktop event-source test and verify red**
 
-Run: `flox activate -- bunx vitest run tests/desktop/canonical-chat-event-source.test.ts`
+Run: `flox activate -- bunx vitest run tests/ui/canonical-chat-event-source.test.ts`
 
 Expected: FAIL because the parser module and streaming fetch seam do not exist.
 
-- [ ] **Step 3: Implement the bounded pure SSE parser**
+- [ ] **Step 3: Implement the bounded shared SSE parser and event source**
 
-Implement incremental `TextDecoder` parsing without a new dependency. Ignore comment lines, join multiple `data:` lines with `\n`, keep the latest `id:`, dispatch on a blank line, and throw `ChatEventFrameTooLarge` before buffered characters exceed 16 KiB. `finish()` flushes the decoder but does not dispatch an incomplete record.
+Implement incremental `TextDecoder` parsing without a new dependency. Ignore comment lines, join multiple `data:` lines with `\n`, keep the latest `id:`, dispatch on a blank line, and throw `ChatEventFrameTooLarge` before buffered characters exceed 16 KiB. `finish()` flushes the decoder but does not dispatch an incomplete record. Move the connection state, cursor replay, dedupe, inactivity, rotation, reconnect, consumer caps, and safe canonical-frame validation into the shared module so Web and Electron cannot drift.
 
 - [ ] **Step 4: Add the typed API streaming request**
 
@@ -417,7 +429,7 @@ In `canonical-chat-client.ts`:
 - rotate each connection after five minutes using an explicit timeout signal;
 - abort/release the reader on reconnect and disposal.
 
-- [ ] **Step 7: Rewire WorkTab**
+- [ ] **Step 7: Rewire Electron Desktop and Web surfaces**
 
 Replace token and WebSocket injection with:
 
@@ -432,21 +444,24 @@ openStream: ({ cursor, signal }) => api.openStream("/api/chats/events", {
 
 Keep event-source sharing/disposal and runtime-scope recreation unchanged.
 
-- [ ] **Step 8: Run focused Desktop tests and typecheck**
+Apply the same injection in `WorkSurfaceRuntime.tsx`. Add `openEventStream` to the Shell client, create one shared event source in `useCanonicalChatState`, subscribe list/detail refreshes to its safe invalidations, and replace the 500 ms active-Run loop with the same 2-10 second fallback used only while the source is not server-attached. Because the hook is shared, this covers both Web Desktop and Web Canvas.
+
+- [ ] **Step 8: Run focused client tests and typecheck**
 
 Run:
 
 ```bash
-flox activate -- bunx vitest run tests/desktop/api-client.test.ts tests/desktop/canonical-chat-event-source.test.ts tests/desktop/canonical-chat-route-controller.test.tsx tests/desktop/work-rail.test.tsx tests/desktop/work-tab.test.tsx
+flox activate -- bunx vitest run tests/ui/canonical-chat-event-source.test.ts tests/desktop/api-client.test.ts tests/desktop/canonical-chat-event-source.test.ts tests/desktop/canonical-chat-route-controller.test.tsx tests/desktop/work-rail.test.tsx tests/desktop/work-tab.test.tsx tests/shell/canonical-chat-state.test.tsx
 flox activate -- pnpm --filter desktop run typecheck
+flox activate -- pnpm --filter shell run typecheck
 ```
 
-Expected: PASS. No Desktop code requests `/api/auth/ws-token` for canonical Chat or constructs a Chat WebSocket.
+Expected: PASS. No Electron Desktop code requests `/api/auth/ws-token` for canonical Chat or constructs a Chat WebSocket; Web Desktop and Web Canvas do not poll an active Run while server-attached.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add desktop/src/renderer/src/lib/api.ts desktop/src/renderer/src/lib/canonical-chat-sse.ts desktop/src/renderer/src/lib/canonical-chat-client.ts desktop/src/renderer/src/features/work/WorkTab.tsx tests/desktop/api-client.test.ts tests/desktop/canonical-chat-event-source.test.ts
+git add packages/ui/src/canonical-chat-event-source.ts packages/ui/src/index.ts desktop/src/renderer/src/lib/api.ts desktop/src/renderer/src/lib/canonical-chat-client.ts desktop/src/renderer/src/features/work/WorkTab.tsx desktop/src/renderer/src/features/work/WorkSurfaceRuntime.tsx shell/src/lib/canonical-chat-client.ts shell/src/hooks/useCanonicalChatState.ts tests/ui/canonical-chat-event-source.test.ts tests/desktop/api-client.test.ts tests/desktop/canonical-chat-event-source.test.ts tests/shell/canonical-chat-state.test.tsx
 git commit -m "refactor(chat): consume invalidations over http streaming"
 ```
 
@@ -468,7 +483,7 @@ git commit -m "refactor(chat): consume invalidations over http streaming"
 Run:
 
 ```bash
-rg -n 'ws/chats/events|fetchWebSocketToken|DesktopCanonicalChatWebSocket|CanonicalChatStreamClientFrameSchema|event-websocket-route' packages desktop tests specs
+rg -n 'ws/chats/events|fetchWebSocketToken|DesktopCanonicalChatWebSocket|CanonicalChatStreamClientFrameSchema|event-websocket-route|ACTIVE_RUN_POLL_MS = 500' packages desktop shell tests specs
 ```
 
 Expected: no implementation/test/spec matches. Unrelated non-Chat WebSocket routes remain untouched.
@@ -478,7 +493,7 @@ Expected: no implementation/test/spec matches. Unrelated non-Chat WebSocket rout
 Run:
 
 ```bash
-flox activate -- bunx vitest run tests/contracts/canonical-chat-api.test.ts tests/gateway/chat-event-stream.test.ts tests/gateway/auth.test.ts tests/desktop/api-client.test.ts tests/desktop/canonical-chat-event-source.test.ts tests/desktop/canonical-chat-route-controller.test.tsx tests/desktop/work-rail.test.tsx tests/desktop/work-tab.test.tsx
+flox activate -- bunx vitest run tests/contracts/canonical-chat-api.test.ts tests/gateway/chat-event-stream.test.ts tests/gateway/auth.test.ts tests/ui/canonical-chat-event-source.test.ts tests/desktop/api-client.test.ts tests/desktop/canonical-chat-event-source.test.ts tests/desktop/canonical-chat-route-controller.test.tsx tests/desktop/work-rail.test.tsx tests/desktop/work-tab.test.tsx tests/shell/canonical-chat-state.test.tsx
 ```
 
 Expected: PASS.
@@ -524,6 +539,8 @@ Update the English PR summary/tests/invariants to state:
 - canonical snapshots and outbox cursors remain authoritative;
 - no MCP JSON-RPC or transcript payload streaming is introduced;
 - exact focused, typecheck, pattern, and full-suite evidence.
+- a separate private `FinnaAI/matrix-os-site` documentation PR describing the
+  user-visible realtime/fallback behavior without exposing internal auth details.
 
 Push with `git push`.
 
