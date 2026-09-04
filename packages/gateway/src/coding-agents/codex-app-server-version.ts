@@ -23,9 +23,20 @@ const CodexAppServerContractSchema = z.object({
   verifiedVersions: z.record(CodexVersionSchema, SchemaVerificationSchema),
   requiredServerMethods: z.array(z.string().min(1).max(100)).min(1).max(16),
   requiredServerNotifications: z.array(z.string().min(1).max(100)).min(1).max(16),
+  requiredServerProtocolSchemaSha256: z.record(
+    z.string().min(1).max(100),
+    SchemaDigestSchema,
+  ),
 }).strict().refine(
   (value) => Object.hasOwn(value.verifiedVersions, value.latestVerifiedVersion),
   { message: "Latest Codex app-server version must have a verified schema" },
+).refine(
+  (value) => {
+    const requiredMethods = [...value.requiredServerMethods, ...value.requiredServerNotifications].sort();
+    return JSON.stringify(Object.keys(value.requiredServerProtocolSchemaSha256).sort())
+      === JSON.stringify(requiredMethods);
+  },
+  { message: "Every required Codex app-server method must have a semantic schema digest" },
 );
 
 export const CODEX_APP_SERVER_CONTRACT = CodexAppServerContractSchema.parse(contract);

@@ -4,6 +4,55 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, stableJson(value[key])]),
+  );
+}
+
+function resolveLocalRef(schema, ref) {
+  if (!ref.startsWith("#/")) throw new Error(`Codex app-server schema uses a non-local reference: ${ref}`);
+  return ref.slice(2).split("/").reduce((value, segment) => {
+    const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!value || typeof value !== "object" || !Object.hasOwn(value, key)) {
+      throw new Error(`Codex app-server schema reference is unavailable: ${ref}`);
+    }
+    return value[key];
+  }, schema);
+}
+
+export function codexProtocolMethodDigest(schema, definitionName, method) {
+  const variants = schema?.definitions?.[definitionName]?.oneOf;
+  if (!Array.isArray(variants)) {
+    throw new Error(`Codex app-server schema definition is unavailable: ${definitionName}`);
+  }
+  const variant = variants.find((candidate) => candidate?.properties?.method?.enum?.includes(method));
+  if (!variant) throw new Error(`Codex app-server method is unavailable: ${method}`);
+
+  const references = new Map();
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    if (typeof value.$ref === "string" && !references.has(value.$ref)) {
+      const referencedSchema = resolveLocalRef(schema, value.$ref);
+      references.set(value.$ref, referencedSchema);
+      visit(referencedSchema);
+    }
+    Object.values(value).forEach(visit);
+  };
+  visit(variant);
+
+  const referencedSchemas = Object.fromEntries(
+    [...references.entries()].sort(([left], [right]) => left.localeCompare(right)),
+  );
+  return sha256(Buffer.from(JSON.stringify(stableJson({ variant, referencedSchemas }))));
+}
+
 function sortedVersions(contract) {
   return Object.keys(contract.verifiedVersions ?? {}).sort();
 }
@@ -68,6 +117,19 @@ export function verifyCodexProviderContracts({
   for (const notification of appServerContract.requiredServerNotifications ?? []) {
     if (!serializedAppServerSchema.includes(JSON.stringify(notification))) {
       throw new Error(`Codex app-server notification is unavailable: ${notification}`);
+    }
+  }
+  for (const [method, expectedDigest] of Object.entries(
+    appServerContract.requiredServerProtocolSchemaSha256 ?? {},
+  )) {
+    const definitionName = (appServerContract.requiredServerMethods ?? []).includes(method)
+      ? "ServerRequest"
+      : "ServerNotification";
+    const actualDigest = codexProtocolMethodDigest(appServerSchema, definitionName, method);
+    if (actualDigest !== expectedDigest) {
+      throw new Error(
+        `Codex app-server payload schema changed for ${method}; received ${actualDigest}`,
+      );
     }
   }
 }

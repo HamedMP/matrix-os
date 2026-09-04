@@ -68,5 +68,17 @@
     "item/commandExecution/outputDelta",
     "thread/tokenUsage/updated",
     "turn/completed"
-  ]
+  ],
+  "requiredServerProtocolSchemaSha256": {
+    "item/commandExecution/requestApproval": "ff60bdaf1c4a31d22a5b820a196abc3c02f1847996c5aa49aa15b40bc562b8be",
+    "item/fileChange/requestApproval": "ac5be166d6a7668792b810a97be8bdfb02b2107320d93d0c4d783a11d32d8cf9",
+    "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
+    "item/permissions/requestApproval": "12ce5d7e867474efcdb8354bc1324e3fdd93b2078cacbbe7d5a0ad15a85a331f",
+    "item/started": "a67dae0c2bcd4245eec5a249c7ce71ae193604a2601a5ee2d14efd5e9beb2ed6",
+    "item/completed": "c26cb115b8ebff983ca9d13b004a31183552df287d6d048988bc05af13e30cb0",
+    "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
+    "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
+    "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
+    "turn/completed": "b5c5c282d0727bc7fb2a73147cb8287e7db2732964a41d5ce83660c40db2e2f1"
+  }
 }
