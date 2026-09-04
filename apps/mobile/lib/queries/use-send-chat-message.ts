@@ -44,7 +44,11 @@ export function useSendChatMessage() {
         });
         targetChatId = record.chat.id;
         revision = record.chat.revision;
-        bindDraftChatId(targetChatId);
+        // Deliberately not bound yet: binding here would enable
+        // useCanonicalChatDetail for a chat that has zero messages, firing an
+        // immediate fetch that can race the post-admission refetch below and
+        // (given the 30s staleTime) permanently overwrite it with an empty
+        // result. Bind only once the turn is actually admitted, below.
       }
 
       const admission = await admitChatTurn(token, gatewayUrl, targetChatId, {
@@ -55,6 +59,10 @@ export function useSendChatMessage() {
         interactionMode: "default",
         permissionMode: "supervised",
       });
+
+      if (!chatId) {
+        bindDraftChatId(targetChatId);
+      }
 
       const computerKey = `${computer.handle}:${computer.runtimeSlot}`;
       const uid = userId ?? "signed-out";
