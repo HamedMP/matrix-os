@@ -237,8 +237,11 @@ function MessageBubble({ message }: { message: TranscriptMessage }) {
 }
 
 function AssistantMessage({ message }: { message: TranscriptMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasWork = message.toolCalls.length > 0;
+  // Auto-expanded while the turn is running (so reasoning/tool activity is
+  // visible live, matching desktop), until the user manually toggles it.
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const expanded = manualExpanded ?? message.isRunning;
+  const hasWork = message.toolCalls.length > 0 || message.reasoningNotes.length > 0;
   const workedLabel = message.isRunning
     ? "Working…"
     : message.elapsedSeconds != null
@@ -252,7 +255,7 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
           accessibilityRole="button"
           accessibilityLabel={hasWork ? (expanded ? "Hide work" : "Show work") : workedLabel}
           disabled={!hasWork}
-          onPress={() => setExpanded((value) => !value)}
+          onPress={() => setManualExpanded(!expanded)}
           style={({ pressed }) => [styles.workedRow, pressed && hasWork && styles.pressed]}
         >
           <Text style={styles.workedText}>{workedLabel}</Text>
@@ -267,6 +270,9 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
       ) : null}
       {expanded && hasWork ? (
         <View style={styles.toolCallsList}>
+          {message.reasoningNotes.map((note) => (
+            <Text key={note.id} style={styles.reasoningText}>{note.label}</Text>
+          ))}
           {message.toolCalls.map((call) => (
             <Text key={call.id} style={styles.toolText}>{call.label}</Text>
           ))}
@@ -370,6 +376,12 @@ const styles = StyleSheet.create({
   },
   toolText: {
     fontFamily: mockFonts.medium,
+    fontSize: 13,
+    color: mockColors.muted,
+  },
+  reasoningText: {
+    fontFamily: mockFonts.body,
+    fontStyle: "italic",
     fontSize: 13,
     color: mockColors.muted,
   },
