@@ -84,7 +84,7 @@ export const CreateTerminalTabInputSchema = TerminalInputSchema.extend({
 }).strict();
 
 export const SelectTerminalTabInputSchema = TerminalInputSchema.extend({
-  tab: z.number().int().min(0).max(1024),
+  tabId: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 }).strict();
 
 export const SendTerminalInputSchema = TerminalInputSchema.extend({

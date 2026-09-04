@@ -41,7 +41,7 @@ The implementation deliberately distinguishes two execution modes:
 
 ### Post-design re-check
 
-The contracts retain explicit runtime identity, preserve the gateway as the authorization source of truth, and add no server endpoints. State-changing tools reuse existing endpoint validation and atomicity. No constitution exception is required.
+The contracts retain explicit runtime identity and preserve the gateway as the authorization source of truth. One authenticated terminal subroute adds stable-ID tab selection while leaving existing position-based clients compatible; other state-changing tools reuse existing endpoint validation and atomicity. No constitution exception is required.
 
 ## Architecture
 
@@ -120,16 +120,16 @@ tests/plugins/
 └── matrix-os-plugin.test.ts
 ```
 
-**Structure Decision**: Keep the protocol adapter in the already published and authenticated `@finnaai/matrix` CLI, organized by responsibility to keep files below the project's large-file threshold. Extend the existing `matrix-os` plugin rather than creating a second marketplace item. Reuse gateway routes unchanged.
+**Structure Decision**: Keep the protocol adapter in the already published and authenticated `@finnaai/matrix` CLI, organized by responsibility to keep files below the project's large-file threshold. Extend the existing `matrix-os` plugin rather than creating a second marketplace item. Reuse existing gateway routes except for one backward-compatible stable-ID tab-selection subroute.
 
 ## Delivery Strategy
 
-One implementation PR is appropriate because the source change is isolated to the CLI package and existing plugin, adds no gateway endpoints or migrations, and can remain below 20 production/test files. The PR is independently releasable after publishing the next CLI patch version. A separate public documentation PR in `FinnaAI/matrix-os-site` is required before release.
+One implementation PR is appropriate because the source change is one cohesive remote-computer boundary spanning the CLI, existing terminal adapter, and existing plugin; it adds one backward-compatible terminal subroute and no migration. The PR is independently releasable after publishing the next CLI patch version and host bundle together. A separate public documentation PR in `FinnaAI/matrix-os-site` is required before release.
 
 ### Required PR invariants
 
 - **Source of truth**: active CLI profile/auth for principal identity; platform computer inventory for available runtimes; selected gateway for terminals/files/chats.
-- **Lock/transaction scope**: none added; one-shot operations delegate to existing atomic gateway behavior.
+- **Lock/transaction scope**: no database scope is added; Zellij returns the created tab ID in the same process invocation, avoiding list/create inference or a new lock.
 - **Acceptable orphan states**: a newly created terminal or tab may remain if the MCP client disconnects after the gateway commits; this is visible owner data and can be managed through Matrix.
 - **Auth source of truth**: platform-issued sync bearer plus selected computer-scoped replacement token.
 - **Deferred scope**: hosted Streamable HTTP/OAuth MCP, chat mutations, delete tools, pane tools, live terminal streaming, large-file MCP streaming, disabling host local-shell tools, and public marketplace publication.

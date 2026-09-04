@@ -167,12 +167,12 @@ export function createMatrixMcpServer(options: MatrixMcpServerOptions = {}): Mcp
   }))));
 
   server.registerTool("select_terminal_tab", {
-    description: "Select the active tab in a named persistent Matrix terminal before sending input.",
+    description: "Select the active tab by its stable Matrix tab ID before sending input.",
     inputSchema: SelectTerminalTabInputSchema.shape,
     annotations: changeAnnotations,
   }, async (input) => safely(() => withClient(input.computer, async (client, computer) => {
-    await client.selectTab(input.terminal, input.tab);
-    return { ok: true, computer, terminal: input.terminal, tab: input.tab };
+    await client.selectTab(input.terminal, input.tabId);
+    return { ok: true, computer, terminal: input.terminal, tabId: input.tabId };
   })));
 
   server.registerTool("send_terminal_input", {

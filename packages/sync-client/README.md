@@ -70,7 +70,8 @@ The server exposes tools to:
 
 `run_command` is best for short commands that need stdout, stderr, and exit
 status. Persistent terminal tools are best for long-running work the user wants
-to observe or reattach. MCP file download returns at most 1 MiB as base64 and
+to observe or reattach. Tab creation returns a stable tab ID, and tab selection
+uses that ID rather than the mutable display position. MCP file download returns at most 1 MiB as base64 and
 does not write a local path; use `matrix download` for larger files.
 
 Every computer-scoped call requires the `runtimeSlot` returned by

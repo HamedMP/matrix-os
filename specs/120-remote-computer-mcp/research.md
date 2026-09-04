@@ -40,11 +40,11 @@
 - Persist every tool-selected computer to the CLI profile: rejected because an agent call should not alter the user's global CLI state.
 - Accept raw gateway URLs: rejected because it would bypass inventory ownership and create an SSRF boundary.
 
-## Decision 4: Use existing interfaces without adding gateway endpoints
+## Decision 4: Reuse existing interfaces with one stable-tab extension
 
-**Decision**: Delegate to existing computer inventory/runtime selection, terminal, captured command, file list/blob, and canonical chat routes.
+**Decision**: Delegate to existing computer inventory/runtime selection, terminal, captured command, file list/blob, and canonical chat routes. Add one authenticated terminal subroute that selects a tab by the stable ID returned atomically by Zellij.
 
-**Rationale**: These routes already implement owner auth, home-path security, zellij lifecycle, output caps, atomic upload, and canonical chat ownership. The MCP boundary adds stricter limits where protocol responses need to stay smaller.
+**Rationale**: These routes already implement owner auth, home-path security, zellij lifecycle, output caps, atomic upload, and canonical chat ownership. Existing position-based tab selection is not safe after concurrent tab creation, while Zellij 0.44.3 emits a stable tab ID from `new-tab` and supports `go-to-tab-by-id`. The narrow subroute preserves existing position-based clients and the MCP boundary adds stricter limits where protocol responses need to stay smaller.
 
 **Alternatives considered**:
 

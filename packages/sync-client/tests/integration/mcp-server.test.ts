@@ -149,8 +149,8 @@ describe("Matrix remote computer MCP server", () => {
       requests.push({ url, method, ...(typeof init?.body === "string" ? { body: init.body } : {}) });
       if (method === "GET" && url.includes("/sessions?")) return json(200, { sessions: [{ name: "work", status: "active" }] });
       if (method === "POST" && url.includes("/sessions?") && !url.includes("/tabs")) return json(201, { name: "work", created: true });
-      if (method === "GET" && url.includes("/tabs?")) return json(200, { tabs: [{ idx: 0, name: "shell", focused: true }] });
-      if (method === "POST" && url.includes("/tabs?") && !url.includes("/go")) return json(200, { tab: { ok: true } });
+      if (method === "GET" && url.includes("/tabs?")) return json(200, { tabs: [{ id: 11, idx: 0, name: "shell", focused: true }] });
+      if (method === "POST" && url.includes("/tabs?") && !url.includes("/go")) return json(200, { tab: { id: 41, name: "tests" } });
       return json(200, { ok: true });
     });
     const { client, server } = await connect({ fetch: fetcher });
@@ -162,16 +162,16 @@ describe("Matrix remote computer MCP server", () => {
     } }))).toMatchObject({ ok: true, terminal: { name: "work" } });
     expect(textResult(await client.callTool({ name: "list_terminal_tabs", arguments: {
       computer: "review", terminal: "work",
-    } }))).toMatchObject({ ok: true, tabs: [{ idx: 0, name: "shell" }] });
+    } }))).toMatchObject({ ok: true, tabs: [{ id: 11, idx: 0, name: "shell" }] });
     expect(textResult(await client.callTool({ name: "create_terminal_tab", arguments: {
       computer: "review", terminal: "work", name: "tests", cwd: "projects/repo",
-    } }))).toMatchObject({ ok: true, tab: { created: true } });
-    await client.callTool({ name: "select_terminal_tab", arguments: { computer: "review", terminal: "work", tab: 1 } });
+    } }))).toMatchObject({ ok: true, tab: { id: 41, name: "tests" } });
+    await client.callTool({ name: "select_terminal_tab", arguments: { computer: "review", terminal: "work", tabId: 41 } });
     await client.callTool({ name: "send_terminal_input", arguments: {
       computer: "review", terminal: "work", data: "bun test\n",
     } });
 
-    expect(requests.some((request) => request.url.includes("/tabs/1/go?") && request.method === "POST")).toBe(true);
+    expect(requests.some((request) => request.url.includes("/tabs/by-id/41/go?") && request.method === "POST")).toBe(true);
     expect(requests.some((request) => request.url.includes("/input?") && request.body === JSON.stringify({ data: "bun test\n" }))).toBe(true);
 
     await client.close();

@@ -123,14 +123,14 @@ describe("Matrix MCP gateway client", () => {
   it("parses the gateway's terminal creation acknowledgements", async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ name: "agent-task", created: true }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tab: { ok: true } }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tab: { id: 41, name: "tests" } }), { status: 200 }));
     const client = createMcpGatewayClient(runtime, { fetch: fetcher });
 
     await expect(client.createTerminal({ name: "agent-task" })).resolves.toEqual({
       name: "agent-task",
       created: true,
     });
-    await expect(client.createTab("agent-task", { name: "tests" })).resolves.toEqual({ created: true });
+    await expect(client.createTab("agent-task", { name: "tests" })).resolves.toEqual({ id: 41, name: "tests" });
   });
 
   it("preserves the bounded file response media type for UTF-8 reads", async () => {

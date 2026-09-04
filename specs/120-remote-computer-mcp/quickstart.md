@@ -47,7 +47,7 @@ The full-path integration test uses a bounded fake platform/gateway server and v
 
 ### Validation evidence (2026-09-04)
 
-- Remote MCP unit/integration suites: 30 tests passed across four files.
+- Remote MCP unit/integration suites: 31 tests passed across four files.
 - Sync client: TypeScript build and publish-content check passed.
 - Matrix OS plugin: two contract tests passed and the plugin validator reported a valid bundle.
 - Repository typecheck: every underlying workspace compiler/build invoked by the root typecheck passed when run directly.

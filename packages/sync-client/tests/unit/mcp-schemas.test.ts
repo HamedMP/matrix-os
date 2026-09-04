@@ -3,6 +3,7 @@ import {
   DownloadFileInputSchema,
   MatrixPathSchema,
   RunCommandInputSchema,
+  SelectTerminalTabInputSchema,
   SendTerminalInputSchema,
   UploadFileInputSchema,
   decodeUploadContent,
@@ -46,6 +47,19 @@ describe("Matrix MCP boundary schemas", () => {
       computer: "primary",
       terminal: "agent-task",
       data: "😀".repeat(15_001),
+    }).success).toBe(false);
+  });
+
+  it("selects tabs only by a stable non-negative tab ID", () => {
+    expect(SelectTerminalTabInputSchema.parse({
+      computer: "primary",
+      terminal: "agent-task",
+      tabId: 41,
+    }).tabId).toBe(41);
+    expect(SelectTerminalTabInputSchema.safeParse({
+      computer: "primary",
+      terminal: "agent-task",
+      tab: 1,
     }).success).toBe(false);
   });
 

@@ -43,6 +43,7 @@ function fakeAdapter(): ZellijAdapter {
     listTabs: vi.fn(async () => []),
     createTab: vi.fn(async () => ({ ok: true })),
     switchTab: vi.fn(async () => ({ ok: true })),
+    switchTabById: vi.fn(async () => ({ ok: true })),
     closeTab: vi.fn(async () => ({ ok: true })),
     splitPane: vi.fn(async () => ({ ok: true })),
     closePane: vi.fn(async () => ({ ok: true })),
@@ -130,6 +131,7 @@ describe("user-systemd zellij adapter", () => {
     await expect(adapter.listSessions()).resolves.toEqual(["Main"]);
     await expect(adapter.getSessionCreatedAt?.("Main")).resolves.toBe(live.createdAt);
     await adapter.sendInput("Main", "echo safe");
+    await adapter.switchTabById("Main", 41);
     adapter.attachSession("Main");
 
     expect(controller.list).toHaveBeenCalledWith({ scope: "terminal", runningOnly: true });
@@ -137,6 +139,7 @@ describe("user-systemd zellij adapter", () => {
       `/opt/matrix/terminal-runtime/generations/${GENERATION}/zellij`,
     );
     expect(pinned.sendInput).toHaveBeenCalledWith(live.sessionName, "echo safe");
+    expect(pinned.switchTabById).toHaveBeenCalledWith(live.sessionName, 41);
     expect(pinned.attachSession).toHaveBeenCalledWith(live.sessionName, {});
   });
 

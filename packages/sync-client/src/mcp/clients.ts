@@ -31,6 +31,7 @@ const TerminalSchema = z.object({
 }).strip();
 
 const TabSchema = z.object({
+  id: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   idx: z.number().int().nonnegative().max(1024),
   name: z.string().min(1).max(64).optional(),
   focused: z.boolean().optional(),
@@ -69,7 +70,10 @@ const CreateTerminalResultSchema = z.object({
 }).strict();
 
 const CreateTabResultSchema = z.object({
-  tab: z.object({ ok: z.literal(true) }).strict(),
+  tab: z.object({
+    id: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    name: z.string().min(1).max(64).optional(),
+  }).strict(),
 }).strict();
 
 const UploadResultSchema = z.object({
@@ -87,7 +91,7 @@ export interface MatrixMcpGatewayClient {
   createTerminal(input: { name: string; cwd?: string }): Promise<unknown>;
   listTabs(terminal: string): Promise<unknown[]>;
   createTab(terminal: string, input: { name?: string; cwd?: string }): Promise<unknown>;
-  selectTab(terminal: string, tab: number): Promise<void>;
+  selectTab(terminal: string, tabId: number): Promise<void>;
   sendTerminalInput(terminal: string, data: string): Promise<void>;
   runCommand(input: { command: string[]; cwd?: string; timeoutMs?: number }): Promise<z.infer<typeof RunResultSchema>>;
   listFiles(path: string): Promise<unknown[]>;
@@ -286,10 +290,10 @@ export function createMcpGatewayClient(
       });
       const parsed = CreateTabResultSchema.safeParse(payload);
       if (!parsed.success) throw createMcpError("request_failed");
-      return { created: true };
+      return parsed.data.tab;
     },
-    async selectTab(terminal, tab) {
-      await request(`/api/terminal/sessions/${encodeURIComponent(terminal)}/tabs/${tab}/go`, { method: "POST" });
+    async selectTab(terminal, tabId) {
+      await request(`/api/terminal/sessions/${encodeURIComponent(terminal)}/tabs/by-id/${tabId}/go`, { method: "POST" });
     },
     async sendTerminalInput(terminal, data) {
       await request(`/api/terminal/sessions/${encodeURIComponent(terminal)}/input`, {

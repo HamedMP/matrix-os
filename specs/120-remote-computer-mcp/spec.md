@@ -116,7 +116,7 @@ A coding-agent user installs or updates the existing Matrix OS plugin and receiv
 - **FR-007**: Captured commands MUST be provided as an argument vector rather than an interpolated shell string, MUST support a validated Matrix-home-relative working directory, and MUST return structured completion metadata.
 - **FR-008**: Captured command execution MUST default to a 10-minute timeout, MUST reject timeouts longer than 30 minutes, and MUST cap combined returned output at 1 MiB while reporting truncation.
 - **FR-009**: Persistent terminal creation MUST accept a validated unique name and optional Matrix-home-relative working directory; a duplicate create MUST fail without altering the existing terminal.
-- **FR-010**: Tab creation MUST target one named terminal, accept a bounded optional name and working directory, and return a stable tab index or identifier supplied by Matrix.
+- **FR-010**: Tab creation MUST target one named terminal, accept a bounded optional name and working directory, and return the stable Zellij tab ID emitted atomically by the create operation.
 - **FR-011**: Terminal input MUST target one named terminal after explicit tab selection, MUST be capped at 60,000 bytes per request, and MUST be annotated as a state-changing operation.
 - **FR-012**: The initial MCP release MUST NOT expose terminal/session/tab deletion, arbitrary pane manipulation, or an unbounded terminal-output stream.
 - **FR-013**: All file paths MUST be normalized beneath the selected computer owner's Matrix home and MUST preserve existing protected-path, symlink, regular-file, and secret-file rules.
@@ -139,7 +139,7 @@ A coding-agent user installs or updates the existing Matrix OS plugin and receiv
 | Start local MCP server / discover tool schemas | Local plugin process | No owner data is read until a tool is called | Yes, locally |
 | List computers | Active Matrix CLI sign-in | Signed-in user's runtime inventory only | No |
 | Select computer / obtain scoped access | Active Matrix CLI sign-in | Requested computer must belong to the signed-in user | No |
-| Commands and persistent terminals | Computer-scoped Matrix access | Selected computer and its owner only | No |
+| Commands and persistent terminals, including stable-ID tab selection | Computer-scoped Matrix access enforced by the existing gateway auth boundary | Selected computer and its owner only | No |
 | Files | Computer-scoped Matrix access plus Matrix-home path policy | Selected owner's Matrix home only | No |
 | Chats | Computer-scoped Matrix access plus chat ownership checks | Selected owner's chats only | No |
 
@@ -148,7 +148,7 @@ A coding-agent user installs or updates the existing Matrix OS plugin and receiv
 - **Computer Reference**: A stable runtime identifier plus user-facing label, handle, availability, type, version, gateway location, and declared capabilities. It belongs to exactly one signed-in owner.
 - **Runtime Access**: A short-lived, computer-scoped authorization resolved from the active Matrix sign-in. It is never returned to the MCP client.
 - **Terminal Session**: A persistent, user-visible terminal identified by a validated name on one computer. It owns an ordered collection of tabs.
-- **Terminal Tab**: A user-visible execution surface within one terminal session, addressable by the index or identifier supplied by Matrix.
+- **Terminal Tab**: A user-visible execution surface within one terminal session, addressable by a stable Zellij ID supplied atomically at creation; its display position may change independently.
 - **Captured Command Result**: A bounded, non-persistent execution result containing output, exit, signal, timeout, truncation, duration, and selected-computer metadata.
 - **Remote File Payload**: Bounded text or binary content associated with a normalized Matrix-home-relative path, size, filename, and media type.
 - **Chat Summary and Detail**: Read-only, owner-authorized chat metadata and paginated messages with stable cursors.

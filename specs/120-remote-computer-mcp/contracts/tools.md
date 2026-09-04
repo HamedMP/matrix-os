@@ -54,19 +54,19 @@ Output: `{"ok":true,"terminal":{"name":"agent-task-4f2a","created":true}}`
 
 Input: `{"computer":"primary","terminal":"agent-task-4f2a"}`
 
-Output: `{"ok":true,"tabs":[{"idx":0,"name":"shell"}]}`
+Output: `{"ok":true,"tabs":[{"id":17,"idx":0,"name":"shell"}]}`
 
 ### `create_terminal_tab`
 
 Input: `{"computer":"primary","terminal":"agent-task-4f2a","name":"tests","cwd":"projects/repo"}`
 
-Output: `{"ok":true,"tab":{"created":true}}`
+Output: `{"ok":true,"tab":{"id":41,"name":"tests"}}`
 
 ### `select_terminal_tab`
 
-Input: `{"computer":"primary","terminal":"agent-task-4f2a","tab":1}`
+Input: `{"computer":"primary","terminal":"agent-task-4f2a","tabId":41}`
 
-Output: `{"ok":true,"terminal":"agent-task-4f2a","tab":1}`
+Output: `{"ok":true,"terminal":"agent-task-4f2a","tabId":41}`
 
 ### `send_terminal_input`
 
@@ -74,7 +74,9 @@ Input: `{"computer":"primary","terminal":"agent-task-4f2a","data":"bun run test\
 
 Output: `{"ok":true,"terminal":"agent-task-4f2a","bytes":13}`
 
-Terminal listing is read-only. Create/select/input operations are state-changing and open-world. Input is sent to the currently active tab; callers use `select_terminal_tab` first when tab identity matters.
+Terminal listing is read-only. Create/select/input operations are state-changing and open-world. `id` is the stable Zellij tab ID; `idx` is the current display position. Input is sent to the currently active tab, so callers pass the stable `id` to `select_terminal_tab` first when tab identity matters.
+
+The gateway returns the ID emitted by `zellij action new-tab` and accepts it at `POST /api/terminal/sessions/:name/tabs/by-id/:tabId/go`. The existing position-based tab route remains unchanged for current shell clients. Both routes use the same computer-scoped gateway authentication boundary; the stable-ID route has bounded-body middleware and validates both path parameters.
 
 ## Files
 
