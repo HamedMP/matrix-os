@@ -69,8 +69,13 @@
     "thread/tokenUsage/updated",
     "turn/completed"
   ],
-  "requiredServerProtocolSchemaSha256": {
-    "item/commandExecution/requestApproval": "ff60bdaf1c4a31d22a5b820a196abc3c02f1847996c5aa49aa15b40bc562b8be",
+  "requiredServerProtocolSchemaDigests": {
+    "item/commandExecution/requestApproval": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "ff60bdaf1c4a31d22a5b820a196abc3c02f1847996c5aa49aa15b40bc562b8be",
+        "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f"
+      }
+    },
     "item/fileChange/requestApproval": "ac5be166d6a7668792b810a97be8bdfb02b2107320d93d0c4d783a11d32d8cf9",
     "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
     "item/permissions/requestApproval": "12ce5d7e867474efcdb8354bc1324e3fdd93b2078cacbbe7d5a0ad15a85a331f",

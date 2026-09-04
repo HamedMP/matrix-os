@@ -23,9 +23,9 @@ const CodexAppServerContractSchema = z.object({
   verifiedVersions: z.record(CodexVersionSchema, SchemaVerificationSchema),
   requiredServerMethods: z.array(z.string().min(1).max(100)).min(1).max(16),
   requiredServerNotifications: z.array(z.string().min(1).max(100)).min(1).max(16),
-  requiredServerProtocolSchemaSha256: z.record(
+  requiredServerProtocolSchemaDigests: z.record(
     z.string().min(1).max(100),
-    SchemaDigestSchema,
+    z.union([SchemaDigestSchema, SchemaVerificationSchema]),
   ),
 }).strict().refine(
   (value) => Object.hasOwn(value.verifiedVersions, value.latestVerifiedVersion),
@@ -33,7 +33,7 @@ const CodexAppServerContractSchema = z.object({
 ).refine(
   (value) => {
     const requiredMethods = [...value.requiredServerMethods, ...value.requiredServerNotifications].sort();
-    return JSON.stringify(Object.keys(value.requiredServerProtocolSchemaSha256).sort())
+    return JSON.stringify(Object.keys(value.requiredServerProtocolSchemaDigests).sort())
       === JSON.stringify(requiredMethods);
   },
   { message: "Every required Codex app-server method must have a semantic schema digest" },

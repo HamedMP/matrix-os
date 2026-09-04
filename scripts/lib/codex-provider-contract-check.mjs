@@ -120,13 +120,16 @@ export function verifyCodexProviderContracts({
     }
   }
   const semanticMismatches = [];
-  for (const [method, expectedDigest] of Object.entries(
-    appServerContract.requiredServerProtocolSchemaSha256 ?? {},
+  for (const [method, verification] of Object.entries(
+    appServerContract.requiredServerProtocolSchemaDigests ?? {},
   )) {
     const definitionName = (appServerContract.requiredServerMethods ?? []).includes(method)
       ? "ServerRequest"
       : "ServerNotification";
     const actualDigest = codexProtocolMethodDigest(appServerSchema, definitionName, method);
+    const expectedDigest = typeof verification === "string"
+      ? verification
+      : verification?.schemaSha256ByTarget?.[runtimeTarget] ?? verification?.schemaSha256;
     if (actualDigest !== expectedDigest) {
       semanticMismatches.push(`${method}: received ${actualDigest}`);
     }

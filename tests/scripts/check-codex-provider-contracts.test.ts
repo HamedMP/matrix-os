@@ -177,7 +177,7 @@ describe("Codex provider contract checker", () => {
       verifiedVersions: { [version]: { schemaSha256: digest(schemaBytes) } },
       requiredServerMethods: [method],
       requiredServerNotifications: [],
-      requiredServerProtocolSchemaSha256: { [method]: semanticDigest },
+      requiredServerProtocolSchemaDigests: { [method]: semanticDigest },
     };
 
     expect(() => verifyCodexProviderContracts({
@@ -187,6 +187,34 @@ describe("Codex provider contract checker", () => {
       execSchemaBytes: execSchema,
       appServerSchemaBytes: schemaBytes,
     })).not.toThrow();
+
+    const targetSpecificSemanticContract = {
+      ...appServerContract,
+      requiredServerProtocolSchemaDigests: {
+        [method]: {
+          schemaSha256ByTarget: {
+            "darwin-arm64": semanticDigest,
+            "linux-x64": "0".repeat(64),
+          },
+        },
+      },
+    };
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: targetSpecificSemanticContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: schemaBytes,
+      runtimeTarget: "darwin-arm64",
+    })).not.toThrow();
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: targetSpecificSemanticContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: schemaBytes,
+      runtimeTarget: "linux-x64",
+    })).toThrow(`Codex app-server payload schema changed for ${method}`);
 
     const changedSchemaBytes = Buffer.from(JSON.stringify({
       ...schema,

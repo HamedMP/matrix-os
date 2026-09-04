@@ -69,8 +69,13 @@ describe("Codex app-server contract", () => {
         "thread/tokenUsage/updated",
         "turn/completed",
       ],
-      requiredServerProtocolSchemaSha256: {
-        "item/commandExecution/requestApproval": expect.stringMatching(/^[a-f0-9]{64}$/),
+      requiredServerProtocolSchemaDigests: {
+        "item/commandExecution/requestApproval": {
+          schemaSha256ByTarget: {
+            "darwin-arm64": expect.stringMatching(/^[a-f0-9]{64}$/),
+            "linux-x64": expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
         "item/fileChange/requestApproval": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/tool/requestUserInput": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/permissions/requestApproval": expect.stringMatching(/^[a-f0-9]{64}$/),
