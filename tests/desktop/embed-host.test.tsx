@@ -124,6 +124,39 @@ describe("EmbedHost", () => {
     expect(invoke).toHaveBeenCalledWith("embed:deactivate", { embedId: "browser-1" });
   });
 
+  it("clears a retained frame when an inactive embed is replaced", async () => {
+    let nextEmbedId = 0;
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        nextEmbedId += 1;
+        return Promise.resolve({ embedId: `browser-${nextEmbedId}`, state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:deactivate") {
+        return Promise.resolve({
+          ok: true,
+          snapshotDataUrl: "data:image/jpeg;base64,b2xkLXBhZ2U=",
+        }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    const view = render(<EmbedHost kind="browser" url="https://one.example" active />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "browser-1", active: true },
+    ));
+    view.rerender(<EmbedHost kind="browser" url="https://one.example" active={false} />);
+    expect(await screen.findByTestId("embed-retained-frame")).toBeTruthy();
+
+    view.rerender(<EmbedHost kind="browser" url="https://two.example" active={false} />);
+
+    expect(screen.queryByTestId("embed-retained-frame")).toBeNull();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:open",
+      expect.objectContaining({ kind: "browser", url: "https://two.example", active: false }),
+    ));
+  });
+
   it.each([
     ["Home", (active: boolean) => <EmbedHost kind="hosted-shell" active={active} />],
     ["VS Code", (active: boolean) => <EmbedHost kind="code-editor" active={active} />],

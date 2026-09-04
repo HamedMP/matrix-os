@@ -73,6 +73,88 @@ describe("createWebContentsView", () => {
     );
   });
 
+  it("deduplicates overlapping retained-frame captures", async () => {
+    let resolveCapture: ((image: {
+      isEmpty: () => boolean;
+      toJPEG: () => Buffer;
+    }) => void) | null = null;
+    electronMock.webContents.capturePage.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveCapture = resolve;
+    }));
+    const view = createWebContentsView({
+      window: {
+        isDestroyed: () => false,
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:browser",
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+    });
+
+    const first = view.captureSnapshot?.();
+    const second = view.captureSnapshot?.();
+    expect(electronMock.webContents.capturePage).toHaveBeenCalledOnce();
+    resolveCapture?.({
+      isEmpty: () => false,
+      toJPEG: () => Buffer.from("shared-frame"),
+    });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      `data:image/jpeg;base64,${Buffer.from("shared-frame").toString("base64")}`,
+      `data:image/jpeg;base64,${Buffer.from("shared-frame").toString("base64")}`,
+    ]);
+  });
+
+  it("caps the native capture rectangle before allocating a retained frame", async () => {
+    const view = createWebContentsView({
+      window: {
+        isDestroyed: () => false,
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:browser",
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+    });
+    view.setBounds({ x: 20, y: 30, width: 16_384, height: 8_192 });
+
+    await view.captureSnapshot?.();
+
+    expect(electronMock.webContents.capturePage).toHaveBeenCalledWith({
+      x: 0,
+      y: 0,
+      width: 2_048,
+      height: 2_048,
+    });
+  });
+
+  it("does not retain a capture that finishes after a new page starts loading", async () => {
+    let resolveCapture: ((image: {
+      isEmpty: () => boolean;
+      toJPEG: () => Buffer;
+    }) => void) | null = null;
+    electronMock.webContents.capturePage.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveCapture = resolve;
+    }));
+    const view = createWebContentsView({
+      window: {
+        isDestroyed: () => false,
+        contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      } as never,
+      partition: "persist:browser",
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+    });
+
+    const staleCapture = view.captureSnapshot?.();
+    electronMock.handlers.get("did-start-loading")?.();
+    resolveCapture?.({
+      isEmpty: () => false,
+      toJPEG: () => Buffer.from("stale-frame"),
+    });
+
+    await expect(staleCapture).resolves.toBeNull();
+  });
+
   it("downscales an oversized frame instead of dropping the retained content", async () => {
     const resized = {
       isEmpty: () => false,

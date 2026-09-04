@@ -11,6 +11,7 @@ import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 
 const MAX_PUBLIC_BROWSER_ORIGINS = 64;
 const MAX_EMBED_SNAPSHOT_BYTES = 3_000_000;
+const MAX_EMBED_SNAPSHOT_CAPTURE_EDGE = 2_048;
 const EMBED_SNAPSHOT_QUALITIES = [72, 54, 36, 24] as const;
 
 function encodeBoundedSnapshot(source: NativeImage): string | null {
@@ -63,12 +64,36 @@ export function createWebContentsView(options: {
 
   const contents = view.webContents;
   let retainedSnapshotDataUrl: string | null = null;
-  const captureSnapshot = async (): Promise<string | null> => {
-    if (contents.isDestroyed()) return retainedSnapshotDataUrl;
-    const image = await contents.capturePage();
-    if (image.isEmpty()) return retainedSnapshotDataUrl;
-    retainedSnapshotDataUrl = encodeBoundedSnapshot(image) ?? retainedSnapshotDataUrl;
-    return retainedSnapshotDataUrl;
+  let snapshotContentGeneration = 0;
+  let snapshotCaptureBounds: Bounds | undefined;
+  let snapshotCaptureInFlight: {
+    generation: number;
+    promise: Promise<string | null>;
+  } | null = null;
+  const captureSnapshot = (): Promise<string | null> => {
+    const generation = snapshotContentGeneration;
+    if (snapshotCaptureInFlight?.generation === generation) {
+      return snapshotCaptureInFlight.promise;
+    }
+    const capture = (async (): Promise<string | null> => {
+      if (contents.isDestroyed()) return retainedSnapshotDataUrl;
+      const image = await contents.capturePage(snapshotCaptureBounds);
+      if (generation !== snapshotContentGeneration) return retainedSnapshotDataUrl;
+      if (image.isEmpty()) return retainedSnapshotDataUrl;
+      retainedSnapshotDataUrl = encodeBoundedSnapshot(image) ?? retainedSnapshotDataUrl;
+      return retainedSnapshotDataUrl;
+    })();
+    const inFlight = { generation, promise: capture };
+    snapshotCaptureInFlight = inFlight;
+    void capture.then(
+      () => {
+        if (snapshotCaptureInFlight === inFlight) snapshotCaptureInFlight = null;
+      },
+      () => {
+        if (snapshotCaptureInFlight === inFlight) snapshotCaptureInFlight = null;
+      },
+    );
+    return capture;
   };
   const publicOrigins = new Map<string, true>();
   for (const origin of options.allowedOrigins) publicOrigins.set(origin, true);
@@ -165,7 +190,11 @@ export function createWebContentsView(options: {
     if (externalUrl) void shell.openExternal(externalUrl);
     return { action: "deny" };
   });
-  contents.on("did-start-loading", () => options.onState("loading"));
+  contents.on("did-start-loading", () => {
+    snapshotContentGeneration += 1;
+    retainedSnapshotDataUrl = null;
+    options.onState("loading");
+  });
   contents.on("did-finish-load", () => {
     options.onState("ready");
     // Warm the first retained frame while the view is definitely paintable so
@@ -198,6 +227,12 @@ export function createWebContentsView(options: {
   return {
     setBounds(bounds: Bounds) {
       view.setBounds(bounds);
+      snapshotCaptureBounds = {
+        x: 0,
+        y: 0,
+        width: Math.min(bounds.width, MAX_EMBED_SNAPSHOT_CAPTURE_EDGE),
+        height: Math.min(bounds.height, MAX_EMBED_SNAPSHOT_CAPTURE_EDGE),
+      };
     },
     setScale(factor: number) {
       contents.setZoomFactor(factor);
@@ -205,9 +240,7 @@ export function createWebContentsView(options: {
     async loadUrl(url: string) {
       await contents.loadURL(url);
     },
-    async captureSnapshot() {
-      return captureSnapshot();
-    },
+    captureSnapshot,
     attach() {
       if (attached) return;
       options.window.contentView.addChildView(view);

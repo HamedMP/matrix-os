@@ -67,6 +67,7 @@ export default function EmbedHost({
     if (!host) return;
     embedIdRef.current = null;
     setState("loading");
+    setSnapshotDataUrl(null);
     let disposed = false;
     let offState: (() => void) | null = null;
     const pendingStates = new Map<string, typeof state>();
