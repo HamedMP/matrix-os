@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatStreamServerFrame } from "@matrix-os/contracts";
 import { Hono } from "hono";
@@ -67,6 +69,15 @@ function eventCursors(sink: ReturnType<typeof frameSink>) {
 }
 
 describe("canonical Chat event stream", () => {
+  it("registers the exact event route before the dynamic Chat detail route", () => {
+    const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
+    const eventRoute = source.indexOf("registerCanonicalChatEventHttpRoute({");
+    const chatRoutes = source.indexOf('app.route("/", createCanonicalChatRoutes({');
+
+    expect(eventRoute).toBeGreaterThan(-1);
+    expect(chatRoutes).toBeGreaterThan(eventRoute);
+  });
+
   it("subscribes before replay, buffers live commits, dedupes the overlap, and publishes safe metadata only", async () => {
     const replay = deferred<{ events: ChatOutboxEvent[]; gap: boolean; nextCursor?: number }>();
     const harness = repositoryHarness(() => replay.promise);

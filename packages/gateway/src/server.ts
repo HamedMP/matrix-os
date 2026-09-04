@@ -4338,6 +4338,13 @@ export async function createGateway(config: GatewayConfig) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
   }
+  if (canonicalChatEventStream) {
+    registerCanonicalChatEventHttpRoute({
+      app,
+      getPrincipal: (context) => requireRequestPrincipal(context as Context),
+      stream: canonicalChatEventStream,
+    });
+  }
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
@@ -4347,13 +4354,6 @@ export async function createGateway(config: GatewayConfig) {
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
-  if (canonicalChatEventStream) {
-    registerCanonicalChatEventHttpRoute({
-      app,
-      getPrincipal: (context) => requireRequestPrincipal(context as Context),
-      stream: canonicalChatEventStream,
-    });
-  }
   app.route("/", createChatProviderRoutes({
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),

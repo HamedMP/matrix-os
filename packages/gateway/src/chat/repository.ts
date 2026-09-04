@@ -1105,6 +1105,14 @@ export class ChatRepository {
       const turnRow = await trx.selectFrom("chat_turns").selectAll()
         .where("id", "=", turnId).where("chat_id", "=", chatId).forUpdate().executeTakeFirst();
       if (!turnRow) throw new ChatNotFoundError(chatId);
+      const latestTurn = await trx.selectFrom("chat_turns").select(["id"])
+        .where("chat_id", "=", chatId)
+        .orderBy("base_message_seq", "desc")
+        .orderBy("created_at", "desc")
+        .executeTakeFirst();
+      if (latestTurn?.id !== turnId) {
+        throw new ChatConflictError(chatId, Number(current.revision));
+      }
       const latest = await trx.selectFrom("chat_runs").selectAll()
         .where("turn_id", "=", turnId).orderBy("attempt", "desc").forUpdate().executeTakeFirst();
       if (!latest || ACTIVE_RUNS.includes(latest.status as typeof ACTIVE_RUNS[number])
