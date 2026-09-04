@@ -28,6 +28,7 @@ import {
   type TranscriptMessage,
 } from "@/lib/canonical-chat-transcript";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon, IconButton } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
@@ -249,6 +250,17 @@ function MessageBubble({ message }: { message: TranscriptMessage }) {
   return <AssistantMessage message={message} />;
 }
 
+const matrixMarkdownTheme: ChatMarkdownTheme = {
+  textStyle: { fontFamily: mockFonts.body, fontSize: 15, lineHeight: 22, color: mockColors.ink },
+  mutedColor: mockColors.muted,
+  linkColor: mockColors.blue,
+  codeBackground: mockColors.surface,
+  codeBorderColor: mockColors.line,
+  monoFontFamily: mockFonts.mono,
+  boldFontFamily: mockFonts.semibold,
+  headingFontFamily: mockFonts.semibold,
+};
+
 function activityStateGlyph(state: TranscriptActivityState): string {
   switch (state) {
     case "running": return "…";
@@ -271,6 +283,12 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
     : message.elapsedSeconds != null
       ? `Worked ${message.elapsedSeconds}s`
       : null;
+  // Re-parses on every text change, which is exactly what a growing streamed
+  // string needs -- markdown applies as the text arrives, not once at the end.
+  const markdownNodes = useMemo(
+    () => renderChatMarkdown(message.text, matrixMarkdownTheme),
+    [message.text],
+  );
 
   return (
     <View style={styles.matrixBubble}>
@@ -322,7 +340,7 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
         </View>
       ) : null}
       {workedLabel ? <View style={styles.divider} /> : null}
-      <Text style={styles.matrixText}>{message.text}</Text>
+      <View style={styles.matrixTextBlock}>{markdownNodes}</View>
     </View>
   );
 }
@@ -408,11 +426,8 @@ const styles = StyleSheet.create({
     backgroundColor: mockColors.line,
     marginVertical: 10,
   },
-  matrixText: {
-    fontFamily: mockFonts.body,
-    fontSize: 15,
-    lineHeight: 22,
-    color: mockColors.ink,
+  matrixTextBlock: {
+    gap: 2,
   },
   toolRow: {
     alignSelf: "flex-start",
