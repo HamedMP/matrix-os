@@ -267,7 +267,6 @@ export default function BillingSection() {
               label="Runtime slots"
               value={`${entitlement.includedRuntimeSlots + entitlement.addonRuntimeSlots} of ${entitlement.maxRuntimeSlots}`}
             />
-            <Row label="Default machine" value={entitlement.defaultServerType} />
           </>
         ) : null}
 

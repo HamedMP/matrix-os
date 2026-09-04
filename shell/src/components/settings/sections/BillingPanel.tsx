@@ -406,17 +406,21 @@ function ActiveBillingPanel({
 }) {
   const planName = entitlement ? billingPlanNames[entitlement.planSlug] ?? entitlement.planSlug : "Active";
   const status = entitlement?.status ? formatStatus(entitlement.status) : accessReason === "legacy_clerk_plan" ? "Legacy plan" : "Active";
-  const machineProfile = resolveMachineProfile(entitlement?.defaultServerType);
-  const allowedProfiles = (entitlement?.allowedServerTypes ?? [])
-    .map(resolveMachineProfile)
-    .filter((profile): profile is NonNullable<ReturnType<typeof resolveMachineProfile>> => Boolean(profile));
+  const allowedProfiles = MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>
+    (entitlement?.allowedServerTypes ?? []).some((serverType) =>
+      MATRIX_BILLING_MACHINE_PROFILES.some(
+        (machine) => machine.planSlug === profile.planSlug
+          && machine.serverType === serverType.toLowerCase(),
+      ),
+    ),
+  );
   const totalComputers = entitlement?.maxRuntimeSlots ?? 1;
   const includedComputers = entitlement?.includedRuntimeSlots ?? 1;
   const addonComputers = entitlement?.addonRuntimeSlots ?? 0;
   const graceLabel = entitlement?.gracePeriodEndsAt ? formatDate(entitlement.gracePeriodEndsAt) : null;
   const isTrialing = entitlement?.status === "trialing" && Boolean(entitlement.trialEndsAt);
   const trialEndLabel = entitlement?.trialEndsAt ? formatDate(entitlement.trialEndsAt) : null;
-  const trialInterval = entitlement?.billingInterval === "annual" ? "annual" : "monthly";
+  const billingInterval = entitlement?.billingInterval === "annual" ? "annual" : "monthly";
 
   return (
     <div className="space-y-3">
@@ -431,7 +435,7 @@ function ActiveBillingPanel({
             </h3>
             <p className="mt-1 text-sm leading-6 text-forest/65">
               {isTrialing && trialEndLabel
-                ? `Your first ${trialInterval} charge is on ${trialEndLabel}.`
+                ? `Your first ${billingInterval} charge is on ${trialEndLabel}.`
                 : `${status}. Your Matrix computers stay available while billing is active${graceLabel ? ` and through the grace period ending ${graceLabel}` : ""}.`}
             </p>
             {isTrialing && trialEndLabel && (
@@ -447,9 +451,9 @@ function ActiveBillingPanel({
           <BillingMetric label="Status" value={status} />
           <BillingMetric label="Computers" value={`${totalComputers}`} detail={`${includedComputers} included${addonComputers ? `, ${addonComputers} add-on` : ""}`} />
           <BillingMetric
-            label="Machine"
-            value={machineProfile?.label ?? entitlement?.defaultServerType ?? "Included"}
-            detail={machineProfile ? `${machineProfile.hetznerType} · ${profileSpec(machineProfile)}` : undefined}
+            label="Billing"
+            value={billingInterval === "annual" ? "Annual" : "Monthly"}
+            detail="Managed subscription"
           />
           <BillingMetric label="Add-ons" value={addonComputers ? `${addonComputers} active` : "None"} detail="Extra machines and storage appear here" />
         </div>
@@ -465,7 +469,7 @@ function ActiveBillingPanel({
         <BillingAction
           icon={<PlusIcon className="size-4" aria-hidden="true" />}
           title="Add-ons"
-          description="Add extra machines first; storage and other Hetzner-backed capacity can be attached as add-ons as they launch."
+          description="Add extra machines first; storage and other hosted capacity can be attached as add-ons as they launch."
           action={<BillingPortalButton entitlement={entitlement} label="Manage add-ons" />}
         />
         <BillingAction
@@ -578,13 +582,6 @@ function BillingAction({
   );
 }
 
-function resolveMachineProfile(serverType: string | null | undefined) {
-  if (!serverType) return null;
-  return MATRIX_BILLING_SERVER_PROFILES.find(
-    (profile) => profile.hetznerType.toLowerCase() === serverType.toLowerCase(),
-  ) ?? null;
-}
-
 function formatStatus(status: string): string {
   return status
     .split("_")
@@ -597,10 +594,6 @@ function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return billingDateFormatter.format(date);
-}
-
-function profileSpec(profile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number]): string {
-  return `${profile.vcpus} vCPU / ${profile.memoryGb} GB RAM / ${profile.diskGb} GB disk`;
 }
 
 function profilePrice(
@@ -628,6 +621,14 @@ function subscribeToBrowserTimeZone(): () => void {
 
 function getServerRegionSlug(): string {
   return "region_fsn1";
+}
+
+function subscribeToSelfHostedDocument(): () => void {
+  return () => undefined;
+}
+
+function getServerSelfHostedDocument(): boolean {
+  return false;
 }
 
 function ProfileOptionRows({
@@ -962,6 +963,11 @@ export function BillingPanel({
   checkoutReturnPath?: string;
   checkoutRuntimeSlot?: string;
 }) {
+  const selfHostedDocument = useSyncExternalStore(
+    subscribeToSelfHostedDocument,
+    isSelfHostedDocument,
+    getServerSelfHostedDocument,
+  );
   const props = {
     active,
     entitlement,
@@ -974,7 +980,7 @@ export function BillingPanel({
     checkoutReturnPath,
     checkoutRuntimeSlot,
   };
-  if (isSelfHostedDocument()) {
+  if (selfHostedDocument) {
     return <BillingPanelInner {...props} selectedPlan={undefined} />;
   }
   return <ManagedBillingPanel {...props} />;

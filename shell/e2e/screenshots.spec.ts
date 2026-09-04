@@ -220,6 +220,22 @@ test.describe("Visual regression", () => {
     });
   });
 
+  test("billing active provider-neutral", async ({ page }) => {
+    await page.goto("/?e2e_billing_state=active");
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(page.getByRole("heading", { name: "Builder" })).toBeVisible();
+    await expect(page.getByText("Billing", { exact: true }).last()).toBeVisible();
+    await expect(page.getByText("Monthly", { exact: true })).toBeVisible();
+    await expect(page.getByText(/\$100/)).toHaveCount(0);
+    await expect(page.getByText(/cpx\d+/i)).toHaveCount(0);
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-active-provider-neutral.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
   test("billing computer plans", async ({ page }) => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();

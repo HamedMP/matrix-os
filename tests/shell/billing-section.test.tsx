@@ -69,6 +69,21 @@ describe("BillingSection", () => {
     vi.unstubAllEnvs();
   });
 
+  it("uses a provider-neutral active fixture in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    window.history.replaceState({}, "", "/?e2e_billing_state=active");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    expect(screen.getByRole("heading", { name: "Builder" })).toBeTruthy();
+    expect(screen.getByText("Monthly")).toBeTruthy();
+    expect(screen.queryByText(/\$100/)).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllEnvs();
+  });
+
   it("waits for Clerk before rendering a subscription state", async () => {
     clerkState.isLoaded = false;
     clerkState.activePlan = "matrix_starter";
@@ -698,8 +713,11 @@ describe("BillingSection", () => {
             maxRuntimeSlots: 3,
             includedRuntimeSlots: 2,
             addonRuntimeSlots: 1,
-            defaultServerType: "cpx32",
-            allowedServerTypes: ["cpx22", "cpx32"],
+            // Billing defaults are an internal admission/provisioning detail.
+            // They can differ from the customer's regional machine (US Builder
+            // is cpx31 while this entitlement default is the EU cpx42).
+            defaultServerType: "cpx42",
+            allowedServerTypes: ["cpx42", "cpx31"],
             stripeSubscriptionId: "sub_123",
             stripePriceId: "price_123",
             gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
@@ -727,7 +745,9 @@ describe("BillingSection", () => {
     expect(screen.getByText("Current plan")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("2 included, 1 add-on")).toBeTruthy();
-    expect(screen.getByText("cpx32")).toBeTruthy();
+    expect(screen.queryByText("Machine")).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    expect(screen.queryByText(/hetzner/i)).toBeNull();
     expect(screen.getByText("Receipts and payment")).toBeTruthy();
     expect(screen.getByText("Canceling")).toBeTruthy();
 
@@ -738,6 +758,40 @@ describe("BillingSection", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
+  });
+
+  it("does not label the monthly catalog price as an annual charge", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: true, reason: "active" },
+        entitlement: {
+          source: "stripe",
+          planSlug: "matrix_builder",
+          status: "active",
+          maxRuntimeSlots: 1,
+          includedRuntimeSlots: 1,
+          addonRuntimeSlots: 0,
+          defaultServerType: "cpx42",
+          allowedServerTypes: ["cpx42", "cpx31"],
+          stripeSubscriptionId: "sub_annual",
+          stripePriceId: "price_builder_annual",
+          billingInterval: "annual",
+          gracePeriodEndsAt: null,
+          effectiveFrom: "2026-05-30T00:00:00.000Z",
+          effectiveUntil: null,
+          updatedAt: "2026-05-30T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Annual")).toBeTruthy());
+    expect(screen.queryByText("$100")).toBeNull();
+    expect(screen.queryByText("per year")).toBeNull();
   });
 
   it("does not mark billing active for the legacy Clerk early_adopter plan", async () => {
