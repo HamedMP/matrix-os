@@ -39,7 +39,7 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
     <WorkRail
       client={runtime?.client ?? null}
       eventSource={runtime?.eventSource ?? undefined}
-      projectedChatTitle={runtime?.projectedChatTitle ?? undefined}
+      projectedChatTitles={runtime?.projectedChatTitles}
       projects={projects}
       active={active}
       activeChatId={tab.chatId}

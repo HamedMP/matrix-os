@@ -292,9 +292,22 @@ export function useCanonicalChatState(): ChatState {
         baseRevision: current.chat.revision,
         title,
       });
-      setRecords((existing) => existing.map((record) => record.chat.id === chatId ? updated : record));
+      const projectTitle = (record: CanonicalChatRecord) => (
+        record.chat.revision > updated.chat.revision
+          ? record
+          : {
+            ...record,
+            chat: {
+              ...record.chat,
+              title: updated.chat.title,
+              revision: updated.chat.revision,
+              updatedAt: updated.chat.updatedAt,
+            },
+          }
+      );
+      setRecords((existing) => existing.map((record) => record.chat.id === chatId ? projectTitle(record) : record));
       setDetail((existing) => existing?.record.chat.id === chatId
-        ? { ...existing, record: updated }
+        ? { ...existing, record: projectTitle(existing.record) }
         : existing);
       setSafeError(null);
       return true;

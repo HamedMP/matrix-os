@@ -22,17 +22,19 @@ import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
 
-function applyProjectedChat(
+function applyProjectedChats(
   records: CanonicalChatRecord[],
-  projection: CanonicalChatTitleProjection | undefined,
+  projections: CanonicalChatTitleProjection[] | undefined,
 ): CanonicalChatRecord[] {
-  if (!projection) return records;
-  const index = records.findIndex((record) => record.chat.id === projection.chatId);
-  if (index < 0 || records[index]!.chat.revision >= projection.revision) return records;
-  return records.map((record, candidateIndex) => candidateIndex === index ? {
-    ...record,
-    chat: { ...record.chat, title: projection.title, revision: projection.revision },
-  } : record);
+  if (!projections?.length) return records;
+  return records.map((record) => {
+    const projection = projections.find((candidate) => candidate.chatId === record.chat.id);
+    if (!projection || record.chat.revision >= projection.revision) return record;
+    return {
+      ...record,
+      chat: { ...record.chat, title: projection.title, revision: projection.revision },
+    };
+  });
 }
 
 async function loadWorkRailChats(client: CanonicalChatClient): Promise<CanonicalChatRecord[]> {
@@ -50,7 +52,7 @@ async function loadWorkRailChats(client: CanonicalChatClient): Promise<Canonical
 export function WorkRail({
   client,
   eventSource,
-  projectedChatTitle,
+  projectedChatTitles,
   projects,
   active,
   activeChatId,
@@ -67,7 +69,7 @@ export function WorkRail({
 }: {
   client: CanonicalChatClient | null;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
-  projectedChatTitle?: CanonicalChatTitleProjection;
+  projectedChatTitles?: CanonicalChatTitleProjection[];
   projects: Project[];
   active: boolean;
   activeChatId?: string;
@@ -102,8 +104,8 @@ export function WorkRail({
   const [searchOpen, setSearchOpen] = useState(false);
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
-  const projectedChatTitleRef = useRef(projectedChatTitle);
-  projectedChatTitleRef.current = projectedChatTitle;
+  const projectedChatTitlesRef = useRef(projectedChatTitles);
+  projectedChatTitlesRef.current = projectedChatTitles;
   if (routeScopeRef.current.key !== routeScope || routeScopeRef.current.client !== client) {
     routeScopeRef.current = {
       client,
@@ -142,7 +144,7 @@ export function WorkRail({
         try {
           const loaded = await loadWorkRailChats(client);
           if (!current) return;
-          setRecords(applyProjectedChat(loaded, projectedChatTitleRef.current));
+          setRecords(applyProjectedChats(loaded, projectedChatTitlesRef.current));
           setStatus("ready");
         } catch (error: unknown) {
           if (!current) return;
@@ -165,9 +167,9 @@ export function WorkRail({
   }, [active, activeChatId, activeProjectSlug, client, eventSource]);
 
   useEffect(() => {
-    if (!projectedChatTitle) return;
-    setRecords((current) => applyProjectedChat(current, projectedChatTitle));
-  }, [projectedChatTitle]);
+    if (!projectedChatTitles?.length) return;
+    setRecords((current) => applyProjectedChats(current, projectedChatTitles));
+  }, [projectedChatTitles]);
 
   const toggleSection = (key: SectionKey) => {
     setSections((current) => ({ ...current, [key]: !current[key] }));

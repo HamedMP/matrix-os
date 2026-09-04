@@ -142,9 +142,9 @@ describe("WorkRail", () => {
       chat: { ...recent.chat, title: "Projected title", revision: recent.chat.revision + 1 },
     };
 
-    rerender(<WorkRail client={client} projectedChatTitle={{
+    rerender(<WorkRail client={client} projectedChatTitles={[{
       chatId: projected.chat.id, title: projected.chat.title, revision: projected.chat.revision,
-    }} projects={[]} active {...actions} />);
+    }]} projects={[]} active {...actions} />);
 
     expect(await screen.findByRole("button", { name: "Projected title" })).toBeTruthy();
     expect(client.list).toHaveBeenCalledOnce();
@@ -171,14 +171,45 @@ describe("WorkRail", () => {
     act(() => events.emit({ type: "chat.changed", chatId: recent.chat.id, cursor: 2 }));
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
 
-    rerender(<WorkRail client={client} eventSource={events.eventSource} projectedChatTitle={{
+    rerender(<WorkRail client={client} eventSource={events.eventSource} projectedChatTitles={[{
       chatId: projected.chat.id, title: projected.chat.title, revision: projected.chat.revision,
-    }} projects={[]} active {...actions} />);
+    }]} projects={[]} active {...actions} />);
     expect(await screen.findByRole("button", { name: "Newest projected title" })).toBeTruthy();
     await act(async () => resolveRefresh({ items: [recent] }));
 
     expect(screen.getByRole("button", { name: "Newest projected title" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Recent global" })).toBeNull();
+  });
+
+  it("preserves every newer title projection across one delayed stale list response", async () => {
+    const second = {
+      ...recent,
+      chat: { ...recent.chat, id: "chat_second", title: "Second old title" },
+    };
+    let resolveRefresh!: (value: { items: CanonicalChatRecord[] }) => void;
+    const client = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ items: [recent, second] })
+        .mockImplementationOnce(() => new Promise<{ items: CanonicalChatRecord[] }>((resolve) => { resolveRefresh = resolve; })),
+    } as unknown as CanonicalChatClient;
+    const events = eventHarness();
+    const actions = {
+      onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(), onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(), onCollapse: vi.fn(),
+    };
+    const { rerender } = render(<WorkRail client={client} eventSource={events.eventSource} projects={[]} active {...actions} />);
+    expect(await screen.findByRole("button", { name: "Recent global" })).toBeTruthy();
+    act(() => events.emit({ type: "chat.changed", chatId: recent.chat.id, cursor: 2 }));
+    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+
+    rerender(<WorkRail client={client} eventSource={events.eventSource} projectedChatTitles={[
+      { chatId: recent.chat.id, title: "First new title", revision: recent.chat.revision + 1 },
+      { chatId: second.chat.id, title: "Second new title", revision: second.chat.revision + 1 },
+    ]} projects={[]} active {...actions} />);
+    await act(async () => resolveRefresh({ items: [recent, second] }));
+
+    expect(screen.getByRole("button", { name: "First new title" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Second new title" })).toBeTruthy();
   });
 
   it("lets an authoritative equal-revision list or omission retire a title projection", async () => {
@@ -190,14 +221,14 @@ describe("WorkRail", () => {
     const { rerender } = render(<WorkRail client={client} projects={[]} active {...actions} />);
     expect(await screen.findByRole("button", { name: "Recent global" })).toBeTruthy();
 
-    rerender(<WorkRail client={client} projectedChatTitle={{
+    rerender(<WorkRail client={client} projectedChatTitles={[{
       chatId: recent.chat.id, title: "Stale projection", revision: recent.chat.revision,
-    }} projects={[]} active {...actions} />);
+    }]} projects={[]} active {...actions} />);
     expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
 
-    rerender(<WorkRail client={client} projectedChatTitle={{
+    rerender(<WorkRail client={client} projectedChatTitles={[{
       chatId: "chat_deleted", title: "Deleted elsewhere", revision: 99,
-    }} projects={[]} active {...actions} />);
+    }]} projects={[]} active {...actions} />);
     expect(screen.queryByRole("button", { name: "Deleted elsewhere" })).toBeNull();
   });
 

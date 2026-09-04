@@ -12,7 +12,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 interface WorkSurfaceRuntime {
   client: CanonicalChatClient | null;
   eventSource: CanonicalChatEventSource | null;
-  projectedChatTitle: CanonicalChatTitleProjection | null;
+  projectedChatTitles: CanonicalChatTitleProjection[];
   projectChat: (record: CanonicalChatRecord) => void;
 }
 
@@ -22,6 +22,9 @@ export interface CanonicalChatTitleProjection {
   revision: number;
 }
 
+const MAX_CHAT_TITLE_PROJECTIONS = 100;
+const EMPTY_CHAT_TITLE_PROJECTIONS: CanonicalChatTitleProjection[] = [];
+
 const WorkSurfaceRuntimeContext = createContext<WorkSurfaceRuntime | null>(null);
 
 export function WorkSurfaceRuntimeProvider({ active, children }: { active: boolean; children: ReactNode }) {
@@ -30,7 +33,7 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
   const authGeneration = useConnection((state) => state.authGeneration);
   const [projection, setProjection] = useState<{
     client: CanonicalChatClient | null;
-    title: CanonicalChatTitleProjection;
+    titles: CanonicalChatTitleProjection[];
   } | null>(null);
   const pendingDisposalRef = useRef<{ source: CanonicalChatEventSource; cancelled: boolean } | null>(null);
   const client = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
@@ -67,19 +70,23 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
   }, [eventSource]);
 
   const projectChat = useCallback((record: CanonicalChatRecord) => {
-    setProjection({
-      client,
-      title: {
-        chatId: record.chat.id,
-        title: record.chat.title,
-        revision: record.chat.revision,
-      },
+    setProjection((current) => {
+      const titles = current?.client === client ? current.titles : [];
+      const existing = titles.find((candidate) => candidate.chatId === record.chat.id);
+      if (existing && existing.revision > record.chat.revision) return current;
+      return {
+        client,
+        titles: [
+          ...titles.filter((candidate) => candidate.chatId !== record.chat.id),
+          { chatId: record.chat.id, title: record.chat.title, revision: record.chat.revision },
+        ].slice(-MAX_CHAT_TITLE_PROJECTIONS),
+      };
     });
   }, [client]);
-  const projectedChatTitle = projection?.client === client ? projection.title : null;
+  const projectedChatTitles = projection?.client === client ? projection.titles : EMPTY_CHAT_TITLE_PROJECTIONS;
   const value = useMemo(
-    () => ({ client, eventSource, projectedChatTitle, projectChat }),
-    [client, eventSource, projectChat, projectedChatTitle],
+    () => ({ client, eventSource, projectedChatTitles, projectChat }),
+    [client, eventSource, projectChat, projectedChatTitles],
   );
   return <WorkSurfaceRuntimeContext.Provider value={value}>{children}</WorkSurfaceRuntimeContext.Provider>;
 }

@@ -23,22 +23,31 @@ const renamedRecord: CanonicalChatRecord = {
     updatedAt: "2026-09-04T01:00:00.000Z",
   },
 };
+const secondRenamedRecord: CanonicalChatRecord = {
+  ...renamedRecord,
+  chat: { ...renamedRecord.chat, id: "chat_second", title: "Second synced title" },
+};
 
 vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
   WorkRail: (props: {
     onChatRenamed?: (record: CanonicalChatRecord) => void;
-    projectedChatTitle?: CanonicalChatTitleProjection;
+    projectedChatTitles?: CanonicalChatTitleProjection[];
   }) => (<>
     <button type="button" onClick={() => props.onChatRenamed?.(renamedRecord)}>
       Complete hosted rail rename
     </button>
-    <span data-testid="hosted-rail-projected-title">{props.projectedChatTitle?.title ?? "No projection"}</span>
+    <span data-testid="hosted-rail-projected-title">
+      {props.projectedChatTitles?.map((projection) => projection.title).join("|") || "No projection"}
+    </span>
   </>),
 }));
 
 function ProjectHeaderRename() {
   const runtime = useWorkSurfaceRuntime();
-  return <button type="button" onClick={() => runtime?.projectChat(renamedRecord)}>Complete header rename</button>;
+  return <>
+    <button type="button" onClick={() => runtime?.projectChat(renamedRecord)}>Complete header rename</button>
+    <button type="button" onClick={() => runtime?.projectChat(secondRenamedRecord)}>Complete second header rename</button>
+  </>;
 }
 
 beforeEach(() => {
@@ -85,5 +94,25 @@ describe("HostedWorkSidebar", () => {
     expect(screen.getByTestId("hosted-rail-projected-title").textContent).toBe("No projection");
     fireEvent.click(screen.getByRole("button", { name: "Complete header rename" }));
     expect(screen.getByTestId("hosted-rail-projected-title").textContent).toBe("Synced title");
+  });
+
+  it("retains bounded projections for multiple header renames", () => {
+    useTabs.getState().openTab({
+      kind: "work", title: "Chat", workRoute: "chat", chatId: "chat_global",
+      chatTitle: "Old title", chatView: "conversation", closable: false,
+    });
+    const tab = useTabs.getState().tabs[0]!;
+
+    render(
+      <WorkSurfaceRuntimeProvider active={false}>
+        <ProjectHeaderRename />
+        <HostedWorkSidebar tab={tab} active={false} />
+      </WorkSurfaceRuntimeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Complete header rename" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete second header rename" }));
+
+    expect(screen.getByTestId("hosted-rail-projected-title").textContent)
+      .toBe("Synced title|Second synced title");
   });
 });
