@@ -5,7 +5,12 @@ import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import { fetchActiveComputer, fetchChatDetail, mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
-const ACTIVE_RUN_POLL_MS = 1_200;
+// Tool calls (hermes-provider-adapter.ts / kernel-provider-adapter.ts) genuinely
+// emit a "running" activity, then a separate "completed" one moments later --
+// but most tool calls finish in well under a second, so a slow poll interval
+// almost always catches them already-completed. Short interval to actually
+// observe the in-progress state, not just the final one.
+const ACTIVE_RUN_POLL_MS = 500;
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "aborted"]);
 
 /**
@@ -35,7 +40,11 @@ function pollWhileRunActive(query: Query<CanonicalChatDetailResponse>): number |
           .reduce((sum, p) => sum + p.text.length, 0),
       })) ?? [],
       activities: query.state.data?.activities.map((a) => (
-        a.type === "agent.activity" ? { type: a.type, kind: a.kind, runId: a.runId } : { type: a.type, runId: a.runId }
+        a.type === "agent.activity"
+          ? { type: a.type, kind: a.kind, status: a.status, activityId: a.activityId, label: a.label }
+          : a.type === "tool.progress"
+            ? { type: a.type, status: a.status, toolCallId: a.toolCallId, label: a.label }
+            : { type: a.type }
       )) ?? [],
       active,
     }),
