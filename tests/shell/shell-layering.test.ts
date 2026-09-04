@@ -5,6 +5,11 @@ import {
 } from "../../shell/src/lib/shell-layering.js";
 
 describe("shell layer ordering", () => {
+  it("keeps app-local rails below shell chrome", () => {
+    expect(SHELL_Z_INDEX.terminalCollapsedRailMenu).toBeLessThan(SHELL_Z_INDEX.appSurfaceRail);
+    expect(SHELL_Z_INDEX.appSurfaceRail).toBeLessThan(SHELL_Z_INDEX.menuBar);
+  });
+
   it("keeps app windows below settings, notifications, and active popovers", () => {
     expect(SHELL_WINDOW_Z_INDEX_MAX).toBeLessThan(SHELL_Z_INDEX.fullscreenWindow);
     expect(SHELL_Z_INDEX.fullscreenWindow).toBeLessThan(SHELL_Z_INDEX.fullscreenExit);

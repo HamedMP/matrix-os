@@ -25,6 +25,8 @@ export interface ChatState {
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
+  /** True only when the current busy state has a server-side run that can be stopped. */
+  canAbort: boolean;
   /** Name of the currently-running tool, or null when the agent is just
       generating text. Drives the global AgentStatusCard's stage label. */
   currentTool: string | null;
@@ -42,6 +44,8 @@ export interface ChatState {
   ) => void;
   newChat: () => Promise<void>;
   switchConversation: (id: string) => void;
+  /** Permanently deletes a conversation after the server confirms success. */
+  deleteConversation?: (id: string) => Promise<boolean>;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
   submitApproval?: (
@@ -319,6 +323,7 @@ export function useChatState(): ChatState {
     messages,
     sessionId,
     busy,
+    canAbort: busy && currentRequestIdRef.current !== null,
     currentTool,
     connected,
     queue,

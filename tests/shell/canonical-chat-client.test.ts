@@ -49,6 +49,23 @@ describe("canonical shell Chat client", () => {
     );
   });
 
+  it("deletes a global Chat through the canonical route with a bounded request id", async () => {
+    const fetchFn = vi.fn(async () => Response.json({
+      chatId: "chat_shell_test",
+      deletedAt: "2026-09-01T10:00:00.000Z",
+    }));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+    await expect(client.delete("chat_shell_test", "req_shell_delete")).resolves.toEqual({
+      chatId: "chat_shell_test",
+      deletedAt: "2026-09-01T10:00:00.000Z",
+    });
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://matrix.test/api/chats/chat_shell_test?clientRequestId=req_shell_delete",
+      expect.objectContaining({ method: "DELETE", signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it("projects canonical parts without exposing raw structured payloads", () => {
     expect(projectCanonicalMessages([{
       id: "msg_shell_user", chatId: "chat_shell_test", seq: 1, role: "user", state: "committed",

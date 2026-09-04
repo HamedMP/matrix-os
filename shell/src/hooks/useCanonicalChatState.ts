@@ -24,6 +24,7 @@ function requestId(): string {
 function conversationMeta(record: CanonicalChatRecord) {
   return {
     id: record.chat.id,
+    title: record.chat.title,
     preview: record.chat.lastMessagePreview ?? record.chat.title,
     messageCount: record.chat.messageCount,
     createdAt: Date.parse(record.chat.createdAt),
@@ -41,18 +42,25 @@ export function useCanonicalChatState(): ChatState {
   const [safeError, setSafeError] = useState<string | null>(null);
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
   const composerDraftSequence = useRef(0);
+  const listRequestGeneration = useRef(0);
   const detailRequestGeneration = useRef(0);
   const detailRef = useRef(detail);
   const activeChatIdRef = useRef(activeChatId);
+  const recordsRef = useRef(records);
   detailRef.current = detail;
   activeChatIdRef.current = activeChatId;
+  recordsRef.current = records;
 
   const loadList = useCallback(async () => {
+    const generation = ++listRequestGeneration.current;
     try {
       const page = await client.list();
+      if (listRequestGeneration.current !== generation) return;
+      recordsRef.current = page.items;
       setRecords(page.items);
       setActiveChatId((current) => current ?? page.items[0]?.chat.id);
     } catch (error: unknown) {
+      if (listRequestGeneration.current !== generation) return;
       console.warn("[canonical-chat] Shell list unavailable:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("Chats could not be loaded. Try again.");
     }
@@ -238,6 +246,29 @@ export function useCanonicalChatState(): ChatState {
     setSafeError(null);
   }, []);
 
+  const deleteConversation = useCallback(async (chatId: string) => {
+    try {
+      await client.delete(chatId, requestId());
+      listRequestGeneration.current += 1;
+      const remaining = recordsRef.current.filter((record) => record.chat.id !== chatId);
+      recordsRef.current = remaining;
+      setRecords(remaining);
+      if (activeChatIdRef.current === chatId) {
+        detailRequestGeneration.current += 1;
+        const nextChatId = remaining[0]?.chat.id;
+        activeChatIdRef.current = nextChatId;
+        setActiveChatId(nextChatId);
+        setDetail(null);
+      }
+      setSafeError(null);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell deletion failed:", error instanceof Error ? error.name : "UnknownError");
+      setSafeError("The Chat could not be deleted. Try again.");
+      return false;
+    }
+  }, [client]);
+
   const abortCurrent = useCallback(() => {
     const current = detailRef.current;
     if (!current?.record.activeRun) return;
@@ -290,6 +321,7 @@ export function useCanonicalChatState(): ChatState {
     messages,
     sessionId: activeChatId,
     busy: submitting || detailLoading || Boolean(detail?.record.activeRun),
+    canAbort: Boolean(detail?.record.activeRun),
     currentTool: null,
     connected,
     queue: [],
@@ -301,6 +333,7 @@ export function useCanonicalChatState(): ChatState {
     submitMessage,
     newChat,
     switchConversation,
+    deleteConversation,
     abortCurrent,
     submitApproval,
   };

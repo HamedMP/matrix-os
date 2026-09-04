@@ -522,11 +522,14 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               messages={chatState.messages}
               sessionId={chatState.sessionId}
               busy={chatState.busy}
+              canAbort={chatState.canAbort}
               connected={chatState.connected}
               conversations={chatState.conversations}
               onNewChat={chatState.newChat}
               onSwitchConversation={chatState.switchConversation}
+              onDeleteConversation={chatState.deleteConversation}
               onSubmit={chatState.submitMessage}
+              onAbort={chatState.abortCurrent}
               onSubmitApproval={chatState.submitApproval}
               providerSelection={chatState.providerSelection}
               composerDraftRequest={chatState.composerDraftRequest}

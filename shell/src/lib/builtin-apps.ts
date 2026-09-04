@@ -38,7 +38,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__workspace__", "Workspace"],
   ["__terminal__", "Terminal"],
   ["__file-browser__", "Files"],
-  ["__chat__", "Hermes"],
+  ["__chat__", "Chat"],
   ["__activity-monitor__", "Activity Monitor"],
 ]);
 

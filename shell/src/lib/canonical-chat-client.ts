@@ -32,6 +32,7 @@ export interface CanonicalShellChatClient {
   list(): Promise<CanonicalChatListResponse>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
+  delete(chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
   cancelRun(chatId: string, runId: string, clientRequestId: string): Promise<CanonicalChatRunCancellationResponse>;
   uploadAttachment(file: ShellAttachmentInput): Promise<CanonicalAttachmentReference>;
@@ -133,6 +134,21 @@ export function createCanonicalShellChatClient(options: {
     async detail(chatId) {
       const id = CanonicalChatIdSchema.parse(chatId);
       return CanonicalChatDetailResponseSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}?limit=200`));
+    },
+    async delete(chatId, clientRequestId) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const parsedRequestId = CanonicalChatRequestIdSchema.parse(clientRequestId);
+      const response = await request(
+        `/api/chats/${encodeURIComponent(id)}?clientRequestId=${encodeURIComponent(parsedRequestId)}`,
+        { method: "DELETE" },
+      );
+      if (typeof response !== "object" || response === null
+        || !("chatId" in response) || response.chatId !== id
+        || !("deletedAt" in response) || typeof response.deletedAt !== "string"
+        || !Number.isFinite(Date.parse(response.deletedAt))) {
+        throw new Error("InvalidChatDeletionResponse");
+      }
+      return { chatId: id, deletedAt: response.deletedAt };
     },
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
