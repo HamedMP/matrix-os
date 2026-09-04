@@ -736,6 +736,11 @@ describe("WorkTab rail integration", () => {
     const trigger = await screen.findByRole("button", { name: "Rename Global chat" });
     fireEvent.click(trigger);
     const input = screen.getByRole("textbox", { name: "Rename Global chat" });
+    expect(input.className).toContain("pointer-events-auto");
+    (input as HTMLInputElement).setSelectionRange(4, 4);
+    fireEvent.click(input);
+    expect((input as HTMLInputElement).selectionStart).toBe(4);
+    expect(screen.getByRole("textbox", { name: "Rename Global chat" })).toBe(input);
     fireEvent.change(input, { target: { value: "Release plan" } });
     fireEvent.keyDown(input, { key: "Enter" });
 

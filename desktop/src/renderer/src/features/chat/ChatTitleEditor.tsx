@@ -42,7 +42,7 @@ export function ChatTitleEditor({
       value={value}
       maxLength={160}
       disabled={disabled}
-      className={`no-drag min-w-0 rounded border bg-[var(--bg-surface)] px-1.5 py-0.5 text-inherit font-inherit outline-none focus:border-[var(--accent)] ${className}`}
+      className={`no-drag pointer-events-auto min-w-0 rounded border bg-[var(--bg-surface)] px-1.5 py-0.5 text-inherit font-inherit outline-none focus:border-[var(--accent)] ${className}`}
       style={{ color: "var(--text-primary)", borderColor: "var(--border-default)" }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
