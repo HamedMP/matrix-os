@@ -1,5 +1,5 @@
 import "@/lib/hermes-polyfills";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -54,6 +54,36 @@ export default function ChatScreen() {
   ) ?? false);
 
   const [draft, setDraft] = useState("");
+  const [inputFocused, setInputFocused] = useState(false);
+  // Tapping the model picker itself blurs the TextInput a beat before its
+  // native menu opens — delay hiding on blur, and cancel the hide entirely
+  // if that blur was caused by touching the picker.
+  const hidePickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pickerTouchedRef = useRef(false);
+
+  const handleInputFocus = useCallback(() => {
+    if (hidePickerTimer.current) {
+      clearTimeout(hidePickerTimer.current);
+      hidePickerTimer.current = null;
+    }
+    setInputFocused(true);
+  }, []);
+
+  const handleInputBlur = useCallback(() => {
+    hidePickerTimer.current = setTimeout(() => {
+      hidePickerTimer.current = null;
+      if (pickerTouchedRef.current) {
+        pickerTouchedRef.current = false;
+        return;
+      }
+      setInputFocused(false);
+    }, 250);
+  }, []);
+
+  const handlePickerTouchStart = useCallback(() => {
+    pickerTouchedRef.current = true;
+  }, []);
+
   const isConnected = Boolean(isSignedIn);
   const hasDraftText = draft.trim().length > 0;
   const canSend = hasDraftText && isConnected && Boolean(selection) && !busy;
@@ -109,41 +139,69 @@ export default function ChatScreen() {
         }
       />
 
-      <ModelPicker
-        catalog={catalog}
-        selection={selection}
-        onSelectionChange={setSelectionOverride}
-      />
-
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
-        <View style={styles.composer}>
-          <IconButton
-            accessibilityLabel="Attach"
-            icon={Add01Icon}
-            iconSize={23}
-            iconColor={mockColors.ink}
-          />
+        <View style={inputFocused ? styles.composerActive : styles.composer}>
+          {inputFocused ? null : (
+            <IconButton
+              accessibilityLabel="Attach"
+              icon={Add01Icon}
+              iconSize={23}
+              iconColor={mockColors.ink}
+            />
+          )}
           <TextInput
             accessibilityLabel="Message Matrix"
             value={draft}
             onChangeText={setDraft}
             onSubmitEditing={send}
+            onFocus={handleInputFocus}
+            onBlur={handleInputBlur}
             placeholder={isConnected ? "Message Matrix" : "Signing in…"}
             placeholderTextColor={mockColors.muted}
             editable={isConnected}
             returnKeyType="send"
-            style={styles.input}
+            style={inputFocused ? styles.inputActive : styles.input}
           />
-          <IconButton
-            accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
-            icon={ArrowUp01Icon}
-            iconSize={19}
-            iconColor={mockColors.surface}
-            backgroundColor={canSend || busy ? mockColors.blue : "#B7BAB7"}
-            loading={busy}
-            disabled={!canSend}
-            onPress={send}
-          />
+          {inputFocused ? (
+            <View style={styles.composerControlsRow}>
+              <IconButton
+                accessibilityLabel="Attach"
+                icon={Add01Icon}
+                iconSize={23}
+                iconColor={mockColors.ink}
+              />
+              <View style={styles.composerControlsRight}>
+                <View onTouchStart={handlePickerTouchStart}>
+                  <ModelPicker
+                    catalog={catalog}
+                    selection={selection}
+                    onSelectionChange={setSelectionOverride}
+                  />
+                </View>
+                <IconButton
+                  accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
+                  icon={ArrowUp01Icon}
+                  iconSize={19}
+                  iconColor={mockColors.surface}
+                  backgroundColor={canSend || busy ? mockColors.blue : "#B7BAB7"}
+                  loading={busy}
+                  disabled={!canSend}
+                  onPress={send}
+                />
+              </View>
+            </View>
+          ) : (
+            <IconButton
+              accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
+              icon={ArrowUp01Icon}
+              iconSize={19}
+              iconColor={mockColors.surface}
+              backgroundColor={canSend || busy ? mockColors.blue : "#B7BAB7"}
+              loading={busy}
+              disabled={!canSend}
+              onPress={send}
+            />
+          )}
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -343,5 +401,35 @@ const styles = StyleSheet.create({
     fontFamily: mockFonts.body,
     fontSize: 15,
     color: mockColors.ink,
+  },
+  composerActive: {
+    flexDirection: "column",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: mockColors.line,
+    borderRadius: 22,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 6,
+    backgroundColor: mockColors.surface,
+    boxShadow: "0 8px 24px rgba(23, 25, 24, 0.08)",
+  },
+  inputActive: {
+    alignSelf: "stretch",
+    minHeight: 40,
+    paddingHorizontal: 4,
+    fontFamily: mockFonts.body,
+    fontSize: 15,
+    color: mockColors.ink,
+  },
+  composerControlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  composerControlsRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
 });

@@ -1,8 +1,8 @@
 import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { Host, Picker } from "@expo/ui";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
+import { mockColors } from "@/components/mock-shell/theme";
 
 const MODEL_VALUE_SEPARATOR = "::";
 
@@ -63,47 +63,44 @@ export function ModelPicker({
     });
   }
 
+  // The native menu button's own label already shows the selected item's
+  // text (SwiftUI .pickerStyle(.menu) / Material3 dropdown convention), so
+  // no separate caption is rendered here — just the model's short name.
   return (
     <View style={styles.row}>
-      <View style={styles.pickerWrap}>
-        <Text style={styles.label}>Model</Text>
-        <Host matchContents>
+      <Host matchContents seedColor={mockColors.muted}>
+        <Picker
+          appearance="menu"
+          selectedValue={modelValue}
+          onValueChange={handleModelChange}
+          testID="model-picker"
+        >
+          {availableInstances.flatMap((instance) => (
+            instance.models
+              .filter((model) => model.availability === "available")
+              .map((model) => (
+                <Picker.Item
+                  key={modelKey(instance.id, model.id)}
+                  label={model.displayName}
+                  value={modelKey(instance.id, model.id)}
+                />
+              ))
+          ))}
+        </Picker>
+      </Host>
+      {composerOption && composerOption.kind === "enum" && composerOption.values ? (
+        <Host matchContents seedColor={mockColors.muted}>
           <Picker
             appearance="menu"
-            selectedValue={modelValue}
-            onValueChange={handleModelChange}
-            testID="model-picker"
+            selectedValue={typeof optionValue === "string" ? optionValue : ""}
+            onValueChange={handleOptionChange}
+            testID="model-option-picker"
           >
-            {availableInstances.flatMap((instance) => (
-              instance.models
-                .filter((model) => model.availability === "available")
-                .map((model) => (
-                  <Picker.Item
-                    key={modelKey(instance.id, model.id)}
-                    label={`${instance.displayName} · ${model.displayName}`}
-                    value={modelKey(instance.id, model.id)}
-                  />
-                ))
+            {composerOption.values.map((value) => (
+              <Picker.Item key={value.value} label={value.label} value={value.value} />
             ))}
           </Picker>
         </Host>
-      </View>
-      {composerOption && composerOption.kind === "enum" && composerOption.values ? (
-        <View style={styles.pickerWrap}>
-          <Text style={styles.label}>{composerOption.label}</Text>
-          <Host matchContents>
-            <Picker
-              appearance="menu"
-              selectedValue={typeof optionValue === "string" ? optionValue : ""}
-              onValueChange={handleOptionChange}
-              testID="model-option-picker"
-            >
-              {composerOption.values.map((value) => (
-                <Picker.Item key={value.value} label={value.label} value={value.value} />
-              ))}
-            </Picker>
-          </Host>
-        </View>
       ) : null}
     </View>
   );
@@ -113,18 +110,6 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 14,
-    paddingBottom: 6,
-  },
-  pickerWrap: {
-    flexDirection: "row",
-    alignItems: "center",
     gap: 4,
-  },
-  label: {
-    fontFamily: mockFonts.medium,
-    fontSize: 13,
-    color: mockColors.muted,
   },
 });
