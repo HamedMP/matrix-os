@@ -49,7 +49,10 @@ describe("Codex app-server contract", () => {
           schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
         "0.153.3": {
-          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          schemaSha256ByTarget: {
+            "darwin-arm64": expect.stringMatching(/^[a-f0-9]{64}$/),
+            "linux-x64": expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
         },
       },
       requiredServerMethods: [

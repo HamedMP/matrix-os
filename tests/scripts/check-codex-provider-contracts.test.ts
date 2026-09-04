@@ -19,7 +19,10 @@ describe("Codex provider contract checker", () => {
     });
     expect(appServerContract.latestVerifiedVersion).toBe("0.153.3");
     expect(appServerContract.verifiedVersions["0.153.3"]).toEqual({
-      schemaSha256: "e8284c5cb8157554a3dd1e035aadbd4325aea501af56887e9c2e12eb1b9b9448",
+      schemaSha256ByTarget: {
+        "darwin-arm64": "e8284c5cb8157554a3dd1e035aadbd4325aea501af56887e9c2e12eb1b9b9448",
+        "linux-x64": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
+      },
     });
   });
 
@@ -53,6 +56,34 @@ describe("Codex provider contract checker", () => {
       execSchemaBytes: execSchema,
       appServerSchemaBytes: appServerSchema,
     })).not.toThrow();
+
+    const targetSpecificAppServerContract = {
+      ...appServerContract,
+      verifiedVersions: {
+        [version]: {
+          schemaSha256ByTarget: {
+            "darwin-arm64": digest(appServerSchema),
+            "linux-x64": "0".repeat(64),
+          },
+        },
+      },
+    };
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: targetSpecificAppServerContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: appServerSchema,
+      runtimeTarget: "darwin-arm64",
+    })).not.toThrow();
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: targetSpecificAppServerContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: appServerSchema,
+      runtimeTarget: "linux-x64",
+    })).toThrow(`received ${digest(appServerSchema)}`);
 
     expect(() => verifyCodexProviderContracts({
       version,

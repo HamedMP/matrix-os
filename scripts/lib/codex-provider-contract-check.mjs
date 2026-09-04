@@ -14,6 +14,7 @@ export function verifyCodexProviderContracts({
   appServerContract,
   execSchemaBytes,
   appServerSchemaBytes,
+  runtimeTarget = `${process.platform}-${process.arch}`,
 }) {
   if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) {
     throw new Error("Codex package version is invalid");
@@ -43,7 +44,9 @@ export function verifyCodexProviderContracts({
     }
   }
 
-  const expectedAppServerDigest = appServerContract.verifiedVersions?.[version]?.schemaSha256;
+  const appServerVerification = appServerContract.verifiedVersions?.[version];
+  const expectedAppServerDigest = appServerVerification?.schemaSha256ByTarget?.[runtimeTarget]
+    ?? appServerVerification?.schemaSha256;
   const actualAppServerDigest = sha256(appServerSchemaBytes);
   if (!expectedAppServerDigest || actualAppServerDigest !== expectedAppServerDigest) {
     throw new Error(
