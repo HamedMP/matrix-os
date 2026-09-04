@@ -1339,6 +1339,86 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
   });
 
+  // Regression test: appendAssistantDelta and the approval-projection insert
+  // in appendRunActivities both write chat_messages rows and both used to
+  // compute their own target seq independently. In production the resolved
+  // record is persisted by the coding-agent runner process over its own
+  // control-socket connection -- genuinely out of band, concurrent with the
+  // dispatch loop below still streaming assistant output for the same run,
+  // not sequenced through the adapter's own event stream the way the test
+  // above resolves it. This drives that out-of-band write directly through
+  // repository.appendRunActivities while the dispatch loop is parked on the
+  // approval pause, then lets the loop resume to a second assistant message
+  // and completion, and asserts no seq collision.
+  it("assigns a collision-free seq to assistant output resumed after an out-of-band approval resolution", async () => {
+    await repository.create(owner, {
+      id: "chat_approval_seq",
+      clientRequestId: "req_create_approval_seq",
+      title: "Approval seq",
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const provider = adapter(async function* () {
+      yield { type: "assistant.delta", messageId: "seq_before_approval", delta: "I need to change a file outside the workspace." };
+      yield {
+        type: "approval.requested" as const,
+        approvalId: "appr_seq",
+        title: "Run command",
+        risk: "medium" as const,
+        allowedDecisions: ["approve" as const, "decline" as const],
+      };
+      await released;
+      yield { type: "assistant.delta", messageId: "seq_after_approval", delta: "Resuming the change now that it's approved." };
+      yield { type: "run.completed" as const, outcome: "completed" as const };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([provider]),
+    });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_approval_seq", {
+      clientRequestId: "req_approval_seq_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "run it" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => {
+      expect((await repository.get(owner, "chat_approval_seq"))?.activeRun?.status)
+        .toBe("waiting_for_approval");
+    });
+
+    await repository.appendRunActivities(owner, "chat_approval_seq", admitted.run.id, [{
+      id: "activity_approval_seq_resolved",
+      chatId: "chat_approval_seq",
+      runId: admitted.run.id,
+      occurredAt: "2026-08-26T00:00:00.000Z",
+      type: "approval.resolved",
+      approvalId: "appr_seq",
+      decision: "approve",
+    }]);
+    release();
+    await orchestrator.drain();
+
+    const messages = await repository.getMessages(owner, "chat_approval_seq", { afterSeq: 0, limit: 50 });
+    // user turn, assistant text, approval_request, approval_result, assistant text
+    expect(messages).toHaveLength(5);
+    const seqs = messages.map((m) => m.seq);
+    expect(new Set(seqs).size).toBe(seqs.length);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+
+    const finalMessage = messages.at(-1)!;
+    expect(finalMessage.role).toBe("assistant");
+    expect(finalMessage.state).toBe("committed");
+    expect(finalMessage.parts.some((p) => p.type === "text" && p.text.includes("Resuming"))).toBe(true);
+
+    const record = await repository.get(owner, "chat_approval_seq");
+    expect(record?.activeRun).toBeUndefined(); // terminal: run completed, no longer active
+  });
+
   it("resumes later Turns only through the same adapter state schema and Instance", async () => {
     await repository.create(owner, {
       id: "chat_resumed",

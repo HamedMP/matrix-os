@@ -409,4 +409,23 @@ describe("Codex structured event normalization", () => {
       delta: "Working on it.",
     });
   });
+
+  it("normalizes matrix.codex.approval.resolved and rejects a malformed decision", () => {
+    const resolved = parseCodexExecJsonLine(JSON.stringify({
+      type: "matrix.codex.approval.resolved",
+      approvalId: "appr_codex_11111111111111111111111111111111",
+      decision: "approve",
+    }), context);
+    expect(resolved.events[0]).toMatchObject({
+      type: "approval.resolved",
+      approvalId: "appr_codex_11111111111111111111111111111111",
+      decision: "approve",
+    });
+
+    expect(parseCodexExecJsonLine(JSON.stringify({
+      type: "matrix.codex.approval.resolved",
+      approvalId: "appr_codex_11111111111111111111111111111111",
+      decision: "not_a_real_decision",
+    }), context)).toEqual({ events: [] });
+  });
 });

@@ -961,6 +961,22 @@ async function applyControl(control) {
       sessionApprovalGrants.grant(pending.method);
     }
     pendingApprovals.delete(control.approvalId);
+    // Mirrors the matrix.codex.approval.requested persist() above: without a
+    // resolved record, the gateway (and the approval_request card it renders)
+    // has no way to learn a decision was actually made here. The decision
+    // has already been sent to the provider at this point, so a transcript
+    // write failure here must not turn into an { ok: false } control
+    // response — that would misreport an approval that did go through.
+    try {
+      await persist({
+        type: "matrix.codex.approval.resolved",
+        approvalId: control.approvalId,
+        decision: control.decision,
+      });
+    } catch (error) {
+      process.stderr.write(`Failed to persist approval resolution for ${control.approvalId}: ${error?.message ?? error}\n`);
+      stopping = true;
+    }
   } else {
     const pending = pendingInputs.get(control.requestId);
     if (!pending) return { ok: false };
@@ -1030,7 +1046,17 @@ const cleanupTimer = setInterval(() => {
   for (const [approvalId, pending] of pendingApprovals) {
     if (pending.expiresAt > now) continue;
     pendingApprovals.delete(approvalId);
-    try { sendProvider({ id: pending.nativeRequestId, result: { decision: "cancel" } }); } catch (_error) { stopping = true; }
+    try {
+      sendProvider({ id: pending.nativeRequestId, result: { decision: "cancel" } });
+      // Same resolved-record gap as applyControl's approval branch: a
+      // timed-out request needs this too, or its card stays "pending" in the
+      // UI forever even though the agent has already moved on.
+      void persist({ type: "matrix.codex.approval.resolved", approvalId, decision: "cancel" })
+        .catch((error) => {
+          process.stderr.write(`Failed to persist timeout resolution for ${approvalId}: ${error?.message ?? error}\n`);
+          stopping = true;
+        });
+    } catch (_error) { stopping = true; }
   }
   for (const [requestId, pending] of pendingInputs) {
     if (pending.expiresAt > now) continue;
