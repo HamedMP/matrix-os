@@ -21,6 +21,7 @@ import ArrowUp01Icon from "@hugeicons/core-free-icons/ArrowUp01Icon";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
+import { useProjects } from "@/lib/queries/use-projects";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import {
   buildTranscript,
@@ -30,6 +31,7 @@ import {
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
 import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
 import { ModelPicker } from "@/components/ModelPicker";
+import { ProjectPicker } from "@/components/ProjectPicker";
 import { Icon, IconButton } from "@/components/ui";
 import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { AnalyticsMask } from "@/lib/analytics";
@@ -39,7 +41,13 @@ const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 export default function ChatScreen() {
   const { isSignedIn } = useAuth();
   const { user } = useUser();
-  const { activeChatId, selectionOverride, setSelectionOverride } = useCanonicalChatSession();
+  const {
+    activeChatId,
+    selectionOverride,
+    setSelectionOverride,
+    selectedProjectId,
+    setSelectedProjectId,
+  } = useCanonicalChatSession();
   const firstName = user?.firstName
     ?? user?.fullName?.trim().split(/\s+/)[0]
     ?? user?.username
@@ -47,6 +55,7 @@ export default function ChatScreen() {
 
   const { detail } = useCanonicalChatDetail(activeChatId);
   const { catalog } = useChatProviderCatalog();
+  const { projects } = useProjects();
   const sendMessage = useSendChatMessage();
 
   const selection = selectionOverride
@@ -114,8 +123,17 @@ export default function ChatScreen() {
       selection,
       interactionMode: turnModes.interactionMode,
       permissionMode: turnModes.permissionMode,
+      projectId: selectedProjectId,
     });
-  }, [draft, selection, turnModes, activeChatId, detail?.record.chat.revision, sendMessage]);
+  }, [
+    draft,
+    selection,
+    turnModes,
+    activeChatId,
+    detail?.record.chat.revision,
+    selectedProjectId,
+    sendMessage,
+  ]);
 
   const insets = useSafeAreaInsets();
 
@@ -157,6 +175,15 @@ export default function ChatScreen() {
       />
 
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+        {inputFocused && activeChatId === null && projects.length > 0 ? (
+          <View style={styles.projectPickerRow} onTouchStart={handlePickerTouchStart}>
+            <ProjectPicker
+              projects={projects}
+              selectedProjectId={selectedProjectId}
+              onSelectionChange={setSelectedProjectId}
+            />
+          </View>
+        ) : null}
         <View style={inputFocused ? styles.composerActive : styles.composer}>
           {inputFocused ? null : (
             <IconButton
@@ -480,6 +507,11 @@ const styles = StyleSheet.create({
   composerWrap: {
     paddingHorizontal: 14,
     paddingTop: 10,
+  },
+  projectPickerRow: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    paddingBottom: 6,
   },
   composer: {
     minHeight: 58,

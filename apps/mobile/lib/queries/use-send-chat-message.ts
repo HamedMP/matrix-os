@@ -22,6 +22,8 @@ interface SendChatMessageInput {
   /** Must be modes the selected instance's `supports` actually declares -- see defaultTurnModes. */
   interactionMode: string;
   permissionMode: string;
+  /** Only applied when creating a new chat (chatId is null) -- see ProjectPicker. */
+  projectId: string | null;
 }
 
 export function useSendChatMessage() {
@@ -37,6 +39,7 @@ export function useSendChatMessage() {
       selection,
       interactionMode,
       permissionMode,
+      projectId,
     }: SendChatMessageInput) => {
       const token = await getToken();
       if (!token) throw new Error("Not signed in.");
@@ -51,6 +54,7 @@ export function useSendChatMessage() {
           clientRequestId: canonicalChatRequestId(),
           title: canonicalChatTitle(text),
           currentSelection: selection,
+          ...(projectId ? { projectId } : {}),
         });
         targetChatId = record.chat.id;
         revision = record.chat.revision;

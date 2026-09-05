@@ -52,4 +52,5 @@ export {
   type MobileBillingStatus,
   type MobileSystemInfo,
 } from "./settings";
+export { fetchProjects, type ProjectSummary } from "./projects";
 export { mobileQueryKeys } from "./query-keys";

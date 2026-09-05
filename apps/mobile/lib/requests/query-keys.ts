@@ -20,6 +20,12 @@ export const mobileQueryKeys = {
     userId,
     computerKey,
   ] as const,
+  projects: (userId: string, computerKey: string) => [
+    "mobile",
+    "projects",
+    userId,
+    computerKey,
+  ] as const,
   files: (userId: string, computerKey: string, path: string) => [
     "mobile",
     "files",

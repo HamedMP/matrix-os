@@ -33,6 +33,14 @@ interface CanonicalChatSessionContextValue {
   /** The model/harness the user explicitly picked for the active chat, if any. */
   selectionOverride: CanonicalChatModelSelection | null;
   setSelectionOverride: (selection: CanonicalChatModelSelection) => void;
+  /**
+   * The Project a draft chat should be created in, if the user picked one.
+   * Only meaningful before the chat exists -- an existing chat's project is
+   * set once at creation (see use-send-chat-message.ts) and isn't repointed
+   * from here.
+   */
+  selectedProjectId: string | null;
+  setSelectedProjectId: (projectId: string | null) => void;
   /** Fires on any invalidation for the active chat or a full-refresh signal. */
   subscribe: (listener: (event: CanonicalChatInvalidation) => void) => () => void;
 }
@@ -44,6 +52,8 @@ const CanonicalChatSessionContext = createContext<CanonicalChatSessionContextVal
   bindDraftChatId: () => {},
   selectionOverride: null,
   setSelectionOverride: () => {},
+  selectedProjectId: null,
+  setSelectedProjectId: () => {},
   subscribe: () => () => {},
 });
 
@@ -54,6 +64,7 @@ export function useCanonicalChatSession(): CanonicalChatSessionContextValue {
 export function CanonicalChatSessionProvider({ children }: { children: ReactNode }) {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [selectionOverride, setSelectionOverride] = useState<CanonicalChatModelSelection | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const { getToken, userId } = useAuth();
   const { computer } = useCanonicalChats();
   const queryClient = useQueryClient();
@@ -111,11 +122,13 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const selectChat = useCallback((id: string) => {
     setActiveChatId(id);
     setSelectionOverride(null);
+    setSelectedProjectId(null);
   }, []);
 
   const startDraftChat = useCallback(() => {
     setActiveChatId(null);
     setSelectionOverride(null);
+    setSelectedProjectId(null);
   }, []);
 
   const bindDraftChatId = useCallback((id: string) => {
@@ -136,9 +149,19 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       bindDraftChatId,
       selectionOverride,
       setSelectionOverride,
+      selectedProjectId,
+      setSelectedProjectId,
       subscribe,
     }),
-    [activeChatId, selectChat, startDraftChat, bindDraftChatId, selectionOverride, subscribe],
+    [
+      activeChatId,
+      selectChat,
+      startDraftChat,
+      bindDraftChatId,
+      selectionOverride,
+      selectedProjectId,
+      subscribe,
+    ],
   );
 
   return <CanonicalChatSessionContext value={value}>{children}</CanonicalChatSessionContext>;
