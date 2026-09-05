@@ -714,6 +714,7 @@ function LegacyProjectChatsView({ projectId, active }: { projectId: string; acti
 export default function ProjectChatsView({
   projectId,
   active,
+  visible = active,
   initialChatId,
   initialView,
   externalNavigation = false,
@@ -724,6 +725,7 @@ export default function ProjectChatsView({
 }: {
   projectId: string;
   active: boolean;
+  visible?: boolean;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
   externalNavigation?: boolean;
@@ -746,6 +748,7 @@ export default function ProjectChatsView({
       initialView={initialView}
       projectLabel={projectLabel}
       active={active}
+      live={visible}
       eventSource={eventSource}
       externalNavigation={externalNavigation}
       renderInspector={renderInspector}

@@ -1,6 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { MATRIX_HOSTED_BILLING_REGIONS } from '@matrix-os/contracts';
+import {
+  MATRIX_HOSTED_BILLING_PLAN_SLUGS,
+  MATRIX_HOSTED_BILLING_REGIONS,
+  MATRIX_HOSTED_BILLING_REGION_SLUGS,
+  resolveMatrixMachineProfile,
+} from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 
 import {
@@ -45,9 +50,21 @@ const AppSessionExchangeBodySchema = z.object({
 const AppSessionProvisionBodySchema = z.object({
   runtime: RuntimeSlotSchema.optional().default('primary'),
   developerTools: DeveloperToolsSchema.optional(),
+  planSlug: z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS).optional(),
+  regionSlug: z.enum(MATRIX_HOSTED_BILLING_REGION_SLUGS).optional(),
+  // Temporary compatibility for already-deployed shell bundles. New clients
+  // send planSlug + regionSlug and never select provider infrastructure.
   serverType: HetznerServerTypeSchema.optional(),
   location: HetznerLocationSchema.optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if ((value.planSlug === undefined) !== (value.regionSlug === undefined)) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Plan and region must be selected together',
+      path: value.planSlug === undefined ? ['planSlug'] : ['regionSlug'],
+    });
+  }
+});
 
 interface ProvisionIdentity {
   handle: string;
@@ -230,12 +247,18 @@ export function createAppSessionRoutes(opts: {
       const settlingCheckoutRegion = checkoutAttempt?.regionSlug
         ? MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === checkoutAttempt.regionSlug)
         : undefined;
+      const requestedProfile = parsed.data.planSlug && parsed.data.regionSlug
+        ? resolveMatrixMachineProfile(parsed.data.planSlug, parsed.data.regionSlug)
+        : undefined;
+      const requestedRegion = parsed.data.regionSlug
+        ? MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === parsed.data.regionSlug)
+        : undefined;
       const developerTools = resolveProvisioningDeveloperTools(
         settlingCheckoutDeveloperTools ?? parsed.data.developerTools,
         undefined,
       );
-      const serverType = checkoutAttempt?.serverType ?? parsed.data.serverType;
-      const location = settlingCheckoutRegion?.location ?? parsed.data.location;
+      const serverType = checkoutAttempt?.serverType ?? requestedProfile?.serverType ?? parsed.data.serverType;
+      const location = settlingCheckoutRegion?.location ?? requestedRegion?.location ?? parsed.data.location;
       const provisioned = await opts.customerVpsService.provision(
         {
           handle: identity.handle,

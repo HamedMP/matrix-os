@@ -10,6 +10,7 @@
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",
     "#ai-provider": "./src/ai-provider.ts",
+    "#billing-public": "./src/billing-public.ts",
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",

@@ -44,6 +44,7 @@ export default function EmbedHost({
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
+  const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
 
   const reportBounds = useCallback((): void => {
     const id = embedIdRef.current;
@@ -66,6 +67,7 @@ export default function EmbedHost({
     if (!host) return;
     embedIdRef.current = null;
     setState("loading");
+    setSnapshotDataUrl(null);
     let disposed = false;
     let offState: (() => void) | null = null;
     const pendingStates = new Map<string, typeof state>();
@@ -136,14 +138,37 @@ export default function EmbedHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url]);
 
-  // Attach/detach the native view as the hosting tab activates/deactivates.
+  // Native views always paint above renderer windows. Keep a bounded local
+  // frame under the detached view so obscured Matrix windows do not go blank.
   useEffect(() => {
     const id = embedIdRef.current;
     // While embed:open is pending there is no native view to attach yet. The
     // open resolution path applies activeRef.current before reporting bounds.
     if (!id) return;
-    void invoke("embed:set-active", { embedId: id, active });
-    if (active) reportBounds();
+    if (active) {
+      setSnapshotDataUrl(null);
+      void invoke("embed:set-active", { embedId: id, active: true });
+      reportBounds();
+      return;
+    }
+    void invoke("embed:deactivate", { embedId: id }).then((result) => {
+      if (embedIdRef.current !== id || activeRef.current) return;
+      if (result.snapshotDataUrl) setSnapshotDataUrl(result.snapshotDataUrl);
+    }).catch((error: unknown) => {
+      console.warn(
+        "[embeds] retained frame request failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      if (embedIdRef.current !== id || activeRef.current) return;
+      void invoke("embed:set-active", { embedId: id, active: false }).catch(
+        (fallbackError: unknown) => {
+          console.warn(
+            "[embeds] fallback detach failed:",
+            fallbackError instanceof Error ? fallbackError.name : "UnknownError",
+          );
+        },
+      );
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
@@ -176,7 +201,17 @@ export default function EmbedHost({
   }, [active, openedEmbedRevision, refreshRequest]);
 
   return (
-    <div ref={hostRef} className="relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
+    <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
+      {snapshotDataUrl ? (
+        <img
+          data-testid="embed-retained-frame"
+          src={snapshotDataUrl}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="pointer-events-none absolute inset-0 size-full object-fill"
+        />
+      ) : null}
       {state === "loading" ? (
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="status-pulse text-sm" style={{ color: "var(--text-tertiary)" }}>

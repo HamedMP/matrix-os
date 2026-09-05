@@ -10,6 +10,12 @@ const clerkState = vi.hoisted(() => ({
   userId: "user_123" as string | null,
   activePlan: null as string | null,
 }));
+const posthogClientMock = vi.hoisted(() => ({
+  capturePostHogEvent: vi.fn(),
+  capturePostHogLog: vi.fn(),
+}));
+
+vi.mock("../../shell/src/lib/posthog-client.js", () => posthogClientMock);
 
 function installClerkMock() {
   vi.doMock("@clerk/nextjs", () => ({
@@ -46,6 +52,8 @@ describe("BillingSection", () => {
     clerkState.isSignedIn = true;
     clerkState.userId = "user_123";
     clerkState.activePlan = null;
+    posthogClientMock.capturePostHogEvent.mockReset();
+    posthogClientMock.capturePostHogLog.mockReset();
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
         status: 200,
@@ -66,6 +74,22 @@ describe("BillingSection", () => {
 
     expect(screen.queryByText("Start your 3-day free trial")).toBeNull();
     expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    vi.unstubAllEnvs();
+  });
+
+  it("uses a provider-neutral active fixture in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    window.history.replaceState({}, "", "/?e2e_billing_state=active");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    expect(screen.getByRole("heading", { name: "Builder" })).toBeTruthy();
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
+    expect(screen.queryByText(/\$100/)).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    window.history.replaceState({}, "", "/");
     vi.unstubAllEnvs();
   });
 
@@ -162,6 +186,49 @@ describe("BillingSection", () => {
     expect(screen.queryByText("Start your 7-day free trial")).toBeNull();
   });
 
+  it("offers internal accounts only plan and region combinations authorized by billing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: true, reason: "active" },
+        trialOffer: { eligible: false, durationDays: 3 },
+        entitlement: {
+          source: "override",
+          planSlug: "internal",
+          status: "active",
+          maxRuntimeSlots: 3,
+          includedRuntimeSlots: 3,
+          addonRuntimeSlots: 0,
+          allowedPlanSlugs: ["matrix_builder"],
+          allowedSelections: [
+            { planSlug: "matrix_builder", regionSlug: "region_fsn1" },
+            { planSlug: "matrix_builder", regionSlug: "region_nbg1" },
+          ],
+          portalAvailable: false,
+          billingInterval: null,
+          gracePeriodEndsAt: null,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialConvertedAt: null,
+          firstTrialPaymentFailedAt: null,
+          effectiveFrom: "2026-08-31T00:00:00.000Z",
+          effectiveUntil: null,
+          updatedAt: "2026-08-31T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="add-computer" checkoutRuntimeSlot="studio" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+
+    expect(screen.getByRole("button", { name: /Falkenstein, Germany/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Nuremberg, Germany/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Ashburn, Virginia/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Hillsboro, Oregon/ })).toBeNull();
+  });
+
   it("does not replace a legacy trial price with the current catalog price", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
@@ -174,10 +241,8 @@ describe("BillingSection", () => {
           maxRuntimeSlots: 1,
           includedRuntimeSlots: 1,
           addonRuntimeSlots: 0,
-          defaultServerType: "cpx32",
-          allowedServerTypes: ["cpx22", "cpx32"],
-          stripeSubscriptionId: "sub_trial",
-          stripePriceId: "price_builder_monthly",
+          allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+          portalAvailable: true,
           billingInterval: "monthly",
           gracePeriodEndsAt: null,
           trialStartedAt: "2026-08-19T00:00:00.000Z",
@@ -212,8 +277,7 @@ describe("BillingSection", () => {
         entitlement: {
           source: "stripe", planSlug: "matrix_builder", status: "past_due",
           maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
-          defaultServerType: "cpx32", allowedServerTypes: ["cpx22", "cpx32"],
-          stripeSubscriptionId: "sub_trial", stripePriceId: "price_builder_monthly",
+          allowedPlanSlugs: ["matrix_starter", "matrix_builder"], portalAvailable: true,
           billingInterval: "monthly", gracePeriodEndsAt: null,
           trialStartedAt: "2026-08-19T00:00:00.000Z", trialEndsAt: "2026-08-26T00:00:00.000Z",
           trialConvertedAt: null, firstTrialPaymentFailedAt: "2026-08-26T00:00:00.000Z",
@@ -335,7 +399,7 @@ describe("BillingSection", () => {
     await waitForBillingConfigurator();
   });
 
-  it("sends the selected US machine shape and preinstalled agents to monthly checkout", async () => {
+  it("sends only the selected Matrix plan, region, and agents to monthly checkout", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -365,7 +429,6 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_ash",
-            serverType: "cpx31",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
           }),
         }),
@@ -459,7 +522,6 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
-            serverType: "cpx42",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
           }),
@@ -698,11 +760,27 @@ describe("BillingSection", () => {
             maxRuntimeSlots: 3,
             includedRuntimeSlots: 2,
             addonRuntimeSlots: 1,
-            defaultServerType: "cpx32",
-            allowedServerTypes: ["cpx22", "cpx32"],
-            stripeSubscriptionId: "sub_123",
-            stripePriceId: "price_123",
+            allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+            portalAvailable: true,
+            billingInterval: "monthly",
+            recurringPrice: {
+              unitAmountMinor: 2000,
+              currency: "usd",
+              interval: "monthly",
+              intervalCount: 1,
+              quantity: 1,
+            },
+            runtimePlacement: {
+              regionSlug: "region_ash",
+              label: "Ashburn, Virginia",
+              countryLabel: "United States",
+              networkZone: "us-east",
+            },
             gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+            trialStartedAt: null,
+            trialEndsAt: null,
+            trialConvertedAt: null,
+            firstTrialPaymentFailedAt: null,
             effectiveFrom: "2026-05-30T00:00:00.000Z",
             effectiveUntil: null,
             updatedAt: "2026-05-30T00:00:00.000Z",
@@ -727,7 +805,28 @@ describe("BillingSection", () => {
     expect(screen.getByText("Current plan")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("2 included, 1 add-on")).toBeTruthy();
-    expect(screen.getByText("cpx32")).toBeTruthy();
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
+    expect(screen.queryByText("Machine")).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    expect(screen.queryByText(/hetzner/i)).toBeNull();
+    await waitFor(() => expect(posthogClientMock.capturePostHogEvent).toHaveBeenCalledWith(
+      "shell_billing",
+      expect.objectContaining({
+        event: "view_active_billing",
+        plan_slug: "matrix_builder",
+        recurring_unit_amount_minor: 2000,
+        recurring_total_amount_minor: 2000,
+        currency: "usd",
+        region_slug: "region_ash",
+        location_label: "Ashburn, Virginia",
+      }),
+    ));
+    const activeView = posthogClientMock.capturePostHogEvent.mock.calls.find(
+      ([event, properties]) => event === "shell_billing"
+        && (properties as { event?: string }).event === "view_active_billing",
+    )?.[1];
+    expect(activeView).not.toHaveProperty("selected_price_usd");
     expect(screen.getByText("Receipts and payment")).toBeTruthy();
     expect(screen.getByText("Canceling")).toBeTruthy();
 
@@ -738,6 +837,42 @@ describe("BillingSection", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
+  });
+
+  it("does not label the monthly catalog price as an annual charge", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: true, reason: "active" },
+        entitlement: {
+          source: "stripe",
+          planSlug: "matrix_builder",
+          status: "active",
+          maxRuntimeSlots: 1,
+          includedRuntimeSlots: 1,
+          addonRuntimeSlots: 0,
+          allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+          portalAvailable: true,
+          billingInterval: "annual",
+          gracePeriodEndsAt: null,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialConvertedAt: null,
+          firstTrialPaymentFailedAt: null,
+          effectiveFrom: "2026-05-30T00:00:00.000Z",
+          effectiveUntil: null,
+          updatedAt: "2026-05-30T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Annual")).toBeTruthy());
+    expect(screen.queryByText("$100")).toBeNull();
+    expect(screen.queryByText("per year")).toBeNull();
   });
 
   it("does not mark billing active for the legacy Clerk early_adopter plan", async () => {

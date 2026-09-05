@@ -34,6 +34,63 @@ beforeEach(() => {
 });
 
 describe("canonical shell Chat state", () => {
+  it("renames through canonical persistence and synchronizes list and active title projections", async () => {
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method === undefined) {
+        return Response.json({ items: [record("chat_a", "Old title", 3)] });
+      }
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
+        return Response.json(detail("chat_a", "Old title", 3));
+      }
+      if (url.endsWith("/api/chats/chat_a/title") && init?.method === "PATCH") {
+        expect(JSON.parse(String(init.body))).toEqual({ baseRevision: 3, title: "New title" });
+        return Response.json(record("chat_a", "New title", 4));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations[0]?.title).toBe("Old title"));
+    await act(async () => {
+      await expect(result.current.renameConversation?.("chat_a", "New title")).resolves.toBe(true);
+    });
+
+    expect(result.current.conversations[0]?.title).toBe("New title");
+    expect(result.current.activeConversationTitle).toBe("New title");
+  });
+
+  it("does not let an older rename response regress a newer canonical refresh", async () => {
+    let resolveRename!: (response: Response) => void;
+    const renameResponse = new Promise<Response>((resolve) => { resolveRename = resolve; });
+    let detailCalls = 0;
+    let listCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method === undefined) {
+        listCalls += 1;
+        return Response.json({ items: [record("chat_a", listCalls === 1 ? "Initial" : "Newest refresh", listCalls === 1 ? 3 : 5)] });
+      }
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
+        detailCalls += 1;
+        return Response.json(detail("chat_a", detailCalls === 1 ? "Initial" : "Newest refresh", detailCalls === 1 ? 3 : 5));
+      }
+      if (url.endsWith("/api/chats/chat_a/title") && init?.method === "PATCH") return renameResponse;
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.activeConversationTitle).toBe("Initial"));
+    let rename!: Promise<boolean>;
+    act(() => { rename = result.current.renameConversation!("chat_a", "Renamed"); });
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(result.current.activeConversationTitle).toBe("Newest refresh"));
+    resolveRename(Response.json(record("chat_a", "Renamed", 4)));
+    await act(async () => { await rename; });
+
+    expect(result.current.conversations[0]?.title).toBe("Newest refresh");
+    expect(result.current.activeConversationTitle).toBe("Newest refresh");
+  });
+
   it("ignores an out-of-order detail response after switching chats", async () => {
     let resolveA: ((response: Response) => void) | undefined;
     const detailA = new Promise<Response>((resolve) => { resolveA = resolve; });

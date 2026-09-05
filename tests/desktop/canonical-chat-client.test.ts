@@ -217,6 +217,21 @@ describe("canonical Chat client", () => {
     })).resolves.toEqual(movedRecord);
   });
 
+  it("renames a Chat through the canonical revision-guarded endpoint", async () => {
+    const renamed = { ...record, chat: { ...record.chat, title: "Release plan", revision: 1 } };
+    const patch = vi.fn(async () => renamed);
+    const client = createCanonicalChatClient(api({ patch }));
+
+    await expect(client.updateTitle(record.chat.id, {
+      baseRevision: 0,
+      title: "  Release plan  ",
+    })).resolves.toEqual(renamed);
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/title", {
+      baseRevision: 0,
+      title: "Release plan",
+    });
+  });
+
   it("updates durable Chat pin state through the owner-scoped endpoint", async () => {
     const pinned = {
       ...record,

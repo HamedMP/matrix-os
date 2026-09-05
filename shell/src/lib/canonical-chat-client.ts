@@ -9,6 +9,7 @@ import {
   CanonicalChatRunIdSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
+  CanonicalUpdateChatTitleRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
@@ -23,6 +24,7 @@ import {
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalUpdateChatTitleRequest,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
 
@@ -32,6 +34,7 @@ export interface CanonicalShellChatClient {
   list(): Promise<CanonicalChatListResponse>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
+  updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
   cancelRun(chatId: string, runId: string, clientRequestId: string): Promise<CanonicalChatRunCancellationResponse>;
   uploadAttachment(file: ShellAttachmentInput): Promise<CanonicalAttachmentReference>;
@@ -133,6 +136,15 @@ export function createCanonicalShellChatClient(options: {
     async detail(chatId) {
       const id = CanonicalChatIdSchema.parse(chatId);
       return CanonicalChatDetailResponseSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}?limit=200`));
+    },
+    async updateTitle(chatId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const body = CanonicalUpdateChatTitleRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/title`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }));
     },
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);

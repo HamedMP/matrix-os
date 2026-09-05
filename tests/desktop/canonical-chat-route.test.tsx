@@ -130,6 +130,47 @@ describe("CanonicalChatRoute", () => {
     expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
   });
 
+  it("keeps a loaded conversation rendered while its visible window is behind another window", async () => {
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const completed = createCanonicalChatFixture("running");
+    const { project, providerBinding, activeRun, ...chat } = completed.snapshot.chat;
+    const record = { chat, projectId: project?.projectId, providerBinding, activeRun };
+    const routeApi = api(vi.fn(async (path: string) => {
+      if (path.startsWith("/api/chat-providers")) return completed.providerCatalog;
+      if (path.startsWith(`/api/chats/${chat.id}`)) {
+        return {
+          record,
+          messages: completed.snapshot.messages,
+          turns: completed.snapshot.turns,
+          runs: completed.snapshot.runs,
+          activities: completed.snapshot.activities,
+          queuedTurns: [],
+        };
+      }
+      if (path.startsWith("/api/chats")) return { items: [record] };
+      throw new Error("route unavailable");
+    }));
+    const props = {
+      api: routeApi,
+      projectId: null,
+      initialChatId: chat.id,
+      initialView: "conversation" as const,
+      live: true,
+      fallback: <div>legacy chat</div>,
+    };
+    const view = render(<CanonicalChatRoute {...props} active />);
+
+    expect(await screen.findByText("Build the canonical Chat contract.")).toBeTruthy();
+    view.rerender(<CanonicalChatRoute {...props} active={false} />);
+
+    expect(screen.getByText("Build the canonical Chat contract.")).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Loading chat" })).toBeNull();
+  });
+
   it("keeps the legacy route on an older Gateway instead of showing a broken surface", async () => {
     render(
       <CanonicalChatRoute

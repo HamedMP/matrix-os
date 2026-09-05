@@ -21,13 +21,14 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.153.0";
+export const CODEX_VERIFIED_VERSION = "0.153.3";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
 export * from "#ai-provider";
 export * from "#billing-catalog";
 export * from "#ai-provider";
+export * from "#billing-public";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";

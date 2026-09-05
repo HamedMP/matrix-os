@@ -49,6 +49,26 @@ describe("canonical shell Chat client", () => {
     );
   });
 
+  it("renames a Chat through the canonical revision-guarded endpoint", async () => {
+    const renamed = { ...record, chat: { ...record.chat, title: "Release plan", revision: 1 } };
+    const fetchFn = vi.fn(async () => Response.json(renamed));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+    await expect(client.updateTitle("chat_shell_test", {
+      baseRevision: 0,
+      title: "Release plan",
+    })).resolves.toEqual(renamed);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://matrix.test/api/chats/chat_shell_test/title",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseRevision: 0, title: "Release plan" }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
   it("projects canonical parts without exposing raw structured payloads", () => {
     expect(projectCanonicalMessages([{
       id: "msg_shell_user", chatId: "chat_shell_test", seq: 1, role: "user", state: "committed",

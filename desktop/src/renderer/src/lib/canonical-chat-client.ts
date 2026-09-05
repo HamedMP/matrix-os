@@ -30,6 +30,7 @@ import {
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
@@ -55,6 +56,7 @@ import {
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -430,6 +432,7 @@ export interface CanonicalChatClient {
   ): Promise<CanonicalChatListResponse>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
+  updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
   updateUserState(chatId: string, input: CanonicalUpdateChatUserStateRequest): Promise<CanonicalChatRecord>;
   acknowledgeCompletion(
     chatId: string,
@@ -541,6 +544,15 @@ export function createCanonicalChatClient(
       const request = CanonicalUpdateChatProjectRequestSchema.parse(input);
       return CanonicalChatRecordSchema.parse(await api.patch(
         `/api/chats/${encodeURIComponent(parsedChatId)}/project`,
+        request,
+      ));
+    },
+
+    async updateTitle(chatId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const request = CanonicalUpdateChatTitleRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await api.patch(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/title`,
         request,
       ));
     },

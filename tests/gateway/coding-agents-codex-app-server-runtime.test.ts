@@ -806,7 +806,7 @@ describe("Codex app-server control runtime", () => {
       "    } else {",
       "      console.log(JSON.stringify({ id: message.id, result: { turnId: 'native-turn-busy-steer' } }));",
       "      console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn-busy-steer', itemId: 'native-message-busy-steer', delta: 'busy-steer-retried' } }));",
-      "      console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-busy-steer', status: 'completed', items: [] } } }));",
+      "      setTimeout(() => console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-busy-steer', status: 'completed', items: [] } } })), 100);",
       "    }",
       "  }",
       "}",
@@ -835,8 +835,8 @@ describe("Codex app-server control runtime", () => {
         prompt: "Focus on the correction.",
         clientRequestId: "req_control_busy_steer_1",
       })).resolves.toEqual({ ok: true });
-      const transcript = await waitForTranscript(eventPath, /busy-steer-retried/);
-      expect(transcript).toContain('"type":"turn.completed"');
+      const transcript = await waitForTranscript(eventPath, /"type":"turn\.completed"/);
+      expect(transcript).toContain("busy-steer-retried");
       expect(child.exitCode).toBeNull();
     } finally {
       child.kill("SIGTERM");

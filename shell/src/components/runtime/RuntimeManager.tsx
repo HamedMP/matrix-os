@@ -1,7 +1,16 @@
 "use client";
 
 import { RedirectToSignIn, useAuth, useClerk, useUser } from "@clerk/nextjs";
-import { MatrixComputerListSchema, type MatrixComputerList } from "@matrix-os/contracts";
+import {
+  MATRIX_HOSTED_BILLING_PLAN_SLUGS,
+  MATRIX_HOSTED_BILLING_REGION_SLUGS,
+  MatrixBillingStatusSchema,
+  MatrixComputerListSchema,
+  type MatrixBillingStatus,
+  type MatrixComputerList,
+  type MatrixHostedBillingPlanSlug,
+  type MatrixHostedBillingRegionSlug,
+} from "@matrix-os/contracts";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import { ArrowLeftIcon, LogOutIcon, SettingsIcon, UserIcon } from "@/lib/hugeicons";
 import Image from "next/image";
@@ -11,8 +20,6 @@ import { DefaultInstallsStep } from "@/components/onboarding/DefaultInstallsStep
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "@/components/Settings";
 import type { ComputerSetupSelection } from "@/components/settings/sections/BillingPanel";
-import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
-import { MATRIX_BILLING_MACHINE_PROFILES, MATRIX_BILLING_REGIONS } from "@/lib/billing";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import {
@@ -34,14 +41,9 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_BILLING_POLL_INTERVAL_MS = 3_000;
 const DEFAULT_JOURNEY_POLL_INTERVAL_MS = 3_000;
 const BILLING_PROJECTION_WAIT_MS = 2 * 60_000;
-export const ADD_COMPUTER_DRAFT_KEY = "matrix:add-computer-draft:v1";
+export const ADD_COMPUTER_DRAFT_KEY = "matrix:add-computer-draft:v2";
 
-type BillingEntitlement = BillingEntitlementSummary;
-
-type BillingStatus = {
-  entitlement: BillingEntitlement | null;
-  access: { runtimeProxyAllowed: boolean; reason: string };
-};
+type BillingStatus = Pick<MatrixBillingStatus, "entitlement" | "access">;
 
 export type JourneyState = {
   phase: "provisioning" | "provisioning_failed" | "ready" | "first_run" | string;
@@ -54,8 +56,8 @@ type AddComputerDraft = {
   name: string;
   slot: string;
   developerTools: DeveloperToolId[];
-  serverType: string;
-  location: string;
+  planSlug: MatrixHostedBillingPlanSlug;
+  regionSlug: MatrixHostedBillingRegionSlug;
   createdAt: number;
 };
 
@@ -102,16 +104,12 @@ function isDeveloperToolId(value: unknown): value is DeveloperToolId {
   return value === "codex" || value === "claude-code" || value === "opencode" || value === "pi";
 }
 
-function isKnownServerType(value: unknown): value is string {
-  return typeof value === "string" && MATRIX_BILLING_MACHINE_PROFILES.some(
-    (profile) => profile.serverType === value.toLowerCase(),
-  );
+function isKnownPlanSlug(value: unknown): value is MatrixHostedBillingPlanSlug {
+  return typeof value === "string" && MATRIX_HOSTED_BILLING_PLAN_SLUGS.some((slug) => slug === value);
 }
 
-function isKnownLocation(value: unknown): value is string {
-  return typeof value === "string" && MATRIX_BILLING_REGIONS.some(
-    (region) => region.location === value,
-  );
+function isKnownRegionSlug(value: unknown): value is MatrixHostedBillingRegionSlug {
+  return typeof value === "string" && MATRIX_HOSTED_BILLING_REGION_SLUGS.some((slug) => slug === value);
 }
 
 function safeReadDraft(): AddComputerDraft | null {
@@ -129,8 +127,8 @@ function safeReadDraft(): AddComputerDraft | null {
       value.slot !== normalizeRuntimeSlotName(value.name) ||
       !Array.isArray(value.developerTools) ||
       !value.developerTools.every(isDeveloperToolId) ||
-      !isKnownServerType(value.serverType) ||
-      !isKnownLocation(value.location)
+      !isKnownPlanSlug(value.planSlug) ||
+      !isKnownRegionSlug(value.regionSlug)
     ) {
       return null;
     }
@@ -142,8 +140,8 @@ function safeReadDraft(): AddComputerDraft | null {
       name: value.name,
       slot: value.slot,
       developerTools: value.developerTools as DeveloperToolId[],
-      serverType: value.serverType.toLowerCase(),
-      location: value.location,
+      planSlug: value.planSlug,
+      regionSlug: value.regionSlug,
       createdAt,
     };
   } catch (error: unknown) {
@@ -179,53 +177,25 @@ async function fetchJson(input: string, init: RequestInit = {}): Promise<{ respo
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   let body: unknown = null;
-  try {
-    body = await response.json();
-  } catch (error: unknown) {
-    capturePostHogLog("warn", "runtime_manager response_parse_failed", {
-      surface: "runtime_manager",
-      error_kind: error instanceof Error ? error.name : typeof error,
-    });
+  if (response.ok) {
+    try {
+      body = await response.json();
+    } catch (error: unknown) {
+      capturePostHogLog("warn", "runtime_manager response_parse_failed", {
+        surface: "runtime_manager",
+        error_kind: error instanceof Error ? error.name : typeof error,
+      });
+    }
   }
   return { response, body };
 }
 
 function parseBillingStatus(value: unknown): BillingStatus | null {
-  if (!value || typeof value !== "object") return null;
-  const candidate = value as { entitlement?: unknown; access?: unknown };
-  if (!candidate.access || typeof candidate.access !== "object") return null;
-  const access = candidate.access as { runtimeProxyAllowed?: unknown; reason?: unknown };
-  if (typeof access.runtimeProxyAllowed !== "boolean" || typeof access.reason !== "string") return null;
-  if (candidate.entitlement === null || candidate.entitlement === undefined) {
-    return { entitlement: null, access: { runtimeProxyAllowed: access.runtimeProxyAllowed, reason: access.reason } };
-  }
-  if (typeof candidate.entitlement !== "object") return null;
-  const entitlement = candidate.entitlement as Partial<BillingEntitlement>;
-  const stringOrNull = (value: unknown) => value === null || typeof value === "string";
-  if (
-    (entitlement.source !== "stripe" && entitlement.source !== "override") ||
-    !["matrix_starter", "matrix_builder", "matrix_max", "internal"].includes(entitlement.planSlug ?? "") ||
-    typeof entitlement.status !== "string" ||
-    !Number.isInteger(entitlement.maxRuntimeSlots) ||
-    (entitlement.maxRuntimeSlots ?? -1) < 0 ||
-    !Number.isInteger(entitlement.includedRuntimeSlots) ||
-    !Number.isInteger(entitlement.addonRuntimeSlots) ||
-    typeof entitlement.defaultServerType !== "string" ||
-    !Array.isArray(entitlement.allowedServerTypes) ||
-    entitlement.allowedServerTypes.length > 10 ||
-    !entitlement.allowedServerTypes.every((serverType) => typeof serverType === "string") ||
-    !stringOrNull(entitlement.stripeSubscriptionId) ||
-    !stringOrNull(entitlement.stripePriceId) ||
-    !stringOrNull(entitlement.gracePeriodEndsAt) ||
-    typeof entitlement.effectiveFrom !== "string" ||
-    !stringOrNull(entitlement.effectiveUntil) ||
-    typeof entitlement.updatedAt !== "string"
-  ) {
-    return null;
-  }
+  const parsed = MatrixBillingStatusSchema.safeParse(value);
+  if (!parsed.success) return null;
   return {
-    entitlement: entitlement as BillingEntitlement,
-    access: { runtimeProxyAllowed: access.runtimeProxyAllowed, reason: access.reason },
+    entitlement: parsed.data.entitlement,
+    access: parsed.data.access,
   };
 }
 
@@ -507,12 +477,13 @@ export function RuntimeManager({
       return;
     }
     setNameError(null);
+    const currentPlanSlug = overview.billing.entitlement?.planSlug;
     setDraft({
       name: computerName.trim(),
       slot: validation.slot,
       developerTools: [],
-      serverType: overview.billing.entitlement?.defaultServerType.toLowerCase() ?? "cpx22",
-      location: MATRIX_BILLING_REGIONS[0]?.location ?? "fsn1",
+      planSlug: isKnownPlanSlug(currentPlanSlug) ? currentPlanSlug : "matrix_builder",
+      regionSlug: "region_fsn1",
       createdAt: Date.now(),
     });
     setStep("configuration");
@@ -525,16 +496,14 @@ export function RuntimeManager({
   function rememberAdditionalCheckout(selection: ComputerSetupSelection): boolean {
     if (
       !draft ||
-      !isKnownLocation(selection.location) ||
-      !MATRIX_BILLING_MACHINE_PROFILES.some(
-        (profile) => profile.serverType === selection.serverType.toLowerCase(),
-      )
+      !isKnownPlanSlug(selection.planSlug) ||
+      !isKnownRegionSlug(selection.regionSlug)
     ) return false;
     const nextDraft = {
       ...draft,
       developerTools: [...selection.developerTools],
-      serverType: selection.serverType.toLowerCase(),
-      location: selection.location,
+      planSlug: selection.planSlug,
+      regionSlug: selection.regionSlug,
       createdAt: Date.now(),
     };
     setDraft(nextDraft);
@@ -575,7 +544,9 @@ export function RuntimeManager({
         body: JSON.stringify({ runtimeSlot: draft.slot }),
       });
       if (response.status === 402) {
-        setStep("installs");
+        setSafeError("This computer configuration is no longer available for your account. Review your plan and region, then try again.");
+        setErrorRetryAction("billing");
+        setStep("error");
         return;
       }
       if (!response.ok) {
@@ -804,12 +775,14 @@ async function provisionComputer(
       body: JSON.stringify({
         runtime: draft.slot,
         developerTools: draft.developerTools,
-        serverType: draft.serverType,
-        location: draft.location,
+        planSlug: draft.planSlug,
+        regionSlug: draft.regionSlug,
       }),
     });
     if (response.status === 402) {
-      setStep("installs");
+      setSafeError("This computer configuration is no longer available for your account. Review your plan and region, then try again.");
+      setErrorRetryAction("billing");
+      setStep("error");
       return;
     }
     if (response.status === 409) {
