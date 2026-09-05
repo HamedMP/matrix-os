@@ -69,12 +69,20 @@ not a model
 
     const catalog = await reader.getCatalog({ refresh: true });
 
-    expect(run).toHaveBeenCalledWith(expect.stringMatching(/(?:^|\/)pi$/), ["--list-models"], expect.objectContaining({
+    expect(run).toHaveBeenCalledWith(expect.stringMatching(/(?:^|\/)pi$/), [
+      "--list-models", "--offline", "--no-extensions", "--no-skills",
+      "--no-prompt-templates", "--no-context-files", "--no-approve",
+    ], expect.objectContaining({
       cwd: "/home/matrix/home",
       timeoutMs: 5_000,
       maxOutputBytes: 256 * 1024,
     }));
-    expect(run).toHaveBeenCalledWith("opencode", ["models"], expect.any(Object));
+    expect(run).toHaveBeenCalledWith("opencode", ["models"], expect.objectContaining({
+      env: expect.objectContaining({
+        HOME: "/home/matrix/home", NO_COLOR: "1",
+        OPENCODE_DISABLE_PROJECT_CONFIG: "1", OPENCODE_DISABLE_AUTOUPDATE: "1",
+      }),
+    }));
     expect(catalog.providers.map((provider) => provider.displayName)).toEqual(["Baseten", "OpenAI"]);
     expect(catalog.accessSources).toEqual(expect.arrayContaining([
       expect.objectContaining({

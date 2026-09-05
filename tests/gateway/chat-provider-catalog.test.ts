@@ -24,6 +24,7 @@ import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 
 const principal: RequestPrincipal = { userId: "owner_1", source: "jwt" };
 
@@ -832,6 +833,19 @@ describe("canonical Chat Provider catalog", () => {
 
     expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "pi_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "authentication_required" });
+  });
+
+  it("exposes the policy-checked managed route through the canonical catalog", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([]), agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
+      executableDriverKinds: ["kernel"],
+    });
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
+      .toMatchObject({ displayName: "Matrix AI", availability: "available" });
+    expect(catalog.drivers.find((driver) => driver.kind === "kernel"))
+      .toMatchObject({ displayName: "Claude SDK", capabilityClass: "system_agent" });
   });
 
   it("hides every Matrix Agent driver and instance while Matrix AI is not release-ready", async () => {

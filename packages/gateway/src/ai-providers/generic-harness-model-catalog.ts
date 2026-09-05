@@ -219,12 +219,17 @@ export function createGenericHarnessModelCatalogReader(options: {
       const env = buildPiChildEnvironment(runtimeEnv);
       const results = await Promise.allSettled(enabled.map(async (harness) => {
         const command = harness === "pi" ? resolvePiCommand(undefined, env) : "opencode";
-        const args = harness === "pi" ? ["--list-models"] : ["models"];
+        const args = harness === "pi" ? [
+          "--list-models", "--offline", "--no-extensions", "--no-skills",
+          "--no-prompt-templates", "--no-context-files", "--no-approve",
+        ] : ["models"];
         const result = await run(command, args, {
           cwd: options.homePath,
           timeoutMs: COMMAND_TIMEOUT_MS,
           maxOutputBytes: MAX_OUTPUT_BYTES,
-          env,
+          env: harness === "opencode" ? {
+            ...env, OPENCODE_DISABLE_PROJECT_CONFIG: "1", OPENCODE_DISABLE_AUTOUPDATE: "1",
+          } : env,
         });
         return {
           harness,

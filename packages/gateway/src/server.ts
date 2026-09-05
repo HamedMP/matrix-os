@@ -29,6 +29,8 @@ import {
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
+import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
@@ -4184,6 +4186,12 @@ export async function createGateway(config: GatewayConfig) {
   const aiProviderService = new AiProviderService({
     homePath,
     fundedCredentialProvider,
+    fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
+      ? createFundedAiReadinessReader({
+        relayBaseUrl: fundedAiRuntimeConfig.relayBaseUrl,
+        summary: fundedAiFundingSummaryReader,
+      })
+      : undefined,
     driverInventory: createProviderDriverInventoryReader({
       detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
       runtimeSource: agentRuntimeServices.source,
