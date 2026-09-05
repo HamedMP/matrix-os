@@ -5,10 +5,10 @@ import {
   Modal,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import CheckmarkCircle02Icon from "@hugeicons/core-free-icons/CheckmarkCircle02Icon";
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
 import RefreshIcon from "@hugeicons/core-free-icons/RefreshIcon";
@@ -21,13 +21,12 @@ import {
   ListRowStack,
 } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { Icon, Spacer } from "@/components/ui";
 import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations";
 import type { ConnectedIntegration, IntegrationService } from "@/lib/requests";
-import { palette } from "@/lib/theme";
 
 export default function InstalledIntegrationsScreen() {
+  const { theme } = useUnistyles();
   const [pendingDelete, setPendingDelete] = useState<ConnectedIntegration | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const pendingDeleteSwipeRef = useRef<(() => void) | null>(null);
@@ -142,6 +141,7 @@ function SwipeableConnectionRow({
   onDelete: (resetSwipe: () => void) => void;
 }) {
   const swipeableRef = useRef<Swipeable>(null);
+  const { theme } = useUnistyles();
   const refreshAndClose = async () => {
     const succeeded = await onRefresh();
     if (succeeded) swipeableRef.current?.close();
@@ -171,14 +171,14 @@ function SwipeableConnectionRow({
             {refreshing ? (
               <ActivityIndicator
                 size="small"
-                color={palette.green[700]}
+                color={theme.v2.palette.green[700]}
                 testID={`integration-refresh-spinner-${connection.id}`}
               />
             ) : (
               <Icon
                 icon={RefreshIcon}
                 size={24}
-                color={palette.green[700]}
+                color={theme.v2.palette.green[700]}
                 testID={`integration-refresh-icon-${connection.id}`}
               />
             )}
@@ -199,14 +199,14 @@ function SwipeableConnectionRow({
             {deleting ? (
               <ActivityIndicator
                 size="small"
-                color={palette.coral[700]}
+                color={theme.v2.palette.coral[700]}
                 testID={`integration-delete-spinner-${connection.id}`}
               />
             ) : (
               <Icon
                 icon={Delete02Icon}
                 size={24}
-                color={palette.coral[700]}
+                color={theme.v2.palette.coral[700]}
                 testID={`integration-delete-icon-${connection.id}`}
               />
             )}
@@ -323,16 +323,16 @@ function fallbackService(id: string): IntegrationService {
   };
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   statusText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   errorText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 13,
-    color: palette.coral[600],
+    color: theme.v2.palette.coral[600],
   },
   swipeActions: {
     alignSelf: "stretch",
@@ -350,12 +350,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   refreshButton: {
-    backgroundColor: palette.green[100],
-    borderColor: palette.green[200],
+    backgroundColor: theme.v2.palette.green[100],
+    borderColor: theme.v2.palette.green[200],
   },
   deleteButton: {
-    backgroundColor: palette.coral[50],
-    borderColor: palette.coral[200],
+    backgroundColor: theme.v2.palette.coral[50],
+    borderColor: theme.v2.palette.coral[200],
   },
   popupOverlay: {
     flex: 1,
@@ -371,26 +371,26 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     alignSelf: "center",
     paddingHorizontal: 20,
-    backgroundColor: palette.neutral[50],
+    backgroundColor: theme.v2.palette.neutral[50],
     borderWidth: 1,
-    borderColor: palette.neutral[300],
+    borderColor: theme.v2.palette.neutral[300],
     borderRadius: 20,
-    shadowColor: palette.neutral[900],
+    shadowColor: theme.v2.palette.neutral[900],
     shadowOpacity: 0.18,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
     elevation: 12,
   },
   popupTitle: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 19,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   popupBody: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
     lineHeight: 20,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   popupButtons: {
     flexDirection: "row",
@@ -407,20 +407,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   popupButtonNeutral: {
-    backgroundColor: palette.neutral[50],
-    borderColor: palette.neutral[300],
+    backgroundColor: theme.v2.palette.neutral[50],
+    borderColor: theme.v2.palette.neutral[300],
   },
   popupButtonDestructive: {
-    backgroundColor: palette.coral[700],
-    borderColor: palette.coral[700],
+    backgroundColor: theme.v2.palette.coral[700],
+    borderColor: theme.v2.palette.coral[700],
   },
   popupButtonText: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 14,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   popupButtonTextDestructive: {
-    color: palette.neutral[50],
+    color: theme.v2.palette.neutral[50],
   },
   pressed: {
     opacity: 0.7,
@@ -428,4 +428,4 @@ const styles = StyleSheet.create({
   disabled: {
     opacity: 0.5,
   },
-});
+}));

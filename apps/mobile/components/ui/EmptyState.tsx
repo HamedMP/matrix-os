@@ -1,8 +1,8 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Icon, type IconData } from "./Icon";
 import { Spacer } from "./Spacer";
-import { fonts, semanticColors } from "@/lib/theme";
 
 export interface EmptyStateProps {
   icon: IconData;
@@ -12,12 +12,14 @@ export interface EmptyStateProps {
 }
 
 export function EmptyState({ icon, message, testID, iconTestID }: EmptyStateProps) {
+  const { theme } = useUnistyles();
+
   return (
     <View testID={testID} style={styles.container}>
       <Icon
         icon={icon}
         size={48}
-        color={semanticColors.textSubtle}
+        color={theme.v2.colors.textSubtle}
         testID={iconTestID}
       />
       <Spacer size="md" />
@@ -26,16 +28,16 @@ export function EmptyState({ icon, message, testID, iconTestID }: EmptyStateProp
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
   message: {
-    fontFamily: fonts.product,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 16,
-    color: semanticColors.textSubtle,
+    color: theme.v2.colors.textSubtle,
     textAlign: "center",
   },
-});
+}));

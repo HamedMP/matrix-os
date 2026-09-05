@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { RefreshControl, ScrollView, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Spacer } from "@/components/ui";
-import { mockColors, mockFonts } from "./theme";
 
 interface MockPageProps {
   title: string;
@@ -21,6 +21,7 @@ export function MockPage({
   refreshing = false,
   onRefresh,
 }: MockPageProps) {
+  const { theme } = useUnistyles();
   const content = (
     <View testID="mock-page-content" style={styles.content}>
       <Spacer size="lg" />
@@ -51,9 +52,9 @@ export function MockPage({
               testID="mock-page-refresh-control"
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor={mockColors.ink}
-              colors={[mockColors.ink]}
-              progressBackgroundColor={mockColors.canvas}
+              tintColor={theme.v2.appColors.ink}
+              colors={[theme.v2.appColors.ink]}
+              progressBackgroundColor={theme.v2.appColors.canvas}
             />
           ) : undefined}
         >
@@ -64,10 +65,10 @@ export function MockPage({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: mockColors.canvas,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   scrollContent: {
     flexGrow: 1,
@@ -78,15 +79,15 @@ const styles = StyleSheet.create({
   },
   heading: {},
   title: {
-    fontFamily: mockFonts.display,
+    fontFamily: theme.v2.fonts.display,
     fontSize: 28,
     letterSpacing: -0.7,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   subtitle: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
     lineHeight: 20,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
-});
+}));

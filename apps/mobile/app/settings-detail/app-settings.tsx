@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Alert, Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { Alert, Pressable, Switch, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
@@ -8,7 +9,6 @@ import FingerPrintIcon from "@hugeicons/core-free-icons/FingerPrintIcon";
 import Notification02Icon from "@hugeicons/core-free-icons/Notification02Icon";
 import PaintBrush01Icon from "@hugeicons/core-free-icons/PaintBrush01Icon";
 
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { SettingsCardStack, SettingsPage, SettingsRow } from "@/components/settings/SettingsSurface";
 import { Divider, Icon, IconButton, Sheet, Spacer } from "@/components/ui";
 import {
@@ -34,6 +34,7 @@ const THEME_LABELS: Record<MobileThemePreference, string> = {
 
 export default function AppSettingsScreen() {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth();
+  const { theme: uiTheme } = useUnistyles();
   const authEnabled = Boolean(isLoaded && isSignedIn && userId);
   const activeComputer = useQuery({
     queryKey: mobileQueryKeys.activeComputer(userId ?? "signed-out"),
@@ -104,8 +105,8 @@ export default function AppSettingsScreen() {
                 disabled={!biometricAvailable || changingBiometric}
                 value={settings.biometricEnabled}
                 onValueChange={(enabled) => void changeBiometric(enabled)}
-                trackColor={{ false: mockColors.line, true: mockColors.green }}
-                thumbColor={mockColors.surface}
+                trackColor={{ false: uiTheme.v2.appColors.line, true: uiTheme.v2.appColors.green }}
+                thumbColor={uiTheme.v2.appColors.surface}
               />
             )}
           />
@@ -120,8 +121,8 @@ export default function AppSettingsScreen() {
                 disabled={!activeComputer.data || changingPush}
                 value={settings.notificationsEnabled}
                 onValueChange={(enabled) => void changePush(enabled)}
-                trackColor={{ false: mockColors.line, true: mockColors.green }}
-                thumbColor={mockColors.surface}
+                trackColor={{ false: uiTheme.v2.appColors.line, true: uiTheme.v2.appColors.green }}
+                thumbColor={uiTheme.v2.appColors.surface}
               />
             )}
           />
@@ -160,7 +161,7 @@ export default function AppSettingsScreen() {
               <View style={styles.themeOptionContent}>
                 <Text style={styles.themeOptionLabel}>{THEME_LABELS[theme]}</Text>
                 {settings.theme === theme ? (
-                  <Icon icon={CheckmarkCircle02Icon} size={22} color={mockColors.green} />
+                  <Icon icon={CheckmarkCircle02Icon} size={22} color={uiTheme.v2.appColors.green} />
                 ) : null}
               </View>
               <Spacer size="lg" />
@@ -226,11 +227,11 @@ export default function AppSettingsScreen() {
   }
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   status: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   sheetHeader: {
     paddingHorizontal: 16,
@@ -239,9 +240,9 @@ const styles = StyleSheet.create({
   },
   sheetTitle: {
     flex: 1,
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 18,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
     textAlign: "center",
   },
   headerBalance: {
@@ -258,11 +259,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   themeOptionLabel: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 18,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   pressed: {
     opacity: 0.65,
   },
-});
+}));

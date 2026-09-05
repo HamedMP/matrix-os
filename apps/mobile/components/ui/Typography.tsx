@@ -6,11 +6,10 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
-  semanticColors,
   spacing,
   typography,
   type SpacingSize,
-} from "@/lib/theme";
+} from "@/lib/theme-v2";
 
 export type TextTone =
   | "default"
@@ -58,7 +57,7 @@ function ProductText({
       style={[
         styles.base,
         typographyStyle,
-        toneStyles[tone],
+        styles[tone],
         { paddingHorizontal: inset, textAlign: align },
       ]}
     >
@@ -91,30 +90,17 @@ export function Text({ size = "body", ...props }: TextProps) {
   return <ProductText {...props} typographyStyle={typography[size]} />;
 }
 
-// Static tokens keep route-module evaluation safe. Expo Router may import this
-// file before the root layout has run the Unistyles configuration side effect.
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   base: {
-    color: semanticColors.textDefault,
+    color: theme.v2.colors.textDefault,
     flexShrink: 1,
   },
-  default: { color: semanticColors.textDefault },
-  subtle: { color: semanticColors.textSubtle },
-  inverse: { color: semanticColors.textInverse },
-  brand: { color: semanticColors.brand },
-  action: { color: semanticColors.action },
-  success: { color: semanticColors.success },
-  highlight: { color: semanticColors.highlight },
-  info: { color: semanticColors.info },
-});
-
-const toneStyles = {
-  default: styles.default,
-  subtle: styles.subtle,
-  inverse: styles.inverse,
-  brand: styles.brand,
-  action: styles.action,
-  success: styles.success,
-  highlight: styles.highlight,
-  info: styles.info,
-} as const;
+  default: { color: theme.v2.colors.textDefault },
+  subtle: { color: theme.v2.colors.textSubtle },
+  inverse: { color: theme.v2.colors.textInverse },
+  brand: { color: theme.v2.colors.brand },
+  action: { color: theme.v2.colors.action },
+  success: { color: theme.v2.colors.success },
+  highlight: { color: theme.v2.colors.highlight },
+  info: { color: theme.v2.colors.info },
+}));

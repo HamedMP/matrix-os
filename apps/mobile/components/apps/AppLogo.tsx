@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import AppWindowIcon from "@hugeicons/core-free-icons/AppWindowIcon";
 import { Image } from "expo-image";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Icon } from "@/components/ui";
-import { mockColors } from "@/components/mock-shell/theme";
 
 export function AppLogo({
   name,
@@ -16,6 +16,7 @@ export function AppLogo({
   authorization?: string;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const { theme } = useUnistyles();
 
   useEffect(() => {
     setImageFailed(false);
@@ -34,7 +35,7 @@ export function AppLogo({
           style={styles.image}
         />
       ) : (
-        <Icon icon={AppWindowIcon} size={24} color={mockColors.ink} />
+        <Icon icon={AppWindowIcon} size={24} color={theme.v2.appColors.ink} />
       )}
     </View>
   );

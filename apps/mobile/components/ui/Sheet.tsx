@@ -5,13 +5,8 @@ import {
   type SnapPoint,
 } from "@expo/ui";
 import { presentationBackground } from "@expo/ui/swift-ui/modifiers";
-import { Platform, StyleSheet, useWindowDimensions, View } from "react-native";
-
-import { semanticColors } from "@/lib/theme";
-
-const solidSheetModifiers = Platform.OS === "ios"
-  ? [presentationBackground(semanticColors.background)]
-  : undefined;
+import { Platform, useWindowDimensions, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 export interface SheetProps {
   visible: boolean;
@@ -32,6 +27,10 @@ export function Sheet({
   testID,
 }: SheetProps) {
   const { width } = useWindowDimensions();
+  const { theme } = useUnistyles();
+  const solidSheetModifiers = Platform.OS === "ios"
+    ? [presentationBackground(theme.v2.colors.background)]
+    : undefined;
 
   return (
     <ExpoBottomSheet
@@ -55,8 +54,8 @@ export function Sheet({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   content: {
-    backgroundColor: semanticColors.background,
+    backgroundColor: theme.v2.colors.background,
   },
-});
+}));

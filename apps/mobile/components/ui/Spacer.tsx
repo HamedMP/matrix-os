@@ -1,6 +1,6 @@
 import { View, type ViewProps } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { spacing, type SpacingSize } from "@/lib/theme";
+import { spacing, type SpacingSize } from "@/lib/theme-v2";
 
 export interface SpacerProps extends Omit<ViewProps, "children" | "style"> {
   size?: SpacingSize;

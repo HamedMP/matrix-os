@@ -10,7 +10,8 @@ import PlusSignIcon from "@hugeicons/core-free-icons/PlusSignIcon";
 import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
 import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated, {
   cancelAnimation,
   useAnimatedStyle,
@@ -24,8 +25,6 @@ import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
 import { Icon, IconButton, Spacer, Text, type IconData } from "@/components/ui";
 import type { ProjectSummary } from "@/lib/requests";
-import { designShadows, palette, semanticColors } from "@/lib/theme";
-import { mockColors } from "./theme";
 
 const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
   { route: "files", label: "Files", icon: Folder01Icon },
@@ -58,6 +57,7 @@ export function MockDrawerContent({
   // Accordion-style (one open at a time) rather than desktop's independent
   // expand/collapse per project -- simpler to scan on a small screen.
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
+  const { theme } = useUnistyles();
 
   function navigate(route: string) {
     props.navigation.navigate(route);
@@ -104,7 +104,7 @@ export function MockDrawerContent({
             onPress={() => navigate("search")}
             style={({ pressed }) => pressed && styles.pressed}
           >
-            <Icon icon={Search01Icon} size={24} color={mockColors.ink} />
+            <Icon icon={Search01Icon} size={24} color={theme.v2.appColors.ink} />
           </Pressable>
         </View>
 
@@ -159,13 +159,13 @@ export function MockDrawerContent({
                     style={({ pressed }) => [styles.padded, styles.projectRow, pressed && styles.pressed]}
                   >
                     <View style={[styles.itemContainer, styles.projectItemContainer]}>
-                      <Icon icon={Folder01Icon} size={20} color={mockColors.ink} style={styles.itemIcon} />
+                      <Icon icon={Folder01Icon} size={20} color={theme.v2.appColors.ink} style={styles.itemIcon} />
                       <Text size="body" numberOfLines={1}>{project.name}</Text>
                     </View>
                     <Icon
                       icon={expanded ? ArrowDown01Icon : ArrowRight01Icon}
                       size={16}
-                      color={mockColors.muted}
+                      color={theme.v2.appColors.muted}
                     />
                   </Pressable>
 
@@ -195,7 +195,7 @@ export function MockDrawerContent({
                             ]}
                           >
                             <View style={styles.itemContainer}>
-                              <Icon icon={Message01Icon} size={18} color={mockColors.ink} style={styles.itemIcon} />
+                              <Icon icon={Message01Icon} size={18} color={theme.v2.appColors.ink} style={styles.itemIcon} />
                               <Text size="body" numberOfLines={1}>{label}</Text>
                             </View>
                           </Pressable>
@@ -208,7 +208,7 @@ export function MockDrawerContent({
                         style={({ pressed }) => [styles.padded, styles.recentChatRow, pressed && styles.pressed]}
                       >
                         <View style={styles.itemContainer}>
-                          <Icon icon={PlusSignIcon} size={16} color={mockColors.muted} style={styles.itemIcon} />
+                          <Icon icon={PlusSignIcon} size={16} color={theme.v2.appColors.muted} style={styles.itemIcon} />
                           <Text size="muted" tone="subtle">New chat</Text>
                         </View>
                       </Pressable>
@@ -254,7 +254,7 @@ export function MockDrawerContent({
                   <Icon
                     icon={Message01Icon}
                     size={20}
-                    color={mockColors.ink}
+                    color={theme.v2.appColors.ink}
                     style={styles.itemIcon}
                   />
                   <Text size="body" numberOfLines={1}>{label}</Text>
@@ -278,7 +278,7 @@ export function MockDrawerContent({
           <Icon
             icon={PencilEdit02Icon}
             size={18}
-            color={semanticColors.textInverse}
+            color={theme.v2.colors.textInverse}
             style={styles.newChatIcon}
             testID="new-chat-icon"
           />
@@ -291,7 +291,7 @@ export function MockDrawerContent({
         accessibilityLabel="Settings"
         icon={Settings02Icon}
         iconSize={22}
-        iconColor={semanticColors.textDefault}
+        iconColor={theme.v2.colors.textDefault}
         iconTestID="settings-icon"
         buttonSize={40}
         style={styles.settingsButton}
@@ -330,13 +330,13 @@ function RecentChatsSkeleton() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
-    backgroundColor: mockColors.canvas,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   content: {
-    backgroundColor: mockColors.canvas,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   header: {
     flexDirection: "row",
@@ -378,7 +378,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   recentChatRowActive: {
-    backgroundColor: palette.neutral[200],
+    backgroundColor: theme.v2.appColors.soft,
   },
   skeletonRow: {
     flexDirection: "row",
@@ -389,12 +389,12 @@ const styles = StyleSheet.create({
     height: 20,
     marginRight: 16,
     borderRadius: 999,
-    backgroundColor: palette.neutral[200],
+    backgroundColor: theme.v2.appColors.soft,
   },
   skeletonText: {
     height: 14,
     borderRadius: 999,
-    backgroundColor: palette.neutral[200],
+    backgroundColor: theme.v2.appColors.soft,
   },
   pressed: {
     opacity: 0.65,
@@ -405,8 +405,8 @@ const styles = StyleSheet.create({
     bottom: 24,
     borderRadius: 999,
     paddingHorizontal: 16,
-    backgroundColor: palette.green[800],
-    boxShadow: designShadows.lg,
+    backgroundColor: theme.v2.palette.green[800],
+    boxShadow: theme.v2.designShadows.lg,
   },
   newChatContent: {
     flexDirection: "row",
@@ -421,8 +421,8 @@ const styles = StyleSheet.create({
     right: 16,
     bottom: 26,
     borderWidth: 1,
-    borderColor: semanticColors.borderSubtle,
+    borderColor: theme.v2.colors.borderSubtle,
     borderRadius: 999,
-    boxShadow: designShadows.lg,
+    boxShadow: theme.v2.designShadows.lg,
   },
-});
+}));

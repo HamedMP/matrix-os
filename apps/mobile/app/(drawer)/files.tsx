@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import File01Icon from "@hugeicons/core-free-icons/File01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
@@ -12,7 +13,6 @@ import {
   MockSearchField,
 } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { Spacer } from "@/components/ui";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
@@ -74,7 +74,7 @@ export default function FilesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
   },
@@ -84,18 +84,18 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   sectionTitle: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 14,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   sectionMeta: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 12,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   statusText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
-});
+}));

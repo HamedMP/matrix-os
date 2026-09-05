@@ -1,12 +1,10 @@
 import {
-  StyleSheet,
   View,
   type StyleProp,
   type ViewProps,
   type ViewStyle,
 } from "react-native";
-
-import { semanticColors } from "@/lib/theme";
+import { StyleSheet } from "react-native-unistyles";
 
 export interface DividerProps extends Omit<ViewProps, "style"> {
   style?: StyleProp<ViewStyle>;
@@ -17,10 +15,10 @@ export function Divider({ style, ...props }: DividerProps) {
   return <View {...props} pointerEvents="none" style={[styles.divider, style]} />;
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   divider: {
     alignSelf: "stretch",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: semanticColors.borderSubtle,
+    borderTopColor: theme.v2.colors.borderSubtle,
   },
-});
+}));

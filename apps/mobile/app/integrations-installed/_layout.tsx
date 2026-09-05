@@ -1,17 +1,18 @@
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import { Stack, useRouter } from "expo-router";
+import { useUnistyles } from "react-native-unistyles";
 
 import { IconButton } from "@/components/ui";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function InstalledIntegrationsLayout() {
   const router = useRouter();
+  const { theme } = useUnistyles();
   const closeButton = () => (
     <IconButton
       accessibilityLabel="Close installed integrations"
       icon={Cancel01Icon}
       iconSize={22}
-      iconColor={mockColors.ink}
+      iconColor={theme.v2.appColors.ink}
       iconTestID="integrations-close-icon"
       buttonSize={32}
       pressedOpacity={1}
@@ -21,9 +22,9 @@ export default function InstalledIntegrationsLayout() {
 
   return <Stack screenOptions={{
     headerShadowVisible: false,
-    headerStyle: { backgroundColor: mockColors.canvas },
-    headerTintColor: mockColors.ink,
-    headerTitleStyle: { fontFamily: mockFonts.semibold, fontSize: 15 },
+    headerStyle: { backgroundColor: theme.v2.appColors.canvas },
+    headerTintColor: theme.v2.appColors.ink,
+    headerTitleStyle: { fontFamily: theme.v2.fonts.semibold, fontSize: 15 },
     headerBackVisible: false,
     headerBackButtonDisplayMode: "minimal",
     headerTitle: "Installed",
@@ -33,6 +34,6 @@ export default function InstalledIntegrationsLayout() {
       element: closeButton(),
       hidesSharedBackground: true,
     }],
-    contentStyle: { backgroundColor: mockColors.canvas },
+    contentStyle: { backgroundColor: theme.v2.appColors.canvas },
   }} />;
 }

@@ -3,7 +3,7 @@ import {
   type HugeiconsProps,
   type IconSvgElement,
 } from "@hugeicons/react-native";
-import { semanticColors } from "@/lib/theme";
+import { useUnistyles } from "react-native-unistyles";
 
 export type IconData = IconSvgElement;
 
@@ -15,16 +15,18 @@ export interface IconProps extends Omit<HugeiconsProps, "icon"> {
 export function Icon({
   icon,
   size = 20,
-  color = semanticColors.textDefault,
+  color,
   strokeWidth = 1.5,
   ...props
 }: IconProps) {
+  const { theme } = useUnistyles();
+
   return (
     <HugeiconsIcon
       {...props}
       icon={icon}
       size={size}
-      color={color}
+      color={color ?? theme.v2.colors.textDefault}
       strokeWidth={strokeWidth}
     />
   );

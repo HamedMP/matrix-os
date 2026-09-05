@@ -1,15 +1,14 @@
 import Menu01Icon from "@hugeicons/core-free-icons/Menu01Icon";
-import { Pressable, StyleSheet } from "react-native";
+import { Pressable } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as Haptics from "expo-haptics";
 import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
 
 import { Icon } from "@/components/ui";
 import { MockDrawerContent } from "@/components/mock-shell/MockDrawerContent";
-import { mockColors } from "@/components/mock-shell/theme";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { useProjects } from "@/lib/queries/use-projects";
-import { semanticColors } from "@/lib/theme";
 
 function triggerDrawerHaptic() {
   void Promise.resolve(
@@ -26,6 +25,7 @@ export default function DrawerLayout() {
   const { computer, chats, isPending: recentChatsLoading } = useCanonicalChats();
   const { projects } = useProjects();
   const { activeChatId, selectChat, startDraftChat } = useCanonicalChatSession();
+  const { theme } = useUnistyles();
   const computerName = computer?.handle ?? (recentChatsLoading ? "Loading…" : "Not connected");
 
   return (
@@ -49,13 +49,13 @@ export default function DrawerLayout() {
       screenOptions={({ navigation }: { navigation: DrawerContentComponentProps["navigation"] }) => ({
         drawerPosition: "left",
         drawerType: "slide",
-        drawerStyle: { width: "80%", backgroundColor: mockColors.canvas },
+        drawerStyle: { width: "80%", backgroundColor: theme.v2.appColors.canvas },
         overlayColor: "rgba(18, 20, 19, 0.24)",
         swipeEnabled: true,
         swipeEdgeWidth: 800,
         headerShadowVisible: false,
         headerTitleAlign: "center",
-        headerStyle: { backgroundColor: mockColors.canvas },
+        headerStyle: { backgroundColor: theme.v2.appColors.canvas },
         headerTitleStyle: { fontSize: 16 },
         headerLeft: () => (
           <Pressable
@@ -68,12 +68,12 @@ export default function DrawerLayout() {
             <Icon
               icon={Menu01Icon}
               size={24}
-              color={semanticColors.textDefault}
+              color={theme.v2.colors.textDefault}
               testID="drawer-menu-icon"
             />
           </Pressable>
         ),
-        sceneStyle: { backgroundColor: mockColors.canvas },
+        sceneStyle: { backgroundColor: theme.v2.appColors.canvas },
       })}
     >
       <Drawer.Screen name="index" options={{ title: null, drawerLabel: "Home" }} />

@@ -3,16 +3,14 @@ import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import {
   Pressable,
   ScrollView,
-  StyleSheet,
   Text as NativeText,
   View,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Divider, Icon, Spacer, type IconData } from "@/components/ui";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
-import { palette } from "@/lib/theme";
 
 export function SettingsPage({ children }: { children: ReactNode }) {
   return (
@@ -82,13 +80,14 @@ export function SettingsRow({
   card = false,
   style,
 }: SettingsRowProps) {
+  const { theme } = useUnistyles();
   const content = (
     <>
       <Spacer size="md" />
       <View style={styles.rowContent}>
         {leading ?? (icon ? (
           <View style={styles.iconSurface}>
-            <Icon icon={icon} size={21} color={tone === "danger" ? palette.coral[600] : mockColors.ink} />
+            <Icon icon={icon} size={21} color={tone === "danger" ? theme.v2.palette.coral[600] : theme.v2.appColors.ink} />
           </View>
         ) : null)}
         <View style={styles.copy}>
@@ -100,7 +99,7 @@ export function SettingsRow({
             </>
           ) : null}
         </View>
-        {trailing ?? (onPress ? <Icon icon={ArrowRight01Icon} size={18} color={mockColors.muted} /> : null)}
+        {trailing ?? (onPress ? <Icon icon={ArrowRight01Icon} size={18} color={theme.v2.appColors.muted} /> : null)}
       </View>
       <Spacer size="md" />
     </>
@@ -120,10 +119,10 @@ export function SettingsRow({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: mockColors.canvas,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   pageContent: {
     flexGrow: 1,
@@ -132,20 +131,20 @@ const styles = StyleSheet.create({
   group: {
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 16,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
   },
   divider: {
     marginHorizontal: 14,
   },
   row: {
     paddingHorizontal: 14,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
   },
   card: {
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 16,
   },
   rowContent: {
@@ -164,19 +163,19 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   title: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 16,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   detail: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 13,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   danger: {
-    color: palette.coral[600],
+    color: theme.v2.palette.coral[600],
   },
   pressed: {
     opacity: 0.7,
   },
-});
+}));

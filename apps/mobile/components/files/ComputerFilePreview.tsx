@@ -2,22 +2,22 @@ import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text as NativeText,
   View,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Image } from "expo-image";
 import FileEmpty01Icon from "@hugeicons/core-free-icons/FileEmpty01Icon";
 
 import { AnalyticsMask } from "@/lib/analytics";
 import { useComputerFilePreview } from "@/lib/queries/use-computer-file-preview";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { EmptyState, Spacer, Text } from "@/components/ui";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export function ComputerFilePreview({ name, path }: { name: string; path: string }) {
   const { preview, isPending, isError, refresh } = useComputerFilePreview(path);
   const pullToRefresh = usePullToRefresh(refresh);
+  const { theme } = useUnistyles();
   const isImage = preview?.kind === "image";
   const isTextWithContent = preview?.kind === "text" && preview.content.length > 0;
 
@@ -38,15 +38,15 @@ export function ComputerFilePreview({ name, path }: { name: string; path: string
             testID="file-preview-refresh-control"
             refreshing={pullToRefresh.refreshing}
             onRefresh={pullToRefresh.onRefresh}
-            tintColor={mockColors.ink}
-            colors={[mockColors.ink]}
-            progressBackgroundColor={mockColors.canvas}
+            tintColor={theme.v2.appColors.ink}
+            colors={[theme.v2.appColors.ink]}
+            progressBackgroundColor={theme.v2.appColors.canvas}
           />
         )}
       >
         {isPending ? (
           <View style={styles.centered}>
-            <ActivityIndicator color={mockColors.ink} />
+            <ActivityIndicator color={theme.v2.appColors.ink} />
             <Spacer size="md" />
             <Text size="muted" tone="subtle">Loading preview…</Text>
           </View>
@@ -113,10 +113,10 @@ export function ComputerFilePreview({ name, path }: { name: string; path: string
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: mockColors.canvas,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   viewport: {
     flex: 1,
@@ -143,9 +143,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   code: {
-    fontFamily: mockFonts.mono,
+    fontFamily: theme.v2.fonts.mono,
     fontSize: 12,
     lineHeight: 18,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
-});
+}));

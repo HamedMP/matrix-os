@@ -6,12 +6,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
   TextInput,
   View,
   type ListRenderItemInfo,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import { Image } from "expo-image";
@@ -34,7 +34,6 @@ import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown"
 import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import { Icon, IconButton } from "@/components/ui";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { AnalyticsMask } from "@/lib/analytics";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
@@ -42,6 +41,7 @@ const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 export default function ChatScreen() {
   const { isSignedIn } = useAuth();
   const { user } = useUser();
+  const { theme } = useUnistyles();
   const {
     activeChatId,
     selectionOverride,
@@ -213,7 +213,7 @@ export default function ChatScreen() {
               accessibilityLabel="Attach"
               icon={Add01Icon}
               iconSize={23}
-              iconColor={mockColors.ink}
+              iconColor={theme.v2.appColors.ink}
             />
           )}
           <TextInput
@@ -225,7 +225,7 @@ export default function ChatScreen() {
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
             placeholder={isConnected ? "Message Matrix" : "Signing in…"}
-            placeholderTextColor={mockColors.muted}
+            placeholderTextColor={theme.v2.appColors.muted}
             editable={isConnected}
             returnKeyType="send"
             style={inputFocused ? styles.inputActive : styles.input}
@@ -236,7 +236,7 @@ export default function ChatScreen() {
                 accessibilityLabel="Attach"
                 icon={Add01Icon}
                 iconSize={23}
-                iconColor={mockColors.ink}
+                iconColor={theme.v2.appColors.ink}
               />
               <View style={styles.composerControlsRight}>
                 <View onTouchStart={handlePickerTouchStart}>
@@ -250,8 +250,8 @@ export default function ChatScreen() {
                   accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
                   icon={ArrowUp01Icon}
                   iconSize={19}
-                  iconColor={mockColors.surface}
-                  backgroundColor={canSend || busy ? mockColors.blue : mockColors.disabledSurface}
+                  iconColor={theme.v2.appColors.surface}
+                  backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
                   loading={busy}
                   disabled={!canSend}
                   onPress={send}
@@ -263,8 +263,8 @@ export default function ChatScreen() {
               accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
               icon={ArrowUp01Icon}
               iconSize={19}
-              iconColor={mockColors.surface}
-              backgroundColor={canSend || busy ? mockColors.blue : mockColors.disabledSurface}
+              iconColor={theme.v2.appColors.surface}
+              backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
               loading={busy}
               disabled={!canSend}
               onPress={send}
@@ -301,17 +301,6 @@ function MessageBubble({ message }: { message: TranscriptMessage }) {
   return <AssistantMessage message={message} />;
 }
 
-const matrixMarkdownTheme: ChatMarkdownTheme = {
-  textStyle: { fontFamily: mockFonts.body, fontSize: 15, lineHeight: 22, color: mockColors.ink },
-  mutedColor: mockColors.muted,
-  linkColor: mockColors.blue,
-  codeBackground: mockColors.surface,
-  codeBorderColor: mockColors.line,
-  monoFontFamily: mockFonts.mono,
-  boldFontFamily: mockFonts.semibold,
-  headingFontFamily: mockFonts.semibold,
-};
-
 function activityStateGlyph(state: TranscriptActivityState): string {
   switch (state) {
     case "running": return "…";
@@ -327,6 +316,7 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
   // Auto-expanded while the turn is running (so reasoning/tool activity is
   // visible live, matching desktop), until the user manually toggles it.
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const { theme } = useUnistyles();
   const expanded = manualExpanded ?? message.isRunning;
   const hasWork = message.toolCalls.length > 0 || message.activities.length > 0;
   const workedLabel = message.isRunning
@@ -336,10 +326,19 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
       : null;
   // Re-parses on every text change, which is exactly what a growing streamed
   // string needs -- markdown applies as the text arrives, not once at the end.
-  const markdownNodes = useMemo(
-    () => renderChatMarkdown(message.text, matrixMarkdownTheme),
-    [message.text],
-  );
+  const markdownNodes = useMemo(() => {
+    const markdownTheme: ChatMarkdownTheme = {
+      textStyle: { fontFamily: theme.v2.fonts.body, fontSize: 15, lineHeight: 22, color: theme.v2.appColors.ink },
+      mutedColor: theme.v2.appColors.muted,
+      linkColor: theme.v2.appColors.blue,
+      codeBackground: theme.v2.appColors.surface,
+      codeBorderColor: theme.v2.appColors.line,
+      monoFontFamily: theme.v2.fonts.mono,
+      boldFontFamily: theme.v2.fonts.semibold,
+      headingFontFamily: theme.v2.fonts.semibold,
+    };
+    return renderChatMarkdown(message.text, markdownTheme);
+  }, [message.text, theme]);
 
   return (
     <View style={styles.matrixBubble}>
@@ -356,7 +355,7 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
             <Icon
               icon={expanded ? ArrowUp01Icon : ArrowDown01Icon}
               size={14}
-              color={mockColors.muted}
+              color={theme.v2.appColors.muted}
             />
           ) : null}
         </Pressable>
@@ -396,10 +395,10 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: mockColors.canvas,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   hero: {
     flex: 1,
@@ -429,10 +428,10 @@ const styles = StyleSheet.create({
     height: 68,
   },
   title: {
-    fontFamily: mockFonts.display,
+    fontFamily: theme.v2.fonts.display,
     fontSize: 28,
     letterSpacing: -0.7,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   pressed: {
     opacity: 0.6,
@@ -444,13 +443,13 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 7,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: mockColors.ink,
+    backgroundColor: theme.v2.appColors.ink,
   },
   userText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 15,
     lineHeight: 21,
-    color: mockColors.surface,
+    color: theme.v2.appColors.surface,
   },
   matrixBubble: {
     width: "100%",
@@ -464,9 +463,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   workedText: {
-    fontFamily: mockFonts.medium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 13,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   toolCallsList: {
     gap: 4,
@@ -474,7 +473,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: mockColors.line,
+    backgroundColor: theme.v2.appColors.line,
     marginVertical: 10,
   },
   matrixTextBlock: {
@@ -484,16 +483,16 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   toolText: {
-    fontFamily: mockFonts.medium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 13,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   reasoningText: {
     flexShrink: 1,
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontStyle: "italic",
     fontSize: 13,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   activityRow: {
     flexDirection: "row",
@@ -501,31 +500,31 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   activityGlyph: {
-    fontFamily: mockFonts.medium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 12,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
     lineHeight: 18,
   },
   activityTextFailed: {
-    color: mockColors.danger,
+    color: theme.v2.appColors.danger,
   },
   activityPreview: {
     fontStyle: "normal",
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   activityPreviewMono: {
-    fontFamily: mockFonts.mono,
+    fontFamily: theme.v2.fonts.mono,
     fontStyle: "normal",
     fontSize: 12,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   systemRow: {
     alignSelf: "center",
   },
   systemText: {
-    fontFamily: mockFonts.medium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 13,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
     textAlign: "center",
   },
   composerWrap: {
@@ -543,38 +542,38 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 22,
     paddingHorizontal: 8,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
     boxShadow: "0 8px 24px rgba(23, 25, 24, 0.08)",
   },
   input: {
     flex: 1,
     minHeight: 46,
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 15,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   composerActive: {
     flexDirection: "column",
     gap: 6,
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 22,
     paddingHorizontal: 8,
     paddingTop: 8,
     paddingBottom: 6,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
     boxShadow: "0 8px 24px rgba(23, 25, 24, 0.08)",
   },
   inputActive: {
     alignSelf: "stretch",
     minHeight: 40,
     paddingHorizontal: 4,
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 15,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   composerControlsRow: {
     flexDirection: "row",
@@ -586,4 +585,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-});
+}));

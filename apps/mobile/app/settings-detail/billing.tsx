@@ -1,9 +1,9 @@
 import { ActivityIndicator, Alert, Linking } from "react-native";
+import { useUnistyles } from "react-native-unistyles";
 import ArrowUpRight01Icon from "@hugeicons/core-free-icons/ArrowUpRight01Icon";
 
 import { SettingsCardStack, SettingsPage, SettingsRow } from "@/components/settings/SettingsSurface";
 import { Icon } from "@/components/ui";
-import { mockColors } from "@/components/mock-shell/theme";
 import { useSettingsBilling } from "@/lib/queries/use-settings-billing";
 
 const PRICING_URL = "https://matrix-os.com/pricing";
@@ -15,6 +15,7 @@ const PLAN_NAMES: Record<string, string> = {
 };
 
 export default function BillingSettingsScreen() {
+  const { theme } = useUnistyles();
   const { billing, isPending, isError, openPortal, isOpeningPortal } = useSettingsBilling();
   const entitlement = billing?.entitlement;
   const plan = entitlement
@@ -34,8 +35,8 @@ export default function BillingSettingsScreen() {
           detail="Opens plan options in your browser"
           accessibilityLabel="Change plan"
           trailing={isOpeningPortal
-            ? <ActivityIndicator color={mockColors.ink} />
-            : <Icon icon={ArrowUpRight01Icon} size={18} color={mockColors.muted} />}
+            ? <ActivityIndicator color={theme.v2.appColors.ink} />
+            : <Icon icon={ArrowUpRight01Icon} size={18} color={theme.v2.appColors.muted} />}
           onPress={() => void openChangePlan()}
         />
       </SettingsCardStack>

@@ -1,9 +1,9 @@
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Stack, useLocalSearchParams } from "expo-router";
 
 import AppRuntimeFrame from "@/components/AppRuntimeFrame";
 import { Spacer } from "@/components/ui";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { useComputerAppSession } from "@/lib/queries/use-computer-apps";
 
 export default function AppPreviewScreen() {
@@ -15,13 +15,14 @@ export default function AppPreviewScreen() {
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
   const title = name || app || "App";
   const { launchUrl, isPending, isError } = useComputerAppSession(app ?? "");
+  const { theme } = useUnistyles();
 
   return (
     <View testID="app-preview-runtime" style={styles.screen}>
       <Stack.Screen options={{ title }} />
       {isPending ? (
         <View style={styles.centered}>
-          <ActivityIndicator color={mockColors.ink} />
+          <ActivityIndicator color={theme.v2.appColors.ink} />
         </View>
       ) : launchUrl ? (
         <AppRuntimeFrame url={launchUrl} title={title} />
@@ -36,10 +37,10 @@ export default function AppPreviewScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
   },
   centered: {
     flex: 1,
@@ -47,13 +48,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   title: {
-    fontFamily: mockFonts.display,
+    fontFamily: theme.v2.fonts.display,
     fontSize: 20,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   subtitle: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
-});
+}));

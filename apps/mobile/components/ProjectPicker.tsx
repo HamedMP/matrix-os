@@ -1,7 +1,7 @@
 import { Host, Picker } from "@expo/ui";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { mockColors } from "@/components/mock-shell/theme";
 import type { ProjectSummary } from "@/lib/requests";
 
 const NO_PROJECT_VALUE = "";
@@ -29,6 +29,7 @@ export function ProjectPicker({
   selectedProjectId: string | null;
   onSelectionChange: (projectId: string | null) => void;
 }) {
+  const { theme } = useUnistyles();
   if (projects.length === 0) return null;
 
   function handleChange(value: string) {
@@ -37,7 +38,7 @@ export function ProjectPicker({
 
   return (
     <View style={styles.row}>
-      <Host matchContents seedColor={mockColors.muted}>
+      <Host matchContents seedColor={theme.v2.appColors.muted}>
         <Picker
           appearance="menu"
           selectedValue={selectedProjectId ?? NO_PROJECT_VALUE}

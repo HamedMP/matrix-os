@@ -1,18 +1,19 @@
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import { Stack, useRouter } from "expo-router";
+import { useUnistyles } from "react-native-unistyles";
 
 import { IconButton } from "@/components/ui";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function SettingsDetailLayout() {
   const router = useRouter();
+  const { theme } = useUnistyles();
   const closeButton = () => (
     <IconButton
       accessibilityLabel="Close settings"
       icon={Cancel01Icon}
       iconSize={22}
-      iconColor={mockColors.ink}
+      iconColor={theme.v2.appColors.ink}
       buttonSize={32}
       pressedOpacity={1}
       onPress={() => router.dismiss()}
@@ -23,7 +24,7 @@ export default function SettingsDetailLayout() {
       accessibilityLabel="Back to help"
       icon={ArrowLeft01Icon}
       iconSize={22}
-      iconColor={mockColors.ink}
+      iconColor={theme.v2.appColors.ink}
       buttonSize={32}
       pressedOpacity={1}
       onPress={() => router.back()}
@@ -39,11 +40,11 @@ export default function SettingsDetailLayout() {
     <Stack
       screenOptions={{
         headerShadowVisible: false,
-        headerStyle: { backgroundColor: mockColors.canvas },
-        headerTintColor: mockColors.ink,
-        headerTitleStyle: { fontFamily: mockFonts.semibold, fontSize: 15 },
+        headerStyle: { backgroundColor: theme.v2.appColors.canvas },
+        headerTintColor: theme.v2.appColors.ink,
+        headerTitleStyle: { fontFamily: theme.v2.fonts.semibold, fontSize: 15 },
         headerBackVisible: false,
-        contentStyle: { backgroundColor: mockColors.canvas },
+        contentStyle: { backgroundColor: theme.v2.appColors.canvas },
       }}
     >
       {[

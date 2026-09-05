@@ -1,15 +1,16 @@
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { FileCreationControls } from "@/components/files/FileCreationControls";
 import { IconButton } from "@/components/ui";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function FileBrowserLayout() {
   const router = useRouter();
   const pathname = usePathname();
+  const { theme } = useUnistyles();
   const params = useGlobalSearchParams<{
     folder?: string | string[];
     path?: string | string[];
@@ -20,7 +21,7 @@ export default function FileBrowserLayout() {
       accessibilityLabel="Close file browser"
       icon={Cancel01Icon}
       iconSize={22}
-      iconColor={mockColors.ink}
+      iconColor={theme.v2.appColors.ink}
       iconTestID="file-browser-close-icon"
       buttonSize={32}
       pressedOpacity={1}
@@ -32,7 +33,7 @@ export default function FileBrowserLayout() {
       accessibilityLabel="Back to previous folder"
       icon={ArrowLeft01Icon}
       iconSize={22}
-      iconColor={mockColors.ink}
+      iconColor={theme.v2.appColors.ink}
       iconTestID="file-browser-back-icon"
       buttonSize={32}
       pressedOpacity={1}
@@ -45,11 +46,11 @@ export default function FileBrowserLayout() {
       <Stack
         screenOptions={{
           headerShadowVisible: false,
-          headerStyle: { backgroundColor: mockColors.canvas },
-          headerTintColor: mockColors.ink,
-          headerTitleStyle: { fontFamily: mockFonts.semibold, fontSize: 15 },
+          headerStyle: { backgroundColor: theme.v2.appColors.canvas },
+          headerTintColor: theme.v2.appColors.ink,
+          headerTitleStyle: { fontFamily: theme.v2.fonts.semibold, fontSize: 15 },
           headerBackButtonDisplayMode: "minimal",
-          contentStyle: { backgroundColor: mockColors.canvas },
+          contentStyle: { backgroundColor: theme.v2.appColors.canvas },
         }}
       >
         <Stack.Screen

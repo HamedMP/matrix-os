@@ -1,11 +1,12 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
 import { Stack, useLocalSearchParams } from "expo-router";
 
 import { Icon, Spacer } from "@/components/ui";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 
 export default function IntegrationDetailScreen() {
+  const { theme } = useUnistyles();
   const params = useLocalSearchParams<{
     integration?: string | string[];
     name?: string | string[];
@@ -19,7 +20,7 @@ export default function IntegrationDetailScreen() {
       <Stack.Screen options={{ title: displayName }} />
       <Spacer size="3xl" />
       <View style={styles.icon}>
-        <Icon icon={PuzzleIcon} size={34} color={mockColors.blue} />
+        <Icon icon={PuzzleIcon} size={34} color={theme.v2.appColors.blue} />
       </View>
       <Spacer size="xl" />
       <Text style={styles.title}>Connect {displayName}</Text>
@@ -48,15 +49,15 @@ export default function IntegrationDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: mockColors.canvas },
+const styles = StyleSheet.create((theme) => ({
+  screen: { flex: 1, backgroundColor: theme.v2.appColors.canvas },
   content: { flexGrow: 1, alignItems: "center", paddingHorizontal: 24 },
-  icon: { width: 72, height: 72, alignItems: "center", justifyContent: "center", borderRadius: 22, backgroundColor: mockColors.blueSoft },
-  title: { fontFamily: mockFonts.display, fontSize: 26, color: mockColors.ink },
-  body: { maxWidth: 320, fontFamily: mockFonts.body, fontSize: 14, lineHeight: 21, textAlign: "center", color: mockColors.muted },
-  permissionCard: { alignSelf: "stretch", borderWidth: 1, borderColor: mockColors.line, borderRadius: 18, paddingHorizontal: 17, backgroundColor: mockColors.surface },
-  permissionTitle: { fontFamily: mockFonts.semibold, fontSize: 14, color: mockColors.ink },
-  permission: { fontFamily: mockFonts.body, fontSize: 13, lineHeight: 19, color: mockColors.muted },
-  button: { alignSelf: "stretch", alignItems: "center", borderRadius: 16, backgroundColor: mockColors.ink },
-  buttonText: { fontFamily: mockFonts.semibold, fontSize: 15, color: mockColors.surface },
-});
+  icon: { width: 72, height: 72, alignItems: "center", justifyContent: "center", borderRadius: 22, backgroundColor: theme.v2.appColors.blueSoft },
+  title: { fontFamily: theme.v2.fonts.display, fontSize: 26, color: theme.v2.appColors.ink },
+  body: { maxWidth: 320, fontFamily: theme.v2.fonts.body, fontSize: 14, lineHeight: 21, textAlign: "center", color: theme.v2.appColors.muted },
+  permissionCard: { alignSelf: "stretch", borderWidth: 1, borderColor: theme.v2.appColors.line, borderRadius: 18, paddingHorizontal: 17, backgroundColor: theme.v2.appColors.surface },
+  permissionTitle: { fontFamily: theme.v2.fonts.semibold, fontSize: 14, color: theme.v2.appColors.ink },
+  permission: { fontFamily: theme.v2.fonts.body, fontSize: 13, lineHeight: 19, color: theme.v2.appColors.muted },
+  button: { alignSelf: "stretch", alignItems: "center", borderRadius: 16, backgroundColor: theme.v2.appColors.ink },
+  buttonText: { fontFamily: theme.v2.fonts.semibold, fontSize: 15, color: theme.v2.appColors.surface },
+}));

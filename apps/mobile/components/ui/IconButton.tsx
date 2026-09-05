@@ -2,13 +2,12 @@ import type { ComponentProps } from "react";
 import {
   ActivityIndicator,
   Pressable,
-  StyleSheet,
   type ColorValue,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { semanticColors } from "@/lib/theme";
 import { Icon, type IconData } from "./Icon";
 
 export interface IconButtonProps
@@ -30,7 +29,7 @@ export interface IconButtonProps
 /** Icon-only control. Its surface is transparent unless a background is provided. */
 export function IconButton({
   icon,
-  iconColor = semanticColors.textDefault,
+  iconColor,
   iconSize = 20,
   iconTestID,
   loading = false,
@@ -43,6 +42,8 @@ export function IconButton({
   style,
   ...pressableProps
 }: IconButtonProps) {
+  const { theme } = useUnistyles();
+  const resolvedIconColor = iconColor ?? theme.v2.colors.textDefault;
   const disabled = Boolean(pressableProps.disabled || loading);
 
   return (
@@ -71,10 +72,10 @@ export function IconButton({
         <ActivityIndicator
           testID={loadingTestID}
           size="small"
-          color={spinnerColor ?? iconColor}
+          color={spinnerColor ?? resolvedIconColor}
         />
       ) : (
-        <Icon testID={iconTestID} icon={icon} size={iconSize} color={iconColor} />
+        <Icon testID={iconTestID} icon={icon} size={iconSize} color={resolvedIconColor} />
       )}
     </Pressable>
   );

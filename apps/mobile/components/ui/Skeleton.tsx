@@ -2,14 +2,12 @@ import { useEffect, useRef } from "react";
 import {
   Animated,
   Easing,
-  StyleSheet,
   View,
   type StyleProp,
   type ViewProps,
   type ViewStyle,
 } from "react-native";
-
-import { semanticColors } from "@/lib/theme";
+import { StyleSheet } from "react-native-unistyles";
 
 export interface SkeletonProps extends Omit<ViewProps, "children" | "style"> {
   style?: StyleProp<ViewStyle>;
@@ -55,10 +53,10 @@ export function Skeleton({ style, shimmerTestID, ...props }: SkeletonProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   base: {
     overflow: "hidden",
-    backgroundColor: semanticColors.accentSurface,
+    backgroundColor: theme.v2.colors.accentSurface,
   },
   shimmer: {
     position: "absolute",
@@ -68,4 +66,4 @@ const styles = StyleSheet.create({
     width: 72,
     backgroundColor: "rgba(255, 255, 255, 0.58)",
   },
-});
+}));

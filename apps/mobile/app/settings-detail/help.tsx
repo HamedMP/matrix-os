@@ -1,4 +1,5 @@
 import { Linking } from "react-native";
+import { useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import ArrowUpRight01Icon from "@hugeicons/core-free-icons/ArrowUpRight01Icon";
 import HelpCircleIcon from "@hugeicons/core-free-icons/HelpCircleIcon";
@@ -6,12 +7,12 @@ import InformationCircleIcon from "@hugeicons/core-free-icons/InformationCircleI
 
 import { SettingsCardStack, SettingsPage, SettingsRow } from "@/components/settings/SettingsSurface";
 import { Icon } from "@/components/ui";
-import { mockColors } from "@/components/mock-shell/theme";
 
 const DOCS_URL = "https://matrix-os.com/docs";
 
 export default function HelpSettingsScreen() {
   const router = useRouter();
+  const { theme } = useUnistyles();
   return (
     <SettingsPage>
       <SettingsCardStack>
@@ -21,7 +22,7 @@ export default function HelpSettingsScreen() {
           detail="Guides and product documentation"
           icon={InformationCircleIcon}
           accessibilityLabel="Open docs"
-          trailing={<Icon icon={ArrowUpRight01Icon} size={18} color={mockColors.muted} />}
+          trailing={<Icon icon={ArrowUpRight01Icon} size={18} color={theme.v2.appColors.muted} />}
           onPress={() => void Linking.openURL(DOCS_URL)}
         />
         <SettingsRow

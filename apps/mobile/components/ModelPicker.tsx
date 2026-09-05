@@ -1,8 +1,7 @@
 import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { Host, Picker } from "@expo/ui";
-import { StyleSheet, View } from "react-native";
-
-import { mockColors } from "@/components/mock-shell/theme";
+import { View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 const MODEL_VALUE_SEPARATOR = "::";
 
@@ -31,6 +30,7 @@ export function ModelPicker({
   selection: CanonicalChatModelSelection | null;
   onSelectionChange: (selection: CanonicalChatModelSelection) => void;
 }) {
+  const { theme } = useUnistyles();
   if (!catalog) return null;
   const availableInstances = catalog.instances.filter((instance) => instance.availability === "available");
   if (availableInstances.length === 0) return null;
@@ -68,7 +68,7 @@ export function ModelPicker({
   // no separate caption is rendered here — just the model's short name.
   return (
     <View style={styles.row}>
-      <Host matchContents seedColor={mockColors.muted}>
+      <Host matchContents seedColor={theme.v2.appColors.muted}>
         <Picker
           appearance="menu"
           selectedValue={modelValue}
@@ -89,7 +89,7 @@ export function ModelPicker({
         </Picker>
       </Host>
       {composerOption && composerOption.kind === "enum" && composerOption.values ? (
-        <Host matchContents seedColor={mockColors.muted}>
+        <Host matchContents seedColor={theme.v2.appColors.muted}>
           <Picker
             appearance="menu"
             selectedValue={typeof optionValue === "string" ? optionValue : ""}

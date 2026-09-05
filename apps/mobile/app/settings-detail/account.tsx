@@ -1,17 +1,17 @@
-import { Linking, StyleSheet } from "react-native";
+import { Linking } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useUser } from "@clerk/clerk-expo";
 import ArrowUpRight01Icon from "@hugeicons/core-free-icons/ArrowUpRight01Icon";
 import { Image } from "expo-image";
 
 import { SettingsCardStack, SettingsPage, SettingsRow } from "@/components/settings/SettingsSurface";
 import { Icon, Spacer } from "@/components/ui";
-import { mockColors } from "@/components/mock-shell/theme";
-import { palette } from "@/lib/theme";
 
 const ACCOUNT_URL = "https://accounts.matrix-os.com/user";
 
 export default function AccountSettingsScreen() {
   const { user } = useUser();
+  const { theme } = useUnistyles();
   const name = user?.fullName ?? user?.firstName ?? "Not set";
   const handle = user?.username ? `@${user.username}` : "Not set";
 
@@ -35,7 +35,7 @@ export default function AccountSettingsScreen() {
           title="Manage account"
           detail="Opens in your browser"
           accessibilityLabel="Manage account"
-          trailing={<Icon icon={ArrowUpRight01Icon} size={18} color={mockColors.muted} />}
+          trailing={<Icon icon={ArrowUpRight01Icon} size={18} color={theme.v2.appColors.muted} />}
           onPress={() => void Linking.openURL(ACCOUNT_URL)}
         />
       </SettingsCardStack>
@@ -43,13 +43,13 @@ export default function AccountSettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   avatar: {
     width: 108,
     height: 108,
     borderRadius: 54,
     borderWidth: 6,
-    borderColor: palette.green[600],
+    borderColor: theme.v2.palette.green[600],
     alignSelf: "center",
   },
-});
+}));

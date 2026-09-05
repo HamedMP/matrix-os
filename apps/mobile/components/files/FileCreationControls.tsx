@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
 import ChevronRight from "@hugeicons/core-free-icons/ChevronRightIcon";
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import {
   Divider,
   FloatingActionButton,
@@ -16,7 +16,6 @@ import {
 } from "@/components/ui";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { isValidNewFileEntryName } from "@/lib/requests";
-import { fonts, palette, semanticColors } from "@/lib/theme";
 
 type CreationType = "folder" | "file";
 type CreationScreen = "options" | "name";
@@ -141,6 +140,7 @@ function CreationOptions({ onSelect }: { onSelect: (type: CreationType) => void 
 }
 
 function CreateOption({ label, onPress }: { label: string; onPress: () => void }) {
+  const { theme } = useUnistyles();
   return (
     <Pressable
       accessibilityRole="button"
@@ -157,7 +157,7 @@ function CreateOption({ label, onPress }: { label: string; onPress: () => void }
         <Icon
           icon={ChevronRight}
           size={22}
-          color={semanticColors.textDefault}
+          color={theme.v2.colors.textDefault}
           style={styles.createOptionIcon}
         />
       </View>
@@ -236,7 +236,7 @@ function NameCreationScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   createOption: {
     alignSelf: "stretch",
   },
@@ -254,9 +254,9 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   createOptionLabel: {
-    fontFamily: fonts.productMedium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 18,
-    color: semanticColors.textDefault,
+    color: theme.v2.colors.textDefault,
   },
   nameScreen: {
     alignSelf: "stretch",
@@ -268,9 +268,9 @@ const styles = StyleSheet.create({
   },
   nameTitle: {
     flex: 1,
-    fontFamily: fonts.productMedium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 18,
-    color: semanticColors.textDefault,
+    color: theme.v2.colors.textDefault,
     textAlign: "center",
   },
   headerBalance: {
@@ -280,18 +280,18 @@ const styles = StyleSheet.create({
   nameInput: {
     height: 48,
     paddingHorizontal: 14,
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 15,
-    color: mockColors.ink,
-    backgroundColor: palette.green[25],
+    color: theme.v2.appColors.ink,
+    backgroundColor: theme.v2.palette.green[25],
     borderWidth: 1,
-    borderColor: palette.neutral[300],
+    borderColor: theme.v2.palette.neutral[300],
     borderRadius: 12,
   },
   error: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 13,
-    color: palette.coral[600],
+    color: theme.v2.palette.coral[600],
   },
   nameFooter: {
     flexDirection: "row",
@@ -302,4 +302,4 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
   },
-});
+}));

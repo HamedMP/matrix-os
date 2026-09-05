@@ -4,10 +4,10 @@ import {
   AppState,
   Linking,
   Pressable,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -19,15 +19,14 @@ import {
   ListRowStack,
 } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { Icon, Spacer } from "@/components/ui";
 import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations";
 import type { IntegrationService } from "@/lib/requests";
-import { palette } from "@/lib/theme";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export default function IntegrationsScreen() {
   const router = useRouter();
+  const { theme } = useUnistyles();
   const {
     available,
     connected,
@@ -152,7 +151,7 @@ export default function IntegrationsScreen() {
               );
             })}
           </View>
-          <Icon icon={ArrowRight01Icon} size={20} color={mockColors.ink} />
+          <Icon icon={ArrowRight01Icon} size={20} color={theme.v2.appColors.ink} />
         </View>
         <Spacer size="lg" />
       </Pressable>
@@ -182,7 +181,7 @@ export default function IntegrationsScreen() {
               actionIcon={Add01Icon}
               action={startingServiceId === service.id || connectingServiceId === service.id ? (
                 <ActivityIndicator
-                  color={mockColors.muted}
+                  color={theme.v2.appColors.muted}
                   size="small"
                   testID={`integration-connect-spinner-${service.id}`}
                 />
@@ -205,24 +204,24 @@ function titleCase(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   installedCard: {
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 20,
     paddingHorizontal: 17,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
   },
   cardEyebrow: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 11,
     letterSpacing: 1.2,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   cardTitle: {
-    fontFamily: mockFonts.display,
+    fontFamily: theme.v2.fonts.display,
     fontSize: 20,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   installedRow: {
     flexDirection: "row",
@@ -236,22 +235,22 @@ const styles = StyleSheet.create({
     marginLeft: -7,
   },
   sectionLabel: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 11,
     letterSpacing: 1.1,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   statusText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   errorText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: palette.coral[600],
+    color: theme.v2.palette.coral[600],
   },
   pressed: {
     opacity: 0.7,
   },
-});
+}));

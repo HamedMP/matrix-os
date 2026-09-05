@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { StyleSheet, Text } from "react-native";
+import { Text } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 
 import { AppLogo } from "@/components/apps/AppLogo";
@@ -10,7 +11,6 @@ import {
   MockSearchField,
 } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { Spacer } from "@/components/ui";
 import { useComputerApps, installedAppSlug } from "@/lib/queries/use-computer-apps";
 import { buildAppIconUrl } from "@/lib/requests";
@@ -62,10 +62,10 @@ export default function AppsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   statusText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
-});
+}));

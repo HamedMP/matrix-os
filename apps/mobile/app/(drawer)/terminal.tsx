@@ -5,11 +5,11 @@ import {
   Modal,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
 import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
@@ -25,13 +25,12 @@ import {
   MockSearchField,
 } from "@/components/mock-shell/MockControls";
 import { MockPage } from "@/components/mock-shell/MockPage";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
 import { TerminalAgentLogo, type MobileTerminalAgent } from "@/components/terminal/TerminalAgentLogo";
 import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components/ui";
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { isValidEditableTerminalSessionName, type TerminalSession } from "@/lib/requests";
-import { fonts, palette, semanticColors } from "@/lib/theme";
+import { palette } from "@/lib/theme-v2";
 
 type TerminalAction = {
   type: "rename" | "delete";
@@ -42,6 +41,7 @@ const SHEET_DISMISS_NAVIGATION_DELAY_MS = 500;
 
 export default function TerminalScreen() {
   const router = useRouter();
+  const { theme } = useUnistyles();
   const [searchQuery, setSearchQuery] = useState("");
   const [terminalAction, setTerminalAction] = useState<TerminalAction>(null);
   const [nextName, setNextName] = useState("");
@@ -241,13 +241,13 @@ export default function TerminalScreen() {
               <ActivityIndicator
                 testID="new-terminal-session-loading"
                 size="small"
-                color={semanticColors.textDefault}
+                color={theme.v2.colors.textDefault}
               />
             ) : (
               <Icon
                 icon={ChevronRightIcon}
                 size={22}
-                color={semanticColors.textDefault}
+                color={theme.v2.colors.textDefault}
                 testID="new-terminal-session-chevron"
               />
             )}
@@ -278,6 +278,7 @@ function SwipeableTerminalRow({
   onDelete: () => void;
 }) {
   const swipeableRef = useRef<Swipeable>(null);
+  const { theme } = useUnistyles();
   const triggerAction = (action: () => void) => {
     swipeableRef.current?.close();
     action();
@@ -297,7 +298,7 @@ function SwipeableTerminalRow({
             onPress={() => triggerAction(onRename)}
             style={({ pressed }) => [styles.swipeButton, styles.renameButton, pressed && styles.pressed]}
           >
-            <Icon icon={PencilEdit02Icon} size={24} color={mockColors.ink} />
+            <Icon icon={PencilEdit02Icon} size={24} color={theme.v2.appColors.ink} />
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -315,7 +316,7 @@ function SwipeableTerminalRow({
         detail={sessionDetail(session)}
         detailLeading={isMobileTerminalAgent(session.agent) ? <TerminalAgentLogo agent={session.agent} /> : undefined}
         icon={ComputerTerminal01Icon}
-        accent={sessionAccent(session)}
+        accent={sessionAccent(session, theme)}
         accessibilityLabel={`Open ${session.name} terminal`}
         onPress={onPress}
       />
@@ -446,11 +447,13 @@ function isMobileTerminalAgent(agent: TerminalSession["agent"]): agent is Mobile
   return agent === "claude" || agent === "codex";
 }
 
-function sessionAccent(session: TerminalSession): string {
-  if (session.status === "exited") return palette.neutral[200];
-  if (session.visualStatus === "running") return palette.green[100];
-  if (session.visualStatus === "waiting") return palette.gold[100];
-  return palette.neutral[200];
+function sessionAccent(session: TerminalSession, theme: ReturnType<typeof useUnistyles>["theme"]): string {
+  const p = theme.v2.palette;
+  const dark = theme.v2.mode === "dark";
+  if (session.status === "exited") return dark ? p.neutral[700] : p.neutral[200];
+  if (session.visualStatus === "running") return dark ? p.green[800] : p.green[100];
+  if (session.visualStatus === "waiting") return dark ? p.gold[800] : p.gold[100];
+  return dark ? p.neutral[700] : p.neutral[200];
 }
 
 function sessionDetail(session: TerminalSession): string {
@@ -464,7 +467,7 @@ function sessionDetail(session: TerminalSession): string {
   return session.branch?.trim() ? `${location} · ${session.branch.trim()}` : location;
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
   },
@@ -478,9 +481,9 @@ const styles = StyleSheet.create({
   },
   sheetTitle: {
     flex: 1,
-    fontFamily: fonts.productMedium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 18,
-    color: semanticColors.textDefault,
+    color: theme.v2.colors.textDefault,
     textAlign: "center",
   },
   manageOption: {
@@ -493,26 +496,26 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   manageOptionLabel: {
-    fontFamily: fonts.productMedium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 18,
-    color: semanticColors.textDefault,
+    color: theme.v2.colors.textDefault,
   },
   createSessionError: {
     paddingHorizontal: 16,
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 13,
-    color: palette.coral[600],
+    color: theme.v2.palette.coral[600],
   },
   sectionLabel: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 11,
     letterSpacing: 1.1,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   statusText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   swipeActions: {
     alignSelf: "stretch",
@@ -530,12 +533,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   renameButton: {
-    backgroundColor: palette.neutral[50],
-    borderColor: palette.neutral[300],
+    backgroundColor: theme.v2.palette.neutral[50],
+    borderColor: theme.v2.palette.neutral[300],
   },
   deleteButton: {
-    backgroundColor: palette.coral[50],
-    borderColor: palette.coral[200],
+    backgroundColor: theme.v2.palette.coral[50],
+    borderColor: theme.v2.palette.coral[200],
   },
   pressed: {
     opacity: 0.7,
@@ -554,42 +557,42 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     alignSelf: "center",
     paddingHorizontal: 20,
-    backgroundColor: palette.neutral[50],
+    backgroundColor: theme.v2.palette.neutral[50],
     borderWidth: 1,
-    borderColor: palette.neutral[300],
+    borderColor: theme.v2.palette.neutral[300],
     borderRadius: 20,
-    shadowColor: palette.neutral[900],
+    shadowColor: theme.v2.palette.neutral[900],
     shadowOpacity: 0.18,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
     elevation: 12,
   },
   popupTitle: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 19,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   popupBody: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
     lineHeight: 20,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   popupInput: {
     height: 48,
     paddingHorizontal: 14,
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 15,
-    color: mockColors.ink,
-    backgroundColor: palette.green[25],
+    color: theme.v2.appColors.ink,
+    backgroundColor: theme.v2.palette.green[25],
     borderWidth: 1,
-    borderColor: palette.neutral[300],
+    borderColor: theme.v2.palette.neutral[300],
     borderRadius: 12,
   },
   popupError: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 13,
-    color: palette.coral[600],
+    color: theme.v2.palette.coral[600],
   },
   popupButtons: {
     flexDirection: "row",
@@ -606,22 +609,22 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   popupButtonNeutral: {
-    backgroundColor: palette.neutral[50],
-    borderColor: palette.neutral[300],
+    backgroundColor: theme.v2.palette.neutral[50],
+    borderColor: theme.v2.palette.neutral[300],
   },
   popupButtonDestructive: {
-    backgroundColor: palette.coral[700],
-    borderColor: palette.coral[700],
+    backgroundColor: theme.v2.palette.coral[700],
+    borderColor: theme.v2.palette.coral[700],
   },
   popupButtonText: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 14,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   popupButtonTextDestructive: {
-    color: palette.neutral[50],
+    color: theme.v2.palette.neutral[50],
   },
   disabled: {
     opacity: 0.5,
   },
-});
+}));

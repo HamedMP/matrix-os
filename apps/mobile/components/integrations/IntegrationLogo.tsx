@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { Image } from "expo-image";
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { mockFonts } from "@/components/mock-shell/theme";
 import type { IntegrationService } from "@/lib/requests";
-import { palette } from "@/lib/theme";
 
 export function IntegrationLogo({
   service,
@@ -14,6 +13,7 @@ export function IntegrationLogo({
   compact?: boolean;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const { theme } = useUnistyles();
   const size = compact ? 32 : 42;
   const imageSize = compact ? 24 : 32;
 
@@ -48,15 +48,15 @@ export function IntegrationLogo({
       )}
     </View>
   );
+
+  function categoryColor(category: string): string {
+    if (category === "google") return theme.v2.palette.blue[50];
+    if (category === "communication") return theme.v2.palette.green[100];
+    return theme.v2.palette.neutral[100];
+  }
 }
 
-function categoryColor(category: string): string {
-  if (category === "google") return palette.blue[50];
-  if (category === "communication") return palette.green[100];
-  return palette.neutral[100];
-}
-
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flexShrink: 0,
     alignItems: "center",
@@ -64,11 +64,11 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   fallback: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 16,
-    color: palette.neutral[700],
+    color: theme.v2.palette.neutral[700],
   },
   fallbackCompact: {
     fontSize: 13,
   },
-});
+}));

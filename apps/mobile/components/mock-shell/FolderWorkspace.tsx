@@ -1,4 +1,5 @@
-import { RefreshControl, ScrollView, StyleSheet, Text } from "react-native";
+import { RefreshControl, ScrollView, Text } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Stack, useRouter } from "expo-router";
 import File01Icon from "@hugeicons/core-free-icons/File01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
@@ -6,12 +7,12 @@ import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 import { EmptyFolderState } from "@/components/files/EmptyFolderState";
 import { Spacer } from "@/components/ui";
 import { FileTileSkeletonGrid, GridTile, GridTileGrid } from "./MockControls";
-import { mockColors, mockFonts } from "./theme";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export function FolderWorkspace({ segments }: { segments: string[] }) {
   const router = useRouter();
+  const { theme } = useUnistyles();
   const currentPath = segments.join("/");
   const title = segments.at(-1) ?? "Files";
   const { entries, isPending, isError, refresh } = useComputerDirectory(currentPath);
@@ -28,9 +29,9 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
           testID="file-browser-refresh-control"
           refreshing={pullToRefresh.refreshing}
           onRefresh={pullToRefresh.onRefresh}
-          tintColor={mockColors.ink}
-          colors={[mockColors.ink]}
-          progressBackgroundColor={mockColors.canvas}
+          tintColor={theme.v2.appColors.ink}
+          colors={[theme.v2.appColors.ink]}
+          progressBackgroundColor={theme.v2.appColors.canvas}
         />
       )}
     >
@@ -68,18 +69,18 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: mockColors.canvas,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   content: {
     flexGrow: 1,
     paddingHorizontal: 20,
   },
   statusText: {
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
-});
+}));

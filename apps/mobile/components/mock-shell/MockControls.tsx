@@ -3,11 +3,11 @@ import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
 import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
-import { Pressable, StyleSheet, Text, TextInput, View, type ColorValue } from "react-native";
+import { Pressable, Text, TextInput, View, type ColorValue } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Icon, IconButton, Skeleton, Spacer, type IconData } from "@/components/ui";
-import { mockColors, mockFonts } from "./theme";
-import type { SpacingSize } from "@/lib/theme";
+import type { SpacingSize } from "@/lib/theme-v2";
 
 interface MockSearchFieldProps {
   placeholder?: string;
@@ -21,6 +21,7 @@ export function MockSearchField({
   onChangeText,
 }: MockSearchFieldProps) {
   const [uncontrolledValue, setUncontrolledValue] = useState("");
+  const { theme } = useUnistyles();
   const currentValue = value ?? uncontrolledValue;
   const updateValue = (nextValue: string) => {
     if (value === undefined) setUncontrolledValue(nextValue);
@@ -29,11 +30,11 @@ export function MockSearchField({
 
   return (
     <View style={styles.search}>
-      <Icon icon={Search01Icon} size={17} color={mockColors.muted} />
+      <Icon icon={Search01Icon} size={17} color={theme.v2.appColors.muted} />
       <TextInput
         accessibilityLabel={placeholder}
         placeholder={placeholder}
-        placeholderTextColor={mockColors.muted}
+        placeholderTextColor={theme.v2.appColors.muted}
         value={currentValue}
         onChangeText={updateValue}
         style={styles.searchInput}
@@ -42,7 +43,7 @@ export function MockSearchField({
         <IconButton
           accessibilityLabel={`Clear ${placeholder}`}
           icon={Cancel01Icon}
-          iconColor={mockColors.ink}
+          iconColor={theme.v2.appColors.ink}
           iconSize={18}
           buttonSize={32}
           pressedOpacity={0.65}
@@ -114,6 +115,7 @@ export function GridTile({
   accessibilityLabel,
   onPress,
 }: GridTileProps) {
+  const { theme } = useUnistyles();
   return (
     <Pressable
       accessibilityRole={onPress ? "button" : undefined}
@@ -134,7 +136,7 @@ export function GridTile({
           testID={`grid-tile-icon-${label}`}
           style={[styles.tileGlyph, { backgroundColor: iconBackgroundColor }]}
         >
-          <Icon icon={icon} size={24} color={accent ? mockColors.blue : mockColors.ink} />
+          <Icon icon={icon} size={24} color={accent ? theme.v2.appColors.blue : theme.v2.appColors.ink} />
         </View>
       )}
       <Spacer testID={centered ? "app-tile-artwork-label-spacer" : undefined} size={artworkLabelSpacerSize} />
@@ -204,19 +206,21 @@ export function ListRow({
   detailLeading,
   leading,
   icon = CubeIcon,
-  accent = mockColors.soft,
+  accent,
   actionIcon = ArrowRight01Icon,
   action,
   accessibilityLabel,
   onPress,
 }: ListRowProps) {
+  const { theme } = useUnistyles();
+  const resolvedAccent = accent ?? theme.v2.appColors.soft;
   const content = (
     <>
       <Spacer size="md" />
       <View style={styles.rowContent}>
         {leading ?? (
-          <View testID={`list-row-icon-${title}`} style={[styles.rowGlyph, { backgroundColor: accent }]}> 
-            <Icon icon={icon} size={20} color={mockColors.ink} />
+          <View testID={`list-row-icon-${title}`} style={[styles.rowGlyph, { backgroundColor: resolvedAccent }]}>
+            <Icon icon={icon} size={20} color={theme.v2.appColors.ink} />
           </View>
         )}
         <View style={styles.rowText}>
@@ -241,7 +245,7 @@ export function ListRow({
             </>
           ) : null}
         </View>
-        {action ?? <Icon icon={actionIcon} size={18} color={mockColors.muted} />}
+        {action ?? <Icon icon={actionIcon} size={18} color={theme.v2.appColors.muted} />}
       </View>
       <Spacer size="md" />
     </>
@@ -263,32 +267,32 @@ export function ListRow({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   search: {
     minHeight: 46,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 14,
     paddingHorizontal: 14,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
   },
   searchInput: {
     flex: 1,
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 15,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   tile: {
     width: "31.5%",
     aspectRatio: 0.9,
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 18,
     paddingHorizontal: 12,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
   },
   tileRow: {
     flexDirection: "row",
@@ -301,8 +305,8 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   tileAccent: {
-    borderColor: mockColors.blue,
-    backgroundColor: mockColors.blueSoft,
+    borderColor: theme.v2.appColors.blue,
+    backgroundColor: theme.v2.appColors.blueSoft,
   },
   tileGlyph: {
     width: 42,
@@ -315,27 +319,27 @@ const styles = StyleSheet.create({
     width: "31.5%",
     aspectRatio: 0.9,
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 18,
   },
   tileLabel: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 13,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   tileLabelCentered: {
     alignSelf: "stretch",
     textAlign: "center",
   },
   tileLabelAccent: {
-    color: mockColors.blue,
+    color: theme.v2.appColors.blue,
   },
   row: {
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 16,
     paddingHorizontal: 13,
-    backgroundColor: mockColors.surface,
+    backgroundColor: theme.v2.appColors.surface,
   },
   rowContent: {
     flexDirection: "row",
@@ -354,15 +358,15 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   rowTitle: {
-    fontFamily: mockFonts.semibold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 15,
-    color: mockColors.ink,
+    color: theme.v2.appColors.ink,
   },
   rowDetail: {
     flexShrink: 1,
-    fontFamily: mockFonts.body,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 12,
-    color: mockColors.muted,
+    color: theme.v2.appColors.muted,
   },
   rowDetailLine: {
     minWidth: 0,
@@ -373,7 +377,7 @@ const styles = StyleSheet.create({
   skeletonRow: {
     height: 66,
     borderWidth: 1,
-    borderColor: mockColors.line,
+    borderColor: theme.v2.appColors.line,
     borderRadius: 16,
     paddingHorizontal: 13,
   },
@@ -381,4 +385,4 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     transform: [{ scale: 0.985 }],
   },
-});
+}));
