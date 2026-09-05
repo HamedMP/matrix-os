@@ -15,6 +15,9 @@ type ReactNativeWebSocketConstructor = new (
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
+// Real usage is a handful of mounted consumers at most; this guards against a
+// subscribe-without-unsubscribe leak growing the registry unbounded.
+const MAX_LISTENERS = 50;
 
 function formatAuthorizationHeader(token: string | undefined): string | undefined {
   if (!token) return undefined;
@@ -163,6 +166,11 @@ export function createCanonicalChatEventSource(options: {
 
   return {
     subscribe(listener) {
+      if (listeners.size >= MAX_LISTENERS) {
+        const oldest = listeners.values().next().value;
+        if (oldest) listeners.delete(oldest);
+        console.warn("[canonical-chat] event listener cap reached, evicting oldest subscriber");
+      }
       listeners.add(listener);
       return () => listeners.delete(listener);
     },

@@ -109,7 +109,10 @@ export default function ChatScreen() {
     if (!trimmed || !selection || !turnModes) return;
     // Clear the draft only once the send actually succeeds -- a failed token
     // fetch, computer resolution, chat creation, or turn admission leaves the
-    // typed text in place so the user can retry instead of losing it.
+    // typed text in place so the user can retry instead of losing it. The
+    // composer stays editable while the send is in flight, so only clear it
+    // if it still holds exactly what was sent -- otherwise the user has
+    // already started a new message and this would erase that instead.
     sendMessage.mutate({
       chatId: activeChatId,
       baseRevision: detail?.record.chat.revision ?? 0,
@@ -119,7 +122,7 @@ export default function ChatScreen() {
       permissionMode: turnModes.permissionMode,
       projectId: selectedProjectId,
     }, {
-      onSuccess: () => setDraft(""),
+      onSuccess: () => setDraft((current) => (current === trimmed ? "" : current)),
     });
   }, [
     draft,
