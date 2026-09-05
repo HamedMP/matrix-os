@@ -74,6 +74,11 @@ export function MockDrawerContent({
     navigate("index");
   }
 
+  // A chat only reads as "active" while the user is actually looking at the
+  // chat screen -- activeSessionId otherwise stays set (it's session state,
+  // not screen state) even after navigating to Files/Terminal/Settings, which
+  // would highlight a chat that isn't actually on screen.
+  const isOnChatScreen = props.state.routeNames[props.state.index] === "index";
   const unassignedChats = recentChats.filter((record) => !record.projectId);
 
   return (
@@ -174,7 +179,7 @@ export function MockDrawerContent({
                         const label = record.chat.title.trim()
                           || record.chat.lastMessagePreview?.trim()
                           || "New chat";
-                        const active = record.chat.id === activeSessionId;
+                        const active = isOnChatScreen && record.chat.id === activeSessionId;
                         return (
                           <Pressable
                             key={record.chat.id}
@@ -230,7 +235,7 @@ export function MockDrawerContent({
           const label = record.chat.title.trim()
             || record.chat.lastMessagePreview?.trim()
             || "New chat";
-          const active = record.chat.id === activeSessionId;
+          const active = isOnChatScreen && record.chat.id === activeSessionId;
           return (
             <Fragment key={record.chat.id}>
               <Pressable
