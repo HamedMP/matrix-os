@@ -35,6 +35,7 @@ import type { CodingAgentProviderRegistry } from "../coding-agents/provider-regi
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
+import { managedChatInstances } from "./managed-chat-catalog.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -882,6 +883,7 @@ export function createChatProviderCatalogService(options: {
       const executableDriverKinds = options.executableDriverKinds;
       const instances = applyHarnessSettings({
         instances: [
+        ...managedChatInstances(aiSnapshot, skills),
         ...systemInstances,
         ...completeCodingInstances,
         ],
@@ -893,6 +895,7 @@ export function createChatProviderCatalogService(options: {
         aiSnapshot,
       });
       const driverKinds: CanonicalProviderDriverKind[] = [
+        ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
         ...SYSTEM_DRIVERS,
         ...CODING_DRIVERS,
       ];
@@ -900,7 +903,7 @@ export function createChatProviderCatalogService(options: {
         kind,
         displayName: driverDisplayName(kind),
         adapterVersion: ADAPTER_VERSION,
-        capabilityClass: SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
+        capabilityClass: kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
           ? "system_agent" as const
           : "coding_agent" as const,
       }));

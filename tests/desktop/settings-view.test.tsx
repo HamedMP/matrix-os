@@ -89,14 +89,13 @@ describe("SettingsView", () => {
     expect(providers.className).not.toContain("bg-[var(--bg-selected)]");
   });
 
-  it("keeps the previous local Agents & providers settings surface", async () => {
+  it("uses the shared runtime-scoped Agents & providers settings surface", async () => {
     render(<SettingsView />);
     fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Providers" })).not.toBeNull());
-    expect(document.querySelector('[data-settings-adapter="agents-providers-legacy"]')).not.toBeNull();
-    expect(document.querySelector('[data-provider-settings-adapter="legacy"]')).not.toBeNull();
-    expect(screen.queryByText("HARNESSES")).toBeNull();
+    await waitFor(() => expect(screen.getByText("Loading provider settings")).not.toBeNull());
+    expect(document.querySelector(".matrix-agents-providers")).not.toBeNull();
+    expect(document.querySelector('[data-settings-adapter="agents-providers-legacy"]')).toBeNull();
   });
 
   it("groups services, MCPs, skills, and CLI under Integrations", () => {
