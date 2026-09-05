@@ -1,7 +1,8 @@
 import "@/lib/hermes-polyfills";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
+  InteractionManager,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -137,6 +138,21 @@ export default function ChatScreen() {
 
   const insets = useSafeAreaInsets();
 
+  // Keep the composer focused and the keyboard open while there's no active
+  // chat (a fresh draft) -- `autoFocus` alone doesn't reliably refire across
+  // Drawer navigation (it only fires once, on initial mount, and can lose
+  // the race against the drawer's close animation), so this focuses
+  // imperatively via a ref whenever activeChatId transitions to null, once
+  // the navigation transition has settled.
+  const inputRef = useRef<TextInput>(null);
+  useEffect(() => {
+    if (activeChatId !== null) return;
+    const task = InteractionManager.runAfterInteractions(() => {
+      inputRef.current?.focus();
+    });
+    return () => task.cancel();
+  }, [activeChatId]);
+
   const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
     <AnalyticsMask>
       <MessageBubble message={item} />
@@ -194,6 +210,7 @@ export default function ChatScreen() {
             />
           )}
           <TextInput
+            ref={inputRef}
             accessibilityLabel="Message Matrix"
             value={draft}
             onChangeText={setDraft}
