@@ -65,6 +65,9 @@ jobs:
       MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '4' }}
       POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
+      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}
+      MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}
+      MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
     steps:
       - name: Checkout
@@ -118,6 +121,25 @@ jobs:
             echo "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE must be a positive integer." >&2
             exit 1
           fi
+          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED; do
+            case "${!name}" in
+              true|false) ;;
+              *)
+                echo "$name must be true or false." >&2
+                exit 1
+                ;;
+            esac
+          done
+          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" ]; then
+            echo "Funded AI control-plane and runtime flags must be enabled or disabled together." >&2
+            exit 1
+          fi
+          if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ]; then
+            if ! [[ "$MATRIX_FUNDED_AI_RELAY_URL" =~ ^https://[^/?#]+/?$ ]]; then
+              echo "MATRIX_FUNDED_AI_RELAY_URL must be an HTTPS origin when funded AI is enabled." >&2
+              exit 1
+            fi
+          fi
       - name: Authenticate to Google Cloud
         # google-github-actions v4 tags are not published yet; v3 is the latest
         # major tag currently resolvable by GitHub Actions.
@@ -129,6 +151,32 @@ jobs:
       - name: Set up gcloud
         # Keep this aligned with auth@v3 until google-github-actions publishes v4.
         uses: google-github-actions/setup-gcloud@v3
+
+      - name: Verify funded AI control-plane secrets
+        if: ${{ env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED == 'true' }}
+        run: |
+          set -euo pipefail
+          required_funded_ai_secrets=(
+            ai-relay-control-token
+            ai-funded-credential-hash-secret
+          )
+          for secret_name in "${required_funded_ai_secrets[@]}"; do
+            gcloud secrets versions describe latest \
+              --secret "$secret_name" \
+              --project "$GCP_PROJECT_ID" >/dev/null
+            accessor_member="$(
+              gcloud secrets get-iam-policy "$secret_name" \
+                --project "$GCP_PROJECT_ID" \
+                --flatten='bindings[].members' \
+                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+                --format='value(bindings.members)' \
+                | head -1
+            )"
+            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
+              exit 1
+            fi
+          done
 
       - name: Verify edge router secret
         run: |
@@ -517,6 +565,13 @@ jobs:
             ats_secret_bindings=",ATS_DATABASE_URL=ats-database-url:latest,ATS_INGEST_SECRET=ats-ingest-secret:latest,ATS_ADMIN_SECRET=ats-admin-secret:latest"
           fi
 
+          funded_ai_env_bindings=",MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED},MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}"
+          funded_ai_secret_bindings=""
+          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
+            funded_ai_env_bindings="${funded_ai_env_bindings},MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
+            funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
+          fi
+
           # TODO(#410): flip CUSTOMER_VPS_TLS_VERIFY back to true once customer VPS origins present trusted certs.
           if ! deploy_json=$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
@@ -534,8 +589,8 @@ jobs:
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
-            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_BACKGROUND_WORKERS_ENABLED=false,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync,GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}${ats_env_bindings}" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,POSTHOG_CONVERSATIONS_IDENTITY_SECRET=posthog-conversations-identity-secret:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest${ats_secret_bindings}" \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_BACKGROUND_WORKERS_ENABLED=false,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync,GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}${ats_env_bindings}${funded_ai_env_bindings}" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,POSTHOG_CONVERSATIONS_IDENTITY_SECRET=posthog-conversations-identity-secret:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest${ats_secret_bindings}${funded_ai_secret_bindings}" \
             --format=json); then
             exit 1
           fi

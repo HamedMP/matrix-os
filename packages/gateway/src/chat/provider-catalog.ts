@@ -99,7 +99,7 @@ export class ProviderCatalogUnavailableError extends Error {
 }
 
 function driverDisplayName(kind: CanonicalProviderDriverKind): string {
-  if (kind === "kernel") return "Matrix Agent";
+  if (kind === "kernel") return "Claude SDK";
   if (kind === "claude_code") return "Claude Code";
   if (kind === "openclaw") return "OpenClaw";
   if (kind === "opencode") return "OpenCode";

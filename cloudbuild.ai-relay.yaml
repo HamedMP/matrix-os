@@ -1,0 +1,25 @@
+substitutions:
+  _IMAGE: europe-west3-docker.pkg.dev/matrix-os-1144/matrix-os/matrix-ai-relay:manual
+  _CACHE_IMAGE: europe-west3-docker.pkg.dev/matrix-os-1144/matrix-os/matrix-ai-relay:buildcache
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - -f
+      - Dockerfile.ai-relay
+      - --build-arg
+      - BUILDKIT_INLINE_CACHE=1
+      - --cache-from
+      - ${_CACHE_IMAGE}
+      - -t
+      - ${_IMAGE}
+      - -t
+      - ${_CACHE_IMAGE}
+      - .
+
+images:
+  - ${_IMAGE}
+  - ${_CACHE_IMAGE}

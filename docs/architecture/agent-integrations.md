@@ -43,7 +43,7 @@ Matrix bootstrap idempotently registers the server under the stable name
 | Claude Code | User-scoped stdio MCP entry in Claude configuration |
 | Hermes | Native `mcp_servers` entry, discovered in every Hermes conversation |
 | OpenClaw | Native `mcp.servers` entry, available to normal coding and messaging profiles |
-| OpenCode and Pi | Auto-discovered global Matrix Agent Skill using the credential-isolated `matrix-integrations` command |
+| OpenCode and Pi | Auto-discovered global Matrix OS skill using the credential-isolated `matrix-integrations` command |
 
 Registration runs after an agent is installed and again during gateway boot,
 so an existing VPS receives the configuration after an update and a newly
