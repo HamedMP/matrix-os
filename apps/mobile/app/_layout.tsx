@@ -416,9 +416,17 @@ function GatewayShell() {
             <Stack.Screen
               name="sign-in"
               options={{
-                title: "Sign In",
+                headerShown: false,
                 presentation: "modal",
-                headerStyle: { backgroundColor: theme.colors.background },
+              }}
+            />
+            <Stack.Screen
+              name="sign-in-computer"
+              options={{
+                title: "Sign in with computer URL",
+                presentation: "modal",
+                headerStyle: { backgroundColor: theme.v2.appColors.canvas },
+                headerTintColor: theme.v2.appColors.ink,
               }}
             />
           </Stack>

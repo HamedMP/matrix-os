@@ -31,12 +31,12 @@ export function GatewayUrlPanel({
     <View style={styles.panel}>
       <Text style={styles.label}>Computer URL</Text>
       <View style={[styles.inputRow, error ? styles.inputRowError : null]}>
-        <Ionicons name="server-outline" size={17} color={theme.colors.inkMuted} />
+        <Ionicons name="server-outline" size={17} color={theme.v2.appColors.muted} />
         <TextInput
           value={url}
           onChangeText={onUrlChange}
           placeholder={HOSTED_GATEWAY_URL}
-          placeholderTextColor={theme.colors.inkDim}
+          placeholderTextColor={theme.v2.appColors.muted}
           autoCapitalize="none"
           autoCorrect={false}
           autoComplete="url"
@@ -76,18 +76,17 @@ export function GatewayUrlPanel({
 
 const styles = StyleSheet.create((theme) => ({
   panel: {
-    borderRadius: theme.radius.xl,
-    borderCurve: "continuous" as const,
+    borderRadius: theme.v2.radius.container,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
+    borderColor: theme.v2.appColors.line,
+    backgroundColor: theme.v2.appColors.surface,
     padding: 14,
     gap: 8,
   },
   label: {
-    fontFamily: theme.fonts.sansSemiBold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 13,
-    color: theme.colors.foreground,
+    color: theme.v2.appColors.ink,
   },
   inputRow: {
     minHeight: 50,
@@ -95,34 +94,33 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: 10,
     paddingHorizontal: 14,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
+    borderRadius: theme.v2.radius.control,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.field,
+    borderColor: theme.v2.appColors.line,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   inputRowError: {
-    borderColor: theme.colors.destructive,
+    borderColor: theme.v2.colors.danger,
   },
   input: {
     flex: 1,
     minWidth: 0,
-    fontFamily: theme.fonts.sansMedium,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: theme.colors.foreground,
+    color: theme.v2.appColors.ink,
     paddingVertical: 10,
   },
   hint: {
-    fontFamily: theme.fonts.sans,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 12,
     lineHeight: 17,
-    color: theme.colors.mutedForeground,
+    color: theme.v2.appColors.muted,
   },
   error: {
-    fontFamily: theme.fonts.sansMedium,
+    fontFamily: theme.v2.fonts.medium,
     fontSize: 12,
     lineHeight: 17,
-    color: theme.colors.destructive,
+    color: theme.v2.colors.danger,
   },
   link: {
     alignSelf: "flex-start",
@@ -134,8 +132,8 @@ const styles = StyleSheet.create((theme) => ({
     transform: [{ scale: 0.98 }],
   },
   linkText: {
-    fontFamily: theme.fonts.sansSemiBold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 12,
-    color: theme.colors.accentInk,
+    color: theme.v2.colors.brand,
   },
 }));

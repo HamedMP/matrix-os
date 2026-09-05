@@ -1,13 +1,12 @@
 import "@/lib/hermes-polyfills";
-import { View, Text, Pressable, Linking } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { View, Text, Linking } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
 import { HOSTED_GATEWAY_URL, getMobileJourneyGatewayUrl, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
+import { SignInScreen } from "@/components/auth/SignInScreen";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
 import { clearAllScrollback } from "@/lib/terminal-scrollback";
 import { resetAnalytics } from "@/lib/analytics";
@@ -113,7 +112,6 @@ function SignedInJourneyGate() {
 }
 
 export default function Index() {
-  const { theme } = useUnistyles();
   const { isSignedIn } = useAuth();
   const router = useRouter();
   const [checkingSelfHosted, setCheckingSelfHosted] = useState(true);
@@ -154,164 +152,24 @@ export default function Index() {
     );
   }
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.content}>
-        <View style={styles.heroSection}>
-          <View style={styles.iconContainer}>
-            <Image
-              source={require("../assets/icon.png")}
-              style={styles.logo}
-              contentFit="contain"
-              accessibilityLabel="Matrix OS"
-            />
-          </View>
-          <Text style={styles.wordmark}>MATRIX OS</Text>
-          <Text style={styles.title}>Your AI operating system</Text>
-          <Text style={styles.description}>
-            Native access to your shell, apps, channels, and agent kernel.
-          </Text>
-        </View>
-
-        <View style={styles.actions}>
-          <Pressable
-            onPress={() => router.push("/sign-in")}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <Ionicons name="person-circle-outline" size={20} color={theme.colors.primaryForeground} />
-            <Text style={styles.primaryButtonText}>Sign In</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>matrix-os.com</Text>
-          <Text style={styles.versionText}>v0.1.0 mobile</Text>
-        </View>
-      </View>
-    </View>
-  );
+  return <SignInScreen />;
 }
 
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.v2.appColors.canvas,
   },
   content: {
     flex: 1,
-    paddingHorizontal: theme.spacing.xl,
+    paddingHorizontal: theme.v2.spacing.xl,
     justifyContent: "center",
-  },
-  heroSection: {
-    alignItems: "center",
-    marginBottom: 48,
-  },
-  iconContainer: {
-    width: 96,
-    height: 96,
-    borderRadius: 28,
-    borderCurve: "continuous" as const,
-    backgroundColor: theme.colors.card,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: theme.spacing.xl,
-    boxShadow: "0 12px 28px rgba(50, 61, 46, 0.10)",
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  logo: {
-    width: 70,
-    height: 70,
   },
   wordmark: {
-    fontFamily: theme.fonts.sansSemiBold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 12,
-    color: theme.colors.forest,
+    color: theme.v2.appColors.muted,
     letterSpacing: 2.6,
-    marginBottom: theme.spacing.lg,
-  },
-  title: {
-    fontFamily: theme.fonts.display,
-    fontSize: 36,
-    letterSpacing: -0.8,
-    color: theme.colors.foreground,
-    marginBottom: theme.spacing.sm,
     textAlign: "center",
-  },
-  subtitle: {
-    fontFamily: theme.fonts.sansMedium,
-    fontSize: 16,
-    color: theme.colors.mutedForeground,
-    marginBottom: theme.spacing.lg,
-  },
-  description: {
-    fontFamily: theme.fonts.sansMedium,
-    fontSize: 14,
-    color: theme.colors.mutedForeground,
-    textAlign: "center",
-    lineHeight: 20,
-    paddingHorizontal: theme.spacing.lg,
-  },
-  actions: {
-    gap: 12,
-  },
-  primaryButton: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.xl,
-    borderCurve: "continuous" as const,
-    paddingVertical: 16,
-    paddingHorizontal: theme.spacing.xl,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 10,
-    boxShadow: "0 4px 8px rgba(194, 112, 58, 0.2)",
-  },
-  primaryButtonText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 16,
-    color: theme.colors.primaryForeground,
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.xl,
-    borderCurve: "continuous" as const,
-    paddingVertical: 16,
-    paddingHorizontal: theme.spacing.xl,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 10,
-  },
-  secondaryButtonText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 16,
-    color: theme.colors.foreground,
-  },
-  buttonPressed: {
-    opacity: 0.8,
-    transform: [{ scale: 0.98 }],
-  },
-  footer: {
-    alignItems: "center",
-    marginTop: 48,
-    gap: 4,
-  },
-  footerText: {
-    fontFamily: theme.fonts.mono,
-    fontSize: 12,
-    color: theme.colors.mutedForeground,
-    letterSpacing: 0.5,
-  },
-  versionText: {
-    fontFamily: theme.fonts.mono,
-    fontSize: 11,
-    color: theme.colors.mutedForeground,
-    opacity: 0.6,
   },
 }));
