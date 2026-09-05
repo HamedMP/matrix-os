@@ -10,20 +10,40 @@ async function jsonFile(path: string) {
 }
 
 describe("Matrix OS coding-agent plugin", () => {
-  it("ships a manifest-linked portable and version-pinned MCP server", async () => {
+  it("exposes the same plugin through Codex and Claude marketplaces", async () => {
+    const codex = await jsonFile(".codex-plugin/plugin.json");
+    const claude = await jsonFile(".claude-plugin/plugin.json");
+    expect(claude).toMatchObject({
+      name: codex.name,
+      version: codex.version,
+      skills: "./skills/",
+      mcpServers: "./.mcp.json",
+    });
+    expect(claude).not.toHaveProperty("interface");
+    const catalog = JSON.parse(await readFile(resolve(root, ".claude-plugin/marketplace.json"), "utf8"));
+    expect(catalog).toMatchObject({
+      name: "matrix-os",
+      owner: { name: "Matrix OS" },
+      plugins: [{ name: "matrix-os", source: "./plugins/matrix-os" }],
+    });
+    const codexCatalog = JSON.parse(await readFile(resolve(root, ".agents/plugins/marketplace.json"), "utf8"));
+    expect(codexCatalog.plugins[0].source.path).toBe(catalog.plugins[0].source);
+  });
+
+  it("ships a manifest-linked hosted HTTP MCP server without local credentials", async () => {
     const manifest = await jsonFile(".codex-plugin/plugin.json");
     const mcp = await jsonFile(".mcp.json");
 
     expect(manifest).toMatchObject({
       name: "matrix-os",
-      version: "0.3.0",
+      version: "0.4.0",
       mcpServers: "./.mcp.json",
     });
     expect(mcp).toEqual({
       mcpServers: {
         "matrix-remote-computer": {
-          command: "npx",
-          args: ["-y", "@finnaai/matrix@0.3.16", "mcp", "serve", "--profile", "cloud"],
+          type: "http",
+          url: "https://api.matrix-os.com/mcp",
         },
       },
     });

@@ -5,17 +5,17 @@ description: Set up, authenticate, diagnose, and recover a Matrix OS cloud compu
 
 # Matrix OS Setup and Recovery
 
-Prepare the user's Matrix cloud computer without collecting or transferring local secrets. Prefer the bundled Matrix MCP tools after authentication and use the CLI fallback for login, diagnosis, and recovery.
+Prepare the user's Matrix cloud computer without collecting or transferring local secrets. Prefer the bundled hosted Matrix MCP tools with browser OAuth; no Matrix CLI installation is needed. Keep the separately authenticated CLI fallback optional for diagnosis and recovery.
 
 ## MCP readiness
 
 When remote tools are available, call `list_computers` first. After selecting an explicit `runtimeSlot`, use `run_command` for captured readiness checks and the terminal tools (`create_terminal`, `create_terminal_tab`, `select_terminal_tab`, and `send_terminal_input`) for observable authentication or recovery work. Never pass credentials as tool arguments.
 
-If `list_computers` returns `auth_required`, complete the CLI fallback readiness gate below. If the tools are absent, continue with the CLI fallback and re-open the coding-agent conversation after installing or updating the plugin.
+For HTTP authentication failures, use `codex mcp login <configured-server-name>` or Claude Code's `/mcp` browser authentication. `matrix login` repairs only stdio/CLI credentials. If hosted tools are unavailable, explain the status and offer the CLI fallback. Never collect OAuth tokens or codes in chat. Hosted `run_command` takes a `command` array and defaults to/caps at 45 seconds; longer work belongs in persistent terminals.
 
 ## Safety and session rules
 
-- Use the hosted `cloud` profile unless the user explicitly requests local development.
+- For the CLI fallback, use the `cloud` profile unless the user explicitly requests local development. Hosted HTTP has no local CLI profile.
 - Use browser/device authentication inside Matrix. Never scan, read, or upload local credential files.
 - Never ask for tokens, OAuth codes, API keys, or credential contents in chat.
 - Ask before deleting files, resetting authentication or sessions, or installing global tools.
@@ -25,7 +25,7 @@ If `list_computers` returns `auth_required`, complete the CLI fallback readiness
 - Report every session name and its `matrix shell connect <session-name>` command.
 - Use the existing Matrix CLI. Do not invent endpoints, SSH access, persistence, or detached-job APIs.
 
-## Readiness gate
+## CLI fallback readiness gate
 
 1. Verify the local CLI and hosted profile:
 

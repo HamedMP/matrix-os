@@ -1,6 +1,7 @@
 export type SafeMcpErrorCode =
   | "invalid_input"
   | "auth_required"
+  | "billing_required"
   | "computer_not_found"
   | "computer_unavailable"
   | "not_found"
@@ -18,6 +19,7 @@ export interface SafeMcpError {
 const ERRORS: Record<SafeMcpErrorCode, Omit<SafeMcpError, "code">> = {
   invalid_input: { message: "The Matrix tool input is invalid.", retryable: false },
   auth_required: { message: "Authenticate with the Matrix CLI and try again.", retryable: false },
+  billing_required: { message: "Paid runtime access is required for this Matrix computer.", retryable: false },
   computer_not_found: { message: "That Matrix computer is not available to this account.", retryable: false },
   computer_unavailable: { message: "That Matrix computer is not currently available.", retryable: true },
   not_found: { message: "The requested Matrix resource was not found.", retryable: false },
@@ -29,6 +31,7 @@ const ERRORS: Record<SafeMcpErrorCode, Omit<SafeMcpError, "code">> = {
 
 const CODE_MAP: Record<string, SafeMcpErrorCode> = {
   auth_required: "auth_required",
+  billing_required: "billing_required",
   auth_expired: "auth_required",
   auth_rejected: "auth_required",
   not_authenticated: "auth_required",
