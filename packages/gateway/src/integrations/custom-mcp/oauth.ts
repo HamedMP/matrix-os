@@ -232,10 +232,9 @@ export class CustomMcpOAuthManager {
   }
 
   async complete(userId: string, state: string, code: string): Promise<{ serverId: string }> {
-    const rows = await this.options.db.listCustomMcpServers(userId);
+    const rows = await this.options.db.listCustomMcpOAuthServersForBroker(userId);
     let match: { row: CustomMcpServerBrokerRow; credential: CustomMcpCredential } | undefined;
-    for (const server of rows) {
-      const row = await this.options.db.getCustomMcpServerForBroker(server.id, userId);
+    for (const row of rows) {
       if (!row?.encrypted_credentials || row.auth_mode !== "oauth") continue;
       const credential = this.decrypt(userId, row);
       if (exactStateMatch(credential.oauth?.state, state)) {

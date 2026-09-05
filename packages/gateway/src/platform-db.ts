@@ -195,6 +195,7 @@ export interface PlatformDb {
 
   createCustomMcpServer(input: CreateCustomMcpServerInput): Promise<CustomMcpServer>;
   listCustomMcpServers(userId: string): Promise<CustomMcpServer[]>;
+  listCustomMcpOAuthServersForBroker(userId: string): Promise<CustomMcpServerBrokerRow[]>;
   getCustomMcpServerForBroker(id: string, userId: string): Promise<CustomMcpServerBrokerRow | null>;
   getCustomMcpPresetForBroker(presetId: string, userId: string): Promise<CustomMcpServerBrokerRow | null>;
   updateCustomMcpServer(
@@ -667,6 +668,18 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         .orderBy("created_at", "asc")
         .execute();
       return rows.map(publicCustomMcpServer);
+    },
+
+    async listCustomMcpOAuthServersForBroker(userId: string): Promise<CustomMcpServerBrokerRow[]> {
+      // OAuth callbacks also serve managed presets. Keep this credential-bearing
+      // lookup separate from the public custom-only inventory.
+      return kysely
+        .selectFrom("custom_mcp_servers")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .where("auth_mode", "=", "oauth")
+        .where("encrypted_credentials", "is not", null)
+        .execute();
     },
 
     async getCustomMcpServerForBroker(id: string, userId: string): Promise<CustomMcpServerBrokerRow | null> {
