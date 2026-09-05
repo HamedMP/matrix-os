@@ -1,4 +1,4 @@
-type SdkClient = import("@pipedream/sdk").PipedreamClient;
+import { collectPipedreamPages } from "./pipedream-pagination.js";
 
 export interface PipedreamConfig {
   clientId: string;
@@ -183,10 +183,10 @@ export async function createPipedreamClient(
     async discoverActions(appSlug: string) {
       const page = await sdk.actions.list(
         { app: appSlug },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS, abortSignal: AbortSignal.timeout(30_000), maxRetries: 0 },
       );
-      const items = (page as any).data ?? [];
-      return items.map((c: any) => ({
+      const items = await collectPipedreamPages(page);
+      return items.map((c) => ({
         key: c.key,
         name: c.name,
         description: c.description,
@@ -312,10 +312,10 @@ export async function createPipedreamClient(
 
     async listAccounts(externalUserId: string) {
       const result = await sdk.accounts.list(
-        { externalUserId, include_credentials: false } as any,
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        { externalUserId, includeCredentials: false },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS, abortSignal: AbortSignal.timeout(30_000), maxRetries: 0 },
       );
-      const accounts = (result as any)?.data ?? (Array.isArray(result) ? result : []);
+      const accounts = await collectPipedreamPages(result);
       return accounts.map((a: any) => {
         const app = a.app;
         const appSlug = typeof app === "string" ? app

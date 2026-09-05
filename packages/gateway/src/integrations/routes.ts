@@ -1,9 +1,11 @@
+import { executeIntegrationAction, IntegrationActionNotImplementedError } from "./action-execution.js";
+import { validateActionParams } from "./action-validation.js";
 import { Hono, type Context } from "hono";
+import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { listServices, getService, getAction } from "./registry.js";
-import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 
@@ -66,155 +68,8 @@ function verifyHmac(payload: string, signature: string, secret: string): boolean
 // Per-action param validation
 // ---------------------------------------------------------------------------
 
-export function validateActionParams(
-  actionDef: ServiceAction,
-  params: Record<string, unknown> | undefined,
-): { valid: true } | { valid: false; missing: string[]; typeErrors: string[] } {
-  const missing: string[] = [];
-  const typeErrors: string[] = [];
-
-  for (const [name, def] of Object.entries(actionDef.params)) {
-    const value = params?.[name];
-    if (def.required && (value === undefined || value === null)) {
-      missing.push(name);
-      continue;
-    }
-    if (value !== undefined && value !== null) {
-      const expectedType = def.type;
-      const actualType = typeof value;
-      if (expectedType === "string" && actualType !== "string") {
-        typeErrors.push(`${name}: expected string, got ${actualType}`);
-      } else if (expectedType === "number" && actualType !== "number") {
-        typeErrors.push(`${name}: expected number, got ${actualType}`);
-      } else if (expectedType === "boolean" && actualType !== "boolean") {
-        typeErrors.push(`${name}: expected boolean, got ${actualType}`);
-      } else if (expectedType === "object" && (actualType !== "object" || Array.isArray(value))) {
-        typeErrors.push(`${name}: expected object, got ${actualType}`);
-      } else if (expectedType === "array" && !Array.isArray(value)) {
-        typeErrors.push(`${name}: expected array, got ${actualType}`);
-      }
-    }
-  }
-
-  if (missing.length > 0 || typeErrors.length > 0) {
-    return { valid: false, missing, typeErrors };
-  }
-  return { valid: true };
-}
-
-export class IntegrationActionNotImplementedError extends Error {
-  readonly serviceId: string;
-  readonly actionId: string;
-
-  constructor(serviceId: string, actionId: string) {
-    super(
-      `Action ${serviceId}/${actionId} is not implemented on this gateway. ` +
-      `It has no componentKey (Pipedream Actions API didn't match it) and no directApi block. ` +
-      `Add one to packages/gateway/src/integrations/registry.ts.`,
-    );
-    this.name = "IntegrationActionNotImplementedError";
-    this.serviceId = serviceId;
-    this.actionId = actionId;
-  }
-}
-
-export async function executeIntegrationAction(opts: {
-  pipedream: PipedreamConnectClient;
-  externalUserId: string;
-  connection: { pipedream_account_id: string };
-  def: ServiceDefinition;
-  actionDef: ServiceAction;
-  serviceId: string;
-  actionId: string;
-  params?: Record<string, unknown>;
-}): Promise<{ data: unknown; summary?: string }> {
-  const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params } = opts;
-
-  if (actionDef.componentKey) {
-    const safeParams = Object.fromEntries(
-      Object.entries(params ?? {}).filter(([k]) => k !== def.pipedreamApp),
-    );
-    const configuredProps: Record<string, unknown> = {
-      ...safeParams,
-      [def.pipedreamApp!]: { authProvisionId: connection.pipedream_account_id },
-    };
-    const result = await pipedream.runAction({
-      externalUserId,
-      componentKey: actionDef.componentKey,
-      configuredProps,
-    });
-    const exports = result.exports as Record<string, unknown> | undefined;
-    return {
-      data: result.ret,
-      summary: typeof exports?.$summary === "string" ? exports.$summary : undefined,
-    };
-  }
-
-  if (actionDef.directApi) {
-    const api = actionDef.directApi;
-    const url = typeof api.url === "function" ? api.url(params ?? {}) : api.url;
-    const accountId = connection.pipedream_account_id;
-
-    switch (api.method) {
-      case "GET":
-        return {
-          data: await pipedream.proxyGet({
-            externalUserId,
-            accountId,
-            url,
-            params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
-            ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
-        };
-      case "DELETE":
-        return {
-          data: await pipedream.proxyDelete({
-            externalUserId,
-            accountId,
-            url,
-            params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
-            ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
-        };
-      case "POST":
-        return {
-          data: await pipedream.proxyPost({
-            externalUserId,
-            accountId,
-            url,
-            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-            ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
-        };
-      case "PUT":
-        return {
-          data: await pipedream.proxyPut({
-            externalUserId,
-            accountId,
-            url,
-            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-            ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
-        };
-      case "PATCH":
-        return {
-          data: await pipedream.proxyPatch({
-            externalUserId,
-            accountId,
-            url,
-            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-            ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
-        };
-      default: {
-        const _exhaustive: never = api.method;
-        throw new Error(`Unsupported directApi method: ${String(_exhaustive)}`);
-      }
-    }
-  }
-
-  throw new IntegrationActionNotImplementedError(serviceId, actionId);
-}
+export { validateActionParams } from "./action-validation.js";
+export { executeIntegrationAction, IntegrationActionNotImplementedError } from "./action-execution.js";
 
 // ---------------------------------------------------------------------------
 // Connection error classification

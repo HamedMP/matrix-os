@@ -1119,6 +1119,7 @@ describe("Integration Routes", () => {
   // -----------------------------------------------------------------------
 
   describe("POST /call -- Actions API (runAction)", () => {
+    const sendDirectApi = getService("gmail")!.actions.send_email.directApi;
     beforeEach(async () => {
       await db.connectService({
         userId,
@@ -1128,6 +1129,8 @@ describe("Integration Routes", () => {
         scopes: ["read", "send"],
       });
 
+      // Exercise the component-only path independently of reviewed direct mappings.
+      getService("gmail")!.actions.send_email.directApi = undefined;
       // Simulate discovered component key
       const gmail = getService("gmail")!;
       gmail.actions.send_email.componentKey = "gmail-send-email";
@@ -1135,6 +1138,7 @@ describe("Integration Routes", () => {
     });
 
     afterEach(() => {
+      getService("gmail")!.actions.send_email.directApi = sendDirectApi;
       // Clean up componentKeys
       const gmail = getService("gmail")!;
       for (const action of Object.values(gmail.actions)) {
@@ -1142,7 +1146,7 @@ describe("Integration Routes", () => {
       }
     });
 
-    it("uses runAction when componentKey is available", async () => {
+    it("uses runAction for component-only actions", async () => {
       const res = await app.request("/api/integrations/call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
