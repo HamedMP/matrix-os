@@ -1,4 +1,4 @@
-import { PanelLeftOpenIcon, RefreshCw, SquareTerminal } from "@renderer/lib/hugeicons";
+import { RefreshCw, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, EmptyState } from "../../design/primitives";
 import RetainedPane from "../../design/RetainedPane";
@@ -16,6 +16,7 @@ import {
 } from "../../lib/shell-session-sync";
 import TerminalView from "./TerminalView";
 import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
+import { TerminalSidebarLayout } from "./TerminalSidebarLayout";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import {
   parseTerminalAgentStatuses,
@@ -104,7 +105,6 @@ export default function TerminalsTab({
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
-  const [terminalTabsShown, setTerminalTabsShown] = useState(true);
   const [agentInventory, setAgentInventory] = useState(() => ({
     api,
     runtimeSlot,
@@ -342,74 +342,39 @@ export default function TerminalsTab({
   const overviewSelected = selected === null;
 
   return (
-    <div
-      data-testid="desktop-terminal-app"
-      className="relative flex min-h-0 flex-1 overflow-hidden"
-      style={{
-        background: "var(--bg-app)",
-        color: "var(--text-primary)",
-      }}
-    >
-      <div
-        id="desktop-terminal-tabs-sidebar"
-        data-terminal-tabs-sidebar
-        hidden={!terminalTabsShown}
-        className={terminalTabsShown
-          ? "w-[280px] min-w-[200px] max-w-[280px] shrink-0 border-r"
-          : "hidden"}
-        style={{ borderColor: "var(--border-subtle)" }}
-      >
-        <TerminalSessionSidebar
-          sessions={shells}
-          selectedName={selectedName}
-          creating={creating}
-          disabled={!api}
-          agentStatuses={agentStatuses}
-          checkingAgentStatuses={checkingAgentStatuses}
-          renamingName={renamingName}
-          renameDraft={renameDraft}
-          renameError={renameError}
-          onCreate={() => void createShell()}
-          onCollapse={() => setTerminalTabsShown(false)}
-          onCreateAgent={(option, action) => void createAgentSession(option, action)}
-          onRefreshAgentStatuses={() => void refreshAgentStatuses()}
-          onSelect={showShellDetail}
-          onRename={startRename}
-          onRenameDraft={(value) => {
-            setRenameDraft(value);
-            setRenameError(null);
-          }}
-          onCommitRename={() => void commitRename()}
-          onCancelRename={() => {
-            setRenamingName(null);
-            setRenameError(null);
-          }}
-          onCopyConnectCommand={(shell) => void copyAttachCommand(shell)}
-          onPin={(shell, pinned) => {
-            if (api) void useShellSessions.getState().patchUiState(api, shell.name, { pinned });
-          }}
-          onDelete={setDeleteTarget}
-        />
-      </div>
-      {!terminalTabsShown ? (
-        <aside
-          aria-label="Collapsed terminal tabs"
-          className="flex w-10 shrink-0 items-start justify-center border-r pt-2"
-          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-        >
-          <button
-            type="button"
-            aria-label="Show terminal tabs"
-            aria-controls="desktop-terminal-tabs-sidebar"
-            aria-expanded="false"
-            title="Show terminal tabs"
-            className="flex size-9 shrink-0 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-            onClick={() => setTerminalTabsShown(true)}
-          >
-            <PanelLeftOpenIcon size={15} aria-hidden="true" />
-          </button>
-        </aside>
-      ) : null}
+    <TerminalSidebarLayout sidebar={(controls) => (
+      <TerminalSessionSidebar
+        {...controls}
+        sessions={shells}
+        selectedName={selectedName}
+        creating={creating}
+        disabled={!api}
+        agentStatuses={agentStatuses}
+        checkingAgentStatuses={checkingAgentStatuses}
+        renamingName={renamingName}
+        renameDraft={renameDraft}
+        renameError={renameError}
+        onCreate={() => void createShell()}
+        onCreateAgent={(option, action) => void createAgentSession(option, action)}
+        onRefreshAgentStatuses={() => void refreshAgentStatuses()}
+        onSelect={showShellDetail}
+        onRename={startRename}
+        onRenameDraft={(value) => {
+          setRenameDraft(value);
+          setRenameError(null);
+        }}
+        onCommitRename={() => void commitRename()}
+        onCancelRename={() => {
+          setRenamingName(null);
+          setRenameError(null);
+        }}
+        onCopyConnectCommand={(shell) => void copyAttachCommand(shell)}
+        onPin={(shell, pinned) => {
+          if (api) void useShellSessions.getState().patchUiState(api, shell.name, { pinned });
+        }}
+        onDelete={setDeleteTarget}
+      />
+    )}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <RetainedPane
@@ -533,7 +498,7 @@ export default function TerminalsTab({
           </div>
         </div>
       </Dialog>
-    </div>
+    </TerminalSidebarLayout>
   );
 }
 

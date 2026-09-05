@@ -1,6 +1,6 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PanelLeftCloseIcon, PinIcon, PinOffIcon, SquareTerminal, Trash2, X } from "@renderer/lib/hugeicons";
-import { useState } from "react";
+import { type Ref, useState } from "react";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
@@ -45,6 +45,8 @@ export function TerminalSessionSidebar({
   renameError,
   onCreate,
   onCollapse,
+  sidebarId,
+  collapseButtonRef,
   onCreateAgent,
   onRefreshAgentStatuses,
   onSelect,
@@ -67,6 +69,8 @@ export function TerminalSessionSidebar({
   renameError: string | null;
   onCreate: () => void;
   onCollapse: () => void;
+  sidebarId: string;
+  collapseButtonRef: Ref<HTMLButtonElement>;
   onCreateAgent: (option: TerminalAgentOption, action: TerminalAgentMenuAction) => void;
   onRefreshAgentStatuses: () => void;
   onSelect: (session: ShellSessionSummary) => void;
@@ -91,7 +95,8 @@ export function TerminalSessionSidebar({
             <button
               type="button"
               aria-label="Hide terminal tabs"
-              aria-controls="desktop-terminal-tabs-sidebar"
+              ref={collapseButtonRef}
+              aria-controls={sidebarId}
               aria-expanded="true"
               title="Hide terminal tabs"
               className="flex size-9 shrink-0 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"

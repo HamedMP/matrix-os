@@ -4,6 +4,7 @@ import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OSWindow, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow";
 import TerminalsTab from "../../desktop/src/renderer/src/features/terminal/TerminalsTab";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
@@ -595,17 +596,44 @@ describe("TerminalsTab", () => {
     expect(hideTabs.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("list", { name: "Terminal sessions" })).toBeTruthy();
 
+    const terminal = screen.getByTestId("terminal-view-matrix-main");
+    hideTabs.focus();
     fireEvent.click(hideTabs);
 
     expect(screen.queryByRole("list", { name: "Terminal sessions" })).toBeNull();
     const showTabs = screen.getByRole("button", { name: "Show terminal tabs" });
     expect(showTabs.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(showTabs);
+    expect(screen.getByTestId("terminal-view-matrix-main")).toBe(terminal);
 
     fireEvent.click(showTabs);
 
     expect(screen.getByRole("list", { name: "Terminal sessions" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Hide terminal tabs" }).getAttribute("aria-expanded"))
       .toBe("true");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Hide terminal tabs" }));
+    expect(screen.getByTestId("terminal-view-matrix-main")).toBe(terminal);
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("keeps collapsed terminal controls and content below floating window chrome", () => {
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active" }] });
+    const { container } = render(
+      <Tooltip.Provider>
+        <OSWindow surfaceId="terminal" safeAreaLayout="sidebar" topBar={<TopBar title="Terminal" />}>
+          <TerminalsTab />
+        </OSWindow>
+      </Tooltip.Provider>,
+    );
+    const content = container.querySelector<HTMLElement>('[data-testid="desktop-terminal-app"]');
+    expect(content).not.toBeNull();
+    expect(content!.style.paddingTop).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Hide terminal tabs" }));
+    const rail = screen.getByRole("complementary", { name: "Collapsed terminal tabs" });
+    expect(content!.contains(rail)).toBe(true);
+    expect(content!.style.paddingTop).toBe("48px");
+    fireEvent.click(screen.getByRole("button", { name: "Show terminal tabs" }));
+    expect(content!.style.paddingTop).toBe("");
   });
 
   it("keeps delete and connect actions in one non-overlapping overflow menu", async () => {

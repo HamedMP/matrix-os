@@ -115,9 +115,10 @@ async function openExternalHttpUrl(url: string): Promise<void> {
 function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const win = new BrowserWindow({
     ...bounds,
-    // Let the renderer's active surface continue beneath the native title bar
-    // instead of retaining an opaque title-bar material.
+    // Let the renderer's active surface continue beneath the macOS controls
+    // instead of retaining an opaque native title-bar material.
     titleBarStyle: "hidden",
+    trafficLightPosition: { x: 14, y: 13 },
     backgroundColor: "#0e0e13",
     show: false,
     webPreferences: {
@@ -127,10 +128,6 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
       nodeIntegration: false,
     },
   });
-
-  if (process.platform === "darwin") {
-    win.setWindowButtonVisibility(false);
-  }
 
   win.once("ready-to-show", () => win.show());
 

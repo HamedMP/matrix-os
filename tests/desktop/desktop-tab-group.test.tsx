@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { Monitor, PanelLeft } from "lucide-react";
 import { describe, expect, it, vi } from "vitest";
 import DesktopTab from "../../desktop/src/renderer/src/features/desktop-shell/DesktopTab";
@@ -26,13 +26,14 @@ describe("DesktopTabGroup", () => {
 
   it("keeps the non-interactive body of a full workspace tab draggable", () => {
     const onRestore = vi.fn();
+    const onActivate = vi.fn();
     render(
       <DesktopTab
         mode="full"
         label="Browser"
         icon={<Monitor />}
         canClose
-        onClick={vi.fn()}
+        onClick={onActivate}
         onRestore={onRestore}
         onClose={vi.fn()}
       />,
@@ -46,6 +47,9 @@ describe("DesktopTabGroup", () => {
     expect(browserTab.classList.contains("no-drag")).toBe(true);
     const restore = screen.getByRole("button", { name: "Restore Browser as window" });
     expect(restore.classList.contains("no-drag")).toBe(true);
+    fireEvent.click(restore);
+    expect(onRestore).toHaveBeenCalledOnce();
+    expect(onActivate).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Close Browser" }).classList.contains("no-drag")).toBe(true);
     expect(screen.queryByRole("button", { name: "Minimize Browser tab" })).toBeNull();
   });

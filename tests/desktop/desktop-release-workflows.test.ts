@@ -175,12 +175,11 @@ describe("desktop release workflows", () => {
     expect(bundledPreloadDependencies).toHaveLength(1);
   });
 
-  it("hides the native macOS window controls without moving them off-screen", () => {
+  it("keeps native macOS window controls in the reserved titlebar region", () => {
     const main = readFileSync(join(root, "desktop/src/main/index.ts"), "utf8");
 
-    expect(main).toContain('if (process.platform === "darwin")');
-    expect(main).toContain("win.setWindowButtonVisibility(false)");
-    expect(main).not.toContain("trafficLightPosition:");
+    expect(main).not.toContain("win.setWindowButtonVisibility(false)");
+    expect(main).toContain("trafficLightPosition: { x: 14, y: 13 }");
   });
 
   it("emits one self-contained sandbox preload for the shell and native apps", () => {
