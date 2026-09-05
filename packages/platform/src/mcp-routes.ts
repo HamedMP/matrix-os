@@ -26,8 +26,9 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
   const perOwner = new Map<string, number>(); // At most maxConcurrent entries; deleted in finally.
   const windows = new Map<string, { count: number; until: number }>(); // 10k cap + TTL, no credential keys.
   let active = 0;
-  let publicCount = 0;
-  let publicUntil = 0;
+  let verifying = 0; // Separate, bounded authentication work; released when verification settles.
+  let authenticatedCount = 0;
+  let authenticatedUntil = 0;
 
   function allowPrincipal(userId: string): boolean {
     const now = Date.now();
@@ -68,12 +69,6 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       c.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, MCP-Protocol-Version');
       return c.body(null, 204);
     }
-    const now = Date.now();
-    if (publicUntil <= now) { publicUntil = now + 60_000; publicCount = 0; }
-    if (++publicCount > 600 || active >= maxConcurrent) {
-      c.header('Retry-After', '60');
-      return c.json({ error: 'Too many requests' }, 429);
-    }
     const authorization = c.req.header('authorization');
     const token = authorization?.match(/^Bearer ([^\s]{1,16384})$/i)?.[1];
     if (!token) {
@@ -81,8 +76,13 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    // Include verification and body parsing in admission/deadline accounting.
-    active++;
+    // Invalid credentials cannot consume authenticated rate/concurrency capacity.
+    // Verification has its own short-lived cap; edge throttling handles ingress floods.
+    if (verifying >= 32) {
+      c.header('Retry-After', '1');
+      return c.json({ error: 'Too many requests' }, 429);
+    }
+    verifying++;
     let principal: McpPrincipal | undefined;
     let ownerAdmitted = false;
     let server: ReturnType<typeof createHostedMatrixMcpServer> | undefined;
@@ -100,14 +100,19 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       if (controller.signal.aborted) rejectAbort();
     });
     async function perform(): Promise<Response> {
-      principal = await options.verify(token!);
+      try { principal = await options.verify(token!); }
+      finally { verifying--; }
       controller.signal.throwIfAborted();
-      if (!allowPrincipal(principal.userId) || (perOwner.get(principal.userId) ?? 0) >= 4) {
+      const now = Date.now();
+      if (authenticatedUntil <= now) { authenticatedUntil = now + 60_000; authenticatedCount = 0; }
+      if (active >= maxConcurrent || !allowPrincipal(principal.userId)
+        || (perOwner.get(principal.userId) ?? 0) >= 4 || ++authenticatedCount > 600) {
         c.header('Retry-After', '60');
         return c.json({ error: 'Too many requests' }, 429);
       }
       perOwner.set(principal.userId, (perOwner.get(principal.userId) ?? 0) + 1);
       ownerAdmitted = true;
+      active++;
       if (c.req.method !== 'POST') {
         // Consume to engage bodyLimit even for DELETE, which usually has no body.
         await c.req.arrayBuffer();
@@ -126,7 +131,7 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       controller.signal.throwIfAborted();
       if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'Invalid request' }, 400);
       const scopedFetch: typeof fetch = (input, init) => fetchImpl(input, { ...init,
-        signal: AbortSignal.any([controller.signal, ...(init?.signal ? [init.signal] : [])]) });
+        signal: AbortSignal.any([AbortSignal.timeout(50_000), controller.signal, ...(init?.signal ? [init.signal] : [])]) });
       server = createHostedMatrixMcpServer({ context: options.context(principal), fetch: scopedFetch, maxCommandTimeoutMs: 45_000 });
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await server.connect(transport);
@@ -150,8 +155,8 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       controller.signal.removeEventListener('abort', rejectAbort);
       c.req.raw.signal.removeEventListener('abort', onDisconnect);
       controller.abort();
-      active--;
       if (principal && ownerAdmitted) {
+        active--;
         const remaining = (perOwner.get(principal.userId) ?? 1) - 1;
         if (remaining > 0) perOwner.set(principal.userId, remaining);
         else perOwner.delete(principal.userId);

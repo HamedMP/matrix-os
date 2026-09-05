@@ -35,7 +35,7 @@ Use a dedicated MCP access-token configuration. Do not weaken audience validatio
 
 Public discovery is `/.well-known/oauth-protected-resource/mcp` (root alias also available). It lists only the configured resource, issuer and scope. Authentication failures include the canonical `WWW-Authenticate` discovery URL. The authorization server owns its own metadata; Matrix does not proxy a token endpoint or forward incoming OAuth tokens to a computer.
 
-JWT verification is local with a bounded five-minute signing-key cache. Revocation may not invalidate an issued JWT until expiry: use short-lived access tokens and test refresh/re-login. Membership/activation and gateway billing are still checked at execution time. Cached signing keys are capped at 32 keys/64 KiB; remote refreshes time out after 10 seconds. Provider outages are 503, not a false bad-login diagnosis.
+JWT verification is local with a bounded five-minute signing-key cache. Revocation may not invalidate an issued JWT until expiry: use short-lived access tokens and test refresh/re-login. Membership/activation and the shared platform runtime billing decision are checked before issuing every computer credential. A denied entitlement returns the safe, non-retryable tool error `billing_required`; accessible previews retain the existing exemption. Cached signing keys are capped at 32 keys/64 KiB; remote refreshes time out after 10 seconds. Provider outages are 503, not a false bad-login diagnosis.
 
 ## Transport and execution
 
@@ -43,7 +43,9 @@ The pinned SDK 1.x supports its 2025 MCP revisions over stateless Streamable HTT
 
 Each request creates a server with an explicitly authenticated principal. Computer inventory and runtime lookup use existing platform repositories; the gateway receives a separately minted computer-bound sync JWT lasting at most 60 seconds and never beyond incoming token expiry. It is not returned to the client. Existing gateway auth and billing enforcement remain in the path.
 
-Per platform process: 600 admission attempts/minute, 120 requests/minute/owner, 32 in-flight requests total, four per owner, and a 2 MiB body cap. Rate keys expire after a minute with a 10,000-key cap. These are not fleet-wide limits: add edge throttling as appropriate. Captured HTTP commands default/max 45 seconds; the overall deadline is 55 seconds. Configure the ingress/Cloud Run request timeout above that budget. Disconnect/deadline aborts downstream fetches; remote side effects may already have occurred. Inspect state rather than blindly retrying writes. Long jobs use persistent zellij terminals.
+Per platform process: 600 authenticated admission attempts/minute, 120 requests/minute/owner, 32 authenticated executions in flight, four per owner, and a 2 MiB body cap. Missing/invalid credentials do not consume these budgets. Verification has a separate 32-in-flight cap, released when verification settles; ingress floods still require edge throttling. Rate keys expire after a minute with a 10,000-key cap. These are not fleet-wide limits. Captured HTTP commands default/max 45 seconds; downstream fetches have an explicit 50-second timeout and the overall deadline is 55 seconds. Configure the ingress/Cloud Run request timeout above that budget. Disconnect/deadline aborts downstream fetches; remote side effects may already have occurred. Inspect state rather than blindly retrying writes. Long jobs use persistent zellij terminals.
+
+Computer discovery remains capped at 20 entries with `hasMore`. Explicit runtime selection prioritizes that slot in the bounded repository query, so a known accessible slot outside the initial discovery page is still usable.
 
 ## Validation
 

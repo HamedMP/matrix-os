@@ -40,10 +40,10 @@ it('composes signed OAuth, SDK HTTP, tenant lookup and attenuated gateway authen
     });
     network = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) =>
       String(input) === issuer + 'jwks' ? Response.json({ keys: [jwk] }) : gatewayFetch(input, init));
-    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: 'platform-admin-secret',
-      env: { MATRIX_MCP_ENABLED: 'true', MATRIX_MCP_RESOURCE_URL: resourceUrl,
+    const env: NodeJS.ProcessEnv = { MATRIX_MCP_ENABLED: 'true', MATRIX_MCP_RESOURCE_URL: resourceUrl,
         MATRIX_MCP_OAUTH_ISSUER: issuer, MATRIX_MCP_OAUTH_JWKS_URL: issuer + 'jwks',
-        PLATFORM_JWT_SECRET: secret, NEXT_PUBLIC_MATRIX_APP_URL: 'https://app.matrix-os.com' } });
+        PLATFORM_JWT_SECRET: secret, NEXT_PUBLIC_MATRIX_APP_URL: 'https://app.matrix-os.com' };
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: 'platform-admin-secret', env });
     await client.connect(new StreamableHTTPClientTransport(new URL(resourceUrl), {
       requestInit: { headers: { authorization: 'Bearer ' + token } },
       fetch: async (input, init) => app.request(new Request(input, init)),
@@ -58,6 +58,10 @@ it('composes signed OAuth, SDK HTTP, tenant lookup and attenuated gateway authen
     expect(JSON.stringify(run)).not.toContain(secret);
     const denied = await client.callTool({ name: 'run_command', arguments: { computer: 'private', command: ['pwd'] } });
     expect(denied.isError).toBe(true);
+    env.MATRIX_BILLING_PROVIDER = 'stripe';
+    const unpaid = await client.callTool({ name: 'run_command', arguments: { computer: 'primary', command: ['pwd'] } });
+    expect(unpaid.isError).toBe(true);
+    expect(JSON.stringify(unpaid)).toContain('billing_required');
     expect(gatewayFetch).toHaveBeenCalledTimes(1);
   } finally {
     await client.close();

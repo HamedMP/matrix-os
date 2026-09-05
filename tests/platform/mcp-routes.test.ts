@@ -33,6 +33,23 @@ function post(app: Hono, body: unknown, headers: Record<string, string> = {}) {
 const rpc = (method: string, params?: unknown) => ({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) });
 
 describe('hosted Streamable HTTP MCP', () => {
+  it('keeps anonymous and invalid-token traffic out of authenticated admission budgets', async () => {
+    const { app } = setup();
+    for (let i = 0; i < 601; i++) {
+      expect((await post(app, rpc('tools/list'), { authorization: '' })).status).toBe(401);
+      expect((await post(app, rpc('tools/list'), { authorization: 'Bearer invalid' })).status).toBe(401);
+    }
+    expect((await post(app, rpc('tools/list'))).status).toBe(200);
+  });
+
+  it('gives each downstream fetch an explicit independent timeout', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      const { app } = setup();
+      await post(app, rpc('tools/call', { name: 'run_command', arguments: { computer: 'primary', command: ['pwd'] } }));
+      expect(timeout).toHaveBeenCalledWith(50_000);
+    } finally { timeout.mockRestore(); }
+  });
   it('publishes canonical public OAuth discovery independent of forwarded headers', async () => {
     const { app } = setup();
     for (const path of ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp']) {

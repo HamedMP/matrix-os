@@ -40,7 +40,7 @@ export function createPlatformMcpRoutes(options: { db: PlatformDB; env: NodeJS.P
     const allowedOrigins = rawOrigins.map(value => secureUrl(value, '/').origin);
     const verify = createMcpTokenVerifier({ resourceUrl, issuer, jwksUrl });
     return createMcpRoutes({ resourceUrl, issuer, allowedOrigins, verify,
-      context: principal => createMcpRuntimeContext({ db: options.db, principal, gatewayOrigin, jwtSecret }) });
+      context: principal => createMcpRuntimeContext({ db: options.db, principal, gatewayOrigin, jwtSecret, env }) });
   } catch (error: unknown) {
     console.error('[mcp] configuration unavailable', error instanceof Error ? error.name : 'UnknownError');
     return unavailable();
