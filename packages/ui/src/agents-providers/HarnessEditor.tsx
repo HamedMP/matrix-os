@@ -6,10 +6,17 @@ import type {
   ProviderModelProvider,
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
+import { isRunnableGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { authLabel, titleCase } from "./utils.js";
 
 const ACCENTS: ProviderAccentColor[] = ["blue", "green", "orange", "red", "purple", "cyan", "teal"];
+
+function unavailableRouteLabel(reference: string): string {
+  const leaf = reference.split(/[/:]/).at(-1) ?? reference;
+  const label = leaf.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  return label ? `${label.slice(0, 1).toUpperCase()}${label.slice(1)}` : reference;
+}
 
 function providerFor(snapshot: ProviderSettingsSnapshot, harness: ProviderHarnessInstance): ProviderModelProvider | null {
   return snapshot.modelProviders.find((provider) => provider.id === harness.route.providerId) ?? null;
@@ -19,18 +26,25 @@ function sourceSupportsModel(
   snapshot: ProviderSettingsSnapshot,
   source: ProviderAccessSource,
   modelId: string,
+  harness?: ProviderHarnessInstance,
 ): boolean {
   if (!source.eligibleModelIds.includes(modelId)) return false;
+  if (harness && (harness.harness === "pi" || harness.harness === "opencode")
+    && !isRunnableGenericHarnessCredentialRoute({
+      ...harness,
+      accessSourceId: source.id,
+      route: { kind: "configurable", providerId: source.providerId, modelId },
+    }, source)) return false;
   if (source.kind !== "matrix_gateway") return true;
   return snapshot.gatewayPolicy?.accessSourceId === source.id
     && snapshot.gatewayPolicy.allowedModelIds.includes(modelId);
 }
 
-function routeTargetForProvider(snapshot: ProviderSettingsSnapshot, provider: ProviderModelProvider) {
+function routeTargetForProvider(snapshot: ProviderSettingsSnapshot, provider: ProviderModelProvider, harness: ProviderHarnessInstance) {
   for (const model of provider.models) {
     if (!model.enabled) continue;
     const source = snapshot.accessSources.find((candidate) =>
-      candidate.providerId === provider.id && sourceSupportsModel(snapshot, candidate, model.id));
+      candidate.providerId === provider.id && sourceSupportsModel(snapshot, candidate, model.id, harness));
     if (source) return { model, source };
   }
   return null;
@@ -64,20 +78,23 @@ export function HarnessEditor({
   const accessSource = snapshot.accessSources.find((source) => source.id === harness.accessSourceId) ?? null;
   const account = snapshot.accounts.find((candidate) => candidate.id === harness.selectedAccountId) ?? null;
   const sources = snapshot.accessSources.filter((source) => source.providerId === harness.route.providerId
-    && sourceSupportsModel(snapshot, source, harness.route.modelId));
+    && sourceSupportsModel(snapshot, source, harness.route.modelId, harness));
   const accounts = snapshot.accounts.filter((candidate) => {
     if (!harness.accountIds.includes(candidate.id)) return false;
     const candidateSource = snapshot.accessSources.find((source) => source.id === candidate.accessSourceId);
     return candidateSource?.providerId === harness.route.providerId
-      && sourceSupportsModel(snapshot, candidateSource, harness.route.modelId);
+      && sourceSupportsModel(snapshot, candidateSource, harness.route.modelId, harness);
   });
   const gatewaySource = sources.find((source) => source.kind === "matrix_gateway") ?? null;
-  const routeProviders = snapshot.modelProviders.filter((candidate) => routeTargetForProvider(snapshot, candidate) !== null);
+  const routeProviders = snapshot.modelProviders.filter((candidate) =>
+    candidate.id === harness.route.providerId
+    || routeTargetForProvider(snapshot, candidate, harness) !== null);
   const mutableRoute = harness.route.kind === "configurable";
+  const routeUnavailable = harness.routeAvailability === "catalog_unavailable";
 
   const changeProvider = (nextProviderId: string) => {
     const nextProvider = snapshot.modelProviders.find((candidate) => candidate.id === nextProviderId);
-    const target = nextProvider ? routeTargetForProvider(snapshot, nextProvider) : null;
+    const target = nextProvider ? routeTargetForProvider(snapshot, nextProvider, harness) : null;
     if (!target) return;
     onMutate({
       type: "set_route",
@@ -92,10 +109,10 @@ export function HarnessEditor({
     const targetSource = snapshot.accessSources.find((candidate) =>
       candidate.id === harness.accessSourceId
       && candidate.providerId === harness.route.providerId
-      && sourceSupportsModel(snapshot, candidate, nextModelId))
+      && sourceSupportsModel(snapshot, candidate, nextModelId, harness))
       ?? snapshot.accessSources.find((candidate) =>
         candidate.providerId === harness.route.providerId
-        && sourceSupportsModel(snapshot, candidate, nextModelId));
+        && sourceSupportsModel(snapshot, candidate, nextModelId, harness));
     if (!targetSource) return;
     onMutate({
       type: "set_route",
@@ -147,6 +164,12 @@ export function HarnessEditor({
       {harness.connectivity === "offline" ? (
         <div className="matrix-ap-notice" data-tone="warning"><strong>Offline</strong><span>Saved settings are visible, but changes may not reach this computer.</span></div>
       ) : null}
+      {routeUnavailable ? (
+        <div className="matrix-ap-notice" data-tone="warning">
+          <strong>Saved model catalog unavailable</strong>
+          <span>The saved route remains visible. Refresh the catalog or choose another available provider and model.</span>
+        </div>
+      ) : null}
 
       <div className="matrix-ap-panel">
         <span className="matrix-ap-eyebrow">Instance</span>
@@ -185,12 +208,12 @@ export function HarnessEditor({
 
       <div className="matrix-ap-panel">
         <div className="matrix-ap-panel-head">
-          <div><span className="matrix-ap-eyebrow">Model route</span><h3>Provider and model</h3></div>
+          <div><span className="matrix-ap-eyebrow">Model</span><h3>Choose the model</h3></div>
           {!mutableRoute ? <span className="matrix-ap-fixed-tag">Fixed by {harness.displayName}</span> : null}
         </div>
         <div className="matrix-ap-form-grid">
           <label className="matrix-ap-field">
-            <span>Model provider</span>
+            <span>Provider</span>
             <select
               aria-label="Model provider"
               value={harness.route.providerId}
@@ -198,6 +221,9 @@ export function HarnessEditor({
               title={!canSetRoute ? "Changing the model route is not available" : undefined}
               onChange={(event) => changeProvider(event.target.value)}
             >
+              {provider === null ? (
+                <option value={harness.route.providerId}>{unavailableRouteLabel(harness.route.providerId)} · Unavailable</option>
+              ) : null}
               {routeProviders.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
             </select>
           </label>
@@ -210,9 +236,14 @@ export function HarnessEditor({
               title={!canSetRoute ? "Changing the model route is not available" : undefined}
               onChange={(event) => changeModel(event.target.value)}
             >
+              {model === null ? (
+                <option value={harness.route.modelId}>{unavailableRouteLabel(harness.route.modelId)} · Unavailable</option>
+              ) : null}
               {provider?.models
-                .filter((candidate) => candidate.enabled && snapshot.accessSources.some((source) =>
-                  source.providerId === harness.route.providerId && sourceSupportsModel(snapshot, source, candidate.id)))
+                .filter((candidate) => candidate.enabled && (
+                  candidate.id === harness.route.modelId
+                  || snapshot.accessSources.some((source) => source.providerId === harness.route.providerId
+                    && sourceSupportsModel(snapshot, source, candidate.id, harness))))
                 .map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
             </select>
           </label>
@@ -220,19 +251,21 @@ export function HarnessEditor({
       </div>
 
       <div className="matrix-ap-panel">
-        <span className="matrix-ap-eyebrow">Signal path</span>
+        <div className="matrix-ap-panel-head">
+          <div><span className="matrix-ap-eyebrow">Access &amp; billing</span><h3>Choose how this route is funded</h3></div>
+        </div>
         <div className="matrix-ap-signal-path" data-testid="provider-signal-path">
           <span><small>Harness</small><strong>{harness.displayName}</strong></span>
           <i aria-hidden="true">›</i>
           <span><small>Model</small><strong>{model?.displayName ?? harness.route.modelId}</strong></span>
           <i aria-hidden="true">›</i>
-          <span><small>Access</small><strong>{accessSource?.displayName ?? "Not selected"}</strong></span>
+          <span><small>Paid through</small><strong>{accessSource?.displayName ?? "Not selected"}</strong></span>
         </div>
         <div className="matrix-ap-form-grid">
           <label className="matrix-ap-field">
-            <span>Access source</span>
+            <span>Paid through</span>
             <select
-              aria-label="Access source"
+              aria-label="Paid through"
               value={harness.accessSourceId ?? ""}
               disabled={disabled || !canSelectSource}
               title={!canSelectSource ? "Changing the access source is not available" : undefined}
@@ -242,27 +275,38 @@ export function HarnessEditor({
               {sources.map((source) => <option key={source.id} value={source.id}>{source.displayName}</option>)}
             </select>
           </label>
-          <label className="matrix-ap-field">
-            <span>Account</span>
-            <select
-              aria-label="Account"
-              value={harness.selectedAccountId ?? ""}
-              disabled={disabled || !canSelectAccount || (accounts.length === 0 && gatewaySource === null)}
-              title={!canSelectAccount ? "Changing the account is not available" : undefined}
-              onChange={(event) => {
-                const accountId = event.target.value;
-                if (accountId !== "" && canSelectAccount) {
-                  onMutate({ type: "select_account", harnessInstanceId: harness.id, accountId });
-                } else if (accountId === "" && gatewaySource !== null && canSelectSource) {
-                  onMutate({ type: "select_access_source", harnessInstanceId: harness.id, accessSourceId: gatewaySource.id });
-                }
-              }}
-            >
-              {gatewaySource ? <option value="">Matrix gateway / no account</option> : <option value="" disabled>Select an account</option>}
-              {accounts.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
-            </select>
-          </label>
+          {accessSource?.kind === "harness_profile" ? (
+            <div className="matrix-ap-field">
+              <span>Authentication</span>
+              <div className="matrix-ap-readonly-value">Managed by {harness.displayName}</div>
+            </div>
+          ) : (
+            <label className="matrix-ap-field">
+              <span>Account</span>
+              <select
+                aria-label="Account"
+                value={harness.selectedAccountId ?? ""}
+                disabled={disabled || !canSelectAccount || (accounts.length === 0 && gatewaySource === null)}
+                title={!canSelectAccount ? "Changing the account is not available" : undefined}
+                onChange={(event) => {
+                  const accountId = event.target.value;
+                  if (accountId !== "" && canSelectAccount) {
+                    onMutate({ type: "select_account", harnessInstanceId: harness.id, accountId });
+                  } else if (accountId === "" && gatewaySource !== null && canSelectSource) {
+                    onMutate({ type: "select_access_source", harnessInstanceId: harness.id, accessSourceId: gatewaySource.id });
+                  }
+                }}
+              >
+                {gatewaySource ? <option value="">Matrix gateway / no account</option> : <option value="" disabled>Select an account</option>}
+                {accounts.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
+              </select>
+            </label>
+          )}
         </div>
+        <p className="matrix-ap-help">The provider supplies the model. Matrix AI appears under Paid through because it funds the route.</p>
+        {accessSource?.kind === "harness_profile" ? (
+          <p className="matrix-ap-help">{harness.displayName} manages authentication for this route. Add or switch accounts from its visible Terminal flow.</p>
+        ) : null}
         {account ? <p className="matrix-ap-help">Selected account: {account.displayName}</p> : null}
         {!canSetRoute || !canSelectSource || !canSelectAccount ? (
           <p className="matrix-ap-help">Some routing controls are unavailable in this runtime.</p>

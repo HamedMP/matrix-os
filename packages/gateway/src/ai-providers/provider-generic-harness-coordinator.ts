@@ -3,7 +3,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   AgentSettingsUpdateSchema,
-  isPortableGenericHarnessCredentialRoute,
+  isRunnableGenericHarnessCredentialRoute,
   ProviderSettingsMutationSchema,
   type AiProviderSnapshotV3,
   type ProviderHarnessKind,
@@ -211,7 +211,7 @@ export function createProviderGenericHarnessCoordinator(options: {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
       const source = settingsSnapshot?.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-      if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
+      if (!isRunnableGenericHarnessCredentialRoute(harness, source)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       return;

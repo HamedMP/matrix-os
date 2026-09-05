@@ -164,4 +164,38 @@ describe("coding harness credential resolution", () => {
 
     expect(await resolver()).toEqual({ env: { ANTHROPIC_API_KEY: "owner-key" } });
   });
+
+  it("uses a harness-owned profile without injecting or resolving provider secrets", async () => {
+    const value = snapshot("opencode", "matrix_included");
+    value.modelProviders = [{
+      id: "baseten",
+      displayName: "Baseten",
+      models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true }],
+    }];
+    value.accessSources = [{
+      ...value.accessSources[0]!,
+      id: "harness_opencode_baseten",
+      kind: "harness_profile",
+      harness: "opencode",
+      fundingKind: "owner_account",
+      providerId: "baseten",
+      accountId: null,
+      displayName: "OpenCode account",
+      eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+    }];
+    Object.assign(value.harnesses[0]!, {
+      accessSourceId: "harness_opencode_baseten",
+      route: { kind: "configurable", providerId: "baseten", modelId: "baseten:zai-org/GLM-5.3" },
+    });
+    const resolveCredentialLaunch = vi.fn();
+    const resolver = createCodingHarnessCredentialResolver({
+      harness: "opencode",
+      homePath: "/home/matrix/home",
+      settings: { getSnapshot: async () => value },
+      resolveCredentialLaunch,
+    });
+
+    await expect(resolver()).resolves.toEqual({ env: {} });
+    expect(resolveCredentialLaunch).not.toHaveBeenCalled();
+  });
 });

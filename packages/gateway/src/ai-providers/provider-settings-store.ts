@@ -39,6 +39,7 @@ import type {
   ProviderSettingsRuntimeMutationInput,
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
+import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 import {
   assertProviderSettingsAction,
   coordinatorLoginHarness,
@@ -66,7 +67,7 @@ export type {
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
 export interface ProviderSettingsStoreWriter {
-  getSnapshot(): Promise<ProviderSettingsSnapshot>;
+  getSnapshot(options?: { refresh?: boolean }): Promise<ProviderSettingsSnapshot>;
   mutate(mutation: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse>;
 }
 interface ProviderSettingsStoreOptions {
@@ -81,6 +82,7 @@ interface ProviderSettingsStoreOptions {
   idGenerator?: () => string;
   maxProjectionAgeMs?: number;
   fundingSummaryReader?: FundedAiFundingSummaryReader;
+  genericModelCatalogReader?: GenericHarnessModelCatalogReader;
 }
 
 export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
@@ -95,6 +97,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #id: () => string;
   readonly #maxProjectionAgeMs: number;
   readonly #fundingSummary?: FundedAiFundingSummaryReader;
+  readonly #genericModelCatalog?: GenericHarnessModelCatalogReader;
   #writeTail: Promise<void> = Promise.resolve();
 
   constructor(options: ProviderSettingsStoreOptions) {
@@ -120,6 +123,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       Math.min(options.maxProjectionAgeMs ?? DEFAULT_PROJECTION_AGE_MS, 30 * 60_000),
     );
     this.#fundingSummary = options.fundingSummaryReader;
+    this.#genericModelCatalog = options.genericModelCatalogReader;
   }
 
   async #serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -159,10 +163,11 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     }
   }
 
-  async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration) {
+  async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false) {
     try {
       let fundingSummary;
       let fundedPolicy;
+      let genericModelCatalog;
       if (this.#fundingSummary && canonical.accessSources.some((source) =>
         source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon")) {
         try {
@@ -176,6 +181,16 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           );
         }
       }
+      if (this.#genericModelCatalog) {
+        try {
+          genericModelCatalog = await this.#genericModelCatalog.getCatalog({ refresh });
+        } catch (error) {
+          console.warn(
+            "[provider-settings] Generic harness model catalog unavailable:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      }
       return await projectProviderSettings({
         canonical,
         config,
@@ -185,6 +200,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         fundingSummary,
         fundedPolicy,
         fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
+        genericModelCatalog,
         configurationHarnessKinds: [...(this.#runtime?.supportedHarnessKinds ?? [])],
         loginMethods: (harness) => coordinatorLoginMethods({
           login: this.#login,
@@ -230,13 +246,13 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     });
   }
 
-  async getSnapshot(): Promise<ProviderSettingsSnapshot> {
+  async getSnapshot(options: { refresh?: boolean } = {}): Promise<ProviderSettingsSnapshot> {
     return await this.#serialize(async () => {
       if (this.#runtime && !this.#runtime.isRecoveryReady()) {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
-      const canonical = await this.#canonical();
-      return await this.#project(canonical, await this.#configuration(canonical));
+      const canonical = await this.#canonical(options.refresh === true);
+      return await this.#project(canonical, await this.#configuration(canonical), options.refresh === true);
     });
   }
 

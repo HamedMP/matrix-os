@@ -4,7 +4,7 @@ import {
   CanonicalChatSkillDescriptorSchema,
   CanonicalProviderCatalogSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
-  isPortableGenericHarnessCredentialRoute,
+  isRunnableGenericHarnessCredentialRoute,
   type AgentProviderDescriptor,
   type AgentProviderSummary,
   type AgentRuntimeDescriptor,
@@ -35,6 +35,7 @@ import type { CodingAgentProviderRegistry } from "../coding-agents/provider-regi
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
+import { managedChatInstances } from "./managed-chat-catalog.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -542,6 +543,7 @@ function configuredHarnessInstanceFromAiSnapshot(input: {
   instance: InstanceDraft;
   harness: ProviderHarnessInstance;
   aiSnapshot?: AiProviderSnapshotV3;
+  settings: ProviderSettingsSnapshot;
 }): InstanceDraft {
   if (input.instance.availability !== "available") {
     return unavailableInstance(input.instance, unavailableReasonFor(input.instance));
@@ -549,16 +551,21 @@ function configuredHarnessInstanceFromAiSnapshot(input: {
   const configured = input.aiSnapshot?.models.find((model) =>
     model.vendor === input.harness.route.providerId && model.id === input.harness.route.modelId
   );
-  if (!configured || configured.status === "unavailable" || configured.status === "retired") {
+  const projected = input.settings.modelProviders
+    .find((provider) => provider.id === input.harness.route.providerId)
+    ?.models.find((model) => model.id === input.harness.route.modelId && model.enabled);
+  if ((!configured && !projected) || configured?.status === "unavailable" || configured?.status === "retired") {
     return unavailableInstance(input.instance, "runtime_unavailable");
   }
-  const modelId = `${input.harness.route.providerId}:${input.harness.route.modelId}`;
-  const capabilities = configured.capabilities.filter((capability) =>
+  const modelId = input.harness.route.modelId.startsWith(`${input.harness.route.providerId}:`)
+    ? input.harness.route.modelId
+    : `${input.harness.route.providerId}:${input.harness.route.modelId}`;
+  const capabilities = (configured?.capabilities ?? ["tools"] as const).filter((capability) =>
     capability === "reasoning" || capability === "tools" || capability === "vision"
   );
   const model: CanonicalModelDescriptor = {
     id: modelId,
-    displayName: configured.displayName,
+    displayName: configured?.displayName ?? projected!.displayName,
     availability: "available",
     capabilities,
     supportsVision: capabilities.includes("vision"),
@@ -703,13 +710,14 @@ function applyHarnessSettings(input: {
     const harness = enabledHarness!;
     if (generic === "pi" || generic === "opencode") {
       const source = input.settings!.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-      if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
+      if (!isRunnableGenericHarnessCredentialRoute(harness, source)) {
         return unavailableInstance(configuredInstance, "runtime_not_runnable");
       }
       return configuredHarnessInstanceFromAiSnapshot({
         instance: { ...configuredInstance, availability: "available" },
         harness,
         aiSnapshot: input.aiSnapshot,
+        settings: input.settings!,
       });
     }
     if (generic === "hermes" || generic === "openclaw") {
@@ -875,6 +883,7 @@ export function createChatProviderCatalogService(options: {
       const executableDriverKinds = options.executableDriverKinds;
       const instances = applyHarnessSettings({
         instances: [
+        ...managedChatInstances(aiSnapshot, skills),
         ...systemInstances,
         ...completeCodingInstances,
         ],
@@ -886,6 +895,7 @@ export function createChatProviderCatalogService(options: {
         aiSnapshot,
       });
       const driverKinds: CanonicalProviderDriverKind[] = [
+        ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
         ...SYSTEM_DRIVERS,
         ...CODING_DRIVERS,
       ];
@@ -893,7 +903,7 @@ export function createChatProviderCatalogService(options: {
         kind,
         displayName: driverDisplayName(kind),
         adapterVersion: ADAPTER_VERSION,
-        capabilityClass: SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
+        capabilityClass: kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
           ? "system_agent" as const
           : "coding_agent" as const,
       }));

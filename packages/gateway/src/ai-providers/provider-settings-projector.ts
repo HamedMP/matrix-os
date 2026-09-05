@@ -5,6 +5,7 @@ import {
   type FundedAiEffectivePolicy,
   type FundedAiFundingSummary,
   type ProviderAccount,
+  type ProviderAccessSource,
   type ProviderDependencyCounts,
   type ProviderHarnessInstance,
   type ProviderHarnessKind,
@@ -15,6 +16,7 @@ import {
 } from "@matrix-os/contracts";
 import type { HarnessConfiguration, ProviderSettingsConfiguration } from "./provider-settings-persistence.js";
 import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
+import type { GenericHarnessModelCatalog } from "./generic-harness-model-catalog.js";
 
 export interface ProviderSettingsDependencyReader {
   getAccountDependencies(input: {
@@ -178,6 +180,61 @@ function fundingState(asOf: string, now: Date): "current" | "stale" {
   return Number.isFinite(age) && age >= -60_000 && age <= 5 * 60_000 ? "current" : "stale";
 }
 
+function fallbackRouteLabel(reference: string, fallback: string): string {
+  const leaf = reference.split(/[/:]/).at(-1) ?? reference;
+  const label = leaf.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  const value = label || fallback;
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`.slice(0, 120);
+}
+
+function retainFailedCatalogRoutes(input: {
+  modelProviders: ProviderSettingsSnapshot["modelProviders"];
+  sources: ProviderAccessSource[];
+  config: ProviderSettingsConfiguration;
+  failures: ReadonlySet<ProviderHarnessKind>;
+  canonicalProviderIds: ReadonlySet<string>;
+}): void {
+  const referencedProviders = new Set(input.config.harnesses.map((harness) => harness.route.providerId));
+  const referencedModels = new Set(input.config.harnesses.map((harness) => harness.route.modelId));
+  for (const harness of input.config.harnesses) {
+    if (!input.failures.has(harness.harness)) continue;
+    let provider = input.modelProviders.find((candidate) => candidate.id === harness.route.providerId);
+    if (!provider) {
+      while (input.modelProviders.length >= 32) {
+        const removable = input.modelProviders.findLastIndex((candidate) =>
+          !input.canonicalProviderIds.has(candidate.id)
+          && !referencedProviders.has(candidate.id));
+        if (removable < 0) break;
+        const [removed] = input.modelProviders.splice(removable, 1);
+        for (let index = input.sources.length - 1; index >= 0; index -= 1) {
+          const source = input.sources[index]!;
+          if (source.kind === "harness_profile" && source.providerId === removed!.id) {
+            input.sources.splice(index, 1);
+          }
+        }
+      }
+      if (input.modelProviders.length >= 32) continue;
+      provider = {
+        id: harness.route.providerId,
+        displayName: fallbackRouteLabel(harness.route.providerId, "Unavailable provider"),
+        models: [],
+      };
+      input.modelProviders.push(provider);
+    }
+    if (provider.models.some((model) => model.id === harness.route.modelId)) continue;
+    if (provider.models.length >= 256) {
+      const removable = provider.models.findLastIndex((model) => !referencedModels.has(model.id));
+      if (removable < 0) continue;
+      provider.models.splice(removable, 1);
+    }
+    provider.models.push({
+      id: harness.route.modelId,
+      displayName: fallbackRouteLabel(harness.route.modelId, "Unavailable model"),
+      enabled: true,
+    });
+  }
+}
+
 async function projectAccounts(input: {
   canonical: AiProviderSnapshotV3;
   config: ProviderSettingsConfiguration;
@@ -215,13 +272,17 @@ async function projectAccounts(input: {
 function projectHarness(input: {
   stored: HarnessConfiguration;
   canonical: AiProviderSnapshotV3;
+  modelProviders: ProviderSettingsSnapshot["modelProviders"];
   accounts: ProviderAccount[];
-  sources: ReturnType<typeof projectAccessSources>["sources"];
+  sources: ProviderAccessSource[];
   allowedGatewayModels: ReadonlySet<string>;
+  catalogUnavailable: boolean;
   loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): ProviderHarnessInstance | null {
-  const model = input.canonical.models.find((candidate) => candidate.id === input.stored.route.modelId);
-  if (!model || model.vendor !== input.stored.route.providerId) return null;
+  const modelProvider = input.modelProviders.find((candidate) => candidate.id === input.stored.route.providerId);
+  const model = modelProvider?.models.find((candidate) => candidate.id === input.stored.route.modelId);
+  const routeAvailable = model?.enabled === true;
+  if (!routeAvailable && !input.catalogUnavailable) return null;
   const driverId = resolveProviderSettingsDriverId({
     driverId: input.stored.driverId,
     harness: input.stored.harness,
@@ -233,16 +294,19 @@ function projectHarness(input: {
     : input.sources.find((candidate) => candidate.id === input.stored.accessSourceId);
   const sourceEligible = source?.providerId === input.stored.route.providerId
     && source.eligibleModelIds.includes(input.stored.route.modelId)
+    && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
-  const selectedAccountId = sourceEligible && source?.kind === "provider_account"
+  const routeCatalogUnavailable = input.catalogUnavailable || !routeAvailable;
+  const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable;
+  const selectedAccountId = routeSourceEligible && source?.kind === "provider_account"
     && source.accountId && input.accounts.some((account) => account.id === source.accountId)
     ? source.accountId : null;
-  const readiness = sourceEligible ? source.readiness : {
-    state: "unknown" as const,
+  const readiness = routeSourceEligible ? source!.readiness : {
+    state: input.catalogUnavailable ? "unavailable" as const : "unknown" as const,
     checkedAt: null,
     staleAfter: null,
     action: "retry" as const,
-    safeReason: "unknown" as const,
+    safeReason: input.catalogUnavailable ? "provider_unavailable" as const : "unknown" as const,
   };
   const accounts = input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
   const visibleMethods = input.loginMethods === undefined
@@ -253,7 +317,8 @@ function projectHarness(input: {
     harness: input.stored.harness,
     displayName: input.stored.displayName,
     accentColor: input.stored.accentColor,
-    enabled: Boolean(input.stored.enabled && driver?.installState === "installed"),
+    enabled: Boolean(routeAvailable && !routeCatalogUnavailable
+      && input.stored.enabled && driver?.installState === "installed"),
     version: null,
     installState: driver?.installState ?? "missing",
     authState: authState(readiness),
@@ -262,8 +327,9 @@ function projectHarness(input: {
     connectivity: connectivity(readiness),
     accountIds: accounts.map((account) => account.id),
     selectedAccountId,
-    accessSourceId: sourceEligible ? source!.id : null,
+    accessSourceId: routeSourceEligible ? source!.id : null,
     route: input.stored.route,
+    routeAvailability: routeCatalogUnavailable ? "catalog_unavailable" : "available",
     activeChatCount: selectedAccountId
       ? accounts.find((account) => account.id === selectedAccountId)!.dependencies.activeChatCount
       : 0,
@@ -279,6 +345,7 @@ export async function projectProviderSettings(input: {
   fundingSummary?: FundedAiFundingSummary;
   fundedPolicy?: FundedAiEffectivePolicy;
   fundedPolicyAuthoritative?: boolean;
+  genericModelCatalog?: GenericHarnessModelCatalog;
   configurationHarnessKinds?: ProviderHarnessKind[];
   loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): Promise<ProviderSettingsSnapshot> {
@@ -286,7 +353,7 @@ export async function projectProviderSettings(input: {
     && !input.supportedActions.includes("add_credit")
     ? [...input.supportedActions, "add_credit" as const]
     : input.supportedActions;
-  const { sources, sourceByAccount } = projectAccessSources(
+  const projected = projectAccessSources(
     input.canonical,
     input.config,
     input.fundingSummary,
@@ -294,6 +361,12 @@ export async function projectProviderSettings(input: {
     input.fundedPolicyAuthoritative,
     input.now,
   );
+  const sources: ProviderAccessSource[] = [
+    ...projected.sources,
+    ...(input.genericModelCatalog?.accessSources ?? []).filter((source) =>
+      !projected.sources.some((candidate) => candidate.id === source.id)),
+  ];
+  const sourceByAccount = projected.sourceByAccount;
   const accounts = await projectAccounts({
     canonical: input.canonical,
     config: input.config,
@@ -314,6 +387,31 @@ export async function projectProviderSettings(input: {
       enabled: model.status !== "retired" && model.status !== "unavailable",
     })),
   }));
+  const canonicalProviderIds = new Set(modelProviders.map((provider) => provider.id));
+  for (const discovered of input.genericModelCatalog?.providers ?? []) {
+    const existing = modelProviders.find((provider) => provider.id === discovered.id);
+    if (!existing) {
+      modelProviders.push({
+        ...discovered,
+        models: discovered.models.map((model) => ({ ...model })),
+      });
+      continue;
+    }
+    for (const model of discovered.models) {
+      if (!existing.models.some((candidate) => candidate.id === model.id)) {
+        existing.models.push({ ...model });
+      }
+    }
+  }
+  const failedCatalogs = new Set<ProviderHarnessKind>(input.genericModelCatalog?.failures ?? []);
+  retainFailedCatalogRoutes({
+    modelProviders,
+    sources,
+    config: input.config,
+    failures: failedCatalogs,
+    canonicalProviderIds,
+  });
+  modelProviders.sort((left, right) => left.displayName.localeCompare(right.displayName));
   const gatewayPolicy = input.config.gatewayPolicy
     && sources.some((source) => source.id === input.config.gatewayPolicy?.accessSourceId && source.kind === "matrix_gateway")
     ? {
@@ -338,9 +436,11 @@ export async function projectProviderSettings(input: {
     const harness = projectHarness({
       stored,
       canonical: input.canonical,
+      modelProviders,
       accounts,
       sources,
       allowedGatewayModels,
+      catalogUnavailable: failedCatalogs.has(stored.harness),
       loginMethods: input.loginMethods,
     });
     return harness ? [harness] : [];

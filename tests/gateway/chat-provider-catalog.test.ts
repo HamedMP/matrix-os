@@ -24,6 +24,7 @@ import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 
 const principal: RequestPrincipal = { userId: "owner_1", source: "jwt" };
 
@@ -294,6 +295,63 @@ describe("canonical Chat Provider catalog", () => {
         displayName,
         models: [{ id: "anthropic:claude-sonnet-5", displayName: "Claude Sonnet 5" }],
         defaultSelection: { instanceId: `${kind}_default`, model: "anthropic:claude-sonnet-5" },
+      });
+  });
+
+  it("projects an OpenCode-native model from the same live Settings catalog", async () => {
+    const configured = {
+      ...configuredHarness("opencode", true),
+      accessSourceId: "harness_opencode_baseten",
+      route: {
+        kind: "configurable" as const,
+        providerId: "baseten",
+        modelId: "baseten:zai-org/GLM-5.3",
+      },
+    };
+    const settings = await harnessSettings([configured]).getSnapshot();
+    settings.modelProviders = [{
+      id: "baseten",
+      displayName: "Baseten",
+      models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true }],
+    }];
+    settings.accessSources = [{
+      ...settings.accessSources[0]!,
+      kind: "harness_profile",
+      harness: "opencode",
+      fundingKind: "owner_account",
+      providerId: "baseten",
+      accountId: null,
+      displayName: "OpenCode account",
+      eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+      usage: {
+        kind: "unavailable",
+        authority: "unavailable",
+        state: "not_applicable",
+        scope: "access_source",
+        reason: "provider_does_not_report",
+        asOf: null,
+      },
+    }];
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "opencode",
+        displayName: "OpenCode",
+        kind: "opencode",
+        supportedModes: ["default"],
+        defaultModel: undefined,
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: { getSnapshot: async () => settings },
+      executableDriverKinds: ["opencode"],
+      credentialedDriverKinds: ["opencode"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "opencode_default"))
+      .toMatchObject({
+        availability: "available",
+        models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3" }],
+        defaultSelection: { instanceId: "opencode_default", model: "baseten:zai-org/GLM-5.3" },
       });
   });
 
@@ -775,6 +833,19 @@ describe("canonical Chat Provider catalog", () => {
 
     expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "pi_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "authentication_required" });
+  });
+
+  it("exposes the policy-checked managed route through the canonical catalog", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([]), agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
+      executableDriverKinds: ["kernel"],
+    });
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
+      .toMatchObject({ displayName: "Matrix AI", availability: "available" });
+    expect(catalog.drivers.find((driver) => driver.kind === "kernel"))
+      .toMatchObject({ displayName: "Claude SDK", capabilityClass: "system_agent" });
   });
 
   it("hides every Matrix Agent driver and instance while Matrix AI is not release-ready", async () => {

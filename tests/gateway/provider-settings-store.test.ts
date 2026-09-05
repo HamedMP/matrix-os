@@ -19,6 +19,7 @@ import {
   type ProviderSettingsRuntimeCoordinator,
 } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
+import type { GenericHarnessModelCatalog } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 import {
   PROVIDER_SETTINGS_NOW as NOW,
   providerReady as ready,
@@ -128,6 +129,7 @@ describe("ProviderSettingsStore", () => {
     withRuntime?: boolean;
     snapshot?: () => AiProviderSnapshotV3;
     fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
+    genericModelCatalog?: GenericHarnessModelCatalog;
   } = {}) {
     let nextId = 0;
     return new ProviderSettingsStore({
@@ -145,6 +147,9 @@ describe("ProviderSettingsStore", () => {
           if (options.fundingSummary instanceof Error) throw options.fundingSummary;
           return options.fundingSummary!;
         }),
+      },
+      genericModelCatalogReader: options.genericModelCatalog === undefined ? undefined : {
+        getCatalog: vi.fn(async () => structuredClone(options.genericModelCatalog!)),
       },
       now: () => NOW,
       idGenerator: () => `generated_${++nextId}`,
@@ -195,6 +200,272 @@ describe("ProviderSettingsStore", () => {
     const stored = await readFile(store.configurationPath, "utf8");
     expect((await stat(store.configurationPath)).mode & 0o777).toBe(0o600);
     expect(stored).not.toMatch(/"readiness"|"usage"|apiKey|accessToken/);
+  });
+
+  it("merges live Pi and OpenCode models as harness-owned access profiles", async () => {
+    const source = {
+      id: "harness_opencode_baseten",
+      kind: "harness_profile" as const,
+      harness: "opencode" as const,
+      fundingKind: "owner_account" as const,
+      providerId: "baseten",
+      accountId: null,
+      displayName: "OpenCode account",
+      readiness: ready,
+      eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+      usage: {
+        kind: "unavailable" as const,
+        authority: "unavailable" as const,
+        state: "not_applicable" as const,
+        scope: "access_source" as const,
+        reason: "provider_does_not_report" as const,
+        asOf: NOW.toISOString(),
+      },
+    };
+    const store = createStore({
+      genericModelCatalog: {
+        providers: [{
+          id: "baseten",
+          displayName: "Baseten",
+          models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true }],
+        }],
+        accessSources: [source],
+        failures: [],
+      },
+    });
+
+    const projected = await store.getSnapshot();
+
+    expect(ProviderSettingsSnapshotSchema.safeParse(projected).success).toBe(true);
+    expect(projected.modelProviders).toContainEqual(expect.objectContaining({
+      id: "baseten",
+      models: [expect.objectContaining({ id: "baseten:zai-org/GLM-5.3" })],
+    }));
+    expect(projected.accessSources).toContainEqual(expect.objectContaining({
+      id: "harness_opencode_baseten",
+      kind: "harness_profile",
+      harness: "opencode",
+    }));
+  });
+
+  it("keeps a configured harness visible and offline when its live catalog fails", async () => {
+    const discoveredProviders = Array.from({ length: 31 }, (_, index) => ({
+      id: `provider_${index}`,
+      displayName: `Provider ${index}`,
+      models: [{
+        id: `provider_${index}:model_${index}`,
+        displayName: `Model ${index}`,
+        enabled: true,
+      }],
+    }));
+    const store = createStore({
+      genericModelCatalog: {
+        providers: discoveredProviders,
+        accessSources: [{
+          id: "harness_opencode_provider_30",
+          kind: "harness_profile",
+          harness: "opencode",
+          fundingKind: "owner_account",
+          providerId: "provider_30",
+          accountId: null,
+          displayName: "OpenCode account",
+          readiness: ready,
+          eligibleModelIds: ["provider_30:model_30"],
+          usage: {
+            kind: "unavailable",
+            authority: "unavailable",
+            state: "not_applicable",
+            scope: "access_source",
+            reason: "provider_does_not_report",
+            asOf: NOW.toISOString(),
+          },
+        }],
+        failures: ["opencode"],
+      },
+    });
+    await mkdir(dirname(store.configurationPath), { recursive: true });
+    await writeFile(store.configurationPath, JSON.stringify({
+      schemaVersion: 1,
+      revision: 4,
+      harnesses: [{
+        id: "harness_opencode",
+        driverId: "opencode",
+        harness: "opencode",
+        displayName: "OpenCode",
+        accentColor: null,
+        enabled: true,
+        selectedAccountId: null,
+        accessSourceId: "harness_opencode_baseten",
+        route: {
+          kind: "configurable",
+          providerId: "baseten",
+          modelId: "baseten:zai-org/GLM-5.3",
+        },
+      }],
+      accountProfiles: [],
+      gatewayPolicy: null,
+      receipts: [],
+    }));
+
+    const projected = await store.getSnapshot();
+
+    expect(projected.harnesses).toContainEqual(expect.objectContaining({
+      id: "harness_opencode",
+      harness: "opencode",
+      connectivity: "offline",
+      enabled: false,
+      accessSourceId: null,
+      routeAvailability: "catalog_unavailable",
+      route: {
+        kind: "configurable",
+        providerId: "baseten",
+        modelId: "baseten:zai-org/GLM-5.3",
+      },
+    }));
+    expect(projected.modelProviders).toContainEqual(expect.objectContaining({
+      id: "baseten",
+      models: [expect.objectContaining({ id: "baseten:zai-org/GLM-5.3" })],
+    }));
+    expect(projected.modelProviders).toHaveLength(32);
+    expect(projected.accessSources).not.toContainEqual(expect.objectContaining({
+      id: "harness_opencode_provider_30",
+    }));
+  });
+
+  it("keeps a failed saved route visible when every provider catalog slot is protected", async () => {
+    const discoveredProviders = Array.from({ length: 31 }, (_, index) => ({
+      id: `provider_${index}`,
+      displayName: `Provider ${index}`,
+      models: [{
+        id: `provider_${index}:model_${index}`,
+        displayName: `Model ${index}`,
+        enabled: true,
+      }],
+    }));
+    const protectedHarnesses = discoveredProviders.map((provider, index) => ({
+      id: `harness_pi_${index}`,
+      driverId: "pi",
+      harness: "pi",
+      displayName: `Pi ${index}`,
+      accentColor: null,
+      enabled: false,
+      selectedAccountId: null,
+      accessSourceId: null,
+      route: {
+        kind: "configurable",
+        providerId: provider.id,
+        modelId: provider.models[0]!.id,
+      },
+    }));
+    const store = createStore({
+      genericModelCatalog: {
+        providers: discoveredProviders,
+        accessSources: [],
+        failures: ["opencode"],
+      },
+    });
+    await mkdir(dirname(store.configurationPath), { recursive: true });
+    await writeFile(store.configurationPath, JSON.stringify({
+      schemaVersion: 1,
+      revision: 5,
+      harnesses: [
+        {
+          id: "harness_pi_anthropic",
+          driverId: "pi",
+          harness: "pi",
+          displayName: "Pi Anthropic",
+          accentColor: null,
+          enabled: false,
+          selectedAccountId: null,
+          accessSourceId: null,
+          route: {
+            kind: "configurable",
+            providerId: "anthropic",
+            modelId: "claude-sonnet-5",
+          },
+        },
+        ...protectedHarnesses,
+        {
+          id: "harness_opencode_unavailable",
+          driverId: "opencode",
+          harness: "opencode",
+          displayName: "OpenCode unavailable",
+          accentColor: null,
+          enabled: true,
+          selectedAccountId: null,
+          accessSourceId: "harness_opencode_baseten",
+          route: {
+            kind: "configurable",
+            providerId: "baseten",
+            modelId: "baseten:zai-org/GLM-5.3",
+          },
+        },
+      ],
+      accountProfiles: [],
+      gatewayPolicy: null,
+      receipts: [],
+    }));
+
+    const projected = await store.getSnapshot();
+
+    expect(projected.modelProviders).toHaveLength(32);
+    expect(projected.modelProviders).not.toContainEqual(expect.objectContaining({ id: "baseten" }));
+    expect(projected.harnesses).toContainEqual(expect.objectContaining({
+      id: "harness_opencode_unavailable",
+      connectivity: "offline",
+      accessSourceId: null,
+      routeAvailability: "catalog_unavailable",
+      route: {
+        kind: "configurable",
+        providerId: "baseten",
+        modelId: "baseten:zai-org/GLM-5.3",
+      },
+    }));
+  });
+
+  it("fails a generic harness route closed when its catalog fails despite a portable source", async () => {
+    const store = createStore({
+      genericModelCatalog: { providers: [], accessSources: [], failures: ["opencode"] },
+    });
+    await mkdir(dirname(store.configurationPath), { recursive: true });
+    await writeFile(store.configurationPath, JSON.stringify({
+      schemaVersion: 1,
+      revision: 6,
+      harnesses: [{
+        id: "harness_opencode_matrix",
+        driverId: "opencode",
+        harness: "opencode",
+        displayName: "OpenCode Matrix",
+        accentColor: null,
+        enabled: true,
+        selectedAccountId: null,
+        accessSourceId: "matrix_included",
+        route: {
+          kind: "configurable",
+          providerId: "anthropic",
+          modelId: "claude-sonnet-5",
+        },
+      }],
+      accountProfiles: [],
+      gatewayPolicy: {
+        accessSourceId: "matrix_included",
+        monthlyBudgetMicrousd: null,
+        allowedModelIds: ["claude-sonnet-5"],
+        topUpEnabled: false,
+      },
+      receipts: [],
+    }));
+
+    const projected = await store.getSnapshot();
+
+    expect(projected.accessSources).toContainEqual(expect.objectContaining({ id: "matrix_included" }));
+    expect(projected.harnesses).toContainEqual(expect.objectContaining({
+      id: "harness_opencode_matrix",
+      enabled: false,
+      connectivity: "offline",
+      accessSourceId: null,
+      routeAvailability: "catalog_unavailable",
+    }));
   });
 
   it("normalizes a persisted legacy Claude driver to canonical inventory for projection and login", async () => {

@@ -295,6 +295,11 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByLabelText("Model provider")).toHaveValue("anthropic");
     expect(screen.getByLabelText("Model")).toHaveValue("anthropic/claude-opus-5");
     expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Personal Anthropic subscription");
+    expect(screen.getByRole("heading", { name: "Choose the model" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Choose how this route is funded" })).toBeVisible();
+    expect(screen.getByLabelText("Paid through")).toHaveValue("owner_anthropic_profile");
+    expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Paid through");
+    expect(screen.getByText(/Matrix AI appears under Paid through/)).toBeVisible();
   });
 
   it("switches a generic harness to another provider as one coherent route intent", () => {
@@ -323,7 +328,7 @@ describe("AgentsProvidersView", () => {
     next.gatewayPolicy!.allowedModelIds = ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"];
     const { onMutate } = setup({ snapshot: next });
 
-    fireEvent.change(screen.getByLabelText("Access source"), { target: { value: "owner_anthropic_profile" } });
+    fireEvent.change(screen.getByLabelText("Paid through"), { target: { value: "owner_anthropic_profile" } });
     fireEvent.change(screen.getByLabelText("Account"), { target: { value: "account_work" } });
     fireEvent.change(screen.getByLabelText("Account"), { target: { value: "" } });
 
@@ -400,7 +405,7 @@ describe("AgentsProvidersView", () => {
     fireEvent.change(within(dialog).getByLabelText("Model"), {
       target: { value: "anthropic/claude-sonnet-5" },
     });
-    const sources = within(dialog).getByLabelText("Access source");
+    const sources = within(dialog).getByLabelText("Paid through");
 
     expect(within(sources).getByRole("option", {
       name: "Work Anthropic key · authentication required",
@@ -592,6 +597,30 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByRole("button", { name: "Add harness" })).toBeDisabled();
   });
 
+  it("shows a failed saved route even when it is absent from the selectable catalog", () => {
+    const base = snapshot();
+    Object.assign(base.harnesses[0]!, {
+      connectivity: "offline",
+      authState: "failed",
+      accessSourceId: null,
+      selectedAccountId: null,
+      routeAvailability: "catalog_unavailable",
+      route: {
+        kind: "configurable",
+        providerId: "baseten",
+        modelId: "baseten:zai-org/GLM-5.3",
+      },
+    });
+
+    setup({ snapshot: base });
+
+    expect(within(screen.getByLabelText("Model provider"))
+      .getByRole("option", { name: "Baseten · Unavailable" })).toBeVisible();
+    expect(within(screen.getByLabelText("Model"))
+      .getByRole("option", { name: "GLM 5.3 · Unavailable" })).toBeVisible();
+    expect(screen.getByText("Saved model catalog unavailable")).toBeVisible();
+  });
+
   it("keeps unsupported future account and credit actions visible but explanatory and disabled", () => {
     const limited = snapshot();
     Object.assign(limited, {
@@ -647,18 +676,119 @@ describe("AgentsProvidersView", () => {
 
     expect(within(within(dialog).getByLabelText("Model provider"))
       .queryByRole("option", { name: "OpenAI" })).toBeNull();
-    expect(within(within(dialog).getByLabelText("Access source"))
+    expect(within(within(dialog).getByLabelText("Paid through"))
       .getByRole("option", { name: "Matrix AI included credit" })).toBeVisible();
-    expect(within(within(dialog).getByLabelText("Access source"))
+    expect(within(within(dialog).getByLabelText("Paid through"))
       .queryByRole("option", { name: "Personal Anthropic subscription" })).toBeNull();
 
     fireEvent.change(within(dialog).getByLabelText("Model"), {
       target: { value: "anthropic/claude-sonnet-5" },
     });
-    expect(within(within(dialog).getByLabelText("Access source"))
+    expect(within(within(dialog).getByLabelText("Paid through"))
       .getByRole("option", { name: "Work Anthropic key · authentication required" })).toBeVisible();
-    expect(within(within(dialog).getByLabelText("Access source"))
+    expect(within(within(dialog).getByLabelText("Paid through"))
       .queryByRole("option", { name: "Personal Anthropic subscription" })).toBeNull();
+  });
+
+  it("offers a harness-owned OpenCode catalog as real provider and model choices", () => {
+    const native = snapshot();
+    Object.assign(native.harnesses[0]!, {
+      harness: "opencode",
+      displayName: "OpenCode",
+      route: { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
+      accessSourceId: "matrix_included",
+      selectedAccountId: null,
+    });
+    native.modelProviders.push({
+      id: "baseten",
+      displayName: "Baseten",
+      models: [
+        { id: "baseten:deepseek-ai/DeepSeek-V4-Pro", displayName: "DeepSeek V4 Pro", enabled: true },
+        { id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true },
+      ],
+    });
+    native.accessSources.push({
+      id: "harness_opencode_baseten",
+      kind: "harness_profile",
+      harness: "opencode",
+      fundingKind: "owner_account",
+      providerId: "baseten",
+      accountId: null,
+      displayName: "OpenCode account",
+      readiness: {
+        state: "ready",
+        checkedAt: now,
+        staleAfter: later,
+        action: "none",
+        safeReason: null,
+      },
+      eligibleModelIds: [
+        "baseten:deepseek-ai/DeepSeek-V4-Pro",
+        "baseten:zai-org/GLM-5.3",
+      ],
+      usage: {
+        kind: "unavailable",
+        authority: "unavailable",
+        state: "not_applicable",
+        scope: "access_source",
+        reason: "provider_does_not_report",
+        asOf: now,
+      },
+    });
+    const { onMutate } = setup({ snapshot: native });
+    expect(within(screen.getByLabelText("Model provider"))
+      .getByRole("option", { name: "Baseten" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Model provider"), { target: { value: "baseten" } });
+    expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({
+      type: "set_route",
+      harnessInstanceId: "harness_hermes",
+      route: { kind: "configurable", providerId: "baseten", modelId: "baseten:deepseek-ai/DeepSeek-V4-Pro" },
+      accessSourceId: "harness_opencode_baseten",
+      accountId: null,
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
+    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "OpenCode" }));
+
+    expect(within(within(dialog).getByLabelText("Model provider"))
+      .getByRole("option", { name: "Baseten" })).toBeVisible();
+    fireEvent.change(within(dialog).getByLabelText("Model provider"), {
+      target: { value: "baseten" },
+    });
+    expect(within(within(dialog).getByLabelText("Model"))
+      .getByRole("option", { name: "DeepSeek V4 Pro" })).toBeVisible();
+    expect(within(within(dialog).getByLabelText("Paid through"))
+      .getByRole("option", { name: "OpenCode account" })).toBeVisible();
+  });
+
+  it("keeps a failed live route visible while its access source is unavailable", () => {
+    const unavailable = snapshot();
+    Object.assign(unavailable.harnesses[0]!, {
+      harness: "opencode",
+      displayName: "OpenCode",
+      connectivity: "offline",
+      authState: "unknown",
+      route: {
+        kind: "configurable",
+        providerId: "baseten",
+        modelId: "baseten:zai-org/GLM-5.3",
+      },
+      accessSourceId: null,
+      selectedAccountId: null,
+    });
+    unavailable.modelProviders.push({
+      id: "baseten",
+      displayName: "Baseten",
+      models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true }],
+    });
+
+    setup({ snapshot: unavailable });
+
+    expect(screen.getByLabelText("Model provider")).toHaveValue("baseten");
+    expect(within(screen.getByLabelText("Model provider"))
+      .getByRole("option", { name: "Baseten" })).toBeVisible();
+    expect(screen.getByLabelText("Model")).toHaveValue("baseten:zai-org/GLM-5.3");
+    expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Not selected");
   });
 
   it("adds a second instance of an existing harness with its own route and account", () => {
@@ -693,7 +823,7 @@ describe("AgentsProvidersView", () => {
       target: { value: "anthropic/claude-sonnet-5" },
     });
 
-    expect(within(within(dialog).getByLabelText("Access source"))
+    expect(within(within(dialog).getByLabelText("Paid through"))
       .queryByRole("option", { name: "Matrix AI included credit" })).toBeNull();
   });
 });

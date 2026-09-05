@@ -164,6 +164,7 @@
 .matrix-ap-field { color: var(--matrix-ap-muted); display: flex; flex-direction: column; font-size: 11px; font-weight: 600; gap: 6px; }
 .matrix-ap-field input,
 .matrix-ap-field select,
+.matrix-ap-readonly-value,
 .matrix-ap-money-input {
   background: var(--matrix-ap-overlay);
   border: 1px solid var(--matrix-ap-border-strong);
@@ -175,6 +176,7 @@
   padding: 0 10px;
   width: 100%;
 }
+.matrix-ap-readonly-value { align-items: center; display: flex; }
 .matrix-ap-field input:disabled,
 .matrix-ap-field select:disabled { color: var(--matrix-ap-faint); opacity: 0.68; }
 .matrix-ap-accents { border: 0; margin: 0; padding: 0; }
