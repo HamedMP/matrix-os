@@ -125,6 +125,17 @@ describe("self-host server installer", () => {
     expect(script).not.toContain("grep '^MATRIX_CODE_PROXY_TOKEN='");
   });
 
+  it("installs the terminal-runtime user units and reloads the matrix user manager", () => {
+    const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
+
+    expect(script).toContain("install -d -o root -g root -m 0755 /etc/systemd/user");
+    expect(script).toContain('install -o root -g root -m 0644 "/opt/matrix/user-systemd/$unit" "/etc/systemd/user/$unit"');
+    expect(script).toContain("matrix-zellij@.service matrix-terminal.slice");
+    expect(script).toContain("loginctl enable-linger matrix");
+    expect(script).toContain('systemctl start "user@${matrix_uid}.service"');
+    expect(script).toContain('systemctl --user daemon-reload');
+  });
+
   it("installs the core Matrix services without enabling managed-cloud backup requirements", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
