@@ -18,7 +18,7 @@ export default function SearchScreen() {
       <View style={styles.list}>
         <ListRow title="matrix-os" detail="Folder · Projects" icon={Folder01Icon} onPress={() => router.push({ pathname: "/file-browser", params: { folder: "Projects" } } as never)} />
         <ListRow title="solar-vale" detail="Active terminal" icon={ComputerTerminal01Icon} accent={mockColors.blueSoft} onPress={() => router.push({ pathname: "/terminal-session/[session]", params: { session: "solar-vale" } } as never)} />
-        <ListRow title="Notes" detail="Installed app" icon={FileTextIcon} accent="#FFF1DD" onPress={() => router.push({ pathname: "/app-preview/[app]", params: { app: "Notes" } } as never)} />
+        <ListRow title="Notes" detail="Installed app" icon={FileTextIcon} accent={mockColors.warmSurface} onPress={() => router.push({ pathname: "/app-preview/[app]", params: { app: "Notes" } } as never)} />
       </View>
     </MockPage>
   );

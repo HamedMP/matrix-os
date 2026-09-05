@@ -141,6 +141,8 @@ export const semanticColors = {
   success: palette.teal[500],
   highlight: palette.gold[400],
   info: palette.blue[500],
+  danger: palette.coral[600],
+  disabledSurface: palette.neutral[300],
 } as const;
 
 export const fonts = {

@@ -12,6 +12,9 @@ export const mockColors = {
   blue: semanticColors.info,
   blueSoft: palette.blue[50],
   green: semanticColors.success,
+  danger: semanticColors.danger,
+  disabledSurface: semanticColors.disabledSurface,
+  warmSurface: palette.gold[100],
   terminal: "#161817",
   terminalInk: "#D9F7DE",
 } as const;

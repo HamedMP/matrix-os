@@ -251,7 +251,7 @@ export default function ChatScreen() {
                   icon={ArrowUp01Icon}
                   iconSize={19}
                   iconColor={mockColors.surface}
-                  backgroundColor={canSend || busy ? mockColors.blue : "#B7BAB7"}
+                  backgroundColor={canSend || busy ? mockColors.blue : mockColors.disabledSurface}
                   loading={busy}
                   disabled={!canSend}
                   onPress={send}
@@ -264,7 +264,7 @@ export default function ChatScreen() {
               icon={ArrowUp01Icon}
               iconSize={19}
               iconColor={mockColors.surface}
-              backgroundColor={canSend || busy ? mockColors.blue : "#B7BAB7"}
+              backgroundColor={canSend || busy ? mockColors.blue : mockColors.disabledSurface}
               loading={busy}
               disabled={!canSend}
               onPress={send}
@@ -507,7 +507,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   activityTextFailed: {
-    color: "#B3402C",
+    color: mockColors.danger,
   },
   activityPreview: {
     fontStyle: "normal",
