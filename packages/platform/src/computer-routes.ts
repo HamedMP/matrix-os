@@ -135,7 +135,7 @@ function computerVersionLabel(imageVersion: string | null): MatrixComputerVersio
   return releaseDate ? `v${releaseDate}` as MatrixComputerVersionLabel : 'Version pending';
 }
 
-function projectComputer(machine: UserRuntimeComputerRecord): MatrixComputer | null {
+export function projectComputer(machine: UserRuntimeComputerRecord): MatrixComputer | null {
   const preview = isPreviewMachine(machine);
   const parsed = MatrixComputerSchema.safeParse({
     handle: machine.handle,
