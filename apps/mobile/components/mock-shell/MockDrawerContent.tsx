@@ -1,9 +1,12 @@
-import { Fragment, useEffect } from "react";
+import { Fragment, useEffect, useState } from "react";
+import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
+import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 import GridViewIcon from "@hugeicons/core-free-icons/GridViewIcon";
 import Message01Icon from "@hugeicons/core-free-icons/Message01Icon";
 import PencilEdit02Icon from "@hugeicons/core-free-icons/PencilEdit02Icon";
+import PlusSignIcon from "@hugeicons/core-free-icons/PlusSignIcon";
 import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
 import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
@@ -20,6 +23,7 @@ import { DrawerContentScrollView, type DrawerContentComponentProps } from "expo-
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
 import { Icon, IconButton, Spacer, Text, type IconData } from "@/components/ui";
+import type { ProjectSummary } from "@/lib/requests";
 import { designShadows, palette, semanticColors } from "@/lib/theme";
 import { mockColors } from "./theme";
 
@@ -34,20 +38,27 @@ interface MockDrawerContentProps extends DrawerContentComponentProps {
   computerName: string;
   recentChats: CanonicalChatRecord[];
   recentChatsLoading: boolean;
+  projects: ProjectSummary[];
   activeSessionId: string | null;
   onSelectConversation: (id: string) => void;
-  onNewConversation: () => void;
+  /** Pass a projectId to start the new chat pre-scoped to that Project. */
+  onNewConversation: (projectId?: string | null) => void;
 }
 
 export function MockDrawerContent({
   computerName,
   recentChats,
   recentChatsLoading,
+  projects,
   activeSessionId,
   onSelectConversation,
   onNewConversation,
   ...props
 }: MockDrawerContentProps) {
+  // Accordion-style (one open at a time) rather than desktop's independent
+  // expand/collapse per project -- simpler to scan on a small screen.
+  const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
+
   function navigate(route: string) {
     props.navigation.navigate(route);
     props.navigation.closeDrawer();
@@ -58,10 +69,12 @@ export function MockDrawerContent({
     navigate("index");
   }
 
-  function newChat() {
-    onNewConversation();
+  function newChat(projectId?: string | null) {
+    onNewConversation(projectId);
     navigate("index");
   }
+
+  const unassignedChats = recentChats.filter((record) => !record.projectId);
 
   return (
     <View style={styles.root}>
@@ -120,17 +133,100 @@ export function MockDrawerContent({
           );
         })}
 
+        {projects.length > 0 ? (
+          <>
+            <Spacer size="xl" />
+            <View style={styles.padded}>
+              <Text size="overline" tone="subtle">Projects</Text>
+            </View>
+            <Spacer size="sm" />
+
+            {projects.map((project, index) => {
+              const expanded = expandedProjectId === project.id;
+              const projectChats = recentChats.filter((record) => record.projectId === project.id);
+              return (
+                <Fragment key={project.id}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded }}
+                    accessibilityLabel={`${project.name} project`}
+                    onPress={() => setExpandedProjectId(expanded ? null : project.id)}
+                    style={({ pressed }) => [styles.padded, styles.projectRow, pressed && styles.pressed]}
+                  >
+                    <View style={[styles.itemContainer, styles.projectItemContainer]}>
+                      <Icon icon={Folder01Icon} size={20} color={mockColors.ink} style={styles.itemIcon} />
+                      <Text size="body" numberOfLines={1}>{project.name}</Text>
+                    </View>
+                    <Icon
+                      icon={expanded ? ArrowDown01Icon : ArrowRight01Icon}
+                      size={16}
+                      color={mockColors.muted}
+                    />
+                  </Pressable>
+
+                  {expanded ? (
+                    <View style={styles.projectChats}>
+                      {projectChats.length === 0 ? (
+                        <View style={styles.padded}>
+                          <Text size="muted" tone="subtle">No chats yet</Text>
+                        </View>
+                      ) : projectChats.map((record) => {
+                        const label = record.chat.title.trim()
+                          || record.chat.lastMessagePreview?.trim()
+                          || "New chat";
+                        const active = record.chat.id === activeSessionId;
+                        return (
+                          <Pressable
+                            key={record.chat.id}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            accessibilityLabel={`Open recent chat ${label}`}
+                            onPress={() => openChat(record.chat.id)}
+                            style={({ pressed }) => [
+                              styles.padded,
+                              styles.recentChatRow,
+                              active && styles.recentChatRowActive,
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                            <View style={styles.itemContainer}>
+                              <Icon icon={Message01Icon} size={18} color={mockColors.ink} style={styles.itemIcon} />
+                              <Text size="body" numberOfLines={1}>{label}</Text>
+                            </View>
+                          </Pressable>
+                        );
+                      })}
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`New chat in ${project.name}`}
+                        onPress={() => newChat(project.id)}
+                        style={({ pressed }) => [styles.padded, styles.recentChatRow, pressed && styles.pressed]}
+                      >
+                        <View style={styles.itemContainer}>
+                          <Icon icon={PlusSignIcon} size={16} color={mockColors.muted} style={styles.itemIcon} />
+                          <Text size="muted" tone="subtle">New chat</Text>
+                        </View>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                  {index < projects.length - 1 ? <Spacer size="sm" /> : null}
+                </Fragment>
+              );
+            })}
+          </>
+        ) : null}
+
         <Spacer size="xl" />
         <View style={styles.padded}>
           <Text size="overline" tone="subtle">Recents</Text>
         </View>
         <Spacer size="sm" />
 
-        {recentChatsLoading ? <RecentChatsSkeleton /> : recentChats.length === 0 ? (
+        {recentChatsLoading ? <RecentChatsSkeleton /> : unassignedChats.length === 0 ? (
           <View style={styles.padded}>
             <Text size="muted" tone="subtle">No chats yet</Text>
           </View>
-        ) : recentChats.map((record, index) => {
+        ) : unassignedChats.map((record, index) => {
           const label = record.chat.title.trim()
             || record.chat.lastMessagePreview?.trim()
             || "New chat";
@@ -159,7 +255,7 @@ export function MockDrawerContent({
                   <Text size="body" numberOfLines={1}>{label}</Text>
                 </View>
               </Pressable>
-              {index < recentChats.length - 1 ? <Spacer size="sm" /> : null}
+              {index < unassignedChats.length - 1 ? <Spacer size="sm" /> : null}
             </Fragment>
           );
         })}
@@ -169,7 +265,7 @@ export function MockDrawerContent({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="New chat"
-        onPress={newChat}
+        onPress={() => newChat()}
         style={({ pressed }) => [styles.newChat, pressed && styles.pressed]}
       >
         <Spacer size="sm" />
@@ -255,6 +351,22 @@ const styles = StyleSheet.create({
   },
   itemIcon: {
     marginRight: 8,
+  },
+  projectRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: 10,
+    paddingVertical: 6,
+  },
+  projectItemContainer: {
+    flex: 1,
+    marginRight: 8,
+  },
+  projectChats: {
+    paddingLeft: 20,
+    gap: 4,
+    marginTop: 4,
   },
   recentChatRow: {
     borderRadius: 10,

@@ -22,8 +22,12 @@ interface CanonicalChatSessionContextValue {
   activeChatId: string | null;
   /** User-driven: opens an existing chat. */
   selectChat: (id: string) => void;
-  /** User-driven: starts a blank draft — no chat is created until the first send. */
-  startDraftChat: () => void;
+  /**
+   * User-driven: starts a blank draft — no chat is created until the first
+   * send. Pass a projectId to pre-select it (e.g. "New chat" from within a
+   * project's section in the drawer).
+   */
+  startDraftChat: (projectId?: string | null) => void;
   /**
    * Binds the id of a chat the draft flow just lazily created on first send —
    * unlike `selectChat`, this does not reset `selectionOverride` (the
@@ -125,10 +129,10 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
     setSelectedProjectId(null);
   }, []);
 
-  const startDraftChat = useCallback(() => {
+  const startDraftChat = useCallback((projectId: string | null = null) => {
     setActiveChatId(null);
     setSelectionOverride(null);
-    setSelectedProjectId(null);
+    setSelectedProjectId(projectId);
   }, []);
 
   const bindDraftChatId = useCallback((id: string) => {

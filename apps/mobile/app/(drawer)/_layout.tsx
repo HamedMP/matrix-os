@@ -8,6 +8,7 @@ import { MockDrawerContent } from "@/components/mock-shell/MockDrawerContent";
 import { mockColors } from "@/components/mock-shell/theme";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
+import { useProjects } from "@/lib/queries/use-projects";
 import { semanticColors } from "@/lib/theme";
 
 function triggerDrawerHaptic() {
@@ -23,6 +24,7 @@ function triggerDrawerHaptic() {
 
 export default function DrawerLayout() {
   const { computer, chats, isPending: recentChatsLoading } = useCanonicalChats();
+  const { projects } = useProjects();
   const { activeChatId, selectChat, startDraftChat } = useCanonicalChatSession();
   const computerName = computer?.handle ?? (recentChatsLoading ? "Loading…" : "Not connected");
 
@@ -38,6 +40,7 @@ export default function DrawerLayout() {
           computerName={computerName}
           recentChats={chats}
           recentChatsLoading={recentChatsLoading}
+          projects={projects}
           activeSessionId={activeChatId}
           onSelectConversation={selectChat}
           onNewConversation={startDraftChat}
