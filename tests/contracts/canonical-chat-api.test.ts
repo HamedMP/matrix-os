@@ -4,6 +4,7 @@ import {
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatListResponseSchema,
@@ -104,6 +105,26 @@ describe("canonical Chat API contracts", () => {
       .toEqual({ pinned: true });
     expect(CanonicalUpdateChatUserStateRequestSchema.safeParse({
       pinned: true,
+      ownerId: "other_owner",
+    }).success).toBe(false);
+  });
+
+  it("accepts only bounded, non-empty revision-guarded Chat titles", () => {
+    expect(CanonicalUpdateChatTitleRequestSchema.parse({
+      baseRevision: 4,
+      title: "  Release plan  ",
+    })).toEqual({ baseRevision: 4, title: "Release plan" });
+    expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
+      baseRevision: 4,
+      title: "   ",
+    }).success).toBe(false);
+    expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
+      baseRevision: 4,
+      title: "x".repeat(161),
+    }).success).toBe(false);
+    expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
+      baseRevision: 4,
+      title: "Release plan",
       ownerId: "other_owner",
     }).success).toBe(false);
   });

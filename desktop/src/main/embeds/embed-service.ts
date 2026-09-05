@@ -164,9 +164,7 @@ export class EmbedService {
   }
 
   setActive(embedId: string, active: boolean): boolean {
-    const pending = this.pendingHostedShells.has(embedId)
-      || this.pendingCodeEditors.has(embedId)
-      || this.pendingApps.has(embedId);
+    const pending = this.isPending(embedId);
     if (pending) {
       this.pendingActive.set(embedId, active);
     }
@@ -174,6 +172,15 @@ export class EmbedService {
       this.scheduleHostedShellSessionRefresh(this.deps.getGatewayOrigin());
     }
     return this.manager.setActive(embedId, active) || pending;
+  }
+
+  async deactivate(embedId: string): Promise<{ ok: boolean; snapshotDataUrl: string | null }> {
+    const pending = this.isPending(embedId);
+    if (pending) {
+      this.pendingActive.set(embedId, false);
+      return { ok: true, snapshotDataUrl: null };
+    }
+    return this.manager.deactivate(embedId);
   }
 
   suspendAll(): boolean {
@@ -184,6 +191,9 @@ export class EmbedService {
       this.pendingActive.set(embedId, false);
     }
     for (const embedId of this.pendingCodeEditors.keys()) {
+      this.pendingActive.set(embedId, false);
+    }
+    for (const embedId of this.pendingBrowsers) {
       this.pendingActive.set(embedId, false);
     }
     return this.manager.suspendAll();
@@ -332,6 +342,7 @@ export class EmbedService {
 
     const generation = this.browserGeneration;
     this.pendingBrowsers.add(embedId);
+    this.pendingActive.set(embedId, active);
     const startPortForward = this.deps.startPortForward ?? startMatrixPortForward;
     let forward: PortForwardHandle;
     try {
@@ -345,6 +356,7 @@ export class EmbedService {
       });
     } catch (err: unknown) {
       this.pendingBrowsers.delete(embedId);
+      this.pendingActive.delete(embedId);
       console.warn(
         "[embed-service] runtime browser tunnel failed:",
         err instanceof Error ? err.message : String(err),
@@ -353,6 +365,8 @@ export class EmbedService {
     }
 
     const stillPending = this.pendingBrowsers.delete(embedId);
+    const resolvedActive = this.pendingActive.get(embedId) ?? active;
+    this.pendingActive.delete(embedId);
     if (generation !== this.browserGeneration || !stillPending) {
       void forward.close().catch((err: unknown) => {
         console.warn(
@@ -376,7 +390,7 @@ export class EmbedService {
     try {
       this.manager.open("browser", null, bounds, localUrl.toString(), {
         id: embedId,
-        active,
+        active: resolvedActive,
         allowedOrigins,
         resolveNavigation: (url) => resolveRuntimeBrowserNavigation(
           url,
@@ -395,6 +409,13 @@ export class EmbedService {
       return { embedId, state: "failed" };
     }
     return { embedId, state: "loading" };
+  }
+
+  private isPending(embedId: string): boolean {
+    return this.pendingHostedShells.has(embedId)
+      || this.pendingCodeEditors.has(embedId)
+      || this.pendingApps.has(embedId)
+      || this.pendingBrowsers.has(embedId);
   }
 
   private async openBrowser(

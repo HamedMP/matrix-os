@@ -9,19 +9,22 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 
 const activeBilling = {
   access: { runtimeProxyAllowed: true, reason: "active" },
+  trialOffer: { eligible: false, durationDays: 3 },
   entitlement: {
     source: "stripe",
-    clerkUserId: "user_test",
     planSlug: "matrix_builder",
     status: "active",
     maxRuntimeSlots: 2,
     includedRuntimeSlots: 1,
     addonRuntimeSlots: 1,
-    defaultServerType: "cpx32",
-    allowedServerTypes: ["cpx22", "cpx32"],
-    stripeSubscriptionId: "sub_123",
-    stripePriceId: "price_123",
+    allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+    portalAvailable: true,
+    billingInterval: "monthly",
     gracePeriodEndsAt: null,
+    trialStartedAt: null,
+    trialEndsAt: null,
+    trialConvertedAt: null,
+    firstTrialPaymentFailedAt: null,
     effectiveFrom: "2026-06-01T00:00:00.000Z",
     effectiveUntil: null,
     updatedAt: "2026-06-01T00:00:00.000Z",
@@ -87,6 +90,8 @@ describe("desktop billing settings", () => {
     expect(api.get).toHaveBeenCalledWith("/billing/status");
     expect(screen.getByText("Builder")).not.toBeNull();
     expect(screen.getByText("2 of 2")).not.toBeNull();
+    expect(screen.queryByText("Default machine")).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
   });
 
   it("opens the billing portal through the platform billing route", async () => {
@@ -104,7 +109,11 @@ describe("desktop billing settings", () => {
   });
 
   it("starts checkout with the selected native billing options", async () => {
-    const api = makeApi({ access: { runtimeProxyAllowed: false }, entitlement: null });
+    const api = makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+    });
     useConnection.setState({ api: api as never });
 
     render(<BillingSection />);
@@ -127,8 +136,9 @@ describe("desktop billing settings", () => {
 
   it("keeps the billing portal available for locked Stripe subscriptions", async () => {
     const api = makeApi({
-      access: { runtimeProxyAllowed: false, reason: "billing_required" },
+      access: { runtimeProxyAllowed: false, reason: "payment_required" },
       entitlement: { ...activeBilling.entitlement, status: "past_due" },
+      trialOffer: { eligible: false, durationDays: 3 },
     });
     useConnection.setState({ api: api as never });
 

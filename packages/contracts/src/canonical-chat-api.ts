@@ -102,6 +102,11 @@ export const CanonicalUpdateChatProjectRequestSchema = z.object({
   projectId: canonicalReferenceId(160).nullable(),
 }).strict();
 
+export const CanonicalUpdateChatTitleRequestSchema = z.object({
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  title: z.string().trim().min(1).max(160),
+}).strict();
+
 export const CanonicalUpdateChatUserStateRequestSchema = z.object({
   pinned: z.boolean(),
 }).strict();
@@ -333,6 +338,7 @@ export type CanonicalChatStreamEvent = z.infer<typeof CanonicalChatStreamEventSc
 export type CanonicalChatStreamClientFrame = z.infer<typeof CanonicalChatStreamClientFrameSchema>;
 export type CanonicalChatStreamServerFrame = z.infer<typeof CanonicalChatStreamServerFrameSchema>;
 export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateChatProjectRequestSchema>;
+export type CanonicalUpdateChatTitleRequest = z.infer<typeof CanonicalUpdateChatTitleRequestSchema>;
 export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdateChatUserStateRequestSchema>;
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;
 export type CanonicalQueueChatTurnRequest = z.infer<typeof CanonicalQueueChatTurnRequestSchema>;

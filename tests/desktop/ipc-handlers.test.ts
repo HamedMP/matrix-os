@@ -29,6 +29,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
       open: vi.fn(),
       setBounds: vi.fn(),
       setActive: vi.fn(),
+      deactivate: vi.fn(),
       suspendAll: vi.fn(),
       reload: vi.fn(),
       close: vi.fn(),
@@ -214,6 +215,20 @@ describe("registerIpcHandlers", () => {
       bounds: { x: 360, y: 57, width: 920, height: 764 },
       active: true,
     });
+  });
+
+  it("captures and detaches an embed through one validated IPC operation", async () => {
+    const harness = makeHarness();
+    vi.mocked(harness.ctx.embeds.deactivate).mockResolvedValue({
+      ok: true,
+      snapshotDataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+    });
+
+    await expect(harness.invoke("embed:deactivate", { embedId: "embed-1" })).resolves.toEqual({
+      ok: true,
+      snapshotDataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+    });
+    expect(harness.ctx.embeds.deactivate).toHaveBeenCalledWith("embed-1");
   });
 
   it("routes Browser embeds with only the validated tunnel URL fields", async () => {

@@ -139,6 +139,7 @@ interface TabsState {
     id: string,
     route: { chatId?: string; chatView: "index" | "draft" | "conversation"; title: string },
   ): void;
+  updateChatTitle(chatId: string, title: string): void;
   clearActiveTab(id: string): void;
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
@@ -252,6 +253,16 @@ export const useTabs = create<TabsState>()((set, get) => ({
           title: route.title,
           chatId: route.chatId,
           chatView: route.chatView,
+        }
+      : tab),
+  })),
+
+  updateChatTitle: (chatId, title) => set((state) => ({
+    tabs: state.tabs.map((tab) => tab.chatId === chatId
+      ? {
+          ...tab,
+          chatTitle: title,
+          ...(tab.kind === "chat" ? { title } : {}),
         }
       : tab),
   })),

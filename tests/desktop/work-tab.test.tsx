@@ -236,6 +236,13 @@ describe("WorkTab rail integration", () => {
     });
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
+      if (path === "/api/chats/chat_global?limit=200") return {
+        record: globalChat,
+        messages: [],
+        turns: [],
+        runs: [],
+        activities: [],
+      };
       if (path.startsWith("/api/chats")) return { items: [projectChat, globalChat] };
       throw new Error("Unexpected WorkTab test request");
     });
@@ -251,7 +258,17 @@ describe("WorkTab rail integration", () => {
           if (path === "/api/chats") return chat("chat_draft_terminal", "New chat");
           throw new Error("Unexpected WorkTab test request");
         }),
-        patch: vi.fn(),
+        patch: vi.fn(async (path: string, body: unknown) => {
+          if (path === "/api/chats/chat_global/title") return {
+            ...globalChat,
+            chat: {
+              ...globalChat.chat,
+              title: (body as { title: string }).title,
+              revision: globalChat.chat.revision + 1,
+            },
+          };
+          throw new Error("Unexpected WorkTab test request");
+        }),
         delete: vi.fn(),
       } as never,
     }, true);
@@ -670,7 +687,7 @@ describe("WorkTab rail integration", () => {
     render(<HostedWork />);
     await screen.findByText("Chat center");
 
-    const chromeTitle = screen.getByText("Global chat", { selector: "header span" });
+    const chromeTitle = screen.getByRole("button", { name: "Rename Global chat" });
     expect(chromeTitle).toBeTruthy();
     const hostedMainElement = screen.getByTestId("hosted-chat-main");
     const hostedMain = within(hostedMainElement);
@@ -694,6 +711,74 @@ describe("WorkTab rail integration", () => {
 
     fireEvent.click(hideInspector);
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
+  });
+
+  it("renames the active Chat from a single click on the center header", async () => {
+    function HostedWork() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return (
+        <SurfaceChromeContext.Provider value={host}>
+          <header>{chrome?.title}</header>
+          <WorkTab
+            tabId="work-chat"
+            route="chat"
+            active
+            initialChatId="chat_global"
+            initialChatTitle="Global chat"
+            initialChatView="conversation"
+          />
+        </SurfaceChromeContext.Provider>
+      );
+    }
+
+    render(<HostedWork />);
+    const trigger = await screen.findByRole("button", { name: "Rename Global chat" });
+    fireEvent.click(trigger);
+    const input = screen.getByRole("textbox", { name: "Rename Global chat" });
+    expect(input.className).toContain("pointer-events-auto");
+    (input as HTMLInputElement).setSelectionRange(4, 4);
+    fireEvent.click(input);
+    expect((input as HTMLInputElement).selectionStart).toBe(4);
+    expect(screen.getByRole("textbox", { name: "Rename Global chat" })).toBe(input);
+    fireEvent.change(input, { target: { value: "Release plan" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(useConnection.getState().api?.patch).toHaveBeenCalledWith(
+      "/api/chats/chat_global/title",
+      { baseRevision: 1, title: "Release plan" },
+    ));
+    expect(await screen.findByRole("button", { name: "Rename Release plan" })).toBeTruthy();
+  });
+
+  it("cancels a header rename with Escape without dismissing the medium inspector", async () => {
+    initialWorkWidth = 900;
+    function HostedWork() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return (
+        <SurfaceChromeContext.Provider value={host}>
+          <header>{chrome?.title}{chrome?.rightActions}</header>
+          <WorkTab
+            tabId="work-chat"
+            route="chat"
+            active
+            initialChatId="chat_global"
+            initialChatTitle="Global chat"
+            initialChatView="conversation"
+          />
+        </SurfaceChromeContext.Provider>
+      );
+    }
+
+    render(<HostedWork />);
+    fireEvent.click(await screen.findByRole("button", { name: "Show inspector" }));
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Rename Global chat" }));
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Rename Global chat" }), { key: "Escape" });
+
+    expect(screen.getByRole("button", { name: "Rename Global chat" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
   });
 
   it("uses the hosted main-pane width without adding the window sidebar", async () => {

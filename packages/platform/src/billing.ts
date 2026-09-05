@@ -1,6 +1,8 @@
 import {
   MATRIX_HOSTED_BILLING_PLANS,
+  MATRIX_HOSTED_BILLING_REGIONS,
   MATRIX_HOSTED_MACHINE_PROFILES,
+  type MatrixBillingPublicEntitlement,
   type MatrixHostedBillingRegionSlug,
 } from '@matrix-os/contracts';
 
@@ -59,6 +61,10 @@ export interface StripePriceCatalog {
 export interface StripeSubscriptionItemProjection {
   priceId: string;
   quantity?: number | null;
+  unitAmountMinor?: number | null;
+  currency?: string | null;
+  interval?: MatrixBillingInterval | null;
+  intervalCount?: number | null;
 }
 
 export interface StripeSubscriptionProjection {
@@ -118,6 +124,59 @@ export interface RuntimeAccessDecision {
   runtimeProxyAllowed: boolean;
   reason: 'active' | 'grace_period' | 'payment_required' | 'no_entitlement';
   gracePeriodEndsAt?: string | null;
+}
+
+export interface PublicBillingEntitlementDetails {
+  recurringPrice?: MatrixBillingPublicEntitlement['recurringPrice'];
+  runtimePlacement?: MatrixBillingPublicEntitlement['runtimePlacement'];
+}
+
+export function projectPublicBillingEntitlement(
+  entitlement: BillingEntitlement,
+  runtimeCatalog: RuntimeCatalog,
+  details: PublicBillingEntitlementDetails = {},
+): MatrixBillingPublicEntitlement {
+  const entitledPlan = entitlement.source === 'stripe' && entitlement.planSlug !== 'internal'
+    ? getPlanDefinition(entitlement.planSlug)
+    : undefined;
+  const allowedServerTypes = new Set(entitlement.allowedServerTypes.map((serverType) => serverType.toLowerCase()));
+  const candidatePlans = entitledPlan
+    ? DEFAULT_BILLING_PLAN_DEFINITIONS
+      .filter((plan) => plan.rank <= entitledPlan.rank)
+    : DEFAULT_BILLING_PLAN_DEFINITIONS
+  const allowedSelections = candidatePlans.flatMap((plan) =>
+    MATRIX_HOSTED_BILLING_REGIONS.flatMap((region) => {
+      const serverType = resolveServerType(runtimeCatalog, plan.defaultCatalogSku, region.slug);
+      if (!serverType || (!entitledPlan && !allowedServerTypes.has(serverType.toLowerCase()))) return [];
+      return [{ planSlug: plan.slug, regionSlug: region.slug }];
+    }),
+  );
+  const allowedPlanSlugs = candidatePlans
+    .filter((plan) => allowedSelections.some((selection) => selection.planSlug === plan.slug))
+    .map((plan) => plan.slug);
+
+  return {
+    source: entitlement.source,
+    planSlug: entitlement.planSlug,
+    status: entitlement.status,
+    maxRuntimeSlots: entitlement.maxRuntimeSlots,
+    includedRuntimeSlots: entitlement.includedRuntimeSlots,
+    addonRuntimeSlots: entitlement.addonRuntimeSlots,
+    allowedPlanSlugs,
+    allowedSelections,
+    portalAvailable: entitlement.source === 'stripe' && entitlement.stripeSubscriptionId !== null,
+    billingInterval: entitlement.billingInterval ?? null,
+    recurringPrice: details.recurringPrice ?? null,
+    runtimePlacement: details.runtimePlacement ?? null,
+    gracePeriodEndsAt: entitlement.gracePeriodEndsAt,
+    trialStartedAt: entitlement.trialStartedAt ?? null,
+    trialEndsAt: entitlement.trialEndsAt ?? null,
+    trialConvertedAt: entitlement.trialConvertedAt ?? null,
+    firstTrialPaymentFailedAt: entitlement.firstTrialPaymentFailedAt ?? null,
+    effectiveFrom: entitlement.effectiveFrom,
+    effectiveUntil: entitlement.effectiveUntil,
+    updatedAt: entitlement.updatedAt,
+  };
 }
 
 export const DEFAULT_BILLING_PLAN_DEFINITIONS: BillingPlanDefinition[] =

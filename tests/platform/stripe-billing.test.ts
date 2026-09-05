@@ -193,6 +193,28 @@ describe('platform/stripe-billing', () => {
     });
   });
 
+  it('retrieves the authoritative recurring amount for legacy subscriptions', async () => {
+    const pricesRetrieve = vi.fn().mockResolvedValue({
+      id: 'price_legacy_builder_monthly',
+      unit_amount: 2000,
+      currency: 'usd',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ prices: { retrieve: pricesRetrieve } }),
+    });
+
+    await expect(client.retrieveRecurringPrice('price_legacy_builder_monthly')).resolves.toEqual({
+      priceId: 'price_legacy_builder_monthly',
+      unitAmountMinor: 2000,
+      currency: 'usd',
+      interval: 'monthly',
+      intervalCount: 1,
+    });
+    expect(pricesRetrieve).toHaveBeenCalledWith('price_legacy_builder_monthly');
+  });
+
   it('creates portal sessions with a platform return URL', async () => {
     const portalCreate = vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' });
     const client = createStripeBillingClient({
@@ -283,6 +305,7 @@ describe('platform/stripe-billing', () => {
 function fakeStripe(overrides: Record<string, unknown>) {
   return {
     checkout: { sessions: { create: vi.fn() } },
+    prices: { retrieve: vi.fn() },
     billingPortal: { sessions: { create: vi.fn() } },
     webhooks: { constructEvent: vi.fn() },
     ...overrides,

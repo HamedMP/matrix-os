@@ -56,6 +56,12 @@ describe("Codex structured event normalization", () => {
         "0.153.0": {
           schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
+        "0.153.2": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        "0.153.3": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
       },
     });
     expect(codexExecContractStatus("codex-cli 0.144.1")).toEqual({
@@ -113,6 +119,14 @@ describe("Codex structured event normalization", () => {
     expect(codexExecContractStatus("codex-cli 0.153.0")).toEqual({
       status: "verified",
       version: "0.153.0",
+    });
+    expect(codexExecContractStatus("codex-cli 0.153.2")).toEqual({
+      status: "verified",
+      version: "0.153.2",
+    });
+    expect(codexExecContractStatus("codex-cli 0.153.3")).toEqual({
+      status: "verified",
+      version: "0.153.3",
     });
     expect(codexExecContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",

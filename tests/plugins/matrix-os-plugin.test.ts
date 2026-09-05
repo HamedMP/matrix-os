@@ -10,6 +10,26 @@ async function jsonFile(path: string) {
 }
 
 describe("Matrix OS coding-agent plugin", () => {
+  it("exposes the same plugin through Codex and Claude marketplaces", async () => {
+    const codex = await jsonFile(".codex-plugin/plugin.json");
+    const claude = await jsonFile(".claude-plugin/plugin.json");
+    expect(claude).toMatchObject({
+      name: codex.name,
+      version: codex.version,
+      skills: "./skills/",
+      mcpServers: "./.mcp.json",
+    });
+    expect(claude).not.toHaveProperty("interface");
+    const catalog = JSON.parse(await readFile(resolve(root, ".claude-plugin/marketplace.json"), "utf8"));
+    expect(catalog).toMatchObject({
+      name: "matrix-os",
+      owner: { name: "Matrix OS" },
+      plugins: [{ name: "matrix-os", source: "./plugins/matrix-os" }],
+    });
+    const codexCatalog = JSON.parse(await readFile(resolve(root, ".agents/plugins/marketplace.json"), "utf8"));
+    expect(codexCatalog.plugins[0].source.path).toBe(catalog.plugins[0].source);
+  });
+
   it("ships a manifest-linked hosted HTTP MCP server without local credentials", async () => {
     const manifest = await jsonFile(".codex-plugin/plugin.json");
     const mcp = await jsonFile(".mcp.json");

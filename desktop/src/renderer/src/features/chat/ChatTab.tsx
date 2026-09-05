@@ -387,6 +387,7 @@ export function ChatUnavailableState({ onRetry }: { onRetry: () => void }) {
 
 export default function ChatTab({
   active = true,
+  visible = active,
   tabId,
   initialChatId,
   initialView,
@@ -397,6 +398,7 @@ export default function ChatTab({
   eventSource,
 }: {
   active?: boolean;
+  visible?: boolean;
   tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
@@ -417,6 +419,7 @@ export default function ChatTab({
       initialChatId={initialChatId}
       initialView={initialView}
       active={active}
+      live={visible}
       eventSource={eventSource}
       externalNavigation={externalNavigation}
       renderInspector={renderInspector}
