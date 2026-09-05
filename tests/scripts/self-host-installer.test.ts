@@ -134,6 +134,10 @@ describe("self-host server installer", () => {
     expect(script).toContain("loginctl enable-linger matrix");
     expect(script).toContain('systemctl start "user@${matrix_uid}.service"');
     expect(script).toContain('systemctl --user daemon-reload');
+    expect(script).toContain("install -o root -g root -m 0755 /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs /usr/local/bin/matrix-terminal-attach");
+    expect(script.indexOf("install_terminal_runtime_user_units")).toBeLessThan(
+      script.indexOf("start_services"),
+    );
   });
 
   it("installs the core Matrix services without enabling managed-cloud backup requirements", () => {

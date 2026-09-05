@@ -536,6 +536,10 @@ install_terminal_runtime_user_units() {
       || fail "bundled terminal runtime unit is missing or unsafe: $unit"
     install -o root -g root -m 0644 "/opt/matrix/user-systemd/$unit" "/etc/systemd/user/$unit"
   done
+  [ -x /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs ] \
+    || fail "bundled terminal runtime attach helper is missing or not executable"
+  install -d -o root -g root -m 0755 /usr/local/bin
+  install -o root -g root -m 0755 /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs /usr/local/bin/matrix-terminal-attach
 
   matrix_uid="$(id -u matrix)"
   run_required "enabling Matrix user linger" loginctl enable-linger matrix
