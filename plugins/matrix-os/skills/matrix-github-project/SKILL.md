@@ -5,12 +5,22 @@ description: Clone, verify, reuse, and change GitHub repositories in observable 
 
 # Work on GitHub Projects in Matrix OS
 
-Authenticate and inspect everything on the Matrix VPS, preserve existing work, and push or open a PR only when explicitly requested.
+Authenticate and inspect everything on the Matrix VPS, preserve existing work, and push or open a PR only when explicitly requested. Prefer Matrix MCP tools and retain the CLI fallback for authentication and recovery.
 
-## Session policy
+## MCP-first execution
+
+1. Call `list_computers` and target one explicit `runtimeSlot` for every operation.
+2. Use `run_command` argv arrays for repository probes, Git operations, tests, and other work that needs captured output.
+3. Use `create_terminal`, `create_terminal_tab`, `select_terminal_tab`, and `send_terminal_input` for long-running or user-observable work. Report the terminal/tab identity.
+4. Use bounded file tools only for Matrix-home content; never move local credentials or accept arbitrary local paths.
+5. Use read-only chat tools when a prior Matrix chat is necessary to recover project context.
+
+If MCP reports `auth_required` or the tools are absent, authenticate or continue through the CLI fallback below.
+
+## CLI fallback session policy
 
 - Always run remote work with `matrix run -it --session <session-name> ... -- <argv...>`.
-- Never create or use shell tabs. Create a separate uniquely named session for every additional command, terminal, or concurrent task.
+- When using the CLI fallback, create a separate uniquely named session for every additional command, terminal, or concurrent task because the current CLI workflow does not address tabs directly.
 - Use collision-resistant names such as `readiness-github-<suffix>`, `inspect-<repo>-<suffix>`, `clone-<repo>-<suffix>`, and `task-<slug>-<suffix>`.
 - Report every session name and its `matrix shell connect <session-name>` command.
 - Pass arguments after `--`; never interpolate user input into a shell string.

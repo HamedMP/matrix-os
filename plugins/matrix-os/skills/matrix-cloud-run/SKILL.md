@@ -5,12 +5,22 @@ description: Run commands and coding-agent tasks in observable Matrix OS session
 
 # Run Work on Matrix OS
 
-Execute every remote workflow in a uniquely named Matrix CLI session so the user can observe and reattach it.
+Use Matrix MCP tools for remote work when they are available. Use the Matrix CLI fallback only for authentication, MCP recovery, or clients that do not expose the remote tools.
 
-## Session policy
+## MCP-first execution
+
+1. Call `list_computers` and choose the explicit `runtimeSlot`; never guess or silently fall back to another computer.
+2. Use `run_command` with an argv array for short probes that need captured output.
+3. For observable or long-running work, use `create_terminal`, `create_terminal_tab` when useful, `select_terminal_tab`, and `send_terminal_input`. Report the terminal and tab names so the user can reconnect in Matrix.
+4. Use `list_files`, `read_file`, `download_file`, and `upload_file` for bounded Matrix-home files. These tools never read or write arbitrary local paths.
+5. Use `list_chats`, `search_chats`, and `get_chat` only when prior Matrix chat context is relevant; these tools are read-only.
+
+If a tool returns `auth_required`, use the CLI fallback below to authenticate. If MCP tools are not present, continue with the CLI fallback rather than claiming remote execution is unavailable.
+
+## CLI fallback session policy
 
 - Always use `matrix run -it --session <session-name> ... -- <argv...>` for remote commands.
-- Never create or use shell tabs. When another terminal or concurrent task is needed, create a separate uniquely named session.
+- When using the CLI fallback, create a separate uniquely named session for every additional terminal or concurrent task because the current CLI workflow does not address tabs directly.
 - Use a short collision-resistant suffix in names such as `readiness-<suffix>`, `inspect-<slug>-<suffix>`, or `task-<slug>-<suffix>`.
 - Report every session name and `matrix shell connect <session-name>` command immediately.
 - Pass prompts as command arguments after `--`; never interpolate user input into `sh -c`, `bash -lc`, substitutions, or a single shell string.

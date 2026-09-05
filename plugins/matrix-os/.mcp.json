@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "matrix-remote-computer": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@finnaai/matrix@0.3.16",
+        "mcp",
+        "serve",
+        "--profile",
+        "cloud"
+      ]
+    }
+  }
+}

@@ -1,20 +1,21 @@
 {
   "name": "matrix-os",
-  "version": "0.2.0",
-  "description": "Run development work on your Matrix cloud computer",
+  "version": "0.3.0",
+  "description": "Run development work on your Matrix computer through skills and remote MCP tools",
   "author": {
     "name": "Matrix OS"
   },
   "homepage": "https://matrix-os.com",
   "repository": "https://github.com/HamedMP/matrix-os",
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Matrix OS",
-    "shortDescription": "Run development work on your Matrix cloud computer",
-    "longDescription": "Set up and recover your Matrix cloud computer, run commands and coding-agent tasks, and safely clone or update GitHub projects without moving local credentials.",
+    "shortDescription": "Run development work on your Matrix computer",
+    "longDescription": "List Matrix computers, run captured commands, manage persistent terminals and tabs, transfer bounded files, inspect chats, and safely clone or update GitHub projects without moving local credentials.",
     "developerName": "Matrix OS",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": ["Interactive", "Read", "Write"],
     "websiteURL": "https://matrix-os.com",
     "brandColor": "#434E3F",
     "composerIcon": "./assets/matrix-icon.png",
