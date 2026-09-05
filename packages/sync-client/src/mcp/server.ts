@@ -26,6 +26,8 @@ export interface MatrixMcpServerOptions {
   configDir?: string;
   apiOrigin?: string;
   fetch?: typeof fetch;
+  /** Hosted HTTP budget; absent preserves the CLI's existing command limits. */
+  maxCommandTimeoutMs?: number;
 }
 
 const readOnlyAnnotations = {
@@ -114,7 +116,9 @@ export function createMatrixMcpServer(options: MatrixMcpServerOptions = {}): Mcp
 
   server.registerTool("run_command", {
     description: "Run a captured argv command on one explicit Matrix computer and return bounded output and exit metadata.",
-    inputSchema: RunCommandInputSchema.shape,
+    inputSchema: options.maxCommandTimeoutMs
+      ? { ...RunCommandInputSchema.shape, timeoutMs: RunCommandInputSchema.shape.timeoutMs.unwrap().max(options.maxCommandTimeoutMs).optional() }
+      : RunCommandInputSchema.shape,
     annotations: executionAnnotations,
   }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
     ok: true,
@@ -122,7 +126,7 @@ export function createMatrixMcpServer(options: MatrixMcpServerOptions = {}): Mcp
     ...await client.runCommand({
       command: input.command,
       ...(input.cwd ? { cwd: input.cwd } : {}),
-      ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+      ...((input.timeoutMs ?? options.maxCommandTimeoutMs) ? { timeoutMs: input.timeoutMs ?? options.maxCommandTimeoutMs } : {}),
     }),
   }))));
 

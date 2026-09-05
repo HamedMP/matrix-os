@@ -81,6 +81,7 @@ import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import { createLegacyContainerRoutes } from './legacy-container-routes.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
+import { createPlatformMcpRoutes } from './mcp-registration.js';
 import {
   HANDLE_PATTERN,
   describeError,
@@ -513,6 +514,7 @@ export function createApp(deps: {
     );
   }
 
+  app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
   app.route('/', createComputerRoutes({
     db,
     clerkAuth,

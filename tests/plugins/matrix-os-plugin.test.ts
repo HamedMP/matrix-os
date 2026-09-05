@@ -10,20 +10,20 @@ async function jsonFile(path: string) {
 }
 
 describe("Matrix OS coding-agent plugin", () => {
-  it("ships a manifest-linked portable and version-pinned MCP server", async () => {
+  it("ships a manifest-linked hosted HTTP MCP server without local credentials", async () => {
     const manifest = await jsonFile(".codex-plugin/plugin.json");
     const mcp = await jsonFile(".mcp.json");
 
     expect(manifest).toMatchObject({
       name: "matrix-os",
-      version: "0.3.0",
+      version: "0.4.0",
       mcpServers: "./.mcp.json",
     });
     expect(mcp).toEqual({
       mcpServers: {
         "matrix-remote-computer": {
-          command: "npx",
-          args: ["-y", "@finnaai/matrix@0.3.16", "mcp", "serve", "--profile", "cloud"],
+          type: "http",
+          url: "https://api.matrix-os.com/mcp",
         },
       },
     });
