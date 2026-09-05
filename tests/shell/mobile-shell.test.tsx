@@ -2,7 +2,7 @@
 
 import React from "react";
 import { renderToString } from "react-dom/server";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
@@ -260,6 +260,42 @@ describe("mobile shell", () => {
     fireEvent.blur(screen.getByRole("textbox", { name: "Command composer" }));
 
     expect(dock.style.display).toBe("flex");
+  });
+
+  it("marks only the current dock destination and disables an empty app switcher", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell />);
+    const dock = within(screen.getByTestId("mobile-bottom-dock"));
+    expect(dock.getByRole("button", { name: "Apps" }).getAttribute("aria-current")).toBe("page");
+    expect(dock.getByRole("button", { name: "Open" }).hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(dock.getByRole("button", { name: "Terminal" }));
+    expect(dock.getByRole("button", { name: "Terminal" }).getAttribute("aria-current")).toBe("page");
+    expect(dock.getByRole("button", { name: "Apps" }).hasAttribute("aria-current")).toBe(false);
+    expect(dock.getByRole("button", { name: "Open" }).hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(dock.getByRole("button", { name: "Apps" }));
+    expect(dock.getByRole("button", { name: "Apps" }).getAttribute("aria-current")).toBe("page");
+    expect(dock.getByRole("button", { name: "Terminal" }).hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("makes background terminals inert without discarding their mounted state", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell launchAppPath="__terminal__" />);
+    const terminal = await screen.findByTestId("terminal-app");
+    const frame = terminal.closest("[aria-hidden]")!;
+    const dock = within(screen.getByTestId("mobile-bottom-dock"));
+    expect(frame.hasAttribute("inert")).toBe(false);
+
+    fireEvent.click(dock.getByRole("button", { name: "Apps" }));
+    expect(frame.hasAttribute("inert")).toBe(true);
+    expect(screen.getByTestId("terminal-app")).toBe(terminal);
+    fireEvent.click(dock.getByRole("button", { name: "Open" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resume foreground app" }));
+    expect(frame.hasAttribute("inert")).toBe(false);
+    expect(screen.getByTestId("terminal-app")).toBe(terminal);
   });
 
   it("loads installed mobile apps from the shared shell bootstrap endpoint", async () => {
