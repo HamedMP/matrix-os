@@ -171,14 +171,14 @@ function SwipeableConnectionRow({
             {refreshing ? (
               <ActivityIndicator
                 size="small"
-                color={theme.v2.palette.green[700]}
+                color={theme.v2.mode === "dark" ? theme.v2.palette.green[400] : theme.v2.palette.green[700]}
                 testID={`integration-refresh-spinner-${connection.id}`}
               />
             ) : (
               <Icon
                 icon={RefreshIcon}
                 size={24}
-                color={theme.v2.palette.green[700]}
+                color={theme.v2.mode === "dark" ? theme.v2.palette.green[400] : theme.v2.palette.green[700]}
                 testID={`integration-refresh-icon-${connection.id}`}
               />
             )}
@@ -199,14 +199,14 @@ function SwipeableConnectionRow({
             {deleting ? (
               <ActivityIndicator
                 size="small"
-                color={theme.v2.palette.coral[700]}
+                color={theme.v2.mode === "dark" ? theme.v2.palette.coral[400] : theme.v2.palette.coral[700]}
                 testID={`integration-delete-spinner-${connection.id}`}
               />
             ) : (
               <Icon
                 icon={Delete02Icon}
                 size={24}
-                color={theme.v2.palette.coral[700]}
+                color={theme.v2.mode === "dark" ? theme.v2.palette.coral[400] : theme.v2.palette.coral[700]}
                 testID={`integration-delete-icon-${connection.id}`}
               />
             )}
@@ -350,12 +350,12 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 14,
   },
   refreshButton: {
-    backgroundColor: theme.v2.palette.green[100],
-    borderColor: theme.v2.palette.green[200],
+    backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.green[900] : theme.v2.palette.green[100],
+    borderColor: theme.v2.mode === "dark" ? theme.v2.palette.green[700] : theme.v2.palette.green[200],
   },
   deleteButton: {
-    backgroundColor: theme.v2.palette.coral[50],
-    borderColor: theme.v2.palette.coral[200],
+    backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.coral[900] : theme.v2.palette.coral[50],
+    borderColor: theme.v2.mode === "dark" ? theme.v2.palette.coral[700] : theme.v2.palette.coral[200],
   },
   popupOverlay: {
     flex: 1,

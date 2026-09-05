@@ -30,7 +30,6 @@ import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { isValidEditableTerminalSessionName, type TerminalSession } from "@/lib/requests";
-import { palette } from "@/lib/theme-v2";
 
 type TerminalAction = {
   type: "rename" | "delete";
@@ -298,7 +297,11 @@ function SwipeableTerminalRow({
             onPress={() => triggerAction(onRename)}
             style={({ pressed }) => [styles.swipeButton, styles.renameButton, pressed && styles.pressed]}
           >
-            <Icon icon={PencilEdit02Icon} size={24} color={theme.v2.appColors.ink} />
+            <Icon
+              icon={PencilEdit02Icon}
+              size={24}
+              color={theme.v2.mode === "dark" ? theme.v2.palette.green[400] : theme.v2.palette.green[700]}
+            />
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -306,7 +309,11 @@ function SwipeableTerminalRow({
             onPress={() => triggerAction(onDelete)}
             style={({ pressed }) => [styles.swipeButton, styles.deleteButton, pressed && styles.pressed]}
           >
-            <Icon icon={Delete02Icon} size={24} color={palette.coral[700]} />
+            <Icon
+              icon={Delete02Icon}
+              size={24}
+              color={theme.v2.mode === "dark" ? theme.v2.palette.coral[400] : theme.v2.palette.coral[700]}
+            />
           </Pressable>
         </View>
       )}
@@ -533,12 +540,12 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 14,
   },
   renameButton: {
-    backgroundColor: theme.v2.palette.neutral[50],
-    borderColor: theme.v2.palette.neutral[300],
+    backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.green[900] : theme.v2.palette.green[100],
+    borderColor: theme.v2.mode === "dark" ? theme.v2.palette.green[700] : theme.v2.palette.green[200],
   },
   deleteButton: {
-    backgroundColor: theme.v2.palette.coral[50],
-    borderColor: theme.v2.palette.coral[200],
+    backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.coral[900] : theme.v2.palette.coral[50],
+    borderColor: theme.v2.mode === "dark" ? theme.v2.palette.coral[700] : theme.v2.palette.coral[200],
   },
   pressed: {
     opacity: 0.7,
