@@ -113,27 +113,10 @@ export default function RootLayout() {
     Geist_800ExtraBold,
   });
 
-  const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
-  const ready = authenticated !== undefined;
-
   useEffect(() => startMobileThemeController(), []);
 
   useEffect(() => {
-    let cancelled = false;
-    async function init() {
-      const authed = await authenticateBiometric();
-      if (!cancelled) setAuthenticated(authed);
-    }
-
-    // react-doctor-disable-next-line react-doctor/no-initialize-state -- intentional: `authenticated` derives from an async biometric check (authenticateBiometric); there is no synchronous initializer and useSyncExternalStore does not apply to a one-shot promise. Starts undefined and resolves once.
-    init();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!fontsLoaded || !ready) return;
+    if (!fontsLoaded) return;
 
     let cancelled = false;
     nativeSplashRegistration.then((registered) => {
@@ -145,9 +128,59 @@ export default function RootLayout() {
     return () => {
       cancelled = true;
     };
-  }, [fontsLoaded, ready]);
+  }, [fontsLoaded]);
 
-  if (!fontsLoaded || !ready) {
+  if (!fontsLoaded) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingTitle}>Matrix OS</Text>
+        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
+      </View>
+    );
+  }
+
+  if (!clerkPublishableKey) {
+    return <MissingClerkConfigScreen />;
+  }
+
+  return (
+    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
+      <QueryClientProvider client={mobileQueryClient}>
+        <AnalyticsProvider>
+          <BiometricGate>
+            <GatewayShell />
+          </BiometricGate>
+        </AnalyticsProvider>
+      </QueryClientProvider>
+    </ClerkProvider>
+  );
+}
+
+// Face ID / Touch ID only guards an existing signed-in session -- there is
+// nothing to protect before the user has signed in, so the sign-in screen
+// itself never prompts for biometrics.
+function BiometricGate({ children }: { children: React.ReactNode }) {
+  const { theme } = useUnistyles();
+  const { isLoaded, isSignedIn } = useAuth();
+  const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      setAuthenticated(true);
+      return;
+    }
+    let cancelled = false;
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- intentional: `authenticated` derives from an async biometric check (authenticateBiometric); there is no synchronous initializer and useSyncExternalStore does not apply to a one-shot promise. Starts undefined and resolves once.
+    authenticateBiometric().then((authed) => {
+      if (!cancelled) setAuthenticated(authed);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn]);
+
+  if (!isLoaded || authenticated === undefined) {
     return (
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingTitle}>Matrix OS</Text>
@@ -166,19 +199,7 @@ export default function RootLayout() {
     );
   }
 
-  if (!clerkPublishableKey) {
-    return <MissingClerkConfigScreen />;
-  }
-
-  return (
-    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-      <QueryClientProvider client={mobileQueryClient}>
-        <AnalyticsProvider>
-          <GatewayShell />
-        </AnalyticsProvider>
-      </QueryClientProvider>
-    </ClerkProvider>
-  );
+  return <>{children}</>;
 }
 
 // Wraps the app in PostHog's provider when analytics is enabled (key present).
