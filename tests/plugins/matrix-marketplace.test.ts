@@ -49,11 +49,11 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(dirname(dirname(manifestPath)).split("/").at(-1)).toBe("matrix-os");
     expect(manifest).toMatchObject({
       name: "matrix-os",
-      version: "0.2.0",
-      description: "Run development work on your Matrix cloud computer",
+      version: "0.4.0",
+      description: "Run development work on your Matrix computer through skills and remote MCP tools",
       interface: {
         displayName: "Matrix OS",
-        shortDescription: "Run development work on your Matrix cloud computer",
+        shortDescription: "Run development work on your Matrix computer",
         category: "Productivity",
         brandColor: "#434E3F",
       },
@@ -113,13 +113,12 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(combined).toMatch(/ask before installing/i);
   });
 
-  it("requires observable named sessions, prohibits tabs, and sandboxes coding agents", () => {
+  it("documents MCP terminals and CLI session limits, and sandboxes coding agents", () => {
     const skill = readSkill("matrix-cloud-run");
     const workflows = [
       readSkill("matrix-onboarding"),
       skill,
       readSkill("matrix-github-project"),
-      readFileSync(standaloneSkillPath, "utf8"),
     ];
 
     expect(skill).toMatch(/safe relative destination/i);
@@ -129,8 +128,10 @@ describe("Matrix OS Codex marketplace plugin", () => {
     for (const workflow of workflows) {
       expect(workflow).toMatch(/matrix run -it --session/);
       expect(workflow).not.toMatch(/matrix run --json/);
-      expect(workflow).toMatch(/never (?:create or use|use)[^\n]*tabs/i);
-      expect(workflow).toMatch(/separate[^\n]*session/i);
+      expect(workflow).toMatch(/create_terminal_tab/);
+      expect(workflow).toMatch(/select_terminal_tab/);
+      expect(workflow).toMatch(/CLI[^\n]*does not address tabs directly/i);
+      expect(workflow).toMatch(/(?:separate|another)[^\n]*session/i);
       expect(workflow).toMatch(/matrix shell connect/);
     }
     expect(skill).toMatch(/prompt[^\n]*argument/i);
@@ -169,6 +170,10 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(standalone).toContain("# Matrix OS");
     expect(standalone).toMatch(/^author: Matrix OS$/m);
     expect(standalone).toMatch(/matrix run -it --session/);
+    expect(standalone).toMatch(/never (?:create or use|use)[^\n]*tabs/i);
+    expect(standalone).toMatch(/separate[^\n]*session/i);
+    expect(standalone).toMatch(/matrix shell connect/);
+    expect(standalone).not.toMatch(/matrix run --json/);
     expect(standalone).toMatch(/gh repo clone/);
     expect(standalone).toMatch(/--sandbox workspace-write/);
     expect(standalone).toMatch(/claude[^\n]*--permission-mode auto/i);
