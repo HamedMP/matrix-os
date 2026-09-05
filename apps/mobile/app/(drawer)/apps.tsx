@@ -1,0 +1,71 @@
+import { useMemo, useState } from "react";
+import { Text } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { useRouter } from "expo-router";
+
+import { AppLogo } from "@/components/apps/AppLogo";
+import {
+  GridTile,
+  GridTileGrid,
+  GridTileSkeletonGrid,
+  SearchField,
+} from "@/components/shell/Controls";
+import { Page } from "@/components/shell/Page";
+import { Spacer } from "@/components/ui";
+import { useComputerApps, installedAppSlug } from "@/lib/queries/use-computer-apps";
+import { buildAppIconUrl } from "@/lib/requests";
+
+export default function AppsScreen() {
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+  const { computer, apps, authorization, gatewayUrl, isPending, isError } = useComputerApps();
+  const visibleApps = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return apps;
+    return apps.filter((app) => app.name.toLocaleLowerCase().includes(normalizedQuery));
+  }, [apps, query]);
+
+  return (
+    <Page title="Apps" subtitle={`Experiences installed on ${computer?.handle ?? "your computer"}`}>
+      <SearchField placeholder="Search apps" value={query} onChangeText={setQuery} />
+      <Spacer size="xl" />
+      {isPending ? <GridTileSkeletonGrid testID="app-tile-skeleton" /> : null}
+      {isError ? <Text style={styles.statusText}>Apps unavailable. Try again.</Text> : null}
+      {!isPending && !isError && visibleApps.length === 0 ? (
+        <Text style={styles.statusText}>{query.trim() ? "No matching apps." : "No apps installed."}</Text>
+      ) : null}
+      {!isPending && !isError && visibleApps.length > 0 ? (
+        <GridTileGrid>
+          {visibleApps.map((app) => {
+            const slug = installedAppSlug(app);
+            return (
+              <GridTile
+                key={slug}
+                label={app.name}
+                centered
+                artworkLabelSpacerSize="md"
+                leading={<AppLogo
+                  name={app.name}
+                  uri={gatewayUrl ? buildAppIconUrl(gatewayUrl, app.icon ?? app.slug) : null}
+                  authorization={authorization}
+                />}
+                onPress={() => router.push({
+                  pathname: "/app-preview/[app]",
+                  params: { app: slug, name: app.name },
+                } as never)}
+              />
+            );
+          })}
+        </GridTileGrid>
+      ) : null}
+    </Page>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  statusText: {
+    fontFamily: theme.v2.fonts.body,
+    fontSize: 14,
+    color: theme.v2.appColors.muted,
+  },
+}));

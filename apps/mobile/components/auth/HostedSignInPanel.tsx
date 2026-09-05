@@ -2,18 +2,20 @@ import { View, Text, Pressable, ActivityIndicator } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
 import { EmailCodeForm } from "./EmailCodeForm";
+import { isLikelyEmail } from "@/lib/clerk-sign-in";
 
 /** OAuth routes the hosted Clerk instance accepts. */
 export type HostedAuthProvider = "google" | "github";
 
 type HostedSignInPanelProps = {
   /** Which OAuth route is mid-flight, or null when idle. */
-  loadingProvider: HostedAuthProvider | "basic" | null;
+  loadingProvider: HostedAuthProvider | null;
   signingInWithPassword: boolean;
   sendingCode: boolean;
   verifyingCode: boolean;
   onGoogle: () => void;
   onGithub: () => void;
+  onComputer: () => void;
   email: string;
   onEmailChange: (value: string) => void;
   password: string;
@@ -35,6 +37,7 @@ export function HostedSignInPanel({
   verifyingCode,
   onGoogle,
   onGithub,
+  onComputer,
   email,
   onEmailChange,
   password,
@@ -48,55 +51,11 @@ export function HostedSignInPanel({
   onVerify,
   onUseDifferentEmail,
 }: HostedSignInPanelProps) {
-  const { theme } = useUnistyles();
   const busy = loadingProvider !== null || signingInWithPassword || sendingCode || verifyingCode;
+  const emailReady = isLikelyEmail(email);
 
   return (
     <View style={styles.panel}>
-      <Text style={styles.panelTitle}>Sign in to this computer</Text>
-      <Pressable
-        onPress={onGoogle}
-        disabled={busy}
-        style={({ pressed }) => [
-          styles.buttonPrimary,
-          pressed && styles.buttonPressed,
-          busy && styles.buttonDisabled,
-        ]}
-      >
-        {loadingProvider === "google" ? (
-          <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
-        ) : (
-          <>
-            <Ionicons name="logo-google" size={19} color={theme.colors.primaryForeground} />
-            <Text style={styles.buttonPrimaryText}>Continue with Google</Text>
-          </>
-        )}
-      </Pressable>
-      <Pressable
-        onPress={onGithub}
-        disabled={busy}
-        style={({ pressed }) => [
-          styles.buttonSecondary,
-          pressed && styles.buttonPressed,
-          busy && styles.buttonDisabled,
-        ]}
-      >
-        {loadingProvider === "github" ? (
-          <ActivityIndicator size="small" color={theme.colors.foreground} />
-        ) : (
-          <>
-            <Ionicons name="logo-github" size={20} color={theme.colors.foreground} />
-            <Text style={styles.buttonSecondaryText}>Continue with GitHub</Text>
-          </>
-        )}
-      </Pressable>
-
-      <View style={styles.divider}>
-        <View style={styles.dividerRule} />
-        <Text style={styles.dividerText}>or</Text>
-        <View style={styles.dividerRule} />
-      </View>
-
       <EmailCodeForm
         email={email}
         onEmailChange={onEmailChange}
@@ -107,86 +66,110 @@ export function HostedSignInPanel({
         onCodeChange={onCodeChange}
         codeSentTo={codeSentTo}
         signingIn={signingInWithPassword}
-        sending={sendingCode}
         verifying={verifyingCode}
         busy={busy}
         onSignIn={onSignIn}
-        onSendCode={onSendCode}
         onVerify={onVerify}
         onUseDifferentEmail={onUseDifferentEmail}
       />
+
+      {codeSentTo === null ? (
+        <View style={styles.iconRow}>
+          <SquareIconButton
+            accessibilityLabel="Continue with Google"
+            iconName="logo-google"
+            loading={loadingProvider === "google"}
+            disabled={busy}
+            onPress={onGoogle}
+          />
+          <SquareIconButton
+            accessibilityLabel="Continue with GitHub"
+            iconName="logo-github"
+            loading={loadingProvider === "github"}
+            disabled={busy}
+            onPress={onGithub}
+          />
+          <SquareIconButton
+            accessibilityLabel="Email me a code instead"
+            iconName="mail-outline"
+            loading={sendingCode}
+            disabled={busy || !emailReady}
+            onPress={onSendCode}
+          />
+          <SquareIconButton
+            accessibilityLabel="Sign in with a computer URL"
+            iconName="desktop-outline"
+            loading={false}
+            disabled={busy}
+            onPress={onComputer}
+          />
+        </View>
+      ) : null}
     </View>
+  );
+}
+
+function SquareIconButton({
+  accessibilityLabel,
+  iconName,
+  onPress,
+  loading,
+  disabled,
+}: {
+  accessibilityLabel: string;
+  iconName: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  loading: boolean;
+  disabled: boolean;
+}) {
+  const { theme } = useUnistyles();
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.squareButton,
+        pressed && styles.buttonPressed,
+        disabled && styles.buttonDisabled,
+      ]}
+    >
+      {loading ? (
+        <ActivityIndicator size="small" color={theme.v2.appColors.ink} />
+      ) : (
+        <Ionicons name={iconName} size={22} color={theme.v2.appColors.ink} />
+      )}
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   panel: {
     marginTop: 16,
-    gap: 10,
+    gap: 12,
   },
-  panelTitle: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 13,
-    color: theme.colors.foreground,
-  },
-  buttonPrimary: {
+  iconRow: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "center",
     gap: 12,
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.primary,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    boxShadow: "0 10px 22px rgba(194, 112, 58, 0.18)",
   },
-  buttonSecondary: {
-    flexDirection: "row",
+  squareButton: {
+    width: 56,
+    height: 56,
     alignItems: "center",
     justifyContent: "center",
-    gap: 12,
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
+    borderRadius: theme.v2.radius.control,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingVertical: 15,
-    paddingHorizontal: 24,
+    borderColor: theme.v2.appColors.line,
+    backgroundColor: theme.v2.appColors.surface,
   },
   buttonDisabled: {
-    opacity: 0.72,
-  },
-  buttonPrimaryText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 16,
-    color: theme.colors.primaryForeground,
-  },
-  buttonSecondaryText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 16,
-    color: theme.colors.foreground,
+    opacity: 0.5,
   },
   buttonPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-  divider: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginVertical: 2,
-  },
-  dividerRule: {
-    flex: 1,
-    height: 1,
-    backgroundColor: theme.colors.border,
-  },
-  dividerText: {
-    fontFamily: theme.fonts.sansMedium,
-    fontSize: 12,
-    color: theme.colors.mutedForeground,
+    opacity: 0.75,
+    transform: [{ scale: 0.97 }],
   },
 }));

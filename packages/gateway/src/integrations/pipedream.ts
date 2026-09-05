@@ -21,6 +21,10 @@ export interface RunActionResult {
 export interface PipedreamConnectClient {
   createConnectToken(
     externalUserId: string,
+    redirects?: {
+      successRedirectUri: string;
+      errorRedirectUri: string;
+    },
   ): Promise<{ token: string; expiresAt: string; connectLinkUrl: string }>;
 
   getOAuthUrl(connectLinkUrl: string, app: string): string;
@@ -119,9 +123,9 @@ export async function createPipedreamClient(
   });
 
   return {
-    async createConnectToken(externalUserId: string) {
+    async createConnectToken(externalUserId: string, redirects) {
       const response = await sdk.tokens.create(
-        { externalUserId },
+        { externalUserId, ...redirects },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
       // The SDK exposes connectLinkUrl on the response but the published

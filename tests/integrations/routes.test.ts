@@ -144,6 +144,37 @@ describe("Integration Routes", () => {
       expect(pipedream.createConnectToken).toHaveBeenCalled();
     });
 
+    it("passes the allowlisted mobile return route to Pipedream", async () => {
+      const res = await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          redirectUri: "matrixos://integrations",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(pipedream.createConnectToken).toHaveBeenCalledWith("pd_ext_route", {
+        successRedirectUri: "matrixos://integrations",
+        errorRedirectUri: "matrixos://integrations",
+      });
+    });
+
+    it("rejects untrusted integration redirect URIs", async () => {
+      const res = await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          redirectUri: "https://attacker.example/callback",
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(pipedream.createConnectToken).not.toHaveBeenCalled();
+    });
+
     it("rejects unknown service", async () => {
       const res = await app.request("/api/integrations/connect", {
         method: "POST",

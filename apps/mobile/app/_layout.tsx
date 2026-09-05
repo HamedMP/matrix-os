@@ -23,12 +23,23 @@ import {
   BricolageGrotesque_600SemiBold,
   BricolageGrotesque_700Bold,
 } from "@expo-google-fonts/bricolage-grotesque";
+import {
+  Geist_400Regular,
+  Geist_500Medium,
+  Geist_600SemiBold,
+  Geist_700Bold,
+  Geist_800ExtraBold,
+} from "@expo-google-fonts/geist";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
+import { CanonicalChatSessionProvider } from "@/lib/canonical-chat-session-context";
+import { mobileQueryClient } from "@/lib/query-client";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
+import { startMobileThemeController } from "@/lib/theme-preference";
 import {
   captureScreen,
   getAnalyticsClient,
@@ -95,27 +106,17 @@ export default function RootLayout() {
     JetBrainsMono_700Bold,
     BricolageGrotesque_600SemiBold,
     BricolageGrotesque_700Bold,
+    Geist_400Regular,
+    Geist_500Medium,
+    Geist_600SemiBold,
+    Geist_700Bold,
+    Geist_800ExtraBold,
   });
 
-  const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
-  const ready = authenticated !== undefined;
+  useEffect(() => startMobileThemeController(), []);
 
   useEffect(() => {
-    let cancelled = false;
-    async function init() {
-      const authed = await authenticateBiometric();
-      if (!cancelled) setAuthenticated(authed);
-    }
-
-    // react-doctor-disable-next-line react-doctor/no-initialize-state -- intentional: `authenticated` derives from an async biometric check (authenticateBiometric); there is no synchronous initializer and useSyncExternalStore does not apply to a one-shot promise. Starts undefined and resolves once.
-    init();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!fontsLoaded || !ready) return;
+    if (!fontsLoaded) return;
 
     let cancelled = false;
     nativeSplashRegistration.then((registered) => {
@@ -127,9 +128,59 @@ export default function RootLayout() {
     return () => {
       cancelled = true;
     };
-  }, [fontsLoaded, ready]);
+  }, [fontsLoaded]);
 
-  if (!fontsLoaded || !ready) {
+  if (!fontsLoaded) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingTitle}>Matrix OS</Text>
+        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
+      </View>
+    );
+  }
+
+  if (!clerkPublishableKey) {
+    return <MissingClerkConfigScreen />;
+  }
+
+  return (
+    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
+      <QueryClientProvider client={mobileQueryClient}>
+        <AnalyticsProvider>
+          <BiometricGate>
+            <GatewayShell />
+          </BiometricGate>
+        </AnalyticsProvider>
+      </QueryClientProvider>
+    </ClerkProvider>
+  );
+}
+
+// Face ID / Touch ID only guards an existing signed-in session -- there is
+// nothing to protect before the user has signed in, so the sign-in screen
+// itself never prompts for biometrics.
+function BiometricGate({ children }: { children: React.ReactNode }) {
+  const { theme } = useUnistyles();
+  const { isLoaded, isSignedIn } = useAuth();
+  const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      setAuthenticated(true);
+      return;
+    }
+    let cancelled = false;
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- intentional: `authenticated` derives from an async biometric check (authenticateBiometric); there is no synchronous initializer and useSyncExternalStore does not apply to a one-shot promise. Starts undefined and resolves once.
+    authenticateBiometric().then((authed) => {
+      if (!cancelled) setAuthenticated(authed);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn]);
+
+  if (!isLoaded || authenticated === undefined) {
     return (
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingTitle}>Matrix OS</Text>
@@ -148,17 +199,7 @@ export default function RootLayout() {
     );
   }
 
-  if (!clerkPublishableKey) {
-    return <MissingClerkConfigScreen />;
-  }
-
-  return (
-    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-      <AnalyticsProvider>
-        <GatewayShell />
-      </AnalyticsProvider>
-    </ClerkProvider>
-  );
+  return <>{children}</>;
 }
 
 // Wraps the app in PostHog's provider when analytics is enabled (key present).
@@ -360,57 +401,60 @@ function GatewayShell() {
   return (
     <GestureHandlerRootView style={styles.flex}>
       <GatewayContext.Provider value={contextValue}>
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: theme.colors.background },
-            headerTintColor: theme.colors.foreground,
-            headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
-            contentStyle: { backgroundColor: theme.colors.background },
-          }}
-        >
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="apps" options={{ headerShown: false }} />
-          <Stack.Screen name="runtime" options={{ headerShown: false }} />
-          <Stack.Screen name="canvas/index" options={{ headerShown: false }} />
-          <Stack.Screen name="agents" options={{ headerShown: false }} />
-          <Stack.Screen name="sessions" options={{ headerShown: false, presentation: "modal" }} />
-          <Stack.Screen
-            name="computers"
-            options={{
-              title: "Computers",
-              headerBackButtonDisplayMode: "minimal",
+        <CanonicalChatSessionProvider>
+          <Stack
+            screenOptions={{
               headerStyle: { backgroundColor: theme.colors.background },
+              headerTintColor: theme.colors.foreground,
+              headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
+              contentStyle: { backgroundColor: theme.colors.background },
             }}
-          />
-          <Stack.Screen
-            name="files"
-            options={{
-              title: "Files",
-              headerBackButtonDisplayMode: "minimal",
-              headerStyle: { backgroundColor: theme.colors.background },
-            }}
-          />
-          <Stack.Screen
-            name="connect"
-            options={{
-              title: "Gateway",
-              presentation: "modal",
-              headerStyle: { backgroundColor: theme.colors.background },
-            }}
-          />
-          <Stack.Screen
-            name="sign-in"
-            options={{
-              title: "Sign In",
-              presentation: "modal",
-              headerStyle: { backgroundColor: theme.colors.background },
-            }}
-          />
-        </Stack>
-        <NotificationRouter />
-        <AnalyticsScreenTracker />
-        <StatusBar style="dark" />
+          >
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+            <Stack.Screen name="file-browser" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="terminal-session" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="app-preview" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="integrations-installed" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="integration-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen name="settings-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+            <Stack.Screen
+              name="computers"
+              options={{
+                title: "Computers",
+                headerBackButtonDisplayMode: "minimal",
+                headerStyle: { backgroundColor: theme.colors.background },
+              }}
+            />
+            <Stack.Screen
+              name="connect"
+              options={{
+                title: "Gateway",
+                presentation: "modal",
+                headerStyle: { backgroundColor: theme.colors.background },
+              }}
+            />
+            <Stack.Screen
+              name="sign-in"
+              options={{
+                headerShown: false,
+                presentation: "modal",
+              }}
+            />
+            <Stack.Screen
+              name="sign-in-computer"
+              options={{
+                title: "Sign in with computer URL",
+                presentation: "modal",
+                headerStyle: { backgroundColor: theme.v2.appColors.canvas },
+                headerTintColor: theme.v2.appColors.ink,
+              }}
+            />
+          </Stack>
+          <NotificationRouter />
+          <AnalyticsScreenTracker />
+          <StatusBar style="dark" />
+        </CanonicalChatSessionProvider>
       </GatewayContext.Provider>
     </GestureHandlerRootView>
   );

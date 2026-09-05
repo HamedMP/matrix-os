@@ -1,0 +1,588 @@
+import "@/lib/hermes-polyfills";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FlatList,
+  InteractionManager,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+  type ListRenderItemInfo,
+} from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth, useUser } from "@clerk/clerk-expo";
+import { Image } from "expo-image";
+import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
+import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
+import ArrowUp01Icon from "@hugeicons/core-free-icons/ArrowUp01Icon";
+
+import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
+import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
+import { useProjects } from "@/lib/queries/use-projects";
+import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
+import {
+  buildTranscript,
+  type TranscriptActivityState,
+  type TranscriptMessage,
+} from "@/lib/canonical-chat-transcript";
+import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
+import { ModelPicker } from "@/components/ModelPicker";
+import { ProjectPicker } from "@/components/ProjectPicker";
+import { Icon, IconButton } from "@/components/ui";
+import { AnalyticsMask } from "@/lib/analytics";
+
+const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
+
+export default function ChatScreen() {
+  const { isSignedIn } = useAuth();
+  const { user } = useUser();
+  const { theme } = useUnistyles();
+  const {
+    activeChatId,
+    selectionOverride,
+    setSelectionOverride,
+    selectedProjectId,
+    setSelectedProjectId,
+  } = useCanonicalChatSession();
+  const firstName = user?.firstName
+    ?? user?.fullName?.trim().split(/\s+/)[0]
+    ?? user?.username
+    ?? "there";
+
+  const { detail } = useCanonicalChatDetail(activeChatId);
+  const { catalog } = useChatProviderCatalog();
+  const { projects } = useProjects();
+  const sendMessage = useSendChatMessage();
+
+  const selection = selectionOverride
+    ?? detail?.record.chat.currentSelection
+    ?? defaultCatalogSelection(catalog);
+  const turnModes = defaultTurnModes(catalog, selection);
+
+  const messages = useMemo(() => buildTranscript(detail), [detail]);
+  // TEMP diagnostic -- remove once streaming is confirmed working.
+  console.warn(
+    "[canonical-chat] render",
+    JSON.stringify({
+      messagesLength: messages.length,
+      headTextLength: messages[0]?.text.length ?? 0,
+      headIsRunning: messages[0]?.isRunning ?? null,
+    }),
+  );
+  const busy = sendMessage.isPending || (detail?.runs.some(
+    (run) => !["completed", "failed", "aborted"].includes(run.status),
+  ) ?? false);
+
+  const [draft, setDraft] = useState("");
+  const [inputFocused, setInputFocused] = useState(false);
+  // Tapping the model picker itself blurs the TextInput a beat before its
+  // native menu opens — delay hiding on blur, and cancel the hide entirely
+  // if that blur was caused by touching the picker.
+  const hidePickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pickerTouchedRef = useRef(false);
+
+  const handleInputFocus = useCallback(() => {
+    if (hidePickerTimer.current) {
+      clearTimeout(hidePickerTimer.current);
+      hidePickerTimer.current = null;
+    }
+    setInputFocused(true);
+  }, []);
+
+  const handleInputBlur = useCallback(() => {
+    hidePickerTimer.current = setTimeout(() => {
+      hidePickerTimer.current = null;
+      if (pickerTouchedRef.current) {
+        pickerTouchedRef.current = false;
+        return;
+      }
+      setInputFocused(false);
+    }, 250);
+  }, []);
+
+  const handlePickerTouchStart = useCallback(() => {
+    pickerTouchedRef.current = true;
+  }, []);
+
+  const isConnected = Boolean(isSignedIn);
+  const hasDraftText = draft.trim().length > 0;
+  const canSend = hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
+
+  const send = useCallback(() => {
+    const trimmed = draft.trim();
+    if (!trimmed || !selection || !turnModes) return;
+    setDraft("");
+    sendMessage.mutate({
+      chatId: activeChatId,
+      baseRevision: detail?.record.chat.revision ?? 0,
+      text: trimmed,
+      selection,
+      interactionMode: turnModes.interactionMode,
+      permissionMode: turnModes.permissionMode,
+      projectId: selectedProjectId,
+    });
+  }, [
+    draft,
+    selection,
+    turnModes,
+    activeChatId,
+    detail?.record.chat.revision,
+    selectedProjectId,
+    sendMessage,
+  ]);
+
+  const insets = useSafeAreaInsets();
+
+  // Keep the composer focused and the keyboard open while there's no active
+  // chat (a fresh draft) -- `autoFocus` alone doesn't reliably refire across
+  // Drawer navigation (it only fires once, on initial mount, and can lose
+  // the race against the drawer's close animation), so this focuses
+  // imperatively via a ref whenever activeChatId transitions to null, once
+  // the navigation transition has settled.
+  const inputRef = useRef<TextInput>(null);
+  useEffect(() => {
+    if (activeChatId !== null) return;
+    const task = InteractionManager.runAfterInteractions(() => {
+      inputRef.current?.focus();
+    });
+    return () => task.cancel();
+  }, [activeChatId]);
+
+  const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
+    <AnalyticsMask>
+      <MessageBubble message={item} />
+    </AnalyticsMask>
+  ), []);
+
+  const keyExtractor = useCallback((item: TranscriptMessage) => item.id, []);
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={84}
+    >
+      <FlatList
+        style={styles.hero}
+        data={messages}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        inverted
+        // FlatList (built on ScrollView) defaults to "never" -- any tap on the
+        // list area dismisses the keyboard. On a fresh draft there's nothing
+        // to tap yet but the empty-state hero, so that default just closes
+        // the keyboard we're trying to keep open (see the auto-focus effect
+        // above); once a real chat exists, restore the normal dismiss-on-tap
+        // behavior.
+        keyboardShouldPersistTaps={activeChatId === null ? "always" : "never"}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <View style={styles.orb} testID="home-rabbit-container">
+              <Image
+                source={rabbitArtwork}
+                style={styles.rabbit}
+                contentFit="contain"
+                accessibilityLabel="Matrix OS"
+                testID="home-rabbit-mark"
+              />
+            </View>
+            <Text style={styles.title}>Welcome back {firstName}</Text>
+          </View>
+        }
+      />
+
+      <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+        {inputFocused && activeChatId === null && projects.length > 0 ? (
+          <View style={styles.projectPickerRow} onTouchStart={handlePickerTouchStart}>
+            <ProjectPicker
+              projects={projects}
+              selectedProjectId={selectedProjectId}
+              onSelectionChange={setSelectedProjectId}
+            />
+          </View>
+        ) : null}
+        <View style={inputFocused ? styles.composerActive : styles.composer}>
+          {inputFocused ? null : (
+            <IconButton
+              accessibilityLabel="Attach"
+              icon={Add01Icon}
+              iconSize={23}
+              iconColor={theme.v2.appColors.ink}
+            />
+          )}
+          <TextInput
+            ref={inputRef}
+            accessibilityLabel="Message Matrix"
+            value={draft}
+            onChangeText={setDraft}
+            onSubmitEditing={send}
+            onFocus={handleInputFocus}
+            onBlur={handleInputBlur}
+            placeholder={isConnected ? "Message Matrix" : "Signing in…"}
+            placeholderTextColor={theme.v2.appColors.muted}
+            editable={isConnected}
+            returnKeyType="send"
+            style={inputFocused ? styles.inputActive : styles.input}
+          />
+          {inputFocused ? (
+            <View style={styles.composerControlsRow}>
+              <IconButton
+                accessibilityLabel="Attach"
+                icon={Add01Icon}
+                iconSize={23}
+                iconColor={theme.v2.appColors.ink}
+              />
+              <View style={styles.composerControlsRight}>
+                <View onTouchStart={handlePickerTouchStart}>
+                  <ModelPicker
+                    catalog={catalog}
+                    selection={selection}
+                    onSelectionChange={setSelectionOverride}
+                  />
+                </View>
+                <IconButton
+                  accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
+                  icon={ArrowUp01Icon}
+                  iconSize={19}
+                  iconColor={theme.v2.appColors.surface}
+                  backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
+                  loading={busy}
+                  disabled={!canSend}
+                  onPress={send}
+                />
+              </View>
+            </View>
+          ) : (
+            <IconButton
+              accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
+              icon={ArrowUp01Icon}
+              iconSize={19}
+              iconColor={theme.v2.appColors.surface}
+              backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
+              loading={busy}
+              disabled={!canSend}
+              onPress={send}
+            />
+          )}
+        </View>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+function MessageBubble({ message }: { message: TranscriptMessage }) {
+  if (message.role === "user") {
+    return (
+      <View style={styles.userBubble}>
+        <Text style={styles.userText}>{message.text}</Text>
+      </View>
+    );
+  }
+  if (message.role === "tool") {
+    return (
+      <View style={styles.toolRow}>
+        <Text style={styles.toolText}>{message.text}</Text>
+      </View>
+    );
+  }
+  if (message.role === "system") {
+    return (
+      <View style={styles.systemRow}>
+        <Text style={styles.systemText}>{message.text}</Text>
+      </View>
+    );
+  }
+  return <AssistantMessage message={message} />;
+}
+
+function activityStateGlyph(state: TranscriptActivityState): string {
+  switch (state) {
+    case "running": return "…";
+    case "completed": return "✓";
+    case "failed": return "✕";
+    case "partial":
+    case "stopped":
+      return "–";
+  }
+}
+
+function AssistantMessage({ message }: { message: TranscriptMessage }) {
+  // Auto-expanded while the turn is running (so reasoning/tool activity is
+  // visible live, matching desktop), until the user manually toggles it.
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const { theme } = useUnistyles();
+  const expanded = manualExpanded ?? message.isRunning;
+  const hasWork = message.toolCalls.length > 0 || message.activities.length > 0;
+  const workedLabel = message.isRunning
+    ? "Working…"
+    : message.elapsedSeconds != null
+      ? `Worked ${message.elapsedSeconds}s`
+      : null;
+  // Re-parses on every text change, which is exactly what a growing streamed
+  // string needs -- markdown applies as the text arrives, not once at the end.
+  const markdownNodes = useMemo(() => {
+    const markdownTheme: ChatMarkdownTheme = {
+      textStyle: { fontFamily: theme.v2.fonts.body, fontSize: 15, lineHeight: 22, color: theme.v2.appColors.ink },
+      mutedColor: theme.v2.appColors.muted,
+      linkColor: theme.v2.appColors.blue,
+      codeBackground: theme.v2.appColors.surface,
+      codeBorderColor: theme.v2.appColors.line,
+      monoFontFamily: theme.v2.fonts.mono,
+      boldFontFamily: theme.v2.fonts.semibold,
+      headingFontFamily: theme.v2.fonts.semibold,
+    };
+    return renderChatMarkdown(message.text, markdownTheme);
+  }, [message.text, theme]);
+
+  return (
+    <View style={styles.matrixBubble}>
+      {workedLabel ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={hasWork ? (expanded ? "Hide work" : "Show work") : workedLabel}
+          disabled={!hasWork}
+          onPress={() => setManualExpanded(!expanded)}
+          style={({ pressed }) => [styles.workedRow, pressed && hasWork && styles.pressed]}
+        >
+          <Text style={styles.workedText}>{workedLabel}</Text>
+          {hasWork ? (
+            <Icon
+              icon={expanded ? ArrowUp01Icon : ArrowDown01Icon}
+              size={14}
+              color={theme.v2.appColors.muted}
+            />
+          ) : null}
+        </Pressable>
+      ) : null}
+      {expanded && hasWork ? (
+        <View style={styles.toolCallsList}>
+          {message.activities.map((activity) => (
+            <View key={activity.id} style={styles.activityRow}>
+              <Text style={styles.activityGlyph}>{activityStateGlyph(activity.state)}</Text>
+              <Text
+                style={[
+                  styles.reasoningText,
+                  activity.state === "failed" && styles.activityTextFailed,
+                ]}
+              >
+                {activity.label}
+                {activity.preview ? (
+                  <Text
+                    style={activity.previewKind === "command" || activity.previewKind === "path"
+                      ? styles.activityPreviewMono
+                      : styles.activityPreview}
+                  >
+                    {" "}· {activity.preview}
+                  </Text>
+                ) : null}
+              </Text>
+            </View>
+          ))}
+          {message.toolCalls.map((call) => (
+            <Text key={call.id} style={styles.toolText}>{call.label}</Text>
+          ))}
+        </View>
+      ) : null}
+      {workedLabel ? <View style={styles.divider} /> : null}
+      <View style={styles.matrixTextBlock}>{markdownNodes}</View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  screen: {
+    flex: 1,
+    backgroundColor: theme.v2.appColors.canvas,
+  },
+  hero: {
+    flex: 1,
+  },
+  listContent: {
+    flexGrow: 1,
+    justifyContent: "flex-end",
+    paddingHorizontal: 24,
+    paddingVertical: 18,
+    gap: 18,
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBottom: 42,
+  },
+  orb: {
+    width: 68,
+    height: 68,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+  },
+  rabbit: {
+    width: 68,
+    height: 68,
+  },
+  title: {
+    fontFamily: theme.v2.fonts.display,
+    fontSize: 28,
+    letterSpacing: -0.7,
+    color: theme.v2.appColors.ink,
+  },
+  pressed: {
+    opacity: 0.6,
+  },
+  userBubble: {
+    maxWidth: "84%",
+    alignSelf: "flex-end",
+    borderRadius: 20,
+    borderBottomRightRadius: 7,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: theme.v2.appColors.ink,
+  },
+  userText: {
+    fontFamily: theme.v2.fonts.body,
+    fontSize: 15,
+    lineHeight: 21,
+    color: theme.v2.appColors.surface,
+  },
+  matrixBubble: {
+    width: "100%",
+    alignSelf: "stretch",
+  },
+  workedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    paddingVertical: 4,
+  },
+  workedText: {
+    fontFamily: theme.v2.fonts.medium,
+    fontSize: 13,
+    color: theme.v2.appColors.muted,
+  },
+  toolCallsList: {
+    gap: 4,
+    paddingBottom: 8,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: theme.v2.appColors.line,
+    marginVertical: 10,
+  },
+  matrixTextBlock: {
+    gap: 2,
+  },
+  toolRow: {
+    alignSelf: "flex-start",
+  },
+  toolText: {
+    fontFamily: theme.v2.fonts.medium,
+    fontSize: 13,
+    color: theme.v2.appColors.muted,
+  },
+  reasoningText: {
+    flexShrink: 1,
+    fontFamily: theme.v2.fonts.body,
+    fontStyle: "italic",
+    fontSize: 13,
+    color: theme.v2.appColors.muted,
+  },
+  activityRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+  },
+  activityGlyph: {
+    fontFamily: theme.v2.fonts.medium,
+    fontSize: 12,
+    color: theme.v2.appColors.muted,
+    lineHeight: 18,
+  },
+  activityTextFailed: {
+    color: theme.v2.appColors.danger,
+  },
+  activityPreview: {
+    fontStyle: "normal",
+    color: theme.v2.appColors.muted,
+  },
+  activityPreviewMono: {
+    fontFamily: theme.v2.fonts.mono,
+    fontStyle: "normal",
+    fontSize: 12,
+    color: theme.v2.appColors.muted,
+  },
+  systemRow: {
+    alignSelf: "center",
+  },
+  systemText: {
+    fontFamily: theme.v2.fonts.medium,
+    fontSize: 13,
+    color: theme.v2.appColors.muted,
+    textAlign: "center",
+  },
+  composerWrap: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+  },
+  projectPickerRow: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    paddingBottom: 6,
+  },
+  composer: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: theme.v2.appColors.line,
+    borderRadius: 22,
+    paddingHorizontal: 8,
+    backgroundColor: theme.v2.appColors.surface,
+    boxShadow: "0 8px 24px rgba(23, 25, 24, 0.08)",
+  },
+  input: {
+    flex: 1,
+    minHeight: 46,
+    fontFamily: theme.v2.fonts.body,
+    fontSize: 15,
+    color: theme.v2.appColors.ink,
+  },
+  composerActive: {
+    flexDirection: "column",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: theme.v2.appColors.line,
+    borderRadius: 22,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 6,
+    backgroundColor: theme.v2.appColors.surface,
+    boxShadow: "0 8px 24px rgba(23, 25, 24, 0.08)",
+  },
+  inputActive: {
+    alignSelf: "stretch",
+    minHeight: 40,
+    paddingHorizontal: 4,
+    fontFamily: theme.v2.fonts.body,
+    fontSize: 15,
+    color: theme.v2.appColors.ink,
+  },
+  composerControlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  composerControlsRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+}));

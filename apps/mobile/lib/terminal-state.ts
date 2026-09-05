@@ -191,8 +191,8 @@ export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
   });
 }
 
-// Gateway shell-session names: lowercase, digits, hyphens, 1-31 chars (e.g. "matrix-7af3c2e", "main").
-const SAFE_SHELL_SESSION_NAME = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
+// Keep this aligned with the gateway's canonical SESSION_NAME_PATTERN.
+const SAFE_SHELL_SESSION_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 export function isSafeShellSessionName(value: string): boolean {
   return SAFE_SHELL_SESSION_NAME.test(value);

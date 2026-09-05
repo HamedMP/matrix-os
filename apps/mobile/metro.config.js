@@ -1,8 +1,10 @@
 const { getDefaultConfig } = require("expo/metro-config");
+const os = require("os");
 const path = require("path");
 
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, "../..");
+const pnpmLinksRoot = path.join(os.homedir(), "Library", "pnpm", "store", "v10", "links");
 
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(projectRoot);
@@ -12,7 +14,11 @@ function resolveFromMobileApp(moduleName) {
   return require.resolve(moduleName, { paths: [projectRoot] });
 }
 
-config.watchFolders = Array.from(new Set([...(config.watchFolders ?? []), workspaceRoot]));
+config.watchFolders = Array.from(new Set([
+  ...(config.watchFolders ?? []),
+  workspaceRoot,
+  pnpmLinksRoot,
+]));
 config.serializer = {
   ...config.serializer,
   polyfillModuleNames: [

@@ -1,263 +1,312 @@
+import type { ReactNode } from "react";
+
+const mockPush = jest.fn();
+const mockUseComputerDirectory = jest.fn();
+const mockCreateFolder = jest.fn();
+const mockCreateFile = jest.fn();
+const mockRefreshDirectory = jest.fn();
+
+jest.mock("expo-router", () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
-jest.mock("../app/_layout", () => ({
-  useGateway: jest.fn(),
+jest.mock("@/lib/queries/use-computer-directory", () => ({
+  useComputerDirectory: (...args: unknown[]) => mockUseComputerDirectory(...args),
 }));
 
-jest.mock("expo-image", () => {
-  const { View } = require("react-native");
+jest.mock("@expo/ui", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  const { View } = jest.requireActual("react-native") as typeof import("react-native");
   return {
-    Image: (props: Record<string, unknown>) => {
-      const mockReact = require("react");
-      return mockReact.createElement(View, { testID: "expo-image", ...props });
+    BottomSheet: ({
+      children,
+      isPresented,
+      onDismiss,
+    }: {
+      children: ReactNode;
+      isPresented: boolean;
+      onDismiss: () => void;
+    }) => {
+      const wasPresented = React.useRef(false);
+      React.useEffect(() => {
+        if (wasPresented.current && !isPresented) onDismiss();
+        wasPresented.current = isPresented;
+      }, [isPresented, onDismiss]);
+      return isPresented ? <View testID="files-create-sheet">{children}</View> : null;
     },
-  };
-});
-
-jest.mock("@/lib/matrix-files", () => {
-  const actual = jest.requireActual("@/lib/matrix-files");
-  return {
-    __esModule: true,
-    ...actual,
-    listFiles: jest.fn(),
-    searchFiles: jest.fn(),
-    listProjects: jest.fn(),
-    readTextFile: jest.fn(),
+    RNHostView: ({ children }: { children: ReactNode }) => children,
   };
 });
 
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import FilesScreen from "../app/files";
-import { useGateway } from "../app/_layout";
-import { GatewayClient } from "../lib/gateway-client";
-import {
-  listFiles,
-  listProjects,
-  readTextFile,
-  searchFiles,
-  type ListFilesResult,
-  type MatrixFileEntry,
-  type SearchFilesResult,
-} from "@/lib/matrix-files";
+import { fireEvent, render, screen } from "@testing-library/react-native";
+import { StyleSheet as NativeStyleSheet } from "react-native";
+import FilesScreen from "../app/(drawer)/files";
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((promiseResolve) => {
-    resolve = promiseResolve;
-  });
-  return { promise, resolve };
-}
-
-const useGatewayMock = useGateway as jest.MockedFunction<typeof useGateway>;
-type GatewayContextValue = ReturnType<typeof useGateway>;
-
-const client = new GatewayClient("https://app.matrix-os.com", "test-token");
-
-function gatewayContext(): GatewayContextValue {
-  return {
-    client,
-    connectionState: "connected",
-    gateway: null,
-    setGateway: jest.fn(),
-    unreadCount: 0,
-    incrementUnread: jest.fn(),
-    clearUnread: jest.fn(),
-  };
-}
-
-const rootEntries: MatrixFileEntry[] = [
-  { name: "projects", type: "directory", gitStatus: null, children: 3 },
-  { name: "README.md", type: "file", size: 2048, gitStatus: null, mime: "text/markdown" },
-];
-
-describe("FilesScreen", () => {
+describe("drawer files screen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    useGatewayMock.mockReturnValue(gatewayContext());
-    jest.mocked(listProjects).mockResolvedValue({ ok: true, projects: [] });
-    jest.mocked(listFiles).mockResolvedValue({ ok: true, path: "", entries: rootEntries });
-    jest.mocked(searchFiles).mockResolvedValue({ ok: true, results: [], truncated: false });
-    jest.mocked(readTextFile).mockResolvedValue({ ok: true, content: "", truncated: false });
-  });
-
-  it("renders the directory listing with folders and files", async () => {
-    render(<FilesScreen />);
-
-    expect(await screen.findByText("projects")).toBeTruthy();
-    expect(screen.getByText("README.md")).toBeTruthy();
-  });
-
-  it("navigates into a folder when a directory row is tapped", async () => {
-    jest.mocked(listFiles).mockImplementation(async (_client, path) => {
-      if (path === "projects") {
-        return { ok: true, path: "projects", entries: [{ name: "app.ts", type: "file", gitStatus: null, size: 10 }] };
-      }
-      return { ok: true, path: "", entries: rootEntries };
-    });
-
-    render(<FilesScreen />);
-
-    fireEvent.press(await screen.findByLabelText("Open projects"));
-
-    expect(await screen.findByText("app.ts")).toBeTruthy();
-    await waitFor(() => expect(jest.mocked(listFiles)).toHaveBeenCalledWith(client, "projects"));
-  });
-
-  it("jumps back to the home root via the breadcrumb", async () => {
-    jest.mocked(listFiles).mockImplementation(async (_client, path) => {
-      if (path === "projects") {
-        return { ok: true, path: "projects", entries: [{ name: "app.ts", type: "file", gitStatus: null, size: 10 }] };
-      }
-      return { ok: true, path: "", entries: rootEntries };
-    });
-
-    render(<FilesScreen />);
-
-    fireEvent.press(await screen.findByLabelText("Open projects"));
-    await screen.findByText("app.ts");
-
-    fireEvent.press(screen.getByLabelText("Go to Home"));
-
-    expect(await screen.findByText("README.md")).toBeTruthy();
-  });
-
-  it("shows search results within the current folder", async () => {
-    jest.mocked(searchFiles).mockResolvedValue({
-      ok: true,
-      truncated: false,
-      results: [
-        { path: "notes/todo.md", name: "todo.md", type: "file", matches: [{ text: "todo.md", type: "name" }] },
+    mockUseComputerDirectory.mockReturnValue({
+      computer: { handle: "solar-vale" },
+      entries: [
+        { name: "Projects", type: "directory" },
+        { name: "Documents", type: "directory" },
+        { name: "README.md", type: "file" },
       ],
+      isPending: false,
+      isError: false,
+      createFolder: mockCreateFolder,
+      createFile: mockCreateFile,
+      refresh: mockRefreshDirectory,
     });
-
-    render(<FilesScreen />);
-    await screen.findByText("README.md");
-
-    fireEvent.changeText(screen.getByPlaceholderText("Search this folder"), "todo");
-
-    expect(await screen.findByText("todo.md")).toBeTruthy();
-    await waitFor(() => expect(jest.mocked(searchFiles)).toHaveBeenCalledWith(client, "", "todo"));
   });
 
-  it("shows an error state and retries the listing", async () => {
-    jest
-      .mocked(listFiles)
-      .mockResolvedValueOnce({ ok: false, error: "Files unavailable. Try again." })
-      .mockResolvedValue({ ok: true, path: "", entries: rootEntries });
-
+  it("holds the native refresh control open until files finish refreshing", async () => {
+    let resolveRefresh: (() => void) | undefined;
+    mockRefreshDirectory.mockReturnValue(new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
     render(<FilesScreen />);
 
-    expect(await screen.findByText("Files unavailable. Try again.")).toBeTruthy();
+    React.act(() => screen.getByTestId("page-refresh-control").props.onRefresh());
 
-    fireEvent.press(screen.getByLabelText("Retry"));
+    expect(mockRefreshDirectory).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(true);
 
-    expect(await screen.findByText("README.md")).toBeTruthy();
+    await React.act(async () => resolveRefresh?.());
+    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(false);
   });
 
-  it("drops a stale folder listing that resolves after navigating away", async () => {
-    const slow = deferred<ListFilesResult>();
-    jest.mocked(listFiles).mockImplementation(async (_client, path) => {
-      if (path === "projects") return slow.promise;
-      return { ok: true, path: "", entries: rootEntries };
-    });
-
+  it("opens a folder as one modal workspace", () => {
     render(<FilesScreen />);
 
-    fireEvent.press(await screen.findByLabelText("Open projects"));
-    // Navigate back to the root before the slow "projects" listing resolves.
-    fireEvent.press(screen.getByLabelText("Go to Home"));
-    await screen.findByText("README.md");
+    fireEvent.press(screen.getByLabelText("Open Projects folder"));
 
-    await act(async () => {
-      slow.resolve({
-        ok: true,
-        path: "projects",
-        entries: [{ name: "STALE.ts", type: "file", gitStatus: null, size: 1 }],
-      });
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/file-browser",
+      params: { folder: "Projects" },
     });
+  });
 
-    expect(screen.queryByText("STALE.ts")).toBeNull();
+  it("shows folders loaded from the selected computer", () => {
+    render(<FilesScreen />);
+
+    expect(mockUseComputerDirectory).toHaveBeenCalledWith("");
+    expect(screen.getByText("Everything on solar-vale")).toBeTruthy();
+    expect(screen.getByText("3 items")).toBeTruthy();
+    expect(screen.getByLabelText("Open Projects folder")).toBeTruthy();
     expect(screen.getByText("README.md")).toBeTruthy();
+    expect(screen.getByTestId("grid-tile-icon-README.md")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Open README.md file"));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/file-browser/file",
+      params: { name: "README.md", path: "README.md" },
+    });
+    expect(screen.queryByLabelText("Open Photos folder")).toBeNull();
   });
 
-  it("drops a stale search that resolves after the query changes", async () => {
-    const slowTodo = deferred<SearchFilesResult>();
-    jest.mocked(searchFiles).mockImplementation(async (_client, _path, q) => {
-      if (q === "todo") return slowTodo.promise;
-      return {
-        ok: true,
-        truncated: false,
-        results: [{ path: "notes/note.md", name: "note.md", type: "file", matches: [{ text: "note.md", type: "name" }] }],
-      };
+  it("renders folder icons without a background by default", () => {
+    render(<FilesScreen />);
+
+    expect(
+      NativeStyleSheet.flatten(screen.getByTestId("grid-tile-icon-Projects").props.style),
+    ).toMatchObject({ backgroundColor: "transparent" });
+  });
+
+  it("shows the create-folder action as a floating action button", () => {
+    render(<FilesScreen />);
+
+    expect(
+      NativeStyleSheet.flatten(screen.getByLabelText("Create").props.style),
+    ).toMatchObject({
+      position: "absolute",
+      right: 20,
+      bottom: 24,
+      width: 48,
+      height: 48,
+      borderWidth: 1,
+      borderRadius: 999,
+      backgroundColor: "#2B3715",
+      boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 16px rgba(51, 46, 36, 0.10)",
+    });
+    expect(screen.getByTestId("create-folder-icon")).toBeTruthy();
+  });
+
+  it("opens a sheet with new-folder and new-file options", () => {
+    render(<FilesScreen />);
+
+    expect(screen.queryByTestId("files-create-sheet")).toBeNull();
+    fireEvent.press(screen.getByLabelText("Create"));
+
+    expect(screen.getByTestId("files-create-sheet")).toBeTruthy();
+    expect(screen.getByLabelText("New folder")).toBeTruthy();
+    expect(screen.getByLabelText("New file")).toBeTruthy();
+    expect(
+      NativeStyleSheet.flatten(screen.getByText("New folder").props.style),
+    ).toMatchObject({ fontSize: 18 });
+    expect(
+      NativeStyleSheet.flatten(screen.getByLabelText("New folder").props.style),
+    ).toMatchObject({ alignSelf: "stretch" });
+    expect(
+      NativeStyleSheet.flatten(screen.getAllByTestId("files-create-divider")[0].props.style),
+    ).toMatchObject({
+      alignSelf: "stretch",
+      borderTopWidth: NativeStyleSheet.hairlineWidth,
+      borderTopColor: "#C8C6C6",
+    });
+  });
+
+  it("pushes a folder naming screen and shows progress in its FAB", async () => {
+    let resolveCreate: (() => void) | undefined;
+    mockCreateFolder.mockImplementation(() => new Promise<void>((resolve) => {
+      resolveCreate = resolve;
+    }));
+    render(<FilesScreen />);
+
+    fireEvent.press(screen.getByLabelText("Create"));
+    fireEvent.press(screen.getByLabelText("New folder"));
+    expect(screen.getByTestId("files-create-sheet")).toBeTruthy();
+    expect(screen.getByText("Name folder")).toBeTruthy();
+    expect(screen.getByLabelText("Back to creation options")).toBeTruthy();
+    fireEvent.changeText(screen.getByLabelText("New folder name"), "Work");
+    const confirmButton = screen.getByLabelText("Create folder");
+    expect(NativeStyleSheet.flatten(confirmButton.props.style)).toMatchObject({
+      position: "relative",
+      width: 48,
+      height: 48,
+      borderRadius: 999,
+      backgroundColor: "#2B3715",
+    });
+    expect(screen.getByTestId("create-folder-submit-icon")).toBeTruthy();
+    fireEvent.press(confirmButton);
+
+    expect(mockCreateFolder).toHaveBeenCalledWith("Work");
+    expect(screen.getByLabelText("New folder name")).toBeTruthy();
+    expect(screen.getByTestId("create-folder-submit-loading")).toBeTruthy();
+    expect(screen.getByLabelText("Create folder").props.accessibilityState).toMatchObject({
+      busy: true,
+      disabled: true,
+    });
+    expect(screen.getByTestId("files-create-sheet")).toBeTruthy();
+
+    await React.act(async () => resolveCreate?.());
+
+    expect(screen.queryByTestId("files-create-sheet")).toBeNull();
+  });
+
+  it("keeps the naming sheet open and restores its submit FAB after a failed request", async () => {
+    mockCreateFolder.mockRejectedValue(new Error("request failed"));
+    render(<FilesScreen />);
+
+    fireEvent.press(screen.getByLabelText("Create"));
+    fireEvent.press(screen.getByLabelText("New folder"));
+    fireEvent.changeText(screen.getByLabelText("New folder name"), "Work");
+    await React.act(async () => {
+      fireEvent.press(screen.getByLabelText("Create folder"));
+    });
+
+    expect(screen.getByLabelText("New folder name")).toBeTruthy();
+    expect(screen.getByText("Could not create folder. Try again.")).toBeTruthy();
+    expect(screen.queryByTestId("create-folder-submit-loading")).toBeNull();
+    expect(screen.getByTestId("create-folder-submit-icon")).toBeTruthy();
+    expect(screen.getByTestId("files-create-sheet")).toBeTruthy();
+  });
+
+  it("creates a file through the matching sheet screen", async () => {
+    mockCreateFile.mockResolvedValue(undefined);
+    render(<FilesScreen />);
+
+    fireEvent.press(screen.getByLabelText("Create"));
+    fireEvent.press(screen.getByLabelText("New file"));
+    expect(screen.getByText("Name file")).toBeTruthy();
+    fireEvent.changeText(screen.getByLabelText("New file name"), "notes.md");
+    fireEvent.press(screen.getByLabelText("Create file"));
+    await React.act(async () => undefined);
+
+    expect(mockCreateFile).toHaveBeenCalledWith("notes.md");
+    expect(screen.queryByTestId("files-create-sheet")).toBeNull();
+  });
+
+  it("returns from the naming screen to the creation options", () => {
+    render(<FilesScreen />);
+
+    fireEvent.press(screen.getByLabelText("Create"));
+    fireEvent.press(screen.getByLabelText("New file"));
+    fireEvent.press(screen.getByLabelText("Back to creation options"));
+
+    expect(screen.getByLabelText("New folder")).toBeTruthy();
+    expect(screen.getByLabelText("New file")).toBeTruthy();
+    expect(screen.queryByLabelText("New file name")).toBeNull();
+  });
+
+  it("shows three skeleton tiles while the root directory is loading", () => {
+    mockUseComputerDirectory.mockReturnValue({
+      computer: { handle: "solar-vale" },
+      entries: [],
+      isPending: true,
+      isError: false,
     });
 
     render(<FilesScreen />);
-    await screen.findByText("README.md");
 
-    const input = screen.getByPlaceholderText("Search this folder");
-    fireEvent.changeText(input, "todo");
-    await waitFor(() => expect(jest.mocked(searchFiles)).toHaveBeenCalledWith(client, "", "todo"));
-
-    // Refine the query before the "todo" search resolves.
-    fireEvent.changeText(input, "note");
-    await waitFor(() => expect(jest.mocked(searchFiles)).toHaveBeenCalledWith(client, "", "note"));
-    await screen.findByText("note.md");
-
-    // The stale "todo" search resolving must not overwrite the "note" results.
-    await act(async () => {
-      slowTodo.resolve({
-        ok: true,
-        truncated: false,
-        results: [{ path: "notes/todo.md", name: "todo.md", type: "file", matches: [{ text: "todo.md", type: "name" }] }],
-      });
-    });
-
-    expect(screen.queryByText("todo.md")).toBeNull();
-    expect(screen.getByText("note.md")).toBeTruthy();
+    expect(screen.getAllByTestId("file-tile-skeleton")).toHaveLength(3);
+    expect(screen.getAllByTestId("file-tile-skeleton-shimmer")).toHaveLength(3);
   });
 
-  it("drops a search that resolves in the gap before the refined query effect runs", async () => {
-    const slowTodo = deferred<SearchFilesResult>();
-    jest.mocked(searchFiles).mockImplementation(async (_client, _path, q) => {
-      if (q === "todo") return slowTodo.promise;
-      // The refined "note" search stays pending so only the guard can hide "todo".
-      return new Promise<SearchFilesResult>(() => {});
+  it("shows a centered empty state after an empty directory finishes loading", () => {
+    mockUseComputerDirectory.mockReturnValue({
+      computer: { handle: "solar-vale" },
+      entries: [],
+      isPending: false,
+      isError: false,
+      createFolder: mockCreateFolder,
+      createFile: mockCreateFile,
     });
 
     render(<FilesScreen />);
-    await screen.findByText("README.md");
 
-    const input = screen.getByPlaceholderText("Search this folder");
-    fireEvent.changeText(input, "todo");
-    await waitFor(() => expect(jest.mocked(searchFiles)).toHaveBeenCalledWith(client, "", "todo"));
-
-    // Refine the query and resolve the stale "todo" search in the same tick,
-    // before the debounced "note" effect runs. If the guard only advances inside
-    // the effect, the stale results land in the gap and overwrite the view.
-    await act(async () => {
-      input.props.onChangeText("note");
-      slowTodo.resolve({
-        ok: true,
-        truncated: false,
-        results: [{ path: "notes/todo.md", name: "todo.md", type: "file", matches: [{ text: "todo.md", type: "name" }] }],
-      });
+    expect(screen.getByTestId("empty-folder-state")).toBeTruthy();
+    expect(screen.getByTestId("empty-folder-icon")).toBeTruthy();
+    expect(screen.getByText("this folder is currently empty")).toBeTruthy();
+    expect(NativeStyleSheet.flatten(screen.getByTestId("empty-folder-state").props.style)).toMatchObject({
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
     });
-
-    expect(screen.queryByText("todo.md")).toBeNull();
   });
 
-  it("opens a file into the text preview", async () => {
-    jest.mocked(readTextFile).mockResolvedValue({ ok: true, content: "# Hello Matrix", truncated: false });
-
+  it("does not mark any folder tile as active", () => {
     render(<FilesScreen />);
 
-    fireEvent.press(await screen.findByLabelText("Open README.md"));
+    const first = NativeStyleSheet.flatten(screen.getByLabelText("Open Projects folder").props.style);
+    const second = NativeStyleSheet.flatten(screen.getByLabelText("Open Documents folder").props.style);
 
-    expect(await screen.findByText("# Hello Matrix")).toBeTruthy();
-    expect(screen.getByLabelText("Back to files")).toBeTruthy();
-    await waitFor(() => expect(jest.mocked(readTextFile)).toHaveBeenCalledWith(client, "README.md"));
+    expect(first.backgroundColor).toBe(second.backgroundColor);
+    expect(first.borderColor).toBe(second.borderColor);
+  });
+
+  it("uses spacers instead of vertical padding or margins", () => {
+    render(<FilesScreen />);
+
+    const styles = [
+      screen.getByTestId("page-content").props.style,
+      screen.getByTestId("page-heading").props.style,
+      screen.getByTestId("files-section-heading").props.style,
+      screen.getByLabelText("Search files").props.style,
+      screen.getByLabelText("Open Projects folder").props.style,
+    ].map(NativeStyleSheet.flatten);
+
+    for (const style of styles) {
+      expect(style.paddingTop).toBeUndefined();
+      expect(style.paddingBottom).toBeUndefined();
+      expect(style.paddingVertical).toBeUndefined();
+      expect(style.marginTop).toBeUndefined();
+      expect(style.marginBottom).toBeUndefined();
+      expect(style.marginVertical).toBeUndefined();
+    }
   });
 });

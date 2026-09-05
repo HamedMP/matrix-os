@@ -106,6 +106,15 @@ jest.mock("@expo/vector-icons", () => {
   };
 });
 
+jest.mock("@hugeicons/react-native", () => {
+  const { View } = require("react-native");
+  const mockReact = require("react");
+  return {
+    HugeiconsIcon: (props) =>
+      mockReact.createElement(View, props),
+  };
+});
+
 jest.mock("expo-blur", () => {
   const { View } = require("react-native");
   return {
