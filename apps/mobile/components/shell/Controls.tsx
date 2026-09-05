@@ -9,17 +9,17 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Icon, IconButton, Skeleton, Spacer, type IconData } from "@/components/ui";
 import type { SpacingSize } from "@/lib/theme-v2";
 
-interface MockSearchFieldProps {
+interface SearchFieldProps {
   placeholder?: string;
   value?: string;
   onChangeText?: (value: string) => void;
 }
 
-export function MockSearchField({
+export function SearchField({
   placeholder = "Search",
   value,
   onChangeText,
-}: MockSearchFieldProps) {
+}: SearchFieldProps) {
   const [uncontrolledValue, setUncontrolledValue] = useState("");
   const { theme } = useUnistyles();
   const currentValue = value ?? uncontrolledValue;

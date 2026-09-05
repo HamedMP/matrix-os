@@ -19,8 +19,8 @@ import {
   ListRow,
   ListRowSkeletonStack,
   ListRowStack,
-} from "@/components/mock-shell/MockControls";
-import { MockPage } from "@/components/mock-shell/MockPage";
+} from "@/components/shell/Controls";
+import { Page } from "@/components/shell/Page";
 import { Icon, Spacer } from "@/components/ui";
 import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations";
 import type { ConnectedIntegration, IntegrationService } from "@/lib/requests";
@@ -78,7 +78,7 @@ export default function InstalledIntegrationsScreen() {
   };
 
   return (
-    <MockPage title="Connected" subtitle="Accounts Matrix can currently access">
+    <Page title="Connected" subtitle="Accounts Matrix can currently access">
       {isPending ? <ListRowSkeletonStack testID="connected-integration-skeleton" /> : null}
       {isError ? <Text style={styles.statusText}>Integrations unavailable. Try again.</Text> : null}
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
@@ -119,7 +119,7 @@ export default function InstalledIntegrationsScreen() {
         onClose={closeDeletePopup}
         onConfirm={() => void confirmDelete()}
       />
-    </MockPage>
+    </Page>
   );
 }
 

@@ -22,9 +22,9 @@ import {
   ListRow,
   ListRowSkeletonStack,
   ListRowStack,
-  MockSearchField,
-} from "@/components/mock-shell/MockControls";
-import { MockPage } from "@/components/mock-shell/MockPage";
+  SearchField,
+} from "@/components/shell/Controls";
+import { Page } from "@/components/shell/Page";
 import { TerminalAgentLogo, type MobileTerminalAgent } from "@/components/terminal/TerminalAgentLogo";
 import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components/ui";
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
@@ -156,13 +156,13 @@ export default function TerminalScreen() {
 
   return (
     <View style={styles.screen}>
-      <MockPage
+      <Page
         title="Terminal"
         subtitle="Persistent sessions on this computer"
         refreshing={pullToRefresh.refreshing}
         onRefresh={pullToRefresh.onRefresh}
       >
-        <MockSearchField
+        <SearchField
           placeholder="Search sessions"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -199,7 +199,7 @@ export default function TerminalScreen() {
           onRename={() => void submitRename()}
           onDelete={() => void submitDelete()}
         />
-      </MockPage>
+      </Page>
       <FloatingActionButton
         accessibilityLabel="Manage terminals"
         icon={Add01Icon}

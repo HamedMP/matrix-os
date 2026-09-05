@@ -33,7 +33,7 @@ const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
   { route: "apps", label: "Apps", icon: GridViewIcon },
 ];
 
-interface MockDrawerContentProps extends DrawerContentComponentProps {
+interface DrawerContentProps extends DrawerContentComponentProps {
   computerName: string;
   recentChats: CanonicalChatRecord[];
   recentChatsLoading: boolean;
@@ -44,7 +44,7 @@ interface MockDrawerContentProps extends DrawerContentComponentProps {
   onNewConversation: (projectId?: string | null) => void;
 }
 
-export function MockDrawerContent({
+export function DrawerContent({
   computerName,
   recentChats,
   recentChatsLoading,
@@ -53,7 +53,7 @@ export function MockDrawerContent({
   onSelectConversation,
   onNewConversation,
   ...props
-}: MockDrawerContentProps) {
+}: DrawerContentProps) {
   // Accordion-style (one open at a time) rather than desktop's independent
   // expand/collapse per project -- simpler to scan on a small screen.
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);

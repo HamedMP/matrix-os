@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Spacer } from "@/components/ui";
 
-interface MockPageProps {
+interface PageProps {
   title: string;
   subtitle?: string;
   children: ReactNode;
@@ -13,19 +13,19 @@ interface MockPageProps {
   onRefresh?: () => void;
 }
 
-export function MockPage({
+export function Page({
   title,
   subtitle,
   children,
   scroll = true,
   refreshing = false,
   onRefresh,
-}: MockPageProps) {
+}: PageProps) {
   const { theme } = useUnistyles();
   const content = (
-    <View testID="mock-page-content" style={styles.content}>
+    <View testID="page-content" style={styles.content}>
       <Spacer size="lg" />
-      <View testID="mock-page-heading" style={styles.heading}>
+      <View testID="page-heading" style={styles.heading}>
         <Text style={styles.title}>{title}</Text>
         {subtitle ? (
           <>
@@ -49,7 +49,7 @@ export function MockPage({
           keyboardShouldPersistTaps="handled"
           refreshControl={onRefresh ? (
             <RefreshControl
-              testID="mock-page-refresh-control"
+              testID="page-refresh-control"
               refreshing={refreshing}
               onRefresh={onRefresh}
               tintColor={theme.v2.appColors.ink}

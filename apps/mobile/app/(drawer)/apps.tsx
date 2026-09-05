@@ -8,9 +8,9 @@ import {
   GridTile,
   GridTileGrid,
   GridTileSkeletonGrid,
-  MockSearchField,
-} from "@/components/mock-shell/MockControls";
-import { MockPage } from "@/components/mock-shell/MockPage";
+  SearchField,
+} from "@/components/shell/Controls";
+import { Page } from "@/components/shell/Page";
 import { Spacer } from "@/components/ui";
 import { useComputerApps, installedAppSlug } from "@/lib/queries/use-computer-apps";
 import { buildAppIconUrl } from "@/lib/requests";
@@ -26,8 +26,8 @@ export default function AppsScreen() {
   }, [apps, query]);
 
   return (
-    <MockPage title="Apps" subtitle={`Experiences installed on ${computer?.handle ?? "your computer"}`}>
-      <MockSearchField placeholder="Search apps" value={query} onChangeText={setQuery} />
+    <Page title="Apps" subtitle={`Experiences installed on ${computer?.handle ?? "your computer"}`}>
+      <SearchField placeholder="Search apps" value={query} onChangeText={setQuery} />
       <Spacer size="xl" />
       {isPending ? <GridTileSkeletonGrid testID="app-tile-skeleton" /> : null}
       {isError ? <Text style={styles.statusText}>Apps unavailable. Try again.</Text> : null}
@@ -58,7 +58,7 @@ export default function AppsScreen() {
           })}
         </GridTileGrid>
       ) : null}
-    </MockPage>
+    </Page>
   );
 }
 

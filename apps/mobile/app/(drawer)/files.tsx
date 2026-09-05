@@ -10,9 +10,9 @@ import {
   FileTileSkeletonGrid,
   GridTile,
   GridTileGrid,
-  MockSearchField,
-} from "@/components/mock-shell/MockControls";
-import { MockPage } from "@/components/mock-shell/MockPage";
+  SearchField,
+} from "@/components/shell/Controls";
+import { Page } from "@/components/shell/Page";
 import { Spacer } from "@/components/ui";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
@@ -29,13 +29,13 @@ export default function FilesScreen() {
 
   return (
     <View style={styles.screen}>
-      <MockPage
+      <Page
         title="Files"
         subtitle={`Everything on ${computer?.handle ?? "your computer"}`}
         refreshing={pullToRefresh.refreshing}
         onRefresh={pullToRefresh.onRefresh}
       >
-        <MockSearchField placeholder="Search files" />
+        <SearchField placeholder="Search files" />
         <Spacer size="2xl" />
         <View testID="files-section-heading" style={styles.sectionHeading}>
           <Text style={styles.sectionTitle}>Items</Text>
@@ -68,7 +68,7 @@ export default function FilesScreen() {
             ))}
           </GridTileGrid>
         ) : null}
-      </MockPage>
+      </Page>
       <FileCreationControls currentPath="" />
     </View>
   );

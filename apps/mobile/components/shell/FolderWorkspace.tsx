@@ -6,7 +6,7 @@ import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 
 import { EmptyFolderState } from "@/components/files/EmptyFolderState";
 import { Spacer } from "@/components/ui";
-import { FileTileSkeletonGrid, GridTile, GridTileGrid } from "./MockControls";
+import { FileTileSkeletonGrid, GridTile, GridTileGrid } from "./Controls";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 

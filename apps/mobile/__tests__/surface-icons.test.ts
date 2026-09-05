@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const mockSurfaceRoots = [
-  join(__dirname, "../components/mock-shell"),
+  join(__dirname, "../components/shell"),
   join(__dirname, "../app/(drawer)"),
   join(__dirname, "../app/app-preview"),
   join(__dirname, "../app/file-browser"),
@@ -18,7 +18,7 @@ function sourceFiles(directory: string): string[] {
   });
 }
 
-describe("mock surface icon system", () => {
+describe("surface icon system", () => {
   it("uses HugeIcons without importing an entire icon catalog", () => {
     const sources = mockSurfaceRoots.flatMap(sourceFiles).map((path) => readFileSync(path, "utf8"));
 

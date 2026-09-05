@@ -1,50 +1,63 @@
-jest.mock("@clerk/clerk-expo", () => ({
-  useAuth: () => ({ signOut: jest.fn() }),
-}));
+const mockPush = jest.fn();
+const mockReplace = jest.fn();
+const mockSignOut = jest.fn(() => Promise.resolve());
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace }),
 }));
 
-jest.mock("@/app/_layout", () => ({
-  useGateway: () => ({ client: null, connectionState: "connected", gateway: null }),
+jest.mock("@clerk/clerk-expo", () => ({
+  useAuth: () => ({ signOut: mockSignOut }),
 }));
 
-jest.mock("@/lib/auth", () => ({
-  isBiometricAvailable: jest.fn().mockResolvedValue(false),
-  getSupportedBiometricTypes: jest.fn().mockResolvedValue([]),
-  getBiometricLabel: jest.fn().mockReturnValue("Biometric"),
+jest.mock("@/lib/terminal-scrollback", () => ({
+  clearAllScrollback: jest.fn(),
+}));
+
+jest.mock("@/lib/analytics", () => ({
+  resetAnalytics: jest.fn(),
 }));
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
-import { SettingsContent } from "../app/(tabs)/settings";
+import { Alert } from "react-native";
 
-describe("SettingsContent", () => {
-  it("delegates computer switching through its route callback", () => {
-    const onSwitchComputer = jest.fn();
+import SettingsScreen from "../app/(drawer)/settings";
 
-    render(
-      <SettingsContent
-        settings={{ biometricEnabled: false, theme: "system", notificationsEnabled: true }}
-        channels={{}}
-        systemInfo={null}
-        aiProfile={null}
-        biometricLabel="Face ID"
-        biometricAvailable={false}
-        refreshing={false}
-        connectionState="connected"
-        gatewayName="Matrix OS Cloud"
-        gatewayUrl="https://app.matrix-os.com"
-        onRefresh={jest.fn()}
-        updateSetting={jest.fn()}
-        onSwitchComputer={onSwitchComputer}
-        onSignOut={jest.fn()}
-      />,
+describe("drawer settings hub", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it.each([
+    ["System", "/settings-detail/system"],
+    ["Account", "/settings-detail/account"],
+    ["App settings", "/settings-detail/app-settings"],
+    ["Billing", "/settings-detail/billing"],
+    ["Help", "/settings-detail/help"],
+  ])("opens %s in the settings modal stack", (label, route) => {
+    render(<SettingsScreen />);
+
+    fireEvent.press(screen.getByLabelText(`Open ${label}`));
+
+    expect(mockPush).toHaveBeenCalledWith(route);
+  });
+
+  it("confirms before signing out", async () => {
+    const alert = jest.spyOn(Alert, "alert").mockImplementation(
+      (_title, _message, buttons) => buttons?.find((button) => button.style === "destructive")?.onPress?.(),
     );
+    render(<SettingsScreen />);
 
-    fireEvent.press(screen.getByText("Switch computer"));
+    fireEvent.press(screen.getByLabelText("Sign out"));
 
-    expect(onSwitchComputer).toHaveBeenCalledTimes(1);
+    expect(alert).toHaveBeenCalledWith(
+      "Sign out?",
+      expect.any(String),
+      expect.any(Array),
+    );
+    await Promise.resolve();
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith("/sign-in");
   });
 });

@@ -1,15 +1,10 @@
-// theme-v2: the token source for the "new app" surfaces (drawer shell,
-// canonical chat, components/ui). It conserves the exact values already in
-// use from lib/theme.ts's `palette`/`semanticColors`/`fonts`/`spacing`/
-// `radius`/`typography`, then adds an on-brand dark variant. The legacy
-// (tabs)/* screens keep reading lib/theme.ts + lib/unistyles.ts directly and
-// are out of scope here.
+// The design token source for the app: palette/semanticColors/fonts/spacing/
+// radius/typography, in both a light and an on-brand dark variant.
 //
 // These are plain data exports (no hook). Runtime reactivity to the user's
 // theme preference is wired through lib/unistyles.ts's `v2` theme group —
 // components read `theme.v2.colors`/`theme.v2.appColors` via
-// `StyleSheet.create((theme) => ...)` or `useUnistyles()`, the same pattern
-// the legacy screens already use for `theme.colors`/`theme.design`.
+// `StyleSheet.create((theme) => ...)` or `useUnistyles()`.
 
 export const palette = {
   green: {
@@ -153,9 +148,8 @@ export const designShadows = {
   lgShine: "inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 16px rgba(51, 46, 36, 0.10)",
 } as const;
 
-// mock-shell-style flattened aliases, per mode. Mirrors
-// components/mock-shell/theme.ts's `mockColors` shape so new-app screens can
-// swap the bridge import for `getAppColors(mode)` without renaming keys.
+// Flattened aliases, per mode, for the common surface/text roles screens
+// reach for most often.
 function buildAppColors(mode: ThemeMode) {
   const semantic = semanticColorsByMode[mode];
   const p = palette;
@@ -172,6 +166,10 @@ function buildAppColors(mode: ThemeMode) {
     danger: semantic.danger,
     disabledSurface: semantic.disabledSurface,
     warmSurface: mode === "dark" ? p.gold[900] : p.gold[100],
+    // The terminal is always a dark console regardless of the app's color
+    // scheme, so these two stay constant across modes.
+    terminal: "#161817",
+    terminalInk: "#D9F7DE",
   } as const;
 }
 

@@ -15,7 +15,7 @@ jest.mock("@clerk/clerk-expo", () => ({
 
 import MockHomeScreen from "../app/(drawer)/index";
 
-describe("mock home screen", () => {
+describe("drawer home screen", () => {
   it("uses the Matrix rabbit artwork for its empty-state mark", () => {
     render(<MockHomeScreen />);
 

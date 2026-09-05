@@ -87,7 +87,7 @@ import { fireEvent, render, screen } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet } from "react-native";
 import * as Haptics from "expo-haptics";
 import DrawerLayout from "../app/(drawer)/_layout";
-import { MockDrawerContent } from "../components/mock-shell/MockDrawerContent";
+import { DrawerContent } from "../components/shell/DrawerContent";
 
 describe("authenticated drawer layout", () => {
   beforeEach(() => {
@@ -175,7 +175,7 @@ describe("authenticated drawer layout", () => {
     const closeDrawer = jest.fn();
 
     render(
-      <MockDrawerContent
+      <DrawerContent
         {...({
           state: {
             index: 0,
@@ -193,7 +193,7 @@ describe("authenticated drawer layout", () => {
           onSelectConversation: jest.fn(),
           onNewConversation: jest.fn().mockResolvedValue("chat-3"),
           isCreatingConversation: false,
-        } as unknown as React.ComponentProps<typeof MockDrawerContent>)}
+        } as unknown as React.ComponentProps<typeof DrawerContent>)}
       />,
     );
 
@@ -252,7 +252,7 @@ describe("authenticated drawer layout", () => {
 
   it("shows skeleton rows while recent conversations are loading", () => {
     render(
-      <MockDrawerContent
+      <DrawerContent
         {...({
           state: { index: 0, routeNames: [] },
           navigation: { navigate: jest.fn(), closeDrawer: jest.fn() },
@@ -264,7 +264,7 @@ describe("authenticated drawer layout", () => {
           onSelectConversation: jest.fn(),
           onNewConversation: jest.fn().mockResolvedValue(null),
           isCreatingConversation: false,
-        } as unknown as React.ComponentProps<typeof MockDrawerContent>)}
+        } as unknown as React.ComponentProps<typeof DrawerContent>)}
       />,
     );
 

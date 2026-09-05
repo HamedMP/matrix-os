@@ -37,7 +37,7 @@ import { Linking, StyleSheet as NativeStyleSheet } from "react-native";
 import IntegrationsScreen from "../app/(drawer)/integrations";
 import InstalledIntegrationsScreen from "../app/integrations-installed/index";
 
-describe("mock integrations screen", () => {
+describe("drawer integrations screen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUseComputerIntegrations.mockReturnValue({
@@ -83,13 +83,13 @@ describe("mock integrations screen", () => {
     }));
     render(<IntegrationsScreen />);
 
-    act(() => screen.getByTestId("mock-page-refresh-control").props.onRefresh());
+    act(() => screen.getByTestId("page-refresh-control").props.onRefresh());
 
     expect(mockRefreshIntegrations).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("mock-page-refresh-control").props.refreshing).toBe(true);
+    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(true);
 
     await act(async () => resolveRefresh?.());
-    expect(screen.getByTestId("mock-page-refresh-control").props.refreshing).toBe(false);
+    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(false);
   });
 
   it("uses spacers instead of vertical padding or margins", () => {

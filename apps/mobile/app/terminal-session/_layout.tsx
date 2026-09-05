@@ -2,7 +2,7 @@ import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import { Stack, useRouter } from "expo-router";
 
 import { IconButton } from "@/components/ui";
-import { mockColors, mockFonts } from "@/components/mock-shell/theme";
+import { appColors, appFonts } from "@/lib/theme-v2";
 
 export default function TerminalSessionLayout() {
   const router = useRouter();
@@ -11,7 +11,7 @@ export default function TerminalSessionLayout() {
       accessibilityLabel="Close terminal session"
       icon={Cancel01Icon}
       iconSize={22}
-      iconColor={mockColors.surface}
+      iconColor={appColors.light.surface}
       iconTestID="terminal-close-icon"
       buttonSize={32}
       pressedOpacity={1}
@@ -23,9 +23,9 @@ export default function TerminalSessionLayout() {
     <Stack
       screenOptions={{
         headerShadowVisible: false,
-        headerStyle: { backgroundColor: mockColors.terminal },
-        headerTintColor: mockColors.surface,
-        headerTitleStyle: { fontFamily: mockFonts.mono, fontSize: 14 },
+        headerStyle: { backgroundColor: appColors.light.terminal },
+        headerTintColor: appColors.light.surface,
+        headerTitleStyle: { fontFamily: appFonts.mono, fontSize: 14 },
         headerBackVisible: false,
         headerBackButtonDisplayMode: "minimal",
         headerLeft: closeButton,
@@ -34,7 +34,7 @@ export default function TerminalSessionLayout() {
           element: closeButton(),
           hidesSharedBackground: true,
         }],
-        contentStyle: { backgroundColor: mockColors.terminal },
+        contentStyle: { backgroundColor: appColors.light.terminal },
       }}
     />
   );

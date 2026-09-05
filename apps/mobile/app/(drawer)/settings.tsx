@@ -8,7 +8,7 @@ import Logout01Icon from "@hugeicons/core-free-icons/Logout01Icon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
 import UserIcon from "@hugeicons/core-free-icons/UserIcon";
 
-import { MockPage } from "@/components/mock-shell/MockPage";
+import { Page } from "@/components/shell/Page";
 import { SettingsCardStack, SettingsRow } from "@/components/settings/SettingsSurface";
 import { resetAnalytics } from "@/lib/analytics";
 import { clearAllScrollback } from "@/lib/terminal-scrollback";
@@ -38,7 +38,7 @@ export default function SettingsScreen() {
   }
 
   return (
-    <MockPage title="Settings" subtitle="Manage Matrix OS and your account">
+    <Page title="Settings" subtitle="Manage Matrix OS and your account">
       <SettingsCardStack>
         <SettingsRow
           card
@@ -84,6 +84,6 @@ export default function SettingsScreen() {
           onPress={confirmSignOut}
         />
       </SettingsCardStack>
-    </MockPage>
+    </Page>
   );
 }

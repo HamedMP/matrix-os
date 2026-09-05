@@ -5,7 +5,7 @@ import * as Haptics from "expo-haptics";
 import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
 
 import { Icon } from "@/components/ui";
-import { MockDrawerContent } from "@/components/mock-shell/MockDrawerContent";
+import { DrawerContent } from "@/components/shell/DrawerContent";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { useProjects } from "@/lib/queries/use-projects";
@@ -35,7 +35,7 @@ export default function DrawerLayout() {
         drawerClose: triggerDrawerHaptic,
       }}
       drawerContent={(props: DrawerContentComponentProps) => (
-        <MockDrawerContent
+        <DrawerContent
           {...props}
           computerName={computerName}
           recentChats={chats}

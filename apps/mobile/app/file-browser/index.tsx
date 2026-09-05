@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from "expo-router";
 
-import { FolderWorkspace } from "@/components/mock-shell/FolderWorkspace";
+import { FolderWorkspace } from "@/components/shell/FolderWorkspace";
 
 export default function FileBrowserScreen() {
   const params = useLocalSearchParams<{ folder?: string | string[] }>();

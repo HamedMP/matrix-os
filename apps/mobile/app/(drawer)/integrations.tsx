@@ -17,8 +17,8 @@ import {
   ListRow,
   ListRowSkeletonStack,
   ListRowStack,
-} from "@/components/mock-shell/MockControls";
-import { MockPage } from "@/components/mock-shell/MockPage";
+} from "@/components/shell/Controls";
+import { Page } from "@/components/shell/Page";
 import { Icon, Spacer } from "@/components/ui";
 import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations";
 import type { IntegrationService } from "@/lib/requests";
@@ -121,7 +121,7 @@ export default function IntegrationsScreen() {
   }, [connectingServiceId]);
 
   return (
-    <MockPage
+    <Page
       title="Integrations"
       subtitle="Capabilities Matrix can use on your behalf"
       refreshing={pullToRefresh.refreshing}
@@ -192,7 +192,7 @@ export default function IntegrationsScreen() {
           ))}
         </ListRowStack>
       ) : null}
-    </MockPage>
+    </Page>
   );
 }
 

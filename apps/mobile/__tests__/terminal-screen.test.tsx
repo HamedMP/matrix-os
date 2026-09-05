@@ -1,630 +1,209 @@
-import React from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { Alert, StyleSheet, View } from "react-native";
-import TerminalScreen from "../app/(tabs)/terminal";
-import { useGateway } from "@/app/_layout";
-import type { GatewayClient } from "../lib/gateway-client";
-import {
-  emitWebViewMessage,
-  latestWebViewSource,
-  resetWebViewMock,
-  webViewInjections,
-} from "../__mocks__/react-native-webview";
+import type { ReactNode } from "react";
 
-const SESSION_ID = "matrix-abc1234";
-const EXCLUSIVE_HARD_PRESENTATION = {
-  client: "hard",
-  cols: 80,
-  rows: 24,
-  lease: "exclusive",
-};
-let mockFocusCallback: (() => void | (() => void)) | null = null;
-let mockFocusCleanup: (() => void) | null = null;
+const mockPush = jest.fn();
+const mockUseComputerTerminals = jest.fn();
+const mockCreateSession = jest.fn();
+const mockRenameSession = jest.fn();
+const mockDeleteSession = jest.fn();
+const mockRefreshTerminals = jest.fn();
 
-// Auto-confirm the End-session / Detach confirmation dialogs in tests.
-function autoConfirmAlerts() {
-  jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => {
-    const confirm = buttons?.find((b) => b.style === "destructive") ?? buttons?.[buttons.length - 1];
-    confirm?.onPress?.();
-  });
-}
-
-function createDeferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
-    resolve = nextResolve;
-  });
-  return { promise, resolve };
-}
-
-jest.mock("@react-native-async-storage/async-storage", () => ({
-  getItem: jest.fn(),
-  setItem: jest.fn(),
-}));
-
-jest.mock("@/app/_layout", () => ({
-  useGateway: jest.fn(),
-}));
+jest.mock("react-native-gesture-handler", () => {
+  const React = require("react");
+  const { View } = require("react-native");
+  return {
+    Swipeable: React.forwardRef(function MockSwipeable(
+      { children, renderRightActions }: { children: React.ReactNode; renderRightActions?: () => React.ReactNode },
+      _ref: React.ForwardedRef<unknown>,
+    ) {
+      return <View>{children}{renderRightActions?.()}</View>;
+    }),
+  };
+});
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ back: jest.fn() }),
-  useFocusEffect: (callback: () => void | (() => void)) => {
-    const React = require("react");
-    React.useEffect(() => {
-      mockFocusCallback = callback;
-      const cleanup = callback();
-      mockFocusCleanup = typeof cleanup === "function" ? cleanup : null;
-      return () => {
-        mockFocusCleanup?.();
-        mockFocusCleanup = null;
-        mockFocusCallback = null;
-      };
-    }, [callback]);
-  },
+  useRouter: () => ({ push: mockPush }),
 }));
 
-jest.mock("expo-status-bar", () => ({
-  setStatusBarStyle: jest.fn(),
-  StatusBar: () => null,
+jest.mock("@/lib/queries/use-computer-terminals", () => ({
+  useComputerTerminals: () => mockUseComputerTerminals(),
 }));
 
-jest.mock("react-native-safe-area-context", () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
-}));
+jest.mock("@expo/ui", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  const { View } = jest.requireActual("react-native") as typeof import("react-native");
+  return {
+    BottomSheet: ({ children, isPresented }: { children: ReactNode; isPresented: boolean }) => (
+      isPresented ? <View testID="terminal-manage-sheet">{children}</View> : null
+    ),
+    RNHostView: ({ children }: { children: ReactNode }) => children,
+  };
+});
 
-class MockTerminalSocket {
-  readyState: number = WebSocket.OPEN;
-  sent: string[] = [];
-  closed = false;
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  onclose: (() => void) | null = null;
+import React from "react";
+import { fireEvent, render, screen } from "@testing-library/react-native";
+import { StyleSheet as NativeStyleSheet } from "react-native";
 
-  send(data: string) {
-    this.sent.push(data);
-  }
+import TerminalScreen from "../app/(drawer)/terminal";
+import { appColors, palette } from "@/lib/theme-v2";
 
-  close() {
-    this.closed = true;
-    this.readyState = WebSocket.CLOSED;
-    this.onclose?.();
-  }
-}
-
-describe("TerminalScreen", () => {
-  const OriginalWebSocket = global.WebSocket;
+describe("drawer terminal screen", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockUseComputerTerminals.mockReturnValue({
+      sessions: [
+        { name: "main", status: "active", visualStatus: "running", cwd: "projects/matrix-os", branch: "main", agent: "claude" },
+        { name: "review-pr-42", status: "active", visualStatus: "waiting", subtitle: "Waiting for approval", agent: "codex" },
+        { name: "notes", status: "active", visualStatus: "idle", cwd: "~" },
+      ],
+      isPending: false,
+      isError: false,
+      renameSession: mockRenameSession,
+      deleteSession: mockDeleteSession,
+      createSession: mockCreateSession,
+      refresh: mockRefreshTerminals,
+    });
+  });
 
   afterEach(() => {
-    global.WebSocket = OriginalWebSocket;
-    jest.clearAllMocks();
-    resetWebViewMock();
-    mockFocusCallback = null;
-    mockFocusCleanup = null;
+    jest.useRealTimers();
   });
 
-  it("opens a mobile terminal session with visible path, output, and command input", async () => {
-    global.WebSocket = {
-      OPEN: 1,
-      CLOSED: 3,
-    } as typeof WebSocket;
-    const socket = new MockTerminalSocket();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([
-        {
-          sessionId: SESSION_ID,
-          cwd: "/home/matrix/home/projects",
-          state: "running",
-        },
-      ]),
-      createTerminalSession: jest.fn().mockResolvedValue(SESSION_ID),
-      getWsToken: jest.fn().mockResolvedValue("ws-token"),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(true),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
-    });
-
-    render(<TerminalScreen />);
-
-    // The terminal lands on a running session automatically (last-session-first).
-    await waitFor(() =>
-      expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledWith(
-        "ws-token",
-        SESSION_ID,
-        undefined,
-        EXCLUSIVE_HARD_PRESENTATION,
-      ),
-    );
-    await act(async () => {
-      socket.onopen?.();
-      socket.onmessage?.({
-        data: JSON.stringify({
-          type: "attached",
-          sessionId: SESSION_ID,
-          cwd: "/home/matrix/home/projects",
-        }),
-      });
-      socket.onmessage?.({
-        data: JSON.stringify({ type: "output", data: "deploy@matrix:~/projects$ " }),
-      });
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // The session name is the visible window title; the path shows in the
-    // expanded chrome subtitle.
-    await waitFor(() => expect(screen.getAllByText(SESSION_ID).length).toBeGreaterThan(0));
-    // Output is written into the embedded xterm.js emulator (WebView), not a Text node.
-    await waitFor(() =>
-      expect(webViewInjections.some((js: string) => js.includes("deploy@matrix:~/projects$ "))).toBe(true),
-    );
-
-    // No command bar anymore — the user types directly into xterm, which posts
-    // an "input" frame that the screen forwards over the WebSocket.
-    await act(async () => {
-      emitWebViewMessage({ type: "input", data: "pwd\r" });
-      await Promise.resolve();
-    });
-
-    const sent = socket.sent.map((frame) => JSON.parse(frame));
-    // No attach frame anymore — the session name is supplied in the WS query.
-    expect(sent.some((frame) => frame.type === "attach")).toBe(false);
-    expect(sent).toContainEqual({ type: "input", data: "pwd\r" });
-  });
-
-  it("leaves terminal touch handling with the WebView instead of a full-surface responder overlay", async () => {
-    global.WebSocket = {
-      OPEN: 1,
-      CLOSED: 3,
-    } as typeof WebSocket;
-    const socket = new MockTerminalSocket();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([
-        {
-          sessionId: SESSION_ID,
-          cwd: "/home/matrix/home/projects",
-          state: "running",
-        },
-      ]),
-      createTerminalSession: jest.fn().mockResolvedValue(SESSION_ID),
-      getWsToken: jest.fn().mockResolvedValue("ws-token"),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(true),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
-    });
-
-    const rendered = render(<TerminalScreen />);
-
-    await waitFor(() => expect(screen.getByTestId("terminal-webview")).toBeTruthy());
-    const responderOverlays = rendered.UNSAFE_queryAllByType(View).filter((node) => {
-      const style = StyleSheet.flatten(node.props.style);
-      return (
-        (typeof node.props.onStartShouldSetResponder === "function" ||
-          typeof node.props.onMoveShouldSetResponder === "function") &&
-        style?.position === "absolute" &&
-        style?.top === 0 &&
-        style?.right === 0 &&
-        style?.bottom === 0 &&
-        style?.left === 0 &&
-        style?.backgroundColor === "transparent"
-      );
-    });
-    expect(responderOverlays).toHaveLength(0);
-    // The emulator owns pan gestures via the in-document touch→wheel bridge so
-    // alternate-screen TUIs receive scroll too; no RN responder overlay exists.
-    const html = (latestWebViewSource as { html?: string } | null)?.html ?? "";
-    expect(html).toContain("touch-action: none");
-    expect(html).toContain("touchmove");
-    expect(html).toContain("WheelEvent");
-  });
-
-  it("offers a real continue action for the persisted terminal session", async () => {
-    global.WebSocket = {
-      OPEN: 1,
-      CLOSED: 3,
-    } as typeof WebSocket;
-    const socket = new MockTerminalSocket();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
-      mode: "terminal",
-      lastActiveTerminalSessionId: SESSION_ID,
-      updatedAt: "2026-05-13T00:00:00.000Z",
+  it("holds the native refresh control open until terminals finish refreshing", async () => {
+    let resolveRefresh: (() => void) | undefined;
+    mockRefreshTerminals.mockReturnValue(new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
     }));
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([
-        {
-          sessionId: SESSION_ID,
-          cwd: "/home/matrix/home/projects",
-          state: "running",
-        },
-      ]),
-      createTerminalSession: jest.fn().mockResolvedValue(SESSION_ID),
-      getWsToken: jest.fn().mockResolvedValue("ws-token"),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(true),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
+    render(<TerminalScreen />);
+
+    React.act(() => screen.getByTestId("page-refresh-control").props.onRefresh());
+
+    expect(mockRefreshTerminals).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(true);
+
+    await React.act(async () => resolveRefresh?.());
+    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(false);
+  });
+
+  it("renders VPS sessions and uses semantic status colors", () => {
+    render(<TerminalScreen />);
+
+    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.getByText("review-pr-42")).toBeTruthy();
+    expect(screen.getByText("notes")).toBeTruthy();
+    expect(screen.queryByText("solar-vale")).toBeNull();
+    expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-main").props.style).backgroundColor)
+      .toBe(palette.green[100]);
+    expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-review-pr-42").props.style).backgroundColor)
+      .toBe(palette.gold[100]);
+    expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-notes").props.style).backgroundColor)
+      .toBe(palette.neutral[200]);
+  });
+
+  it("shows the desktop-style agent logo beside the session path", () => {
+    render(<TerminalScreen />);
+
+    expect(screen.getByTestId("terminal-session-agent-logo-claude")).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-agent-logo-image-claude")).toBeTruthy();
+    expect(screen.getAllByTestId("terminal-session-agent-separator")).toHaveLength(2);
+    expect(screen.getByTestId("terminal-session-agent-logo-codex")).toBeTruthy();
+    expect(screen.queryByTestId("terminal-session-agent-logo-notes")).toBeNull();
+  });
+
+  it("shows three full-size terminal row skeletons while sessions load", () => {
+    mockUseComputerTerminals.mockReturnValue({
+      sessions: [],
+      isPending: true,
+      isError: false,
+      renameSession: mockRenameSession,
+      deleteSession: mockDeleteSession,
     });
 
     render(<TerminalScreen />);
 
-    // Remembered session auto-attaches by name on open (no create, no attach frame).
-    await waitFor(() =>
-      expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledWith(
-        "ws-token",
-        SESSION_ID,
-        undefined,
-        EXCLUSIVE_HARD_PRESENTATION,
-      ),
-    );
-    expect(gatewayClient.createTerminalSession).not.toHaveBeenCalled();
-    await act(async () => {
-      socket.onopen?.();
-      socket.onmessage?.({
-        data: JSON.stringify({
-          type: "attached",
-          sessionId: SESSION_ID,
-          cwd: "/home/matrix/home/projects",
-        }),
-      });
-      await Promise.resolve();
-      await Promise.resolve();
+    const skeletons = screen.getAllByTestId("terminal-row-skeleton");
+    expect(skeletons).toHaveLength(3);
+    expect(NativeStyleSheet.flatten(skeletons[0].props.style)).toMatchObject({
+      height: 66,
+      backgroundColor: appColors.light.soft,
     });
-
-    expect(socket.sent.map((frame) => JSON.parse(frame)).some((frame) => frame.type === "attach")).toBe(false);
+    expect(screen.getAllByTestId("terminal-skeleton-shimmer")).toHaveLength(3);
   });
 
-  it("ignores duplicate connect actions while a terminal connection is pending", async () => {
-    global.WebSocket = {
-      OPEN: 1,
-      CLOSED: 3,
-    } as typeof WebSocket;
-    const socket = new MockTerminalSocket();
-    const tokenRequest = createDeferred<string>();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([]),
-      createTerminalSession: jest.fn().mockResolvedValue(SESSION_ID),
-      getWsToken: jest.fn(() => tokenRequest.promise),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(true),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
-    });
-
+  it("filters sessions by a case-insensitive name substring only", () => {
     render(<TerminalScreen />);
 
-    const newSession = screen.getByLabelText("New session");
-    fireEvent.press(newSession);
-    fireEvent.press(newSession);
+    fireEvent.changeText(screen.getByLabelText("Search sessions"), "REVIEW");
 
-    // The in-flight guard collapses the duplicate press: only one session is created.
-    expect(gatewayClient.createTerminalSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("review-pr-42")).toBeTruthy();
+    expect(screen.queryByText("main")).toBeNull();
+    expect(screen.queryByText("notes")).toBeNull();
 
-    await act(async () => {
-      tokenRequest.resolve("ws-token");
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    fireEvent.changeText(screen.getByLabelText("Search sessions"), "approval");
 
-    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("review-pr-42")).toBeNull();
   });
 
-  it("keeps terminal recovery state when deleting a session fails", async () => {
-    global.WebSocket = {
-      OPEN: 1,
-      CLOSED: 3,
-    } as typeof WebSocket;
-    const socket = new MockTerminalSocket();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
-      mode: "terminal",
-      lastActiveTerminalSessionId: SESSION_ID,
-      updatedAt: "2026-05-13T00:00:00.000Z",
+  it("renames a swiped terminal after editing its name in a popup", async () => {
+    mockRenameSession.mockResolvedValue(undefined);
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Rename main terminal"));
+    fireEvent.changeText(screen.getByLabelText("Terminal session name"), "renamed-session");
+    fireEvent.press(screen.getByLabelText("Save terminal name"));
+
+    expect(mockRenameSession).toHaveBeenCalledWith("main", "renamed-session");
+  });
+
+  it("requires popup confirmation before deleting a swiped terminal", () => {
+    mockDeleteSession.mockResolvedValue(undefined);
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Delete main terminal"));
+
+    expect(screen.getByText("Delete terminal session?")).toBeTruthy();
+    expect(mockDeleteSession).not.toHaveBeenCalled();
+
+    fireEvent.press(screen.getByLabelText("Confirm delete terminal"));
+
+    expect(mockDeleteSession).toHaveBeenCalledWith("main");
+  });
+
+  it("stretches square swipe actions to the terminal row height without a fixed size", () => {
+    render(<TerminalScreen />);
+
+    const style = NativeStyleSheet.flatten(screen.getByLabelText("Rename main terminal").props.style);
+
+    expect(style.height).toBeUndefined();
+    expect(style.width).toBeUndefined();
+    expect(style.alignSelf).toBe("stretch");
+    expect(style.aspectRatio).toBe(1);
+  });
+
+  it("creates a session from the manage sheet and opens the new terminal", async () => {
+    jest.useFakeTimers();
+    let resolveCreate: ((name: string) => void) | undefined;
+    mockCreateSession.mockImplementation(() => new Promise<string>((resolve) => {
+      resolveCreate = resolve;
     }));
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([
-        {
-          sessionId: SESSION_ID,
-          cwd: "/home/matrix/home/projects",
-          state: "running",
-        },
-      ]),
-      createTerminalSession: jest.fn().mockResolvedValue(SESSION_ID),
-      getWsToken: jest.fn().mockResolvedValue("ws-token"),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(false),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
-    });
-
     render(<TerminalScreen />);
 
-    // The terminal auto-attaches to the last running session on open.
-    await waitFor(() =>
-      expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledWith(
-        "ws-token",
-        SESSION_ID,
-        undefined,
-        EXCLUSIVE_HARD_PRESENTATION,
-      ),
-    );
+    fireEvent.press(screen.getByLabelText("Manage terminals"));
+    expect(screen.getByText("Manage terminals")).toBeTruthy();
+    expect(screen.getByTestId("new-terminal-session-chevron")).toBeTruthy();
 
-    await act(async () => {
-      socket.onopen?.();
-      socket.onmessage?.({
-        data: JSON.stringify({
-          type: "attached",
-          sessionId: SESSION_ID,
-          cwd: "/home/matrix/home/projects",
-        }),
-      });
-      await Promise.resolve();
-      await Promise.resolve();
+    fireEvent.press(screen.getByLabelText("New session"));
+    expect(screen.queryByTestId("new-terminal-session-chevron")).toBeNull();
+    expect(screen.getByTestId("new-terminal-session-loading")).toBeTruthy();
+
+    await React.act(async () => resolveCreate?.("swift-falcon"));
+
+    expect(screen.queryByTestId("terminal-manage-sheet")).toBeNull();
+    await React.act(async () => {
+      jest.advanceTimersByTime(500);
     });
-
-    // End session sits in the header behind a confirmation dialog.
-    await waitFor(() => expect(screen.getByLabelText("End session")).toBeTruthy());
-    autoConfirmAlerts();
-    fireEvent.press(screen.getByLabelText("End session"));
-
-    await waitFor(() => expect(gatewayClient.deleteTerminalSession).toHaveBeenCalledWith(SESSION_ID));
-    expect(socket.closed).toBe(false);
-    expect(AsyncStorage.setItem).not.toHaveBeenLastCalledWith(
-      expect.any(String),
-      expect.stringContaining('"lastActiveTerminalSessionId":null'),
-    );
-  });
-
-  it("falls back to an available running session when the persisted one is gone", async () => {
-    const AVAILABLE = "matrix-1a2b3c4";
-    global.WebSocket = { OPEN: 1, CLOSED: 3 } as typeof WebSocket;
-    const socket = new MockTerminalSocket();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
-      mode: "terminal",
-      lastActiveTerminalSessionId: SESSION_ID,
-      updatedAt: "2026-05-13T00:00:00.000Z",
-    }));
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([
-        { sessionId: AVAILABLE, cwd: "/home/matrix/home/projects", state: "running", visualStatus: "running" },
-      ]),
-      createTerminalSession: jest.fn().mockResolvedValue(AVAILABLE),
-      getWsToken: jest.fn().mockResolvedValue("ws-token"),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(true),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/terminal-session/[session]",
+      params: { session: "swift-falcon" },
     });
-
-    render(<TerminalScreen />);
-
-    // The persisted session is gone, so it auto-attaches to the available one.
-    await waitFor(() =>
-      expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledWith(
-        "ws-token",
-        AVAILABLE,
-        undefined,
-        EXCLUSIVE_HARD_PRESENTATION,
-      ),
-    );
-    expect(gatewayClient.createTerminalSession).not.toHaveBeenCalled();
-  });
-
-  it("applies canonical presentation frames and offers explicit resume after displacement", async () => {
-    global.WebSocket = { OPEN: 1, CLOSED: 3 } as typeof WebSocket;
-    const firstSocket = new MockTerminalSocket();
-    const resumedSocket = new MockTerminalSocket();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([
-        { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running" },
-      ]),
-      createTerminalSession: jest.fn().mockResolvedValue(SESSION_ID),
-      getWsToken: jest.fn().mockResolvedValue("ws-token"),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn()
-        .mockReturnValueOnce(firstSocket as unknown as WebSocket)
-        .mockReturnValueOnce(resumedSocket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(true),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
-    });
-
-    render(<TerminalScreen />);
-    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(1));
-    await act(async () => {
-      firstSocket.onopen?.();
-      firstSocket.onmessage?.({
-        data: JSON.stringify({
-          type: "attached",
-          session: SESSION_ID,
-          state: "running",
-          canonicalSize: { cols: 92, rows: 31 },
-          lease: { epoch: 5 },
-        }),
-      });
-      firstSocket.onmessage?.({ data: JSON.stringify({ type: "presentation-reset" }) });
-      firstSocket.onmessage?.({ data: JSON.stringify({ type: "canonical-size", cols: 90, rows: 30 }) });
-      firstSocket.onmessage?.({ data: JSON.stringify({ type: "lease-revoked", epoch: 5 }) });
-      await Promise.resolve();
-    });
-
-    expect(webViewInjections.some((js) => js.includes("window.__term.resize(92,31)"))).toBe(true);
-    expect(webViewInjections.some((js) => js.includes("window.__term.reset()"))).toBe(true);
-    expect(webViewInjections.some((js) => js.includes("window.__term.resize(90,30)"))).toBe(true);
-    expect(await screen.findByText("Live on another device.")).toBeTruthy();
-    expect(firstSocket.closed).toBe(true);
-
-    fireEvent.press(screen.getByText("Resume here"));
-    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(2));
-    expect(gatewayClient.openTerminalWebSocket).toHaveBeenLastCalledWith(
-      "ws-token",
-      SESSION_ID,
-      undefined,
-      EXCLUSIVE_HARD_PRESENTATION,
-    );
-  });
-
-  it("releases ownership when unfocused and reacquires it on return", async () => {
-    global.WebSocket = { OPEN: 1, CLOSED: 3 } as typeof WebSocket;
-    const firstSocket = new MockTerminalSocket();
-    const returnedSocket = new MockTerminalSocket();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([
-        { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running" },
-      ]),
-      createTerminalSession: jest.fn().mockResolvedValue(SESSION_ID),
-      getWsToken: jest.fn().mockResolvedValue("ws-token"),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn()
-        .mockReturnValueOnce(firstSocket as unknown as WebSocket)
-        .mockReturnValueOnce(returnedSocket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(true),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
-    });
-
-    render(<TerminalScreen />);
-    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(1));
-    await act(async () => {
-      firstSocket.onopen?.();
-      firstSocket.onmessage?.({
-        data: JSON.stringify({
-          type: "attached",
-          session: SESSION_ID,
-          state: "running",
-          canonicalSize: { cols: 80, rows: 24 },
-          lease: { epoch: 9 },
-        }),
-      });
-      await Promise.resolve();
-    });
-
-    await act(async () => {
-      mockFocusCleanup?.();
-      await Promise.resolve();
-    });
-    expect(firstSocket.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "detach" });
-    expect(firstSocket.closed).toBe(true);
-
-    await act(async () => {
-      const cleanup = mockFocusCallback?.();
-      mockFocusCleanup = typeof cleanup === "function" ? cleanup : null;
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(2));
-  });
-
-  it("does not fall back to another running session when an explicit terminal handoff is stale", async () => {
-    const AVAILABLE = "matrix-1a2b3c4";
-    global.WebSocket = { OPEN: 1, CLOSED: 3 } as typeof WebSocket;
-    const socket = new MockTerminalSocket();
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
-      mode: "terminal",
-      lastActiveTerminalSessionId: SESSION_ID,
-      terminalHandoffSessionId: SESSION_ID,
-      updatedAt: "2026-05-13T00:00:00.000Z",
-    }));
-    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
-    const gatewayClient = {
-      getTerminalSessions: jest.fn().mockResolvedValue([
-        { sessionId: AVAILABLE, cwd: "/home/matrix/home/projects", state: "running", visualStatus: "running" },
-      ]),
-      createTerminalSession: jest.fn().mockResolvedValue(AVAILABLE),
-      getWsToken: jest.fn().mockResolvedValue("ws-token"),
-      setWebSocketToken: jest.fn(),
-      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
-      deleteTerminalSession: jest.fn().mockResolvedValue(true),
-    };
-    jest.mocked(useGateway).mockReturnValue({
-      client: gatewayClient as unknown as GatewayClient,
-      connectionState: "connected",
-      gateway: null,
-      setGateway: jest.fn(),
-      unreadCount: 0,
-      incrementUnread: jest.fn(),
-      clearUnread: jest.fn(),
-    });
-
-    render(<TerminalScreen />);
-
-    expect(await screen.findByText("Terminal unavailable")).toBeTruthy();
-    expect(gatewayClient.openTerminalWebSocket).not.toHaveBeenCalledWith("ws-token", AVAILABLE, undefined);
-    expect(gatewayClient.createTerminalSession).not.toHaveBeenCalled();
   });
 });
