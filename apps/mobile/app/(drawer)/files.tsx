@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useRouter } from "expo-router";
@@ -19,13 +20,19 @@ import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export default function FilesScreen() {
   const router = useRouter();
+  const [query, setQuery] = useState("");
   const { computer, entries, isPending, isError, refresh } = useComputerDirectory("");
   const pullToRefresh = usePullToRefresh(refresh);
+  const visibleEntries = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return entries;
+    return entries.filter((entry) => entry.name.toLocaleLowerCase().includes(normalizedQuery));
+  }, [entries, query]);
   const sectionMeta = isPending
     ? "Loading…"
     : isError
       ? "Unavailable"
-      : `${entries.length} ${entries.length === 1 ? "item" : "items"}`;
+      : `${visibleEntries.length} ${visibleEntries.length === 1 ? "item" : "items"}`;
 
   return (
     <View style={styles.screen}>
@@ -35,7 +42,7 @@ export default function FilesScreen() {
         refreshing={pullToRefresh.refreshing}
         onRefresh={pullToRefresh.onRefresh}
       >
-        <SearchField placeholder="Search files" />
+        <SearchField placeholder="Search files" value={query} onChangeText={setQuery} />
         <Spacer size="2xl" />
         <View testID="files-section-heading" style={styles.sectionHeading}>
           <Text style={styles.sectionTitle}>Items</Text>
@@ -45,9 +52,12 @@ export default function FilesScreen() {
         {isPending ? <FileTileSkeletonGrid /> : null}
         {isError ? <Text style={styles.statusText}>Files unavailable. Try again.</Text> : null}
         {!isPending && !isError && entries.length === 0 ? <EmptyFolderState /> : null}
-        {!isPending && !isError && entries.length > 0 ? (
+        {!isPending && !isError && entries.length > 0 && visibleEntries.length === 0 ? (
+          <Text style={styles.statusText}>No files match “{query.trim()}”.</Text>
+        ) : null}
+        {!isPending && !isError && visibleEntries.length > 0 ? (
           <GridTileGrid>
-            {entries.map((entry) => (
+            {visibleEntries.map((entry) => (
               <GridTile
                 key={entry.name}
                 label={entry.name}

@@ -69,8 +69,9 @@ export default function IntegrationsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void Promise.resolve().then(() => syncConnectionsRef.current()).catch(() => {
+      void Promise.resolve().then(() => syncConnectionsRef.current()).catch((error: unknown) => {
         // Best-effort reconciliation also covers a remount caused by the deep link.
+        console.warn("[mobile] integrations focus sync failed", error instanceof Error ? error.name : "unknown");
       });
     }, []),
   );
@@ -94,8 +95,9 @@ export default function IntegrationsScreen() {
       syncInFlight.current = true;
       try {
         await syncConnectionsRef.current();
-      } catch {
+      } catch (error: unknown) {
         // The next poll retries; a delayed provider account is expected during OAuth.
+        console.warn("[mobile] integrations poll sync failed", error instanceof Error ? error.name : "unknown");
       } finally {
         syncInFlight.current = false;
       }

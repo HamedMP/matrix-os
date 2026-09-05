@@ -25,7 +25,7 @@ export default function IntegrationDetailScreen() {
       <Spacer size="xl" />
       <Text style={styles.title}>Connect {displayName}</Text>
       <Spacer size="sm" />
-      <Text style={styles.body}>This mock will become the permission and account connection flow for this service.</Text>
+      <Text style={styles.body}>This screen will become the permission and account connection flow for this service.</Text>
       <Spacer size="2xl" />
       <View style={styles.permissionCard}>
         <Spacer size="lg" />

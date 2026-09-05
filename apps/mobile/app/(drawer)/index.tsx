@@ -65,15 +65,6 @@ export default function ChatScreen() {
   const turnModes = defaultTurnModes(catalog, selection);
 
   const messages = useMemo(() => buildTranscript(detail), [detail]);
-  // TEMP diagnostic -- remove once streaming is confirmed working.
-  console.warn(
-    "[canonical-chat] render",
-    JSON.stringify({
-      messagesLength: messages.length,
-      headTextLength: messages[0]?.text.length ?? 0,
-      headIsRunning: messages[0]?.isRunning ?? null,
-    }),
-  );
   const busy = sendMessage.isPending || (detail?.runs.some(
     (run) => !["completed", "failed", "aborted"].includes(run.status),
   ) ?? false);
@@ -116,7 +107,9 @@ export default function ChatScreen() {
   const send = useCallback(() => {
     const trimmed = draft.trim();
     if (!trimmed || !selection || !turnModes) return;
-    setDraft("");
+    // Clear the draft only once the send actually succeeds -- a failed token
+    // fetch, computer resolution, chat creation, or turn admission leaves the
+    // typed text in place so the user can retry instead of losing it.
     sendMessage.mutate({
       chatId: activeChatId,
       baseRevision: detail?.record.chat.revision ?? 0,
@@ -125,6 +118,8 @@ export default function ChatScreen() {
       interactionMode: turnModes.interactionMode,
       permissionMode: turnModes.permissionMode,
       projectId: selectedProjectId,
+    }, {
+      onSuccess: () => setDraft(""),
     });
   }, [
     draft,

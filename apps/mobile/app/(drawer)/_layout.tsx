@@ -77,7 +77,6 @@ export default function DrawerLayout() {
       })}
     >
       <Drawer.Screen name="index" options={{ title: null, drawerLabel: "Home" }} />
-      <Drawer.Screen name="search" options={{ title: null, drawerLabel: "Search" }} />
       <Drawer.Screen name="files" options={{ title: null, drawerLabel: "Files" }} />
       <Drawer.Screen name="terminal" options={{ title: null, drawerLabel: "Terminal" }} />
       <Drawer.Screen name="integrations" options={{ title: null, drawerLabel: "Integrations" }} />

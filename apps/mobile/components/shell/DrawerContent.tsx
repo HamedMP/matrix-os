@@ -8,7 +8,6 @@ import Message01Icon from "@hugeicons/core-free-icons/Message01Icon";
 import PencilEdit02Icon from "@hugeicons/core-free-icons/PencilEdit02Icon";
 import PlusSignIcon from "@hugeicons/core-free-icons/PlusSignIcon";
 import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
-import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
 import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -95,16 +94,6 @@ export function DrawerContent({
             <Text size="large">Matrix OS</Text>
             <Spacer size="xs" />
             <Text size="muted" tone="subtle">{computerName}</Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Search"
-            hitSlop={10}
-            onPress={() => navigate("search")}
-            style={({ pressed }) => pressed && styles.pressed}
-          >
-            <Icon icon={Search01Icon} size={24} color={theme.v2.appColors.ink} />
           </Pressable>
         </View>
 
