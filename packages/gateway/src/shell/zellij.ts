@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { shellError, type ShellSafeError } from "./errors.js";
+import { resolveShellCwd } from "./names.js";
 import {
   MATRIX_TERMINAL_BASHRC,
   MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT,
@@ -618,9 +619,10 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       }));
     },
     async createTab(name, input) {
+      const tabCwd = deps.homePath ? await resolveShellCwd(input.cwd, deps.homePath) : input.cwd;
       const args = ["--session", name, "action", "new-tab"];
       if (input.name) args.push("--name", input.name);
-      if (input.cwd) args.push("--cwd", input.cwd);
+      if (tabCwd) args.push("--cwd", tabCwd);
       if (input.cmd) args.push("--", ...splitCommand(input.cmd));
       const stdout = await run(args);
       const rawId = stdout.trim();

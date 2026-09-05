@@ -43,16 +43,18 @@ bun run check:patterns
 bun run test
 ```
 
-The full-path integration test uses a bounded fake platform/gateway server and verifies the MCP handler-to-HTTP wiring without real credentials.
+MCP tests verify handler-to-HTTP wiring with mocked responses; additional integration tests exercise the published CLI's stdio lifecycle and the real gateway route-to-adapter path without real credentials.
 
-### Validation evidence (2026-09-04)
+### Validation evidence (2026-09-05)
 
-- Remote MCP unit/integration suites: 31 tests passed across four files.
+- Remote MCP unit/integration suites: 33 tests passed across five files, including authentication error projection and a real CLI handshake/clean shutdown.
+- Gateway tab regression: home-relative/default cwd resolution and rejection of missing, traversal, and out-of-home symlink paths passed through the real route and adapter.
 - Sync client: TypeScript build and publish-content check passed.
 - Matrix OS plugin: two contract tests passed and the plugin validator reported a valid bundle.
 - Repository typecheck: every underlying workspace compiler/build invoked by the root typecheck passed when run directly.
 - Pattern scan: no violations in the changed files; only pre-existing repository warnings remained.
 - Public docs: 50 tests passed in the companion site repository.
+- Broader terminal verification: 56/57 tests passed; the existing shell-wrapper 1-second timeout reproduced with expected stdout, including in isolation (unrelated to tab creation).
 - The repository-wide test command was exercised but cannot complete cleanly in this checkout's Node 22 shell: Matrix OS requires Node 24 and the installed QMD `better-sqlite3` binary targets Node 24 ABI 137 rather than Node 22 ABI 127. All feature-focused tests pass. The sync-client suite's one credential-discovery failure is environment-sensitive and reproduces unchanged on `main` because this machine has a Claude Code Keychain credential.
 
 ### Deliberate first-release boundaries

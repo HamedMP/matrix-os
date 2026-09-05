@@ -34,8 +34,4 @@ export const mcpCommand = defineCommand({
     description: "Expose Matrix computers to coding agents over MCP",
   },
   subCommands: { serve: serveCommand },
-  run: () => {
-    console.error("Usage: matrix mcp serve [--profile <name>]");
-    process.exitCode = 1;
-  },
 });

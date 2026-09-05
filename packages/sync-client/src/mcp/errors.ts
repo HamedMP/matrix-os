@@ -28,6 +28,7 @@ const ERRORS: Record<SafeMcpErrorCode, Omit<SafeMcpError, "code">> = {
 };
 
 const CODE_MAP: Record<string, SafeMcpErrorCode> = {
+  auth_required: "auth_required",
   auth_expired: "auth_required",
   auth_rejected: "auth_required",
   not_authenticated: "auth_required",

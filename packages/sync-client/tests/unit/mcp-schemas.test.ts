@@ -8,7 +8,7 @@ import {
   UploadFileInputSchema,
   decodeUploadContent,
 } from "../../src/mcp/schemas.js";
-import { toSafeMcpError } from "../../src/mcp/errors.js";
+import { createMcpError, toSafeMcpError } from "../../src/mcp/errors.js";
 
 describe("Matrix MCP boundary schemas", () => {
   it("normalizes owner-relative Matrix paths and rejects escape syntax", () => {
@@ -96,6 +96,14 @@ describe("Matrix MCP boundary schemas", () => {
 });
 
 describe("safe MCP errors", () => {
+  it("preserves authentication errors produced by the MCP clients", () => {
+    expect(toSafeMcpError(createMcpError("auth_required"))).toEqual({
+      code: "auth_required",
+      message: "Authenticate with the Matrix CLI and try again.",
+      retryable: false,
+    });
+  });
+
   it("maps known errors and hides unknown messages", () => {
     expect(toSafeMcpError(Object.assign(new Error("token expired at secret path"), { code: "auth_expired" }))).toEqual({
       code: "auth_required",
