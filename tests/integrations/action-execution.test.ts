@@ -55,33 +55,32 @@ describe("executeIntegrationAction", () => {
     expect(pipedream.proxyPost).not.toHaveBeenCalled();
   });
 
-  it("dispatches DELETE directApi actions with proxyDelete", async () => {
-    const pipedream = mockPipedream();
-    vi.mocked(pipedream.proxyDelete).mockResolvedValue(undefined);
 
-    const service = getService("google_calendar")!;
-    const action = getAction("google_calendar", "delete_event")!;
+  it("forwards only registry-owned static headers to the provider proxy", async () => {
+    const pipedream = mockPipedream();
+    vi.mocked(pipedream.proxyPost).mockResolvedValue({ results: [] });
 
     await executeIntegrationAction({
       pipedream,
       externalUserId: "user-1",
       connection: { pipedream_account_id: "acc-1" },
-      def: service,
-      actionDef: action,
-      serviceId: "google_calendar",
-      actionId: "delete_event",
+      def: getService("notion")!,
+      actionDef: getAction("notion", "search")!,
+      serviceId: "notion",
+      actionId: "search",
       params: {
-        eventId: "evt_456",
+        query: "roadmap",
+        headers: { Authorization: "attacker-controlled" },
       },
     });
 
-    expect(pipedream.proxyDelete).toHaveBeenCalledWith({
+    expect(pipedream.proxyPost).toHaveBeenCalledWith({
       externalUserId: "user-1",
       accountId: "acc-1",
-      url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_456",
-      params: undefined,
+      url: "https://api.notion.com/v1/search",
+      body: { query: "roadmap" },
+      headers: { "Notion-Version": "2022-06-28" },
     });
-    expect(pipedream.proxyPost).not.toHaveBeenCalled();
   });
 
   it("throws a not-implemented error instead of calling a fabricated fallback URL", async () => {

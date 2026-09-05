@@ -1,4 +1,5 @@
 import type { ServiceAction, ServiceDefinition } from "./types.js";
+import { EXPANSION_SERVICE_REGISTRY } from "./registry-expansion.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
@@ -83,7 +84,24 @@ function linearGraphqlBody(query: string, variables?: Record<string, unknown>): 
   return variables ? { query, variables } : { query };
 }
 
-export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
+type RegistryServiceInput = Omit<ServiceDefinition, "actions" | "connectorKind"> & {
+  connectorKind?: ServiceDefinition["connectorKind"];
+  actions: ServiceDefinition["actions"];
+};
+
+function defineServiceRegistry(
+  input: Record<string, RegistryServiceInput>,
+): Record<string, ServiceDefinition> {
+  return Object.fromEntries(Object.entries(input).map(([serviceId, service]) => [
+    serviceId,
+    {
+      ...service,
+      connectorKind: service.connectorKind ?? "pipedream",
+    },
+  ])) as Record<string, ServiceDefinition>;
+}
+
+export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineServiceRegistry({
   gmail: {
     id: "gmail",
     name: "Gmail",
@@ -94,6 +112,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     actions: {
       list_messages: {
         description: "List recent email messages",
+        risk: "read",
         params: {
           query: { type: "string" },
           maxResults: { type: "number" },
@@ -109,6 +128,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       get_message: {
         description: "Get a specific email message by ID",
+        risk: "read",
         params: {
           messageId: { type: "string", required: true },
         },
@@ -131,6 +151,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // CR/LF in the body is legitimate message content.
       send_email: {
         description: "Send an email",
+        risk: "write",
         params: {
           to: { type: "string", required: true },
           subject: { type: "string", required: true },
@@ -155,6 +176,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       search: {
         description: "Search emails by query",
+        risk: "read",
         params: {
           query: { type: "string", required: true },
           maxResults: { type: "number" },
@@ -170,6 +192,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_labels: {
         description: "List all email labels",
+        risk: "read",
         params: {},
         directApi: {
           method: "GET",
@@ -192,6 +215,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // and a /calendars/list call to enumerate.
       list_events: {
         description: "List calendar events",
+        risk: "read",
         params: {
           timeMin: { type: "string" },
           timeMax: { type: "string" },
@@ -215,6 +239,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // and remap to {date: ...} all-day events here.
       create_event: {
         description: "Create a new calendar event",
+        risk: "write",
         params: {
           summary: { type: "string", required: true },
           start: { type: "string", required: true },
@@ -239,6 +264,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // forwarded.
       update_event: {
         description: "Update an existing calendar event",
+        risk: "write",
         params: {
           eventId: { type: "string", required: true },
           summary: { type: "string" },
@@ -254,18 +280,6 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
             ...(p.start !== undefined ? { start: { dateTime: String(p.start) } } : {}),
             ...(p.end !== undefined ? { end: { dateTime: String(p.end) } } : {}),
           }),
-        },
-      },
-      // GCal API: events.delete. Returns 204 No Content on success.
-      delete_event: {
-        description: "Delete a calendar event",
-        params: {
-          eventId: { type: "string", required: true },
-        },
-        directApi: {
-          method: "DELETE",
-          url: (p) =>
-            `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(String(p.eventId))}`,
         },
       },
     },
@@ -284,6 +298,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // language. If both are absent, returns the user's recent files.
       list_files: {
         description: "List files in Google Drive",
+        risk: "read",
         params: {
           query: { type: "string" },
           maxResults: { type: "number" },
@@ -309,6 +324,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // would need a separate `download_file` action we haven't shipped.
       get_file: {
         description: "Get file metadata by ID",
+        risk: "read",
         params: {
           fileId: { type: "string", required: true },
         },
@@ -334,6 +350,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // integrations skill at home/.agents/skills/matrix-integrations/SKILL.md.
       upload_file: {
         description: "Upload a file to Google Drive (requires paid Pipedream plan)",
+        risk: "write",
         params: {
           name: { type: "string", required: true },
           content: { type: "string", required: true },
@@ -347,6 +364,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // want a notification, they can paste the link manually.
       share_file: {
         description: "Share a file with another user",
+        risk: "write",
         params: {
           fileId: { type: "string", required: true },
           email: { type: "string", required: true },
@@ -385,6 +403,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // active repos surface first; matches what `gh repo list` does.
       list_repos: {
         description: "List repositories",
+        risk: "read",
         params: {
           sort: { type: "string" },
           per_page: { type: "number" },
@@ -403,6 +422,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // issues should filter on `pull_request === null` client-side.
       list_issues: {
         description: "List issues for a repository (use owner/repo format)",
+        risk: "read",
         params: {
           repo: { type: "string", required: true },
           state: { type: "string" },
@@ -420,6 +440,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // split here. Empty string -> no labels, not a single empty label.
       create_issue: {
         description: "Create a new issue (use owner/repo format)",
+        risk: "write",
         params: {
           repo: { type: "string", required: true },
           title: { type: "string", required: true },
@@ -441,6 +462,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // GitHub API: GET /repos/{owner}/{repo}/pulls.
       list_prs: {
         description: "List pull requests for a repository (use owner/repo format)",
+        risk: "read",
         params: {
           repo: { type: "string", required: true },
           state: { type: "string" },
@@ -457,6 +479,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // default is unread only.
       get_notifications: {
         description: "Get notifications",
+        risk: "read",
         params: {
           all: { type: "boolean" },
         },
@@ -481,6 +504,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     actions: {
       viewer: {
         description: "Get the connected Linear user",
+        risk: "read",
         params: {},
         directApi: {
           method: "POST",
@@ -494,6 +518,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_teams: {
         description: "List Linear teams",
+        risk: "read",
         params: {
           first: { type: "number" },
         },
@@ -511,6 +536,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_projects: {
         description: "List Linear projects",
+        risk: "read",
         params: {
           first: { type: "number" },
           after: { type: "string" },
@@ -540,6 +566,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_workflow_states: {
         description: "List workflow states for a Linear team",
+        risk: "read",
         params: {
           teamId: { type: "string", required: true },
           first: { type: "number" },
@@ -561,6 +588,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_issues: {
         description: "List Linear issues, optionally filtered by team, project, or state name",
+        risk: "read",
         params: {
           first: { type: "number" },
           teamId: { type: "string" },
@@ -638,6 +666,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       create_issue: {
         description: "Create a Linear issue",
+        risk: "write",
         params: {
           teamId: { type: "string", required: true },
           title: { type: "string", required: true },
@@ -677,6 +706,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       update_issue: {
         description: "Update a Linear issue",
+        risk: "write",
         params: {
           issueId: { type: "string", required: true },
           title: { type: "string" },
@@ -711,6 +741,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       comment_issue: {
         description: "Add a comment to a Linear issue",
+        risk: "write",
         params: {
           issueId: { type: "string", required: true },
           body: { type: "string", required: true },
@@ -735,6 +766,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       create_workflow_state: {
         description: "Create a Linear workflow state for Symphony",
+        risk: "write",
         params: {
           teamId: { type: "string", required: true },
           name: { type: "string", required: true },
@@ -758,21 +790,6 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
               color: String(p.color),
               type: p.type ? String(p.type) : "started",
             },
-          }),
-        },
-      },
-      graphql: {
-        description: "Run a custom Linear GraphQL operation for advanced workflows",
-        params: {
-          query: { type: "string", required: true },
-          variables: { type: "object" },
-        },
-        directApi: {
-          method: "POST",
-          url: "https://api.linear.app/graphql",
-          mapBody: (p) => ({
-            query: String(p.query),
-            ...(p.variables && typeof p.variables === "object" ? { variables: p.variables } : {}),
           }),
         },
       },
@@ -800,6 +817,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // channel name like "#general" -- Slack resolves both.
       send_message: {
         description: "Send a message to a channel",
+        risk: "write",
         params: {
           channel: { type: "string", required: true },
           text: { type: "string", required: true },
@@ -815,6 +833,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_channels: {
         description: "List available channels",
+        risk: "read",
         params: {
           limit: { type: "number" },
         },
@@ -830,6 +849,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_messages: {
         description: "List messages in a channel",
+        risk: "read",
         params: {
           channel: { type: "string", required: true },
           limit: { type: "number" },
@@ -849,6 +869,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // they need to reconnect with `search:read` user-scope.
       search: {
         description: "Search messages",
+        risk: "read",
         params: {
           query: { type: "string", required: true },
         },
@@ -864,6 +885,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // colons -- ":thumbsup:" should be passed as "thumbsup".
       react: {
         description: "Add a reaction to a message (emoji name without colons)",
+        risk: "write",
         params: {
           channel: { type: "string", required: true },
           timestamp: { type: "string", required: true },
@@ -903,6 +925,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // strictly validated before interpolation.
       send_message: {
         description: "Send a message to a channel",
+        risk: "write",
         params: {
           channelId: { type: "string", required: true },
           content: { type: "string", required: true },
@@ -919,6 +942,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // OAuth scope.
       list_servers: {
         description: "List servers the bot is in",
+        risk: "read",
         params: {},
         directApi: {
           method: "GET",
@@ -929,6 +953,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // VIEW_CHANNEL permission.
       list_channels: {
         description: "List channels in a server",
+        risk: "read",
         params: {
           serverId: { type: "string", required: true },
         },
@@ -941,6 +966,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // GET /channels/{channel.id}/messages. Returns most recent first.
       list_messages: {
         description: "List messages in a channel",
+        risk: "read",
         params: {
           channelId: { type: "string", required: true },
           limit: { type: "number" },
@@ -956,7 +982,9 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
     },
   },
-};
+
+  ...EXPANSION_SERVICE_REGISTRY,
+});
 
 export function getService(id: string): ServiceDefinition | undefined {
   return SERVICE_REGISTRY[id];
@@ -1001,6 +1029,7 @@ export async function discoverComponentKeys(
 
   for (const service of services) {
     try {
+      if (service.connectorKind !== "pipedream" || !service.pipedreamApp) continue;
       const actions = await pipedream.discoverActions(service.pipedreamApp);
       const keySet = new Map(actions.map((a) => [a.key, a]));
 
