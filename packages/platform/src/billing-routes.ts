@@ -3,12 +3,17 @@ import { bodyLimit } from 'hono/body-limit';
 import { createHash, randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import {
-  MATRIX_HOSTED_BILLING_REGIONS,
   type MatrixBillingPublicEntitlement,
   type MatrixHostedBillingRegionSlug,
 } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import { appOrigin, resolveReturnPath } from './origins.js';
+import {
+  stageBillingTelemetry,
+  lockBillingTelemetrySubscription,
+  buildSubscriptionTelemetryProperties,
+  resolveRuntimePlacement,
+} from './billing-telemetry.js';
 import {
   abandonCreatingCheckoutAttempt,
   claimCardTrialCheckoutAttempt,
@@ -38,7 +43,6 @@ import {
   upsertBillingSubscription,
   type PlatformDB,
   type BillingSubscriptionRecord,
-  type UserMachineRecord,
 } from './db.js';
 import {
   DEFAULT_BILLING_PLAN_DEFINITIONS,
@@ -874,6 +878,7 @@ export function createBillingRoutes(options: {
     let preparationToResume: { intentId: string; clerkUserId: string } | undefined;
     try {
       const webhookProcessedAt = now();
+      const telemetry = stageBillingTelemetry(event.id, event.type);
       const result = await runBillingWebhookTransaction(options.db, async (trx) => {
         const inserted = await insertBillingWebhookEvent(trx, {
           stripeEventId: event.id,
@@ -919,7 +924,7 @@ export function createBillingRoutes(options: {
               });
             }
           }
-          emitTelemetry(
+          telemetry.capture(
             event.type === 'checkout.session.completed'
               ? BILLING_CHECKOUT_COMPLETED_EVENT
               : BILLING_CHECKOUT_EXPIRED_EVENT,
@@ -937,9 +942,10 @@ export function createBillingRoutes(options: {
           }
           const invoice = readInvoiceProjection(event.data.object);
           if (!invoice) return { received: true, ignored: true };
+          await lockBillingTelemetrySubscription(trx, invoice.stripeSubscriptionId);
           const subscription = await getBillingSubscriptionByStripeId(trx, invoice.stripeSubscriptionId);
           if (!subscription) return { received: true, ignored: true };
-          emitTelemetry(
+          telemetry.capture(
             event.type === 'invoice.paid'
               ? BILLING_INVOICE_PAID_EVENT
               : BILLING_INVOICE_PAYMENT_FAILED_EVENT,
@@ -988,7 +994,7 @@ export function createBillingRoutes(options: {
                 : new Date(Date.parse(eventAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS).toISOString(),
               createdAt: webhookProcessedAt.toISOString(),
             });
-            emitTelemetry(BILLING_TRIAL_PAYMENT_FAILED_EVENT, {
+            telemetry.capture(BILLING_TRIAL_PAYMENT_FAILED_EVENT, {
               distinctId: updated.clerkUserId,
               properties: { billing_interval: updated.billingInterval ?? undefined },
             });
@@ -1018,7 +1024,7 @@ export function createBillingRoutes(options: {
                 createdAt: webhookProcessedAt.toISOString(),
               });
             }
-            emitTelemetry(BILLING_TRIAL_CONVERTED_EVENT, {
+            telemetry.capture(BILLING_TRIAL_CONVERTED_EVENT, {
               distinctId: updated.clerkUserId,
               properties: { billing_interval: updated.billingInterval ?? undefined },
             });
@@ -1047,6 +1053,8 @@ export function createBillingRoutes(options: {
         const recurringItem = projection.items.find(
           (item) => item.priceId === entitlement.stripePriceId,
         );
+        await lockBillingTelemetrySubscription(trx, projection.stripeSubscriptionId);
+        const previousSubscription = await getBillingSubscriptionByStripeId(trx, projection.stripeSubscriptionId);
         const projectionApplied = await upsertBillingSubscription(trx, {
           stripeSubscriptionId: projection.stripeSubscriptionId,
           stripeCustomerId: projection.stripeCustomerId,
@@ -1125,22 +1133,26 @@ export function createBillingRoutes(options: {
           projection.clerkUserId,
           projection.runtimeSlot,
         );
-        emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
+        telemetry.capture(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
           distinctId: entitlement.clerkUserId,
-          properties: buildSubscriptionTelemetryProperties({
-            entitlement,
-            recurringItem,
-            runtimeSlot: projection.runtimeSlot,
-            regionSlug: projection.regionSlug,
-            machine: telemetryMachine,
-          }),
+          properties: {
+            subscription_status_changed: previousSubscription?.status !== entitlement.status,
+            previous_subscription_status: previousSubscription?.status,
+            ...buildSubscriptionTelemetryProperties({
+              entitlement,
+              recurringItem,
+              runtimeSlot: projection.runtimeSlot,
+              regionSlug: projection.regionSlug,
+              machine: telemetryMachine,
+            }),
+          },
         });
         if (event.type === 'customer.subscription.created' && projection.status === 'trialing') {
           await consumeCardTrial(trx, projection.clerkUserId, webhookProcessedAt.toISOString());
-          emitTelemetry(BILLING_TRIAL_STARTED_EVENT, { distinctId: projection.clerkUserId });
+          telemetry.capture(BILLING_TRIAL_STARTED_EVENT, { distinctId: projection.clerkUserId });
         }
         if (event.type === 'customer.subscription.trial_will_end') {
-          emitTelemetry(BILLING_TRIAL_WILL_END_EVENT, { distinctId: projection.clerkUserId });
+          telemetry.capture(BILLING_TRIAL_WILL_END_EVENT, { distinctId: projection.clerkUserId });
         }
         if (
           projection.trialEndsAt
@@ -1169,6 +1181,7 @@ export function createBillingRoutes(options: {
         }
         return { received: true, processed: true };
       });
+      telemetry.flush(emitTelemetry);
       if (preparationToResume && options.prebilling) {
         void options.prebilling.resumePreparation(preparationToResume).catch((err: unknown) => {
           console.error(
@@ -1291,62 +1304,6 @@ async function resolvePublicRecurringPrice(
     );
     return null;
   }
-}
-
-function buildSubscriptionTelemetryProperties(input: {
-  entitlement: BillingEntitlement;
-  recurringItem: StripeSubscriptionProjection['items'][number] | undefined;
-  runtimeSlot: string;
-  regionSlug: MatrixHostedBillingRegionSlug | null;
-  machine: Pick<UserMachineRecord, 'serverType' | 'location' | 'hetznerServerId'> | undefined;
-}): Record<string, string | number | boolean | undefined> {
-  const { entitlement, recurringItem, runtimeSlot, machine } = input;
-  const planSlug = entitlement.planSlug === 'internal' ? undefined : entitlement.planSlug;
-  const placement = resolveRuntimePlacement(machine?.location, input.regionSlug);
-  const hasRecurringPrice = recurringItem?.unitAmountMinor !== null
-    && recurringItem?.unitAmountMinor !== undefined
-    && recurringItem.currency !== null
-    && recurringItem.currency !== undefined
-    && recurringItem.interval !== null
-    && recurringItem.interval !== undefined
-    && recurringItem.intervalCount !== null
-    && recurringItem.intervalCount !== undefined
-    && recurringItem.quantity !== null
-    && recurringItem.quantity !== undefined;
-  return {
-    plan_slug: planSlug,
-    subscription_status: entitlement.status,
-    billing_interval: recurringItem?.interval ?? entitlement.billingInterval ?? undefined,
-    ...(hasRecurringPrice ? {
-      recurring_unit_amount_minor: recurringItem.unitAmountMinor!,
-      recurring_total_amount_minor: recurringItem.unitAmountMinor! * recurringItem.quantity!,
-      currency: recurringItem.currency!,
-      price_interval_count: recurringItem.intervalCount!,
-      price_quantity: recurringItem.quantity!,
-    } : {}),
-    runtime_slot: runtimeSlot,
-    ...(placement ? {
-      region_slug: placement.slug,
-      location_code: placement.location,
-      location_label: placement.label,
-      country: placement.countryLabel,
-      network_zone: placement.networkZone,
-    } : {}),
-    ...(machine?.serverType ? { server_type: machine.serverType } : {}),
-    ...(machine ? { provider: 'hetzner' } : {}),
-    included_runtime_slots: entitlement.includedRuntimeSlots,
-    addon_runtime_slots: entitlement.addonRuntimeSlots,
-    max_runtime_slots: entitlement.maxRuntimeSlots,
-  };
-}
-
-function resolveRuntimePlacement(
-  machineLocation: string | null | undefined,
-  fallbackRegionSlug: MatrixHostedBillingRegionSlug | null = null,
-) {
-  return MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.location === machineLocation)
-    ?? MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === fallbackRegionSlug)
-    ?? null;
 }
 
 function planPriceUsd(planSlug: MatrixBillingPlanSlug, interval: MatrixBillingInterval): number | undefined {
