@@ -173,6 +173,13 @@ export default function ChatScreen() {
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         inverted
+        // FlatList (built on ScrollView) defaults to "never" -- any tap on the
+        // list area dismisses the keyboard. On a fresh draft there's nothing
+        // to tap yet but the empty-state hero, so that default just closes
+        // the keyboard we're trying to keep open (see the auto-focus effect
+        // above); once a real chat exists, restore the normal dismiss-on-tap
+        // behavior.
+        keyboardShouldPersistTaps={activeChatId === null ? "always" : "never"}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyState}>
