@@ -327,6 +327,7 @@ interface CustomMcpInventoryItem {
     description: string;
     approval: "always_ask" | "allow";
     enabled: boolean;
+    inputSchema?: Record<string, unknown>;
   }>;
 }
 
@@ -362,9 +363,24 @@ export async function describeCustomMcpServerHandler(
     );
     if (!response.ok) return textResult("Custom MCP server details are unavailable.");
     const server = await response.json() as CustomMcpInventoryItem;
-    const tools = server.tools.filter((tool) => tool.enabled).map((tool) =>
-      `- ${tool.name} [approval: ${tool.approval}]${tool.description ? ` — ${tool.description}` : ""}`,
-    );
+    const tools: string[] = [];
+    let remaining = 64_000;
+    for (const tool of server.tools) {
+      if (!tool.enabled) continue;
+      const schema = tool.inputSchema ? JSON.stringify(tool.inputSchema) : undefined;
+      const contract = !schema
+        ? "Input schema unavailable; do not guess arguments."
+        : schema.length > 16_000
+          ? "Input schema too large to display safely; do not guess arguments."
+          : `Input schema: ${schema}`;
+      const entry = `- ${tool.name.slice(0, 128)} [approval: ${tool.approval}]${tool.description ? ` — ${tool.description.slice(0, 2048)}` : ""}\n${contract}`;
+      if (entry.length > remaining) {
+        tools.push("Additional tools omitted because the description limit was reached.");
+        break;
+      }
+      tools.push(entry);
+      remaining -= entry.length;
+    }
     return textResult(wrapExternalContent(
       `${server.name} [${server.status}]\n${tools.length ? tools.join("\n") : "No tools are enabled."}`,
       { source: "api", includeWarning: true },

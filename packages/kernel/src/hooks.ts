@@ -11,6 +11,7 @@ export interface HookInput {
   tool_response?: unknown;
   session_id: string;
   agent_id?: string;
+  agent_type?: string;
 }
 
 export interface HookOutput {
@@ -277,7 +278,10 @@ export function createIntegrationApprovalHook(
         };
       }
       if (input.agent_id) {
-        const grants = customAgentMcpAllowlists[input.agent_id] ?? [];
+        // SDK agent_id identifies an invocation; agent_type names its definition.
+        const grants = input.agent_type && Object.hasOwn(customAgentMcpAllowlists, input.agent_type)
+          ? customAgentMcpAllowlists[input.agent_type]
+          : [];
         if (!grants.includes(server.id) && !grants.includes(server.name)) {
           return {
             hookSpecificOutput: { permissionDecision: "deny" },

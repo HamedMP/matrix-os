@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -24,16 +24,17 @@ describe("integration native approval hook", () => {
     expect([...MANAGED_WRITE_ACTIONS].sort()).toEqual(writes.sort());
   });
 
-  it("intersects enabled local policy and explicit subagent frontmatter grants", async () => {
+  it("intersects enabled local policy and explicit subagent frontmatter grants", async (context) => {
     const home = await mkdtemp(join(tmpdir(), "matrix-mcp-hook-"));
+    context.onTestFinished(() => rm(home, { recursive: true, force: true }));
     await mkdir(join(home, "system"));
     await writeFile(join(home, "system", "mcp-servers.json"), JSON.stringify({
       version: 1,
       servers: [{ id: "server-1", name: "Research", enabled: true, tools: [{ name: "search", enabled: true, approval: "allow" }] }],
     }));
     const hook = createIntegrationApprovalHook(home, vi.fn(async () => true), { researcher: ["Research"] });
-    const allowed = await hook({ hook_event_name: "PreToolUse", tool_name: "mcp__matrix-os-ipc__call_custom_mcp_tool", tool_input: { server_id: "server-1", tool: "search" }, session_id: "s", agent_id: "researcher" });
-    const denied = await hook({ hook_event_name: "PreToolUse", tool_name: "mcp__matrix-os-ipc__call_custom_mcp_tool", tool_input: { server_id: "server-1", tool: "search" }, session_id: "s", agent_id: "builder" });
+    const allowed = await hook({ hook_event_name: "PreToolUse", tool_name: "mcp__matrix-os-ipc__call_custom_mcp_tool", tool_input: { server_id: "server-1", tool: "search" }, session_id: "s", agent_id: "runtime-123", agent_type: "researcher" });
+    const denied = await hook({ hook_event_name: "PreToolUse", tool_name: "mcp__matrix-os-ipc__call_custom_mcp_tool", tool_input: { server_id: "server-1", tool: "search" }, session_id: "s", agent_id: "runtime-456", agent_type: "builder" });
     expect(allowed.hookSpecificOutput?.permissionDecision).toBeUndefined();
     expect(denied.hookSpecificOutput?.permissionDecision).toBe("deny");
   });
