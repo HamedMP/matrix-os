@@ -526,6 +526,31 @@ WantedBy=multi-user.target
 EOF
 }
 
+install_terminal_runtime_user_units() {
+  local matrix_uid unit
+
+  [ -d /opt/matrix/user-systemd ] || fail "bundled terminal runtime user units are missing"
+  install -d -o root -g root -m 0755 /etc/systemd/user
+  for unit in matrix-zellij@.service matrix-terminal.slice; do
+    [ -f "/opt/matrix/user-systemd/$unit" ] && [ ! -L "/opt/matrix/user-systemd/$unit" ] \
+      || fail "bundled terminal runtime unit is missing or unsafe: $unit"
+    install -o root -g root -m 0644 "/opt/matrix/user-systemd/$unit" "/etc/systemd/user/$unit"
+  done
+  [ -x /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs ] \
+    || fail "bundled terminal runtime attach helper is missing or not executable"
+  install -d -o root -g root -m 0755 /usr/local/bin
+  install -o root -g root -m 0755 /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs /usr/local/bin/matrix-terminal-attach
+
+  matrix_uid="$(id -u matrix)"
+  run_required "enabling Matrix user linger" loginctl enable-linger matrix
+  run_required "starting Matrix user manager" systemctl start "user@${matrix_uid}.service"
+  run_required "reloading Matrix user systemd units" runuser -u matrix -- env \
+    HOME="$MATRIX_HOME_DIR" \
+    XDG_RUNTIME_DIR="/run/user/${matrix_uid}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" \
+    systemctl --user daemon-reload
+}
+
 install_systemd_units() {
   section "Installing systemd units"
   install -m 0644 /opt/matrix/systemd/matrix-gateway.service /etc/systemd/system/matrix-gateway.service
@@ -536,6 +561,7 @@ install_systemd_units() {
     install -m 0644 /opt/matrix/systemd/matrix-developer-tools.service /etc/systemd/system/matrix-developer-tools.service
   fi
   write_self_host_restore_service
+  install_terminal_runtime_user_units
   run_required "reloading systemd" systemctl daemon-reload
   run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server
   if [ -f /etc/systemd/system/matrix-developer-tools.service ] && [ -n "$MATRIX_DEVELOPER_TOOLS" ]; then
