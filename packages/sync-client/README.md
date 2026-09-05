@@ -41,6 +41,7 @@ matrix run -it -- codex   # same shared zellij session primitive for Codex
 matrix run -it --session setup -- gh auth login
 matrix forward 5173       # forward a Matrix computer dev server to local loopback
 mos shell attach setup    # reattach the same session from local CLI or web terminal
+matrix mcp serve          # expose Matrix computers to a coding agent over stdio
 matrix peers              # list connected peers
 matrix logout             # clear local credentials
 ```
@@ -53,11 +54,37 @@ participates in gateway ownership, size coordination, and renderer revocation.
 See [Terminal session ownership](../../docs/dev/terminal-session-ownership.md)
 for supported clients and the single-gateway deployment constraint.
 
+## Coding-agent MCP
+
+The Matrix OS plugin starts `matrix mcp serve --profile cloud` automatically.
+For a manual MCP client configuration, run the same command as a local stdio
+server after `matrix login`. Credentials stay in the Matrix CLI profile and are
+never placed in MCP configuration or tool arguments.
+
+The server exposes tools to:
+
+- list owner-authorized computers and explicitly target a `runtimeSlot`;
+- run captured argv commands or work through persistent zellij terminals/tabs;
+- list, read, download, and upload bounded Matrix-home file content; and
+- list, search, and inspect Matrix chats without mutating them.
+
+`run_command` is best for short commands that need stdout, stderr, and exit
+status. Persistent terminal tools are best for long-running work the user wants
+to observe or reattach. Tab creation returns a stable tab ID, and tab selection
+uses that ID rather than the mutable display position. MCP file download returns at most 1 MiB as base64 and
+does not write a local path; use `matrix download` for larger files.
+
+Every computer-scoped call requires the `runtimeSlot` returned by
+`list_computers`. The server never silently chooses a different computer. MCP
+also cannot disable a coding agent's built-in local shell; disable that host
+tool separately when enforcing a remote-only workflow.
+
 ## Requirements
 
 - Node.js 20 or newer for npm package runners and global npm installs
 - No Node.js install is required when using the standalone binary from `get.matrix-os.com`
 - A Matrix OS account — sign up at [app.matrix-os.com](https://app.matrix-os.com)
+- A coding-agent host with local stdio MCP support for `matrix mcp serve`
 
 ## License
 

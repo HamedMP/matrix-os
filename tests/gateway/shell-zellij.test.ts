@@ -887,8 +887,8 @@ describe("zellij adapter", () => {
 
   it("creates tabs and panes with terminal-capable environment at process launch", async () => {
     const child = childProcess();
-    const execFile = vi.fn((_file, _args, _opts, cb) => {
-      cb(null, "", "");
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      cb(null, args.includes("new-tab") ? "1\n" : "", "");
       return child;
     });
     const adapter = createZellijAdapter({
@@ -914,10 +914,40 @@ describe("zellij adapter", () => {
     }
   });
 
+  it("returns the stable tab ID emitted atomically by Zellij and selects by ID", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      const stdout = args.includes("list-tabs")
+        ? JSON.stringify([{ tab_id: 41, position: 1, name: "tests", active: true }])
+        : args.includes("new-tab") ? "41\n" : "";
+      cb(null, stdout, "");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.listTabs("main")).resolves.toEqual([{
+      id: 41,
+      idx: 1,
+      name: "tests",
+      focused: true,
+    }]);
+    await expect(adapter.createTab("main", { name: "tests" })).resolves.toEqual({
+      id: 41,
+      name: "tests",
+    });
+    await expect(adapter.switchTabById("main", 41)).resolves.toEqual({ ok: true });
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["--session", "main", "action", "go-to-tab-by-id", "41"],
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
   it("splits multi-word commands into argv tokens for zellij actions", async () => {
     const child = childProcess();
-    const execFile = vi.fn((_file, _args, _opts, cb) => {
-      cb(null, "", "");
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      cb(null, args.includes("new-tab") ? "1\n" : "", "");
       return child;
     });
     const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });

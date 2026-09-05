@@ -5,7 +5,13 @@ description: Set up, authenticate, diagnose, and recover a Matrix OS cloud compu
 
 # Matrix OS Setup and Recovery
 
-Prepare the user's Matrix cloud computer without collecting or transferring local secrets.
+Prepare the user's Matrix cloud computer without collecting or transferring local secrets. Prefer the bundled Matrix MCP tools after authentication and use the CLI fallback for login, diagnosis, and recovery.
+
+## MCP readiness
+
+When remote tools are available, call `list_computers` first. After selecting an explicit `runtimeSlot`, use `run_command` for captured readiness checks and the terminal tools (`create_terminal`, `create_terminal_tab`, `select_terminal_tab`, and `send_terminal_input`) for observable authentication or recovery work. Never pass credentials as tool arguments.
+
+If `list_computers` returns `auth_required`, complete the CLI fallback readiness gate below. If the tools are absent, continue with the CLI fallback and re-open the coding-agent conversation after installing or updating the plugin.
 
 ## Safety and session rules
 
@@ -14,8 +20,8 @@ Prepare the user's Matrix cloud computer without collecting or transferring loca
 - Never ask for tokens, OAuth codes, API keys, or credential contents in chat.
 - Ask before deleting files, resetting authentication or sessions, or installing global tools.
 - Prefer Matrix's visible developer-tool installation path for missing agents or GitHub CLI.
-- Always run remote work in a uniquely named session created with `matrix run -it --session`.
-- Never create or use shell tabs. Open a separate uniquely named session whenever another terminal or concurrent task is needed.
+- With MCP, use explicit named terminals and tabs and report their identities.
+- With the CLI fallback, run remote work in a uniquely named session created with `matrix run -it --session`; create another session for concurrent work because the current CLI workflow does not address tabs directly.
 - Report every session name and its `matrix shell connect <session-name>` command.
 - Use the existing Matrix CLI. Do not invent endpoints, SSH access, persistence, or detached-job APIs.
 

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { shellError, type ShellSafeError } from "./errors.js";
+import { resolveShellCwd } from "./names.js";
 import {
   MATRIX_TERMINAL_BASHRC,
   MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT,
@@ -108,6 +109,7 @@ export interface ZellijAdapter {
   listTabs(name: string): Promise<unknown[]>;
   createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<unknown>;
   switchTab(name: string, tab: number): Promise<unknown>;
+  switchTabById(name: string, tabId: number): Promise<unknown>;
   closeTab(name: string, tab: number): Promise<unknown>;
   splitPane(name: string, input: { direction: "right" | "down"; cwd?: string; cmd?: string }): Promise<unknown>;
   closePane(name: string, pane: string): Promise<unknown>;
@@ -119,6 +121,12 @@ export interface ZellijAdapter {
 const ZellijTabInfoSchema = z.object({
   tab_id: z.number().int().nonnegative(),
 }).passthrough();
+const ZellijTabListSchema = z.array(z.object({
+  tab_id: z.number().int().nonnegative(),
+  position: z.number().int().nonnegative(),
+  name: z.string().min(1).max(64),
+  active: z.boolean(),
+}).passthrough()).max(1024);
 const ZellijPaneListSchema = z.array(z.object({
   is_plugin: z.boolean(),
   is_focused: z.boolean(),
@@ -593,23 +601,42 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       await run(["--session", name, "action", "write-chars", "--", data]);
     },
     async listTabs(name) {
-      const stdout = await run(["--session", name, "action", "query-tab-names"]);
-      return stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((tab, idx) => ({ idx, name: tab }));
+      const stdout = await run(["--session", name, "action", "list-tabs", "--json"]);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(stdout);
+      } catch (err: unknown) {
+        if (!(err instanceof SyntaxError)) throw err;
+        throw shellError("zellij_failed", "Shell operation failed", 500);
+      }
+      const parsed = ZellijTabListSchema.safeParse(raw);
+      if (!parsed.success) throw shellError("zellij_failed", "Shell operation failed", 500);
+      return parsed.data.map((tab) => ({
+        id: tab.tab_id,
+        idx: tab.position,
+        name: tab.name,
+        focused: tab.active,
+      }));
     },
     async createTab(name, input) {
+      const tabCwd = deps.homePath ? await resolveShellCwd(input.cwd, deps.homePath) : input.cwd;
       const args = ["--session", name, "action", "new-tab"];
       if (input.name) args.push("--name", input.name);
-      if (input.cwd) args.push("--cwd", input.cwd);
+      if (tabCwd) args.push("--cwd", tabCwd);
       if (input.cmd) args.push("--", ...splitCommand(input.cmd));
-      await run(args);
-      return { ok: true };
+      const stdout = await run(args);
+      const rawId = stdout.trim();
+      if (!/^\d+$/.test(rawId)) throw shellError("zellij_failed", "Shell operation failed", 500);
+      const id = Number(rawId);
+      if (!Number.isSafeInteger(id)) throw shellError("zellij_failed", "Shell operation failed", 500);
+      return { id, ...(input.name ? { name: input.name } : {}) };
     },
     async switchTab(name, tab) {
       await run(["--session", name, "action", "go-to-tab", String(tab)]);
+      return { ok: true };
+    },
+    async switchTabById(name, tabId) {
+      await run(["--session", name, "action", "go-to-tab-by-id", String(tabId)]);
       return { ok: true };
     },
     async closeTab(name, tab) {

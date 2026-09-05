@@ -260,6 +260,7 @@ export function createUserSystemdZellijAdapter(options: {
     listTabs: (name) => delegate(name, (adapter, sessionName) => adapter.listTabs(sessionName)),
     createTab: (name, input) => delegate(name, (adapter, sessionName) => adapter.createTab(sessionName, input)),
     switchTab: (name, tab) => delegate(name, (adapter, sessionName) => adapter.switchTab(sessionName, tab)),
+    switchTabById: (name, tabId) => delegate(name, (adapter, sessionName) => adapter.switchTabById(sessionName, tabId)),
     closeTab: (name, tab) => delegate(name, (adapter, sessionName) => adapter.closeTab(sessionName, tab)),
     splitPane: (name, input) => delegate(name, (adapter, sessionName) => adapter.splitPane(sessionName, input)),
     closePane: (name, pane) => delegate(name, (adapter, sessionName) => adapter.closePane(sessionName, pane)),

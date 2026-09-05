@@ -11,6 +11,9 @@ const pkgRoot = resolve(here, '..');
 const mustExist = [
   'bin/matrix.mjs',
   'src/cli/index.ts',
+  'src/cli/commands/mcp.ts',
+  'src/mcp/server.ts',
+  'src/mcp/clients.ts',
   'src/daemon/index.ts',
   'src/index.ts',
   'src/lib/find-tsx-loader.mjs',
