@@ -32,7 +32,7 @@ pnpm --filter @finnaai/matrix exec node ./scripts/validate-package-runners.mjs
 Also verify the version is new:
 
 ```bash
-npm view @finnaai/matrix version
+pnpm view @finnaai/matrix version
 git tag -l 'cli-v*'
 ```
 
@@ -50,9 +50,8 @@ Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.16`
 ## Post-Release Verification
 
 ```bash
-npm view @finnaai/matrix version
-npm view @finnaai/matrix dist.tarball
-npx --yes @finnaai/matrix --version
+pnpm view @finnaai/matrix version
+pnpm view @finnaai/matrix dist.tarball
 pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
 MATRIX_VERSION=0.3.16 sh scripts/install.sh
@@ -86,5 +85,5 @@ For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3
 npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.17` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
 
 ```bash
-npm deprecate @finnaai/matrix@0.3.16 "Use @finnaai/matrix@0.3.17"
+pnpm deprecate @finnaai/matrix@0.3.16 "Use @finnaai/matrix@0.3.17"
 ```
