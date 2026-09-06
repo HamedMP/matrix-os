@@ -7,6 +7,8 @@
     ".": "./src/index.ts"
   },
   "imports": {
+    "#chat-links": "./src/chat-links.ts",
+    "#chat-sharing": "./src/chat-sharing.ts",
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",
     "#ai-provider": "./src/ai-provider.ts",

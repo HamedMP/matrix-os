@@ -126,7 +126,8 @@ describe("current desktop tab panes", () => {
 
     const tabSidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
     expect(tabSidebar.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("");
-    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeNull();
+    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Toggle Chat sidebar" })).toBeTruthy();
   });
 
   it("shows the inspector toggle for a New Chat in full-tab mode", () => {
@@ -165,6 +166,12 @@ describe("current desktop tab panes", () => {
       onBoundsChange={vi.fn()}
     />);
 
+    const toggle = screen.getByRole("button", { name: "Toggle Chat sidebar" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
     expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
   });

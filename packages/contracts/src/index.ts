@@ -1190,5 +1190,5 @@ export type {
   PatchOsViewStateRequest,
 } from "#os-view";
 
-export { resolveChatMessageLink } from "./chat-links.js";
-export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, type ShareSnapshot } from "./chat-sharing.js";
+export { resolveChatMessageLink } from "#chat-links";
+export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, type ShareSnapshot } from "#chat-sharing";
