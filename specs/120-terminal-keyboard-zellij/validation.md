@@ -41,3 +41,5 @@ Regression tests reproduce replacement between authorization and dispatch, verif
 ## CI follow-up
 
 The full CI run caught a native Node package-entrypoint failure: the new terminal keyboard export used a `.js` relative path in the source-only contracts package. It now uses the existing package import-map pattern. The native runtime regression was reproduced before the fix; all 220 contract tests and the contracts typecheck pass after it.
+
+CI also caught the new broad Vitest UI alias shadowing the package's CSS subpath exports. Removed the alias so workspace package exports resolve normally. The existing Electron settings regression was reproduced before the fix; it and the terminal renderer/control suites pass afterward (107 tests across eight files).
