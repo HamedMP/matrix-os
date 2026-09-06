@@ -80,7 +80,9 @@ function loadPromotionalGrantConfig(env: NodeJS.ProcessEnv): AiFundedPromotional
 export function loadAiFundedControlPlaneConfig(env: NodeJS.ProcessEnv): AiFundedControlPlaneConfig {
   if (env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED !== "true") return { enabled: false };
   const platformSecret = env.PLATFORM_SECRET ?? "";
-  const relayControlToken = env.AI_RELAY_CONTROL_TOKEN ?? "";
+  // Match relay-side readSecret(): bearer transport cannot preserve surrounding
+  // whitespace from secret-manager inputs. Identity/hash secrets stay byte-exact.
+  const relayControlToken = (env.AI_RELAY_CONTROL_TOKEN ?? "").trim();
   const credentialHashSecret = env.AI_FUNDED_CREDENTIAL_HASH_SECRET ?? "";
   const secrets = [platformSecret, relayControlToken, credentialHashSecret];
   if (secrets.some((secret) => secret.length < 32) || new Set(secrets).size !== secrets.length) {
