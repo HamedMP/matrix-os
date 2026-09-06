@@ -16,10 +16,22 @@ describe('start-platform-cloud-run.sh', () => {
 
     const authStartIndex = script.indexOf('node node_modules/next/dist/bin/next start shell');
     const readinessIndex = script.indexOf('if ! wait_for_auth_shell; then');
-    const platformStartIndex = script.indexOf('node packages/platform/dist/main.js');
+    const platformStartIndex = script.indexOf('node --import=tsx packages/platform/dist/main.js');
     expect(authStartIndex).toBeGreaterThanOrEqual(0);
     expect(readinessIndex).toBeGreaterThan(authStartIndex);
     expect(platformStartIndex).toBeGreaterThan(readinessIndex);
+  });
+
+  it('loads TypeScript workspace exports in the production platform process', () => {
+    const root = process.cwd();
+    const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
+    const platformPackage = JSON.parse(
+      readFileSync(join(root, 'packages/platform/package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+
+    expect(script).toContain('node --import=tsx packages/platform/dist/main.js');
+    expect(platformPackage.dependencies?.tsx).toBe('^4.21.0');
+    expect(platformPackage.devDependencies?.tsx).toBeUndefined();
   });
 
   it('installs the readiness probe client in the platform runtime image', () => {
