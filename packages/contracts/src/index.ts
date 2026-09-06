@@ -1190,4 +1190,4 @@ export type {
   PatchOsViewStateRequest,
 } from "#os-view";
 
-export * from './terminal-keyboard.js';
+export * from "#terminal-keyboard";

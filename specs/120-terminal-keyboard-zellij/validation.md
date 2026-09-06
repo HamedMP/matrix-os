@@ -37,3 +37,7 @@ Rebased onto main at eb8b8e91e, including the verified Codex 0.153.4 compatibili
 The Chat authorization result now carries the verified creation timestamp to the managed adapter. The adapter rejects a mismatched descriptor and dispatches only through the checked generation and immutable runtime name; concurrent display-name replacement cannot redirect the command. Unmanaged adapters fail closed for incarnation-bound actions.
 
 Regression tests reproduce replacement between authorization and dispatch, verify immutable targeting after lookup, and verify the unmanaged fallback rejects dispatch. All 66 focused authorization, Chat wiring, action-route and managed-adapter tests pass.
+
+## CI follow-up
+
+The full CI run caught a native Node package-entrypoint failure: the new terminal keyboard export used a `.js` relative path in the source-only contracts package. It now uses the existing package import-map pattern. The native runtime regression was reproduced before the fix; all 220 contract tests and the contracts typecheck pass after it.
