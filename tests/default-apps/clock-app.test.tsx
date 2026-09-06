@@ -686,6 +686,10 @@ describe("Clock app", () => {
   });
 
   it("renders alarms in bridge order by time", async () => {
+    // Keep one-shot alarms from firing during this ordering check.
+    // Mock only Date so Testing Library can still wait with real timers.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 5, 1, 12, 0, 0));
     installMatrixDb({
       zones: [],
       alarms: [
