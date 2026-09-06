@@ -3,6 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MatrixLocalSetup } from "../../packages/ui/src/matrix-local-setup/MatrixLocalSetup";
+import cliPackage from "../../packages/sync-client/package.json";
 
 const writeText = vi.fn();
 beforeEach(() => {
@@ -21,7 +22,17 @@ it("distinguishes local setup, remote execution, and unverified availability", (
   expect(writeText).not.toHaveBeenCalled();
 });
 
+it("matches the standalone CLI runtime requirement rather than the monorepo runtime", () => {
+  expect(cliPackage.engines.node).toBe(">=20");
+  render(<MatrixLocalSetup />);
+  expect(screen.getByText(/Node.js 20\+ is required/)).toBeTruthy();
+  expect(screen.queryByText(/Node.js 24\+/)).toBeNull();
+  expect(screen.getByText(/without a global install/)).toBeTruthy();
+});
+
 it.each([
+  ["Copy npx", "npx --yes @finnaai/matrix login --profile cloud\nnpx --yes @finnaai/matrix whoami"],
+  ["Copy pnpm dlx", "pnpm dlx @finnaai/matrix login --profile cloud\npnpm dlx @finnaai/matrix whoami"],
   ["Copy MCP URL", "https://api.matrix-os.com/mcp"],
   ["Copy Codex MCP", "codex mcp add matrix --url https://api.matrix-os.com/mcp\ncodex mcp login matrix"],
   ["Copy Claude Code MCP", "claude mcp add --transport http --scope user matrix https://api.matrix-os.com/mcp"],

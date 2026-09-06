@@ -16,7 +16,11 @@ export function MatrixCliSetup() {
   return (
     <section aria-label="CLI setup" className="flex flex-col gap-3">
       <h3 className="text-lg font-semibold">CLI</h3>
-      <p className="text-sm">Control your Matrix computer from your local terminal. Choose one installer; Node.js 24+ is required for npm.</p>
+      <p className="text-sm">Control your Matrix computer from your local terminal. Node.js 20+ is required for npm installs and package runners.</p>
+      <p className="text-sm">Try the CLI without a global install using either package runner. These commands download and run the CLI on your local computer; sign-in is reused by later invocations.</p>
+      <CopyCommand title="npx" command={"npx --yes @finnaai/matrix login --profile cloud\nnpx --yes @finnaai/matrix whoami"} />
+      <CopyCommand title="pnpm dlx" command={"pnpm dlx @finnaai/matrix login --profile cloud\npnpm dlx @finnaai/matrix whoami"} />
+      <p className="text-sm">For a permanent installation, choose Homebrew or npm, then sign in with the installed CLI.</p>
       <CopyCommand title="Homebrew" command={CLI_BREW_INSTALL_COMMAND} testId="plugins-cli-copy-brew" />
       <CopyCommand title="npm" command={CLI_NPM_INSTALL_COMMAND} testId="plugins-cli-copy-npm" />
       <CopyCommand title="CLI sign-in" command={"matrix login\nmatrix status"} />
