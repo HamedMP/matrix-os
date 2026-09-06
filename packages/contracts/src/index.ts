@@ -1189,3 +1189,6 @@ export type {
   OsViewWindowGeometry,
   PatchOsViewStateRequest,
 } from "#os-view";
+
+export { resolveChatMessageLink } from "./chat-links.js";
+export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, type ShareSnapshot } from "./chat-sharing.js";

@@ -279,7 +279,7 @@ describe("ChatTab", () => {
     });
 
     render(<ChatTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Open main.ts in Editor" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open main.ts" }));
 
     expect(useDesktopEditor.getState()).toMatchObject({
       paths: ["projects/app/src/main.ts"],

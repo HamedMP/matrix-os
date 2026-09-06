@@ -10,7 +10,8 @@
     "./agents-providers.css": "./src/agents-providers/agents-providers.css"
   },
   "dependencies": {
-    "@matrix-os/contracts": "workspace:*"
+    "@matrix-os/contracts": "workspace:*",
+    "zod": "^4.3.6"
   },
   "peerDependencies": {
     "react": "^19.0.0",

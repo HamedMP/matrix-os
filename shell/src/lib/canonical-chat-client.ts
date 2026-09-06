@@ -248,6 +248,7 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
       ? [`${message.runId}\0${part.approvalId}`]
       : [])));
   return messages.flatMap((message) => {
+    const attachments = message.parts.flatMap((part) => part.type === "attachment_reference" ? [{ id: part.attachmentId, label: part.label, kind: part.kind === "image" ? "image" as const : "file" as const, path: part.ownerReference, ...(part.kind === "image" && part.ownerReference ? { src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}` } : {}) }] : []);
     const content = message.parts.map(partText).filter((part): part is string => part !== null).join("\n");
     if (!content) return [];
     const toolRequest = message.parts.find((part) => part.type === "tool_request");
@@ -257,6 +258,7 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
       role: message.role === "user" || message.role === "assistant" ? message.role : "system",
       content,
       timestamp: Date.parse(message.createdAt),
+      ...(attachments.length ? { attachments } : {}),
       ...(toolRequest?.type === "tool_request" ? { tool: toolRequest.name } : {}),
       ...(message.runId ? { requestId: message.runId } : {}),
       ...(approvalRequest?.type === "approval_request" ? { metadata: { canonicalApproval: {

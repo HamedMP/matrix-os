@@ -1,3 +1,4 @@
+import { resolveChatMessageLink } from "@matrix-os/contracts";
 import { Check, Copy, FileText, Folder, WrapText } from "@renderer/lib/hugeicons";
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
@@ -288,20 +289,26 @@ export function MessageResponse({
   children,
   copyText,
   openFile,
+  openWebLink,
   className,
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
   openFile?: ConversationPresentationCallbacks["openFile"];
+  openWebLink?: ConversationPresentationCallbacks["openWebLink"];
   className?: string;
 }) {
   const markdownComponents = React.useMemo(() => ({
     a: ({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => {
-      const external = typeof href === "string" && /^https?:\/\//i.test(href);
-      const editorPath = typeof href === "string" ? normalizeDesktopEditorPath(href) : null;
+      const target = typeof href === "string" ? resolveChatMessageLink(href) : null;
+      const external = target?.kind === "web";
+      const editorPath = target?.kind === "file" ? target.path : null;
       return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && openFile ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
         openFile(editorPath);
+      } } : {})} {...(external && openWebLink ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        openWebLink(href!);
       } } : {})} />;
     },
     code: ({ node: _node, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
@@ -316,7 +323,7 @@ export function MessageResponse({
         return (
           <button
             type="button"
-            aria-label={`Open ${path.label} in Editor`}
+            aria-label={`Open ${path.label}`}
             title={value}
             onClick={() => openFile(editorPath)}
             className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
@@ -356,7 +363,7 @@ export function MessageResponse({
     table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
       <MarkdownTable {...props} copyText={copyText} />
     ),
-  }), [copyText, openFile]);
+  }), [copyText, openFile, openWebLink]);
 
   return (
     <div

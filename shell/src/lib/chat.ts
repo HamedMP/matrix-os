@@ -32,6 +32,7 @@ export interface ChatMessage {
   tool?: string;
   toolInput?: Record<string, unknown>;
   requestId?: string;
+  attachments?: Array<{ id: string; label: string; kind: "image" | "file"; path?: string; src?: string }>;
   metadata?: Record<string, unknown>;
   timestamp: number;
 }

@@ -200,7 +200,7 @@ export function authMiddleware(
     const expectedRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT;
 
     const normalizedPath = c.req.path;
-    if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
+    if ((c.req.method === "GET" && /^\/share\/chats\/[a-f0-9]{64}$/.test(normalizedPath)) || PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return nextWithReady(c, next);
     }

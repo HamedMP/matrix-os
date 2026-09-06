@@ -1,4 +1,4 @@
-import { MessageSquare, PanelLeftOpenIcon, Plus, Search } from "@renderer/lib/hugeicons";
+import { MessageSquare, PanelLeftCloseIcon, Plus, Search } from "@renderer/lib/hugeicons";
 
 export function WorkRailHeader({
   onNewChat,
@@ -43,12 +43,14 @@ export function WorkRailHeader({
           <button
             type="button"
             aria-label="Hide Chat navigation"
+            aria-expanded={true}
+            aria-controls="work-navigation-pane"
             title="Hide Chat navigation"
             className="flex size-7 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
             style={{ color: "var(--text-tertiary)" }}
             onClick={onCollapse}
           >
-            <PanelLeftOpenIcon size={15} aria-hidden />
+            <PanelLeftCloseIcon size={15} aria-hidden />
           </button>
         ) : null}
       </div>

@@ -1,3 +1,4 @@
+import { useChatFileNavigation } from "./ChatFileNavigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { CanonicalChatDetailResponse, TerminalSessionSummary } from "@matrix-os/contracts";
@@ -167,6 +168,13 @@ function WorkInspectorContent({
   );
   const [selectedId, setSelectedId] = useState(initialTerminalTab?.id ?? FILES_TAB.id);
   const [selectedFile, setSelectedFile] = useState<InspectorFileTarget | null>(null);
+  const navigation = useChatFileNavigation();
+  const requestedFile = navigation?.request;
+  useEffect(() => {
+    if (!requestedFile || requestedFile.chatId !== scope.chatId) return;
+    setSelectedFile(requestedFile.target);
+    setSelectedId(FILES_TAB.id);
+  }, [requestedFile, scope.chatId]);
   const [resolvedChatId, setResolvedChatId] = useState<string | null>(
     detail?.record.chat.id ?? initialTerminal?.chatId ?? null,
   );
