@@ -20,7 +20,7 @@ import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
 import { useChatFileNavigation } from "../work/ChatFileNavigation";
-import { resolveWorkFilesScope } from "../work/work-files-scope";
+import { resolveChatInspectorTarget, resolveWorkFilesScope } from "../work/work-files-scope";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -752,14 +752,11 @@ export function CanonicalChatWorkspace({
               },
               openWebLink: openChatWebLink,
               openFile: (rawPath) => {
-                const path = normalizeDesktopEditorPath(rawPath);
-                if (!path || !fileNavigation || !controller.detail) return false;
+                if (!fileNavigation || !controller.detail) return false;
                 const scope = resolveWorkFilesScope(controller.detail, projects);
-                if (scope.kind === "unavailable") return false;
-                fileNavigation.open({ chatId: scope.chatId, target: scope.kind === "home"
-                  ? { kind: "home", path, label: path.split("/").at(-1) ?? path }
-                  : { kind: "project", projectId: scope.projectId, worktreeId: scope.worktreeId, path, label: path.split("/").at(-1) ?? path },
-                });
+                const target = resolveChatInspectorTarget(rawPath, scope);
+                if (!target) return false;
+                fileNavigation.open({ chatId: scope.chatId, target });
                 return true;
               },
               ...(api ? { loadImage: loadChatImage } : {}),

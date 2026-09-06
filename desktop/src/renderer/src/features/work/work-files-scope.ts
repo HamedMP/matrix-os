@@ -1,3 +1,5 @@
+import { resolveChatMessageLink } from "@matrix-os/contracts";
+import type { InspectorFileTarget } from "../panels/InspectorFilesPanel";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import type { Project } from "../../stores/board";
 
@@ -35,4 +37,15 @@ export function resolveWorkFilesScope(
       ? { worktreeId: run.executionRoot.worktreeId }
       : {}),
   };
+}
+
+export function resolveChatInspectorTarget(rawPath: string, scope: WorkFilesScope): InspectorFileTarget | null {
+  const link = resolveChatMessageLink(rawPath);
+  if (link?.kind !== "file" || scope.kind === "unavailable") return null;
+  const decoded = decodeURIComponent(rawPath.trim()).replace(/^file:\/\//i, "");
+  const ownerPath = decoded.startsWith("/home/matrix/home/") || decoded.startsWith("~/") || decoded.startsWith("/files/");
+  const label = link.path.split("/").at(-1) ?? link.path;
+  return scope.kind === "home" || ownerPath
+    ? { kind: "home", path: link.path, label }
+    : { kind: "project", projectId: scope.projectId, worktreeId: scope.worktreeId, path: link.path, label };
 }
