@@ -23,7 +23,7 @@ describe("Codex provider contract checker", () => {
     expect(appServerContract.latestVerifiedVersion).toBe("0.153.4");
     expect(appServerContract.verifiedVersions["0.153.4"]).toEqual({
       schemaSha256ByTarget: {
-        "darwin-arm64": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "darwin-arm64": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
         "linux-x64": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
       },
     });
