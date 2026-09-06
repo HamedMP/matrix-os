@@ -44,6 +44,7 @@ export default defineConfig({
       "@matrix-os/brand/marks": path.resolve(__dirname, "packages/brand/src/marks.ts"),
       "@matrix-os/brand": path.resolve(__dirname, "packages/brand/src/index.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
+      "@matrix-os/ui": path.resolve(__dirname, "packages/ui/src/index.ts"),
       "@matrix-os/observability/client": path.resolve(
         __dirname,
         "packages/observability/src/client.ts",

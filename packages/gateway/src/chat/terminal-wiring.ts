@@ -3,6 +3,7 @@ import type { UpgradeWebSocket, WSEvents } from "hono/ws";
 import {
   CanonicalChatIdSchema,
   MatrixComputerRuntimeSlotSchema,
+  type TerminalPaneAction,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -10,6 +11,7 @@ import type { OwnerScope } from "../state-ops.js";
 import type { ShellRouteDeps } from "../shell/routes.js";
 import { createPendingTerminalInputQueue } from "../shell/pending-input.js";
 import { SESSION_NAME_PATTERN } from "../shell/names.js";
+import { shellError } from "../shell/errors.js";
 import {
   shellWsMessageDataToString,
   type ShellWsOpenOptions,
@@ -37,7 +39,7 @@ type TerminalSocketHandler = {
 };
 
 export interface GatewayChatTerminalWiring {
-  shellRouteDeps: Pick<ShellRouteDeps, "getPrincipal" | "listChatBoundSessionIds">;
+  shellRouteDeps: Pick<ShellRouteDeps, "getPrincipal" | "listChatBoundSessionIds" | "chatPaneAction">;
   workspaceRouteDeps: {
     listChatBoundSessionIds?: (
       ownerScope: OwnerScope,
@@ -226,12 +228,26 @@ export function createGatewayChatTerminalWiring(input: {
   repository: ChatTerminalRepository | null;
   getPrincipal: (c: Context) => RequestPrincipal;
   registry: TerminalRegistry;
+  paneActions?: { paneAction(name: string, action: TerminalPaneAction): Promise<void> };
   shellWs: TerminalSocketHandler;
   onUnexpectedSendFailure: (context: string, err: unknown) => void;
 }): GatewayChatTerminalWiring {
   const shellRouteDeps: GatewayChatTerminalWiring["shellRouteDeps"] = input.repository
     ? {
         getPrincipal: input.getPrincipal,
+        chatPaneAction: async (principal, { chatId, sessionId, action }) => {
+          if (!input.paneActions) throw shellError("pane_actions_unavailable", "Request failed", 503);
+          if (!await authorizeChatTerminalAttach({
+            repository: input.repository!,
+            registry: input.registry,
+            owner: { type: "personal", ownerId: principal.userId },
+            chatId,
+            sessionId,
+          })) {
+            throw shellError("session_not_found", "Session not found", 404);
+          }
+          await input.paneActions.paneAction(sessionId, action);
+        },
         listChatBoundSessionIds: (principal, sessionIds) => input.repository!.listBoundTerminalSessionIds(
           { type: "personal", ownerId: principal.userId },
           sessionIds,

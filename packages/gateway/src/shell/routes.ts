@@ -1,10 +1,11 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { CanonicalChatIdSchema } from "@matrix-os/contracts";
+import { CanonicalChatIdSchema, type TerminalPaneAction } from "@matrix-os/contracts";
 import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js";
 import { toShellError } from "./errors.js";
 import { SESSION_NAME_PATTERN } from "./names.js";
+import { registerTerminalPaneActionRoutes } from "./pane-action-routes.js";
 import {
   saveTerminalPasteAsset,
   TERMINAL_PASTE_ASSET_BODY_LIMIT,
@@ -50,6 +51,7 @@ interface ChatTerminalRoutes {
 }
 
 interface ShellWorkspaceRoutes {
+  paneAction?(name: string, action: TerminalPaneAction): Promise<void>;
   listTabs(name: string): Promise<unknown[]>;
   createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<unknown>;
   switchTab(name: string, tab: number): Promise<unknown>;
@@ -111,6 +113,7 @@ export interface ShellRouteDeps {
     principal: RequestPrincipal,
     sessionIds: readonly string[],
   ) => Promise<readonly string[]>;
+  chatPaneAction?: (principal: RequestPrincipal, input: { chatId: string; sessionId: string; action: TerminalPaneAction }) => Promise<void>;
   chatTerminals?: ChatTerminalRoutes;
 }
 
@@ -636,6 +639,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
+  registerTerminalPaneActionRoutes(app, deps);
   return app;
 }
 

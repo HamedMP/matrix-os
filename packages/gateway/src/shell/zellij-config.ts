@@ -161,6 +161,19 @@ export function renderMatrixZellijConfig(
 pane_frames false
 simplified_ui true
 hide_session_name true
+// All Matrix clients share a session focus, including scoped CLI pane actions.
+mirror_session true
+// Shells and agent TUIs receive their normal editing keys. Ctrl+g deliberately
+// unlocks Zellij's native prefix modes when Matrix shortcut handling is bypassed.
+default_mode "locked"
+keybinds {
+  normal {
+    unbind "Alt Left" "Alt Right" "Alt b" "Alt f" "Alt Backspace"
+  }
+  locked {
+    bind "Ctrl g" { SwitchToMode "Normal"; }
+  }
+}
 default_layout "${MATRIX_ZELLIJ_LAYOUT_NAME}"
 default_shell ${JSON.stringify(configPaths.shellFile)}
 theme "${zellijThemeForShellTheme(themeId)}"

@@ -256,6 +256,7 @@ export function createUserSystemdZellijAdapter(options: {
       return adapterFor(descriptor).attachSession(descriptor.sessionName, attachOptions);
     },
 
+    paneAction: (name, action) => delegate(name, (adapter, sessionName) => adapter.paneAction(sessionName, action)),
     sendInput: (name, data) => delegate(name, (adapter, sessionName) => adapter.sendInput(sessionName, data)),
     listTabs: (name) => delegate(name, (adapter, sessionName) => adapter.listTabs(sessionName)),
     createTab: (name, input) => delegate(name, (adapter, sessionName) => adapter.createTab(sessionName, input)),

@@ -46,3 +46,7 @@ export type {
   ProviderSettingsTransportErrorCode,
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
+
+export { TerminalControls } from './terminal/TerminalControls.js';
+export { useTerminalControls } from './terminal/use-terminal-controls.js';
+export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';

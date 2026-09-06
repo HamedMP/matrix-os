@@ -1189,3 +1189,5 @@ export type {
   OsViewWindowGeometry,
   PatchOsViewStateRequest,
 } from "#os-view";
+
+export * from './terminal-keyboard.js';

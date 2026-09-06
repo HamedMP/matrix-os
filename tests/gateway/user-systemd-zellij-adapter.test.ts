@@ -40,6 +40,7 @@ function fakeAdapter(): ZellijAdapter {
       onExit: vi.fn(() => ({ dispose: vi.fn() })),
     })),
     sendInput: vi.fn(async () => undefined),
+    paneAction: vi.fn(async () => undefined),
     listTabs: vi.fn(async () => []),
     createTab: vi.fn(async () => ({ ok: true })),
     switchTab: vi.fn(async () => ({ ok: true })),
@@ -87,6 +88,16 @@ describe("user-systemd zellij adapter", () => {
   afterEach(async () => {
     await rm(homePath, { recursive: true, force: true });
     vi.restoreAllMocks();
+  });
+
+  it("routes pane actions through the session generation and opaque runtime name", async () => {
+    controller.findByDisplayName.mockResolvedValue(descriptor());
+    const adapterFactory = vi.fn(() => pinned);
+    const adapter = createUserSystemdZellijAdapter({ homePath, generation: GENERATION, controller, baseAdapter: base, adapterFactory });
+    await adapter.paneAction("Main", { type: "focus", direction: "right" });
+    expect(pinned.paneAction).toHaveBeenCalledWith(`matrix-${RUNTIME_ID}`, { type: "focus", direction: "right" });
+    expect(base.paneAction).not.toHaveBeenCalled();
+    expect(adapterFactory).toHaveBeenCalledWith(`/opt/matrix/terminal-runtime/generations/${GENERATION}/zellij`);
   });
 
   it("creates command sessions through the typed controller without spawning from the gateway", async () => {

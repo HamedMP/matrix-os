@@ -1917,6 +1917,7 @@ export async function createGateway(config: GatewayConfig) {
     repository: chatRepository,
     getPrincipal: (c) => requireRequestPrincipal(c),
     registry: chatZellijShellRegistry,
+    paneActions: chatZellijAdapter,
     shellWs: chatZellijShellWs,
     onUnexpectedSendFailure: logUnexpectedWsSendFailure,
   });
