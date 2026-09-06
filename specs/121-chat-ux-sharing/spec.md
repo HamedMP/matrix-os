@@ -1,6 +1,6 @@
 # Chat sharing, message navigation, and panels
 
-Issues: OM-209, OM-210, OM-211, OM-212, OM-213. One product PR; a separate FinnaAI/matrix-os-site documentation PR covers the public guide.
+Issues: OM-209, OM-210, OM-211, OM-212, OM-213. One product PR. Site documentation is excluded by the user.
 
 ## Product contract
 
