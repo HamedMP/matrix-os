@@ -27,6 +27,14 @@ describe("Codex provider contract checker", () => {
         "linux-x64": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
       },
     });
+    expect(appServerContract.requiredServerProtocolSchemaDigests[
+      "item/commandExecution/requestApproval"
+    ]).toEqual({
+      schemaSha256ByTarget: {
+        "darwin-arm64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
+        "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
+      },
+    });
   });
 
   it("requires exact-version digests and protocol semantics to evolve together", () => {

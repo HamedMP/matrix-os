@@ -78,7 +78,7 @@
   "requiredServerProtocolSchemaDigests": {
     "item/commandExecution/requestApproval": {
       "schemaSha256ByTarget": {
-        "darwin-arm64": "ff60bdaf1c4a31d22a5b820a196abc3c02f1847996c5aa49aa15b40bc562b8be",
+        "darwin-arm64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
         "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f"
       }
     },
