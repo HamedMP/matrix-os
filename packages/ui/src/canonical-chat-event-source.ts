@@ -322,7 +322,10 @@ export function createCanonicalChatEventSource(options: {
     rotationTimer = setTimeoutFn(() => {
       if (!disposed && generation === connectionGeneration) scheduleReconnect();
     }, connectionLifetimeMs);
-    const replay = { complete: false, gap: false, sawEvent: false };
+    // BIGSERIAL cursors are allocated before commit. Across Chats, a lower
+    // cursor can commit while disconnected after we received a higher one.
+    // Reconcile once on resume; healthy online output remains content-only.
+    const replay = { complete: false, gap: lastCursor !== undefined, sawEvent: false };
     const parser = createCanonicalChatSseParser({
       maxEventBytes: 512 * 1024,
       onActivity: () => resetInactivityTimer(generation),

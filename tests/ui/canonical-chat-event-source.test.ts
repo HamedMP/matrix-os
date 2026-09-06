@@ -112,7 +112,8 @@ describe("shared canonical Chat event source", () => {
       },
       clearTimeoutFn(timer) { (timer as typeof timers[number]).cleared = true; },
     });
-    const subscription = source.subscribe(() => undefined);
+    const received: CanonicalChatInvalidation[] = [];
+    const subscription = source.subscribe((event) => received.push(event));
     expect(() => source.subscribe(() => undefined)).toThrow("Chat event consumer limit reached");
 
     await source.start();
@@ -126,6 +127,11 @@ describe("shared canonical Chat event source", () => {
     reconnect.callback();
     await vi.waitFor(() => expect(opens).toHaveLength(2));
     expect(opens[1]?.cursor).toBe(5);
+    received.length = 0;
+    // A lower cursor may have committed while disconnected. An empty replay
+    // alone cannot prove the persisted projection is current.
+    streams[1]!.emit('data: {"type":"chat.stream.attached"}\n\ndata: {"type":"chat.replay.end","nextCursor":5}\n\n');
+    await vi.waitFor(() => expect(received).toEqual([{ type: "chat.full_refresh", cursor: 5 }]));
 
     subscription.dispose();
     source.dispose();
