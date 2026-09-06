@@ -132,6 +132,9 @@ describe("BootSequence", () => {
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
     expect(await screen.findByText("Building your Matrix computer")).toBeTruthy();
     expect(screen.getByText("Booting your computer")).toBeTruthy();
+    const progress = screen.getByRole("progressbar", { name: "Matrix computer setup" });
+    expect(progress.getAttribute("aria-valuenow")).toBe("50");
+    expect(progress.getAttribute("aria-valuetext")).toBe("Booting your computer");
     expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
     expect(screen.queryByText("Default installs")).toBeNull();
   });

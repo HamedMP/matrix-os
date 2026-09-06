@@ -45,6 +45,13 @@ const STAGE_LABEL: Record<string, string> = {
   finalizing: "Finishing setup",
 };
 
+const STAGE_PROGRESS: Record<string, number> = {
+  creating_server: 20,
+  booting: 50,
+  registering: 75,
+  finalizing: 90,
+};
+
 type BootStep = "account" | "billing" | "installs" | "computer";
 
 const STEP_ORDER: BootStep[] = ["account", "billing", "installs", "computer"];
@@ -127,6 +134,35 @@ function BootShell({
 
 function Spinner() {
   return <Loader2Icon className="size-5 animate-spin text-ember" aria-hidden="true" />;
+}
+
+function ProvisioningProgress({
+  label,
+  stage,
+}: {
+  label: string;
+  stage?: string;
+}) {
+  const value = stage ? STAGE_PROGRESS[stage] : undefined;
+  return (
+    <div
+      role="progressbar"
+      aria-label="Matrix computer setup"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value}
+      aria-valuetext={label}
+      className="h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-forest/10"
+    >
+      <div
+        className={[
+          "h-full rounded-full bg-ember transition-[width] duration-700",
+          value === undefined ? "w-1/2 motion-safe:animate-pulse" : "",
+        ].join(" ")}
+        style={value === undefined ? undefined : { width: `${value}%` }}
+      />
+    </div>
+  );
 }
 
 function AppSessionHandoff({
@@ -237,6 +273,7 @@ function AppSessionHandoff({
       <p className="max-w-sm text-sm">
         Your computer is starting. Matrix will continue automatically when it is ready.
       </p>
+      <ProvisioningProgress label="Finishing setup" stage="finalizing" />
     </BootShell>
   );
 }
@@ -473,6 +510,7 @@ function BootSequenceInner({
             <p className="max-w-sm text-sm">
               Your setup is already in progress. Matrix will continue automatically when it is ready.
             </p>
+            <ProvisioningProgress label="Checking setup status" />
           </BootShell>
         );
       }
@@ -492,16 +530,18 @@ function BootSequenceInner({
           }}
         />
       );
-    case "provisioning":
+    case "provisioning": {
+      const stage = state.progress?.stage;
+      const progressLabel = stage ? (STAGE_LABEL[stage] ?? state.detail) : state.detail;
       return (
         <BootShell activeStep="computer">
           <Spinner />
           <h1 className="text-lg font-medium text-forest">Building your Matrix computer</h1>
-          <p className="max-w-sm text-sm">
-            {state.progress ? (STAGE_LABEL[state.progress.stage] ?? state.detail) : state.detail}
-          </p>
+          <p className="max-w-sm text-sm">{progressLabel}</p>
+          <ProvisioningProgress label={progressLabel} stage={stage} />
         </BootShell>
       );
+    }
     case "provisioning_failed":
       return (
         <BootShell activeStep="computer">

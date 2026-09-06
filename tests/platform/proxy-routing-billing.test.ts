@@ -511,8 +511,10 @@ describe("platform proxy routing billing and provisioning", () => {
     expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     const html = await res.text();
     expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('aria-label="Matrix computer setup"');
+    expect(html).toContain("Checking core services");
+    expect(html).not.toContain("<strong>provisioning</strong>");
     expect(html).not.toContain("alice.matrix-os.com");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -557,8 +559,10 @@ describe("platform proxy routing billing and provisioning", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
     const html = await res.text();
     expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('aria-label="Matrix computer setup"');
+    expect(html).toContain("Checking core services");
+    expect(html).not.toContain("<strong>provisioning</strong>");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -597,8 +601,10 @@ describe("platform proxy routing billing and provisioning", () => {
     expect(res.status).toBe(503);
     const html = await res.text();
     expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('aria-label="Matrix computer setup"');
+    expect(html).toContain("Checking core services");
+    expect(html).not.toContain("<strong>provisioning</strong>");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
