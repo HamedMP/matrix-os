@@ -23,7 +23,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AnimatePresence, motion, MotionConfig, type PanInfo } from "framer-motion";
 import { toast } from "sonner";
-import { MobileQuickActions } from "@/components/mobile/MobileQuickActions";
+import { MobileLauncher } from "./MobileLauncher";
+import { MobileDock } from "./MobileDock";
+import { MobileAppIcon } from "./MobileAppIcon";
+import type { MobileApp } from "./mobile-app";
 import {
   appTransition,
   EASE_EMPHASIZED,
@@ -32,7 +35,6 @@ import {
   tapScale,
 } from "@/lib/motion";
 import { useChatContext } from "@/stores/chat-context";
-import { iconUrlForSlug } from "@/lib/app-launch";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
 import {
@@ -51,13 +53,6 @@ import { Settings } from "@/components/Settings";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
 import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
-
-interface MobileApp {
-  id: string;
-  name: string;
-  path: string;
-  iconSlug: string;
-}
 
 interface OpenApp {
   id: string;
@@ -104,28 +99,6 @@ function mergeMobileApps(base: MobileApp[], installed: MobileApp[]): MobileApp[]
   return merged;
 }
 
-const LAUNCHER_APP_BUTTON_STYLE: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  gap: 6,
-  background: "transparent",
-  border: "none",
-  color: "inherit",
-  cursor: "pointer",
-  padding: 0,
-};
-
-const LAUNCHER_APP_LABEL_STYLE: CSSProperties = {
-  fontSize: 12,
-  lineHeight: 1.2,
-  textAlign: "center",
-  maxWidth: 70,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
-
 const SWITCHER_CLOSE_BUTTON_STYLE: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -154,32 +127,6 @@ const SWITCHER_RESUME_BUTTON_STYLE: CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
   cursor: "pointer",
-};
-
-const DOCK_BUTTON_BASE_STYLE: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  gap: 2,
-  background: "transparent",
-  border: "none",
-  color: "inherit",
-  padding: "4px 10px",
-  position: "relative",
-  cursor: "pointer",
-};
-
-const DOCK_BADGE_STYLE: CSSProperties = {
-  position: "absolute",
-  top: 2,
-  right: 6,
-  background: "var(--primary, #c2703a)",
-  color: "white",
-  fontSize: 12,
-  fontWeight: 700,
-  borderRadius: 999,
-  padding: "1px 5px",
-  lineHeight: 1.2,
 };
 
 interface MobileShellProps {
@@ -370,7 +317,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
 
   // Touch: swipe from the bottom edge up by >40px when an app is foregrounded
   // opens the app switcher (matches iOS swipe-up). Done with pointer events
-  // on the bottom 24px-tall edge sensor.
+  // on a dedicated bottom strip, below the dock buttons.
   const edgeSensorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = edgeSensorRef.current;
@@ -443,6 +390,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
             <motion.div
               key={o.id}
               aria-hidden={!visible}
+              inert={!visible}
               // Kept mounted (never unmounted) to preserve live app state such as
               // terminal sessions; we animate opacity/transform instead of
               // toggling `visibility`, so foregrounding an app slides + fades in.
@@ -476,7 +424,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
               animate="animate"
               exit="exit"
             >
-              <Launcher
+              <MobileLauncher
                 apps={apps}
                 onOpen={openApp}
                 onOpenSettings={() => setSettingsOpen(true)}
@@ -519,49 +467,25 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
         </AnimatePresence>
       </main>
 
-      <nav
-        data-testid="mobile-bottom-dock"
-        className="flex items-center justify-around px-2"
-        style={{
-          display: hideBottomDock ? "none" : "flex",
-          height: 64,
-          background: "rgba(0,0,0,0.35)",
-          borderTop: "1px solid rgba(244,237,224,0.08)",
-          // react-doctor-disable-next-line react-doctor/no-large-animated-blur -- intentional frosted-glass bottom nav: this is a static (non-animated) backdrop-filter on a small fixed 64px-tall bar, so the GPU cost is bounded; the 20px radius is the designed frosted look and clamping it under 10px would visibly thin the frost. Paired with the -webkit- prefix below.
-          backdropFilter: "blur(20px)",
-          // react-doctor-disable-next-line react-doctor/no-large-animated-blur -- -webkit- prefixed twin of the static frosted-glass backdrop-filter above; same bounded 64px nav bar, kept in sync with the unprefixed property for Safari/iOS.
-          WebkitBackdropFilter: "blur(20px)",
-        }}
-      >
-        {pinnedDock.map((app) => (
-          <DockButton
-            key={app.id}
-            label={app.name}
-            iconSlug={app.iconSlug}
-            highlighted={top?.app.path === app.path && view === "app"}
-            onClick={() => openApp(app)}
-          />
-        ))}
-        <DockButton label="Apps" iconSlug="grid" onClick={() => setView("launcher")} highlighted={view === "launcher"} />
-        <DockButton
-          label="Open"
-          iconSlug="layers"
-          onClick={showSwitcher}
-          highlighted={view === "switcher"}
-          badge={openStack.length || undefined}
-        />
-      </nav>
+      <MobileDock
+        apps={pinnedDock}
+        currentPath={view === "app" ? top?.app.path : undefined}
+        view={view}
+        hidden={hideBottomDock}
+        openCount={openStack.length}
+        onOpen={openApp}
+        onShowApps={() => setView("launcher")}
+        onShowSwitcher={showSwitcher}
+      />
 
       <div
         ref={edgeSensorRef}
         aria-hidden
         style={{
-          position: "fixed",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 24,
-          zIndex: 50,
+          display: hideBottomDock ? "none" : "block",
+          height: 12,
+          flexShrink: 0,
+          background: "var(--background)",
           touchAction: "none",
         }}
       />
@@ -634,64 +558,6 @@ function MobileAppFrame({
     );
   }
   return <AppViewer path={app.path} onOpenApp={() => {}} />;
-}
-
-interface LauncherProps {
-  apps: MobileApp[];
-  onOpen: (app: MobileApp) => void;
-  onOpenSettings: () => void;
-  openStackCount: number;
-  onShowSwitcher: () => void;
-  onCloseAll: () => void;
-}
-
-function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher, onCloseAll }: LauncherProps) {
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between px-5 pt-4 pb-3">
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: -0.3 }}>Apps</div>
-          <div style={{ fontSize: 12, opacity: 0.6 }}>
-            {apps.length} installed{openStackCount > 0 ? ` · ${openStackCount} open` : ""}
-          </div>
-        </div>
-        <MobileQuickActions
-          openStackCount={openStackCount}
-          onOpenSettings={onOpenSettings}
-          onShowSwitcher={onShowSwitcher}
-          onCloseAll={onCloseAll}
-        />
-      </div>
-      <motion.div
-        className="flex-1 overflow-y-auto"
-        variants={staggerContainer()}
-        initial="initial"
-        animate="animate"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, minmax(0,1fr))",
-          gap: 18,
-          padding: "8px 18px 32px",
-          alignContent: "start",
-        }}
-      >
-        {apps.map((app) => (
-          <motion.button
-            key={app.id}
-            data-testid={`mobile-launcher-app-${app.path}`}
-            type="button"
-            onClick={() => onOpen(app)}
-            variants={fadeUp}
-            {...tapScale}
-            style={LAUNCHER_APP_BUTTON_STYLE}
-          >
-            <AppIcon slug={app.iconSlug} size={56} />
-            <span style={LAUNCHER_APP_LABEL_STYLE}>{app.name}</span>
-          </motion.button>
-        ))}
-      </motion.div>
-    </div>
-  );
 }
 
 function AppSwitcher({
@@ -779,7 +645,7 @@ function AppSwitcher({
                 touchAction: "pan-y",
               }}
             >
-              <AppIcon slug={o.app.iconSlug} size={44} />
+              <MobileAppIcon slug={o.app.iconSlug} size={44} />
               <button
                 onClick={() => onSelect(o.id)}
                 type="button"
@@ -831,77 +697,6 @@ function AppSwitcher({
         )}
       </motion.div>
     </div>
-  );
-}
-
-function DockButton({
-  label,
-  iconSlug,
-  onClick,
-  highlighted,
-  badge,
-}: {
-  label: string;
-  iconSlug: string;
-  onClick: () => void;
-  highlighted?: boolean;
-  badge?: number;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      type="button"
-      style={{ ...DOCK_BUTTON_BASE_STYLE, opacity: highlighted ? 1 : 0.65 }}
-      aria-label={label}
-    >
-      <AppIcon slug={iconSlug} size={32} />
-      <span style={{ fontSize: 12, opacity: 0.8 }}>{label}</span>
-      {badge !== undefined && (
-        <span aria-hidden style={DOCK_BADGE_STYLE}>
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-}
-
-function AppIcon({ slug, size }: { slug: string; size: number }) {
-  const [src, setSrc] = useState(() => iconUrlForSlug(slug) ?? "/icon-192.png");
-  const triedSvg = useRef(false);
-  const prevSlug = useRef(slug);
-
-  useEffect(() => {
-    if (prevSlug.current === slug) return;
-    prevSlug.current = slug;
-    triedSvg.current = false;
-    // react-doctor-disable-next-line react-doctor/no-derived-state -- `src` is not pure derived state: it is seeded from `slug` but then mutated at runtime by the onError fallback chain (.png -> .svg -> /icon-192.png). Computing it in render would discard the resolved fallback and re-trigger the broken-image flicker on every render. This effect resets the chain only when the slug actually changes.
-    setSrc(iconUrlForSlug(slug) ?? "/icon-192.png");
-  }, [slug]);
-
-  return (
-    // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- icon src is swapped at runtime via onError fallback chain (.png -> .svg -> /icon-192.png), which next/image does not support; <img> preserves the graceful-degradation behavior.
-    <img
-      src={src}
-      alt=""
-      width={size}
-      height={size}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: Math.round(size * 0.22),
-        background: "rgba(244,237,224,0.08)",
-        objectFit: "contain",
-      }}
-      onError={() => {
-        const svgUrl = src.replace(/\.[^.]+$/, ".svg");
-        if (!triedSvg.current && src !== svgUrl) {
-          triedSvg.current = true;
-          setSrc(svgUrl);
-        } else {
-          setSrc("/icon-192.png");
-        }
-      }}
-    />
   );
 }
 

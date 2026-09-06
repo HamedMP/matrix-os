@@ -16,6 +16,7 @@ import {
 } from "../../lib/shell-session-sync";
 import TerminalView from "./TerminalView";
 import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
+import { TerminalSidebarLayout } from "./TerminalSidebarLayout";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import {
   parseTerminalAgentStatuses,
@@ -341,46 +342,39 @@ export default function TerminalsTab({
   const overviewSelected = selected === null;
 
   return (
-    <div
-      data-testid="desktop-terminal-app"
-      className="relative flex min-h-0 flex-1 overflow-hidden"
-      style={{
-        background: "var(--bg-app)",
-        color: "var(--text-primary)",
-      }}
-    >
-      <div className="w-[280px] min-w-[200px] max-w-[280px] shrink-0 border-r" style={{ borderColor: "var(--border-subtle)" }}>
-        <TerminalSessionSidebar
-          sessions={shells}
-          selectedName={selectedName}
-          creating={creating}
-          disabled={!api}
-          agentStatuses={agentStatuses}
-          checkingAgentStatuses={checkingAgentStatuses}
-          renamingName={renamingName}
-          renameDraft={renameDraft}
-          renameError={renameError}
-          onCreate={() => void createShell()}
-          onCreateAgent={(option, action) => void createAgentSession(option, action)}
-          onRefreshAgentStatuses={() => void refreshAgentStatuses()}
-          onSelect={showShellDetail}
-          onRename={startRename}
-          onRenameDraft={(value) => {
-            setRenameDraft(value);
-            setRenameError(null);
-          }}
-          onCommitRename={() => void commitRename()}
-          onCancelRename={() => {
-            setRenamingName(null);
-            setRenameError(null);
-          }}
-          onCopyConnectCommand={(shell) => void copyAttachCommand(shell)}
-          onPin={(shell, pinned) => {
-            if (api) void useShellSessions.getState().patchUiState(api, shell.name, { pinned });
-          }}
-          onDelete={setDeleteTarget}
-        />
-      </div>
+    <TerminalSidebarLayout sidebar={(controls) => (
+      <TerminalSessionSidebar
+        {...controls}
+        sessions={shells}
+        selectedName={selectedName}
+        creating={creating}
+        disabled={!api}
+        agentStatuses={agentStatuses}
+        checkingAgentStatuses={checkingAgentStatuses}
+        renamingName={renamingName}
+        renameDraft={renameDraft}
+        renameError={renameError}
+        onCreate={() => void createShell()}
+        onCreateAgent={(option, action) => void createAgentSession(option, action)}
+        onRefreshAgentStatuses={() => void refreshAgentStatuses()}
+        onSelect={showShellDetail}
+        onRename={startRename}
+        onRenameDraft={(value) => {
+          setRenameDraft(value);
+          setRenameError(null);
+        }}
+        onCommitRename={() => void commitRename()}
+        onCancelRename={() => {
+          setRenamingName(null);
+          setRenameError(null);
+        }}
+        onCopyConnectCommand={(shell) => void copyAttachCommand(shell)}
+        onPin={(shell, pinned) => {
+          if (api) void useShellSessions.getState().patchUiState(api, shell.name, { pinned });
+        }}
+        onDelete={setDeleteTarget}
+      />
+    )}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <RetainedPane
@@ -504,7 +498,7 @@ export default function TerminalsTab({
           </div>
         </div>
       </Dialog>
-    </div>
+    </TerminalSidebarLayout>
   );
 }
 

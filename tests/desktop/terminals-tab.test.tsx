@@ -4,6 +4,7 @@ import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OSWindow, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow";
 import TerminalsTab from "../../desktop/src/renderer/src/features/terminal/TerminalsTab";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
@@ -584,6 +585,57 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("textbox", { name: "Search terminal sessions" })).toBeNull();
   });
 
+  it("collapses and restores the terminal tabs sidebar", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    renderTab();
+
+    const hideTabs = screen.getByRole("button", { name: "Hide terminal tabs" });
+    expect(hideTabs.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("list", { name: "Terminal sessions" })).toBeTruthy();
+
+    const terminal = screen.getByTestId("terminal-view-matrix-main");
+    hideTabs.focus();
+    fireEvent.click(hideTabs);
+
+    expect(screen.queryByRole("list", { name: "Terminal sessions" })).toBeNull();
+    const showTabs = screen.getByRole("button", { name: "Show terminal tabs" });
+    expect(showTabs.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(showTabs);
+    expect(screen.getByTestId("terminal-view-matrix-main")).toBe(terminal);
+
+    fireEvent.click(showTabs);
+
+    expect(screen.getByRole("list", { name: "Terminal sessions" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide terminal tabs" }).getAttribute("aria-expanded"))
+      .toBe("true");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Hide terminal tabs" }));
+    expect(screen.getByTestId("terminal-view-matrix-main")).toBe(terminal);
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("keeps collapsed terminal controls and content below floating window chrome", () => {
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active" }] });
+    const { container } = render(
+      <Tooltip.Provider>
+        <OSWindow surfaceId="terminal" safeAreaLayout="sidebar" topBar={<TopBar title="Terminal" />}>
+          <TerminalsTab />
+        </OSWindow>
+      </Tooltip.Provider>,
+    );
+    const content = container.querySelector<HTMLElement>('[data-testid="desktop-terminal-app"]');
+    expect(content).not.toBeNull();
+    expect(content!.style.paddingTop).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Hide terminal tabs" }));
+    const rail = screen.getByRole("complementary", { name: "Collapsed terminal tabs" });
+    expect(content!.contains(rail)).toBe(true);
+    expect(content!.style.paddingTop).toBe("48px");
+    fireEvent.click(screen.getByRole("button", { name: "Show terminal tabs" }));
+    expect(content!.style.paddingTop).toBe("");
+  });
+
   it("keeps delete and connect actions in one non-overlapping overflow menu", async () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
@@ -670,10 +722,10 @@ describe("TerminalsTab", () => {
     expect(screen.getByRole("menuitem", { name: /Codex/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /OpenCode/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /Pi/ })).toBeTruthy();
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-claude").getAttribute("src")).toContain("/agent-logos/claude-code.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-codex").getAttribute("src")).toContain("/agent-logos/codex.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-opencode").getAttribute("src")).toContain("/agent-logos/opencode-white.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-pi").getAttribute("src")).toContain("/agent-logos/pi-coding-agent.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-claude").getAttribute("src")).toBe("./agent-logos/claude-code.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-codex").getAttribute("src")).toBe("./agent-logos/codex.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-opencode").getAttribute("src")).toBe("./agent-logos/opencode-white.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-pi").getAttribute("src")).toBe("./agent-logos/pi-coding-agent.png");
 
     fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api, {
