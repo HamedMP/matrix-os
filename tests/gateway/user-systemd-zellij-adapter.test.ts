@@ -40,6 +40,7 @@ function fakeAdapter(): ZellijAdapter {
       onExit: vi.fn(() => ({ dispose: vi.fn() })),
     })),
     sendInput: vi.fn(async () => undefined),
+    paneAction: vi.fn(async () => undefined),
     listTabs: vi.fn(async () => []),
     createTab: vi.fn(async () => ({ ok: true })),
     switchTab: vi.fn(async () => ({ ok: true })),
@@ -87,6 +88,28 @@ describe("user-systemd zellij adapter", () => {
   afterEach(async () => {
     await rm(homePath, { recursive: true, force: true });
     vi.restoreAllMocks();
+  });
+
+  it("routes pane actions through the session generation and opaque runtime name", async () => {
+    controller.findByDisplayName.mockResolvedValue(descriptor());
+    const adapterFactory = vi.fn(() => pinned);
+    const adapter = createUserSystemdZellijAdapter({ homePath, generation: GENERATION, controller, baseAdapter: base, adapterFactory });
+    await adapter.paneAction("Main", { type: "focus", direction: "right" });
+    expect(pinned.paneAction).toHaveBeenCalledWith(`matrix-${RUNTIME_ID}`, { type: "focus", direction: "right" });
+    expect(base.paneAction).not.toHaveBeenCalled();
+    expect(adapterFactory).toHaveBeenCalledWith(`/opt/matrix/terminal-runtime/generations/${GENERATION}/zellij`);
+  });
+
+  it("pins authorized pane actions to the immutable runtime even if the name is replaced after lookup", async () => {
+    const live = descriptor();
+    controller.findByDisplayName.mockResolvedValue(live);
+    const replacement = descriptor({ runtimeId: "rt_ffffffffffffffffffffffffffffffff", sessionName: "matrix-rt_ffffffffffffffffffffffffffffffff", createdAt: "2026-08-01T12:00:00.000Z" });
+    const adapter = createUserSystemdZellijAdapter({ homePath, generation: GENERATION, controller, baseAdapter: base, adapterFactory: () => {
+      controller.findByDisplayName.mockResolvedValue(replacement);
+      return pinned;
+    }});
+    await adapter.paneAction("Main", { type: "close" }, { expectedCreatedAt: live.createdAt });
+    expect(pinned.paneAction).toHaveBeenCalledWith(live.sessionName, { type: "close" });
   });
 
   it("creates command sessions through the typed controller without spawning from the gateway", async () => {

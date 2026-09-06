@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
-import { countPanes as countPanesFromStore, getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
+import { getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
+import { dispatchTerminalPaneAction } from "./terminal-pane-actions";
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
 import { useThemeStyle } from "../window/useThemeStyle";
@@ -30,13 +31,11 @@ import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetai
 import {
   DEFAULT_CWD,
   applyCompatModeToTabs,
-  closePaneInTree,
   compatModeForShellSession,
   destroyTerminalSessions,
   getCanonicalShellSessionIds,
   getFirstPaneId,
   getPaneIdsForSession,
-  getPaneSessionId,
   getSessionIds,
   genId,
   hasPaneId,
@@ -44,7 +43,6 @@ import {
   removeSessionFromPaneTree,
   renameSessionInTree,
   setPaneSessionId,
-  splitPaneInTree,
   terminalSessionName,
   type Tab,
   type TerminalLayout,
@@ -200,8 +198,6 @@ function terminalAppDebug(event: string, details: Record<string, unknown>): void
   }
   console.info("[terminal-debug][app]", event, details);
 }
-
-const countPanes = countPanesFromStore;
 
 interface TerminalAppProps {
   initialCommand?: string;
@@ -796,36 +792,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const splitPane = (paneId: string, dir: "horizontal" | "vertical") => {
-    setTabs(prev => prev.map(t => {
-      if (t.id !== activeTabId || countPanes(t.paneTree) >= 4) return t;
-      return { ...t, paneTree: splitPaneInTree(t.paneTree, paneId, dir) };
-    }));
+    dispatchTerminalPaneAction(paneId, { type: "split", direction: dir === "horizontal" ? "right" : "down" });
   };
 
   const closePane = (paneId: string) => {
-    const activeTabRecord = tabsRef.current.find((tab) => tab.id === activeTabId);
-    const closingSessionIds = new Set<string>();
-    const closingSessionId = activeTabRecord ? getPaneSessionId(activeTabRecord.paneTree, paneId) : null;
-    if (closingSessionId) closingSessionIds.add(closingSessionId);
-    const pendingSessionId = pendingPaneSessionsRef.current!.get(paneId);
-    if (pendingSessionId) closingSessionIds.add(pendingSessionId);
-    destroyTerminalSessions(Array.from(closingSessionIds));
-    markPanesClosing([paneId]);
-    log("close-pane", { paneId });
-    setTabs(prev => {
-      const tab = prev.find(t => t.id === activeTabId);
-      if (!tab) return prev;
-      const newTree = closePaneInTree(tab.paneTree, paneId);
-      if (!newTree) {
-        const next = prev.filter(t => t.id !== activeTabId);
-        const replacement = next[0];
-        setActiveTabId(replacement?.id ?? "");
-        requestPaneFocus(replacement ? getFirstPaneId(replacement.paneTree) : null);
-        return next;
-      }
-      requestPaneFocus(getFirstPaneId(newTree));
-      return prev.map(t => t.id === activeTabId ? { ...t, paneTree: newTree } : t);
-    });
+    dispatchTerminalPaneAction(paneId, { type: "close" });
   };
 
   const renameTab = (tabId: string, label: string) => {
@@ -920,14 +891,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   }, [activeTabId, initialized, sidebarOpen]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (!e.ctrlKey || !e.shiftKey) return;
+    if (e.defaultPrevented || e.repeat || !e.ctrlKey || !e.shiftKey || e.metaKey || e.altKey) return;
     switch (e.key.toUpperCase()) {
       case "T": e.preventDefault(); markTerminalLayoutDirty(); void createShellSessionTab("Shell", getCwd()); break;
-      case "W": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); closePane(focusedPaneId); } break;
-      case "D": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); splitPane(focusedPaneId, "horizontal"); } break;
-      case "E": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); splitPane(focusedPaneId, "vertical"); } break;
       case "B": e.preventDefault(); markTerminalLayoutDirty(); setSidebarOpen(o => !o); break;
-      case "C": e.preventDefault(); markTerminalLayoutDirty(); addTab(getCwd(), "Claude Code", true); break;
       case "Z": e.preventDefault(); markTerminalLayoutDirty(); void createShellSessionTab("Shell", getCwd()); break;
     }
   };
@@ -987,14 +954,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       markTerminalLayoutDirty();
       return reorderTabs(...args);
     },
-    splitPane: (...args: Parameters<typeof splitPane>) => {
-      markTerminalLayoutDirty();
-      return splitPane(...args);
-    },
-    closePane: (...args: Parameters<typeof closePane>) => {
-      markTerminalLayoutDirty();
-      return closePane(...args);
-    },
+    splitPane,
+    closePane,
     setFocusedPane: (paneId: string | null) => {
       markTerminalLayoutDirty();
       setFocusedPaneId(paneId);
