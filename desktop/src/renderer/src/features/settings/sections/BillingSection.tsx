@@ -181,7 +181,7 @@ export default function BillingSection() {
   }
 
   async function openPortal(): Promise<void> {
-    if (!api || !portalAvailable || ui.actionLoading) return;
+    if (!api || loading || error || !portalAvailable || ui.actionLoading) return;
     dispatchUi({ type: "start-action", action: "portal" });
     try {
       const raw = await api.post<unknown>("/billing/portal", {});
@@ -198,7 +198,7 @@ export default function BillingSection() {
     <>
       <SettingsSectionHeader
         title="Billing"
-        description="Manage hosted runtime billing through the native Matrix session."
+        description="View your plan and manage your subscription, invoices, and payment methods."
       />
       <Card>
         <div className="flex items-center gap-3">
@@ -239,17 +239,32 @@ export default function BillingSection() {
           </>
         ) : null}
 
-        {portalAvailable ? (
-          <div className="flex items-center justify-between border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
-            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-              Invoices, payment methods, coupons, and cancellation live in Stripe.
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
+          <div className="min-w-0 flex-1 basis-64">
+            <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+              Billing management
             </p>
-            <Button onClick={() => void openPortal()} disabled={!portalAvailable || ui.actionLoading !== null}>
-              {ui.actionLoading === "portal" ? "Opening..." : "Open portal"}
-              <ExternalLink size={14} />
-            </Button>
+            <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
+              {loading
+                ? "Checking billing management availability."
+                : error || !api
+                  ? "Refresh your billing status to check whether billing management is available."
+                  : portalAvailable
+                    ? "Manage your subscription, invoices, and payment methods in your browser."
+                    : entitlement?.source === "override"
+                      ? "This account is managed internally. Contact the Matrix team for receipts and plan changes."
+                      : "Billing management is not available for this account yet."}
+            </p>
           </div>
-        ) : null}
+          <Button
+            variant="primary"
+            onClick={() => void openPortal()}
+            disabled={!api || loading || error || !portalAvailable || ui.actionLoading !== null}
+          >
+            {ui.actionLoading === "portal" ? "Opening..." : "Manage billing"}
+            <ExternalLink size={14} />
+          </Button>
+        </div>
 
         {!active ? (
           <div className="flex flex-col gap-3 border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
@@ -302,7 +317,7 @@ export default function BillingSection() {
         ) : null}
 
         {ui.actionError ? (
-          <p className="text-sm" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>
             {ui.actionError}
           </p>
         ) : null}
