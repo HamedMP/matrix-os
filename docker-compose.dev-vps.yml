@@ -76,6 +76,7 @@ services:
       - ./package.json:/app/package.json
       - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
       - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
+      - ./patches:/app/patches:ro
       - ./tsconfig.json:/app/tsconfig.json
       - ./vitest.config.ts:/app/vitest.config.ts
       - ./.env:/app/.env:ro

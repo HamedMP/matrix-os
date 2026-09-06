@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
 
 // Resolve the code actually used by the desktop packager, including pnpm patches.
 const desktopRequire = createRequire(resolve("desktop/package.json"));
@@ -92,5 +93,24 @@ describe("signing patch build inputs", () => {
   it("keeps host bundle manifests together with the patch they reference", () => {
     const source = readFileSync("scripts/build-host-bundle.sh", "utf8");
     expect(source).toContain('cp -a "$ROOT_DIR/patches" "$STAGE_DIR/app/patches"');
+  });
+});
+
+describe("signing patch Compose mounts", () => {
+  const cases = readdirSync(".")
+    .filter((file) => /^docker-compose.*\.yml$/.test(file))
+    .flatMap((file) => {
+      const config = parse(readFileSync(file, "utf8")) as { services: Record<string, { volumes?: string[] }> };
+      return Object.entries(config.services)
+        .filter(([, service]) => service.volumes?.includes("./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro"))
+        .map(([name, service]) => ({ file, name, volumes: service.volumes! }));
+    });
+
+  it("includes the development container used by Docker CI", () => {
+    expect(cases).toContainEqual(expect.objectContaining({ file: "docker-compose.dev.yml", name: "dev" }));
+  });
+
+  it.each(cases)("makes patches available with the lockfile in $file / $name", ({ volumes }) => {
+    expect(volumes).toContain("./patches:/app/patches:ro");
   });
 });
