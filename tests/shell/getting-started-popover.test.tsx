@@ -123,6 +123,9 @@ describe("web getting started status", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect email & calendar" }));
     expect(onOpenSettings).toHaveBeenCalledWith("integrations");
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Set up local CLI, MCP & skills" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("cli");
+    expect(screen.getByTestId("getting-started-counter").textContent).toBe("5 of 5");
 
     fireEvent.click(trigger);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());

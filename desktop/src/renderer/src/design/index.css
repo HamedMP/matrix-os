@@ -8,6 +8,7 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
+@source "../../../../../packages/ui/src/matrix-local-setup";
 
 @keyframes native-desktop-window-hide {
   from { opacity: 1; transform: translate3d(0, 0, 0); }

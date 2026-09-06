@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState } from "react";
+import { MatrixLocalSetup } from "@matrix-os/ui";
 import Image from "next/image";
 import {
   PaletteIcon,
@@ -51,6 +52,7 @@ const sections = [
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "integrations", label: "Services", icon: CableIcon },
+  { id: "cli", label: "Matrix CLI & MCP", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },
@@ -407,6 +409,7 @@ function SettingsFrame({
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
+              {activeSection === "cli" && <div className="p-5"><MatrixLocalSetup /></div>}
               {activeSection === "skills" && <SkillsSection />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}

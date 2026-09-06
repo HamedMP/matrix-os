@@ -110,7 +110,8 @@ describe("SettingsView", () => {
     expect(screen.getByRole("button", { name: "Services" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "MCPs" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Skills" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "CLI" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Matrix CLI & MCP" }));
+    expect(screen.getByRole("heading", { name: "Matrix CLI & MCP" })).not.toBeNull();
     expect(sidebar.textContent).not.toContain("Integration categories");
   });
 

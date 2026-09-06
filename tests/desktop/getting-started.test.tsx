@@ -251,5 +251,8 @@ describe("GettingStartedPopover", () => {
     ]);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(12));
+    fireEvent.click(screen.getByRole("button", { name: "Set up local CLI, MCP & skills" }));
+    expect(useUi.getState().requestedSettingsSection).toBe("cli");
+    expect(screen.getByTestId("getting-started-counter").textContent).toBe("3 of 5");
   });
 });
