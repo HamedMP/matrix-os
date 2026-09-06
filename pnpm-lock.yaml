@@ -849,6 +849,9 @@ importers:
       stripe:
         specifier: 22.5.0
         version: 22.5.0(@types/node@25.5.0)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
       undici:
         specifier: 7.24.8
         version: 7.24.8
@@ -877,9 +880,6 @@ importers:
       kysely-pglite:
         specifier: ^0.6.1
         version: 0.6.1(@electric-sql/pglite@0.4.1)(better-sqlite3@12.10.0)(kysely@0.28.14)(pg@8.21.0)
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

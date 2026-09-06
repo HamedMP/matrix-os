@@ -91,6 +91,8 @@ COPY --from=builder --chown=matrix-platform:matrix-platform /app/shell ./shell
 COPY --chown=matrix-platform:matrix-platform distro/customer-vps ./distro/customer-vps
 COPY --chown=matrix-platform:matrix-platform scripts/start-platform-cloud-run.sh ./scripts/start-platform-cloud-run.sh
 
+RUN node --import=tsx --input-type=module --eval "await import('@finnaai/matrix/mcp')"
+
 RUN chmod 0755 ./scripts/start-platform-cloud-run.sh && \
     mkdir -p ./shell/.next/cache ./shell/.next/server && \
     chown -R matrix-platform:matrix-platform ./shell/.next/cache ./shell/.next/server
