@@ -24,6 +24,7 @@ import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail"
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useProjects } from "@/lib/queries/use-projects";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
+import { canonicalChatRequestId } from "@/lib/requests";
 import {
   buildTranscript,
   type TranscriptActivityState,
@@ -76,6 +77,9 @@ export default function ChatScreen() {
   // if that blur was caused by touching the picker.
   const hidePickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickerTouchedRef = useRef(false);
+  // Idempotency keys for the in-flight/most recent send attempt, keyed by its
+  // exact drafted text -- see the comment in `send` below.
+  const pendingSendRef = useRef<{ text: string; chatRequestId: string; turnRequestId: string } | null>(null);
 
   const handleInputFocus = useCallback(() => {
     if (hidePickerTimer.current) {
@@ -113,6 +117,19 @@ export default function ChatScreen() {
     // composer stays editable while the send is in flight, so only clear it
     // if it still holds exactly what was sent -- otherwise the user has
     // already started a new message and this would erase that instead.
+    //
+    // Reuse the same idempotency keys across retries of this exact drafted
+    // text -- if the first attempt's admission succeeded server-side but its
+    // response was lost, retrying with fresh IDs would create a second chat
+    // and run (and bill) the prompt again.
+    if (pendingSendRef.current?.text !== trimmed) {
+      pendingSendRef.current = {
+        text: trimmed,
+        chatRequestId: canonicalChatRequestId(),
+        turnRequestId: canonicalChatRequestId(),
+      };
+    }
+    const { chatRequestId, turnRequestId } = pendingSendRef.current;
     sendMessage.mutate({
       chatId: activeChatId,
       baseRevision: detail?.record.chat.revision ?? 0,
@@ -121,8 +138,13 @@ export default function ChatScreen() {
       interactionMode: turnModes.interactionMode,
       permissionMode: turnModes.permissionMode,
       projectId: selectedProjectId,
+      chatRequestId,
+      turnRequestId,
     }, {
-      onSuccess: () => setDraft((current) => (current === trimmed ? "" : current)),
+      onSuccess: () => {
+        if (pendingSendRef.current?.text === trimmed) pendingSendRef.current = null;
+        setDraft((current) => (current === trimmed ? "" : current));
+      },
     });
   }, [
     draft,

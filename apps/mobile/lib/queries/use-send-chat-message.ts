@@ -5,7 +5,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import {
   admitChatTurn,
-  canonicalChatRequestId,
   canonicalChatTitle,
   createChat,
   fetchActiveComputer,
@@ -24,6 +23,15 @@ interface SendChatMessageInput {
   permissionMode: string;
   /** Only applied when creating a new chat (chatId is null) -- see ProjectPicker. */
   projectId: string | null;
+  /**
+   * Idempotency keys for this exact send attempt. The caller must generate
+   * these once per logical compose action and reuse the same values across
+   * retries of that same attempt -- minting fresh IDs here on every call
+   * would defeat server-side idempotent create/admit and let a lost response
+   * duplicate the chat and its billed AI run.
+   */
+  chatRequestId: string;
+  turnRequestId: string;
 }
 
 export function useSendChatMessage() {
@@ -40,6 +48,8 @@ export function useSendChatMessage() {
       interactionMode,
       permissionMode,
       projectId,
+      chatRequestId,
+      turnRequestId,
     }: SendChatMessageInput) => {
       const token = await getToken();
       if (!token) throw new Error("Not signed in.");
@@ -51,7 +61,7 @@ export function useSendChatMessage() {
       let revision = baseRevision;
       if (!targetChatId) {
         const record = await createChat(token, gatewayUrl, {
-          clientRequestId: canonicalChatRequestId(),
+          clientRequestId: chatRequestId,
           title: canonicalChatTitle(text),
           currentSelection: selection,
           ...(projectId ? { projectId } : {}),
@@ -66,7 +76,7 @@ export function useSendChatMessage() {
       }
 
       const admission = await admitChatTurn(token, gatewayUrl, targetChatId, {
-        clientRequestId: canonicalChatRequestId(),
+        clientRequestId: turnRequestId,
         baseRevision: revision,
         parts: [{ type: "text", text }],
         selection,

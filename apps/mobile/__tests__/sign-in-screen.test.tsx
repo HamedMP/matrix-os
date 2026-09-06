@@ -112,7 +112,7 @@ describe("SignInScreen email code flow", () => {
 
     expect(await screen.findByText(/no password/i)).toBeTruthy();
     expect(mockSetActive).not.toHaveBeenCalled();
-    expect(screen.getByText("Email me a code instead")).toBeTruthy();
+    expect(screen.getByLabelText("Email me a code instead")).toBeTruthy();
   });
 
   it("does not start a second attempt when the keyboard submits again mid-flight", async () => {
@@ -178,18 +178,18 @@ describe("SignInScreen email code flow", () => {
   it("offers email and password sign-in next to the OAuth providers", () => {
     render(<SignInScreen />);
 
-    expect(screen.getByText("Continue with Google")).toBeTruthy();
-    expect(screen.getByText("Continue with GitHub")).toBeTruthy();
+    expect(screen.getByLabelText("Continue with Google")).toBeTruthy();
+    expect(screen.getByLabelText("Continue with GitHub")).toBeTruthy();
     expect(screen.getByText("Sign in")).toBeTruthy();
     expect(screen.getByLabelText("Password")).toBeTruthy();
-    expect(screen.getByText("Email me a code instead")).toBeTruthy();
+    expect(screen.getByLabelText("Email me a code instead")).toBeTruthy();
   });
 
   it("sends a code, verifies it, and activates the session", async () => {
     render(<SignInScreen />);
 
     fireEvent.changeText(screen.getByLabelText("Email address"), "Neo@Matrix-OS.com");
-    fireEvent.press(screen.getByText("Email me a code instead"));
+    fireEvent.press(screen.getByLabelText("Email me a code instead"));
 
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith({ identifier: "neo@matrix-os.com" });
@@ -216,7 +216,7 @@ describe("SignInScreen email code flow", () => {
     render(<SignInScreen />);
 
     fireEvent.changeText(screen.getByLabelText("Email address"), "neo@matrix-os.com");
-    fireEvent.press(screen.getByText("Email me a code instead"));
+    fireEvent.press(screen.getByLabelText("Email me a code instead"));
     await screen.findByLabelText("Verification code");
 
     fireEvent.changeText(screen.getByLabelText("Verification code"), "000000");
@@ -233,7 +233,7 @@ describe("SignInScreen email code flow", () => {
     render(<SignInScreen />);
 
     fireEvent.changeText(screen.getByLabelText("Email address"), "neo@matrix-os.com");
-    fireEvent.press(screen.getByText("Email me a code instead"));
+    fireEvent.press(screen.getByLabelText("Email me a code instead"));
     await screen.findByLabelText("Verification code");
 
     fireEvent.changeText(screen.getByLabelText("Verification code"), "123456");
@@ -254,7 +254,7 @@ describe("SignInScreen email code flow", () => {
     render(<SignInScreen />);
 
     fireEvent.changeText(screen.getByLabelText("Email address"), "ghost@matrix-os.com");
-    fireEvent.press(screen.getByText("Email me a code instead"));
+    fireEvent.press(screen.getByLabelText("Email me a code instead"));
 
     expect(await screen.findByText("Couldn't find your account.")).toBeTruthy();
     expect(screen.queryByLabelText("Verification code")).toBeNull();
@@ -267,7 +267,7 @@ describe("SignInScreen email code flow", () => {
     render(<SignInScreen />);
 
     fireEvent.changeText(screen.getByLabelText("Email address"), "neo@matrix-os.com");
-    fireEvent.press(screen.getByText("Email me a code instead"));
+    fireEvent.press(screen.getByLabelText("Email me a code instead"));
 
     expect(await screen.findByText("Enter a valid Matrix OS URL.")).toBeTruthy();
     expect(mockCreate).not.toHaveBeenCalled();
@@ -277,7 +277,7 @@ describe("SignInScreen email code flow", () => {
     render(<SignInScreen />);
 
     fireEvent.changeText(screen.getByLabelText("Email address"), "neo@matrix-os.com");
-    fireEvent.press(screen.getByText("Email me a code instead"));
+    fireEvent.press(screen.getByLabelText("Email me a code instead"));
     await screen.findByLabelText("Verification code");
 
     fireEvent.press(screen.getByText("Use a different email"));

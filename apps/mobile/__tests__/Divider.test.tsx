@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet } from "react-native";
+import { StyleSheet as UnistylesStyleSheet } from "react-native-unistyles";
 
 import { Divider } from "../components/ui/Divider";
 
@@ -10,7 +11,7 @@ describe("Divider", () => {
     const style = NativeStyleSheet.flatten(screen.getByTestId("divider").props.style);
     expect(style).toMatchObject({
       alignSelf: "stretch",
-      borderTopWidth: NativeStyleSheet.hairlineWidth,
+      borderTopWidth: UnistylesStyleSheet.hairlineWidth,
       borderTopColor: "#C8C6C6",
     });
     expect(style.marginHorizontal).toBeUndefined();

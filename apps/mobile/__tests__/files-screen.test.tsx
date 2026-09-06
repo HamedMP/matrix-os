@@ -44,7 +44,8 @@ jest.mock("@expo/ui", () => {
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
-import { StyleSheet as NativeStyleSheet } from "react-native";
+import { RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
+import { StyleSheet as UnistylesStyleSheet } from "react-native-unistyles";
 import FilesScreen from "../app/(drawer)/files";
 
 describe("drawer files screen", () => {
@@ -72,13 +73,13 @@ describe("drawer files screen", () => {
     }));
     render(<FilesScreen />);
 
-    React.act(() => screen.getByTestId("page-refresh-control").props.onRefresh());
+    React.act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
 
     expect(mockRefreshDirectory).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(true);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 
     await React.act(async () => resolveRefresh?.());
-    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(false);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
   });
 
   it("opens a folder as one modal workspace", () => {
@@ -155,7 +156,7 @@ describe("drawer files screen", () => {
       NativeStyleSheet.flatten(screen.getAllByTestId("files-create-divider")[0].props.style),
     ).toMatchObject({
       alignSelf: "stretch",
-      borderTopWidth: NativeStyleSheet.hairlineWidth,
+      borderTopWidth: UnistylesStyleSheet.hairlineWidth,
       borderTopColor: "#C8C6C6",
     });
   });

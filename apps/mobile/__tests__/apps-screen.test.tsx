@@ -7,6 +7,7 @@ jest.mock("expo-router", () => ({
 
 jest.mock("@/lib/queries/use-computer-apps", () => ({
   useComputerApps: () => mockUseComputerApps(),
+  installedAppSlug: (app: { slug: string }) => app.slug,
 }));
 
 import React from "react";

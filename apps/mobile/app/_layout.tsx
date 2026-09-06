@@ -419,22 +419,6 @@ function GatewayShell() {
             <Stack.Screen name="integration-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
             <Stack.Screen name="settings-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
             <Stack.Screen
-              name="computers"
-              options={{
-                title: "Computers",
-                headerBackButtonDisplayMode: "minimal",
-                headerStyle: { backgroundColor: theme.colors.background },
-              }}
-            />
-            <Stack.Screen
-              name="connect"
-              options={{
-                title: "Gateway",
-                presentation: "modal",
-                headerStyle: { backgroundColor: theme.colors.background },
-              }}
-            />
-            <Stack.Screen
               name="sign-in"
               options={{
                 headerShown: false,

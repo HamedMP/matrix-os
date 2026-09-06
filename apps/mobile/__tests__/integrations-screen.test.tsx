@@ -32,7 +32,7 @@ jest.mock("@/lib/queries/use-computer-integrations", () => ({
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { Linking, StyleSheet as NativeStyleSheet } from "react-native";
+import { Linking, RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
 import IntegrationsScreen from "../app/(drawer)/integrations";
 import InstalledIntegrationsScreen from "../app/integrations-installed/index";
@@ -83,13 +83,13 @@ describe("drawer integrations screen", () => {
     }));
     render(<IntegrationsScreen />);
 
-    act(() => screen.getByTestId("page-refresh-control").props.onRefresh());
+    act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
 
     expect(mockRefreshIntegrations).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(true);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 
     await act(async () => resolveRefresh?.());
-    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(false);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
   });
 
   it("uses spacers instead of vertical padding or margins", () => {
@@ -121,7 +121,8 @@ describe("drawer integrations screen", () => {
 
     render(<InstalledIntegrationsScreen />);
 
-    expect(screen.getAllByText("GitHub")).toHaveLength(3);
+    // One row per connected account, each titled with the service name.
+    expect(screen.getAllByText("GitHub")).toHaveLength(2);
     expect(screen.getByText("dev@example.com")).toBeTruthy();
     expect(screen.getByText("Personal")).toBeTruthy();
     expect(screen.queryByText("GitHub · dev@example.com · active")).toBeNull();

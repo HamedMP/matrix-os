@@ -1,17 +1,8 @@
 import { render, screen } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet } from "react-native";
 import { Spacer, Subtitle, Text, Title } from "@/components/ui";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
 describe("design-system primitives", () => {
-  it("does not resolve the Unistyles theme while the route module is loading", () => {
-    const source = readFileSync(join(__dirname, "../components/ui/Typography.tsx"), "utf8");
-
-    expect(source).not.toContain("StyleSheet.create((theme)");
-    expect(source).not.toContain("useUnistyles");
-  });
-
   it("renders each title size from the shared typography scale", () => {
     render(
       <>

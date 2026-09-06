@@ -62,7 +62,7 @@ jest.mock("@/lib/queries/use-computer-file-preview", () => ({
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
-import { ScrollView, StyleSheet as NativeStyleSheet } from "react-native";
+import { RefreshControl, ScrollView, StyleSheet as NativeStyleSheet } from "react-native";
 import FileBrowserScreen from "../app/file-browser/index";
 import FileBrowserLayout from "../app/file-browser/_layout";
 import FileDetailScreen from "../app/file-browser/file";
@@ -102,13 +102,13 @@ describe("file browser modal stack", () => {
     }));
     render(<FileBrowserScreen />);
 
-    React.act(() => screen.getByTestId("file-browser-refresh-control").props.onRefresh());
+    React.act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
 
     expect(mockRefreshDirectory).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("file-browser-refresh-control").props.refreshing).toBe(true);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 
     await React.act(async () => resolveRefresh?.());
-    expect(screen.getByTestId("file-browser-refresh-control").props.refreshing).toBe(false);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
   });
 
   it("holds file preview pull-to-refresh until the preview refresh completes", async () => {
@@ -120,13 +120,13 @@ describe("file browser modal stack", () => {
     }));
     render(<FileDetailScreen />);
 
-    React.act(() => screen.getByTestId("file-preview-refresh-control").props.onRefresh());
+    React.act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
 
     expect(mockRefreshFilePreview).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("file-preview-refresh-control").props.refreshing).toBe(true);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 
     await React.act(async () => resolveRefresh?.());
-    expect(screen.getByTestId("file-preview-refresh-control").props.refreshing).toBe(false);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
   });
 
   it("pushes deeper folders inside the existing modal stack", () => {

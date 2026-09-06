@@ -41,7 +41,7 @@ jest.mock("@expo/ui", () => {
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
-import { StyleSheet as NativeStyleSheet } from "react-native";
+import { RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
 import TerminalScreen from "../app/(drawer)/terminal";
 import { appColors, palette } from "@/lib/theme-v2";
@@ -75,13 +75,13 @@ describe("drawer terminal screen", () => {
     }));
     render(<TerminalScreen />);
 
-    React.act(() => screen.getByTestId("page-refresh-control").props.onRefresh());
+    React.act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
 
     expect(mockRefreshTerminals).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(true);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 
     await React.act(async () => resolveRefresh?.());
-    expect(screen.getByTestId("page-refresh-control").props.refreshing).toBe(false);
+    expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
   });
 
   it("renders VPS sessions and uses semantic status colors", () => {
