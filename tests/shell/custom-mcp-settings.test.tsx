@@ -10,6 +10,16 @@ describe("Canvas Custom MCP management", () => {
     vi.restoreAllMocks();
   });
 
+  it("fails safely when the server list response is malformed", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ servers: [] }));
+
+    render(<CustomMcpServersPanel />);
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Could not load Custom MCP servers.",
+    );
+  });
+
   it("serializes rapid tool edits onto the latest optimistic revision", async () => {
     let releaseFirstPatch!: () => void;
     const firstPatchGate = new Promise<void>((resolve) => { releaseFirstPatch = resolve; });

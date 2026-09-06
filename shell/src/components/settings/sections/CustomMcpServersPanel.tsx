@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 
 type AuthMode = "none" | "oauth" | "bearer" | "api_key";
+type McpStatus = "pending" | "auth_required" | "ready" | "degraded" | "disabled" | "action_required";
 interface McpTool {
   name: string;
   description: string;
@@ -17,7 +18,7 @@ interface McpServer {
   name: string;
   url: string;
   authMode: AuthMode;
-  status: string;
+  status: McpStatus;
   enabled: boolean;
   revision: number;
   tools: McpTool[];
@@ -25,10 +26,53 @@ interface McpServer {
 
 const GATEWAY = getGatewayUrl();
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isAuthMode(value: unknown): value is AuthMode {
+  return value === "none" || value === "oauth" || value === "bearer" || value === "api_key";
+}
+
+function isMcpStatus(value: unknown): value is McpStatus {
+  return value === "pending"
+    || value === "auth_required"
+    || value === "ready"
+    || value === "degraded"
+    || value === "disabled"
+    || value === "action_required";
+}
+
+function isMcpTool(value: unknown): value is McpTool {
+  if (!isRecord(value)) return false;
+  return typeof value.name === "string"
+    && typeof value.description === "string"
+    && Object.hasOwn(value, "inputSchema")
+    && (value.approval === "always_ask" || value.approval === "allow")
+    && typeof value.enabled === "boolean";
+}
+
+function isMcpServer(value: unknown): value is McpServer {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string"
+    && typeof value.name === "string"
+    && typeof value.url === "string"
+    && isAuthMode(value.authMode)
+    && isMcpStatus(value.status)
+    && typeof value.enabled === "boolean"
+    && Number.isSafeInteger(value.revision)
+    && Array.isArray(value.tools)
+    && value.tools.every(isMcpTool);
+}
+
 async function fetchMcpServers(): Promise<McpServer[]> {
   const response = await fetch(`${GATEWAY}/api/mcp-servers`, { signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error("Custom MCP unavailable");
-  return response.json() as Promise<McpServer[]>;
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload) || !payload.every(isMcpServer)) {
+    throw new Error("Invalid Custom MCP response");
+  }
+  return payload;
 }
 
 function findMcpServer(servers: McpServer[], serverId: string): McpServer | undefined {
