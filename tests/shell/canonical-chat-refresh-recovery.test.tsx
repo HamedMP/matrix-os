@@ -1,0 +1,110 @@
+// @vitest-environment jsdom
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
+
+vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
+const record = {
+  chat: {
+    id: "chat_recovery", ownerScope: { type: "personal", ownerId: "owner_test" },
+    title: "Recovery", lifecycle: "active", attention: "none", revision: 1, messageCount: 1,
+    createdAt: "2026-09-04T00:00:00.000Z", updatedAt: "2026-09-04T00:00:00.000Z",
+  },
+};
+function snapshot(text: string, running = true) {
+  return Response.json({
+    record: { ...record, ...(running ? {
+      activeRun: { runId: "run_test", turnId: "cturn_test", status: "running" },
+    } : {}) },
+    messages: [{ id: "msg_test", chatId: record.chat.id, seq: 1, role: "assistant", state: "committed",
+      parts: [{ type: "text", text }], createdAt: record.chat.createdAt }],
+    turns: [], runs: [], activities: [],
+  });
+}
+function harness() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const response = new Response(new ReadableStream<Uint8Array>({ start(c) { controller = c; } }), {
+    headers: { "content-type": "text/event-stream" },
+  });
+  const getDetail = vi.fn(async () => snapshot("Before"));
+  const list = vi.fn(async () => Response.json({ items: [record] }));
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/api/chats/events")) return response;
+    if (url.includes("/api/chats?")) return list();
+    if (url.includes(`/api/chats/${record.chat.id}?`)) return getDetail();
+    throw new Error("Unexpected request");
+  }));
+  controller.enqueue(new TextEncoder().encode('data: {"type":"chat.stream.attached"}\n\n'));
+  return {
+    getDetail, list,
+    emit(cursor: number, eventType = "run.message", chatId = record.chat.id) {
+      controller.enqueue(new TextEncoder().encode(`id: ${cursor}\ndata: ${JSON.stringify({
+        type: "chat.event", event: { cursor, chatId, revision: cursor, eventType, createdAt: record.chat.createdAt },
+      })}\n\n`));
+    },
+  };
+}
+async function tick(ms = 0) {
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+}
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe("Web Desktop and Web Mobile shared Chat refresh", () => {
+  it("applies slow snapshots during continuous events without concurrent detail requests", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const hook = renderHook(() => useCanonicalChatState());
+    try {
+      await tick();
+      expect(hook.result.current.messages[0]?.content).toBe("Before");
+      let resolve!: (response: Response) => void;
+      h.getDetail.mockImplementationOnce(() => new Promise<Response>((r) => { resolve = r; }));
+      h.getDetail.mockImplementation(() => new Promise<Response>(() => undefined));
+      h.emit(2);
+      await tick(200);
+      h.emit(3);
+      await tick(200);
+      h.emit(4);
+      await tick(200);
+      expect(h.getDetail).toHaveBeenCalledTimes(2);
+      await act(async () => { resolve(snapshot("Partial answer")); });
+      expect(hook.result.current.messages[0]?.content).toBe("Partial answer");
+      expect(h.getDetail).toHaveBeenCalledTimes(3);
+      expect(h.list).toHaveBeenCalledTimes(1);
+    } finally { hook.unmount(); }
+  });
+
+  it("retries the last failed snapshot even when SSE remains open", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const h = harness();
+    const hook = renderHook(() => useCanonicalChatState());
+    try {
+      await tick();
+      h.getDetail.mockRejectedValueOnce(new Error("temporary failure"))
+        .mockImplementation(() => Promise.resolve(snapshot("Finished", false)));
+      h.emit(2, "run.completed");
+      await tick(200);
+      await tick(10_000);
+      expect(hook.result.current.messages[0]?.content).toBe("Finished");
+      expect(hook.result.current.busy).toBe(false);
+      expect(h.getDetail).toHaveBeenCalledTimes(3);
+    } finally { hook.unmount(); }
+  });
+
+  it("does not reload the list or selected detail for another Chat's message deltas", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const hook = renderHook(() => useCanonicalChatState());
+    try {
+      await tick();
+      h.emit(2, "run.message", "chat_other");
+      await tick(200);
+      expect(h.list).toHaveBeenCalledTimes(1);
+      expect(h.getDetail).toHaveBeenCalledTimes(1);
+      h.emit(3, "run.completed", "chat_other");
+      await tick(200);
+      expect(h.list).toHaveBeenCalledTimes(2);
+    } finally { hook.unmount(); }
+  });
+});

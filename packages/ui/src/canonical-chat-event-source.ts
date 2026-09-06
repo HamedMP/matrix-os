@@ -1,5 +1,6 @@
 import {
-  CanonicalChatStreamServerFrameSchema,
+  CanonicalChatTransportFrameSchema,
+  type CanonicalChatContentFrame,
   type CanonicalChatStreamEvent,
 } from "@matrix-os/contracts";
 
@@ -24,6 +25,7 @@ export type CanonicalChatInvalidation =
       cursor: number;
       revision: number;
       eventType: CanonicalChatStreamEvent["eventType"];
+      content?: CanonicalChatContentFrame;
     }
   | { type: "chat.full_refresh"; cursor?: number };
 
@@ -87,7 +89,7 @@ export function createCanonicalChatSseParser(options: {
 }): { push(chunk: Uint8Array): void; finish(): void } {
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const encoder = new TextEncoder();
-  const maxEventBytes = Math.max(1, Math.min(options.maxEventBytes ?? DEFAULT_MAX_EVENT_BYTES, DEFAULT_MAX_EVENT_BYTES));
+  const maxEventBytes = Math.max(1, Math.min(options.maxEventBytes ?? DEFAULT_MAX_EVENT_BYTES, 512 * 1024));
   let pending = "";
   let eventBytes = 0;
   let dataLines: string[] = [];
@@ -253,7 +255,7 @@ export function createCanonicalChatEventSource(options: {
       console.warn("[canonical-chat] event stream sent invalid JSON:", error instanceof Error ? error.name : "UnknownError");
       throw error;
     }
-    const parsed = CanonicalChatStreamServerFrameSchema.safeParse(value);
+    const parsed = CanonicalChatTransportFrameSchema.safeParse(value);
     if (!parsed.success) throw new Error("InvalidChatEventFrame");
     const frame = parsed.data;
     if (frame.type === "chat.stream.attached") {
@@ -271,16 +273,17 @@ export function createCanonicalChatEventSource(options: {
       }
       replay.complete = true;
       replay.gap = false;
-    } else if (frame.type === "chat.event") {
+    } else if (frame.type === "chat.event" || frame.type === "chat.content") {
       advanceCursor(frame.event.cursor);
       if (!rememberCursor(frame.event.cursor)) return;
-      if (!replay.complete) replay.sawEvent = true;
+      if (!replay.complete && frame.type === "chat.event") replay.sawEvent = true;
       invalidationConsumers.notify((consumer) => consumer({
         type: "chat.changed",
         chatId: frame.event.chatId,
         cursor: frame.event.cursor,
         revision: frame.event.revision,
         eventType: frame.event.eventType,
+        ...(frame.type === "chat.content" ? { content: frame } : {}),
       }));
     } else if (frame.type === "chat.stream.closing" || (frame.type === "chat.stream.error" && frame.error.retryable)) {
       scheduleReconnect();
@@ -321,6 +324,7 @@ export function createCanonicalChatEventSource(options: {
     }, connectionLifetimeMs);
     const replay = { complete: false, gap: false, sawEvent: false };
     const parser = createCanonicalChatSseParser({
+      maxEventBytes: 512 * 1024,
       onActivity: () => resetInactivityTimer(generation),
       onData: (data) => handleData(data, replay),
     });

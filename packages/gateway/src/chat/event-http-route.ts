@@ -1,4 +1,4 @@
-import { CanonicalChatEventCursorSchema, type CanonicalChatStreamServerFrame } from "@matrix-os/contracts";
+import { CanonicalChatEventCursorSchema, type CanonicalChatTransportFrame } from "@matrix-os/contracts";
 import { type Context, type Hono } from "hono";
 import type { RequestPrincipal } from "../request-principal.js";
 import type {
@@ -21,10 +21,10 @@ function acceptsEventStream(value: string | undefined): boolean {
   return value?.split(",").some((entry) => entry.trim().split(";", 1)[0]?.toLowerCase() === "text/event-stream") ?? false;
 }
 
-function encodeFrame(encoder: TextEncoder, frame: CanonicalChatStreamServerFrame): Uint8Array {
+function encodeFrame(encoder: TextEncoder, frame: CanonicalChatTransportFrame): Uint8Array {
   const json = JSON.stringify(frame);
-  if (encoder.encode(json).byteLength > MAX_FRAME_BYTES) throw new Error("FrameTooLarge");
-  const id = frame.type === "chat.event" ? `id: ${frame.event.cursor}\n` : "";
+  if (encoder.encode(json).byteLength > (frame.type === "chat.content" ? 512 * 1024 - 1024 : MAX_FRAME_BYTES)) throw new Error("FrameTooLarge");
+  const id = frame.type === "chat.event" || frame.type === "chat.content" ? `id: ${frame.event.cursor}\n` : "";
   return encoder.encode(`${id}data: ${json}\n\n`);
 }
 
@@ -56,6 +56,8 @@ export function registerCanonicalChatEventHttpRoute(options: {
 
     const encoder = new TextEncoder();
     const principal = options.getPrincipal(context);
+    const protocol = context.req.header("x-matrix-chat-protocol");
+    if (protocol !== undefined && protocol !== "1" && protocol !== "2") return context.json({ error: "Unsupported stream protocol" }, 400);
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     let session: CanonicalChatEventStreamSession | undefined;
     let heartbeatTimer: unknown;
@@ -84,10 +86,11 @@ export function registerCanonicalChatEventHttpRoute(options: {
       cancel() {
         close(true);
       },
-    }, new CountQueuingStrategy({ highWaterMark: MAX_PENDING_CHUNKS }));
+    }, protocol === "2" ? new ByteLengthQueuingStrategy({ highWaterMark: 8 * 1024 * 1024 })
+      : new CountQueuingStrategy({ highWaterMark: MAX_PENDING_CHUNKS }));
 
     const sink = {
-      send(frame: CanonicalChatStreamServerFrame): boolean {
+      send(frame: CanonicalChatTransportFrame): boolean {
         if (closed || (controller.desiredSize ?? 0) <= 0) return false;
         try {
           controller.enqueue(encodeFrame(encoder, frame));
@@ -106,6 +109,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
         : options.stream.open({
             sink,
             principal,
+            ...(protocol === "2" ? { content: true } : {}),
             ...(cursor === undefined ? {} : { cursor }),
           }))
       .then((opened) => {

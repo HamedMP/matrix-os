@@ -154,6 +154,7 @@ import {
 } from "./chat/routes.js";
 import { createCanonicalChatEventStream } from "./chat/event-stream.js";
 import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
+import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
@@ -4339,6 +4340,12 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
   if (canonicalChatEventStream) {
+    registerCanonicalChatEventWebSocketRoute({
+      app,
+      upgradeWebSocket,
+      getPrincipal: (context) => requireRequestPrincipal(context as Context),
+      stream: canonicalChatEventStream,
+    });
     registerCanonicalChatEventHttpRoute({
       app,
       getPrincipal: (context) => requireRequestPrincipal(context as Context),

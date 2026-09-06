@@ -13,6 +13,7 @@ import type {
   CanonicalChatEventConsumer,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
+import { createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-os/ui";
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
@@ -28,7 +29,7 @@ function detailWithRecord(
   detail: CanonicalChatDetailResponse,
   record: CanonicalChatRecord,
 ): CanonicalChatDetailResponse {
-  return { ...detail, record };
+  return detail.record.chat.revision > record.chat.revision ? detail : { ...detail, record };
 }
 
 function shouldApplyAcknowledgement(
@@ -173,24 +174,11 @@ export function useCanonicalChatRouteController({
   useEffect(() => {
     if (!active || !eventSource) return;
     let current = true;
-    let detailRefreshInFlight = false;
-    let detailRefreshPending = false;
     let listRefreshInFlight = false;
     let listRefreshPending = false;
-    let detailRefreshTimer: number | undefined;
-    const refreshSelectedDetail = async () => {
-      if (detailRefreshInFlight) {
-        detailRefreshPending = true;
-        return;
-      }
-      detailRefreshInFlight = true;
-      do {
-        detailRefreshPending = false;
-        const selectedChatId = activeChatIdRef.current;
-        if (selectedChatId) await loadDetail(selectedChatId, { background: true });
-      } while (current && detailRefreshPending);
-      detailRefreshInFlight = false;
-    };
+    const detailRefresh = createCanonicalChatRefresh(async () => (
+      !activeChatId || Boolean(await loadDetail(activeChatId, { background: true }))
+    ));
     const refreshList = async () => {
       if (listRefreshInFlight) {
         listRefreshPending = true;
@@ -203,41 +191,39 @@ export function useCanonicalChatRouteController({
       } while (current && listRefreshPending);
       listRefreshInFlight = false;
     };
-    const scheduleSelectedDetailRefresh = (delay = 0) => {
-      if (delay === 0) {
-        if (detailRefreshTimer !== undefined) {
-          window.clearTimeout(detailRefreshTimer);
-          detailRefreshTimer = undefined;
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.content) {
+        const record = event.content.content.record;
+        setItems((current) => current.map((item) => item.chat.id === record.chat.id
+          && item.chat.revision < record.chat.revision ? record : item));
+        if (event.chatId === activeChatIdRef.current) {
+          const current = detailRef.current;
+          const next = current ? applyCanonicalChatContent(current, event.content) : null;
+          if (next) {
+            detailRef.current = next;
+            setDetail(next);
+          } else detailRefresh.schedule();
         }
-        void refreshSelectedDetail();
         return;
       }
-      if (detailRefreshTimer !== undefined) return;
-      detailRefreshTimer = window.setTimeout(() => {
-        detailRefreshTimer = undefined;
-        void refreshSelectedDetail();
-      }, delay);
-    };
-    const subscription = eventSource.subscribe((event) => {
       if (event.type === "chat.full_refresh") {
         void refreshList();
-        scheduleSelectedDetailRefresh();
+        detailRefresh.schedule();
         return;
       }
       if (event.chatId === activeChatIdRef.current) {
-        scheduleSelectedDetailRefresh(
+        detailRefresh.schedule(
           event.eventType === "run.message" ? STREAM_MESSAGE_REFRESH_COALESCE_MS : 0,
         );
       }
     });
     return () => {
       current = false;
-      detailRefreshPending = false;
       listRefreshPending = false;
-      if (detailRefreshTimer !== undefined) window.clearTimeout(detailRefreshTimer);
+      detailRefresh.dispose();
       subscription.dispose();
     };
-  }, [active, eventSource, load, loadDetail]);
+  }, [active, activeChatId, eventSource, load, loadDetail]);
 
   useEffect(() => {
     if (!active || !activeChatId || detail?.record.chat.id === activeChatId) return;
@@ -421,6 +407,7 @@ export function useCanonicalChatRouteController({
         chatScope: current.record.projectId ? "project" : "global",
       });
       if (!isCurrentScope()) return null;
+      const streamed = detailRef.current;
       const next: CanonicalChatDetailResponse = {
         ...current,
         record: admitted.record,
@@ -428,12 +415,14 @@ export function useCanonicalChatRouteController({
         turns: [...current.turns, admitted.turn],
         runs: [...current.runs, admitted.run],
       };
+      const resolved = streamed?.record.chat.id === next.record.chat.id
+        && streamed.record.chat.revision >= next.record.chat.revision ? streamed : next;
       setActiveChatId(admitted.record.chat.id);
       activeChatIdRef.current = admitted.record.chat.id;
-      detailRef.current = next;
-      setDetail(next);
+      detailRef.current = resolved;
+      setDetail(resolved);
       setItems((existing) => [
-        admitted.record,
+        resolved.record,
         ...existing.filter((item) => item.chat.id !== admitted.record.chat.id),
       ]);
       setError(null);
@@ -482,7 +471,8 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
       setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const messages = currentDetail.messages.some((message) => message.id === response.message.id)
           ? currentDetail.messages
           : [...currentDetail.messages, response.message];
@@ -529,7 +519,8 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
       setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const existing = currentDetail.queuedTurns ?? [];
         const queuedTurns = existing.some((turn) => turn.id === response.queuedTurn.id)
           ? existing.map((turn) => turn.id === response.queuedTurn.id ? response.queuedTurn : turn)
@@ -577,7 +568,8 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
       setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
           ...currentDetail,
           record: {
@@ -629,7 +621,8 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
       setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const messages = currentDetail.messages.some((message) => message.id === response.message.id)
           ? currentDetail.messages
           : [...currentDetail.messages, response.message];
@@ -675,7 +668,8 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope()) return false;
       detailRequestSequence.current += 1;
       setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
           ...currentDetail,
           record: {
@@ -714,7 +708,8 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope()) return false;
       detailRequestSequence.current += 1;
       setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
           ...currentDetail,
           record: response.cancellation === "cancelled" ? {
@@ -779,6 +774,7 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope()) return null;
       const existing = detailRef.current;
       if (!existing || existing.record.chat.id !== admitted.record.chat.id) return null;
+      if (existing.record.chat.revision >= admitted.record.chat.revision) return admitted;
       const next = {
         ...existing,
         record: admitted.record,

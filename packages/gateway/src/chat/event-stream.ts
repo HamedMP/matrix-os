@@ -1,9 +1,10 @@
 import {
   CanonicalChatEventCursorSchema,
   CanonicalChatStreamEventSchema,
-  CanonicalChatStreamServerFrameSchema,
+  CanonicalChatContentFrameSchema,
+  CanonicalChatTransportFrameSchema,
+  type CanonicalChatTransportFrame,
   type CanonicalChatStreamEvent,
-  type CanonicalChatStreamServerFrame,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOutboxEvent, ChatOwner } from "./records.js";
@@ -16,7 +17,7 @@ const MAX_SEEN_CURSORS = 500;
 const REPLAY_LIMIT = 100;
 
 export interface CanonicalChatEventStreamSink {
-  send(frame: CanonicalChatStreamServerFrame): boolean;
+  send(frame: CanonicalChatTransportFrame): boolean;
   close(): void;
 }
 
@@ -40,6 +41,7 @@ export interface CanonicalChatEventRepository {
 }
 
 interface Subscriber {
+  content: boolean;
   id: number;
   owner: ChatOwner;
   sink: CanonicalChatEventStreamSink;
@@ -61,7 +63,7 @@ function safeEvent(event: ChatOutboxEvent): CanonicalChatStreamEvent {
 
 function sendFrame(sink: CanonicalChatEventStreamSink, frame: unknown): boolean {
   try {
-    return sink.send(CanonicalChatStreamServerFrameSchema.parse(frame));
+    return sink.send(CanonicalChatTransportFrameSchema.parse(frame));
   } catch (error: unknown) {
     console.warn("[chat/event-stream] Send failed:", error instanceof Error ? error.name : "UnknownError");
     return false;
@@ -162,6 +164,16 @@ export function createCanonicalChatEventStream(options: {
   function deliver(subscriber: Subscriber, event: ChatOutboxEvent): boolean {
     if (!rememberCursor(subscriber, event.cursor)) return true;
     try {
+      if (subscriber.content && event.payload.streamContent) {
+        const parsed = CanonicalChatContentFrameSchema.safeParse({
+          type: "chat.content", event: safeEvent(event), content: event.payload.streamContent,
+        });
+        if (parsed.success && sameOwner(parsed.data.content.record.chat.ownerScope, subscriber.owner)
+          && new TextEncoder().encode(JSON.stringify(parsed.data)).byteLength < 512 * 1024 - 1024) {
+          return sendFrame(subscriber.sink, parsed.data);
+        }
+        // Old/oversized persisted events retain the safe notification recovery path.
+      }
       return sendFrame(subscriber.sink, { type: "chat.event", event: safeEvent(event) });
     } catch (error: unknown) {
       console.warn("[chat/event-stream] Invalid outbox metadata:", error instanceof Error ? error.name : "UnknownError");
@@ -193,6 +205,7 @@ export function createCanonicalChatEventStream(options: {
     sink: CanonicalChatEventStreamSink;
     principal: RequestPrincipal;
     cursor?: number;
+    content?: boolean;
   }): Promise<CanonicalChatEventStreamSession> {
     if (shuttingDown) {
       sendFrame(input.sink, { type: "chat.stream.closing", reason: "server_shutdown" });
@@ -205,6 +218,7 @@ export function createCanonicalChatEventStream(options: {
     const owner: ChatOwner = { type: "personal", ownerId: input.principal.userId };
     enforceCaps(owner);
     const subscriber: Subscriber = {
+      content: input.content === true,
       id: ++nextSubscriberId,
       owner,
       sink: input.sink,

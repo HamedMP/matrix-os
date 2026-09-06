@@ -208,7 +208,7 @@ describe("canonical Chat event stream", () => {
     expect(order).toEqual(["stream.shutdown", "repository.release"]);
   });
 
-  it("rejects the removed Chat WebSocket query-token path", async () => {
+  it("preserves legacy Chat WebSocket auth without allowing REST query tokens", async () => {
     const middleware = authMiddleware("secret-token");
     const calls: string[] = [];
     const context = (path: string) => ({
@@ -217,8 +217,8 @@ describe("canonical Chat event stream", () => {
     });
     const removed = await middleware(context("/ws/chats/events") as never, async () => { calls.push("ws"); });
     const rest = await middleware(context("/api/chats") as never, async () => { calls.push("rest"); });
-    expect(calls).toEqual([]);
-    expect(removed).toEqual({ body: { error: "Unauthorized" }, status: 401 });
+    expect(calls).toEqual(["ws"]);
+    expect(removed).toBeUndefined();
     expect(rest).toEqual({ body: { error: "Unauthorized" }, status: 401 });
   });
 

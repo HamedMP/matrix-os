@@ -97,6 +97,7 @@ const ROUTE_SCOPED_SIGNATURE_PATHS = [
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = [
+  "/ws/chats/events",
   "/ws",
   "/ws/voice",
   "/ws/terminal",

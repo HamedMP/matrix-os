@@ -125,6 +125,7 @@ export function createCanonicalShellChatClient(options: {
         method: "GET",
         headers: {
           Accept: "text/event-stream",
+          "X-Matrix-Chat-Protocol": "2",
           ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }),
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60 * 1000)]),

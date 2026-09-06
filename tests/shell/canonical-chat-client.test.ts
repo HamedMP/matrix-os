@@ -34,7 +34,7 @@ describe("canonical shell Chat client", () => {
       "https://matrix.test/api/chats/events",
       expect.objectContaining({
         method: "GET",
-        headers: { Accept: "text/event-stream", "Last-Event-ID": "12" },
+        headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2" },
         signal: expect.any(AbortSignal),
       }),
     );

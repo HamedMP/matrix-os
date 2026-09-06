@@ -57,3 +57,5 @@ export type {
   ProviderSettingsTransportErrorCode,
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
+export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
+export { applyCanonicalChatContent } from "./canonical-chat-content.js";

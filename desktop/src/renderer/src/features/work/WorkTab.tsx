@@ -246,7 +246,7 @@ export default function WorkTab({
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,
-          ...(cursor === undefined ? {} : { headers: { "last-event-id": String(cursor) } }),
+          headers: { "x-matrix-chat-protocol": "2", ...(cursor === undefined ? {} : { "last-event-id": String(cursor) }) },
         });
       },
     });

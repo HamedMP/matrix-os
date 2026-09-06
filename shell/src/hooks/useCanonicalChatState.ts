@@ -8,6 +8,8 @@ import type {
 } from "@matrix-os/contracts";
 import {
   createSharedCanonicalChatEventSource,
+  createCanonicalChatRefresh,
+  applyCanonicalChatContent,
   type CanonicalChatEventConnectionState,
 } from "@matrix-os/ui";
 import { useSocket } from "@/hooks/useSocket";
@@ -83,8 +85,9 @@ export function useCanonicalChatState(): ChatState {
       const current = detailRef.current;
       if (current?.record.chat.id === chatId
         && current.record.chat.revision > value.record.chat.revision) {
-        return null;
+        return current;
       }
+      detailRef.current = value;
       setDetail(value);
       setSafeError(null);
       return value;
@@ -126,26 +129,45 @@ export function useCanonicalChatState(): ChatState {
   }, [eventSource]);
 
   useEffect(() => {
-    let timer: number | undefined;
-    let refreshSelected = false;
+    const selectedRefresh = createCanonicalChatRefresh(async () => (
+      !activeChatId || Boolean(await loadDetail(activeChatId))
+    ));
+    let listTimer: number | undefined;
     const subscription = eventSource.subscribe((event) => {
-      const selectedChatId = activeChatIdRef.current;
-      refreshSelected ||= event.type === "chat.full_refresh" || event.chatId === selectedChatId;
-      if (timer !== undefined) return;
-      timer = window.setTimeout(() => {
-        timer = undefined;
-        const shouldRefreshSelected = refreshSelected;
-        refreshSelected = false;
-        void loadList();
-        const currentChatId = activeChatIdRef.current;
-        if (shouldRefreshSelected && currentChatId) void loadDetail(currentChatId);
-      }, EVENT_INVALIDATION_COALESCE_MS);
+      if (event.type === "chat.changed" && event.content) {
+        const record = event.content.content.record;
+        setRecords((current) => current.map((item) => item.chat.id === record.chat.id
+          && item.chat.revision < record.chat.revision ? record : item));
+        if (event.chatId === activeChatId) {
+          const current = detailRef.current;
+          const next = current ? applyCanonicalChatContent(current, event.content) : null;
+          if (next) {
+            detailRef.current = next;
+            setDetail(next);
+            setSafeError(null);
+          } else selectedRefresh.schedule();
+        }
+        if (event.eventType === "chat.created" || event.eventType === "chat.updated") void loadList();
+        return;
+      }
+      if (event.type === "chat.full_refresh" || event.chatId === activeChatId) {
+        selectedRefresh.schedule(EVENT_INVALIDATION_COALESCE_MS);
+      }
+      // Token/message deltas affect the selected transcript, not the work rail.
+      if (event.type === "chat.full_refresh" || event.eventType !== "run.message") {
+        if (listTimer !== undefined) return;
+        listTimer = window.setTimeout(() => {
+          listTimer = undefined;
+          void loadList();
+        }, EVENT_INVALIDATION_COALESCE_MS);
+      }
     });
     return () => {
       subscription.dispose();
-      if (timer !== undefined) window.clearTimeout(timer);
+      selectedRefresh.dispose();
+      if (listTimer !== undefined) window.clearTimeout(listTimer);
     };
-  }, [eventSource, loadDetail, loadList]);
+  }, [activeChatId, eventSource, loadDetail, loadList]);
 
   useEffect(() => {
     let cancelled = false;
@@ -262,7 +284,8 @@ export function useCanonicalChatState(): ChatState {
           permissionMode: options.permissionMode!,
         });
         turnAdmitted = true;
-        setDetail((current) => ({
+        setDetail((current) => current?.record.chat.id === admitted.record.chat.id
+          && current.record.chat.revision >= admitted.record.chat.revision ? current : ({
           record: admitted.record,
           messages: [...(current?.record.chat.id === record.chat.id ? current.messages : []), admitted.message],
           turns: [...(current?.record.chat.id === record.chat.id ? current.turns : []), admitted.turn],

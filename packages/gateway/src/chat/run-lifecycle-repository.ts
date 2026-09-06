@@ -315,6 +315,7 @@ export class ChatRunLifecycleRepository {
       }
       const unseenCount = activityIds.length - existing.length;
       const overflow = Number(count.count) + unseenCount - 500;
+      let removedActivityIds: string[] = [];
       if (overflow > 0) {
         if (!activities.some(isTerminalActivity)) {
           throw new ChatConflictError(chatId, Number(current.revision));
@@ -334,6 +335,7 @@ export class ChatRunLifecycleRepository {
           throw new ChatConflictError(chatId, Number(current.revision));
         }
         await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
+        removedActivityIds = evictedIds;
       }
       const latestSequence = await trx.selectFrom("chat_run_events")
         .select(({ fn }) => fn.max("run_seq").as("sequence"))
@@ -410,7 +412,7 @@ export class ChatRunLifecycleRepository {
           ...(railTransition ? { attention: railTransition.attention } : {}),
           updated_at: sql`now()`,
         }).where("id", "=", chatId).execute();
-        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId });
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId, activityIds, removedActivityIds });
       }
       return changed;
     });
@@ -514,6 +516,11 @@ export class ChatRunLifecycleRepository {
       await this.appendOutbox(trx, owner, chatId, revision, "run.message", {
         runId: input.runId,
         messageId: input.messageId,
+        messageDelta: {
+          message: { ...next, parts: [{ type: "text", text: input.delta }] },
+          partIndex: next.parts.length - 1,
+          offset: (next.parts.at(-1) as { text: string }).text.length - input.delta.length,
+        },
       });
       return next;
     });
