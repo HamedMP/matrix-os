@@ -31,6 +31,20 @@ secure URL supported by electron-builder. macOS release jobs fail before the
 build if any certificate, certificate-password, or notarization secret is
 missing; unsigned artifacts must never reach a release.
 
+## Signing dependency patch
+
+`app-builder-lib@26.15.3` is patched through pnpm to pass the generated
+temporary-keychain password to `security set-key-partition-list`. The upstream
+implementation instead passes the certificate password, which can fail with
+`SecKeychainUnlock` during macOS packaging. Certificate import still uses the
+certificate password. Signing and notarization gates remain mandatory.
+
+`tests/desktop/signing-keychain.test.ts` exercises the installed dependency's
+keychain creation with a simulated security command boundary, including separate
+application and installer certificate passwords. When upgrading electron-builder,
+verify that upstream fixes this behavior before removing the patch. Validate the
+result with the non-publishing Desktop Release dry run on both macOS architectures.
+
 ## Channels
 
 - Stable: tag `desktop-vX.Y.Z` or run `Desktop Release` with `channel=stable`
