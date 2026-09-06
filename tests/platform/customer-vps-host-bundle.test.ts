@@ -297,10 +297,12 @@ describe('customer VPS host bundle', () => {
     expect(unit).toContain('IOSchedulingClass=idle');
     expect(unit).toContain('MemoryHigh=1G');
     expect(unit).toContain('MemoryMax=1536M');
+    expect(unit).toContain('TimeoutStartSec=4800');
     expect(unit).toContain('Restart=on-failure');
     expect(codeServerUnit).toContain('ExecStartPre=/opt/matrix/bin/matrix-wait-runtime-ready');
     expect(codeServerUnit).toContain('CPUWeight=10');
     expect(codeServerUnit).toContain('IOWeight=10');
+    expect(codeServerUnit).toContain('TimeoutStartSec=2100');
     expect(codeUnit).toContain('After=matrix-restore.service');
     expect(codeUnit).toContain('ExecStartPre=/opt/matrix/bin/matrix-wait-runtime-ready');
     expect(readinessWaiter).toContain('MATRIX_OPTIONAL_TOOLS_READY_TIMEOUT_SECONDS');
@@ -1762,6 +1764,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(launcher).toContain('/hetzner/v1/metadata/public-ipv4');
     expect(launcher).toContain('/vps/register');
     expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(launcher).toMatch(/curl --fail --silent --show-error --max-time 30 \\\n\s+-X POST/);
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');

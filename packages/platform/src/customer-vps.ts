@@ -123,7 +123,8 @@ import {
   resolvePersistedProvisioningImage,
 } from './golden-snapshot-preview-test.js';
 import {
-  probeCustomerVpsStartupReadiness,
+  createCustomerVpsStartupReadinessGate,
+  resolveCustomerVpsRegistrationReadinessAddress,
   type CustomerVpsStartupReadinessInput,
   type CustomerVpsStartupReadinessResult,
 } from './customer-vps-startup-readiness.js';
@@ -633,42 +634,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
   const now = deps.now ?? (() => new Date());
-  const startupReadinessIntervalMs = Math.min(
-    5_000,
-    Math.max(0, deps.startupReadinessIntervalMs ?? 500),
-  );
-  const startupReadinessDispatcher = deps.fetchDispatcher;
-  const probeStartupReadiness = deps.probeStartupReadiness
-    ?? (startupReadinessDispatcher
-      ? (input: CustomerVpsStartupReadinessInput) => probeCustomerVpsStartupReadiness(input, {
-          dispatcher: startupReadinessDispatcher,
-        })
-      : undefined);
-
-  async function assertStartupReadiness(input: CustomerVpsStartupReadinessInput): Promise<void> {
-    if (!probeStartupReadiness) return;
-    for (let success = 0; success < 3; success += 1) {
-      let result: CustomerVpsStartupReadinessResult;
-      try {
-        result = await probeStartupReadiness(input);
-      } catch (err: unknown) {
-        const errorName = err instanceof Error ? err.name : 'UnknownError';
-        console.warn(
-          `[customer-vps] startup readiness probe unavailable machineId=${input.machineId} error=${errorName}`,
-        );
-        throw new CustomerVpsError(425, 'runtime_not_ready', 'Computer is still starting');
-      }
-      if (!result.ready) {
-        console.info(
-          `[customer-vps] startup readiness pending machineId=${input.machineId} checks=${result.failing.join(',')}`,
-        );
-        throw new CustomerVpsError(425, 'runtime_not_ready', 'Computer is still starting');
-      }
-      if (success < 2 && startupReadinessIntervalMs > 0) {
-        await sleep(startupReadinessIntervalMs);
-      }
-    }
-  }
+  const assertStartupReadiness = createCustomerVpsStartupReadinessGate({
+    dispatcher: deps.fetchDispatcher,
+    probe: deps.probeStartupReadiness,
+    intervalMs: deps.startupReadinessIntervalMs,
+  });
 
   async function waitForServerStatus(
     serverId: number,
@@ -2261,35 +2231,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           || input.healthy !== true)) {
         throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
       }
-      if (row.status === 'provisioning') {
-        // Provisioning persists the provider-returned address before bootstrap,
-        // so an authenticated callback still cannot redirect platform probes.
-        if (!row.publicIPv4 || row.publicIPv4 !== publicIPv4.data) {
-          throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
-        }
-      } else {
-        // Recovery deliberately keeps public_ipv4 pointed at the routable
-        // predecessor until cutover. Resolve the replacement by its already
-        // persisted provider id before sending the platform bearer token to it.
-        let replacement;
-        try {
-          replacement = await deps.hetzner.getServer(input.hetznerServerId);
-        } catch (err: unknown) {
-          console.warn(
-            `[customer-vps] recovery registration address verification unavailable machineId=${row.machineId} error=${err instanceof Error ? err.name : 'UnknownError'}`,
-          );
-          throw new CustomerVpsError(425, 'runtime_not_ready', 'Computer is still starting');
-        }
-        if (!replacement
-          || replacement.id !== input.hetznerServerId
-          || replacement.publicIPv4 !== publicIPv4.data) {
-          throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
-        }
-      }
+      const readinessPublicIPv4 = await resolveCustomerVpsRegistrationReadinessAddress({
+        machineId: row.machineId,
+        status: row.status,
+        hetznerServerId: input.hetznerServerId,
+        storedPublicIPv4: row.publicIPv4,
+        callbackPublicIPv4: publicIPv4.data,
+      }, deps.hetzner);
       await assertStartupReadiness({
         machineId: row.machineId,
         handle: row.handle,
-        publicIPv4: publicIPv4.data,
+        publicIPv4: readinessPublicIPv4,
         expectedVersion: registrationTarget?.targetBundleVersion
           ?? provisioningJob?.targetBundleVersion
           ?? input.imageVersion,

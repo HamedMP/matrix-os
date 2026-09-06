@@ -171,7 +171,7 @@ write_files:
       MemoryMax=1536M
       Restart=on-failure
       RestartSec=10m
-      TimeoutStartSec=900
+      TimeoutStartSec=2100
 
       [Install]
       WantedBy=multi-user.target
@@ -221,7 +221,7 @@ write_files:
       ExecStartPost=-/bin/systemctl start matrix-code.service
       Restart=on-failure
       RestartSec=10m
-      TimeoutStartSec=1800
+      TimeoutStartSec=3000
 
       [Install]
       WantedBy=multi-user.target
@@ -275,7 +275,7 @@ write_files:
       MemoryMax=1536M
       Restart=on-failure
       RestartSec=10m
-      TimeoutStartSec=1800
+      TimeoutStartSec=3000
 
       [Install]
       WantedBy=multi-user.target

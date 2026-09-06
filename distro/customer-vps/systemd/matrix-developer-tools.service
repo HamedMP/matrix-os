@@ -19,7 +19,7 @@ Nice=10
 IOSchedulingClass=idle
 MemoryHigh=1G
 MemoryMax=1536M
-TimeoutStartSec=3600
+TimeoutStartSec=4800
 Restart=on-failure
 RestartSec=120
 
