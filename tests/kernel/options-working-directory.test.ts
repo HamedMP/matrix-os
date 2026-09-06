@@ -8,6 +8,7 @@ vi.mock("../../packages/kernel/src/ipc-server.js", () => ({
 vi.mock("../../packages/kernel/src/agents.js", () => ({
   getCoreAgents: vi.fn(() => ({})),
   loadCustomAgents: vi.fn(() => ({})),
+  loadCustomAgentMcpAllowlists: vi.fn(() => ({})),
 }));
 
 vi.mock("../../packages/kernel/src/prompt.js", () => ({
@@ -27,6 +28,7 @@ vi.mock("../../packages/kernel/src/hooks.js", () => ({
   onSubagentComplete: vi.fn(),
   notifyShellHook: vi.fn(),
   preCompactHook: vi.fn(),
+  createIntegrationApprovalHook: vi.fn(() => vi.fn()),
 }));
 
 vi.mock("../../packages/kernel/src/evolution.js", () => ({

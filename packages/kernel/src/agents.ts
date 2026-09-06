@@ -90,6 +90,23 @@ export function loadCustomAgents(
   return agents;
 }
 
+/** Security projection for Custom MCP subagent access. Missing/invalid files
+ * and absent `mcp` frontmatter produce no grants. */
+export function loadCustomAgentMcpAllowlists(agentsDir: string): Record<string, string[]> {
+  if (!existsSync(agentsDir)) return {};
+  const result: Record<string, string[]> = {};
+  try {
+    for (const file of readdirSync(agentsDir).filter((entry) => entry.endsWith(".md"))) {
+      const { frontmatter } = parseFrontmatter(readFileSync(join(agentsDir, file), "utf8"));
+      if (!Array.isArray(frontmatter.mcp) || !frontmatter.mcp.every((entry) => typeof entry === "string")) continue;
+      result[frontmatter.name ?? basename(file, ".md")] = [...new Set(frontmatter.mcp)];
+    }
+  } catch (error: unknown) {
+    console.warn("[kernel/agents] failed to load Custom MCP allowlists:", error instanceof Error ? error.message : String(error));
+  }
+  return result;
+}
+
 const IPC_TOOLS = {
   all: [
     "mcp__matrix-os-ipc__list_tasks",

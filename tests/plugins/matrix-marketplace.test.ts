@@ -113,13 +113,15 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(combined).toMatch(/ask before installing/i);
   });
 
-  it("documents MCP terminals and CLI session limits, and sandboxes coding agents", () => {
+  it("requires observable sessions, scopes tabs by transport, and sandboxes coding agents", () => {
     const skill = readSkill("matrix-cloud-run");
-    const workflows = [
+    const hostedWorkflows = [
       readSkill("matrix-onboarding"),
       skill,
       readSkill("matrix-github-project"),
     ];
+    const standaloneWorkflow = readFileSync(standaloneSkillPath, "utf8");
+    const workflows = [...hostedWorkflows, standaloneWorkflow];
 
     expect(skill).toMatch(/safe relative destination/i);
     expect(skill).toMatch(/inspect[^\n]*destination/i);
@@ -128,12 +130,15 @@ describe("Matrix OS Codex marketplace plugin", () => {
     for (const workflow of workflows) {
       expect(workflow).toMatch(/matrix run -it --session/);
       expect(workflow).not.toMatch(/matrix run --json/);
-      expect(workflow).toMatch(/create_terminal_tab/);
-      expect(workflow).toMatch(/select_terminal_tab/);
-      expect(workflow).toMatch(/CLI[^\n]*does not address tabs directly/i);
-      expect(workflow).toMatch(/(?:separate|another)[^\n]*session/i);
+      expect(workflow).toMatch(/separate[^\n]*session/i);
       expect(workflow).toMatch(/matrix shell connect/);
     }
+    for (const workflow of hostedWorkflows) {
+      expect(workflow).toMatch(/create_terminal_tab/);
+      expect(workflow).toMatch(/select_terminal_tab/);
+      expect(workflow).toMatch(/CLI workflow does not address tabs directly/i);
+    }
+    expect(standaloneWorkflow).toMatch(/never (?:create or use|use)[^\n]*tabs/i);
     expect(skill).toMatch(/prompt[^\n]*argument/i);
     expect(skill).toMatch(/--sandbox workspace-write/);
     expect(skill).toMatch(/--sandbox read-only/);
@@ -170,10 +175,6 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(standalone).toContain("# Matrix OS");
     expect(standalone).toMatch(/^author: Matrix OS$/m);
     expect(standalone).toMatch(/matrix run -it --session/);
-    expect(standalone).toMatch(/never (?:create or use|use)[^\n]*tabs/i);
-    expect(standalone).toMatch(/separate[^\n]*session/i);
-    expect(standalone).toMatch(/matrix shell connect/);
-    expect(standalone).not.toMatch(/matrix run --json/);
     expect(standalone).toMatch(/gh repo clone/);
     expect(standalone).toMatch(/--sandbox workspace-write/);
     expect(standalone).toMatch(/claude[^\n]*--permission-mode auto/i);

@@ -15,16 +15,24 @@ const scriptPath = fileURLToPath(
 );
 
 describe("Codex provider contract checker", () => {
-  it("trusts the reviewed Codex 0.153.3 provider schemas", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.153.3");
-    expect(contract.verifiedVersions["0.153.3"]).toEqual({
+  it("trusts the reviewed Codex 0.153.4 provider schemas", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.153.4");
+    expect(contract.verifiedVersions["0.153.4"]).toEqual({
       schemaSha256: "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32",
     });
-    expect(appServerContract.latestVerifiedVersion).toBe("0.153.3");
-    expect(appServerContract.verifiedVersions["0.153.3"]).toEqual({
+    expect(appServerContract.latestVerifiedVersion).toBe("0.153.4");
+    expect(appServerContract.verifiedVersions["0.153.4"]).toEqual({
       schemaSha256ByTarget: {
-        "darwin-arm64": "e8284c5cb8157554a3dd1e035aadbd4325aea501af56887e9c2e12eb1b9b9448",
+        "darwin-arm64": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
         "linux-x64": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
+      },
+    });
+    expect(appServerContract.requiredServerProtocolSchemaDigests[
+      "item/commandExecution/requestApproval"
+    ]).toEqual({
+      schemaSha256ByTarget: {
+        "darwin-arm64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
+        "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
       },
     });
   });
@@ -245,6 +253,10 @@ describe("Codex provider contract checker", () => {
     ), "utf8");
 
     expect(workflow).toContain('cron: "41 5 * * *"');
+    expect(workflow).toContain("macos-15");
+    expect(workflow).toContain("Report generated protocol digests");
+    expect(workflow).toContain('installed_version="${installed_output##* }"');
+    expect(workflow).not.toContain("sed -n");
     expect(workflow).toContain("pnpm view @openai/codex version --json");
     expect(workflow).toContain('pnpm dlx "@openai/codex@${CODEX_VERSION}" --version');
     expect(workflow).toContain("codex-provider-version-check.mjs");

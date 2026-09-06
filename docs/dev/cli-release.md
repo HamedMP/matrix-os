@@ -6,9 +6,10 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 `0.3.16` is the prepared CLI patch release after `0.3.15`. It:
 
-- adds remote computer MCP tools for commands, terminals, files, and chats;
-- supports hosted Streamable HTTP with browser OAuth alongside the stdio transport; and
-- keeps the Matrix CLI fallback separately authenticated from hosted MCP.
+- adds a stdio MCP server backed by the authenticated Matrix CLI;
+- exposes bounded remote computer, terminal, file-transfer, and read-only chat tools;
+- adds stable terminal-tab addressing and owner-scoped runtime access; and
+- exports the shared hosted MCP tool definitions for the platform transport.
 
 ## Versioning
 
