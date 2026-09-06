@@ -113,7 +113,8 @@ jobs:
           CODEX_VERSION: ${{ steps.latest.outputs.version }}
         run: |
           set -euo pipefail
-          installed_version="$(pnpm dlx "@openai/codex@${CODEX_VERSION}" --version | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' | head -1)"
+          installed_output="$(pnpm dlx "@openai/codex@${CODEX_VERSION}" --version)"
+          installed_version="${installed_output##* }"
           test "$installed_version" = "$CODEX_VERSION"
           pnpm dlx "@openai/codex@${CODEX_VERSION}" app-server generate-json-schema \
             --experimental \

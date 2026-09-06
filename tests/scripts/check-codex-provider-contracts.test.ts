@@ -247,6 +247,8 @@ describe("Codex provider contract checker", () => {
     expect(workflow).toContain('cron: "41 5 * * *"');
     expect(workflow).toContain("macos-15");
     expect(workflow).toContain("Report generated protocol digests");
+    expect(workflow).toContain('installed_version="${installed_output##* }"');
+    expect(workflow).not.toContain("sed -n");
     expect(workflow).toContain("pnpm view @openai/codex version --json");
     expect(workflow).toContain('pnpm dlx "@openai/codex@${CODEX_VERSION}" --version');
     expect(workflow).toContain("codex-provider-version-check.mjs");
