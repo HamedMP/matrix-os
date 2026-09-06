@@ -19,7 +19,7 @@ import {
   type ShellWsSocket,
 } from "../shell/ws.js";
 import type { ChatOwner } from "./records.js";
-import { authorizeChatTerminalAttach } from "./terminal-authorization.js";
+import { authorizeChatTerminalAttach, getAuthorizedChatTerminal } from "./terminal-authorization.js";
 
 type ChatTerminalRepository = {
   getTerminalBinding(
@@ -228,7 +228,7 @@ export function createGatewayChatTerminalWiring(input: {
   repository: ChatTerminalRepository | null;
   getPrincipal: (c: Context) => RequestPrincipal;
   registry: TerminalRegistry;
-  paneActions?: { paneAction(name: string, action: TerminalPaneAction): Promise<void> };
+  paneActions?: { paneAction(name: string, action: TerminalPaneAction, options?: { expectedCreatedAt: string }): Promise<void> };
   shellWs: TerminalSocketHandler;
   onUnexpectedSendFailure: (context: string, err: unknown) => void;
 }): GatewayChatTerminalWiring {
@@ -237,16 +237,17 @@ export function createGatewayChatTerminalWiring(input: {
         getPrincipal: input.getPrincipal,
         chatPaneAction: async (principal, { chatId, sessionId, action }) => {
           if (!input.paneActions) throw shellError("pane_actions_unavailable", "Request failed", 503);
-          if (!await authorizeChatTerminalAttach({
+          const authorized = await getAuthorizedChatTerminal({
             repository: input.repository!,
             registry: input.registry,
             owner: { type: "personal", ownerId: principal.userId },
             chatId,
             sessionId,
-          })) {
-            throw shellError("session_not_found", "Session not found", 404);
-          }
-          await input.paneActions.paneAction(sessionId, action);
+          });
+          if (!authorized) throw shellError("session_not_found", "Session not found", 404);
+          await input.paneActions.paneAction(authorized.sessionId, action, {
+            expectedCreatedAt: authorized.createdAt,
+          });
         },
         listChatBoundSessionIds: (principal, sessionIds) => input.repository!.listBoundTerminalSessionIds(
           { type: "personal", ownerId: principal.userId },

@@ -30,4 +30,10 @@ Twelve review domains covered correctness, tests, maintainability, project stand
 
 The browser preview used an injected test transport; it was not a live authenticated Matrix runtime. Automated renderer integration and real Zellij/PTy tests are separate evidence. Full authenticated Web Canvas/Web Desktop and packaged Electron end-to-end tests, deployment, and merge are outside the completed local validation.
 
-CI provider compatibility check rejects newly published Codex 0.153.4 as unverified by the repository contract. This feature does not modify that contract or bypass its guard. Implementation PR: https://github.com/HamedMP/matrix-os/pull/1545. Public docs PR: https://github.com/FinnaAI/matrix-os-site/pull/78.
+Rebased onto main at eb8b8e91e, including the verified Codex 0.153.4 compatibility update from #1546. Implementation PR: https://github.com/HamedMP/matrix-os/pull/1545. Public docs PR: https://github.com/FinnaAI/matrix-os-site/pull/78.
+
+## Greptile follow-up
+
+The Chat authorization result now carries the verified creation timestamp to the managed adapter. The adapter rejects a mismatched descriptor and dispatches only through the checked generation and immutable runtime name; concurrent display-name replacement cannot redirect the command. Unmanaged adapters fail closed for incarnation-bound actions.
+
+Regression tests reproduce replacement between authorization and dispatch, verify immutable targeting after lookup, and verify the unmanaged fallback rejects dispatch. All 66 focused authorization, Chat wiring, action-route and managed-adapter tests pass.

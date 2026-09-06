@@ -256,7 +256,16 @@ export function createUserSystemdZellijAdapter(options: {
       return adapterFor(descriptor).attachSession(descriptor.sessionName, attachOptions);
     },
 
-    paneAction: (name, action) => delegate(name, (adapter, sessionName) => adapter.paneAction(sessionName, action)),
+    async paneAction(name, action, actionOptions) {
+      const descriptor = await descriptorFor(name);
+      if (actionOptions && descriptor.createdAt !== actionOptions.expectedCreatedAt) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      // Capture the checked generation and immutable runtime name. A later
+      // cache refresh or display-name replacement cannot redirect this action.
+      const { sessionName } = descriptor;
+      return adapterFor(descriptor).paneAction(sessionName, action);
+    },
     sendInput: (name, data) => delegate(name, (adapter, sessionName) => adapter.sendInput(sessionName, data)),
     listTabs: (name) => delegate(name, (adapter, sessionName) => adapter.listTabs(sessionName)),
     createTab: (name, input) => delegate(name, (adapter, sessionName) => adapter.createTab(sessionName, input)),

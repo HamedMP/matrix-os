@@ -126,3 +126,10 @@ describe("Zellij pane commands", () => {
     expect(ShellPreferencesPatchSchema.safeParse({ keyboard: { profile: "arbitrary" } }).success).toBe(false);
   });
 });
+
+it("fails closed when incarnation-bound actions reach an unmanaged adapter", async () => {
+  const execFile = vi.fn();
+  const adapter = createZellijAdapter({ execFile: execFile as never, manageConfig: false });
+  await expect(adapter.paneAction("main", { type: "close" }, { expectedCreatedAt: "2026-09-01T00:00:00.000Z" })).rejects.toMatchObject({ status: 503 });
+  expect(execFile).not.toHaveBeenCalled();
+});

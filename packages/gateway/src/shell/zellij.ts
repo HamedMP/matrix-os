@@ -108,7 +108,7 @@ export interface ZellijAdapter {
   validateLayout(path: string): Promise<void>;
   attachSession(name: string, options?: AttachOptions): ShellAttachProcess;
   sendInput(name: string, data: string): Promise<void>;
-  paneAction(name: string, action: TerminalPaneAction): Promise<void>;
+  paneAction(name: string, action: TerminalPaneAction, options?: { expectedCreatedAt: string }): Promise<void>;
   listTabs(name: string): Promise<unknown[]>;
   createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<unknown>;
   switchTab(name: string, tab: number): Promise<unknown>;
@@ -600,7 +600,12 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     attachSession(name, options = {}) {
       return attachProcess(name, options);
     },
-    async paneAction(name, action) {
+    async paneAction(name, action, options) {
+      // Only the managed adapter can turn an authorized incarnation into an
+      // immutable runtime name. A legacy display name can be reused at any time.
+      if (options?.expectedCreatedAt !== undefined) {
+        throw shellError("pane_actions_unavailable", "Request failed", 503);
+      }
       await run(terminalPaneActionArgs(name, action));
       focusedPaneRuntimeCache.delete(name);
     },
