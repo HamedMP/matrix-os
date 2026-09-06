@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { isRunnableGenericHarnessCredentialRoute, isSupportedGenericHarnessCredentialRoute, type ProviderHarnessInstance, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
@@ -28,8 +28,10 @@ export function AgentsProvidersView({
   onOpenTerminal,
   onOpenBrowser,
   onAddCredit,
+  onSetupHarness,
 }: AgentsProvidersViewProps) {
   const [addOpen, setAddOpen] = useState(false);
+  const [collapsedId, setCollapsedId] = useState<string | null>(null);
   const harness = selectedHarness(snapshot, selectedHarnessId);
   const actions = supportedActions(snapshot);
   const supports = (action: SupportedAction) => actions.includes(action);
@@ -46,6 +48,22 @@ export function AgentsProvidersView({
   const gatewayProvider = gatewaySource === null
     ? null
     : snapshot.modelProviders.find((provider) => provider.id === gatewaySource.providerId) ?? null;
+  const eligibleGatewayModels = gatewayProvider?.models.filter((model) => model.enabled
+    && gatewaySource?.eligibleModelIds.includes(model.id)
+    && snapshot.gatewayPolicy?.allowedModelIds.includes(model.id)) ?? [];
+  const gatewayModelsFor = (item: ProviderHarnessInstance) => eligibleGatewayModels.filter((model) => gatewaySource !== null
+    && isRunnableGenericHarnessCredentialRoute({ ...item, route: { kind: "configurable", providerId: gatewaySource.providerId, modelId: model.id }, accessSourceId: gatewaySource.id }, gatewaySource));
+  const gatewayModels = harness ? gatewayModelsFor(harness) : [];
+  const gatewayModel = gatewayModels.find((model) => model.id === harness?.route.modelId) ?? gatewayModels[0];
+  const canUseGateway = genericConfiguration && supports("set_route") && harness?.route.kind === "configurable"
+    && gatewaySource?.readiness.state === "ready" && gatewayModel !== undefined;
+  const gatewaySelected = gatewaySource !== null && harness?.accessSourceId === gatewaySource.id
+    && harness.route.providerId === gatewaySource.providerId
+    && isSupportedGenericHarnessCredentialRoute(harness, gatewaySource)
+    && eligibleGatewayModels.some((model) => model.id === harness.route.modelId);
+  const compatibleGatewayAgents = supports("set_route") ? snapshot.harnesses.filter((item) =>
+    item.id !== selectedId && item.installState === "installed" && item.route.kind === "configurable"
+    && configurationHarnessKinds.includes(item.harness) && gatewayModelsFor(item).length > 0) : [];
 
   return (
     <div className="matrix-agents-providers" aria-busy={busy ? "true" : undefined}>
@@ -53,10 +71,13 @@ export function AgentsProvidersView({
         <div>
           <span className="matrix-ap-eyebrow">Settings</span>
           <h1>Agents &amp; providers</h1>
-          <p>Choose which harness runs a task, which model it uses, and who funds the route.</p>
+          <p>Connect an agent, choose a model, and start a chat.</p>
         </div>
         <div className="matrix-ap-refresh">
           <span>Checked {relativeCheckedAt(snapshot.refreshedAt)}</span>
+          {supports("add_harness") && configurationHarnessKinds.length > 0 ? (
+            <button type="button" className="matrix-ap-icon-button" aria-label="Add agent" title="Add agent" onClick={() => setAddOpen(true)} disabled={mutationsDisabled}>+</button>
+          ) : null}
           <button type="button" className="matrix-ap-icon-button" aria-label="Refresh provider status" onClick={onRefresh} disabled={busy}>↻</button>
         </div>
       </header>
@@ -75,28 +96,38 @@ export function AgentsProvidersView({
       ) : null}
 
       <div className="matrix-ap-workspace">
+        <GatewayPanel
+          key={gatewaySource?.id ?? "matrix-ai-unconfigured"}
+          source={gatewaySource} policy={snapshot.gatewayPolicy} provider={gatewayProvider}
+          disabled={mutationsDisabled} canSetBudget={supports("set_gateway_budget")}
+          canSetAllowlist={supports("set_gateway_allowlist")} canAddCredit={supports("add_credit")}
+          onMutate={onMutate} onAddCredit={onAddCredit} onRefresh={onRefresh}
+          selectedAgentName={harness?.displayName ?? null}
+          selectedAgentEnabled={harness?.enabled ?? false}
+          selectedModelName={gatewayModel?.displayName ?? null}
+          isSelected={gatewaySelected}
+          savedRouteUnavailable={gatewaySource !== null && harness?.accessSourceId === gatewaySource.id && !gatewaySelected}
+          compatibleAgents={compatibleGatewayAgents}
+          onChooseAgent={(id) => { setCollapsedId(null); onSelectHarness(id); }}
+          onUseGateway={canUseGateway && harness && gatewaySource && gatewayModel ? () => {
+            void onMutate({ type: "set_route", harnessInstanceId: harness.id,
+              route: { kind: "configurable", providerId: gatewaySource.providerId, modelId: gatewayModel.id },
+              accessSourceId: gatewaySource.id, accountId: null });
+          } : undefined}
+        />
         <HarnessRail
           harnesses={snapshot.harnesses}
-          selectedId={selectedId}
+          sources={snapshot.accessSources}
+          selectedId={collapsedId === selectedId ? null : selectedId}
           disabled={mutationsDisabled}
-          canAdd={supports("add_harness") && configurationHarnessKinds.length > 0}
-          onSelect={onSelectHarness}
-          onAdd={() => setAddOpen(true)}
-        />
-        <main className="matrix-ap-main">
-          {harness ? (
+          canEnable={(item) => configurationHarnessKinds.includes(item.harness) && supports("set_harness_enabled")}
+          onEnable={(item) => { void onMutate({ type: "set_harness_enabled", harnessInstanceId: item.id, enabled: !item.enabled }); }}
+          onSelect={(id) => {
+            setCollapsedId(id === selectedId && collapsedId !== id ? id : null);
+            onSelectHarness(id);
+          }}
+          renderDetails={(harness) => (
             <>
-              <HarnessEditor
-                snapshot={snapshot}
-                harness={harness}
-                disabled={mutationsDisabled}
-                canUpdate={genericConfiguration && supports("update_harness")}
-                canEnable={genericConfiguration && supports("set_harness_enabled")}
-                canSetRoute={genericConfiguration && supports("set_route")}
-                canSelectSource={genericConfiguration && supports("select_access_source")}
-                canSelectAccount={genericConfiguration && supports("select_account")}
-                onMutate={onMutate}
-              />
               <AccountsPanel
                 harness={harness}
                 accounts={snapshot.accounts.filter((account) => harness.accountIds.includes(account.id))}
@@ -112,34 +143,30 @@ export function AgentsProvidersView({
                 onMutate={onMutate}
                 onOpenTerminal={onOpenTerminal}
                 onOpenBrowser={onOpenBrowser}
+                onSetupHarness={onSetupHarness}
+                onRefresh={onRefresh}
               />
-              {gatewaySource ? (
-                <GatewayPanel
-                  source={gatewaySource}
-                  policy={snapshot.gatewayPolicy}
-                  provider={gatewayProvider}
-                  disabled={mutationsDisabled}
-                  canSetBudget={supports("set_gateway_budget")}
-                  canSetAllowlist={supports("set_gateway_allowlist")}
-                  canAddCredit={supports("add_credit")}
-                  onMutate={onMutate}
-                  onAddCredit={onAddCredit}
-                  onRefresh={onRefresh}
-                />
-              ) : null}
+              <HarnessEditor
+                snapshot={snapshot} harness={harness} disabled={mutationsDisabled}
+                canUpdate={genericConfiguration && supports("update_harness")}
+                canSetRoute={genericConfiguration && supports("set_route")}
+                canSelectSource={genericConfiguration && supports("select_access_source")}
+                canSelectAccount={genericConfiguration && supports("select_account")}
+                onMutate={onMutate} onRefresh={onRefresh}
+              />
             </>
-          ) : (
-            <div className="matrix-ap-empty-state">
-              <strong>No harnesses configured</strong>
-              <span>Add Hermes, OpenClaw, Pi, or OpenCode to begin.</span>
-              <button type="button" className="matrix-ap-button matrix-ap-button-primary" disabled={mutationsDisabled || !supports("add_harness") || configurationHarnessKinds.length === 0} onClick={() => setAddOpen(true)}>Add harness</button>
-            </div>
           )}
-        </main>
+        />
+        {snapshot.harnesses.length === 0 ? (
+            <div className="matrix-ap-empty-state">
+              <strong>No agents found</strong>
+              <span>Use + Add agent above to install or connect an agent.</span>
+            </div>
+        ) : null}
       </div>
 
       {addOpen && supports("add_harness") ? (
-        <AddHarnessDialog snapshot={snapshot} onMutate={onMutate} onClose={() => setAddOpen(false)} />
+        <AddHarnessDialog snapshot={snapshot} onMutate={onMutate} onClose={() => setAddOpen(false)} onRefresh={onRefresh} onSetupHarness={onSetupHarness} busy={busy} error={error} />
       ) : null}
     </div>
   );

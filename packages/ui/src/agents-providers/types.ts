@@ -56,7 +56,8 @@ export interface AgentsProvidersViewProps {
   error?: string | null;
   onSelectHarness: (harnessInstanceId: string) => void;
   onRefresh: () => void;
-  onMutate: (intent: ProviderSettingsMutationIntent) => void;
+  onMutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
+  onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;
   onOpenTerminal: (terminalSessionId: string) => void;
   onOpenBrowser: (authorizationPath: string) => void;
   onAddCredit: (

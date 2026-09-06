@@ -122,7 +122,13 @@ export function parsePiModelCatalog(output: string): GenericHarnessModelRoute[] 
   const routes: GenericHarnessModelRoute[] = [];
   for (const raw of output.split(/\r?\n/)) {
     const columns = raw.trim().split(/\s+/);
-    if (columns.length < 2 || columns[0] === "provider") continue;
+    // Pi also prints setup/diagnostic prose on stdout. Only accept complete
+    // table rows, never interpret the first two words of a message as a route.
+    if (columns.length !== 6
+      || !/^\d+(?:\.\d+)?[kKmM]?$/.test(columns[2]!)
+      || !/^\d+(?:\.\d+)?[kKmM]?$/.test(columns[3]!)
+      || !/^(yes|no)$/i.test(columns[4]!)
+      || !/^(yes|no)$/i.test(columns[5]!)) continue;
     const candidate = route(columns[0]!, columns[1]!);
     if (candidate) routes.push(candidate);
     if (routes.length >= MAX_MODELS_PER_HARNESS) break;

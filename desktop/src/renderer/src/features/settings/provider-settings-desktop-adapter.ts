@@ -6,7 +6,9 @@ import {
   type ProviderSettingsMutation,
   type ProviderSettingsMutationResponse,
   type ProviderSettingsSnapshot,
+  type ProviderHarnessKind,
 } from "@matrix-os/contracts";
+import { openProviderAgentSetup } from "@matrix-os/ui";
 import type {
   ProviderSettingsTransport,
   ProviderSettingsTransportErrorCode,
@@ -115,6 +117,23 @@ export async function openExistingProviderTerminalSession(
   useDesktopSurfaces.getState().activateSurface(tabId);
   useTabs.getState().requestTerminalSession(terminalSessionId);
   return true;
+}
+
+export async function openDesktopProviderAgentSetup(
+  api: ApiClient,
+  harness: ProviderHarnessKind,
+  isIdentityCurrent: () => boolean,
+): Promise<boolean> {
+  return openProviderAgentSetup({
+    harness,
+    getCatalog: () => api.get("/api/chat-providers?refresh=true", { maxBytes: MAX_RESPONSE_BYTES, signal: AbortSignal.timeout(10_000) }),
+    openCommand: async (cmd) => {
+      if (!isIdentityCurrent()) return false;
+      const session = await useShellSessions.getState().create(api, { cmd });
+      if (!session || !isIdentityCurrent()) return false;
+      return openExistingProviderTerminalSession(api, session.name, isIdentityCurrent);
+    },
+  });
 }
 
 type OpenExternal = (url: string) => Promise<unknown>;
