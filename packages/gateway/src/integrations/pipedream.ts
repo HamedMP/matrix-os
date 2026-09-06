@@ -50,6 +50,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     params?: Record<string, string>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   proxyPost(opts: {
@@ -57,6 +58,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     body?: Record<string, unknown>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   proxyPut(opts: {
@@ -64,6 +66,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     body?: Record<string, unknown>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   proxyPatch(opts: {
@@ -71,6 +74,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     body?: Record<string, unknown>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   proxyDelete(opts: {
@@ -78,6 +82,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     params?: Record<string, string>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   revokeAccount(accountId: string): Promise<void>;
@@ -215,6 +220,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           params: opts.params,
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -228,6 +234,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           body: opts.body ?? {},
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -241,6 +248,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           body: opts.body ?? {},
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -254,6 +262,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           body: opts.body ?? {},
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -272,6 +281,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           params: opts.params,
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );

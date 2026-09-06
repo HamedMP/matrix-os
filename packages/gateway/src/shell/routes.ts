@@ -53,6 +53,7 @@ interface ShellWorkspaceRoutes {
   listTabs(name: string): Promise<unknown[]>;
   createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<unknown>;
   switchTab(name: string, tab: number): Promise<unknown>;
+  switchTabById?(name: string, tabId: number): Promise<unknown>;
   closeTab(name: string, tab: number): Promise<unknown>;
   splitPane(name: string, input: { direction: "right" | "down"; cwd?: string; cmd?: string }): Promise<unknown>;
   closePane(name: string, pane: string): Promise<unknown>;
@@ -453,6 +454,17 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
       const tab = z.coerce.number().int().nonnegative().parse(c.req.param("tab"));
       await deps.workspace.switchTab(SafeSessionNameSchema.parse(c.req.param("name")), tab);
+      return c.json({ ok: true });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.post("/sessions/:name/tabs/by-id/:tabId/go", workspaceBodyLimit, async (c) => {
+    try {
+      if (!deps.workspace?.switchTabById) return unavailable(c, "workspace_unavailable");
+      const tabId = z.coerce.number().int().nonnegative().parse(c.req.param("tabId"));
+      await deps.workspace.switchTabById(SafeSessionNameSchema.parse(c.req.param("name")), tabId);
       return c.json({ ok: true });
     } catch (err) {
       return safeError(c, err);

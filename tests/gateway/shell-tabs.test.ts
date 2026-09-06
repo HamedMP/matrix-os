@@ -15,8 +15,9 @@ describe("gateway shell tab routes", () => {
   it("lists, creates, switches, and closes tabs with validated inputs", async () => {
     const workspace = {
       listTabs: vi.fn(async () => [{ idx: 0, name: "main", focused: true }]),
-      createTab: vi.fn(async () => ({ idx: 1, name: "api" })),
+      createTab: vi.fn(async () => ({ id: 41, idx: 1, name: "api" })),
       switchTab: vi.fn(async () => ({ ok: true })),
+      switchTabById: vi.fn(async () => ({ ok: true })),
       closeTab: vi.fn(async () => ({ ok: true })),
     };
     const app = appWithWorkspace(workspace);
@@ -28,8 +29,11 @@ describe("gateway shell tab routes", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "api", cwd: "~/repo", cmd: "pnpm dev" }),
-    })).json()).resolves.toEqual({ tab: { idx: 1, name: "api" } });
+    })).json()).resolves.toEqual({ tab: { id: 41, idx: 1, name: "api" } });
     await expect((await app.request("/api/sessions/main/tabs/1/go", {
+      method: "POST",
+    })).json()).resolves.toEqual({ ok: true });
+    await expect((await app.request("/api/sessions/main/tabs/by-id/41/go", {
       method: "POST",
     })).json()).resolves.toEqual({ ok: true });
     await expect((await app.request("/api/sessions/main/tabs/1", {
@@ -42,6 +46,7 @@ describe("gateway shell tab routes", () => {
       cmd: "pnpm dev",
     });
     expect(workspace.switchTab).toHaveBeenCalledWith("main", 1);
+    expect(workspace.switchTabById).toHaveBeenCalledWith("main", 41);
     expect(workspace.closeTab).toHaveBeenCalledWith("main", 1);
   });
 
@@ -50,6 +55,7 @@ describe("gateway shell tab routes", () => {
       listTabs: vi.fn(),
       createTab: vi.fn(),
       switchTab: vi.fn(),
+      switchTabById: vi.fn(),
       closeTab: vi.fn(),
     });
 
