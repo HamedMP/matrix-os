@@ -25,11 +25,15 @@ describe('start-platform-cloud-run.sh', () => {
   it('loads TypeScript workspace exports in the production platform process', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
+    const dockerfile = readFileSync(join(root, 'Dockerfile.platform'), 'utf8');
     const platformPackage = JSON.parse(
       readFileSync(join(root, 'packages/platform/package.json'), 'utf8'),
     ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
 
     expect(script).toContain('node --import=tsx packages/platform/dist/main.js');
+    expect(dockerfile).toContain(
+      'RUN node --import=tsx --input-type=module --eval "await import(\'@finnaai/matrix/mcp\')"',
+    );
     expect(platformPackage.dependencies?.tsx).toBe('^4.21.0');
     expect(platformPackage.devDependencies?.tsx).toBeUndefined();
   });
