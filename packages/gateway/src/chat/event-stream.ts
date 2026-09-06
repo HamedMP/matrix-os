@@ -84,6 +84,7 @@ function sameOwner(left: ChatOwner, right: ChatOwner): boolean {
 
 export function createCanonicalChatEventStream(options: {
   repository: CanonicalChatEventRepository;
+  reconcileOwner?: (owner: ChatOwner) => Promise<unknown>;
   maxSubscribers?: number;
   maxSubscribersPerOwner?: number;
   subscriberTtlMs?: number;
@@ -230,6 +231,7 @@ export function createCanonicalChatEventStream(options: {
     subscribers.set(subscriber.id, subscriber);
 
     try {
+      await options.reconcileOwner?.(owner);
       const replay = await options.repository.replayOutboxWindow(owner, {
         ...(cursor === undefined ? {} : { afterCursor: cursor }),
         limit: REPLAY_LIMIT,

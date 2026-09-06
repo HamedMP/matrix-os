@@ -989,7 +989,10 @@ export async function createGateway(config: GatewayConfig) {
       await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
-      canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
+      canonicalChatEventStream = createCanonicalChatEventStream({
+        repository: chatRepository,
+        reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
+      });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       await messagingRepository.bootstrap();

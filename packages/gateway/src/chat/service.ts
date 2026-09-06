@@ -130,7 +130,7 @@ export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
     orchestrator?: Pick<CanonicalChatOrchestrator,
-      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn"
+      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn" | "reconcileActiveRuns"
     >;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
   } = {},
@@ -214,6 +214,7 @@ export function createCanonicalChatService(
     },
 
     async list(owner, input): Promise<CanonicalChatListResponse> {
+      await options.orchestrator?.reconcileActiveRuns(owner);
       const page = await repository.list(owner, {
         limit: input.limit,
         ...(input.lifecycle === undefined ? {} : { lifecycle: input.lifecycle }),
@@ -234,6 +235,7 @@ export function createCanonicalChatService(
     },
 
     async search(owner, input): Promise<CanonicalChatListResponse> {
+      await options.orchestrator?.reconcileActiveRuns(owner);
       return CanonicalChatListResponseSchema.parse({
         items: await repository.search(
           owner,
@@ -246,6 +248,7 @@ export function createCanonicalChatService(
 
     async getDetail(owner, chatId, input): Promise<CanonicalChatDetailResponse | null> {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      await options.orchestrator?.reconcileActiveRuns(owner);
       const page = await repository.getDetailPage(owner, parsedChatId, {
         limit: input.limit,
         ...(input.cursor === undefined ? {} : {
