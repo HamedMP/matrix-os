@@ -32,7 +32,7 @@ export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
 export * from "#canonical-chat-api";
-export * from "./canonical-chat-content.js";
+export * from "#canonical-chat-content";
 export {
   CanonicalChatCompatibilityProjectionSchema,
 } from "#canonical-chat-compatibility";
