@@ -1569,6 +1569,79 @@ describe('platform/customer-vps', () => {
     expect(systemStore.writtenMeta).toHaveLength(1);
   });
 
+  it('requires three consecutive external readiness probes before registration becomes running', async () => {
+    const probeStartupReadiness = vi.fn()
+      .mockResolvedValueOnce({ ready: true, failing: [] })
+      .mockResolvedValueOnce({ ready: true, failing: [] })
+      .mockResolvedValueOnce({ ready: true, failing: [] });
+    const { service } = createService({
+      probeStartupReadiness,
+      startupReadinessIntervalMs: 0,
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    })).resolves.toEqual({ registered: true, status: 'running' });
+
+    expect(probeStartupReadiness).toHaveBeenCalledTimes(3);
+    expect(probeStartupReadiness).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      machineId: provisioned.machineId,
+      handle: 'alice',
+      publicIPv4: '203.0.113.10',
+      expectedVersion: 'stable',
+    }));
+  });
+
+  it('keeps registration retryable and provisioning when external readiness is incomplete', async () => {
+    const probeStartupReadiness = vi.fn().mockResolvedValue({
+      ready: false,
+      failing: ['terminal_websocket'],
+    });
+    const { service, systemStore } = createService({
+      probeStartupReadiness,
+      startupReadinessIntervalMs: 0,
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    })).rejects.toMatchObject({
+      status: 425,
+      code: 'runtime_not_ready',
+      publicMessage: 'Computer is still starting',
+    });
+
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      status: 'provisioning',
+      registrationTokenHash: expect.any(String),
+    });
+    expect(systemStore.writtenMeta).toHaveLength(0);
+  });
+
+  it('never probes an address that differs from the provider address stored during provisioning', async () => {
+    const probeStartupReadiness = vi.fn();
+    const { service } = createService({ probeStartupReadiness });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    })).rejects.toMatchObject({
+      status: 401,
+      code: 'registration_rejected',
+    });
+    expect(probeStartupReadiness).not.toHaveBeenCalled();
+  });
+
   it('completes registration after an already-authorized create when entitlement later changes', async () => {
     const resolveBillingEntitlement = vi.fn().mockResolvedValue(activeEntitlement());
     const { service } = createService({ resolveBillingEntitlement });
@@ -1821,6 +1894,14 @@ describe('platform/customer-vps', () => {
           publicIPv4: '203.0.113.11',
           publicIPv6: '2001:db8::11',
         }),
+      getServer: vi.fn(async (serverId: number) => serverId === 789012
+        ? {
+            id: 789012,
+            status: 'running',
+            publicIPv4: '203.0.113.11',
+            publicIPv6: '2001:db8::11',
+          }
+        : null),
     });
     const systemStore = createMockCustomerVpsSystemStore({
       hasDbLatest: vi.fn().mockResolvedValue(true),
@@ -2015,6 +2096,9 @@ describe('platform/customer-vps', () => {
             status: 'running',
             publicIPv4: '203.0.113.11',
           }),
+        getServer: vi.fn(async (serverId: number) => serverId === 789012
+          ? { id: 789012, status: 'running', publicIPv4: '203.0.113.11' }
+          : null),
         deleteServer,
       }),
       systemStore: createMockCustomerVpsSystemStore({
@@ -2457,6 +2541,19 @@ describe('platform/customer-vps', () => {
     ];
     const { service } = createService({
       machineIdFactory: () => machineIds.shift() ?? '9f05824c-8d0a-4d83-9cb4-b312d43ff114',
+      hetzner: createMockHetznerClient({
+        createServer: vi.fn()
+          .mockResolvedValueOnce({
+            id: 123456,
+            status: 'running',
+            publicIPv4: '203.0.113.10',
+          })
+          .mockResolvedValueOnce({
+            id: 123456,
+            status: 'running',
+            publicIPv4: '203.0.113.11',
+          }),
+      }),
     });
     const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
     await service.register('registration-token', {

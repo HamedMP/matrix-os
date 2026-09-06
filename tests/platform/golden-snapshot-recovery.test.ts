@@ -62,6 +62,7 @@ describe('golden snapshot recovery', () => {
   it('leases the exact image for replacement infrastructure and releases it after durable adoption', async () => {
     const hetzner = createMockHetznerClient();
     const systemStore = createMockCustomerVpsSystemStore({ hasDbLatest: async () => true });
+    const probeStartupReadiness = vi.fn().mockResolvedValue({ ready: true, failing: [] });
     const config = loadCustomerVpsConfig({
       PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       HETZNER_SERVER_TYPE: 'cpx32',
@@ -78,6 +79,8 @@ describe('golden snapshot recovery', () => {
         expiresAt: '2026-07-03T01:00:00.000Z',
       }),
       now: () => new Date('2026-07-03T00:00:00.000Z'),
+      probeStartupReadiness,
+      startupReadinessIntervalMs: 0,
     });
 
     const recovery = await service.recover({ clerkUserId: 'user_recover', runtimeSlot: 'primary' });
@@ -88,6 +91,16 @@ describe('golden snapshot recovery', () => {
     expect(activeLease.purpose).toBe('recover');
     expect(activeLease.released_at).toBeNull();
 
+    await expect(service.register('recovery-registration-token', {
+      machineId: recovery.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'v2',
+      bundleSha256: '2'.repeat(64),
+      healthy: true,
+    })).rejects.toMatchObject({ status: 401, code: 'registration_rejected' });
+    expect(probeStartupReadiness).not.toHaveBeenCalled();
+
     await service.register('recovery-registration-token', {
       machineId: recovery.machineId,
       hetznerServerId: 123456,
@@ -96,6 +109,7 @@ describe('golden snapshot recovery', () => {
       bundleSha256: '2'.repeat(64),
       healthy: true,
     });
+    expect(probeStartupReadiness).toHaveBeenCalledTimes(3);
 
     const releasedLease = await db.executor.selectFrom('golden_snapshot_leases').selectAll()
       .where('machine_id', '=', recovery.machineId).executeTakeFirstOrThrow();
@@ -141,7 +155,12 @@ describe('golden snapshot recovery', () => {
       S3_ACCESS_KEY_ID: 'access-key', S3_SECRET_ACCESS_KEY: 'secret-key', S3_ENDPOINT: 'https://r2.example',
     });
     const service = createCustomerVpsService({
-      db, config, hetzner: createMockHetznerClient({ createServer }),
+      db, config, hetzner: createMockHetznerClient({
+        createServer,
+        getServer: vi.fn(async (serverId: number) => serverId === 123462
+          ? { id: 123462, status: 'running', publicIPv4: '203.0.113.17', publicIPv6: null }
+          : null),
+      }),
       systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: async () => true }),
       machineIdFactory: () => '30000000-0000-4000-8000-000000000017',
       tokenFactory: () => ({
@@ -343,11 +362,11 @@ describe('golden snapshot recovery', () => {
     await expect(reconcileExpiredGoldenSnapshotLeases(db, '2026-07-03T00:11:00.000Z', 10)).resolves.toBe(0);
 
     await expect(service.register('delayed-registration-token', {
-      machineId: recovery.machineId, hetznerServerId: 123456, publicIPv4: '203.0.113.21',
+      machineId: recovery.machineId, hetznerServerId: 123456, publicIPv4: '203.0.113.10',
       imageVersion: 'v1', bundleSha256: '1'.repeat(64), healthy: true,
     })).rejects.toMatchObject({ status: 409, code: 'registration_rejected' });
     await expect(service.register('delayed-registration-token', {
-      machineId: recovery.machineId, hetznerServerId: 123456, publicIPv4: '203.0.113.21',
+      machineId: recovery.machineId, hetznerServerId: 123456, publicIPv4: '203.0.113.10',
       imageVersion: 'v2', bundleSha256: '2'.repeat(64), healthy: true,
     })).resolves.toMatchObject({ registered: true, status: 'running' });
     await expect(getUserMachine(db, recovery.machineId)).resolves.toMatchObject({
@@ -403,9 +422,15 @@ describe('golden snapshot recovery', () => {
         createServer,
         deleteServer,
         getAction: vi.fn().mockResolvedValue({ id: 9001, status: 'error', command: 'create_server' }),
-        getServer: vi.fn(async (serverId: number) => serverId === 50
-          ? { id: 50, status: 'running', publicIPv4: '203.0.113.50', publicIPv6: null }
-          : null),
+        getServer: vi.fn(async (serverId: number) => {
+          if (serverId === 50) {
+            return { id: 50, status: 'running', publicIPv4: '203.0.113.50', publicIPv6: null };
+          }
+          if (serverId === 123459) {
+            return { id: 123459, status: 'running', publicIPv4: '203.0.113.13', publicIPv6: null };
+          }
+          return null;
+        }),
       }),
       systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: async () => true }),
       machineIdFactory: () => '30000000-0000-4000-8000-000000000013',

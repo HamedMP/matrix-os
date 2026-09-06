@@ -135,6 +135,7 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       WorkingDirectory=/opt/matrix
+      ExecStartPre=/opt/matrix/bin/matrix-wait-runtime-ready
       ExecStart=/opt/matrix/bin/matrix-code
       Restart=on-failure
       RestartSec=5
@@ -160,7 +161,14 @@ write_files:
       User=root
       Group=root
       EnvironmentFile=/opt/matrix/env/host.env
+      ExecStartPre=/opt/matrix/bin/matrix-wait-runtime-ready
       ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server
+      CPUWeight=10
+      IOWeight=10
+      Nice=10
+      IOSchedulingClass=idle
+      MemoryHigh=1G
+      MemoryMax=1536M
       Restart=on-failure
       RestartSec=10m
       TimeoutStartSec=900
@@ -194,7 +202,7 @@ write_files:
     content: |
       [Unit]
       Description=Install Matrix OS optional Hermes agent
-      After=network-online.target
+      After=network-online.target matrix-code-server.service
       Wants=network-online.target
       ConditionPathExists=/opt/matrix/bin/matrix-install-hermes
 
@@ -202,7 +210,14 @@ write_files:
       Type=oneshot
       User=root
       Group=root
+      ExecStartPre=/opt/matrix/bin/matrix-wait-runtime-ready
       ExecStart=/opt/matrix/bin/matrix-install-hermes
+      CPUWeight=10
+      IOWeight=10
+      Nice=10
+      IOSchedulingClass=idle
+      MemoryHigh=1G
+      MemoryMax=1536M
       ExecStartPost=-/bin/systemctl start matrix-code.service
       Restart=on-failure
       RestartSec=10m
@@ -237,7 +252,7 @@ write_files:
     content: |
       [Unit]
       Description=Install Matrix OS optional Linux developer tools
-      After=network-online.target
+      After=network-online.target matrix-hermes.service
       Wants=network-online.target
       ConditionPathExists=/opt/matrix/bin/matrix-install-linux-tools
 
@@ -250,7 +265,14 @@ write_files:
       Environment=XDG_CONFIG_HOME=/home/matrix/home/.config
       Environment=XDG_DATA_HOME=/home/matrix/home/.local/share
       Environment=XDG_CACHE_HOME=/home/matrix/home/.cache
+      ExecStartPre=/opt/matrix/bin/matrix-wait-runtime-ready
       ExecStart=/opt/matrix/bin/matrix-install-linux-tools
+      CPUWeight=10
+      IOWeight=10
+      Nice=10
+      IOSchedulingClass=idle
+      MemoryHigh=1G
+      MemoryMax=1536M
       Restart=on-failure
       RestartSec=10m
       TimeoutStartSec=1800
@@ -667,7 +689,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
+    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes matrix-wait-runtime-ready; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
     for optional_bin in matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do

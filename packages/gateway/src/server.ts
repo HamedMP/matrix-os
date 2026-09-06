@@ -26,6 +26,7 @@ import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
 import { logTerminalDebug } from "./terminal-debug.js";
 import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
+import { registerTerminalReadinessRoute } from "./terminal-readiness-route.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import {
   createConversationLifecycle,
@@ -2559,6 +2560,7 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
+  registerTerminalReadinessRoute(app, upgradeWebSocket);
   chatTerminalWiring.registerSessionRoute(app, upgradeWebSocket);
 
   if (codingAgentThreadStream) {

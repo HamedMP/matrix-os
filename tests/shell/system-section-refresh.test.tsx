@@ -34,6 +34,43 @@ describe("SystemSection release refresh", () => {
     vi.restoreAllMocks();
   });
 
+  it("shows truthful loading labels instead of reporting an unknown gateway", async () => {
+    const systemInfo = deferred<Response>();
+    const health = deferred<Response>();
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/system/info")) return systemInfo.promise;
+      if (url.endsWith("/health")) return health.promise;
+      if (url.includes("/api/system/update")) {
+        return Promise.resolve(jsonResponse({ channel: "stable", latest: null, updateAvailable: false }));
+      }
+      if (url.includes("/api/system/releases")) {
+        return Promise.resolve(jsonResponse({ channel: "stable", releases: [] }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SystemSection />);
+
+    expect(screen.getAllByText("Checking…").length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText("unknown")).toBeNull();
+    expect(screen.queryByText("unavailable")).toBeNull();
+
+    await act(async () => {
+      systemInfo.resolve(jsonResponse({
+        version: "v-ready",
+        runningVersion: "v-ready",
+        updateChannel: "stable",
+        release: { version: "v-ready", channel: "stable" },
+      }));
+      health.resolve(jsonResponse({ status: "ok", cronJobs: 0, channels: {} }));
+    });
+
+    await waitFor(() => expect(screen.getByText("ok")).toBeTruthy());
+    expect(screen.getAllByText("v-ready").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("uses the persistent update channel instead of the bundle provenance channel", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
