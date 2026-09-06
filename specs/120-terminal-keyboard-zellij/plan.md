@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 ---
 # Shared terminal keyboard and Zellij panes
 
