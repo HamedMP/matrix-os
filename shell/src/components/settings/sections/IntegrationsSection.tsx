@@ -8,6 +8,7 @@ import {
   shouldLogIntegrationWarning,
   type ConnectedService,
 } from "./integrations-helpers";
+import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
 
 const GATEWAY = getGatewayUrl();
 
@@ -710,6 +711,7 @@ export function IntegrationsSection() {
           </div>
         )}
       </section>
+      <CustomMcpServersPanel />
     </div>
   );
 }
