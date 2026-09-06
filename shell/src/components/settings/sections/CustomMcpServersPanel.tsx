@@ -158,18 +158,20 @@ export function CustomMcpServersPanel() {
     replaceServers(serversRef.current.map((server) => server.id === serverId ? update(server) : server));
   }
 
-  function queuePolicyUpdate(serverId: string, update: (server: McpServer) => McpServer): void {
-    updateLocalServer(serverId, update);
-    saveGenerationsRef.current[serverId] = (saveGenerationsRef.current[serverId] ?? 0) + 1;
+  function startPolicyWorker(serverId: string): void {
     if (saveWorkersRef.current[serverId]) return;
     setBusy(serverId);
     setError(null);
+    let attemptedGeneration = -1;
+    let retryNewerEdit = false;
     const worker = (async () => {
       let rebaseAvailable = true;
       // react-doctor-disable-next-line react-hooks-js/todo -- the worker must always release its per-server refs and busy state, including on fetch and parse failures.
       try {
         while (true) {
           const generation = saveGenerationsRef.current[serverId];
+          if (generation === undefined) return;
+          attemptedGeneration = generation;
           const desired = findMcpServer(serversRef.current, serverId);
           if (!desired) return;
           const response = await fetch(`${GATEWAY}/api/mcp-servers/${serverId}`, {
@@ -202,6 +204,7 @@ export function CustomMcpServersPanel() {
           if (saveGenerationsRef.current[serverId] === generation) return;
         }
       } catch (operationError: unknown) {
+        retryNewerEdit = (saveGenerationsRef.current[serverId] ?? -1) > attemptedGeneration;
         console.warn(
           "[custom-mcp] policy save failed:",
           operationError instanceof Error ? operationError.message : String(operationError),
@@ -209,11 +212,21 @@ export function CustomMcpServersPanel() {
         setError("The Custom MCP policy could not be saved. Your local edits remain visible; retry the change.");
       } finally {
         delete saveWorkersRef.current[serverId];
-        delete saveGenerationsRef.current[serverId];
-        setBusy(null);
+        if (retryNewerEdit) {
+          startPolicyWorker(serverId);
+        } else {
+          delete saveGenerationsRef.current[serverId];
+          setBusy(null);
+        }
       }
     })();
     saveWorkersRef.current[serverId] = worker;
+  }
+
+  function queuePolicyUpdate(serverId: string, update: (server: McpServer) => McpServer): void {
+    updateLocalServer(serverId, update);
+    saveGenerationsRef.current[serverId] = (saveGenerationsRef.current[serverId] ?? 0) + 1;
+    startPolicyWorker(serverId);
   }
 
   return (

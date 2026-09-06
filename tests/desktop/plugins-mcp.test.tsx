@@ -135,4 +135,46 @@ describe("desktop Custom MCP management", () => {
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
     expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("persists a newer edit queued while a rebased retry fails", async () => {
+    let releaseRetry!: () => void;
+    const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    const server = {
+      id: "6bc45f4b-cf18-43ac-a424-c199a43511f4",
+      name: "Research",
+      url: "https://mcp.acme.tools/mcp",
+      authMode: "none" as const,
+      status: "disabled",
+      enabled: false,
+      revision: 1,
+      tools: [{ name: "search", description: "", inputSchema: {}, approval: "always_ask" as const, enabled: false }],
+    };
+    const authoritative = { ...server, revision: 2 };
+    const api = makeApi();
+    vi.mocked(api.get)
+      .mockResolvedValueOnce([server] as never)
+      .mockResolvedValueOnce([authoritative] as never);
+    vi.mocked(api.patch).mockImplementation(async (_path, body) => {
+      const attempt = vi.mocked(api.patch).mock.calls.length;
+      if (attempt === 1) throw new Error("revision conflict");
+      if (attempt === 2) {
+        await retryGate;
+        throw new Error("temporary failure");
+      }
+      return { ...authoritative, ...(body as object), revision: 3 } as never;
+    });
+    useConnection.setState({ status: "signed-in", handle: "operator", api: api as never });
+    render(<McpServersSection />);
+
+    fireEvent.click((await screen.findAllByRole("checkbox"))[0]!);
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getByLabelText("search approval"), { target: { value: "allow" } });
+    releaseRetry();
+
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(api.patch).mock.calls[2]?.[1]).toMatchObject({
+      revision: 2,
+      tools: [{ name: "search", enabled: true, approval: "allow" }],
+    });
+  });
 });

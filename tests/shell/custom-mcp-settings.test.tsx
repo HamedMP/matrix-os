@@ -103,4 +103,50 @@ describe("Canvas Custom MCP management", () => {
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
     expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("persists a newer edit queued while a rebased retry fails", async () => {
+    let releaseRetry!: () => void;
+    const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    let server = {
+      id: "6bc45f4b-cf18-43ac-a424-c199a43511f4",
+      name: "Research",
+      url: "https://mcp.acme.tools/mcp",
+      authMode: "none",
+      status: "disabled",
+      enabled: false,
+      revision: 1,
+      tools: [{ name: "search", description: "", inputSchema: {}, approval: "always_ask", enabled: false }],
+    };
+    let getCount = 0;
+    const patchBodies: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET") {
+        getCount += 1;
+        if (getCount === 2) server = { ...server, revision: 2 };
+        return Response.json([server]);
+      }
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      patchBodies.push(body);
+      if (patchBodies.length === 1) return Response.json({ error: "Revision conflict" }, { status: 409 });
+      if (patchBodies.length === 2) {
+        await retryGate;
+        return Response.json({ error: "Temporary failure" }, { status: 503 });
+      }
+      server = { ...server, ...body, revision: 3 } as typeof server;
+      return Response.json(server);
+    });
+    render(<CustomMcpServersPanel />);
+
+    fireEvent.click((await screen.findAllByRole("checkbox"))[0]!);
+    await waitFor(() => expect(patchBodies).toHaveLength(2));
+    fireEvent.change(screen.getByLabelText("search approval"), { target: { value: "allow" } });
+    releaseRetry();
+
+    await waitFor(() => expect(patchBodies).toHaveLength(3));
+    expect(patchBodies[2]).toMatchObject({
+      revision: 2,
+      tools: [{ name: "search", enabled: true, approval: "allow" }],
+    });
+  });
 });
