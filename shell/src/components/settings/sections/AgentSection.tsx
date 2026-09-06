@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { AgentsProvidersView, useProviderSettingsController } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
-import { createProviderSettingsTransport } from "@/lib/provider-settings-transport";
+import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
 import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
 
 export function AgentSection({
@@ -40,7 +40,8 @@ export function AgentSection({
         error={controller.error}
         onSelectHarness={controller.onSelectHarness}
         onRefresh={() => { void controller.refresh(); }}
-        onMutate={(intent) => { void controller.mutate(intent); }}
+        onMutate={controller.mutate}
+        onSetupHarness={onOpenTerminal ? (harness) => openWebProviderAgentSetup(harness, onOpenTerminal) : undefined}
         onOpenTerminal={(sessionId) => { onOpenTerminal?.(sessionId); }}
         onOpenBrowser={openProviderAuthorizationPath}
         onAddCredit={async (_sourceId, packageId, requestId) => {

@@ -6,6 +6,10 @@ import {
 } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 
 describe("generic harness model catalog", () => {
+  it("does not turn Pi diagnostic prose into ready providers", () => {
+    expect(parsePiModelCatalog("No models available.\nRun pi to configure a provider.\nWarning: credentials unavailable\n")).toEqual([]);
+  });
+
   it("parses Pi's authenticated provider table into executable provider/model references", () => {
     expect(parsePiModelCatalog(`
 provider      model                context  max-out  thinking  images
@@ -105,7 +109,7 @@ not a model
   });
 
   it("caps the merged provider catalog when Pi and OpenCode expose disjoint model sets", async () => {
-    const piModels = Array.from({ length: 256 }, (_, index) => `openai model-${index}`).join("\n");
+    const piModels = Array.from({ length: 256 }, (_, index) => `openai model-${index} 128K 16K yes no`).join("\n");
     const openCodeModels = Array.from({ length: 256 }, (_, index) => `openai/model-${index + 256}`).join("\n");
     const reader = createGenericHarnessModelCatalogReader({
       homePath: "/home/matrix/home",

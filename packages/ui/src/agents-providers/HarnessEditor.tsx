@@ -6,9 +6,8 @@ import type {
   ProviderModelProvider,
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
-import { isRunnableGenericHarnessCredentialRoute } from "@matrix-os/contracts";
+import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { authLabel, titleCase } from "./utils.js";
 
 const ACCENTS: ProviderAccentColor[] = ["blue", "green", "orange", "red", "purple", "cyan", "teal"];
 
@@ -29,8 +28,7 @@ function sourceSupportsModel(
   harness?: ProviderHarnessInstance,
 ): boolean {
   if (!source.eligibleModelIds.includes(modelId)) return false;
-  if (harness && (harness.harness === "pi" || harness.harness === "opencode")
-    && !isRunnableGenericHarnessCredentialRoute({
+  if (harness && !isSupportedGenericHarnessCredentialRoute({
       ...harness,
       accessSourceId: source.id,
       route: { kind: "configurable", providerId: source.providerId, modelId },
@@ -55,27 +53,28 @@ export function HarnessEditor({
   harness,
   disabled,
   canUpdate,
-  canEnable,
   canSetRoute,
   canSelectSource,
   canSelectAccount,
   onMutate,
+  onRefresh,
 }: {
   snapshot: ProviderSettingsSnapshot;
   harness: ProviderHarnessInstance;
   disabled: boolean;
   canUpdate: boolean;
-  canEnable: boolean;
   canSetRoute: boolean;
   canSelectSource: boolean;
   canSelectAccount: boolean;
   onMutate: (intent: ProviderSettingsMutationIntent) => void;
+  onRefresh: () => void;
 }) {
   const [displayName, setDisplayName] = useState(harness.displayName);
   useEffect(() => setDisplayName(harness.displayName), [harness.displayName, harness.id]);
   const provider = providerFor(snapshot, harness);
   const model = provider?.models.find((candidate) => candidate.id === harness.route.modelId) ?? null;
   const accessSource = snapshot.accessSources.find((source) => source.id === harness.accessSourceId) ?? null;
+  const savedSourceUnsupported = accessSource !== null && !isSupportedGenericHarnessCredentialRoute(harness, accessSource);
   const account = snapshot.accounts.find((candidate) => candidate.id === harness.selectedAccountId) ?? null;
   const sources = snapshot.accessSources.filter((source) => source.providerId === harness.route.providerId
     && sourceSupportsModel(snapshot, source, harness.route.modelId, harness));
@@ -124,45 +123,15 @@ export function HarnessEditor({
   };
 
   return (
-    <section className="matrix-ap-editor" aria-labelledby="matrix-ap-harness-title">
-      <div className="matrix-ap-editor-head">
-        <div className="matrix-ap-title-lockup">
-          <span className="matrix-ap-harness-mark" data-accent={harness.accentColor ?? "none"} aria-hidden="true">
-            {harness.displayName.slice(0, 1).toUpperCase()}
-          </span>
-          <div>
-            <h2 id="matrix-ap-harness-title">{harness.displayName}</h2>
-            <p>{titleCase(harness.harness)}{harness.version ? ` · ${harness.version}` : ""}</p>
-          </div>
-        </div>
-        <label className="matrix-ap-switch">
-          <input
-            type="checkbox"
-            role="switch"
-            aria-label={`Enable ${harness.displayName}`}
-            checked={harness.enabled}
-            disabled={disabled || !canEnable || harness.installState !== "installed"}
-            onChange={() => onMutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: !harness.enabled })}
-          />
-          <span aria-hidden="true" />
-        </label>
-      </div>
-
-      <div className="matrix-ap-state-strip">
-        <span data-state={harness.connectivity}>{titleCase(harness.connectivity)}</span>
-        <span>{titleCase(harness.installState)}</span>
-        <span>{authLabel(harness.authState)}</span>
-        {harness.activeChatCount > 0 ? <span>{harness.activeChatCount} active chat{harness.activeChatCount === 1 ? "" : "s"}</span> : null}
-      </div>
-
+    <section className="matrix-ap-editor" aria-label={`${harness.displayName} configuration`}>
+      {savedSourceUnsupported ? <div className="matrix-ap-notice" data-tone="warning"><strong>Saved access cannot be used by this agent</strong><span>Choose a supported connection. Matrix AI is currently available through Pi and OpenCode, not this agent.</span></div> : null}
       {harness.installState !== "installed" ? (
         <div className="matrix-ap-notice" data-tone="warning">
-          <div><strong>{harness.displayName} is not installed</strong><span>Install this harness from Terminal before enabling it here.</span></div>
-          <button type="button" className="matrix-ap-button" disabled aria-label={`Install ${harness.displayName}`} title="Harness installation is not available from this runtime">Install unavailable</button>
+          <div><strong>{harness.displayName} {harness.installState === "missing" ? "is not installed" : "installation needs checking"}</strong><span>Install from this computer’s Terminal, then check again. Use the Connection action above when available.</span></div>
         </div>
       ) : null}
-      {harness.connectivity === "offline" ? (
-        <div className="matrix-ap-notice" data-tone="warning"><strong>Offline</strong><span>Saved settings are visible, but changes may not reach this computer.</span></div>
+      {harness.connectivity !== "online" ? (
+        <div className="matrix-ap-notice" data-tone="warning"><strong>Connection not verified</strong><span>Saved settings are shown. Check again before starting a chat.</span><button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button></div>
       ) : null}
       {routeUnavailable ? (
         <div className="matrix-ap-notice" data-tone="warning">
@@ -172,41 +141,6 @@ export function HarnessEditor({
       ) : null}
 
       <div className="matrix-ap-panel">
-        <span className="matrix-ap-eyebrow">Instance</span>
-        <div className="matrix-ap-form-grid matrix-ap-form-grid-name">
-          <label className="matrix-ap-field">
-            <span>Display name</span>
-            <input
-              value={displayName}
-              maxLength={120}
-              disabled={disabled || !canUpdate}
-              onChange={(event) => setDisplayName(event.target.value)}
-              onBlur={() => {
-                const next = displayName.trim();
-                if (next && next !== harness.displayName) onMutate({ type: "update_harness", harnessInstanceId: harness.id, displayName: next });
-              }}
-            />
-          </label>
-          <fieldset className="matrix-ap-accents" disabled={disabled || !canUpdate}>
-            <legend>Accent color</legend>
-            <div>
-              {ACCENTS.map((accent) => (
-                <button
-                  key={accent}
-                  type="button"
-                  className="matrix-ap-accent"
-                  data-accent={accent}
-                  data-selected={accent === harness.accentColor ? "true" : undefined}
-                  aria-label={`Use ${accent} accent`}
-                  onClick={() => onMutate({ type: "update_harness", harnessInstanceId: harness.id, accentColor: accent })}
-                />
-              ))}
-            </div>
-          </fieldset>
-        </div>
-      </div>
-
-      <div className="matrix-ap-panel">
         <div className="matrix-ap-panel-head">
           <div><span className="matrix-ap-eyebrow">Model</span><h3>Choose the model</h3></div>
           {!mutableRoute ? <span className="matrix-ap-fixed-tag">Fixed by {harness.displayName}</span> : null}
@@ -214,7 +148,7 @@ export function HarnessEditor({
         <div className="matrix-ap-form-grid">
           <label className="matrix-ap-field">
             <span>Provider</span>
-            <select
+            {canSetRoute && mutableRoute ? <select
               aria-label="Model provider"
               value={harness.route.providerId}
               disabled={disabled || !canSetRoute || !mutableRoute}
@@ -225,11 +159,11 @@ export function HarnessEditor({
                 <option value={harness.route.providerId}>{unavailableRouteLabel(harness.route.providerId)} · Unavailable</option>
               ) : null}
               {routeProviders.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
-            </select>
+            </select> : <span className="matrix-ap-readonly-value">{provider?.displayName ?? `${unavailableRouteLabel(harness.route.providerId)} · Unavailable`}</span>}
           </label>
           <label className="matrix-ap-field">
             <span>Model</span>
-            <select
+            {canSetRoute && mutableRoute ? <select
               aria-label="Model"
               value={harness.route.modelId}
               disabled={disabled || !canSetRoute || !mutableRoute}
@@ -245,26 +179,26 @@ export function HarnessEditor({
                   || snapshot.accessSources.some((source) => source.providerId === harness.route.providerId
                     && sourceSupportsModel(snapshot, source, candidate.id, harness))))
                 .map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
-            </select>
+            </select> : <span className="matrix-ap-readonly-value">{model?.displayName ?? `${unavailableRouteLabel(harness.route.modelId)} · Unavailable`}</span>}
           </label>
         </div>
       </div>
 
       <div className="matrix-ap-panel">
         <div className="matrix-ap-panel-head">
-          <div><span className="matrix-ap-eyebrow">Access &amp; billing</span><h3>Choose how this route is funded</h3></div>
+          <div><h3>Access</h3></div>
         </div>
         <div className="matrix-ap-signal-path" data-testid="provider-signal-path">
           <span><small>Harness</small><strong>{harness.displayName}</strong></span>
           <i aria-hidden="true">›</i>
           <span><small>Model</small><strong>{model?.displayName ?? harness.route.modelId}</strong></span>
           <i aria-hidden="true">›</i>
-          <span><small>Paid through</small><strong>{accessSource?.displayName ?? "Not selected"}</strong></span>
+          <span><small>Paid through</small><strong>{savedSourceUnsupported ? "Saved access unavailable" : accessSource?.displayName ?? "Not selected"}</strong></span>
         </div>
         <div className="matrix-ap-form-grid">
           <label className="matrix-ap-field">
             <span>Paid through</span>
-            <select
+            {canSelectSource && sources.length > 0 ? <select
               aria-label="Paid through"
               value={harness.accessSourceId ?? ""}
               disabled={disabled || !canSelectSource}
@@ -272,8 +206,9 @@ export function HarnessEditor({
               onChange={(event) => onMutate({ type: "select_access_source", harnessInstanceId: harness.id, accessSourceId: event.target.value })}
             >
               <option value="" disabled>Select an access source</option>
+              {savedSourceUnsupported ? <option value={harness.accessSourceId ?? ""} disabled>Saved access unavailable</option> : null}
               {sources.map((source) => <option key={source.id} value={source.id}>{source.displayName}</option>)}
-            </select>
+            </select> : <span className="matrix-ap-readonly-value">{savedSourceUnsupported ? "Saved access unavailable" : accessSource?.displayName ?? "No access connected"}</span>}
           </label>
           {accessSource?.kind === "harness_profile" ? (
             <div className="matrix-ap-field">
@@ -283,7 +218,7 @@ export function HarnessEditor({
           ) : (
             <label className="matrix-ap-field">
               <span>Account</span>
-              <select
+              {canSelectAccount && (accounts.length > 0 || gatewaySource !== null) ? <select
                 aria-label="Account"
                 value={harness.selectedAccountId ?? ""}
                 disabled={disabled || !canSelectAccount || (accounts.length === 0 && gatewaySource === null)}
@@ -299,19 +234,41 @@ export function HarnessEditor({
               >
                 {gatewaySource ? <option value="">Matrix gateway / no account</option> : <option value="" disabled>Select an account</option>}
                 {accounts.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
-              </select>
+              </select> : <span className="matrix-ap-readonly-value">{savedSourceUnsupported ? "Choose a supported connection" : accessSource?.kind === "matrix_gateway" ? "Included with Matrix AI — no separate login" : account?.displayName ?? "No account connected"}</span>}
             </label>
           )}
         </div>
-        <p className="matrix-ap-help">The provider supplies the model. Matrix AI appears under Paid through because it funds the route.</p>
+        <p className="matrix-ap-help">{harness.harness === "hermes" || harness.harness === "openclaw"
+          ? "Connect your own provider account in Terminal. Matrix AI funding is not supported for this agent yet."
+          : "Use Matrix AI credit or connect your own account. Only supported connections appear here."}</p>
         {accessSource?.kind === "harness_profile" ? (
           <p className="matrix-ap-help">{harness.displayName} manages authentication for this route. Add or switch accounts from its visible Terminal flow.</p>
         ) : null}
         {account ? <p className="matrix-ap-help">Selected account: {account.displayName}</p> : null}
-        {!canSetRoute || !canSelectSource || !canSelectAccount ? (
-          <p className="matrix-ap-help">Some routing controls are unavailable in this runtime.</p>
-        ) : null}
       </div>
+      <details className="matrix-ap-advanced">
+        <summary>Advanced settings</summary>
+        <div className="matrix-ap-panel matrix-ap-form-grid matrix-ap-form-grid-name">
+          <label className="matrix-ap-field">
+            <span>Display name</span>
+            <input value={displayName} maxLength={120} disabled={disabled || !canUpdate}
+              onChange={(event) => setDisplayName(event.target.value)}
+              onBlur={() => {
+                const next = displayName.trim();
+                if (next && next !== harness.displayName) onMutate({ type: "update_harness", harnessInstanceId: harness.id, displayName: next });
+              }} />
+          </label>
+          <fieldset className="matrix-ap-accents" disabled={disabled || !canUpdate}>
+            <legend>Accent color</legend>
+            <div>{ACCENTS.map((accent) => (
+              <button key={accent} type="button" className="matrix-ap-accent" data-accent={accent}
+                data-selected={accent === harness.accentColor ? "true" : undefined}
+                aria-label={`Use ${accent} accent`}
+                onClick={() => onMutate({ type: "update_harness", harnessInstanceId: harness.id, accentColor: accent })} />
+            ))}</div>
+          </fieldset>
+        </div>
+      </details>
     </section>
   );
 }

@@ -677,3 +677,17 @@ export function isRunnableGenericHarnessCredentialRoute(
   return isPortableGenericHarnessCredentialRoute(harness, source)
     || isNativeGenericHarnessCredentialRoute(harness, source);
 }
+
+/** Configuration support: system runtimes do not receive Matrix relay credentials. */
+export function isSupportedGenericHarnessCredentialRoute(
+  harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
+  source: ProviderAccessSource | null | undefined,
+): boolean {
+  if (harness.harness === "hermes" || harness.harness === "openclaw") {
+    return source?.kind !== "matrix_gateway";
+  }
+  if (harness.harness === "pi" || harness.harness === "opencode") {
+    return isRunnableGenericHarnessCredentialRoute(harness, source);
+  }
+  return true;
+}

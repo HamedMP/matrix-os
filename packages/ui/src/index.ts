@@ -31,6 +31,7 @@ export type {
 export {
   ProviderSettingsController,
   ProviderSettingsTransportError,
+  openProviderAgentSetup,
   useProviderSettingsController,
 } from "./agents-providers/provider-settings-controller.js";
 

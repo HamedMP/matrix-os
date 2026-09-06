@@ -217,6 +217,36 @@ labels are safe display metadata, not secret suffixes. Adding an account must
 not overwrite another account, and every runnable instance identifies the
 selected account or Matrix-funded access source explicitly.
 
+## Setup presentation and failure behavior
+
+All three desktop presentations use the shared compact, expandable agent list.
+Matrix AI appears above that list even when configuration or funding is missing;
+its card explains the missing state rather than disappearing. Show compatible
+agent navigation when the selected agent cannot use the managed connection.
+Selecting Matrix AI changes an explicit eligible provider/model/access-source
+route; it never silently enables a disabled agent. A saved source ID alone is
+not enough to label a route selected when its model is no longer allowed.
+Generic managed routes are currently executable through Pi/OpenCode. Hermes
+and OpenClaw system-runtime configuration does not yet apply that funding path;
+both presentation and mutation validation must reject a Matrix AI selection
+there rather than save a misleading access label.
+
+The header **Add agent** action guides **Agent → Connect → Model**. Installation
+and native profile management open the selected agent's server-advertised
+command in a visible canonical Terminal. Surface adapters pin the target
+computer and reject a computer switch before launch or navigation. Installed
+agents are discovered; users should not recreate entries just to see them.
+
+Connection actions precede collapsed **Advanced** customization. Unsupported
+multi-account actions remain hidden: native CLI sign-in may replace the current
+login and must not imply isolated concurrent accounts. Keep supported native
+profile management reachable after authentication. Failed login remains
+retryable within its original attempt expiry. Add, remove, and reassignment
+dialogs retain drafts/errors until the server confirms success. Once the user
+continues past Connect, refresh must not silently substitute a different funding
+source. Operator-owned budgets and unavailable controls are readable values,
+not inert form fields.
+
 ## Gateway readiness, credits, and usage
 
 Matrix AI is a managed access source, not an Anthropic account. It is `ready`

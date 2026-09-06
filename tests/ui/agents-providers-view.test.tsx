@@ -284,22 +284,21 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByText("Checked 2 minutes ago")).toBeVisible();
   });
 
-  it("renders the T3-derived harness rail with add at the top and a selected editor", () => {
+  it("renders the T3-derived expandable agent list with add at the top", () => {
     setup();
 
-    const rail = screen.getByRole("navigation", { name: "Agent harnesses" });
-    const controls = within(rail).getAllByRole("button");
-    expect(controls[0]).toHaveAccessibleName("Add harness");
-    expect(within(rail).getByRole("button", { name: /Hermes/ })).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("heading", { name: "Hermes" })).toBeVisible();
+    const rail = screen.getByRole("region", { name: "Installed agents" });
+    expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
+    expect(within(rail).getByRole("button", { name: /Hermes.*Ready/ })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("region", { name: "Hermes configuration" })).toBeVisible();
     expect(screen.getByLabelText("Model provider")).toHaveValue("anthropic");
     expect(screen.getByLabelText("Model")).toHaveValue("anthropic/claude-opus-5");
     expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Personal Anthropic subscription");
     expect(screen.getByRole("heading", { name: "Choose the model" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Choose how this route is funded" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Access" })).toBeVisible();
     expect(screen.getByLabelText("Paid through")).toHaveValue("owner_anthropic_profile");
     expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Paid through");
-    expect(screen.getByText(/Matrix AI appears under Paid through/)).toBeVisible();
+    expect(screen.getByText(/Connect your own provider account in Terminal/)).toBeVisible();
   });
 
   it("switches a generic harness to another provider as one coherent route intent", () => {
@@ -322,17 +321,20 @@ describe("AgentsProvidersView", () => {
   it("emits compatible access-source and account intents and never sends a blank account", () => {
     const next = snapshot();
     const harness = next.harnesses[0]!;
+    harness.harness = "pi";
+    harness.displayName = "Pi";
+    harness.accountIds = ["account_work"];
     harness.route = { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-sonnet-5" };
     harness.accessSourceId = "matrix_included";
     harness.selectedAccountId = null;
     next.gatewayPolicy!.allowedModelIds = ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"];
     const { onMutate } = setup({ snapshot: next });
 
-    fireEvent.change(screen.getByLabelText("Paid through"), { target: { value: "owner_anthropic_profile" } });
+    fireEvent.change(screen.getByLabelText("Paid through"), { target: { value: "owner_anthropic_key" } });
     fireEvent.change(screen.getByLabelText("Account"), { target: { value: "account_work" } });
     fireEvent.change(screen.getByLabelText("Account"), { target: { value: "" } });
 
-    expect(onMutate).toHaveBeenCalledWith({ type: "select_access_source", harnessInstanceId: "harness_hermes", accessSourceId: "owner_anthropic_profile" });
+    expect(onMutate).toHaveBeenCalledWith({ type: "select_access_source", harnessInstanceId: "harness_hermes", accessSourceId: "owner_anthropic_key" });
     expect(onMutate).toHaveBeenCalledWith({ type: "select_account", harnessInstanceId: "harness_hermes", accountId: "account_work" });
     expect(onMutate).toHaveBeenCalledWith({ type: "select_access_source", harnessInstanceId: "harness_hermes", accessSourceId: "matrix_included" });
     expect(onMutate).not.toHaveBeenCalledWith(expect.objectContaining({ type: "select_account", accountId: "" }));
@@ -342,21 +344,24 @@ describe("AgentsProvidersView", () => {
     setup({ selectedHarnessId: "harness_claude" });
 
     expect(screen.getByText("Fixed by Claude")).toBeVisible();
-    expect(screen.getByLabelText("Model provider")).toBeDisabled();
-    expect(screen.getByLabelText("Model")).toBeDisabled();
+    expect(screen.queryByRole("combobox", { name: "Model provider" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Model" })).not.toBeInTheDocument();
+    const configuration = screen.getByRole("region", { name: "Claude configuration" });
+    expect(within(configuration).getByText("Anthropic")).toBeVisible();
+    expect(within(configuration).getAllByText("Claude Opus 5").length).toBeGreaterThan(0);
   });
 
   it("does not advertise generic configuration mutations for specialized harnesses", () => {
     const { onMutate } = setup({ selectedHarnessId: "harness_claude" });
 
-    expect(screen.getByRole("switch", { name: "Enable Claude" })).toBeDisabled();
+    expect(screen.queryByRole("switch", { name: "Enable Claude" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Display name")).toBeDisabled();
     fireEvent.click(within(screen.getByTestId("account-account_personal"))
       .getByRole("button", { name: "Log out Personal" }));
     expect(onMutate).toHaveBeenCalledWith({ type: "logout_account", accountId: "account_personal" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
     expect(within(dialog).queryByRole("radio", { name: "Codex" })).toBeNull();
     expect(within(dialog).queryByRole("radio", { name: "Claude" })).toBeNull();
   });
@@ -372,46 +377,45 @@ describe("AgentsProvidersView", () => {
     });
     setup({ snapshot: limited });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
     expect(within(dialog).getByRole("radio", { name: "Hermes" })).toBeVisible();
     expect(within(dialog).getByRole("radio", { name: "OpenClaw" })).toBeVisible();
     expect(within(dialog).getByRole("radio", { name: "Pi" })).toBeDisabled();
     expect(within(dialog).getByRole("radio", { name: "OpenCode" })).toBeDisabled();
-    expect(within(dialog).getAllByText(/Unavailable in this runtime/)).toHaveLength(2);
+    expect(within(dialog).getAllByText(/Unavailable on this computer/)).toHaveLength(2);
     expect(within(dialog).getByRole("radio", { name: "Pi" }))
-      .toHaveAccessibleDescription(/Unavailable in this runtime/);
+      .toHaveAccessibleDescription(/Unavailable on this computer/);
     expect(within(dialog).getByRole("radio", { name: "OpenCode" }))
-      .toHaveAccessibleDescription(/Unavailable in this runtime/);
+      .toHaveAccessibleDescription(/Unavailable on this computer/);
   });
 
   it("shows the truthful setup path for a supported harness that is not installed", () => {
     setup();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
     fireEvent.click(within(dialog).getByRole("radio", { name: "OpenClaw" }));
-
-    expect(within(dialog).getByText("Install OpenClaw before adding it")).toBeVisible();
-    expect(within(dialog).getByText(/Open Terminal and use the \+ menu to install OpenClaw/)).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Add harness" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    expect(within(dialog).getByText("Install OpenClaw")).toBeVisible();
+    expect(within(dialog).getByText(/Installation runs in a visible Terminal/)).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Next" })).toBeDisabled();
   });
 
   it("marks access sources that still need authentication and keeps the auth handoff visible", () => {
     setup();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
-    fireEvent.change(within(dialog).getByLabelText("Model"), {
-      target: { value: "anthropic/claude-sonnet-5" },
-    });
-    const sources = within(dialog).getByLabelText("Paid through");
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    const sources = within(dialog).getByLabelText("Use AI through");
 
     expect(within(sources).getByRole("option", {
-      name: "Work Anthropic key · authentication required",
+      name: "Work Anthropic key · setup required",
     })).toBeVisible();
     fireEvent.change(sources, { target: { value: "owner_anthropic_key" } });
-    expect(within(dialog).getByText(/continue authentication from Accounts in a visible Terminal, browser, or secure credential prompt/)).toBeVisible();
+    expect(within(dialog).getByText(/Only connections reported ready can continue/)).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Next" })).toBeDisabled();
   });
 
   it("shows exact, stale, and unavailable gateway credit without inventing balances", () => {
@@ -439,7 +443,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByText("$0.00 remaining")).toBeNull();
   });
 
-  it("shows per-account usage and keeps login, logout, and remove distinct", () => {
+  it("shows per-account usage and keeps login, logout, and remove distinct", async () => {
     const { onMutate } = setup();
     const personal = screen.getByTestId("account-account_personal");
     const work = screen.getByTestId("account-account_work");
@@ -447,7 +451,9 @@ describe("AgentsProvidersView", () => {
     expect(within(personal).getByText("25% used")).toBeVisible();
     expect(within(work).getByText("$0.13 observed")).toBeVisible();
     fireEvent.click(within(personal).getByRole("button", { name: "Log out Personal" }));
+    await waitFor(() => expect(within(work).getByRole("button", { name: "Log in Work" })).toBeEnabled());
     fireEvent.click(within(work).getByRole("button", { name: "Log in Work" }));
+    await waitFor(() => expect(within(work).getByRole("button", { name: "Remove Work" })).toBeEnabled());
     fireEvent.click(within(work).getByRole("button", { name: "Remove Work" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
 
@@ -461,7 +467,9 @@ describe("AgentsProvidersView", () => {
   });
 
   it("requires dependency reassignment before removing an account in use", () => {
-    const { onMutate } = setup();
+    const value = snapshot();
+    value.harnesses[0]!.harness = "pi";
+    const { onMutate } = setup({ snapshot: value });
     const personal = screen.getByTestId("account-account_personal");
     fireEvent.click(within(personal).getByRole("button", { name: "Remove Personal" }));
 
@@ -481,7 +489,9 @@ describe("AgentsProvidersView", () => {
   });
 
   it("offers only reassignment targets that serve every dependent harness route", () => {
-    setup();
+    const value = snapshot();
+    value.harnesses[0]!.harness = "pi";
+    setup({ snapshot: value });
     fireEvent.click(within(screen.getByTestId("account-account_personal"))
       .getByRole("button", { name: "Remove Personal" }));
 
@@ -585,16 +595,17 @@ describe("AgentsProvidersView", () => {
       activeChatCount: 0,
     });
     const { rerender } = setup({ snapshot: base, selectedHarnessId: "harness_pi" });
-    expect(screen.getAllByText("Offline")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Install Pi" })).toBeDisabled();
+    expect(screen.getByText("Connection not verified")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Install Pi" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Install from this computer’s Terminal/)).toBeVisible();
 
     const readOnly = structuredClone(base);
     readOnly.access = { mode: "read_only", reason: "remote_policy" };
     Object.assign(readOnly, { supportedActions: [] });
     rerender(<AgentsProvidersView {...setupProps(readOnly, { selectedHarnessId: "harness_pi", busy: true })} />);
     expect(screen.getByRole("status")).toHaveTextContent("Read only");
-    expect(screen.getByRole("button", { name: "Install Pi" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add harness" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Install Pi" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add agent" })).not.toBeInTheDocument();
   });
 
   it("shows a failed saved route even when it is absent from the selectable catalog", () => {
@@ -621,7 +632,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByText("Saved model catalog unavailable")).toBeVisible();
   });
 
-  it("keeps unsupported future account and credit actions visible but explanatory and disabled", () => {
+  it("hides unsupported future account and credit actions without inventing capabilities", () => {
     const limited = snapshot();
     Object.assign(limited, {
       supportedActions: [
@@ -631,11 +642,10 @@ describe("AgentsProvidersView", () => {
     });
     setup({ snapshot: limited });
 
-    expect(screen.getByRole("button", { name: "+ Add account" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Log out Personal" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Remove Personal" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add credit" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add credit" })).toHaveAttribute("title", "Adding credit is not available yet");
+    expect(screen.queryByRole("button", { name: "+ Add account" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Log out Personal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Personal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
   });
 
   it("renders platform-authoritative gateway policy as read-only", () => {
@@ -644,25 +654,30 @@ describe("AgentsProvidersView", () => {
       action !== "set_gateway_budget" && action !== "set_gateway_allowlist");
     const { onMutate } = setup({ snapshot: authoritative });
 
-    expect(screen.getByLabelText("Monthly budget in USD")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save budget" })).toBeDisabled();
-    expect(screen.getByRole("checkbox", { name: "Allow Claude Sonnet 5" })).toBeDisabled();
-    expect(screen.getByText("Some gateway controls are unavailable in this runtime.")).toBeVisible();
+    expect(screen.queryByLabelText("Monthly budget in USD")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save budget" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Allow Claude Sonnet 5" })).not.toBeInTheDocument();
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Managed by your workspace")).toBeVisible();
+    expect(within(gateway).getByText("$1.00")).toBeVisible();
+    expect(within(gateway).getByText("Claude Opus 5")).toBeVisible();
+    expect(within(gateway).queryByText("Claude Sonnet 5")).not.toBeInTheDocument();
     expect(onMutate).not.toHaveBeenCalled();
   });
 
   it("adds a harness from the top-rail flow without collecting credentials", () => {
     const { onMutate } = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
     fireEvent.click(within(dialog).getByRole("radio", { name: "OpenCode" }));
-    fireEvent.change(within(dialog).getByLabelText("Display name"), { target: { value: "OpenCode Work" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Add harness" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add agent" }));
 
     expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({
       type: "add_harness",
       harness: "opencode",
-      displayName: "OpenCode Work",
+      displayName: "OpenCode",
       accountId: null,
     }));
     expect(within(dialog).queryByLabelText(/API key/i)).toBeNull();
@@ -670,24 +685,19 @@ describe("AgentsProvidersView", () => {
 
   it("offers direct adapters only routes backed by portable credentials", () => {
     setup();
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
     fireEvent.click(within(dialog).getByRole("radio", { name: "OpenCode" }));
-
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    expect(within(within(dialog).getByLabelText("Use AI through"))
+      .getByRole("option", { name: "Matrix AI included credit" })).toBeVisible();
+    expect(within(within(dialog).getByLabelText("Use AI through"))
+      .queryByRole("option", { name: "Personal Anthropic subscription" })).toBeNull();
+    expect(within(within(dialog).getByLabelText("Use AI through"))
+      .getByRole("option", { name: "Work Anthropic key · setup required" })).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
     expect(within(within(dialog).getByLabelText("Model provider"))
       .queryByRole("option", { name: "OpenAI" })).toBeNull();
-    expect(within(within(dialog).getByLabelText("Paid through"))
-      .getByRole("option", { name: "Matrix AI included credit" })).toBeVisible();
-    expect(within(within(dialog).getByLabelText("Paid through"))
-      .queryByRole("option", { name: "Personal Anthropic subscription" })).toBeNull();
-
-    fireEvent.change(within(dialog).getByLabelText("Model"), {
-      target: { value: "anthropic/claude-sonnet-5" },
-    });
-    expect(within(within(dialog).getByLabelText("Paid through"))
-      .getByRole("option", { name: "Work Anthropic key · authentication required" })).toBeVisible();
-    expect(within(within(dialog).getByLabelText("Paid through"))
-      .queryByRole("option", { name: "Personal Anthropic subscription" })).toBeNull();
   });
 
   it("offers a harness-owned OpenCode catalog as real provider and model choices", () => {
@@ -746,10 +756,14 @@ describe("AgentsProvidersView", () => {
       accessSourceId: "harness_opencode_baseten",
       accountId: null,
     }));
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
     fireEvent.click(within(dialog).getByRole("radio", { name: "OpenCode" }));
-
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    fireEvent.change(within(dialog).getByLabelText("Use AI through"), { target: { value: "harness_opencode_baseten" } });
+    expect(within(within(dialog).getByLabelText("Use AI through"))
+      .getByRole("option", { name: "OpenCode account" })).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
     expect(within(within(dialog).getByLabelText("Model provider"))
       .getByRole("option", { name: "Baseten" })).toBeVisible();
     fireEvent.change(within(dialog).getByLabelText("Model provider"), {
@@ -757,8 +771,6 @@ describe("AgentsProvidersView", () => {
     });
     expect(within(within(dialog).getByLabelText("Model"))
       .getByRole("option", { name: "DeepSeek V4 Pro" })).toBeVisible();
-    expect(within(within(dialog).getByLabelText("Paid through"))
-      .getByRole("option", { name: "OpenCode account" })).toBeVisible();
   });
 
   it("keeps a failed live route visible while its access source is unavailable", () => {
@@ -793,38 +805,37 @@ describe("AgentsProvidersView", () => {
 
   it("adds a second instance of an existing harness with its own route and account", () => {
     const { onMutate } = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
     fireEvent.click(within(dialog).getByRole("radio", { name: "Hermes" }));
-    fireEvent.change(within(dialog).getByLabelText("Display name"), {
-      target: { value: "Hermes OpenAI" },
-    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    fireEvent.change(within(dialog).getByLabelText("Use AI through"), { target: { value: "owner_openai_profile" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
     fireEvent.change(within(dialog).getByLabelText("Model provider"), {
       target: { value: "openai" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Add harness" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add agent" }));
 
     expect(onMutate).toHaveBeenCalledWith({
       type: "add_harness",
       harness: "hermes",
-      displayName: "Hermes OpenAI",
+      displayName: "Hermes",
       route: { kind: "configurable", providerId: "openai", modelId: "openai/gpt-5.6" },
       accessSourceId: "owner_openai_profile",
       accountId: "account_openai",
     });
   });
 
-  it("does not offer a Matrix gateway source for a model outside its allowlist", () => {
+  it("does not offer a model outside the selected Matrix gateway allowlist", () => {
     setup();
-    fireEvent.click(screen.getByRole("button", { name: "Add harness" }));
-    const dialog = screen.getByRole("dialog", { name: "Add harness" });
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Add agent" });
     fireEvent.click(within(dialog).getByRole("radio", { name: "OpenCode" }));
-    fireEvent.change(within(dialog).getByLabelText("Model"), {
-      target: { value: "anthropic/claude-sonnet-5" },
-    });
-
-    expect(within(within(dialog).getByLabelText("Paid through"))
-      .queryByRole("option", { name: "Matrix AI included credit" })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    expect(within(dialog).getByLabelText("Use AI through")).toHaveValue("matrix_included");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    expect(within(within(dialog).getByLabelText("Model"))
+      .queryByRole("option", { name: "Claude Sonnet 5" })).toBeNull();
   });
 });
 

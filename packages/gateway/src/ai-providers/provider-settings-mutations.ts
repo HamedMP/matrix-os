@@ -1,5 +1,5 @@
 import {
-  isRunnableGenericHarnessCredentialRoute,
+  isSupportedGenericHarnessCredentialRoute,
   type AiProviderSnapshotV3,
   type ProviderAccessSource,
   type ProviderHarnessInstance,
@@ -23,8 +23,7 @@ function genericHarnessRouteIsSupported(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | undefined,
 ): boolean {
-  return (harness.harness !== "pi" && harness.harness !== "opencode")
-    || isRunnableGenericHarnessCredentialRoute(harness, source);
+  return isSupportedGenericHarnessCredentialRoute(harness, source);
 }
 
 function accountMatchesSource(
