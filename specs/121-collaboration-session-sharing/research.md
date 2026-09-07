@@ -1,7 +1,7 @@
 # Research: Collaboration and Session Sharing
 
 **Date:** 2026-09-07
-**Baseline:** implementation inspected at `3c4e92c89`; specification commit `10557fef1` on PR #1558. Findings are code inspection and design decisions, not claims of successful runtime experiments. Two read-only research workstreams covered canonical Chat and platform/Terminal/project boundaries.
+**Baseline:** implementation inspected at `3c4e92c89`; specification commit `10557fef1` on PR #1558. Rebased baseline: `7e333712e8914d173f5c023aae7d751a551de928`, the merged #1551 snapshot feature. Original core findings below were inspected at the earlier baseline; section 10 records the newly inspected overlap. Findings are code inspection and design decisions, not claims of successful runtime experiments. Two read-only research workstreams covered canonical Chat and platform/Terminal/project boundaries.
 
 ## 1. Reuse canonical Chat, including its existing queue
 
@@ -88,6 +88,20 @@ A service unit or filesystem path is not sufficient evidence. M2's isolated adap
 **Rationale:** Code can merge before use is enabled, and internal use can begin before later milestones finish. Disabling mutations must preserve owner export/revoke/recovery and existing data; an emergency access-off mode closes participant connections.
 
 **Alternatives considered:** A single final launch switch; scattered app flags; marking security cleanup as a late milestone. Rejected.
+
+## 10. Reuse merged snapshot sharing without reusing its authority
+
+**Evidence:** [PR #1551](https://github.com/HamedMP/matrix-os/pull/1551) merged at `7e333712e8914d173f5c023aae7d751a551de928` on 2026-09-07. `packages/ui/src/chat/ChatSharingButton.tsx` opens the existing snapshot dialog and handles preview refresh/renewed consent. `ChatShareDialog.tsx` renders safe Markdown, copy/revoke and the seven-day disclosure. Web `shell/src/components/chat/ChatSharing.tsx` and Electron `desktop/src/renderer/src/features/chat/ChatSharingButton.tsx` already wrap that common entrypoint.
+
+`packages/contracts/src/chat-sharing.ts` defines a reduced title plus user/assistant text schema with no participant identity. `packages/gateway/src/chat/sharing.ts` stores immutable `chat_shares` in owner Postgres, hashes tokens, checks preview revision/fingerprint, expires after seven days and caps ten active shares, 200 messages and 256 KiB per snapshot. `sharing-routes.ts` restricts management to the owner while allowing the exact public token GET. `packages/platform/src/chat-share-proxy.ts` relays validated snapshot JSON from registered runtimes with bounded requests and no caller credentials. These are public snapshot capabilities, not live membership.
+
+**Decision:** PR1 extends the existing Share entrypoint with **Share snapshot** and **Invite collaborators**. Preserve the snapshot dialog and backend contracts; compose new authenticated invitation/member UI alongside them. Retain existing Markdown, attachment and navigation components with new scope-authorized data adapters. Public snapshot links never authorize live history/streams, acceptance, participant identity or AI/Terminal actions. The two revocation paths remain distinct.
+
+**Rationale:** This removes duplicate UI work inside PR1 while preserving the frozen-copy feature. Anonymous readers and invited collaborators have different authorization, data, lifecycle and UI needs. Attachment improvements apply to canonical Chat presentation; attachments are still excluded from public snapshots.
+
+**Alternatives considered:** A second unrelated Share button; replacing snapshots with live links; reusing `ShareSnapshotSchema` as the collaboration transcript; upgrading snapshot tokens into invitations. All would regress the existing feature or violate collaboration scope. Keep the six-PR plan; snapshot sharing supplies neither the common live grant authority nor isolated execution.
+
+**Regression anchors:** `tests/desktop/chat-sharing-dialog.test.tsx`, `tests/gateway/chat-sharing.test.ts`, `tests/gateway/chat-sharing-routes.test.ts`, `tests/platform/chat-share-proxy.test.ts`; existing attachment/navigation tests remain applicable. PR1 adds two-action choice, snapshot/collaboration credential separation, independent revocation, participant snapshot-management denial and scope-safe attachment/navigation tests. Merged-code inspection does not substitute for fresh milestone surface evidence.
 
 ## Research completion
 

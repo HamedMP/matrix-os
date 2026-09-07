@@ -9,7 +9,7 @@ A **merge gate** proves one PR can safely land on main. A **milestone gate** pro
 
 | PR | Scope | Usable result | Depends on |
 | --- | --- | --- | --- |
-| PR1 | Common sharing foundation plus complete Chat discussion flow | **M1:** share a Chat and discuss together | Spec/plan |
+| PR1 | Common sharing foundation plus complete Chat discussion, reusing #1551 Share UI | **M1:** share a Chat and discuss together | Spec/plan |
 | PR2 | Prove and build isolated execution | Execution foundation; remains disabled until its milestone is complete | PR1 |
 | PR3 | Shared AI queue, controls and UI | **M2:** prompt AI together | PR2 |
 | PR4 | Terminal sharing, control and UI | **M3:** use the same terminal | PR2; M2 precedes M3 rollout |
@@ -47,11 +47,13 @@ Use one manual worktree/PR per planned change, normally from current origin/main
 
 Include shared scope/action schemas; actor/owner distinction; owner-Postgres membership, invitations, capacity/expiry, role changes, revoke/export/lifecycle guards and audit/outbox; platform discovery and actor-preserving HTTP/WS routing, one-use tickets and cohort policy; attributed canonical discussion, private member state, scoped read/search/replay; common invitation/member controls, Shared with me and discussion UI across applicable clients.
 
+Build on merged [PR #1551](https://github.com/HamedMP/matrix-os/pull/1551): extend the common `ChatSharingButton` with **Share snapshot** and **Invite collaborators**, preserve `ChatShareDialog` and owner snapshot preview/consent/copy/revoke, and reuse Web/Electron adapters plus applicable Markdown/attachment/navigation presentation. Live data and file destinations still require scoped adapters. Preserve immutable snapshots, seven-day expiry, exclusions and anonymous read-only relay; do not replace canonical live history or grant membership through snapshot tokens. This reduces UI work inside PR1 and leaves the six-PR structure intact.
+
 M1 is discussion-only. Gate shared AI start, queue, dispatch, steering, retry and approval on every path, including owner legacy routes. Conversion waits for active/pending private work to settle and fences further personal dispatch. This intermediate delivery does not claim final P1 completion.
 
-**Tests and enablement:** contract/frame validation; real-Postgres invitation/acceptance/capacity/revoke races; outbox atomicity; proof tampering and route escape; outsider/viewer rejection; two-account invite/accept/open/discuss/downgrade/revoke/reconnect journey; zero AI runs from discussion; private drafts and state; no sibling/parent reference access. Include an invitee without a primary computer and truthful unsupported-client states. Install exact compatible versions on a disposable VPS-native environment before internal enablement. Owner revoke/export/recovery remains available.
+**Tests and enablement:** contract/frame validation; real-Postgres invitation/acceptance/capacity/revoke races; outbox atomicity; proof tampering and route escape; outsider/viewer rejection; two-account invite/accept/open/discuss/downgrade/revoke/reconnect journey; zero AI runs from discussion; private drafts and state; no sibling/parent reference access. Include an invitee without a primary computer and truthful unsupported-client states. Install exact compatible versions on a disposable VPS-native environment before internal enablement. Owner revoke/export/recovery remains available. Re-run snapshot preview/renewed-consent/expiry/revoke regressions and add tests for the two action labels, token/proof separation, independent snapshot/member revocation, participant publishing denial and scope-safe attachment navigation.
 
-**Rollback:** read_only stops shared mutations while preserving permitted reads/export; off closes participant access. Preserve scopes, grants and history. Do not return shared Chats to unrestricted personal execution automatically.
+**Rollback:** read_only stops shared mutations while preserving permitted reads/export; off closes participant access. Preserve scopes, grants and history. Do not return shared Chats to unrestricted personal execution automatically. Disabling live collaboration must preserve the existing snapshot feature under its own policy.
 
 ## PR2 — Prove and build isolated execution
 
@@ -109,7 +111,7 @@ Four documentation updates remain explicit deliverables in separate `FinnaAI/mat
 
 | Update | Accompanies | Content |
 | --- | --- | --- |
-| D1 | M1 / PR1 release | Discussion-only Chat scope, invitations, roles, revoke, unavailable AI and recovery. |
+| D1 | M1 / PR1 release | Share snapshot versus Invite collaborators, frozen-copy versus live scope, independent revocation, invitations, roles, unavailable AI and recovery. |
 | D2 | M2 / PR3 release | Explicit AI requests, ordering, supported context/adapter limitations and run controls. |
 | D3 | M3 / PR4 release | Eligible terminals, watch/control, disconnection and owner recovery. |
 | D4 | M4 / PR6 release | Whole inventory, future inheritance, transition blockers, backup/export/delete and no partial sharing. |

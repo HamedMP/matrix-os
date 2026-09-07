@@ -161,6 +161,14 @@ As an owner, I want to manage access and retain ownership, export, deletion, and
 
 A whole-project share has one inventory confirmation, never a content-selection flow. Existing and new contents inherit access. A standalone share has no excerpt-selection flow. References to external resources do not change resource ownership or confer access. All-or-nothing scope does not override each member's role or the existing app safety checks.
 
+### Existing Snapshot Sharing and the Share Entrypoint
+
+Build on the existing Share entrypoint delivered by [PR #1551](https://github.com/HamedMP/matrix-os/pull/1551), merged on 2026-09-07. Offer two clearly labeled actions: **Share snapshot** for a frozen read-only copy, and **Invite collaborators** for the ongoing Chat. Preserve the owner-preview/confirmation, seven-day expiry and revocation behavior of snapshots. Attachments, tool results and hidden context remain excluded from snapshots; those exclusions do not redefine the whole-Chat collaboration scope above.
+
+Snapshot links remain anonymous access to the confirmed copy only. They never accept an invitation, establish membership, open live history or authorize execution. Live collaboration continues to use canonical history with participant identity and current role checks; the reduced snapshot format cannot replace it. Managing a snapshot remains an owner action, and a collaborator's role does not confer public-publishing rights.
+
+The two actions and their revocation controls must explain their different targets. Revoking a snapshot link does not remove invited collaborators; revoking membership does not recall previously published copies or independently revoke existing snapshot links. Disabling live collaboration leaves the existing snapshot flow available under its own policy. PR1 includes regression evidence for both paths across applicable surfaces.
+
 ### Role and Action Matrix
 
 This specification retains exactly three roles. Permissions apply only within the selected scope.
@@ -296,7 +304,7 @@ This sequence is delivery order, not a reduction of the final P1/P2 scope. Discu
 - A new collaboration billing, budgeting, credential-selection, or running-agent revocation-policy product; existing policy continues to apply alongside the required access checks.
 - Independently writable offline project peers or bidirectional synchronization of personal copies.
 - Automatic exposure or live migration of unrestricted personal processes and terminals, personal homes, credentials, or system state.
-- Anonymous public links, custom organization-wide policies, outside identity federation, or automatic public project publishing.
+- Anonymous live-collaboration links, custom organization-wide policies, outside identity federation, or automatic public project publishing. Existing read-only snapshot links are preserved.
 - Runtime implementation or deployment as part of this specification and planning PR.
 
 ## Success Criteria *(mandatory)*

@@ -11,6 +11,7 @@
 - [x] Terminal owner takeover versus editor release/expiry rules match the product action matrix.
 - [x] Complete project inventory and future inheritance remain mandatory; no excluded product feature is introduced.
 - [x] Named-surface acceptance, rollback and separate documentation deliverables are included.
+- [x] Merged #1551 reuse is explicit: one Share entrypoint, two labeled actions, preserved snapshots, separate live authority/history and regression coverage.
 - [x] Agent context points to the plan; `/speckit-tasks` and runtime implementation remain subsequent work.
 - [x] Local Markdown links, document fences, placeholders, PR counts and whitespace were checked.
 

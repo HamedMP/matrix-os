@@ -71,6 +71,10 @@ Bindings map stable scope/resource identities to authoritative root/app-data nam
 
 Execution profile: scope_id, profile_version, execution_generation, supervisor_handle, kind, supported_adapter_id, status, last_verified_at. No secrets. A missing or outdated profile disables shared execution but does not erase history. Each run/session has an isolated process namespace and identity/incarnation; project-shared files can be mounted without making sibling process control available. Only the trusted supervisor can resolve its fixed handle to host paths.
 
+## Existing snapshot records remain separate
+
+Merged #1551 already stores `chat_shares` with Chat foreign key, token hash, immutable snapshot, creation time and expiry. Keep that table and `ShareSnapshotSchema` as the existing publication model. A row is not a scope/member/invitation, and its bearer token cannot identify an actor. Do not migrate snapshots into canonical live messages or use their deliberately reduced user/assistant text projection as participant history. Existing snapshot expiry, explicit owner revoke and Chat-deletion cascade continue; membership changes alone do not mutate already-published snapshots. Collaboration migrations preserve those existing rows and constraints.
+
 ## Extend canonical Chat rather than create another store
 
 | Existing record | Additive changes |

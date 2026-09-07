@@ -5,7 +5,7 @@
 
 ## Authentication and authority
 
-There are no public content or anonymous acceptance endpoints. All external routes below use verified Matrix identity through platform authentication. A participant does not need a provisioned personal computer. Platform lookup chooses the registered owner runtime; it never grants machine access or exposes an owner credential.
+New collaboration routes provide no public content or anonymous acceptance endpoints. All routes in the collaboration matrix below use verified Matrix identity through platform authentication. Existing snapshot routes remain separate, as recorded in the snapshot matrix. A participant does not need a provisioned personal computer. Platform lookup chooses the registered owner runtime; it never grants machine access or exposes an owner credential.
 
 For each forwarded request, platform strips client-supplied actor/proof headers and signs actor, owner, runtime audience, scope (or owner-only creation target), purpose, canonical HTTP method/path/query, mutation-body digest, issue/expiry time, nonce and key ID. Maximum lifetime is 30 seconds. Gateway verifies the proof and current effective membership independently. Signed fields must match the actual forwarded bytes/target. Retry safety uses actor-scoped operation IDs, not proof reuse. Signing follows existing managed-key conventions and constant-time verification; missing keys or owner storage fail closed.
 
@@ -60,6 +60,22 @@ Project child Chat/terminal operations use that child's scope ID, whose binding 
 
 Internal service routes are separate: `PUT /internal/collaboration/directory` accepts idempotent metadata from the authenticated registered runtime for its own owner/generation only; `GET /internal/collaboration/policy` returns signed capability policy to an authenticated registered runtime. Both require service authentication and are not public or reachable using participant proofs/tickets. Policy changes use existing authenticated platform operator configuration, not a new customer endpoint. Directory repair cannot change owner membership.
 
+## Existing snapshot routes: preserved, not collaboration credentials
+
+Merged #1551 provides the following independent routes. Preserve their existing contracts and do not widen their anonymous allowlists to any collaboration path.
+
+| Route | Existing authorization | Relationship to live collaboration |
+| --- | --- | --- |
+| GET `/api/chats/:chatId/shares/preview` | Initialized authenticated owner principal and owned Chat | Preview reduced snapshot text only; no invitation or live grant. |
+| GET/POST `/api/chats/:chatId/shares` | Owner; creation requires confirmed preview revision/fingerprint | List/create frozen snapshots; editors/viewers gain no publishing permission from collaboration. |
+| DELETE `/api/chats/:chatId/shares/:shareId` | Owner | Revoke this public link only; does not remove members. |
+| GET `/api/share/chats/:token` | Public snapshot bearer token; hash lookup and expiry | Snapshot content only; cannot establish an actor or access live APIs/WS. |
+| GET `/shared/chat/:handle/:runtimeSlot/:token` | Public snapshot relay; registered runtime and exact path | Bounded validated snapshot JSON rendered as public HTML; no caller credentials forwarded. |
+
+The public snapshot token, snapshot consent and collaboration invitation are distinct. Reject snapshot tokens on all collaboration HTTP/WS routes, and do not interpret collaboration proofs/tickets as snapshot-management authentication. Preserve snapshot immutability, seven-day expiry, safe Markdown and attachment/tool/hidden-context exclusions. Existing snapshot-management body limit is 4 KiB and its data limits remain in the snapshot contract; the new collaboration defaults below do not overwrite them.
+
+The common Share chooser opens either **Share snapshot** using existing preview/consent/revoke UI or **Invite collaborators** using the new authority. Labels, availability and revocation controls identify the selected action. Membership revocation does not silently revoke an independently published frozen copy; snapshot revoke does not change live membership. Collaboration-off does not disable existing snapshot policy. Shared history remains canonical and actor-attributed rather than using `ShareSnapshotSchema`.
+
 ## Payload and result rules
 
 Zod 4 validates params, queries and bodies before service calls. New IDs are UUIDs; canonical resource IDs retain their existing bounded contracts. Revisions/epochs/sequences are decimal strings. Reject unknown fields, actor/owner/role injection and client absolute paths. All mutation verbs, including DELETE, apply Hono `bodyLimit` before buffering. Default maximum is 96 KiB; file upload has an explicit 2 MiB bounded body exception. Text messages/AI requests are at most 64 KiB UTF-8. Pagination defaults to 50, maximum 100; opaque cursors are scope-bound and at most 512 bytes. Rate/capacity and cleanup bounds are in the [plan](../plan.md).
@@ -84,4 +100,4 @@ M1 denies shared AI through all start, queue, dispatch, approval, retry, steer, 
 
 ## Required contract tests
 
-Test owner/editor/viewer/pending/expired/revoked/outsider for every route family, including owner legacy bypass and inherited child access. Test proof tampering/replay-purpose substitution, direct runtime access, double acceptance, capacity races, wrong resource kind, stale inventory, query-token allowlist boundaries, duplicate operation payloads, generic error normalization, body limits and downgrade/revoke races. Exercise platform → gateway → authority → actual resource adapter → scoped event delivery with two verified actors; route mocks alone do not pass a milestone.
+Test owner/editor/viewer/pending/expired/revoked/outsider for every route family, including owner legacy bypass and inherited child access. Test proof tampering/replay-purpose substitution, direct runtime access, double acceptance, capacity races, wrong resource kind, stale inventory, query-token allowlist boundaries, duplicate operation payloads, generic error normalization, body limits and downgrade/revoke races. Exercise platform → gateway → authority → actual resource adapter → scoped event delivery with two verified actors; route mocks alone do not pass a milestone. Include snapshot/live credential substitution, owner-only publishing, independent revocation and unchanged snapshot consent/expiry/content-limit tests when modifying the common Share entrypoint.

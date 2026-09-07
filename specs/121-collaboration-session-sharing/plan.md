@@ -9,6 +9,8 @@ Deliver four usable internal milestones: shared Chat discussion, shared AI, shar
 
 Reuse canonical Chat history, queue, outbox, and per-member state; add a common owner-local collaboration authority and narrow actor-preserving platform ingress. Preserve existing terminal session identity through a scope-runtime adapter, proving native execution isolation before enabling shared input. Use project-owned state adapters and a guarded migration journal for final whole-project cutover.
 
+Reuse the Share entrypoint and snapshot dialog merged in [PR #1551](https://github.com/HamedMP/matrix-os/pull/1551) at `7e333712e8914d173f5c023aae7d751a551de928`. PR1 extends common UI with **Share snapshot** and **Invite collaborators**, preserving snapshot consent, expiry, revocation and public-reader boundaries. This reduces PR1 UI work; it does not supply live membership or execution isolation.
+
 The detailed work breakdown, acceptance gates, and dependency graph are in [delivery-plan.md](delivery-plan.md). These are proposed PR boundaries, not already-created implementation PRs or a commitment to completion dates.
 
 ## Technical Context
@@ -41,7 +43,7 @@ Pre-research and post-design gate result: **PASS for the proposed design**. This
 | X. Worktree/PR review | All future implementation slices use manual worktrees and Conventional Commit PRs; required checks and current-head Greptile 5/5 before merging. |
 | Documentation | Separate `FinnaAI/matrix-os-site` `content/docs/` PRs accompany milestone releases as documentation deliverables, without gating implementation merges or internal enablement; no docs claim for unavailable later milestones. |
 
-The setup script only recognizes numeric feature names. Run it and agent-context tooling with `SPECIFY_FEATURE=121-collaboration-session-sharing`; keep the actual git branch's required `codex/` prefix. The optional before/after planning auto-commit hooks are disabled by project configuration; normal reviewed commits publish this plan.
+The setup script only recognizes numeric feature names. Run it and agent-context tooling with `SPECIFY_FEATURE=121-collaboration-session-sharing`; keep the actual git branch's required `codex/` prefix. After #1551, two spec directories share prefix 121. The existing helper prints an ambiguity diagnostic but falls back to this exact feature name; verify the returned path is this directory. `.specify/feature.json` and the agent marker also name this exact directory. Do not select `121-chat-ux-sharing` or renumber either spec implicitly. The optional before/after planning auto-commit hooks are disabled by project configuration; normal reviewed commits publish this plan.
 
 ## Project Structure
 
@@ -69,6 +71,7 @@ Existing anchors; `(new)` entries are proposed boundaries, not claimed files:
 
 ```text
 packages/contracts/src/canonical-chat*.ts
+packages/contracts/src/chat-sharing.ts                 existing snapshot-only schema
 packages/contracts/src/collaboration*.ts                 (new)
 packages/gateway/src/collaboration/                     (new authority/adapters/wiring)
 packages/gateway/src/chat/{database,repository,queue-repository,orchestrator}.ts
@@ -78,7 +81,8 @@ packages/gateway/src/{request-principal,auth,project-manager,agent-sandbox}.ts
 packages/platform/src/collaboration/                    (new directory/proxy/policy)
 packages/platform/src/{session-routing-proxy,session-routing-middleware,session-routing-websocket}.ts
 packages/platform/src/{ws-upgrade,customer-vps-preview}.ts
-packages/ui/src/collaboration/                          (new common controls/projections)
+packages/ui/src/chat/{ChatSharingButton,ChatShareDialog,ChatAttachments}.tsx
+packages/ui/src/collaboration/                          (new live controls/projections)
 shell/src/{components/ChatApp.tsx,hooks/useCanonicalChatState.ts}
 desktop/src/renderer/src/features/chat/
 apps/mobile/lib/{requests,queries}/
@@ -104,6 +108,14 @@ tests/e2e/                                             named-surface full journe
 5. Directory metadata is eventually reconciled from the owner outbox. Stale discovery may show unavailable; it can never grant access. The platform stores no transcript, terminal replay, or project content.
 
 All external, owner, invitation, discovery, proxy, runtime, and live routes are enumerated in [contracts/collaboration-api.md](contracts/collaboration-api.md). Ordinary owner routes stay owner-only. They must nevertheless check shared resource state so owner legacy Chat/terminal routes cannot bypass rollout, control, or scope gates.
+
+### Snapshot coexistence and component reuse
+
+Extend `packages/ui/src/chat/ChatSharingButton.tsx` as the common action chooser; keep `ChatShareDialog.tsx` for snapshot preview, consent, copy and revoke. Reuse the existing Web adapter `shell/src/components/chat/ChatSharing.tsx` and Electron adapter `desktop/src/renderer/src/features/chat/ChatSharingButton.tsx`. These components already integrate with their Chat surfaces, but do not imply completed cross-surface acceptance. New live invitation/member controls consume collaboration contracts rather than the snapshot dialog's role/text projection.
+
+Preserve canonical Markdown, attachment previews/lightbox and file/navigation improvements. Their presentation can be reused only with collaboration-authorized data and destinations: standalone access cannot borrow the owner's home/file preview authority. Public snapshots continue rendering private file references as inert text and excluding attachment bytes/tool output/hidden context.
+
+Keep `chat_shares`, `ShareSnapshotSchema`, gateway `chat/sharing*.ts` and platform `chat-share-proxy.ts` as snapshot-specific storage/transport. Their token and anonymous GET allowlists never become collaboration authentication. Live canonical history, membership and streams stay separate; snapshot consent does not create grants, and public link revoke does not remove members. Snapshot management remains owner-only, including for shared Chats. PR1 tests both paths and their independent revocation/capability states.
 
 ### Execution boundary
 
