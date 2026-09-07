@@ -311,7 +311,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
     const [scopeValue, chatValue] = await Promise.all([api.get(base), api.get(`${base}/chat`)]);
     const nextScope = CollaborationScopeSchema.parse(scopeValue);
     const nextChat = CollaborationChatSchema.parse(chatValue);
-    let combined = stateRef.current.messages;
+    let combined: SharedMessage[] = [];
     const targetCount = BigInt(nextChat.messageCount);
     while (BigInt(combined.length) < targetCount) {
       const after = combined.at(-1)?.sequence ?? "0";
