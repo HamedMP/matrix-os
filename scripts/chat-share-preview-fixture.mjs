@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
+import { readFile, writeFile } from "node:fs/promises";
 
 export function selectSharePreviewMachine(fleet, pr) {
   if (!/^[1-9][0-9]{0,8}$/.test(pr)) throw new Error("Invalid PR number");
@@ -15,15 +16,25 @@ export function selectSharePreviewMachine(fleet, pr) {
 }
 
 async function main() {
-  const { Client } = await import("pg");
-  const response = await fetch(new URL("/vps/fleet", process.env.PLATFORM_PUBLIC_URL), {
-    headers: { authorization: `Bearer ${process.env.PLATFORM_SECRET}` },
-    signal: AbortSignal.timeout(30_000), redirect: "error",
-  });
-  if (!response.ok) throw new Error("Preview registry lookup failed");
-  const { handle, address } = selectSharePreviewMachine(await response.json(), process.env.PR_NUMBER);
+  let selected;
+  if (process.argv.includes("--select")) {
+    const response = await fetch(new URL("/vps/fleet", process.env.PLATFORM_PUBLIC_URL), {
+      headers: { authorization: `Bearer ${process.env.PLATFORM_SECRET}` },
+      signal: AbortSignal.timeout(30_000), redirect: "error",
+    });
+    if (!response.ok) throw new Error("Preview registry lookup failed");
+    selected = selectSharePreviewMachine(await response.json(), process.env.PR_NUMBER);
+    await writeFile("preview-share-route.json", JSON.stringify(selected), { mode: 0o600 });
+    return;
+  }
+  const fixture = JSON.parse(await readFile("preview-share-route.json", "utf8"));
+  const { handle, address } = selectSharePreviewMachine({ machines: [{
+    handle: fixture.handle, runtimeSlot: fixture.handle, publicIPv4: fixture.address,
+    provisioningClass: "preview", status: "running",
+  }] }, process.env.PR_NUMBER);
   // Only a synthetic route record enters staging. No owner IDs, auth credentials,
   // provider server IDs, or production database connection are copied.
+  const { Client } = await import("pg");
   const client = new Client({ connectionString: process.env.PREVIEW_DATABASE_URL, connectionTimeoutMillis: 10_000, statement_timeout: 10_000 });
   await client.connect();
   try {

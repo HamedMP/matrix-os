@@ -327,7 +327,29 @@ jobs:
             echo "Deleted revision $rev"
           done
 
+  select-share-preview:
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PR_NUMBER: ${{ inputs.pr }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Read the one existing preview route
+        run: node scripts/chat-share-preview-fixture.mjs --select
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-share-route
+          path: preview-share-route.json
+          retention-days: 1
+
   connect-share-preview:
+    needs: select-share-preview
     if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -337,10 +359,11 @@ jobs:
       GCP_REGION: ${{ vars.GCP_REGION }}
       CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
       PR_NUMBER: ${{ inputs.pr }}
-      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
-      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-share-route
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
