@@ -81,9 +81,9 @@
   border: 1px solid
     color-mix(in srgb, var(--terminal-control-fg) 16%, transparent);
   box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
-  z-index: 100001;
 }
 .matrix-terminal-menu {
+  z-index: var(--terminal-control-popover-layer, auto);
   width: 220px;
   max-width: calc(100vw - 24px);
   max-height: var(--radix-dropdown-menu-content-available-height);
@@ -122,9 +122,10 @@
   position: fixed;
   inset: 0;
   background: rgb(0 0 0 / 0.38);
-  z-index: 100000;
+  z-index: var(--terminal-control-dialog-layer, auto);
 }
 .matrix-terminal-dialog {
+  z-index: var(--terminal-control-dialog-layer, auto);
   position: fixed;
   top: 50%;
   left: 50%;
@@ -236,4 +237,29 @@
     display: flex;
     align-items: center;
   }
+}
+
+/* A host header owns the row; portal content keeps the same accessible controls. */
+.matrix-terminal-controls-header {
+  position: relative;
+  border: 0;
+  background: transparent;
+}
+.matrix-terminal-controls-header .matrix-terminal-toolbar {
+  padding: 0;
+}
+.matrix-terminal-controls-header
+  :is(.matrix-terminal-prefix, .matrix-terminal-error) {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--terminal-control-popover-layer, auto);
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 12px;
+  border: 1px solid
+    color-mix(in srgb, var(--terminal-control-fg) 15%, transparent);
+  border-radius: 8px;
+  background: var(--terminal-control-bg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
 }

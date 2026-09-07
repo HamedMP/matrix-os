@@ -36,7 +36,11 @@ const DIRECTIONS = ["left", "down", "up", "right"] as const;
 export function TerminalControls({
   controls,
   theme,
+  placement = "surface",
+  layers,
 }: {
+  placement?: "surface" | "header";
+  layers?: { popover: number; dialog: number };
   controls: TerminalControlsState;
   theme?: { background?: string; foreground?: string };
 }) {
@@ -63,6 +67,8 @@ export function TerminalControls({
   }
   // Portals need the same explicit terminal palette as the inline controls.
   const palette = {
+    "--terminal-control-popover-layer": layers?.popover,
+    "--terminal-control-dialog-layer": layers?.dialog,
     "--terminal-control-bg":
       theme?.background ?? "var(--matrix-background, #101218)",
     "--terminal-control-fg": theme?.foreground ?? "var(--matrix-fg, #e4e4e7)",
@@ -75,7 +81,7 @@ export function TerminalControls({
   return (
     <div
       data-testid="terminal-controls"
-      className="matrix-terminal-controls"
+      className={`matrix-terminal-controls${placement === "header" ? " matrix-terminal-controls-header" : ""}`}
       style={palette}
     >
       <div
@@ -83,9 +89,11 @@ export function TerminalControls({
         aria-label="Terminal pane controls"
         className="matrix-terminal-toolbar"
       >
-        <span className="matrix-terminal-hint" aria-hidden="true">
-          Pane controls <kbd>⌃ G</kbd>
-        </span>
+        {placement === "surface" && (
+          <span className="matrix-terminal-hint" aria-hidden="true">
+            Pane controls <kbd>⌃ G</kbd>
+          </span>
+        )}
         <div className="matrix-terminal-primary">
           {PRIMARY_ACTIONS.map(({ label, icon, action }) => (
             <button
@@ -114,7 +122,7 @@ export function TerminalControls({
             </button>
           </Dialog.Trigger>
           <Dialog.Portal>
-            <Dialog.Overlay className="matrix-terminal-overlay" />
+            <Dialog.Overlay className="matrix-terminal-overlay" style={palette} />
             <Dialog.Content className="matrix-terminal-dialog" style={palette}>
               <div className="matrix-terminal-dialog-header">
                 <Dialog.Title>Keyboard shortcuts</Dialog.Title>
@@ -214,7 +222,7 @@ export function TerminalControls({
       </div>
       <Dialog.Root open={closing} onOpenChange={setClosing}>
         <Dialog.Portal>
-          <Dialog.Overlay className="matrix-terminal-overlay" />
+          <Dialog.Overlay className="matrix-terminal-overlay" style={palette} />
           <Dialog.Content
             role="alertdialog"
             className="matrix-terminal-dialog matrix-terminal-confirm"

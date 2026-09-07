@@ -122,7 +122,6 @@ export function useTerminalControls(
           sessionName,
           TerminalPaneActionSchema.parse(action),
         );
-        if (current === generation.current) focus();
       } catch (err) {
         console.warn("[terminal-controls] pane action failed", err);
         if (current === generation.current)
@@ -130,6 +129,7 @@ export function useTerminalControls(
             ? "Update this computer to use this pane control."
             : "The pane action could not be completed. Try again.");
       } finally {
+        if (current === generation.current) focus();
         pendingAction.current = false;
         setBusy(false);
       }

@@ -313,3 +313,22 @@ it("opens shortcuts in an overlay and restores focus when dismissed", async () =
   await waitFor(() => expect(view.queryByRole("dialog")).toBeNull());
   expect(document.activeElement).toBe(trigger);
 });
+it("returns keyboard focus after a failed current pane action", async () => {
+  const opts = setup();
+  opts.transport.paneAction.mockRejectedValueOnce(new Error("request rejected"));
+  const { result } = renderHook(() => useTerminalControls(opts));
+  await act(async () => result.current.runAction({ type: "focus", direction: "left" }));
+  expect(opts.focus).toHaveBeenCalledOnce();
+  expect(result.current.error).toContain("could not be completed");
+});
+it("does not steal focus when a failed action belongs to the previous terminal", async () => {
+  const opts = setup();
+  let reject!: (error: Error) => void;
+  opts.transport.paneAction.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+  const { result, rerender } = renderHook((props) => useTerminalControls(props), { initialProps: opts });
+  let pending!: Promise<void>;
+  act(() => { pending = result.current.runAction({ type: "focus", direction: "left" }); });
+  rerender({ ...opts, sessionName: "beta" });
+  await act(async () => { reject(new Error("request rejected")); await pending; });
+  expect(opts.focus).not.toHaveBeenCalled();
+});
