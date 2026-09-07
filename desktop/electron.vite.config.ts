@@ -55,6 +55,7 @@ export default defineConfig({
       allowedHosts: [DESKTOP_DEV_RENDERER_HOST],
     },
     resolve: {
+      dedupe: ["react", "react-dom"],
       alias: {
         "@renderer": resolve(__dirname, "src/renderer/src"),
       },

@@ -1,4 +1,4 @@
-import { MessageSquare, PanelLeftCloseIcon, Plus, Search } from "@renderer/lib/hugeicons";
+import { MessageSquare, PanelLeftOpenIcon, Plus, Search } from "@renderer/lib/hugeicons";
 
 export function WorkRailHeader({
   onNewChat,
@@ -50,7 +50,7 @@ export function WorkRailHeader({
             style={{ color: "var(--text-tertiary)" }}
             onClick={onCollapse}
           >
-            <PanelLeftCloseIcon size={15} aria-hidden />
+            <PanelLeftOpenIcon size={15} aria-hidden />
           </button>
         ) : null}
       </div>

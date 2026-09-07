@@ -1,5 +1,5 @@
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
-import { ArrowLeft, PanelLeftOpenIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
+import { ArrowLeft, PanelLeftCloseIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
 import {
   useCallback,
   useEffect,
@@ -759,7 +759,7 @@ export default function WorkTab({
             expanded={false}
             onClick={showRail}
           >
-            <PanelLeftOpenIcon size={15} aria-hidden />
+            <PanelLeftCloseIcon size={15} aria-hidden />
           </PaneButton>
           <span className="flex-1 truncate px-2 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
             Chat
@@ -806,7 +806,7 @@ export default function WorkTab({
             style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
           >
             <PaneButton buttonRef={showNavigationRef} label="Show Chat navigation" controls="work-navigation-pane" expanded={false} onClick={showRail}>
-              <PanelLeftOpenIcon size={15} aria-hidden />
+              <PanelLeftCloseIcon size={15} aria-hidden />
             </PaneButton>
           </aside>
         ) : null}

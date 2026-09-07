@@ -1,4 +1,4 @@
-import { ArrowExpand01, Minus, PanelLeftCloseIcon, PanelLeftOpenIcon, X } from "@renderer/lib/hugeicons";
+import { ArrowExpand01, Minus, PanelLeftOpenIcon, PanelLeftCloseIcon, X } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,
@@ -42,7 +42,7 @@ export function OSWindowSidebarTrigger({
 }: Omit<ComponentProps<"button">, "children" | "aria-label"> & { label?: string }) {
   const sidebar = useContext(OSWindowSidebarContext);
   if (!sidebar?.available) return null;
-  const Icon = sidebar.sidebarShown ? PanelLeftCloseIcon : PanelLeftOpenIcon;
+  const Icon = sidebar.sidebarShown ? PanelLeftOpenIcon : PanelLeftCloseIcon;
 
   return (
     <button
