@@ -68,3 +68,15 @@ it("does not treat package names or API members as local files", () => {
   fireEvent.click(screen.getByRole("button", { name: "Open main.ts" }));
   expect(openFile).toHaveBeenCalledWith("src/main.ts");
 });
+
+it("keeps file links mounted when navigation callbacks refresh", () => {
+  const previous = vi.fn(() => true);
+  const current = vi.fn(() => true);
+  const { rerender } = render(<MessageResponse copyText={vi.fn()} openFile={previous}>{"[App.tsx](src/App.tsx)"}</MessageResponse>);
+  const link = screen.getByRole("link", { name: "App.tsx" });
+  rerender(<MessageResponse copyText={vi.fn()} openFile={current}>{"[App.tsx](src/App.tsx)"}</MessageResponse>);
+  expect(screen.getByRole("link", { name: "App.tsx" })).toBe(link);
+  fireEvent.click(link);
+  expect(current).toHaveBeenCalledWith("src/App.tsx");
+  expect(previous).not.toHaveBeenCalled();
+});
