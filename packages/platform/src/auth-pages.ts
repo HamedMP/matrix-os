@@ -1,4 +1,3 @@
-import { onboardingChecklist } from '@matrix-os/brand/tokens';
 import type { UserMachineRecord } from './db.js';
 import { normalizeDeviceReturnPath } from './request-routing.js';
 
@@ -1370,13 +1369,6 @@ export function getVpsBootPage(input: { status: string }) {
   const detail = input.status === 'recovering'
     ? 'Matrix is restoring your workspace and will bring you back automatically.'
     : 'Matrix is preparing your cloud computer. This usually takes a couple of minutes.';
-  const statusLabel = input.status === 'recovering'
-    ? 'Restoring your workspace'
-    : input.status === 'resizing'
-      ? 'Preparing your updated computer'
-      : input.status === 'resuming'
-        ? 'Starting core services'
-        : 'Checking core services';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1474,27 +1466,8 @@ export function getVpsBootPage(input: { status: string }) {
       font-size: 13px;
       box-shadow: 0 12px 40px rgba(47, 57, 44, 0.08);
     }
-    .progress {
-      width: min(360px, 80vw);
-      height: 8px;
-      overflow: hidden;
-      border-radius: 999px;
-      background: ${onboardingChecklist.colors.progressTrack};
-    }
-    .progress::before {
-      content: "";
-      display: block;
-      width: 38%;
-      height: 100%;
-      border-radius: inherit;
-      background: ${onboardingChecklist.colors.progressFill};
-      animation: progress 1.8s ease-in-out infinite;
-    }
+    strong { color: #2f392c; font-weight: 700; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes progress {
-      from { transform: translateX(-120%); }
-      to { transform: translateX(360%); }
-    }
     @keyframes shimmer {
       0%, 100% { background-position: 200% 0; }
       50% { background-position: -100% 0; }
@@ -1505,7 +1478,6 @@ export function getVpsBootPage(input: { status: string }) {
     }
     @media (prefers-reduced-motion: reduce) {
       .mark::before, .wordmark { animation-duration: 1ms; animation-iteration-count: 1; }
-      .progress::before { width: 60%; animation: none; transform: none; }
     }
   </style>
 </head>
@@ -1516,8 +1488,7 @@ export function getVpsBootPage(input: { status: string }) {
       <h1 class="wordmark">${title}</h1>
       <p>${detail}</p>
     </div>
-    <div class="progress" role="progressbar" aria-label="Matrix computer setup" aria-valuetext="${statusLabel}"></div>
-    <p class="status">${statusLabel}</p>
+    <p class="status">Instance status: <strong>${escapeHtml(input.status)}</strong></p>
   </main>
 </body>
 </html>`;

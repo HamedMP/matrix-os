@@ -124,7 +124,7 @@ register_once() {
   fi
 
   for attempt in $(seq 1 30); do
-    if curl --fail --silent --show-error --max-time 30 \
+    if curl --fail --silent --show-error --max-time 10 \
       -X POST \
       -H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}" \
       -H "content-type: application/json" \

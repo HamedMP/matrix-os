@@ -577,11 +577,6 @@ exit 99
     expect(cloudInit).toContain("MATRIX_DEVELOPER_TOOLS='{{developerTools}}'");
     expect(cloudInit).toContain('matrix-developer-tools.service');
     expect(cloudInit).toContain('systemctl start --no-block matrix-developer-tools.service');
-    expect(cloudInit).toContain('ExecStartPre=/opt/matrix/bin/matrix-wait-runtime-ready');
-    expect(cloudInit.match(/CPUWeight=10/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(cloudInit.match(/IOWeight=10/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(cloudInit).toContain('TimeoutStartSec=2100');
-    expect(cloudInit.match(/TimeoutStartSec=3000/g)?.length).toBeGreaterThanOrEqual(2);
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"');
     expect(cloudInit).toContain('export HOME="$MATRIX_HOME"');

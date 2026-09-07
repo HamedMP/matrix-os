@@ -381,23 +381,6 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
-  it("keeps terminal readiness restricted to bearer-authenticated platform probes", async () => {
-    const mw = authMiddleware("secret-token");
-    let nextCalled = false;
-    const queryResult = await mw(
-      mockContext("/ws/terminal/readiness", undefined, "secret-token", "10.0.0.1"),
-      async () => { nextCalled = true; },
-    );
-    expect(nextCalled).toBe(false);
-    expect(queryResult?.status).toBe(401);
-
-    await mw(
-      mockContext("/ws/terminal/readiness", "Bearer secret-token", undefined, "10.0.0.1"),
-      async () => { nextCalled = true; },
-    );
-    expect(nextCalled).toBe(true);
-  });
-
   it("requires bearer auth for /ws/forward and rejects query-token fallback", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

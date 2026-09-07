@@ -122,12 +122,6 @@ import {
   resolvePinnedPreviewTestSnapshotBundle,
   resolvePersistedProvisioningImage,
 } from './golden-snapshot-preview-test.js';
-import {
-  createCustomerVpsStartupReadinessGate,
-  resolveCustomerVpsRegistrationReadinessAddress,
-  type CustomerVpsStartupReadinessInput,
-  type CustomerVpsStartupReadinessResult,
-} from './customer-vps-startup-readiness.js';
 
 export interface ProvisionResponse {
   machineId: string;
@@ -229,10 +223,6 @@ export interface CustomerVpsServiceDeps {
   enqueueProvisioningJob?: (db: PlatformDB, job: NewProvisioningJob) => Promise<void>;
   scheduleProvisioningDispatch?: (dispatch: () => Promise<void>) => void;
   fetchDispatcher?: import('undici').Dispatcher;
-  probeStartupReadiness?: (
-    input: CustomerVpsStartupReadinessInput,
-  ) => Promise<CustomerVpsStartupReadinessResult>;
-  startupReadinessIntervalMs?: number;
   resolveBillingEntitlement?: (
     db: PlatformDB,
     clerkUserId: string,
@@ -634,11 +624,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
   const now = deps.now ?? (() => new Date());
-  const assertStartupReadiness = createCustomerVpsStartupReadinessGate({
-    dispatcher: deps.fetchDispatcher,
-    probe: deps.probeStartupReadiness,
-    intervalMs: deps.startupReadinessIntervalMs,
-  });
 
   async function waitForServerStatus(
     serverId: number,
@@ -2231,22 +2216,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           || input.healthy !== true)) {
         throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
       }
-      const readinessPublicIPv4 = await resolveCustomerVpsRegistrationReadinessAddress({
-        machineId: row.machineId,
-        status: row.status,
-        hetznerServerId: input.hetznerServerId,
-        storedPublicIPv4: row.publicIPv4,
-        callbackPublicIPv4: publicIPv4.data,
-      }, deps.hetzner);
-      await assertStartupReadiness({
-        machineId: row.machineId,
-        handle: row.handle,
-        publicIPv4: readinessPublicIPv4,
-        expectedVersion: registrationTarget?.targetBundleVersion
-          ?? provisioningJob?.targetBundleVersion
-          ?? input.imageVersion,
-        platformSecret: deps.config.platformSecret,
-      });
       const lastSeenAt = now().toISOString();
       const updated = await runInPlatformTransaction(deps.db, async (trx) => {
         const snapshotLeaseId = provisioningJob?.snapshotLeaseId ?? recoveryTarget?.leaseId;

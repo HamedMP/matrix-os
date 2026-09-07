@@ -10,7 +10,6 @@ export type CustomerVpsFailureCode =
   | 'billing_required'
   | 'not_found'
   | 'registration_rejected'
-  | 'runtime_not_ready'
   | 'registration_timeout'
   | 'retry_exhausted'
   | 'unknown';

@@ -10,7 +10,6 @@ User=matrix
 Group=matrix
 EnvironmentFile=/opt/matrix/env/host.env
 WorkingDirectory=/opt/matrix
-ExecStartPre=/opt/matrix/bin/matrix-wait-runtime-ready
 ExecStart=/opt/matrix/bin/matrix-code
 Restart=on-failure
 RestartSec=5

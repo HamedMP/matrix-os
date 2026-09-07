@@ -115,8 +115,6 @@ function coerceReleaseChannel(value: unknown): ReleaseChannel {
 export function SystemSection({ billingActive = true }: { billingActive?: boolean }) {
   const [info, setInfo] = useState<SystemInfo>({});
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [systemInfoLoading, setSystemInfoLoading] = useState(true);
-  const [healthLoading, setHealthLoading] = useState(true);
   const [updateStatus, setUpdateStatus] = useState<SystemUpdateStatus | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<ReleaseChannel>("stable");
   const [releaseList, setReleaseList] = useState<SystemReleaseList | null>(null);
@@ -133,7 +131,6 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
 
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only teardown must flip the live mountedRef and clear whichever reload timeout is pending at cleanup time; reloadTimeoutRef is reassigned by waitForInstalledUpdate, so snapshotting it at mount would always capture the initial null and never clear an active timer.
   useEffect(() => {
-    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (reloadTimeoutRef.current) {
@@ -189,32 +186,21 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
     fetch(`${GATEWAY}/api/system/info`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) })
       .then((r) => r.ok ? r.json() : {})
       .then((data: SystemInfo) => {
-        if (!mountedRef.current) return;
         setInfo(data);
         const channel = coerceReleaseChannel(data.updateChannel ?? data.release?.channel);
         setSelectedChannel(channel);
         void refreshReleaseData(channel);
       })
       .catch((err: unknown) => {
-        if (!mountedRef.current) return;
         console.warn("[system-settings] failed to load system info:", err instanceof Error ? err.message : String(err));
         void refreshReleaseData("stable");
-      })
-      .finally(() => {
-        if (mountedRef.current) setSystemInfoLoading(false);
       });
 
     fetch(`${GATEWAY}/health`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) })
       .then((r) => r.ok ? r.json() : null)
-      .then((data: HealthStatus | null) => {
-        if (mountedRef.current) setHealth(data);
-      })
+      .then(setHealth)
       .catch((err: unknown) => {
-        if (!mountedRef.current) return;
         console.warn("[system-settings] failed to load health:", err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (mountedRef.current) setHealthLoading(false);
       });
 
   }, [refreshReleaseData]);
@@ -429,13 +415,11 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             <span className="text-sm text-muted-foreground">Gateway</span>
             <Badge
               variant="outline"
-              className={healthLoading
-                ? "bg-muted text-muted-foreground"
-                : health?.status === "ok"
-                  ? "bg-green-500/10 text-green-600"
-                  : "bg-red-500/10 text-red-600"}
+              className={health?.status === "ok"
+                ? "bg-green-500/10 text-green-600"
+                : "bg-red-500/10 text-red-600"}
             >
-              {healthLoading ? "Checking…" : health?.status ?? "unavailable"}
+              {health?.status ?? "unknown"}
             </Badge>
           </div>
           {health?.channels && Object.entries(health.channels).map(([id, status]) => (
@@ -512,15 +496,11 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
           <div className="grid gap-2 text-sm">
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">Installed version</span>
-              <span className="font-mono text-xs text-right">
-                {systemInfoLoading ? "Checking…" : installedVersion ?? "unavailable"}
-              </span>
+              <span className="font-mono text-xs text-right">{currentVersion}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">Running version</span>
-              <span className="font-mono text-xs text-right">
-                {systemInfoLoading ? "Checking…" : runningVersion ?? "unavailable"}
-              </span>
+              <span className="font-mono text-xs text-right">{runningVersion ?? "unavailable"}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">Installed channel</span>
