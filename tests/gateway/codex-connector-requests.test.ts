@@ -12,6 +12,53 @@ function harness() {
 const raw = { id: 42, method: "mcpServer/elicitation/request", params: { threadId: "thread", turnId: "turn", serverName: "connector", mode: "openai/form", message: "Allow once?", requestedSchema: null } };
 
 describe("connector request lifetime", () => {
+  it("validates answers, rejects expired/replayed controls, and keeps unexpired requests", async () => {
+    const h = harness();
+    expect(h.requests.answer("missing", {})).toBeUndefined();
+    await h.requests.handle(raw);
+    const request = h.persist.mock.calls[0]![0] as { requestId: string; connectorActionId: string };
+    await h.requests.expire();
+    expect(h.persist).toHaveBeenCalledTimes(1);
+    expect(h.requests.answer(request.requestId, {})).toBe(false);
+    expect(h.requests.answer(request.requestId, { [request.connectorActionId]: ["Allow once"] })).toBe(true);
+    expect(h.send).toHaveBeenCalledWith({ id: 42, result: { action: "accept", content: {}, _meta: null } });
+    expect(h.requests.answer(request.requestId, {})).toBeUndefined();
+    await h.requests.handle({ ...raw, id: 43 });
+    const expired = h.persist.mock.calls[1]![0] as { requestId: string };
+    h.tick();
+    expect(h.requests.answer(expired.requestId, {})).toBe(false);
+  });
+  it("fails malformed forms closed and cancels if persistence fails", async () => {
+    const h = harness();
+    expect(await h.requests.handle({ id: null, method: "bad" })).toBe(false);
+    await h.requests.handle({ ...raw, params: { ...raw.params, requestedSchema: { type: "array" } } });
+    expect(h.send).toHaveBeenCalledWith({ id: 42, error: { code: -32602, message: "This connector form is not supported." } });
+    h.persist.mockRejectedValueOnce(new Error("disk unavailable"));
+    await expect(h.requests.handle(raw)).rejects.toThrow("disk unavailable");
+    expect(h.send).toHaveBeenLastCalledWith({ id: 42, result: { action: "cancel", content: null, _meta: null } });
+    await h.requests.handle(raw);
+    expect(h.persist).toHaveBeenCalledTimes(2);
+  });
+  it("persists explicit URL authorization and enforces the request cap", async () => {
+    const h = harness();
+    await h.requests.handle({ ...raw, params: { ...raw.params, mode: "url", url: "https://connect.example.com/authorize", elicitationId: "auth" } });
+    expect(h.persist.mock.calls[0]?.[0]).toMatchObject({ connectorUrl: "https://connect.example.com/authorize" });
+    for (let id = 100; id < 120; id++) await h.requests.handle({ ...raw, id });
+    expect(h.persist).toHaveBeenCalledTimes(20);
+    expect(h.send).toHaveBeenLastCalledWith({ id: 119, result: { action: "cancel", content: null, _meta: null } });
+  });
+  it.each([undefined, "another-turn"])("rejects absent/mismatched active turns (%s)", async (turnId) => {
+    const send = vi.fn();
+    const requests = createConnectorRequests({ send, persist: vi.fn(), safeText: (value: string) => value,
+      scope: () => ({ threadId: "thread", turnId }) });
+    await requests.handle(raw);
+    expect(send).toHaveBeenCalledWith({ id: 42, result: { action: "cancel", content: null, _meta: null } });
+  });
+  it("does not misclassify non-Error programming failures as unsupported forms", async () => {
+    const requests = createConnectorRequests({ send: vi.fn(), persist: vi.fn(), safeText: () => { throw "unexpected"; },
+      scope: () => ({ threadId: "thread", turnId: "turn" }) });
+    await expect(requests.handle(raw)).rejects.toBe("unexpected");
+  });
   it("resolves completed-turn requests without replying on the closed native turn", async () => {
     const h = harness();
     await h.requests.handle(raw);

@@ -8,6 +8,22 @@ const request = (requestedSchema: unknown) => ({
 });
 
 describe("connector elicitation", () => {
+  it("rejects malformed selections and enforces text/selection maxima", () => {
+    const form = compileElicitation(request({ type: "object", properties: {
+      text: { type: "string", maxLength: 2 },
+      tags: { type: "array", items: { anyOf: [{ const: "a", title: "A" }, { const: "b", title: "B" }] }, maxItems: 1 },
+    } }), safeText);
+    const [text, tags] = form.questions;
+    const accept = { [form.actionId]: ["Allow once"] };
+    expect(form.respond({ ...accept, [text.questionId]: ["a", "b"] })).toBeNull();
+    expect(form.respond({ ...accept, [tags.questionId]: ["1. A", "1. A"] })).toBeNull();
+    expect(form.respond({ ...accept, [tags.questionId]: ["unknown"] })).toBeNull();
+    expect(form.respond({ ...accept, [tags.questionId]: ["1. A", "2. B"] })).toBeNull();
+    expect(form.respond({ ...accept, [text.questionId]: ["long"] })).toBeNull();
+    const noTurn = request(null);
+    Object.assign(noTurn.params, { turnId: null });
+    expect(compileElicitation(noTurn, safeText, "active-turn").requestId).not.toBe(form.requestId);
+  });
   it.each(["form", "openai/form", "openaiForm"])("supports %s with titled enums and optional fields", (mode) => {
     const raw = request({ type: "object", properties: {
       plan: { type: "string", oneOf: [{ const: "basic", title: "Basic" }] },
