@@ -121,15 +121,18 @@ type DesktopModeStore = typeof useDesktopMode;
 type WindowManagerStore = typeof useWindowManager;
 
 let DesktopComponent: DesktopComponentType;
+let VisibilityProvider: typeof import("@matrix-os/ui").GettingStartedVisibilityProvider;
 let desktopModeStore: DesktopModeStore;
 let windowManagerStore: WindowManagerStore;
 let queryClient: QueryClient;
 
 function renderDesktop() {
   return render(
+    <VisibilityProvider scope="fullscreen-test">
     <QueryClientProvider client={queryClient}>
       <DesktopComponent />
-    </QueryClientProvider>,
+    </QueryClientProvider>
+    </VisibilityProvider>,
   );
 }
 
@@ -168,6 +171,7 @@ describe("Desktop terminal fullscreen chrome", () => {
       return jsonResponse({});
     }));
     DesktopComponent = (await import("../../shell/src/components/Desktop.js")).Desktop;
+    VisibilityProvider = (await import("@matrix-os/ui")).GettingStartedVisibilityProvider;
     desktopModeStore = (await import("../../shell/src/stores/desktop-mode.js")).useDesktopMode;
     windowManagerStore = (await import("../../shell/src/hooks/useWindowManager.js")).useWindowManager;
     queryClient = createShellQueryClient();
