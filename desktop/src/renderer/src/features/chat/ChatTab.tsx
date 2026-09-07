@@ -1,3 +1,4 @@
+import { openChatWebLink } from "./chat-web-navigation";
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
@@ -318,7 +319,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
         </div>
       ) : (
         <>
-          <ConversationTranscript turns={turns} callbacks={{ copyText, openFile: openFileInDesktopEditor }} />
+          <ConversationTranscript turns={turns} callbacks={{ copyText, openWebLink: openChatWebLink, openFile: openFileInDesktopEditor }} />
           <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>
             {renderComposer("Reply to Hermes…")}
           </div>

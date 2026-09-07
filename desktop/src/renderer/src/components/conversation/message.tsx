@@ -1,3 +1,4 @@
+import { resolveChatMessageLink } from "@matrix-os/contracts";
 import { Check, Copy, FileText, Folder, WrapText } from "@renderer/lib/hugeicons";
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
@@ -288,37 +289,51 @@ export function MessageResponse({
   children,
   copyText,
   openFile,
+  openWebLink,
   className,
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
   openFile?: ConversationPresentationCallbacks["openFile"];
+  openWebLink?: ConversationPresentationCallbacks["openWebLink"];
   className?: string;
 }) {
+  const callbacks = React.useRef({ copyText, openFile, openWebLink });
+  React.useLayoutEffect(() => {
+    callbacks.current = { copyText, openFile, openWebLink };
+  }, [copyText, openFile, openWebLink]);
+  const copy = React.useCallback((text: string) => callbacks.current.copyText(text), []);
+  const hasFileNavigation = Boolean(openFile);
+  const hasWebNavigation = Boolean(openWebLink);
+  // Keep Markdown element types stable across focus and controller updates.
   const markdownComponents = React.useMemo(() => ({
     a: ({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => {
-      const external = typeof href === "string" && /^https?:\/\//i.test(href);
-      const editorPath = typeof href === "string" ? normalizeDesktopEditorPath(href) : null;
-      return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && openFile ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+      const target = typeof href === "string" ? resolveChatMessageLink(href) : null;
+      const external = target?.kind === "web";
+      const editorPath = target?.kind === "file" ? target.path : null;
+      return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
-        openFile(editorPath);
+        callbacks.current.openFile?.(href!);
+      } } : {})} {...(external && hasWebNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        callbacks.current.openWebLink?.(href!);
       } } : {})} />;
     },
     code: ({ node: _node, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
       const value = String(codeChildren).replace(/\n$/, "");
       const blockLanguage = className?.match(/(?:^|\s)language-([^\s]+)/)?.[1];
       if (blockLanguage || String(codeChildren).endsWith("\n")) {
-        return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copyText} />;
+        return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copy} />;
       }
-      const path = className ? null : pathPresentation(value);
+      const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
       const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
-      if (path && editorPath && openFile) {
+      if (path && editorPath && hasFileNavigation) {
         return (
           <button
             type="button"
-            aria-label={`Open ${path.label} in Editor`}
+            aria-label={`Open ${path.label}`}
             title={value}
-            onClick={() => openFile(editorPath)}
+            onClick={() => callbacks.current.openFile?.(value)}
             className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
           >
             <FileText size={13} aria-hidden className="shrink-0" />
@@ -354,9 +369,9 @@ export function MessageResponse({
     ),
     pre: ({ children: preChildren }: React.ComponentProps<"pre">) => <>{preChildren}</>,
     table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
-      <MarkdownTable {...props} copyText={copyText} />
+      <MarkdownTable {...props} copyText={copy} />
     ),
-  }), [copyText, openFile]);
+  }), [copy, hasFileNavigation, hasWebNavigation]);
 
   return (
     <div

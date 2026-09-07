@@ -8,8 +8,8 @@ export interface ConversationAttachmentPresentation {
 
 export type ConversationMessageContentPresentation =
   | { kind: "text"; text: string }
-  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string }
-  | { kind: "image"; id: string; label: string; src: string };
+  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string; path?: string }
+  | { kind: "image"; id: string; label: string; src: string; path?: string };
 
 export interface ConversationMessagePresentation {
   kind: "message";
@@ -129,4 +129,6 @@ export interface ConversationPresentationCallbacks {
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
   openFile?: (path: string) => boolean;
+  openAttachment?: (path: string) => boolean;
+  openWebLink?: (url: string) => boolean;
 }
