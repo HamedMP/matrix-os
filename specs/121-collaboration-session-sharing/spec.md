@@ -2,7 +2,7 @@
 
 **Feature Branch**: `codex/121-collaboration-session-sharing`
 **Created**: 2026-09-07
-**Status**: Draft — rewritten product specification, ready for planning review
+**Status**: Draft — rewritten product specification with phased implementation plan
 **Input**: Rewrite the shared-project specification with whole-project sharing, standalone Chat and terminal sharing, common collaboration behavior, and first-release collaborative Chat interactions.
 **Source**: [PR #1325](https://github.com/HamedMP/matrix-os/pull/1325), [original spec at reviewed revision](https://github.com/HamedMP/matrix-os/blob/3dcec8d89fa7bea044885b2b36cb5efd3aa1bce5/specs/117-shared-project-workspace/spec.md). This document is a proposed replacement; it does not modify or close that PR.
 
@@ -279,6 +279,14 @@ The plan must assign finite operation timeouts, invitation/connection limits, re
 - P1 delivers whole-project membership/inheritance, standalone sharing, Chat, Terminal, and viewer enforcement. P2 app/layout and management stories retain original scope; existing project-owned content cannot be silently excluded while a P2 surface is pending. Unsupported whole-project transitions stay unavailable until all present contents can satisfy the scope promise.
 - Test-first implementation and a separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/` are explicit implementation deliverables. No public site tree is created in this repository.
 
+### Approved Incremental Delivery
+
+The usable internal milestones are (1) shared Chat history and human discussion with shared AI disabled, (2) shared AI requests and controls, (3) standalone terminal sharing, and (4) whole-project sharing. Each milestone can be merged, enabled for an internal cohort, used and tested while later work continues. Smaller supporting PRs remain dormant until their connected milestone is ready.
+
+This sequence is delivery order, not a reduction of the final P1/P2 scope. Discussion-only M1 is not full P1 completion. Whole-project sharing stays unavailable until every owned resource can participate; no stage introduces partial sharing. Authorization, revocation, isolation, recovery and applicable surface parity are prerequisites for each enabled capability.
+
+[plan.md](plan.md) defines the technical design and [delivery-plan.md](delivery-plan.md) defines the proposed PR boundaries, dependencies, acceptance gates and rollback. API and execution contracts are planning artifacts alongside this product spec.
+
 ### Explicitly Out of Scope
 
 - Commenter/custom roles or viewer discussion permissions.
@@ -289,7 +297,7 @@ The plan must assign finite operation timeouts, invitation/connection limits, re
 - Independently writable offline project peers or bidirectional synchronization of personal copies.
 - Automatic exposure or live migration of unrestricted personal processes and terminals, personal homes, credentials, or system state.
 - Anonymous public links, custom organization-wide policies, outside identity federation, or automatic public project publishing.
-- Runtime implementation, transport contracts, or deployment as part of this specification PR.
+- Runtime implementation or deployment as part of this specification and planning PR.
 
 ## Success Criteria *(mandatory)*
 

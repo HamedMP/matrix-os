@@ -67,4 +67,4 @@ The source is the pinned revision of PR #1325 linked in the specification. Old r
 - Interaction defaults are recorded as assumptions: owner-only approvals, editor cancellation/retry of their own requests, and 32 pending AI requests per Chat. These make the accepted queue and run-control requirements testable without adding roles or a billing model.
 - The plan must satisfy the repository's technical security, integration wiring, timeout, cleanup, and test-first gates before implementation. This product specification defines no transport endpoints and does not replace those gates.
 - A separate public-documentation PR in `FinnaAI/matrix-os-site` is an explicit implementation deliverable.
-- No unresolved product clarification markers remain. Ready for `/speckit-plan`; further product changes require a separately reviewed scope update.
+- No unresolved product clarification markers remain. Planning artifacts now live in [plan.md](../plan.md); further product changes require a separately reviewed scope update.
