@@ -9,7 +9,9 @@ export function ShareChoiceDialog({ collaborationAvailable, pending, onSnapshot,
   onCollaborate: () => void;
   onClose: () => void;
 }) {
-  return <Dialog open onClose={onClose} aria-label="Share Chat" className="ph-no-capture w-[min(92vw,560px)] rounded-2xl border p-6">
+  return <Dialog open onClose={onClose} aria-label="Share Chat" className="ph-no-capture w-[min(92vw,560px)] rounded-2xl border p-6"
+    style={{ background: "var(--bg-surface, var(--matrix-card, #FCFCF8))", color: "var(--text-primary, var(--matrix-card-fg, #32352E))",
+      borderColor: "var(--border-default, var(--matrix-border, #D8D6C7))" }}>
     <div className="flex items-center justify-between gap-4">
       <div>
         <h2 className="text-lg font-semibold">Share Chat</h2>

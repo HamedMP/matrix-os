@@ -103,7 +103,9 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     }
   };
   return <Dialog open onClose={() => { if (!pending) onClose(); }} aria-label="Invite collaborators"
-    className="ph-no-capture flex max-h-[85vh] w-[min(92vw,640px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6">
+    className="ph-no-capture flex max-h-[85vh] w-[min(92vw,640px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
+    style={{ background: "var(--bg-surface, var(--matrix-card, #FCFCF8))", color: "var(--text-primary, var(--matrix-card-fg, #32352E))",
+      borderColor: "var(--border-default, var(--matrix-border, #D8D6C7))" }}>
     <div className="flex items-start justify-between gap-4">
       <div>
         <h2 className="text-lg font-semibold">Invite collaborators</h2>

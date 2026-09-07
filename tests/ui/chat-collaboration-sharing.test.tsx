@@ -20,6 +20,8 @@ describe("Chat collaboration sharing", () => {
     render(<ChatSharingButton api={api} collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
       handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect((screen.getByRole("dialog", { name: "Share Chat" }).firstElementChild as HTMLElement).style.background)
+      .toContain("--bg-surface");
     expect(screen.getByRole("button", { name: "Share snapshot" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Invite collaborators" })).toBeVisible();
     expect(screen.getByText(/frozen copy/i)).toBeVisible();

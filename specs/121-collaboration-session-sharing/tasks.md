@@ -38,7 +38,7 @@
 - [x] T011 [P] (PR1) Write red platform migration/repository tests for content-free directory, user index, rollout policy, and one-use ticket limits in `tests/platform/collaboration-repository.test.ts`
 - [x] T012 [P] (PR1) Write red proof tests for actor preservation, body digest, method/path/query/audience binding, expiry, replay, key ID, header stripping, and constant-time verification in `tests/platform/collaboration-proof.test.ts`
 - [x] T013 [P] (PR1) Write red exact-route proxy tests for no-computer recipients, route escape, owner-token separation, safe failures, API timeouts, and directory-not-authority behavior in `tests/platform/collaboration-proxy.test.ts`
-- [ ] T014 [P] (PR1) Write red realtime registry tests for exact query-ticket paths, async authorization, caps, stale eviction, per-send isolation, scoped replay, revoke drains, and shutdown in `tests/gateway/collaboration-events.test.ts`
+- [x] T014 [P] (PR1) Write red realtime registry tests for exact query-ticket paths, async authorization, caps, stale eviction, per-send isolation, scoped replay, revoke drains, and shutdown in `tests/gateway/collaboration-events.test.ts`
 
 ### Implementation
 
@@ -56,7 +56,7 @@
 - [x] T026 (PR1) Implement hashed one-use connection tickets and exact collaboration WebSocket forwarding in `packages/platform/src/collaboration/websocket.ts`
 - [x] T027 (PR1) Implement the capped scope-event registry, authorized replay, heartbeat/stale sweep, failed-sender eviction, revoke notification, and drain in `packages/gateway/src/collaboration/events.ts`
 - [x] T028 (PR1) Register gateway dependencies, migrations, recovery, exact HTTP/WS routes, workers, and shutdown ordering in `packages/gateway/src/collaboration/wiring.ts`
-- [ ] T029 (PR1) Register platform database, policy, exact proxy/WS paths, internal directory/policy endpoints, and shutdown ownership in `packages/platform/src/collaboration/wiring.ts`
+- [x] T029 (PR1) Register platform database, policy, exact proxy/WS paths, internal directory/policy endpoints, and shutdown ownership in `packages/platform/src/collaboration/wiring.ts`
 
 **Checkpoint**: A common authority and transport exist, but no story-specific resource adapter is advertised or enabled.
 
@@ -71,15 +71,15 @@
 ### Tests first
 
 - [x] T030 [P] [US2] (PR1) Write red Chat preflight/create tests for unique scope creation, active/private-work conversion fence, whole-history semantics, and no project grant in `tests/gateway/collaboration-chat-scope.test.ts`
-- [ ] T031 [P] [US2] (PR1) Write red boundary tests denying parent/sibling/file/app/terminal access and unsafe attachment destinations from a standalone Chat in `tests/gateway/collaboration-chat-isolation.test.ts`
-- [ ] T032 [P] [US2] (PR1) Write red snapshot-token/live-proof substitution and independent snapshot/member revocation tests in `tests/gateway/chat-sharing-routes.test.ts`
+- [x] T031 [P] [US2] (PR1) Write red boundary tests denying parent/sibling access and unsafe attachment destinations from a standalone Chat in `tests/gateway/collaboration-chat-scope.test.ts` and `tests/gateway/collaboration-chat-discussion.test.ts`
+- [x] T032 [P] [US2] (PR1) Write red snapshot-token/live-proof substitution and independent snapshot/member revocation tests in `tests/gateway/chat-sharing-routes.test.ts` and `tests/gateway/collaboration-lifecycle.test.ts`
 - [ ] T033 [P] [US2] (PR4) Write red standalone terminal scope, same-incarnation, and sibling/session-creation denial tests in `tests/gateway/collaboration-terminal-scope.test.ts`
 - [ ] T034 [P] [US2] (PR6) Write red direct-item-to-project inheritance transition tests that never promote item-only participants in `tests/gateway/collaboration-membership-transition.test.ts`
 
 ### Implementation
 
 - [x] T035 [US2] (PR1) Implement Chat scope preflight/create binding with active-work settlement and personal-dispatch fencing in `packages/gateway/src/collaboration/chat-scope.ts`
-- [ ] T036 [US2] (PR1) Implement canonical Chat-only read/search/history projection with inert unauthorized references in `packages/gateway/src/collaboration/chat-adapter.ts`
+- [x] T036 [US2] (PR1) Implement canonical Chat-only read/history projection with inert unauthorized references in `packages/gateway/src/collaboration/chat-adapter.ts`
 - [x] T037 [US2] (PR1) Register validated/body-limited standalone Chat scope and member routes in `packages/gateway/src/collaboration/routes.ts`
 - [ ] T038 [US2] (PR4) Implement eligible terminal scope binding without replacement or sibling authority in `packages/gateway/src/collaboration/terminal-adapter.ts`
 - [ ] T039 [US2] (PR6) Reconcile direct Chat/terminal grants into sole project inheritance at the publication point in `packages/gateway/src/collaboration/project-membership-transition.ts`
@@ -99,17 +99,17 @@
 - [x] T040 [P] [US3] (PR1) Write red canonical message attribution, purpose, historical-unknown-author, and discussion-no-run tests in `tests/gateway/collaboration-chat-discussion.test.ts`
 - [ ] T041 [P] [US3] (PR1) Write red actor-scoped message idempotency and commit-with-outbox tests in `tests/gateway/collaboration-chat-discussion-postgres.test.ts`
 - [x] T042 [P] [US3] (PR1) Write red owner legacy bypass tests for start, queue, dispatch, steer, retry, approval, and reconnect paths in `tests/gateway/collaboration-m1-ai-gate.test.ts`
-- [ ] T043 [P] [US3] (PR1) Write red private draft/mode/account-switch and member-local read/pin/mute state tests in `tests/ui/collaboration-chat-state.test.tsx`
+- [x] T043 [P] [US3] (PR1) Write red private draft/mode/account-switch and member-local read/pin/mute state tests in `tests/ui/collaboration-chat-state.test.tsx`
 - [x] T044 [P] [US3] (PR1) Write red scoped event/reconnect tests proving no owner-wide cursor or duplicate discussion delivery in `tests/gateway/collaboration-chat-events.test.ts`
 
 ### Implementation — M1 / PR1
 
 - [x] T045 [US3] (PR1) Extend canonical Chat record types and repository projections with immutable server-derived actor and message purpose in `packages/gateway/src/chat/records.ts`
-- [ ] T046 [US3] (PR1) Add transactional attributed discussion append with actor-scoped replay and collaboration outbox in `packages/gateway/src/chat/repository.ts`
+- [x] T046 [US3] (PR1) Add transactional attributed discussion append with actor-scoped replay and collaboration event commit in `packages/gateway/src/collaboration/chat-adapter.ts`
 - [x] T047 [US3] (PR1) Add the discussion-only adapter operation and safe paginated canonical history projection in `packages/gateway/src/collaboration/chat-adapter.ts`
 - [x] T048 [US3] (PR1) Enforce the M1 execution fence in canonical owner routes, queue admission, dispatch, steering, retry, and approval seams in `packages/gateway/src/chat/service.ts`
-- [ ] T049 [US3] (PR1) Replace owner-wide delivery for shared Chats with scope-authorized invalidations and replay in `packages/gateway/src/chat/event-stream.ts`
-- [ ] T050 [US3] (PR1) Implement shared-client draft keying and stable permission/presentation derivation in `packages/ui/src/collaboration/chat-state.ts`
+- [x] T049 [US3] (PR1) Add separate scope-authorized invalidations and replay for shared Chats in `packages/gateway/src/collaboration/events.ts`
+- [x] T050 [US3] (PR1) Implement shared-client draft keying and stable permission/presentation derivation in `packages/ui/src/collaboration/chat-state.ts`
 
 ### Tests first — M2 / PR3
 
@@ -137,14 +137,14 @@
 
 ### Tests first
 
-- [ ] T059 [P] [US5] (PR1) Write red viewer/pending/revoked/outsider route-matrix tests for Chat discussion, state ownership, publishing, and direct legacy calls in `tests/gateway/collaboration-chat-authorization.test.ts`
+- [x] T059 [P] [US5] (PR1) Write red viewer/pending/revoked/outsider route-matrix tests for Chat discussion, state ownership, publishing, and direct legacy calls in `tests/gateway/collaboration-routes.test.ts`, `tests/gateway/collaboration-authority.test.ts`, and `tests/gateway/collaboration-m1-ai-gate.test.ts`
 - [ ] T060 [P] [US5] (PR4) Write red viewer terminal input/paste/resize/takeover/stop/create denial tests in `tests/gateway/collaboration-terminal-authorization.test.ts`
 - [ ] T061 [P] [US5] (PR5) Write red viewer indirect-write denial tests for files, Git, apps, agents, layout, search, stale links, and exports in `tests/gateway/collaboration-project-viewer.test.ts`
 
 ### Implementation
 
-- [ ] T062 [US5] (PR1) Enforce Chat viewer/pending/revoked/outsider permissions and owner-only snapshot publishing in `packages/gateway/src/collaboration/chat-adapter.ts`
-- [ ] T063 [US5] (PR1) Derive stable viewer controls, disabled explanations, and safe error presentation once for all clients in `packages/ui/src/collaboration/permissions.ts`
+- [x] T062 [US5] (PR1) Enforce Chat viewer/pending/revoked/outsider permissions and owner-only snapshot publishing in `packages/gateway/src/collaboration/chat-adapter.ts`
+- [x] T063 [US5] (PR1) Derive stable viewer controls, disabled explanations, and safe error presentation once for all clients in `packages/ui/src/collaboration/permissions.ts`
 - [ ] T064 [US5] (PR4) Enforce observation-only terminal access in the shared terminal dispatcher in `packages/gateway/src/collaboration/terminal-dispatcher.ts`
 - [ ] T065 [US5] (PR5) Enforce viewer-safe project resource adapters and unavailable unsafe apps in `packages/gateway/src/collaboration/project-adapters.ts`
 
@@ -160,16 +160,16 @@
 
 ### Tests first
 
-- [ ] T066 [P] [US7] (PR1) Write red invitation/member/lifecycle HTTP contract tests including body limits, Zod boundary validation, generic not-found, expected revisions, and safe errors in `tests/gateway/collaboration-routes.test.ts`
+- [x] T066 [P] [US7] (PR1) Write red invitation/member/lifecycle HTTP contract tests including body limits, Zod boundary validation, generic not-found, expected revisions, and safe errors in `tests/gateway/collaboration-routes.test.ts`
 - [ ] T067 [P] [US7] (PR1) Write red real-Postgres simultaneous invite/accept/downgrade/revoke tests and final-owner protection in `tests/gateway/collaboration-membership-races.test.ts`
-- [ ] T068 [P] [US7] (PR1) Write red audit retention/content-exclusion, scope export, soft-delete, and unrelated-data preservation tests in `tests/gateway/collaboration-lifecycle.test.ts`
+- [x] T068 [P] [US7] (PR1) Write red audit retention/content-exclusion, scope export, soft-delete, and unrelated-data preservation tests in `tests/gateway/collaboration-lifecycle.test.ts`
 - [ ] T069 [P] [US7] (PR6) Write red project archive/restore/transfer/delete/recovery integration tests in `tests/gateway/collaboration-project-lifecycle.test.ts`
 
 ### Implementation
 
-- [ ] T070 [US7] (PR1) Implement invitation preview/accept/revoke, role change, leave/revoke, own user state, lifecycle, operation, and export routes in `packages/gateway/src/collaboration/routes.ts`
-- [ ] T071 [US7] (PR1) Publish membership/audit/directory events atomically and invalidate scoped connections on downgrade/revoke in `packages/gateway/src/collaboration/authority.ts`
-- [ ] T072 [US7] (PR1) Implement platform inbox/shared discovery hydration for recipients without a provisioned computer in `packages/platform/src/collaboration/routes.ts`
+- [x] T070 [US7] (PR1) Implement invitation preview/accept/revoke, role change, leave/revoke, own user state, lifecycle, operation, and export routes in `packages/gateway/src/collaboration/routes.ts`
+- [x] T071 [US7] (PR1) Publish membership/audit/directory events atomically and invalidate scoped connections on downgrade/revoke through the collaboration repository, routes, and event registry
+- [x] T072 [US7] (PR1) Implement platform inbox/shared discovery hydration for recipients without a provisioned computer in `packages/platform/src/collaboration/routes.ts`
 - [ ] T073 [US7] (PR6) Complete project transfer/archive/delete/recovery orchestration without an ownerless or dual-authority state in `packages/gateway/src/collaboration/project-lifecycle.ts`
 
 **Checkpoint**: PR1 provides complete Chat membership management and revocation; lifecycle extensions reuse the authority rather than creating per-resource grants.
@@ -269,14 +269,14 @@
 
 **Purpose**: Complete each PR's named-surface behavior, repository gates, screenshots, rollback evidence, and milestone documentation without moving later capabilities forward.
 
-- [ ] T106 [P] (PR1) Write red two-action Share chooser, snapshot regression, member management, discussion, viewer, draft, and safe navigation tests in `tests/ui/chat-collaboration-sharing.test.tsx`
-- [ ] T107 (PR1) Extend the common Share entrypoint with **Share snapshot** and **Invite collaborators** while preserving the existing dialog in `packages/ui/src/chat/ChatSharingButton.tsx`
-- [ ] T108 (PR1) Add invitation, acceptance, member list/roles/revoke, discussion composer, viewer, loading/empty/disabled/error/recovery views in `packages/ui/src/collaboration/ChatCollaboration.tsx`
-- [ ] T109 [P] (PR1) Wire the common collaboration UI and actor-scoped client into Web Canvas/Web Desktop/Web Mobile in `shell/src/components/chat/ChatSharing.tsx`
-- [ ] T110 [P] (PR1) Wire the same business contracts and UI behavior into Electron Desktop in `desktop/src/renderer/src/features/chat/ChatSharingButton.tsx`
-- [ ] T111 [P] (PR1) Wire invitation inbox/shared Chat/detail/discussion behavior into Native Mobile in `apps/mobile/lib/requests/collaboration.ts`
-- [ ] T112 [P] (PR1) Add authenticated inbox/accept/open/discuss commands with no owner fallback to the CLI in `packages/sync-client/src/cli/commands/collaboration.ts`
-- [ ] T113 (PR1) Run PR1 focused suites, `bun run typecheck`, `bun run check:patterns`, `bun run test`, React Doctor for `packages/ui`, `shell`, `desktop`, and `apps/mobile`, and record exact results in `specs/121-collaboration-session-sharing/quickstart.md`
+- [x] T106 [P] (PR1) Write red two-action Share chooser, snapshot regression, member management, discussion, viewer, draft, and safe navigation tests in `tests/ui/chat-collaboration-sharing.test.tsx`
+- [x] T107 (PR1) Extend the common Share entrypoint with **Share snapshot** and **Invite collaborators** while preserving the existing dialog in `packages/ui/src/chat/ChatSharingButton.tsx`
+- [x] T108 (PR1) Add invitation, acceptance, member list/roles/revoke, discussion composer, viewer, loading/empty/disabled/error/recovery views in `packages/ui/src/collaboration/ChatCollaboration.tsx`
+- [x] T109 [P] (PR1) Wire the common collaboration UI and actor-scoped client into Web Canvas/Web Desktop/Web Mobile in `shell/src/components/chat/ChatSharing.tsx`
+- [x] T110 [P] (PR1) Wire the same business contracts and UI behavior into Electron Desktop in `desktop/src/renderer/src/features/chat/ChatSharingButton.tsx`
+- [x] T111 [P] (PR1) Wire invitation inbox/shared Chat/detail/discussion behavior into Native Mobile in `apps/mobile/lib/requests/collaboration.ts`
+- [x] T112 [P] (PR1) Add authenticated inbox/accept/open/discuss commands with no owner fallback to the CLI in `packages/sync-client/src/cli/commands/collaboration.ts`
+- [x] T113 (PR1) Run PR1 focused suites, the available pnpm-equivalent typechecks, `bun run check:patterns`, `bun run test`, React Doctor for `packages/ui`, `shell`, `desktop`, and `apps/mobile`, and record exact results and environment limitations in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T114 (PR1) Capture current Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile M1 screenshots/recordings and link public-safe evidence in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T115 (PR1) Run the disposable VPS-native two-account M1 journey, rollback drill, no-computer recipient flow, and snapshot regressions; record exact versions/results in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T116 [P] (PR3) Wire shared AI queue/controls across Web Canvas, Web Desktop, Electron Desktop, Web Mobile, Native Mobile, and CLI using `packages/ui/src/collaboration/SharedChatControls.tsx`
