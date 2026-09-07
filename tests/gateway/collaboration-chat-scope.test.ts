@@ -4,6 +4,7 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import {
   CollaborationChatScopeError,
   CollaborationChatScopeService,
+  createDiscussionOnlyChatExecutionGuard,
 } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import {
   collaborationActors,
@@ -113,6 +114,25 @@ describe("CollaborationChatScopeService", () => {
       parent_scope_id: null,
       membership_mode: "direct",
     }]);
+  });
+
+  it("builds an execution guard from canonical Chat state without rollout configuration", async () => {
+    const guard = createDiscussionOnlyChatExecutionGuard(fixture.db);
+    await expect(guard.assertPersonalExecutionAllowed(
+      { type: "personal", ownerId: collaborationActors.owner },
+      collaborationIds.chat,
+    )).resolves.toBeUndefined();
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    await service.shareChat({
+      ownerId: collaborationActors.owner,
+      chatId: collaborationIds.chat,
+      expectedChatRevision: 0,
+      confirmationToken: preflight.confirmationToken!,
+    });
+    await expect(guard.assertPersonalExecutionAllowed(
+      { type: "personal", ownerId: collaborationActors.owner },
+      collaborationIds.chat,
+    )).rejects.toMatchObject({ code: "shared_execution_disabled" });
   });
 });
 

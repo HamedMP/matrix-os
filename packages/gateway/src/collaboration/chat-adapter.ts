@@ -188,7 +188,7 @@ export class CollaborationChatAdapter {
     const authors = new Map<string, { actorId: string; displayName: string }>();
     for (const row of rows) {
       if (!row.actor_id || authors.has(row.actor_id)) continue;
-      authors.set(row.actor_id, await this.options.resolveParticipant(row.actor_id));
+      authors.set(row.actor_id, await this.resolveParticipant(row.actor_id));
     }
     return rows.map((row) => {
       const message = canonicalMessage(row);
@@ -211,7 +211,7 @@ export class CollaborationChatAdapter {
   private async humanMessage(message: CanonicalChatMessage): Promise<CollaborationHumanMessage> {
     const text = message.parts.find((part) => part.type === "text")?.text ?? "";
     const actor = message.actorId
-      ? await this.options.resolveParticipant(message.actorId)
+      ? await this.resolveParticipant(message.actorId)
       : { actorId: "unknown_participant", displayName: "Unknown participant" };
     return CollaborationHumanMessageSchema.parse({
       id: message.id,
@@ -222,6 +222,21 @@ export class CollaborationChatAdapter {
       text,
       createdAt: message.createdAt,
     });
+  }
+
+  private async resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }> {
+    try {
+      const participant = await this.options.resolveParticipant(actorId);
+      return participant.actorId === actorId
+        ? participant
+        : { actorId, displayName: "Unknown participant" };
+    } catch (error: unknown) {
+      console.warn(
+        "[collaboration-chat] participant lookup failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      return { actorId, displayName: "Unknown participant" };
+    }
   }
 }
 

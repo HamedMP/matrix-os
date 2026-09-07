@@ -159,6 +159,31 @@ describe("CollaborationChatAdapter discussion", () => {
     expect(history[0]).toMatchObject({ actor: { displayName: "Unknown participant" } });
     expect(JSON.stringify(history)).not.toContain("projects/private.txt");
   });
+
+  it("keeps committed discussion and history available when participant lookup fails", async () => {
+    const resilient = new CollaborationChatAdapter({
+      db: fixture.db,
+      authority,
+      now: () => new Date(now),
+      resolveParticipant: async () => { throw new Error("participant directory offline"); },
+    });
+    const writer = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    });
+    await expect(resilient.appendDiscussion(writer, {
+      clientRequestId: requestId,
+      expectedRevision: "1",
+      text: "The discussion must still commit.",
+    })).resolves.toMatchObject({
+      actor: { actorId: collaborationActors.editor, displayName: "Unknown participant" },
+    });
+    await expect(resilient.listMessages(writer, { afterSequence: "0", limit: 50 }))
+      .resolves.toMatchObject([{
+        actor: { actorId: collaborationActors.editor, displayName: "Unknown participant" },
+      }]);
+  });
 });
 
 async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void> {

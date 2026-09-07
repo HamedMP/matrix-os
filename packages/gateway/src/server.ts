@@ -173,6 +173,7 @@ import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
+import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -1010,6 +1011,7 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatEventStream: ReturnType<typeof createCanonicalChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
+  let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
   if (databaseUrl) {
     try {
@@ -1029,6 +1031,7 @@ export async function createGateway(config: GatewayConfig) {
       await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
+      canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
       await bootstrapChatSharing(chatRepository.kysely);
       canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
@@ -4405,6 +4408,7 @@ export async function createGateway(config: GatewayConfig) {
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
       executionRoots: canonicalChatExecutionRoots,
+      ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
       onAiGeneration: recordAiGeneration,
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
@@ -4417,6 +4421,7 @@ export async function createGateway(config: GatewayConfig) {
         ? createCanonicalChatService(chatRepository, {
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
+          ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
         })
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),

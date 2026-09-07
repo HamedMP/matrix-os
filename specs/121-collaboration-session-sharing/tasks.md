@@ -53,7 +53,7 @@
 - [x] T023 (PR1) Implement short-lived signed actor proofs and signed policy snapshots using managed keys in `packages/platform/src/collaboration/proof.ts`
 - [x] T024 (PR1) Implement gateway proof verification that constructs `AuthorizedCollaborationContext` without configured-owner fallback in `packages/gateway/src/collaboration/actor-proof.ts`
 - [x] T025 (PR1) Implement exact collaboration HTTP proxying, caller-header stripping, bounded fetch timeouts, and safe response mapping in `packages/platform/src/collaboration/proxy.ts`
-- [ ] T026 (PR1) Implement hashed one-use connection tickets and exact collaboration WebSocket forwarding in `packages/platform/src/collaboration/websocket.ts`
+- [x] T026 (PR1) Implement hashed one-use connection tickets and exact collaboration WebSocket forwarding in `packages/platform/src/collaboration/websocket.ts`
 - [x] T027 (PR1) Implement the capped scope-event registry, authorized replay, heartbeat/stale sweep, failed-sender eviction, revoke notification, and drain in `packages/gateway/src/collaboration/events.ts`
 - [ ] T028 (PR1) Register gateway dependencies, migrations, recovery, exact HTTP/WS routes, workers, and shutdown ordering in `packages/gateway/src/collaboration/wiring.ts`
 - [ ] T029 (PR1) Register platform database, policy, exact proxy/WS paths, internal directory/policy endpoints, and shutdown ownership in `packages/platform/src/collaboration/wiring.ts`

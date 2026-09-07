@@ -95,6 +95,38 @@ export class CollaborationActorProofVerifier {
     return context;
   }
 
+  async verifySocket(input: {
+    signedProof: unknown;
+    purpose: "events" | "terminal";
+    path: string;
+  }): Promise<CollaborationActorProof> {
+    const parsed = CollaborationSignedActorProofSchema.safeParse(input.signedProof);
+    if (!parsed.success) throw invalidProof();
+    const { proof, signature } = parsed.data;
+    const key = this.options.keys[proof.keyId];
+    if (!key || Buffer.byteLength(key) < 32
+      || !constantTimeSignatureMatches(input.purpose, proof, key, signature)) {
+      throw invalidProof();
+    }
+    const now = this.now().getTime();
+    const issuedAt = Date.parse(proof.issuedAt);
+    const expiresAt = Date.parse(proof.expiresAt);
+    if (proof.runtimeId !== this.options.runtimeId
+      || proof.purpose !== input.purpose
+      || proof.method !== "GET"
+      || proof.path !== input.path
+      || proof.query !== ""
+      || proof.bodyDigest !== digestBody(new Uint8Array())
+      || !proof.scopeId
+      || issuedAt > now + MAX_CLOCK_SKEW_MS
+      || expiresAt <= now
+      || expiresAt - issuedAt > MAX_PROOF_LIFETIME_MS) {
+      throw invalidProof();
+    }
+    this.rejectReplay(proof, expiresAt, now);
+    return proof;
+  }
+
   verifyPolicy(input: unknown): CollaborationPolicy {
     const parsed = CollaborationSignedPolicySchema.safeParse(input);
     if (!parsed.success) throw invalidProof();
@@ -134,7 +166,7 @@ export class CollaborationActorProofVerifier {
 }
 
 function constantTimeSignatureMatches(
-  domain: "http" | "policy",
+  domain: "http" | "events" | "terminal" | "policy",
   value: CollaborationActorProof | CollaborationPolicy,
   key: string,
   signature: string,

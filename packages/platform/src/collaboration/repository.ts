@@ -118,16 +118,18 @@ export class PlatformCollaborationRepository {
     scopeId: string;
     runtimeId: string;
     ownerId: string;
+    kind: "chat" | "terminal" | "project";
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_directory")
-      .select(["scope_id", "runtime_id", "owner_id", "authority_generation"])
+      .select(["scope_id", "runtime_id", "owner_id", "kind", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
       scopeId: row.scope_id,
       runtimeId: row.runtime_id,
       ownerId: row.owner_id,
+      kind: row.kind,
       authorityGeneration: Number(row.authority_generation),
     } : null;
   }
@@ -162,6 +164,15 @@ export class PlatformCollaborationRepository {
       .limit(100)
       .execute();
     return rows.map((row) => row.actor_id);
+  }
+
+  async getScopeActorStatus(scopeId: string, actorId: string): Promise<"invited" | "accepted" | "revoked" | null> {
+    const row = await this.db.selectFrom("collaboration_user_index")
+      .select("status")
+      .where("scope_id", "=", scopeId)
+      .where("actor_id", "=", actorId)
+      .executeTakeFirst();
+    return row?.status ?? null;
   }
 
   async listForActor(actorId: string): Promise<CollaborationDirectoryEntry[]> {

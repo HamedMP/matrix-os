@@ -863,6 +863,9 @@ export class ChatRepository {
       if (current.lifecycle !== "active") {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
+      if (current.collaboration !== null) {
+        throw new ChatConflictError(input.chatId, Number(current.revision));
+      }
       if (Number(current.revision) !== input.baseRevision) {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
@@ -1098,6 +1101,9 @@ export class ChatRepository {
         };
       }
       if (current.lifecycle !== "active") {
+        throw new ChatConflictError(chatId, Number(current.revision));
+      }
+      if (current.collaboration !== null) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
       if (Number(current.revision) !== input.baseRevision) {

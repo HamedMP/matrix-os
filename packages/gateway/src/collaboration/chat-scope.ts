@@ -207,19 +207,7 @@ export class CollaborationChatScopeService {
   }
 
   async assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void> {
-    const chat = await this.db.selectFrom("chats")
-      .select("collaboration")
-      .where("id", "=", chatId)
-      .where("owner_type", "=", owner.type)
-      .where("owner_id", "=", owner.ownerId)
-      .executeTakeFirst();
-    if (!chat) throw new CollaborationChatScopeError("not_found", "Chat not found");
-    if (parseBinding(chat.collaboration)) {
-      throw new CollaborationChatScopeError(
-        "shared_execution_disabled",
-        "AI is unavailable while this shared Chat is in discussion-only mode",
-      );
-    }
+    await assertDiscussionOnlyChatExecutionAllowed(this.db, owner, chatId);
   }
 
   private verifyConfirmation(input: {
@@ -246,6 +234,34 @@ export class CollaborationChatScopeService {
     if (!payload.success || payload.data.ownerId !== input.ownerId || payload.data.chatId !== input.chatId
       || payload.data.chatRevision !== input.expectedChatRevision
       || Date.parse(payload.data.expiresAt) <= this.now().getTime()) throw invalidConfirmation();
+  }
+}
+
+export function createDiscussionOnlyChatExecutionGuard(db: Kysely<OwnerCollaborationDatabase>): {
+  assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
+} {
+  return {
+    assertPersonalExecutionAllowed: (owner, chatId) => assertDiscussionOnlyChatExecutionAllowed(db, owner, chatId),
+  };
+}
+
+async function assertDiscussionOnlyChatExecutionAllowed(
+  db: Kysely<OwnerCollaborationDatabase>,
+  owner: ChatOwner,
+  chatId: string,
+): Promise<void> {
+  const chat = await db.selectFrom("chats")
+    .select("collaboration")
+    .where("id", "=", chatId)
+    .where("owner_type", "=", owner.type)
+    .where("owner_id", "=", owner.ownerId)
+    .executeTakeFirst();
+  if (!chat) throw new CollaborationChatScopeError("not_found", "Chat not found");
+  if (parseBinding(chat.collaboration)) {
+    throw new CollaborationChatScopeError(
+      "shared_execution_disabled",
+      "AI is unavailable while this shared Chat is in discussion-only mode",
+    );
   }
 }
 

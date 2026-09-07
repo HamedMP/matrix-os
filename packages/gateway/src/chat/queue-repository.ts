@@ -175,6 +175,9 @@ export class ChatQueueRepository {
       if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
+      if (chat.collaboration !== null) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
       const activeRun = await trx.selectFrom("chat_runs").select("id")
         .where("chat_id", "=", chatId)
         .where("status", "in", [...ACTIVE_RUNS])
