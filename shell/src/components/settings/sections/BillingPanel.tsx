@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  getMatrixDeveloperToolPreinstallLimit,
+} from "@matrix-os/contracts";
+import {
   useEffect,
   useEffectEvent,
   useMemo,
@@ -30,6 +33,7 @@ import type {
 import { ActiveBillingPanel, BillingPortalButton, TrialPaymentRecoveryPanel } from "./BillingManagementPanel";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
 import {
+  constrainDeveloperToolsSelection,
   defaultDeveloperTools,
   nextDeveloperToolsSelection,
   type DeveloperToolId,
@@ -310,6 +314,7 @@ function SelectionTriggerCards({
   onSelectProfile,
   onSelectRegion,
   onToggleDeveloperTool,
+  onClearDeveloperTools,
 }: {
   profiles: typeof MATRIX_BILLING_SERVER_PROFILES;
   regions: typeof MATRIX_BILLING_REGIONS;
@@ -324,6 +329,7 @@ function SelectionTriggerCards({
   onSelectProfile: (featureSlug: string) => void;
   onSelectRegion: (featureSlug: string) => void;
   onToggleDeveloperTool: (tool: DeveloperToolId) => void;
+  onClearDeveloperTools: () => void;
 }) {
   const regionOpen = openPicker === "region";
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -377,7 +383,9 @@ function SelectionTriggerCards({
         <DeveloperToolsSelector
           selectedTools={developerTools}
           onToggle={onToggleDeveloperTool}
+          onClear={onClearDeveloperTools}
           variant="billing"
+          singleChoice={getMatrixDeveloperToolPreinstallLimit(selectedProfile.hetznerType) === 1}
         />
       </div>
 
@@ -574,6 +582,8 @@ function BillingPanelInner({
     () => resolveMatrixServerProfile(selectedPlanProfile, selectedRegion),
     [selectedPlanProfile, selectedRegion],
   );
+  const developerToolLimit = getMatrixDeveloperToolPreinstallLimit(selectedProfile.hetznerType);
+  const effectiveDeveloperTools = constrainDeveloperToolsSelection(developerTools, developerToolLimit);
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by a useEffect dependency array below (the ref-sync effect keyed on telemetryProperties); removing useMemo would re-run that effect on every render.
   const telemetryProperties = useMemo<BillingTelemetryProperties>(
     () => {
@@ -646,6 +656,10 @@ function BillingPanelInner({
     ) ? selectedRegion : nextAllowedRegions[0] ?? selectedRegion;
     const nextProfile = resolveMatrixServerProfile(nextPlanProfile, nextRegion);
     setSelectedProfileSlug(nextPlanProfile.featureSlug);
+    setDeveloperTools((current) => constrainDeveloperToolsSelection(
+      current,
+      getMatrixDeveloperToolPreinstallLimit(nextProfile.hetznerType),
+    ));
     if (nextRegion.featureSlug !== selectedRegion.featureSlug) {
       setSelectedRegionOverride(nextRegion.featureSlug);
     }
@@ -664,6 +678,11 @@ function BillingPanelInner({
       allowedRegions.find((region) => region.featureSlug === featureSlug) ??
       selectedRegion;
     setSelectedRegionOverride(featureSlug);
+    const nextProfile = resolveMatrixServerProfile(selectedPlanProfile, nextRegion);
+    setDeveloperTools((current) => constrainDeveloperToolsSelection(
+      current,
+      getMatrixDeveloperToolPreinstallLimit(nextProfile.hetznerType),
+    ));
     setOpenPicker(null);
     captureBillingTelemetry("region_select", {
       ...telemetryProperties,
@@ -744,7 +763,7 @@ function BillingPanelInner({
             regions={allowedRegions}
             selectedProfile={selectedProfile}
             selectedRegion={selectedRegion}
-            developerTools={developerTools}
+            developerTools={effectiveDeveloperTools}
             billingInterval={billingInterval}
             openPicker={openPicker}
             onToggleRegion={() =>
@@ -754,8 +773,9 @@ function BillingPanelInner({
             onSelectProfile={handleProfileSelect}
             onSelectRegion={handleRegionSelect}
             onToggleDeveloperTool={(tool) => setDeveloperTools(
-              (current) => nextDeveloperToolsSelection(current, tool),
+              (current) => nextDeveloperToolsSelection(current, tool, developerToolLimit === 1),
             )}
+            onClearDeveloperTools={() => setDeveloperTools([])}
           />
         </div>
       </div>
@@ -770,7 +790,7 @@ function BillingPanelInner({
         selectedProfile={selectedProfile}
         selectedRegion={selectedRegion}
         billingInterval={billingInterval}
-        developerTools={developerTools}
+        developerTools={effectiveDeveloperTools}
         trialDurationDays={trialDurationDays}
       />
     </div>

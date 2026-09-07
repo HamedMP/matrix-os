@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import Image from "next/image";
 import { CheckIcon, Loader2Icon, ServerIcon } from "@/lib/hugeicons";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
@@ -186,24 +186,33 @@ function DeveloperToolLogo({ logoPath }: { logoPath: string }) {
 export function DeveloperToolsSelector({
   selectedTools,
   onToggle,
+  onClear,
   variant = "default",
+  singleChoice = false,
 }: {
   selectedTools: DeveloperToolId[];
   onToggle: (tool: DeveloperToolId) => void;
+  onClear?: () => void;
   variant?: "default" | "billing";
+  singleChoice?: boolean;
 }) {
   // The selector is bounded to the four supported developer tools.
   const selectedToolIds = new Set(selectedTools);
   const billingLayout = variant === "billing";
+  const radioGroupName = useId();
+  const detail = singleChoice
+    ? "This computer is designed for lighter workloads, so you can preinstall one coding agent—or none."
+    : "Choose command-line agents to preinstall on this VPS.";
 
   return (
     <section className="max-w-3xl rounded-2xl border border-border/70 bg-background/55 p-3 sm:p-4">
       <div className="mb-3 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <h4 className="text-sm font-semibold text-deep">Developer tools</h4>
-        <p className="text-xs text-forest/45">Choose command-line agents to preinstall on this VPS.</p>
+        <p className={`text-xs ${singleChoice ? "text-forest/65" : "text-forest/45"}`}>{detail}</p>
       </div>
       <ol
         aria-label="Coding agents"
+        role={singleChoice ? "radiogroup" : undefined}
         className={billingLayout ? "grid grid-cols-2 gap-2" : "flex flex-col gap-2"}
       >
         {developerToolOptions.map((tool, index) => {
@@ -242,7 +251,8 @@ export function DeveloperToolsSelector({
                   </span>
                 </span>
                 <input
-                  type="checkbox"
+                  type={singleChoice ? "radio" : "checkbox"}
+                  name={singleChoice ? radioGroupName : undefined}
                   aria-label={tool.label}
                   checked={checked}
                   onChange={() => onToggle(tool.id)}
@@ -264,6 +274,63 @@ export function DeveloperToolsSelector({
             </li>
           );
         })}
+        {singleChoice ? (
+          <li className="onboarding-choice-enter" style={{ animationDelay: `${developerToolOptions.length * 48}ms` }}>
+            <label
+              className={`group flex min-h-14 cursor-pointer items-center justify-between rounded-xl border px-3 py-2 transition-all duration-200 active:scale-[0.995] ${
+                selectedTools.length === 0
+                  ? billingLayout
+                    ? "border-[#0E3422] bg-[#F4F7ED] shadow-[0_8px_24px_rgba(14,52,34,0.08)]"
+                    : "translate-x-1 border-ember bg-[#fff7ec] shadow-[0_10px_28px_rgba(83,68,48,0.10)]"
+                  : "border-forest/10 bg-white/90 hover:translate-x-0.5 hover:border-forest/25"
+              }`}
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                <kbd
+                  aria-hidden="true"
+                  className={`grid size-7 shrink-0 place-items-center rounded-lg border font-mono text-[11px] transition-colors ${
+                    selectedTools.length === 0
+                      ? billingLayout
+                        ? "border-[#BED77B] bg-[#BED77B] text-[#0E3422]"
+                        : "border-ember/35 bg-ember text-white"
+                      : "border-forest/15 bg-white text-forest/55 group-hover:text-forest"
+                  }`}
+                >
+                  {developerToolOptions.length + 1}
+                </kbd>
+                <span
+                  className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-[#2F392C] text-white shadow-sm"
+                  aria-hidden="true"
+                >
+                  <ServerIcon className="size-5" />
+                </span>
+                <span className="block min-w-0 whitespace-normal break-words text-sm font-medium leading-5 text-deep">
+                  None
+                </span>
+              </span>
+              <input
+                type="radio"
+                name={radioGroupName}
+                aria-label="None"
+                checked={selectedTools.length === 0}
+                onChange={() => onClear?.()}
+                className="sr-only"
+              />
+              <span
+                className={`flex size-5 items-center justify-center rounded-full border transition-colors ${
+                  selectedTools.length === 0
+                    ? billingLayout
+                      ? "border-[#0E3422] bg-[#BED77B] text-[#0E3422]"
+                      : "border-ember bg-ember text-white"
+                    : "border-forest/20 bg-white"
+                }`}
+                aria-hidden="true"
+              >
+                {selectedTools.length === 0 ? <CheckIcon className="onboarding-selection-pop size-3.5" /> : null}
+              </span>
+            </label>
+          </li>
+        ) : null}
       </ol>
     </section>
   );

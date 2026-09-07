@@ -3,6 +3,7 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { nextDeveloperToolsSelection } from "../../shell/src/components/onboarding/developer-tools.js";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
@@ -60,6 +61,10 @@ describe("BillingSection", () => {
         headers: { "content-type": "application/json" },
       }),
     );
+  });
+
+  it("keeps the selected CPX22 radio selected until None is chosen", () => {
+    expect(nextDeveloperToolsSelection(["codex"], "codex", true)).toEqual(["codex"]);
   });
 
   afterEach(() => {
@@ -639,6 +644,65 @@ describe("BillingSection", () => {
     expect((screen.getByRole("checkbox", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("uses a single-choice developer tool selector for CPX22", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout") {
+        return new Response(JSON.stringify({ url: "https://checkout.stripe.test/session" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+
+    expect(screen.getByText(
+      "This computer is designed for lighter workloads, so you can preinstall one coding agent—or none.",
+    )).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: "Codex" })).toBeNull();
+    expect((screen.getByRole("radio", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("radio", { name: "None" }) as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(screen.getByRole("radio", { name: "Claude Code" }));
+    expect((screen.getByRole("radio", { name: "Codex" }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("radio", { name: "Claude Code" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/checkout",
+      expect.objectContaining({
+        body: JSON.stringify({
+          planSlug: "matrix_starter",
+          interval: "monthly",
+          regionSlug: "region_fsn1",
+          developerTools: ["claude-code"],
+        }),
+      }),
+    ));
+  });
+
+  it("allows no developer tool on CPX22 and restores multi-select on larger computers", async () => {
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+    fireEvent.click(screen.getByRole("radio", { name: "None" }));
+    expect((screen.getByRole("radio", { name: "None" }) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Builder\b/i }));
+    expect(screen.queryByRole("radio", { name: "None" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Codex" })).toBeTruthy();
+    expect(screen.getByText("Choose command-line agents to preinstall on this VPS.")).toBeTruthy();
   });
 
   it("prefills the closest server for an American browser timezone", async () => {
