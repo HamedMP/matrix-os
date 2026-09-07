@@ -16,7 +16,10 @@ export function UserMessage({
   const lines = message.markdown.split("\n");
   const collapsible = message.markdown.length > 700 || lines.length > 12;
   const [expanded, setExpanded] = useState(false);
-  const references = message.references ?? message.attachments ?? [];
+  const references = (message.references ?? message.attachments ?? []).filter((reference) =>
+    reference.kind !== "file" || !message.content?.some((segment) =>
+      segment.kind !== "text" && segment.id === reference.id
+      && (segment.kind === "image" || segment.referenceKind === "file")));
   const visibleMarkdown = collapsible && !expanded
     ? `${lines.slice(0, 10).join("\n").slice(0, 700)}…`
     : message.markdown;

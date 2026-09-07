@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { UserMessage } from "../../desktop/src/renderer/src/components/conversation/user-message";
 import type { ConversationMessageContentPresentation } from "../../desktop/src/renderer/src/components/conversation/presentation";
@@ -38,5 +38,17 @@ describe("attachment-only user messages", () => {
   it("preserves a resource-only bubble", () => {
     show([{ kind: "reference", referenceKind: "resource", id: "apps", label: "apps" }]);
     expect(screen.getByText("apps").closest('[data-slot="bubble"]')).toBeTruthy();
+  });
+
+  it("renders each attachment once while a long mixed message is collapsed or expanded", () => {
+    const markdown = "Long message. ".repeat(70);
+    render(<UserMessage message={{
+      kind: "message", id: "mixed", role: "user", phase: "commentary", timestamp: 1000,
+      markdown, copyText: markdown, content: [file, { kind: "text", text: markdown }],
+      references: [{ id: "file", kind: "file", label: "notes.txt" }],
+    }} callbacks={{ copyText: vi.fn() }} />);
+    expect(screen.getAllByText("notes.txt")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Show full message" }));
+    expect(screen.getAllByText("notes.txt")).toHaveLength(1);
   });
 });
