@@ -24,13 +24,14 @@ export function UserMessage({
   return (
     <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
       <Message align="end">
-        <MessageContent className="gap-0">
+        <MessageContent className="gap-1.5">
           <ChatAttachments attachments={(message.content ?? []).flatMap<ChatMessageAttachment>((segment) => segment.kind === "image"
             ? [{ ...segment, kind: "image" as const }]
             : segment.kind === "reference" && segment.referenceKind === "file" ? [{ ...segment, kind: "file" as const }] : [])}
             open={callbacks.openAttachment} loadImage={callbacks.loadImage} />
-          <Bubble variant="plain" align="end">
-            <BubbleContent className="max-w-[min(85%,48rem)] whitespace-pre-wrap rounded-2xl bg-[var(--bg-sunken)] px-4 py-3 text-sm leading-relaxed" data-selectable>
+          <Bubble variant="secondary" align="end" className="max-w-[min(85%,48rem)]">
+            <BubbleContent className="max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
+              style={{ background: "color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface))", borderColor: "color-mix(in srgb, var(--text-primary) 6%, transparent)" }} data-selectable>
               {renderStructuredContent ? message.content!.map((segment, index) => {
                 if (segment.kind === "text") return <span key={`text:${index}`}>{segment.text}</span>;
                 if (segment.kind === "image" || segment.referenceKind === "file") return null;
