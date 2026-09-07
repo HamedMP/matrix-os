@@ -1,3 +1,4 @@
+import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
 import { ArrowLeft, PanelLeftCloseIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
 import {
@@ -700,25 +701,31 @@ export default function WorkTab({
       renamingChatTitle,
       route,
     ]);
+  const sharingControl = useMemo(() => api && initialChatId ? (
+    <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} />
+  ) : null, [api, initialChatId, runtimeSlot, authGeneration]);
   const chromeSpec = useMemo(() => ({
     title: chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
     rightPaneWidth: layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
     rightActions: hasInspector ? (
-      <PaneButton
-        buttonRef={showToolsRef}
-        label={inspectorVisible ? "Hide inspector" : "Show inspector"}
-        controls="work-inspector"
-        expanded={inspectorVisible}
-        compact
-        onClick={inspectorVisible ? closeInspector : openInspector}
-      >
-        {inspectorVisible
-          ? <PanelRightCloseIcon size={15} aria-hidden />
-          : <PanelRightOpen size={15} aria-hidden />}
-      </PaneButton>
-    ) : undefined,
-  }), [chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+      <div className="flex items-center gap-1">
+        {sharingControl}
+        <PaneButton
+          buttonRef={showToolsRef}
+          label={inspectorVisible ? "Hide inspector" : "Show inspector"}
+          controls="work-inspector"
+          expanded={inspectorVisible}
+          compact
+          onClick={inspectorVisible ? closeInspector : openInspector}
+        >
+          {inspectorVisible
+            ? <PanelRightCloseIcon size={15} aria-hidden />
+            : <PanelRightOpen size={15} aria-hidden />}
+        </PaneButton>
+      </div>
+    ) : sharingControl,
+  }), [sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;

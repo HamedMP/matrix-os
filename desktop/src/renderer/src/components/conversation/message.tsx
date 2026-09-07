@@ -305,7 +305,7 @@ export function MessageResponse({
       const editorPath = target?.kind === "file" ? target.path : null;
       return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && openFile ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
-        openFile(editorPath);
+        openFile(href!);
       } } : {})} {...(external && openWebLink ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
         openWebLink(href!);
@@ -317,7 +317,7 @@ export function MessageResponse({
       if (blockLanguage || String(codeChildren).endsWith("\n")) {
         return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copyText} />;
       }
-      const path = className ? null : pathPresentation(value);
+      const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
       const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
       if (path && editorPath && openFile) {
         return (
@@ -325,7 +325,7 @@ export function MessageResponse({
             type="button"
             aria-label={`Open ${path.label}`}
             title={value}
-            onClick={() => openFile(editorPath)}
+            onClick={() => openFile(value)}
             className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
           >
             <FileText size={13} aria-hidden className="shrink-0" />

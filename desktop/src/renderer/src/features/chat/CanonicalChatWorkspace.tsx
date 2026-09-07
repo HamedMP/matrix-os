@@ -1,3 +1,4 @@
+import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
 import { openChatWebLink } from "./chat-web-navigation";
 import type {
@@ -108,6 +109,7 @@ export function CanonicalChatWorkspace({
 }) {
   const projects = useBoard((state) => state.projects);
   const fileNavigation = useChatFileNavigation();
+  const chromeHost = useSurfaceChromeHost();
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
@@ -741,7 +743,7 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail && globalView === "conversation" ? (
           <>
-            {api ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
+            {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
             <ConversationTranscript turns={transcript} callbacks={{
               copyText,
               openAttachment: (rawPath) => {

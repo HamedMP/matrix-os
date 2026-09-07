@@ -58,7 +58,7 @@ export class ChatSharing {
       const chat = await trx.selectFrom("chats").selectAll().where("id", "=", chatId)
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).forUpdate().executeTakeFirst();
       if (!chat) throw new ChatSharingError("not_found");
-      if (chat.revision !== revision) throw new ChatSharingError("conflict");
+      if (Number(chat.revision) !== revision) throw new ChatSharingError("conflict");
       await trx.deleteFrom("chat_shares").where("chat_id", "=", chatId).where("expires_at", "<=", new Date()).execute();
       const existing = await trx.selectFrom("chat_shares").select("id").where("chat_id", "=", chatId).limit(MAX_SHARES_PER_CHAT).execute();
       if (existing.length >= MAX_SHARES_PER_CHAT) throw new ChatSharingError("limit");
@@ -79,7 +79,7 @@ export class ChatSharing {
         .forShare().executeTakeFirst();
       if (!chat) throw new ChatSharingError("not_found");
       const snapshot = await readSnapshot(trx, chatId, chat.title);
-      return { ...snapshot, revision: chat.revision, fingerprint: tokenHash(JSON.stringify(snapshot)) };
+      return { ...snapshot, revision: Number(chat.revision), fingerprint: tokenHash(JSON.stringify(snapshot)) };
     });
   }
 

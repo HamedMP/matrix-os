@@ -71,3 +71,17 @@ it("wires owner preview, listing, creation, public read, and revocation", async 
   expect((await app.request(path + "/" + created.id, { method: "DELETE" })).status).toBe(200);
   expect((await app.request("/share/chats/" + created.token)).status).toBe(404);
 });
+
+it("normalizes PostgreSQL bigint revisions for preview and confirmed creation", async () => {
+  const postgresLike = repository.kysely.withPlugin({
+    transformQuery: ({ node }) => node,
+    async transformResult({ result }) {
+      return { ...result, rows: result.rows.map((row) => "revision" in row ? { ...row, revision: String(row.revision) } : row) };
+    },
+  });
+  const service = new ChatSharing(postgresLike);
+  const preview = await service.preview(owner, "chat_share");
+  expect(preview.revision).toBe(0);
+  const created = await service.create(owner, "chat_share", 0, preview.fingerprint);
+  expect(await service.read(created.token)).not.toBeNull();
+});

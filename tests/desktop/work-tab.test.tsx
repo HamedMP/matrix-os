@@ -713,6 +713,8 @@ describe("WorkTab rail integration", () => {
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     const hideInspector = screen.getByRole("button", { name: "Hide inspector" });
     expect(within(chromeTitle.closest("header")!).queryByRole("button", { name: /Chat navigation/ })).toBeNull();
+    expect(within(chromeTitle.closest("header")!).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+    expect(hostedMain.queryByRole("button", { name: "Share", exact: true })).toBeNull();
     expect(hideInspector.className).toContain("size-7");
     expect(hideInspector.className).toContain("rounded-md");
     expect(hideInspector.className).toContain("pointer-events-auto");

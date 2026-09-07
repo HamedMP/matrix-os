@@ -51,3 +51,20 @@ it("opens an attached file using its owner reference instead of its display labe
   fireEvent.click(screen.getByRole("button", { name: "Preview Report.pdf" }));
   expect(openAttachment).toHaveBeenCalledWith("uploads/report.pdf");
 });
+
+it("preserves the source root when opening an absolute message file link", () => {
+  const openFile = vi.fn(() => true);
+  const path = "/home/matrix/home/apps/games/chess/src/App.tsx";
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>{`[App.tsx](${path})`}</MessageResponse>);
+  fireEvent.click(screen.getByRole("link", { name: "App.tsx" }));
+  expect(openFile).toHaveBeenCalledWith(path);
+});
+
+it("does not treat package names or API members as local files", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>{"Uses `chess.js` and `MatrixOS.db`; see `src/main.ts`."}</MessageResponse>);
+  expect(screen.queryByRole("button", { name: "Open chess.js" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open MatrixOS.db" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Open main.ts" }));
+  expect(openFile).toHaveBeenCalledWith("src/main.ts");
+});

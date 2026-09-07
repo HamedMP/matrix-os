@@ -38,8 +38,8 @@ export function ChatSharingButton({ api, chatId, copyText, handle, runtimeSlot, 
       if (alive.current) setError(true);
     } finally { if (alive.current) setPending(false); }
   };
-  return <div className="flex shrink-0 items-center justify-end gap-2 px-5 pt-2 text-xs">
-    {error ? <span role="alert">Sharing unavailable. Try again.</span> : null}
+  return <div className="relative inline-flex shrink-0 items-center gap-2 text-xs">
+    {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">Sharing unavailable. Try again.</span> : null}
     <button type="button" disabled={pending} onClick={() => void open()} className="rounded-lg px-3 py-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
     {preview ? <ChatShareDialog title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
       onClose={() => setPreview(null)} revoke={async (id) => { await api.delete(`${path}/${encodeURIComponent(id)}`); }}
