@@ -31,7 +31,7 @@ function deferred<T>() {
 }
 
 vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({
+  default: function MockTerminalView({
     sessionName,
     active,
     visualScale,
@@ -39,7 +39,7 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
     sessionName: string;
     active?: boolean;
     visualScale?: number;
-  }) => {
+  }) {
     const themeMode = useAppearance((state) => state.mode);
     const terminalThemeId = useTerminalAppearance((state) => state.themeId);
     React.useEffect(() => {
@@ -231,6 +231,20 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
 
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
+  });
+
+  it("keeps the Terminal title, session details, and controls in one header with a persistent sidebar toggle", () => {
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active" }] });
+    renderTab();
+    const header = screen.getByRole("banner");
+    expect(header.contains(screen.getByRole("heading", { name: "Terminal", exact: true }))).toBe(true);
+    expect(header.querySelector("[data-terminal-controls-host]")).not.toBeNull();
+    const toggle = screen.getByRole("button", { name: "Hide terminal tabs" });
+    expect(toggle.querySelector('svg')?.getAttribute('data-direction')).toBe('left');
+    fireEvent.click(toggle);
+    const show = screen.getByRole("button", { name: "Show terminal tabs" });
+    expect(header.contains(show)).toBe(true);
+    expect(show.querySelector('svg')?.getAttribute('data-direction')).toBe('right');
   });
 
   it("places the shell theme picker beside the new-session controls in the sidebar", () => {
@@ -627,13 +641,14 @@ describe("TerminalsTab", () => {
     );
     const content = container.querySelector<HTMLElement>('[data-testid="desktop-terminal-app"]');
     expect(content).not.toBeNull();
-    expect(content!.style.paddingTop).toBe("");
+    expect(content!.style.paddingTop).toBe("48px");
     fireEvent.click(screen.getByRole("button", { name: "Hide terminal tabs" }));
-    const rail = screen.getByRole("complementary", { name: "Collapsed terminal tabs" });
-    expect(content!.contains(rail)).toBe(true);
+    const header = screen.getByRole("banner");
+    expect(header.contains(screen.getByRole("button", { name: "Show terminal tabs" }))).toBe(true);
+    expect(screen.queryByRole("complementary", { name: "Collapsed terminal tabs" })).toBeNull();
     expect(content!.style.paddingTop).toBe("48px");
     fireEvent.click(screen.getByRole("button", { name: "Show terminal tabs" }));
-    expect(content!.style.paddingTop).toBe("");
+    expect(content!.style.paddingTop).toBe("48px");
   });
 
   it("keeps delete and connect actions in one non-overlapping overflow menu", async () => {

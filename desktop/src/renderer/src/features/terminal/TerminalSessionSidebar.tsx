@@ -1,12 +1,11 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PanelLeftCloseIcon, PinIcon, PinOffIcon, SquareTerminal, Trash2, X } from "@renderer/lib/hugeicons";
+import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PinIcon, PinOffIcon, Trash2, X } from "@renderer/lib/hugeicons";
 import { type Ref, useState } from "react";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
 import { OSWindowSafeView } from "../desktop-shell/OSWindow";
-import { DesktopNewSessionControl } from "./DesktopNewSessionControl";
-import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
+import { TerminalSessionHeader } from "./TerminalSessionHeader";
 import { relativeSessionActivity } from "./terminal-session-activity";
 import {
   terminalAgentLabel,
@@ -34,6 +33,7 @@ function sessionTitle(shell: ShellSessionSummary): string {
 }
 
 export function TerminalSessionSidebar({
+  showHeader = true,
   sessions,
   selectedName,
   creating,
@@ -58,6 +58,7 @@ export function TerminalSessionSidebar({
   onPin,
   onDelete,
 }: {
+  showHeader?: boolean;
   sessions: ShellSessionSummary[];
   selectedName: string | null;
   creating: boolean;
@@ -84,38 +85,13 @@ export function TerminalSessionSidebar({
 }) {
   const [actionsName, setActionsName] = useState<string | null>(null);
   return (
-    <OSWindowSafeView area="sidebar" data-terminal-session-sidebar className="flex h-full min-h-0 w-full flex-col">
+    <OSWindowSafeView area="sidebar" style={showHeader ? undefined : { paddingTop: 0 }} data-terminal-session-sidebar className="flex h-full min-h-0 w-full flex-col">
       <aside className="flex h-full min-h-0 w-full flex-col">
-        <div className="flex min-h-12 shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-subtle)" }}>
-          <div className="flex min-w-0 items-center gap-1.5">
-            <SquareTerminal size={16} aria-hidden="true" />
-            <h1 className="truncate text-base font-medium tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>Terminal</h1>
-          </div>
-          <div data-terminal-sidebar-header-actions className="no-drag flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              aria-label="Hide terminal tabs"
-              ref={collapseButtonRef}
-              aria-controls={sidebarId}
-              aria-expanded="true"
-              title="Hide terminal tabs"
-              className="flex size-9 shrink-0 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-              onClick={onCollapse}
-            >
-              <PanelLeftCloseIcon size={15} aria-hidden="true" />
-            </button>
-            <DesktopTerminalThemePicker />
-            <DesktopNewSessionControl
-              disabled={disabled}
-              creating={creating}
-              agentStatuses={agentStatuses}
-              checkingAgentStatuses={checkingAgentStatuses}
-              onRefreshAgentStatuses={onRefreshAgentStatuses}
-              onCreateShell={onCreate}
-              onCreateAgent={onCreateAgent}
-            />
-          </div>
-        </div>
+        {showHeader && <div className="shrink-0 border-b" style={{ borderColor: "var(--border-subtle)" }}>
+          <TerminalSessionHeader sidebarId={sidebarId} buttonRef={collapseButtonRef} onToggle={onCollapse}
+            disabled={disabled} creating={creating} agentStatuses={agentStatuses} checkingAgentStatuses={checkingAgentStatuses}
+            onRefreshAgentStatuses={onRefreshAgentStatuses} onCreateShell={onCreate} onCreateAgent={onCreateAgent} />
+        </div>}
         <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {[...sessions].sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))).map((session) => {
             const selected = selectedName === session.name;
