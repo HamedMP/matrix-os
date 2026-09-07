@@ -1,3 +1,4 @@
+import { isPublicShareLink } from "@matrix-os/contracts";
 import { Dialog } from "../Dialog.js";
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -51,7 +52,7 @@ export function ChatShareDialog({ title, messages, createLink, copyText, revoke,
               <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
                 img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : "[Image]"}</span>,
                 table: ({ children }) => <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-left">{children}</table></div>,
-                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
+                a: ({ href, children }) => isPublicShareLink(href) ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
               }}>{message.text}</ReactMarkdown>
             </div>
           </div>)}

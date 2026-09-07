@@ -11,6 +11,10 @@ export const ShareTokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 const escape = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
 
+export function isPublicShareLink(href: string | undefined): boolean {
+  return /^(?:https?:\/\/|mailto:)/i.test(href ?? "");
+}
+
 function snapshotMarkdown(text: string): string {
   const html = micromark(text, {
     extensions: [gfm(), { disable: { null: ["labelStartImage"] } }],
@@ -21,7 +25,7 @@ function snapshotMarkdown(text: string): string {
   // This matches only compiler-generated anchors: raw HTML is escaped above.
   // Relative and local file destinations have no meaning in a public snapshot.
   return html.replace(/<a href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g, (anchor, href: string, label: string) =>
-    /^(?:https?:\/\/|mailto:)/i.test(href) ? anchor : label);
+    isPublicShareLink(href) ? anchor : label);
 }
 
 export function shareHtml(snapshot: ShareSnapshot): string {

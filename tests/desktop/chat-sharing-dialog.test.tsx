@@ -58,11 +58,12 @@ it("refreshes a reply committed between preflight and share creation without ret
 });
 
 it("renders readable Markdown in the consent preview without active HTML or remote images", () => {
-  render(<ChatShareDialog title="Preview" messages={[{ role: "assistant", text: "## Result\n\n**Ready** with `chess.js`.\n\n- First\n- Second\n\n```js\nconst ready = true;\n```\n\n| File | State |\n| --- | --- |\n| app.ts | Done |\n\n<script>alert(1)</script>\n\n![tracking](https://example.com/pixel)" }]} createLink={vi.fn()} copyText={vi.fn()} revoke={vi.fn()} onClose={vi.fn()} />);
+  render(<ChatShareDialog title="Preview" messages={[{ role: "assistant", text: "## Result\n\n**Ready** with `chess.js`. [Private file](/home/private.ts)\n\n- First\n- Second\n\n```js\nconst ready = true;\n```\n\n| File | State |\n| --- | --- |\n| app.ts | Done |\n\n<script>alert(1)</script>\n\n![tracking](https://example.com/pixel)" }]} createLink={vi.fn()} copyText={vi.fn()} revoke={vi.fn()} onClose={vi.fn()} />);
   expect(screen.getByRole("heading", { name: "Result" })).toBeTruthy();
   expect(screen.getByRole("list").children).toHaveLength(2);
   expect(screen.getByRole("table")).toBeTruthy();
   expect(screen.getByText("Ready").tagName).toBe("STRONG");
   expect(screen.getByText("const ready = true;").closest("pre")).toBeTruthy();
   expect(document.querySelector("script, img")).toBeNull();
+  expect(screen.getByText("Private file").closest("a")).toBeNull();
 });

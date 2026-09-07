@@ -1191,4 +1191,4 @@ export type {
 } from "#os-view";
 
 export { resolveChatMessageLink } from "#chat-links";
-export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, type ShareSnapshot } from "#chat-sharing";
+export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, type ShareSnapshot } from "#chat-sharing";
