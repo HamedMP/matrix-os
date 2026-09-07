@@ -2,6 +2,7 @@
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { desktopPalette } from "@matrix-os/brand";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
@@ -37,6 +38,12 @@ async function loadBillingSection() {
 
 async function waitForBillingConfigurator() {
   await waitFor(() => expect(screen.getByTestId("billing-configurator-layout")).toBeTruthy());
+}
+
+function normalizedCssColor(color: string): string {
+  const element = document.createElement("span");
+  element.style.color = color;
+  return element.style.color;
 }
 
 describe("BillingSection", () => {
@@ -89,6 +96,30 @@ describe("BillingSection", () => {
     expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
     expect(screen.queryByText(/\$100/)).toBeNull();
     expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    const activeBadge = document.querySelector<HTMLElement>('[data-slot="badge"]');
+    expect(activeBadge?.style.backgroundColor).toBe(normalizedCssColor(desktopPalette.surfaceMuted));
+    expect(activeBadge?.style.borderColor).toBe(normalizedCssColor(desktopPalette.forestHover));
+    expect(activeBadge?.style.color).toBe(normalizedCssColor(desktopPalette.forest));
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllEnvs();
+  });
+
+  it("uses a recoverable unavailable fixture in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    window.history.replaceState({}, "", "/?e2e_billing_state=unavailable");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    expect(screen.getByRole("alert").textContent).toContain("Billing status is unavailable");
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.queryByText("Checking billing status")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Builder" })).toBeTruthy());
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
     window.history.replaceState({}, "", "/");
     vi.unstubAllEnvs();
   });
@@ -181,7 +212,10 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="add-computer" checkoutRuntimeSlot="studio" />);
 
-    await waitFor(() => expect(screen.getByText("New subscription")).toBeTruthy());
+    const subscriptionBadge = await waitFor(() => screen.getByText("New subscription"));
+    expect(subscriptionBadge.style.backgroundColor).toBe(normalizedCssColor(desktopPalette.canvas));
+    expect(subscriptionBadge.style.borderColor).toBe(normalizedCssColor(desktopPalette.green));
+    expect(subscriptionBadge.style.color).toBe(normalizedCssColor(desktopPalette.forest));
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByText("Start your 7-day free trial")).toBeNull();
   });
@@ -397,6 +431,64 @@ describe("BillingSection", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5000 });
     await waitForBillingConfigurator();
+  });
+
+  it("shows a recoverable error after repeated invalid billing responses", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    const invalidResponse = () => new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: true, reason: "active" },
+      entitlement: { effectiveFrom: "2026-09-07 12:34:56.123456+00" },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(
+      "Billing status is unavailable",
+    ));
+    expect(screen.queryByText("Checking billing status")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitForBillingConfigurator();
+  });
+
+  it("does not label an unavailable add-computer status as a new subscription", async () => {
+    const invalidResponse = () => new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: true, reason: "active" },
+      entitlement: { effectiveFrom: "2026-09-07 12:34:56.123456+00" },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(invalidResponse());
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="add-computer" />);
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(
+      "Billing status is unavailable",
+    ), { timeout: 5_000 });
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.queryByText("New subscription")).toBeNull();
   });
 
   it("sends only the selected Matrix plan, region, and agents to monthly checkout", async () => {

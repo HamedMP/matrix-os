@@ -174,6 +174,32 @@ describe('platform billing entitlements', () => {
     expect(projected.allowedPlanSlugs).toEqual(['matrix_builder']);
   });
 
+  it('normalizes legacy PostgreSQL timestamp text in public projections', () => {
+    const entitlement: BillingEntitlement = {
+      clerkUserId: 'user_123',
+      source: 'override',
+      planSlug: 'internal',
+      status: 'active',
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: 'cpx42',
+      allowedServerTypes: ['cpx42'],
+      stripeSubscriptionId: null,
+      stripePriceId: null,
+      billingInterval: null,
+      gracePeriodEndsAt: null,
+      effectiveFrom: '2026-09-07 12:34:56.123456+00',
+      effectiveUntil: null,
+      updatedAt: '2026-09-07 12:34:56.123456+00',
+    };
+
+    const projected = projectPublicBillingEntitlement(entitlement, loadRuntimeCatalog({}));
+
+    expect(projected.effectiveFrom).toBe('2026-09-07T12:34:56.123Z');
+    expect(projected.updatedAt).toBe('2026-09-07T12:34:56.123Z');
+  });
+
   it('never grants capacity from legacy add-on quantities', () => {
     const entitlement = deriveStripeEntitlement({
       clerkUserId: 'user_123',

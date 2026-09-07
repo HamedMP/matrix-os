@@ -237,6 +237,67 @@ test.describe("Visual regression", () => {
     });
   });
 
+  test("billing unavailable state recovers on retry", async ({ page }) => {
+    await page.goto("/?e2e_billing_state=unavailable");
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    const billingAlert = page.getByRole("alert").filter({ hasText: "Billing status is unavailable" });
+    await expect(billingAlert).toBeVisible();
+    await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-status-unavailable.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByRole("heading", { name: "Builder" })).toBeVisible();
+    await expect(billingAlert).toHaveCount(0);
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-status-recovered.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
+  test("billing unavailable state in Web Canvas", async ({ page }) => {
+    await page.goto("/?e2e_billing_state=unavailable");
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    const gettingStartedDialog = page.getByRole("dialog", { name: "Getting started" });
+    if (await gettingStartedDialog.isVisible()) {
+      await page.keyboard.press("Escape");
+      await expect(gettingStartedDialog).toHaveCount(0);
+    }
+    await page.keyboard.press("Meta+k");
+    await page.keyboard.type("Mode: Canvas");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("dock-settings")).toBeVisible();
+    await page.getByTestId("dock-settings").click();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Billing status is unavailable" }),
+    ).toBeVisible();
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-status-unavailable-web-canvas.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
+  test("billing unavailable state in Web Mobile", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/?e2e_billing_state=unavailable");
+    await page.getByRole("button", { name: "Quick actions" }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Billing status is unavailable" }),
+    ).toBeVisible();
+    await page.mouse.move(195, 422);
+    await expect(page).toHaveScreenshot("billing-status-unavailable-web-mobile.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
   test("billing computer plans", async ({ page }) => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();
