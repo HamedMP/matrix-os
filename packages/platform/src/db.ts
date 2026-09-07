@@ -1218,6 +1218,15 @@ function wrapDb(
 }
 
 async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    await sql`
+      SELECT pg_advisory_xact_lock(hashtext('matrix_os_platform_schema_migration'))
+    `.execute(trx);
+    await migrateSchema(trx);
+  });
+}
+
+async function migrateSchema(db: Executor): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS users (
       id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
