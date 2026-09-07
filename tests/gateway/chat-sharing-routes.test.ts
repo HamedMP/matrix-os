@@ -42,3 +42,14 @@ it("exempts only exact GET capabilities from gateway authentication", async () =
   expect((await app.request(path + "/files")).status).toBe(401);
   expect((await app.request("/api/chats/chat_share/shares")).status).toBe(401);
 });
+
+it("formats the public snapshot as safe Markdown with contained code and tables", () => {
+  const html = shareHtml({title:"Markdown",messages:[{role:"assistant",text:"## Result\n\n**Ready** with `chess.js`.\n\n- First\n- Second\n\n```js\nconst ready = true;\n```\n\n| File | State |\n| --- | --- |\n| app.ts | Done |\n\n[unsafe](javascript:alert%281%29)\n\n![tracking](https://example.com/pixel)"}]});
+  expect(html).toContain("<h2>Result</h2>");
+  expect(html).toContain("<strong>Ready</strong>");
+  expect(html).toContain("<ul>");
+  expect(html).toContain("<pre><code");
+  expect(html).toContain("<table>");
+  expect(html).not.toContain('href="javascript:');
+  expect(html).not.toContain("<img");
+});
