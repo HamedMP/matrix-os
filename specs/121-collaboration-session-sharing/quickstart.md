@@ -18,6 +18,7 @@ Validation results:
 | Check | Result |
 | --- | --- |
 | `pnpm exec vitest run collaboration chat-sharing` | 28 files and 148 tests passed; three real-Postgres files (12 tests) skipped because `MATRIX_TEST_POSTGRES_URL` is unset. The opt-in suites cover scope/capacity/expiry/idempotency, revoke/write serialization, discussion-event atomic rollback, and membership races. |
+| Real PostgreSQL transactions | 3 files and 12 tests passed against a disposable loopback-only PostgreSQL 16.13 database. The container and isolated test schemas were removed after the run. |
 | Two-account fixture validation | `pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/fixtures/collaboration-fixture.e2e.test.ts` passed 2/2 tests. The fixture uses separate authenticated browser contexts and only session or `/vm/<handle>` runtime routes. |
 | Native mobile collaboration Jest | 2 suites and 7 tests passed. |
 | Root typecheck command | `bun run typecheck` could not be invoked because `bun` is absent. Its pnpm-equivalent kernel prerequisite and observability, integrations-mcp, gateway, platform, proxy, edge-router, and desktop TypeScript checks all passed; additional contracts, UI, and shell checks passed. |
@@ -27,7 +28,7 @@ Validation results:
 | React Doctor, changed scope | `packages/ui`, `shell`, and `apps/mobile` have no findings. Desktop has two inherited complexity warnings in `AccountMenu.tsx` and `TabContent.tsx`; the PR1 diff in those files is one menu row and one switch case. |
 | Local Playwright UI check | 1/1 passed after it exposed and drove a fix for transparent cross-shell collaboration dialogs. |
 
-Still required before M1 is review-ready or internally enabled: a configured real-Postgres run, full named-surface screenshots/recordings, a disposable VPS-native two-account/no-computer-recipient journey, snapshot rollback regressions on the release artifact, and the rollout/rollback drill. No runtime acceptance or production enablement is claimed here.
+Still required before M1 is review-ready or internally enabled: full named-surface screenshots/recordings, a disposable VPS-native two-account/no-computer-recipient journey, snapshot rollback regressions on the release artifact, and the rollout/rollback drill. No runtime acceptance or production enablement is claimed here.
 
 ## Prepare a slice
 

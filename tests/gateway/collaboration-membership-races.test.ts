@@ -31,7 +31,9 @@ realDescribe("collaboration membership real PostgreSQL races", () => {
     });
   });
 
-  afterEach(async () => fixture.destroy());
+  afterEach(async () => {
+    if (fixture) await fixture.destroy();
+  });
 
   it("serializes simultaneous invitations for one actor", async () => {
     const results = await Promise.allSettled([1, 2].map((index) => repository.createInvitation({

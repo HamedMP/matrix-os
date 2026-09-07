@@ -24,7 +24,9 @@ realDescribe("CollaborationRepository real PostgreSQL serialization", () => {
     repository = new CollaborationRepository(fixture.db, { now: () => now });
   });
 
-  afterEach(async () => fixture.destroy());
+  afterEach(async () => {
+    if (fixture) await fixture.destroy();
+  });
 
   async function createScope() {
     return repository.createDirectScope({

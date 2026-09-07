@@ -36,7 +36,9 @@ realDescribe("shared Chat discussion real PostgreSQL transactions", () => {
     await seedSharedChat(fixture);
   });
 
-  afterEach(async () => fixture.destroy());
+  afterEach(async () => {
+    if (fixture) await fixture.destroy();
+  });
 
   it("serializes actor-scoped idempotency while allowing another actor to reuse the request id", async () => {
     const editor = await authority.authorize({
@@ -131,9 +133,10 @@ realDescribe("shared Chat discussion real PostgreSQL transactions", () => {
     expect(await countRows(fixture, "chat_messages")).toBe(0);
     expect(await countRows(fixture, "collaboration_operations")).toBe(0);
     expect(await countRows(fixture, "collaboration_events")).toBe(0);
-    await expect(fixture.db.selectFrom("chats").select(["revision", "message_count"])
-      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
-      .resolves.toMatchObject({ revision: 1, message_count: 0 });
+    const chat = await fixture.db.selectFrom("chats").select(["revision", "message_count"])
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow();
+    expect({ revision: Number(chat.revision), messageCount: Number(chat.message_count) })
+      .toEqual({ revision: 1, messageCount: 0 });
   });
 });
 
