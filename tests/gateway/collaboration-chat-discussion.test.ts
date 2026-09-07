@@ -142,6 +142,34 @@ describe("CollaborationChatAdapter discussion", () => {
       .toMatchObject({ pinned: false });
   });
 
+  it("validates read cursors against safe integers and canonical history inside the write transaction", async () => {
+    const editor = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+    await expect(adapter.updateUserState(editor, { readThroughSeq: "9007199254740992" }))
+      .rejects.toBeDefined();
+    await expect(adapter.updateUserState(editor, { readThroughSeq: "1" }))
+      .rejects.toBeDefined();
+    expect(await fixture.db.selectFrom("chat_user_state").selectAll().execute()).toEqual([]);
+
+    const writer = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    });
+    await adapter.appendDiscussion(writer, {
+      clientRequestId: requestId,
+      expectedRevision: "1",
+      text: "Read me",
+    });
+    await expect(adapter.updateUserState(editor, { readThroughSeq: "1" }))
+      .resolves.toMatchObject({ readThroughSeq: "1" });
+    await expect(adapter.updateUserState(editor, { readThroughSeq: "0" }))
+      .resolves.toMatchObject({ readThroughSeq: "1" });
+  });
+
   it("rechecks membership in the same transaction as canonical history reads", async () => {
     const staleContext = await authority.authorize({
       scopeId: collaborationIds.scope,

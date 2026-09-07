@@ -201,6 +201,7 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
       const nextMessages = CollaborationChatMessagesResponseSchema.parse(messagesValue).messages;
       if (generation !== loadGeneration.current) return;
       setScope(nextScope); setChat(nextChat); setMessages(nextMessages);
+      setLoadingMoreMessages(false);
       setError((current) => clearForegroundError || current === "load" || current === "unavailable" ? null : current);
       setHasMoreMessages(BigInt(nextChat.messageCount) > BigInt(nextMessages.length));
       if (api.patch && nextMessages.length > 0) {
@@ -218,20 +219,21 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
   }, [api, scopeId]);
   useEffect(() => {
     setScope(null); setChat(null); setMessages([]); setDraft({ text: "", mode: "discussion" });
-    setLoading(true); setError(null);
+    setLoading(true); setLoadingMoreMessages(false); setError(null);
     void load(true);
     return () => { loadGeneration.current += 1; };
   }, [load]);
   const loadMoreMessages = async () => {
     const after = messages.at(-1)?.sequence;
     if (!after || !chat || loadingMoreMessages) return;
+    const generation = loadGeneration.current;
     setLoadingMoreMessages(true);
     try {
       const next = CollaborationChatMessagesResponseSchema.parse(await api.get(
         `/api/collaboration/scopes/${encodeURIComponent(scopeId)}/chat/messages?after=${encodeURIComponent(after)}&limit=100`,
       )).messages;
-      const known = new Set(messages.map((message) => message.id));
-      const appended = next.filter((message) => !known.has(message.id));
+      if (generation !== loadGeneration.current) return;
+      const appended = next.filter((message) => !messages.some((known) => known.id === message.id));
       const combined = [...messages, ...appended];
       setMessages(combined);
       setHasMoreMessages(appended.length > 0 && BigInt(chat.messageCount) > BigInt(combined.length));
@@ -245,9 +247,9 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
       }
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
-      setError("load");
+      if (generation === loadGeneration.current) setError("load");
     } finally {
-      setLoadingMoreMessages(false);
+      if (generation === loadGeneration.current) setLoadingMoreMessages(false);
     }
   };
   useEffect(() => {

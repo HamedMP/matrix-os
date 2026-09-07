@@ -7,6 +7,7 @@ import {
   type CollaborationScopeExport,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
+import type { ChatRepository } from "../chat/repository.js";
 import {
   type CollaborationDatabase,
   type CollaborationMembersTable,
@@ -20,6 +21,7 @@ const MAX_SCOPE_PARTICIPANTS = 8;
 const MAX_EXPORT_MESSAGES = 100_000;
 const MAX_EXPORT_ATTACHMENTS = 100_000;
 const MAX_EXPORT_AUDIT_RECORDS = 10_000;
+const MAX_EXPORT_BYTES = 16 * 1024 * 1024;
 
 type Executor = Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase>;
 type ScopeRow = Selectable<CollaborationScopesTable>;
@@ -140,6 +142,8 @@ export interface MemberMutationResult {
 export interface CollaborationRepositoryOptions {
   now?: () => Date;
   createId?: () => string;
+  chatRepository?: ChatRepository;
+  maxExportBytes?: number;
 }
 
 export interface ChatLifecycleInput {
@@ -156,6 +160,8 @@ export interface ChatLifecycleInput {
 export class CollaborationRepository {
   private readonly now: () => Date;
   private readonly createId: () => string;
+  private readonly chatRepository: ChatRepository | undefined;
+  private readonly maxExportBytes: number;
 
   constructor(
     public readonly db: Kysely<OwnerCollaborationDatabase>,
@@ -163,6 +169,8 @@ export class CollaborationRepository {
   ) {
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
+    this.chatRepository = options.chatRepository;
+    this.maxExportBytes = Math.max(1, Math.min(options.maxExportBytes ?? MAX_EXPORT_BYTES, MAX_EXPORT_BYTES));
   }
 
   async createDirectScope(input: CreateDirectScopeInput): Promise<CollaborationScopeRecord> {
@@ -589,7 +597,10 @@ export class CollaborationRepository {
     const nowDate = this.now();
     const now = nowDate.toISOString();
     const operationKind = `lifecycle.${input.type}`;
-    return this.db.transaction().execute(async (trx) => {
+    const apply = async (
+      trx: Transaction<OwnerCollaborationDatabase>,
+      canonicalChatRepository?: ChatRepository,
+    ): Promise<CollaborationOperation> => {
       const replay = await readOperationReplay<CollaborationOperation>(trx, input, operationKind);
       if (replay) return CollaborationOperationSchema.parse(replay);
       const scope = await lockDirectScope(trx, input.scopeId);
@@ -614,7 +625,7 @@ export class CollaborationRepository {
         await appendLifecycleAudit(trx, scope, input.actorId, "scope.exported", now);
         const exportId = input.clientRequestId;
         const expiresAt = new Date(nowDate.getTime() + EXPORT_RETENTION_MS).toISOString();
-        const payload = await buildChatScopeExport(trx, scope, chat, exportId, now, expiresAt);
+        const payload = await buildChatScopeExport(trx, scope, chat, exportId, now, expiresAt, this.maxExportBytes);
         await trx.insertInto("collaboration_exports").values({
           id: exportId,
           scope_id: scope.id,
@@ -666,15 +677,24 @@ export class CollaborationRepository {
         .returningAll().executeTakeFirst();
       if (!updatedScope) throw new CollaborationRepositoryError("conflict", "Scope lifecycle changed");
 
-      await trx.insertInto("chat_outbox").values({
-        owner_type: scope.owner_type,
-        owner_id: scope.owner_id,
-        chat_id: chat.id,
-        revision: nextChatRevision,
-        event_type: input.type === "delete" ? "chat.deleted" : "chat.updated",
-        payload: jsonb({}),
-        created_at: now,
-      }).execute();
+      if (canonicalChatRepository) {
+        await canonicalChatRepository.appendOutboxEvent(
+          { type: scope.owner_type, ownerId: scope.owner_id },
+          chat.id,
+          nextChatRevision,
+          input.type === "delete" ? "chat.deleted" : "chat.updated",
+        );
+      } else {
+        await trx.insertInto("chat_outbox").values({
+          owner_type: scope.owner_type,
+          owner_id: scope.owner_id,
+          chat_id: chat.id,
+          revision: nextChatRevision,
+          event_type: input.type === "delete" ? "chat.deleted" : "chat.updated",
+          payload: jsonb({}),
+          created_at: now,
+        }).execute();
+      }
       if (input.type === "delete") {
         const deletion = await trx.insertInto("chat_deletions").values({
           owner_type: scope.owner_type,
@@ -726,7 +746,14 @@ export class CollaborationRepository {
         now,
       });
       return result;
-    });
+    };
+    if (this.chatRepository) {
+      return this.chatRepository.withTransaction((repository) => apply(
+        repository.kysely as unknown as Transaction<OwnerCollaborationDatabase>,
+        repository,
+      ));
+    }
+    return this.db.transaction().execute((trx) => apply(trx));
   }
 
   async getLifecycleOperation(
@@ -870,7 +897,19 @@ async function buildChatScopeExport(
   exportId: string,
   exportedAt: string,
   expiresAt: string,
+  maxExportBytes: number,
 ): Promise<CollaborationScopeExport> {
+  const messageAggregate = await trx.selectFrom("chat_messages")
+    .select(({ fn }) => [
+      fn.countAll<string>().as("count"),
+      sql<string>`COALESCE(SUM(octet_length(parts::text)), 0)::text`.as("parts_bytes"),
+    ])
+    .where("chat_id", "=", chat.id)
+    .executeTakeFirstOrThrow();
+  if (BigInt(messageAggregate.count) > BigInt(MAX_EXPORT_MESSAGES)
+    || BigInt(messageAggregate.parts_bytes) > BigInt(maxExportBytes)) {
+    throw new CollaborationRepositoryError("capacity", "Scope export exceeds safe limits");
+  }
   const [members, audit, messages, attachments] = await Promise.all([
     trx.selectFrom("collaboration_members").selectAll().where("scope_id", "=", scope.id)
       .orderBy("updated_at", "asc").limit(MAX_SCOPE_PARTICIPANTS + 1).execute(),
@@ -885,7 +924,7 @@ async function buildChatScopeExport(
     || messages.length > MAX_EXPORT_MESSAGES || attachments.length > MAX_EXPORT_ATTACHMENTS) {
     throw new CollaborationRepositoryError("capacity", "Scope export exceeds safe limits");
   }
-  return CollaborationScopeExportSchema.parse({
+  const payload = CollaborationScopeExportSchema.parse({
     version: 1,
     id: exportId,
     scopeId: scope.id,
@@ -937,6 +976,10 @@ async function buildChatScopeExport(
       })),
     },
   });
+  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > maxExportBytes) {
+    throw new CollaborationRepositoryError("capacity", "Scope export exceeds safe limits");
+  }
+  return payload;
 }
 
 function sanitizeExportParts(value: unknown) {

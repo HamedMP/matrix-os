@@ -192,6 +192,46 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByRole("heading", { name: "Old Chat" })).toBeNull();
   });
 
+  it("does not let a stale history page overwrite a newer canonical refresh", async () => {
+    const scope = {
+      id: scopeId, ownerId: "user_owner", kind: "chat" as const, resourceId: chatId,
+      membershipMode: "direct" as const, lifecycle: "shared" as const, revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "viewer" as const,
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+    };
+    const message = (sequence: number) => ({
+      id: `msg_${sequence}`, chatId, sequence: String(sequence), role: "user" as const,
+      state: "committed" as const, purpose: "discussion" as const,
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${sequence}` }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    let refresh = () => undefined;
+    let refreshing = false;
+    let resolvePage!: (value: unknown) => void;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("after=1&limit=100")) return new Promise<unknown>((resolve) => { resolvePage = resolve; });
+        if (path.endsWith("after=0&limit=100")) return { messages: refreshing ? [message(1), message(2), message(3)] : [message(1)] };
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Race-safe Chat", lifecycle: "active", revision: "1", messageCount: refreshing ? "3" : "2" };
+        return scope;
+      }),
+      post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => void) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load more messages" }));
+    await waitFor(() => expect(resolvePage).toBeTypeOf("function"));
+    refreshing = true;
+    refresh();
+    expect(await screen.findByText("Message 3")).toBeVisible();
+    await act(async () => resolvePage({ messages: [message(2)] }));
+    expect(screen.getByText("Message 3")).toBeVisible();
+  });
+
   it("keeps viewer discussion controls read-only", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",

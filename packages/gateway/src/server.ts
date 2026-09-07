@@ -1050,6 +1050,7 @@ export async function createGateway(config: GatewayConfig) {
       if (collaborationConfig) {
         gatewayCollaboration = await createGatewayCollaboration({
           db: chatRepository.kysely as Kysely<any>,
+          chatRepository,
           config: collaborationConfig,
         });
       }

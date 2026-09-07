@@ -11,6 +11,7 @@ import {
   type CollaborationHumanMessage,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
+import { z } from "zod/v4";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "./authority.js";
 import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./database.js";
 import { CollaborationRepositoryError } from "./repository.js";
@@ -272,23 +273,37 @@ export class CollaborationChatAdapter {
 
   async updateUserState(context: AuthorizedCollaborationContext, input: unknown) {
     const patch = CollaborationUserStatePatchSchema.parse(input);
+    const readThroughSeq = patch.readThroughSeq === undefined ? undefined : z.coerce.number()
+      .int().min(0).max(Number.MAX_SAFE_INTEGER).parse(patch.readThroughSeq);
     const now = this.now().toISOString();
     return this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, context);
       await reauthorizeRead(trx, context, this.now());
       requireCurrentEpoch(scope, context, await membershipEpoch(trx, context));
+      const chat = await trx.selectFrom("chats")
+        .select(["message_count", "collaboration"])
+        .where("id", "=", context.resourceId)
+        .where("owner_type", "=", "personal")
+        .where("owner_id", "=", context.ownerId)
+        .executeTakeFirst();
+      if (!chat || !bindingMatches(chat.collaboration, context.scopeId)) {
+        throw new CollaborationAuthorizationError("unavailable", "Shared Chat binding is unavailable");
+      }
+      if (readThroughSeq !== undefined) {
+        z.number().max(Number(chat.message_count)).parse(readThroughSeq);
+      }
       await trx.insertInto("chat_user_state").values({
         chat_id: context.resourceId,
         principal_id: context.actorId,
-        read_through_seq: patch.readThroughSeq === undefined ? 0 : Number(patch.readThroughSeq),
+        read_through_seq: readThroughSeq ?? 0,
         pinned: patch.pinned ?? false,
         muted: patch.muted ?? false,
         attention_acknowledged_at: null,
         last_opened_at: now,
         updated_at: now,
       }).onConflict((conflict) => conflict.columns(["chat_id", "principal_id"]).doUpdateSet({
-        ...(patch.readThroughSeq === undefined ? {} : {
-          read_through_seq: sql<number>`GREATEST(chat_user_state.read_through_seq, ${Number(patch.readThroughSeq)})`,
+        ...(readThroughSeq === undefined ? {} : {
+          read_through_seq: sql<number>`GREATEST(chat_user_state.read_through_seq, ${readThroughSeq})`,
         }),
         ...(patch.pinned === undefined ? {} : { pinned: patch.pinned }),
         ...(patch.muted === undefined ? {} : { muted: patch.muted }),

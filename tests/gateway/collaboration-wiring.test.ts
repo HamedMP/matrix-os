@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
+import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import {
   createGatewayCollaboration,
   loadGatewayCollaborationConfig,
@@ -53,6 +54,7 @@ describe("gateway collaboration wiring", () => {
   it("resolves dependencies before route registration and drains before database disposal", async () => {
     const runtime = await createGatewayCollaboration({
       db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
       config: {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
@@ -108,6 +110,7 @@ describe("gateway collaboration wiring", () => {
 
     const runtime = await createGatewayCollaboration({
       db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
       config: {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",

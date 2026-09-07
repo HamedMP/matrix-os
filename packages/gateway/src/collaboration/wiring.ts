@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
+import type { ChatRepository } from "../chat/repository.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority } from "./authority.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
@@ -62,6 +63,7 @@ export function loadGatewayCollaborationConfig(env: NodeJS.ProcessEnv): GatewayC
 
 export async function createGatewayCollaboration(options: {
   db: Kysely<OwnerCollaborationDatabase>;
+  chatRepository: ChatRepository;
   config: GatewayCollaborationConfig;
   resolveParticipant?(actorId: string): Promise<{ actorId: string; displayName: string }>;
   outboxFetch?: typeof fetch;
@@ -69,7 +71,7 @@ export async function createGatewayCollaboration(options: {
 }) {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
-  const repository = new CollaborationRepository(options.db);
+  const repository = new CollaborationRepository(options.db, { chatRepository: options.chatRepository });
   const participantResolver = options.resolveParticipant ? undefined : new CollaborationParticipantResolver({
     platformBaseUrl: options.config.platformBaseUrl,
     runtimeId: options.config.runtimeId,

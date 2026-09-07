@@ -71,7 +71,7 @@ export default function SharedScreen() {
   const loadChat = useCallback(async (scopeId: string) => {
     const generation = ++chatLoadGeneration.current;
     setLoading(true); setError(""); setView({ kind: "chat", scopeId });
-    setScope(null); setChat(null); setMessages([]); setDraft("");
+    setScope(null); setChat(null); setMessages([]); setDraft(""); setLoadingMoreMessages(false);
     try {
       const actorToken = await token();
       const [nextScope, nextChat, history] = await Promise.all([
@@ -100,18 +100,21 @@ export default function SharedScreen() {
     if (view.kind !== "chat" || !chat || loadingMoreMessages) return;
     const after = messages.at(-1)?.sequence;
     if (!after) return;
+    const generation = chatLoadGeneration.current;
     setLoadingMoreMessages(true); setError("");
     try {
       const page = await fetchSharedChatMessages(await token(), view.scopeId, after);
-      const known = new Set(messages.map((message) => message.id));
-      const appended = page.messages.filter((message) => !known.has(message.id));
+      if (generation !== chatLoadGeneration.current) return;
+      const appended = page.messages.filter((message) => !messages.some((known) => known.id === message.id));
       const combined = [...messages, ...appended];
       setMessages(combined);
       setHasMoreMessages(appended.length > 0 && BigInt(chat.messageCount) > BigInt(combined.length));
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
-      setError("More messages could not be loaded. Try again.");
-    } finally { setLoadingMoreMessages(false); }
+      if (generation === chatLoadGeneration.current) setError("More messages could not be loaded. Try again.");
+    } finally {
+      if (generation === chatLoadGeneration.current) setLoadingMoreMessages(false);
+    }
   };
   const review = async (invitationId: string) => {
     setLoading(true); setError("");
@@ -175,7 +178,12 @@ export default function SharedScreen() {
   if (view.kind === "chat") {
     const viewer = scope?.role === "viewer";
     return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <View style={styles.header}><Back onPress={() => { setView({ kind: "home" }); void loadHome(); }} />
+      <View style={styles.header}><Back onPress={() => {
+        chatLoadGeneration.current += 1;
+        setLoadingMoreMessages(false);
+        setView({ kind: "home" });
+        void loadHome();
+      }} />
         <Text style={styles.title}>{chat?.title ?? "Shared Chat"}</Text><Text style={styles.muted}>{scope ? `${roleLabel(scope.role)} · Discussion only` : "Loading…"}</Text></View>
       {loading ? <ActivityIndicator accessibilityLabel="Loading shared Chat" /> : null}
       <ScrollView contentContainerStyle={styles.history}>

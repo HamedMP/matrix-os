@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
+import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import {
@@ -14,13 +15,17 @@ const now = new Date("2026-09-07T12:00:00.000Z");
 describe("Chat collaboration lifecycle", () => {
   let fixture: CollaborationTestDatabase;
   let repository: CollaborationRepository;
+  let delivered: Array<{ event: { eventType: string } }>;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     await seed(fixture);
-    repository = new CollaborationRepository(fixture.db, { now: () => now });
+    const chatRepository = new ChatRepository(fixture.db);
+    delivered = [];
+    chatRepository.registerOutboxSink((event) => delivered.push(event));
+    repository = new CollaborationRepository(fixture.db, { now: () => now, chatRepository });
   });
 
   afterEach(async () => fixture.destroy());
@@ -49,6 +54,7 @@ describe("Chat collaboration lifecycle", () => {
     });
     expect(restored).toMatchObject({ type: "restore", status: "completed", revision: "3" });
     expect(await repository.getScope(collaborationIds.scope)).toMatchObject({ lifecycle: "shared", revision: 3 });
+    expect(delivered.map(({ event }) => event.eventType)).toEqual(["chat.updated", "chat.updated"]);
   });
 
   it("exports only scope-owned content and necessary content-free metadata", async () => {
@@ -73,6 +79,26 @@ describe("Chat collaboration lifecycle", () => {
     expect(encoded).not.toContain("user_state");
   });
 
+  it("rejects an export whose encoded payload exceeds the aggregate byte cap", async () => {
+    const chatRepository = new ChatRepository(fixture.db);
+    const bounded = new CollaborationRepository(fixture.db, {
+      now: () => now,
+      chatRepository,
+      maxExportBytes: 512,
+    });
+    await expect(bounded.applyChatLifecycle({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      type: "export",
+      clientRequestId: request(30),
+      expectedRevision: 1,
+      payloadHash: "e".repeat(64),
+    })).rejects.toMatchObject({ code: "capacity" });
+    expect(await fixture.db.selectFrom("collaboration_exports").select("id").execute()).toEqual([]);
+    expect(await fixture.db.selectFrom("collaboration_operations").select("client_request_id").execute()).toEqual([]);
+    expect(await fixture.db.selectFrom("collaboration_audit").select("action").execute()).toEqual([]);
+  });
+
   it("soft-deletes authority, removes only the selected Chat, and retains content-free audit", async () => {
     const deleted = await repository.applyChatLifecycle({
       scopeId: collaborationIds.scope,
@@ -93,6 +119,29 @@ describe("Chat collaboration lifecycle", () => {
       { action: "scope.deleted", actor_id: collaborationActors.owner },
     ]);
     expect(await repository.getScopeExport(collaborationIds.scope, collaborationActors.owner, request(4))).toBeNull();
+    expect(delivered.map(({ event }) => event.eventType)).toEqual(["chat.deleted"]);
+  });
+
+  it("does not deliver a canonical lifecycle event when the surrounding transaction rolls back", async () => {
+    await fixture.db.insertInto("chat_deletions").values({
+      owner_type: "personal",
+      owner_id: collaborationActors.owner,
+      chat_id: "chat_unrelated",
+      request_id: request(40),
+      deleted_at: now.toISOString(),
+    }).execute();
+    await expect(repository.applyChatLifecycle({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      type: "delete",
+      clientRequestId: request(40),
+      expectedRevision: 1,
+      payloadHash: "f".repeat(64),
+    })).rejects.toMatchObject({ code: "conflict" });
+    expect(delivered).toEqual([]);
+    expect(await repository.getScope(collaborationIds.scope)).toMatchObject({ lifecycle: "shared", revision: 1 });
+    expect(await fixture.db.selectFrom("chats").select("id").where("id", "=", collaborationIds.chat).executeTakeFirst())
+      .toEqual({ id: collaborationIds.chat });
   });
 });
 

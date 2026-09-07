@@ -382,6 +382,19 @@ export class ChatRepository {
     return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
   }
 
+  async appendOutboxEvent(
+    ownerInput: ChatOwner,
+    chatId: string,
+    revision: number,
+    eventType: ChatOutboxEventType,
+    payload: Record<string, unknown> = {},
+  ): Promise<void> {
+    const owner = validateOwner(ownerInput);
+    CanonicalChatIdSchema.parse(chatId);
+    z.number().int().nonnegative().parse(revision);
+    await this.transact((trx) => this.appendOutbox(trx, owner, chatId, revision, eventType, payload));
+  }
+
   private async transact<T>(fn: (trx: Executor) => Promise<T>): Promise<T> {
     if (this.transactionScoped) return fn(this.kysely);
     const result = await this.kysely.transaction().execute(async (trx) => {
