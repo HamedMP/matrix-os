@@ -5,6 +5,15 @@ import { afterEach, expect, it, vi } from "vitest";
 import { CanonicalInputMessage } from "../../shell/src/components/chat/CanonicalInputMessage";
 
 afterEach(cleanup);
+it("shows unsupported unstructured requests with an explicit stop-and-retry recovery", () => {
+  const stop = vi.fn();
+  render(<CanonicalInputMessage message={{ id: "input", role: "system", content: "Clarification", timestamp: 1,
+    metadata: { canonicalInput: { runId: "run_coding", requestId: "req_clarify", title: "Clarification needed", pending: true } } }} onStop={stop} />);
+  expect(screen.getByText("Clarification needed")).toBeTruthy();
+  expect(screen.getByText(/cannot be answered in this view/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Stop run to retry" }));
+  expect(stop).toHaveBeenCalledTimes(1);
+});
 it("keeps web connector consent visible and submits only an explicit choice", async () => {
   const request = { requestId: "req_connector", threadId: "thread_native", title: "Connector request", safeDescription: "Review", correlationId: "corr_connector", required: false,
     connectorActionId: "question_action", questions: [{ questionId: "question_action", header: "Permission", question: "Allow access?", allowOther: false, secret: false,

@@ -131,6 +131,7 @@ interface ChatAppProps {
     decision: CanonicalChatApprovalDecision,
   ) => Promise<boolean>;
   onSubmitInput?: (runId: string, requestId: string, answers: CanonicalSubmitChatInputRequest["answers"]) => Promise<boolean>;
+  onStopRun?: () => void;
   composerDraftRequest?: { id: number; text: string } | null;
   onComposerDraftConsumed?: (id: number) => void;
   onProviderSetupAction?: (
@@ -181,6 +182,7 @@ export function ChatApp({
   providerSelection,
   onSubmitApproval,
   onSubmitInput,
+  onStopRun,
   composerDraftRequest,
   onComposerDraftConsumed,
   onProviderSetupAction,
@@ -490,7 +492,7 @@ export function ChatApp({
                           </MessageContent>
                         </Message>
                       ) : msg.role === "system" ? (
-                        canonicalInput(msg) ? <CanonicalInputMessage message={msg} onSubmit={onSubmitInput} /> :
+                        canonicalInput(msg) ? <CanonicalInputMessage message={msg} onSubmit={onSubmitInput} onStop={onStopRun} /> :
                         <CanonicalApprovalMessage
                           message={msg}
                           submitting={(() => {
@@ -513,7 +515,7 @@ export function ChatApp({
                 })}
 
                 {busy && messages.some((message) => canonicalApproval(message)?.pending || canonicalInput(message)?.pending) ? (
-                  <p role="status" className="text-sm text-muted-foreground">Waiting for your approval or response above.</p>
+                  <p role="status" className="text-sm text-muted-foreground">A request needs your attention above.</p>
                 ) : busy && (
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground py-1">
                     <div className="flex gap-1">

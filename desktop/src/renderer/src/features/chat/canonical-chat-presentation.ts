@@ -412,6 +412,7 @@ function runPresentation(
         requestId: activity.approvalId,
         state: "waiting",
         label: activity.title,
+        ...(activity.description ? { detail: activity.description } : {}),
         risk: activity.risk,
         timestamp: Date.parse(activity.occurredAt),
         actions: activity.allowedDecisions.map((decision) => ({
