@@ -269,6 +269,7 @@ describe("BillingSection", () => {
   });
 
   it("does not replace a legacy trial price with the current catalog price", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-20T00:00:00.000Z"));
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         access: { runtimeProxyAllowed: true, reason: "active" },

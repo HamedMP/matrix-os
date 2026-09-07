@@ -6,6 +6,7 @@ export function deriveBillingManagementView(
   entitlement: MatrixBillingPublicEntitlement | null | undefined,
   management?: MatrixBillingManagement,
   accessReason?: string | null,
+  now = Date.now(),
 ) {
   const subscription = management
     ? management.subscription
@@ -23,7 +24,12 @@ export function deriveBillingManagementView(
     ? formatRecurringPrice(recurringPrice)
     : interval === 'annual' ? 'Annual' : interval === 'monthly' ? 'Monthly'
     : management && !subscription ? 'No subscription' : 'Not available';
-  const status = subscription?.status ?? (teamAccess ? entitlement.status : legacyAccess ? 'active' : null);
+  const unconvertedTrial = subscription?.status === 'trialing' && !subscription.trialConvertedAt;
+  const elapsedTrial = unconvertedTrial && subscription.trialEndsAt != null
+    && Date.parse(subscription.trialEndsAt) <= now;
+  const paymentRequired = accessReason === 'payment_required' || Boolean(elapsedTrial
+    || (subscription?.firstTrialPaymentFailedAt && !subscription.trialConvertedAt));
+  const status = paymentRequired ? 'payment_required' : subscription?.status ?? (teamAccess ? entitlement.status : legacyAccess ? 'active' : null);
   const statusLabel = status ? status.charAt(0).toUpperCase() + status.slice(1).replaceAll('_', ' ') : 'No subscription';
   const allowanceLabel = entitlement ? `Up to ${entitlement.maxRuntimeSlots} computers` : 'Not available';
   const portalMessage = portalAvailable
@@ -32,8 +38,7 @@ export function deriveBillingManagementView(
   const accessDescription = teamAccess
     ? 'The Matrix team provides runtime access for this account.'
     : 'Runtime access follows your subscription and any applicable grace period.';
-  const trialEndsAt = subscription?.status === 'trialing' ? subscription.trialEndsAt : null;
-  const paymentRequired = Boolean(subscription?.firstTrialPaymentFailedAt && !subscription.trialConvertedAt);
+  const trialEndsAt = unconvertedTrial && !paymentRequired ? subscription.trialEndsAt : null;
   return {
     subscription, teamAccess, portalAvailable, planName, statusLabel, billingLabel,
     allowanceLabel, portalMessage, accessDescription, trialEndsAt, paymentRequired,

@@ -11,7 +11,7 @@ const PRICING_URL = "https://matrix-os.com/pricing";
 export default function BillingSettingsScreen() {
   const { theme } = useUnistyles();
   const { billing, isPending, isError, openPortal, isOpeningPortal } = useSettingsBilling();
-  const view = deriveBillingManagementView(billing?.entitlement, billing?.management);
+  const view = deriveBillingManagementView(billing?.entitlement, billing?.management, billing?.access?.reason);
   const plan = isPending ? "Loading…" : isError ? "Unavailable" : view.planName;
   const canManage = !isPending && !isError && view.portalAvailable;
 

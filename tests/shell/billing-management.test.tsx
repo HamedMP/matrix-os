@@ -50,4 +50,12 @@ describe('Web Canvas and Web Desktop billing management', () => {
     expect(screen.queryByText('Monthly')).toBeNull();
   });
 
+  it('shows payment recovery instead of active-trial copy after expiry', () => {
+    render(<ActiveBillingPanel entitlement={entitlement} management={{ ...management,
+      subscription: { ...management.subscription!, status: 'trialing', trialEndsAt: '2020-01-01T00:00:00.000Z' },
+    }} accessReason="payment_required" />);
+    expect(screen.queryByText('Free trial active')).toBeNull();
+    expect(screen.queryByText(/Cancel before/)).toBeNull();
+    expect(screen.getByRole('alert').textContent).toContain('Payment required');
+  });
 });

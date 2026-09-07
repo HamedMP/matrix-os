@@ -138,7 +138,7 @@ export default function BillingSection() {
 
   const active = status?.access.runtimeProxyAllowed === true;
   const entitlement = status?.entitlement ?? null;
-  const view = deriveBillingManagementView(entitlement, status?.management);
+  const view = deriveBillingManagementView(entitlement, status?.management, status?.access.reason);
   const portalAvailable = view.portalAvailable;
   const settingsUrl = useMemo(() => {
     const base = platformHost.startsWith("https://") ? platformHost : "https://app.matrix-os.com";
