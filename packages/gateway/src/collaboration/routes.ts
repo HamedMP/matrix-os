@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import {
   COLLABORATION_HTTP_BODY_LIMIT,
+  COLLABORATION_CLIENT_REQUEST_ID_HEADER,
+  COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
+  COLLABORATION_EXPECTED_REVISION_HEADER,
   CollaborationAcceptInvitationRequestSchema,
   CollaborationActorIdSchema,
   CollaborationCreateDiscussionRequestSchema,
@@ -185,9 +188,9 @@ export function createCollaborationRoutes(options: {
   routes.delete("/api/collaboration/scopes/:scopeId/invitations/:invitationId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const invitationId = CollaborationIdSchema.parse(c.req.param("invitationId"));
-    const { value, bytes } = await readJson(c);
+    const bytes = new Uint8Array();
+    const input = deleteConditions(c);
     const context = await authorize(options, c, bytes, "manage_members", scopeId);
-    const input = CollaborationRevokeRequestSchema.parse(value);
     const result = await options.repository.revokeInvitation({
       scopeId,
       invitationId,
@@ -195,7 +198,7 @@ export function createCollaborationRoutes(options: {
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
       expectedMemberRevision: Number(input.expectedMemberRevision),
-      payloadHash: digest(bytes),
+      payloadHash: digestDeleteConditions(input),
     });
     options.onRevoked?.(scopeId, result.actorId);
     await notifyScope(options, scopeId);
@@ -225,8 +228,8 @@ export function createCollaborationRoutes(options: {
   routes.delete("/api/collaboration/scopes/:scopeId/members/:actorId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const targetActorId = CollaborationActorIdSchema.parse(c.req.param("actorId"));
-    const { value, bytes } = await readJson(c);
-    const input = CollaborationRevokeRequestSchema.parse(value);
+    const bytes = new Uint8Array();
+    const input = deleteConditions(c);
     const proof = await verifyHttp(options.verifier, c, bytes);
     if (proof.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Member access is required");
     const context = proof.actorId === targetActorId
@@ -239,7 +242,7 @@ export function createCollaborationRoutes(options: {
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
       expectedMemberRevision: Number(input.expectedMemberRevision),
-      payloadHash: digest(bytes),
+      payloadHash: digestDeleteConditions(input),
     });
     options.onRevoked?.(scopeId, result.actorId);
     await notifyScope(options, scopeId);
@@ -250,13 +253,7 @@ export function createCollaborationRoutes(options: {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     requireChatContext(context);
-    const state = await options.repository.getChatUserState(context.resourceId, context.actorId);
-    return c.json(CollaborationUserStateSchema.parse({
-      readThroughSeq: String(state.readThroughSeq),
-      pinned: state.pinned,
-      muted: state.muted,
-      ...(state.lastOpenedAt ? { lastOpenedAt: state.lastOpenedAt } : {}),
-    }));
+    return c.json(await options.chatAdapter.getUserState(context));
   }));
 
   routes.patch("/api/collaboration/scopes/:scopeId/user-state", async (c) => handle(c, async () => {
@@ -265,29 +262,7 @@ export function createCollaborationRoutes(options: {
     const context = await authorize(options, c, bytes, "read", scopeId);
     requireChatContext(context);
     const input = CollaborationUserStatePatchSchema.parse(value);
-    const readThroughSeq = input.readThroughSeq === undefined ? undefined : Number(input.readThroughSeq);
-    if (readThroughSeq !== undefined) {
-      const latest = await options.repository.db.selectFrom("chat_messages")
-        .select(({ fn }) => fn.max("seq").as("sequence"))
-        .where("chat_id", "=", context.resourceId)
-        .executeTakeFirst();
-      z.number().int().safe().min(0).max(Number(latest?.sequence ?? 0)).parse(readThroughSeq);
-    }
-    await options.repository.updateChatUserState({
-      chatId: context.resourceId,
-      actorId: context.actorId,
-      ...(readThroughSeq === undefined ? {} : { readThroughSeq }),
-      ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
-      ...(input.muted === undefined ? {} : { muted: input.muted }),
-      openedAt: now().toISOString(),
-    });
-    const state = await options.repository.getChatUserState(context.resourceId, context.actorId);
-    return c.json(CollaborationUserStateSchema.parse({
-      readThroughSeq: String(state.readThroughSeq),
-      pinned: state.pinned,
-      muted: state.muted,
-      ...(state.lastOpenedAt ? { lastOpenedAt: state.lastOpenedAt } : {}),
-    }));
+    return c.json(await options.chatAdapter.updateUserState(context, input));
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId/chat", async (c) => handle(c, async () => {
@@ -332,10 +307,24 @@ async function authorize(
     path: c.req.path,
     query: rawQuery(c),
     body,
+    conditionalHeaders: optionalDeleteConditions(c),
     action,
   });
   if (context.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Scope access is required");
   return context;
+}
+
+function optionalDeleteConditions(c: Context) {
+  if (c.req.method !== "DELETE") return undefined;
+  return deleteConditions(c);
+}
+
+function deleteConditions(c: Context) {
+  return CollaborationRevokeRequestSchema.parse({
+    clientRequestId: c.req.header(COLLABORATION_CLIENT_REQUEST_ID_HEADER),
+    expectedRevision: c.req.header(COLLABORATION_EXPECTED_REVISION_HEADER),
+    expectedMemberRevision: c.req.header(COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER),
+  });
 }
 
 async function verifyHttp(verifier: CollaborationActorProofVerifier, c: Context, body: Uint8Array) {
@@ -345,7 +334,12 @@ async function verifyHttp(verifier: CollaborationActorProofVerifier, c: Context,
     path: c.req.path,
     query: rawQuery(c),
     body,
+    conditionalHeaders: optionalDeleteConditions(c),
   });
+}
+
+function digestDeleteConditions(input: z.infer<typeof CollaborationRevokeRequestSchema>): string {
+  return digest(new TextEncoder().encode(JSON.stringify(input)));
 }
 
 function decodeProof(c: Context): unknown {

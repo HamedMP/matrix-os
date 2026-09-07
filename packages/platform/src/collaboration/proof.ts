@@ -5,6 +5,7 @@ import {
   CollaborationSignedActorProofSchema,
   CollaborationSignedPolicySchema,
   type CollaborationActorProof,
+  type CollaborationDeleteCondition,
   type CollaborationPolicy,
 } from "@matrix-os/contracts";
 
@@ -36,6 +37,7 @@ export class CollaborationProofSigner {
     path: string;
     query: string;
     body: Uint8Array;
+    conditionalHeaders?: CollaborationDeleteCondition;
   }) {
     const issuedAt = this.now();
     const proof = CollaborationActorProofSchema.parse({
@@ -50,6 +52,7 @@ export class CollaborationProofSigner {
       path: input.path,
       query: input.query,
       bodyDigest: digestBody(input.body),
+      conditionalHeadersDigest: digestConditionalHeaders(input.conditionalHeaders),
       nonce: this.createNonce(),
       issuedAt: issuedAt.toISOString(),
       expiresAt: new Date(issuedAt.getTime() + PROOF_LIFETIME_MS).toISOString(),
@@ -82,6 +85,7 @@ export class CollaborationProofSigner {
       path: input.path,
       query: input.query ?? "",
       bodyDigest: digestBody(new Uint8Array()),
+      conditionalHeadersDigest: digestConditionalHeaders(undefined),
       nonce: this.createNonce(),
       issuedAt: issuedAt.toISOString(),
       expiresAt: new Date(issuedAt.getTime() + PROOF_LIFETIME_MS).toISOString(),
@@ -104,6 +108,14 @@ export class CollaborationProofSigner {
 
 export function digestBody(body: Uint8Array): string {
   return createHash("sha256").update(body).digest("hex");
+}
+
+export function digestConditionalHeaders(value: CollaborationDeleteCondition | undefined): string {
+  return createHash("sha256").update(value === undefined ? "" : JSON.stringify({
+    clientRequestId: value.clientRequestId,
+    expectedRevision: value.expectedRevision,
+    expectedMemberRevision: value.expectedMemberRevision,
+  })).digest("hex");
 }
 
 function sign(

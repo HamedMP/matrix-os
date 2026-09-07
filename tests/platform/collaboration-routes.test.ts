@@ -21,7 +21,7 @@ describe("platform collaboration routes", () => {
   let fixture: PlatformCollaborationTestDatabase;
   let repository: PlatformCollaborationRepository;
   let app: Hono;
-  let hydrate: (input: { actorId: string; entry: { scopeId: string; invitationId?: string; kind: string } }) => Promise<unknown>;
+  let hydrate: Parameters<typeof createPlatformCollaborationRoutes>[0]["hydrate"];
 
   beforeEach(async () => {
     fixture = await createPlatformCollaborationTestDatabase();
@@ -41,10 +41,27 @@ describe("platform collaboration routes", () => {
       now: () => now,
       createToken: () => "c".repeat(43),
     });
-    hydrate = async ({ actorId, entry }) => ({
-      id: entry.invitationId ?? entry.scopeId,
-      actorId,
-      kind: entry.kind,
+    hydrate = async ({ actorId, entry }) => entry.status === "invited" ? ({
+      id: entry.invitationId,
+      scopeId: entry.scopeId,
+      owner: { actorId: entry.ownerId, displayName: "Owner" },
+      target: { actorId, displayName: "Recipient" },
+      scopeKind: "chat",
+      role: "editor",
+      status: "pending",
+      expiresAt: "2026-09-14T12:00:00.000Z",
+      revision: "1",
+    }) : ({
+      scope: {
+        id: entry.scopeId, ownerId: entry.ownerId, kind: "chat", resourceId: "chat_shared",
+        membershipMode: "direct", lifecycle: "shared", revision: "2", authEpoch: "2",
+        authorityGeneration: String(entry.authorityGeneration), role: "editor",
+        capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+      },
+      chat: {
+        id: "chat_shared", scopeId: entry.scopeId, title: "Shared Chat", lifecycle: "active",
+        revision: "2", messageCount: "1",
+      },
     });
     app = new Hono();
     app.route("/", createPlatformCollaborationRoutes({
@@ -103,7 +120,7 @@ describe("platform collaboration routes", () => {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
     expect(shared.status).toBe(200);
-    expect(await shared.json()).toMatchObject({ items: [{ status: "accepted", resource: { id: inviteId } }] });
+    expect(await shared.json()).toMatchObject({ items: [{ status: "accepted", resource: { chat: { id: "chat_shared" } } }] });
   });
 
   it("keeps healthy discovery entries when one owner runtime cannot hydrate", async () => {
@@ -120,9 +137,11 @@ describe("platform collaboration routes", () => {
         invitationId: "30000000-0000-4000-8000-000000000002",
       }],
     });
-    hydrate = async ({ entry }) => {
+    const healthyHydrate = hydrate;
+    hydrate = async (input) => {
+      const { entry } = input;
       if (entry.scopeId === unavailableScopeId) throw new Error("owner runtime stopped");
-      return { id: entry.invitationId ?? entry.scopeId };
+      return healthyHydrate(input);
     };
 
     const response = await app.request("/api/collaboration/inbox", {

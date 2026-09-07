@@ -61,10 +61,10 @@ export class CollaborationAuthority {
     const membershipScope = await this.resolveMembershipScope(scope);
     const member = await this.repository.getMember(membershipScope.id, input.actorId);
     if (!member || member.status !== "accepted") {
-      throw new CollaborationAuthorizationError("forbidden", "Current membership is required");
+      throw new CollaborationAuthorizationError("not_found", "Current membership is required");
     }
     if (member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime()) {
-      throw new CollaborationAuthorizationError("forbidden", "Current membership is required");
+      throw new CollaborationAuthorizationError("not_found", "Current membership is required");
     }
     this.requireLifecycle(scope, member.role, input.action);
     requireRoleCapability(member.role, input.action);

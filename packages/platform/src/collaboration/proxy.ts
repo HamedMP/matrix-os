@@ -1,4 +1,10 @@
-import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
+import {
+  COLLABORATION_CLIENT_REQUEST_ID_HEADER,
+  COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
+  COLLABORATION_EXPECTED_REVISION_HEADER,
+  COLLABORATION_HTTP_BODY_LIMIT,
+  CollaborationDeleteConditionSchema,
+} from "@matrix-os/contracts";
 import type { CollaborationProofSigner } from "./proof.js";
 import type { PlatformCollaborationRepository } from "./repository.js";
 
@@ -86,6 +92,14 @@ export class CollaborationProxy {
     if (input.body.byteLength > COLLABORATION_HTTP_BODY_LIMIT) {
       return safeResponse("Collaboration request too large", 413);
     }
+    const conditionalHeaders = input.method === "DELETE" ? CollaborationDeleteConditionSchema.safeParse({
+      clientRequestId: input.headers.get(COLLABORATION_CLIENT_REQUEST_ID_HEADER),
+      expectedRevision: input.headers.get(COLLABORATION_EXPECTED_REVISION_HEADER),
+      expectedMemberRevision: input.headers.get(COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER),
+    }) : undefined;
+    if (input.method === "DELETE" && (input.body.byteLength !== 0 || !conditionalHeaders?.success)) {
+      return safeResponse("Invalid collaboration request", 422);
+    }
     try {
       const directory = route.kind === "scope"
         ? await this.options.repository.getDirectoryRoute(route.identifier)
@@ -124,10 +138,16 @@ export class CollaborationProxy {
         path: input.path,
         query: input.query,
         body: input.body,
+        ...(conditionalHeaders?.success ? { conditionalHeaders: conditionalHeaders.data } : {}),
       });
       const headers = new Headers();
       const contentType = input.headers.get("content-type");
       if (contentType && contentType.length <= 128) headers.set("content-type", contentType);
+      if (conditionalHeaders?.success) {
+        headers.set(COLLABORATION_CLIENT_REQUEST_ID_HEADER, conditionalHeaders.data.clientRequestId);
+        headers.set(COLLABORATION_EXPECTED_REVISION_HEADER, conditionalHeaders.data.expectedRevision);
+        headers.set(COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER, conditionalHeaders.data.expectedMemberRevision);
+      }
       headers.set("accept", "application/json");
       headers.set(PROOF_HEADER, Buffer.from(JSON.stringify(signedProof)).toString("base64url"));
       const response = await (this.options.fetchImpl ?? fetch)(
@@ -227,13 +247,13 @@ function safeContentType(value: string | null): string {
   return value?.startsWith("application/json") ? "application/json" : "application/octet-stream";
 }
 
-function safeStatus(status: number): 401 | 403 | 404 | 409 | 413 | 429 | 503 {
-  return [401, 403, 404, 409, 413, 429].includes(status)
-    ? status as 401 | 403 | 404 | 409 | 413 | 429
+function safeStatus(status: number): 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503 {
+  return [401, 403, 404, 409, 413, 422, 429].includes(status)
+    ? status as 401 | 403 | 404 | 409 | 413 | 422 | 429
     : 503;
 }
 
-function safeResponse(message: string, status: 401 | 403 | 404 | 409 | 413 | 429 | 503): Response {
+function safeResponse(message: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503): Response {
   return new Response(message, {
     status,
     headers: { "cache-control": "private, no-store", "content-type": "text/plain; charset=utf-8" },

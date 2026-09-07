@@ -127,6 +127,21 @@ describe("CollaborationChatAdapter discussion", () => {
     })).rejects.toMatchObject({ code: "forbidden" });
   });
 
+  it("rejects member-local state writes from a context revoked before commit", async () => {
+    const editor = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+    await fixture.db.updateTable("collaboration_members").set({ status: "revoked" })
+      .where("scope_id", "=", collaborationIds.scope)
+      .where("actor_id", "=", collaborationActors.editor).execute();
+    await expect(adapter.updateUserState(editor, { pinned: true }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    expect(await repository.getChatUserState(collaborationIds.chat, collaborationActors.editor))
+      .toMatchObject({ pinned: false });
+  });
+
   it("returns canonical history while making owner-home attachment destinations inert", async () => {
     await fixture.db.insertInto("chat_messages").values({
       id: "msg_historical",

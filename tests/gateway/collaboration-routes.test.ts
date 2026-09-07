@@ -303,7 +303,7 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "DELETE",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/members/${collaborationActors.editor}`,
-      body: {
+      deleteConditions: {
         clientRequestId: "50000000-0000-4000-8000-000000000021",
         expectedRevision: "4",
         expectedMemberRevision: "3",
@@ -315,7 +315,7 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "GET",
       path: `/api/collaboration/scopes/${collaborationIds.scope}`,
-    })).status).toBe(403);
+    })).status).toBe(404);
   });
 
   it("rejects snapshot-token substitution and oversized mutation bodies", async () => {
@@ -353,6 +353,18 @@ describe("collaboration gateway routes", () => {
     })).status).toBe(413);
   });
 
+  it("returns generic not-found to outsiders without weakening viewer denials", async () => {
+    await shareChat();
+    const outsider = await signedJson({
+      actorId: collaborationActors.outsider,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/chat`,
+    });
+    expect(outsider.status).toBe(404);
+    expect(await outsider.json()).toEqual({ error: "Collaboration unavailable", code: "not_found" });
+  });
+
   async function shareChat(): Promise<void> {
     const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
     const preflight = await signedJson({
@@ -383,6 +395,7 @@ describe("collaboration gateway routes", () => {
     path: string;
     query?: string;
     body?: unknown;
+    deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string };
   }): Promise<Response> {
     const body = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
@@ -394,12 +407,18 @@ describe("collaboration gateway routes", () => {
       path: input.path,
       query: input.query ?? "",
       body,
+      ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
     });
     return app.request(`${input.path}${input.query ? `?${input.query}` : ""}`, {
       method: input.method,
       headers: {
         "content-type": "application/json",
         "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(proof)).toString("base64url"),
+        ...(input.deleteConditions ? {
+          "x-matrix-client-request-id": input.deleteConditions.clientRequestId,
+          "x-matrix-expected-revision": input.deleteConditions.expectedRevision,
+          "x-matrix-expected-member-revision": input.deleteConditions.expectedMemberRevision,
+        } : {}),
       },
       ...(input.body === undefined ? {} : { body: new TextDecoder().decode(body) }),
     });

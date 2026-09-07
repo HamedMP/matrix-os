@@ -76,6 +76,28 @@ describe("collaboration actor proofs", () => {
     })).rejects.toMatchObject({ code: "invalid_proof" });
   });
 
+  it("binds body-free DELETE conditions into the signed proof", async () => {
+    const { signer, verifier } = createPair();
+    const conditions = {
+      clientRequestId: "50000000-0000-4000-8000-000000000001",
+      expectedRevision: "4",
+      expectedMemberRevision: "2",
+    };
+    const signedProof = signer.signHttp({
+      actorId: "user_owner", ownerId: "user_owner", runtimeId: "runtime_owner", scopeId,
+      method: "DELETE", path: `/api/collaboration/scopes/${scopeId}/members/user_editor`, query: "",
+      body: new Uint8Array(), conditionalHeaders: conditions,
+    });
+    await expect(verifier.verifyHttp({
+      signedProof,
+      method: "DELETE",
+      path: `/api/collaboration/scopes/${scopeId}/members/user_editor`,
+      query: "",
+      body: new Uint8Array(),
+      conditionalHeaders: { ...conditions, expectedRevision: "5" },
+    })).rejects.toMatchObject({ code: "invalid_proof" });
+  });
+
   it("rejects wrong runtime audience and unknown key IDs", async () => {
     const { signedProof } = await signedRequest();
     const wrongRuntime = new CollaborationActorProofVerifier({

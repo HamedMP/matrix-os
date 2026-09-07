@@ -342,11 +342,13 @@ export class CollaborationRepository {
     const operationExpiresAt = new Date(nowDate.getTime() + OPERATION_RETENTION_MS).toISOString();
     const result = await this.db.transaction().execute(async (trx) => {
       const invitation = await trx.selectFrom("collaboration_members")
-        .select("scope_id")
+        .select(["scope_id"])
         .where("invitation_id", "=", input.invitationId)
         .where("actor_id", "=", input.actorId)
         .executeTakeFirst();
       if (!invitation) throw new CollaborationRepositoryError("not_found", "Invitation not found");
+      // All membership mutations lock the scope before a member row. Keeping one
+      // lock order prevents accept/revoke deadlocks on real PostgreSQL.
       const scope = await lockDirectScope(trx, invitation.scope_id);
       const member = await trx.selectFrom("collaboration_members")
         .selectAll()

@@ -1,5 +1,9 @@
 import {
   COLLABORATION_HTTP_BODY_LIMIT,
+  COLLABORATION_CLIENT_REQUEST_ID_HEADER,
+  COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
+  COLLABORATION_EXPECTED_REVISION_HEADER,
+  CollaborationDeleteConditionSchema,
   CollaborationConnectionTicketResponseSchema,
   CollaborationEventFrameSchema,
   CollaborationIdSchema,
@@ -20,7 +24,8 @@ export function createCollaborationBrowserApi(options: {
   const baseUrl = requireBaseUrl(options.baseUrl);
   const request = async (path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) => {
     const url = requireCollaborationPath(baseUrl, path);
-    const serialized = body === undefined ? undefined : JSON.stringify(body);
+    const deleteConditions = method === "DELETE" ? CollaborationDeleteConditionSchema.parse(body) : undefined;
+    const serialized = method === "DELETE" || body === undefined ? undefined : JSON.stringify(body);
     if (serialized !== undefined && new TextEncoder().encode(serialized).byteLength > COLLABORATION_HTTP_BODY_LIMIT) {
       throw new Error("CollaborationUnavailable");
     }
@@ -29,6 +34,11 @@ export function createCollaborationBrowserApi(options: {
     const headers = new Headers({ accept: "application/json" });
     if (serialized !== undefined) headers.set("content-type", "application/json");
     if (authorization && authorization.length <= 4_096) headers.set("authorization", authorization);
+    if (deleteConditions) {
+      headers.set(COLLABORATION_CLIENT_REQUEST_ID_HEADER, deleteConditions.clientRequestId);
+      headers.set(COLLABORATION_EXPECTED_REVISION_HEADER, deleteConditions.expectedRevision);
+      headers.set(COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER, deleteConditions.expectedMemberRevision);
+    }
     try {
       const response = await (options.fetchImpl ?? fetch)(url.href, {
         method,

@@ -192,6 +192,41 @@ describe("CollaborationProxy", () => {
     expect(await response.text()).toBe("Collaboration request denied");
   });
 
+  it("forwards only signed conditional headers on body-free DELETE", async () => {
+    const path = `/api/collaboration/scopes/${scopeId}/members/${platformCollaborationActors.recipientWithoutComputer}`;
+    const conditions = {
+      "x-matrix-client-request-id": "40000000-0000-4000-8000-000000000009",
+      "x-matrix-expected-revision": "3",
+      "x-matrix-expected-member-revision": "2",
+    };
+    const response = await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "DELETE",
+      path,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers({ ...conditions, "x-matrix-owner-token": "never-forward" }),
+    });
+    expect(response.status).toBe(200);
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const forwarded = new Headers(init.headers);
+    expect(forwarded.get("x-matrix-client-request-id")).toBe(conditions["x-matrix-client-request-id"]);
+    expect(forwarded.has("x-matrix-owner-token")).toBe(false);
+    expect(init.body).toBeUndefined();
+    const signedProof = JSON.parse(Buffer.from(forwarded.get("x-matrix-collaboration-proof")!, "base64url").toString("utf8"));
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
+    });
+    await expect(verifier.verifyHttp({
+      signedProof, method: "DELETE", path, query: "", body: new Uint8Array(),
+      conditionalHeaders: {
+        clientRequestId: conditions["x-matrix-client-request-id"],
+        expectedRevision: conditions["x-matrix-expected-revision"],
+        expectedMemberRevision: conditions["x-matrix-expected-member-revision"],
+      },
+    })).resolves.toMatchObject({ actorId: platformCollaborationActors.owner });
+  });
+
   it("returns a safe unavailable response on timeout or upstream failure", async () => {
     fetchImpl.mockRejectedValueOnce(new Error("connect ECONNREFUSED 10.0.0.7:443"));
     const response = await proxy.forward({

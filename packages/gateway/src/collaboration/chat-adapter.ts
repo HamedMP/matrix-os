@@ -4,6 +4,8 @@ import {
   CollaborationChatSchema,
   CollaborationCreateDiscussionRequestSchema,
   CollaborationHumanMessageSchema,
+  CollaborationUserStatePatchSchema,
+  CollaborationUserStateSchema,
   type CanonicalChatMessage,
   type CanonicalChatMessagePart,
   type CollaborationHumanMessage,
@@ -239,6 +241,64 @@ export class CollaborationChatAdapter {
     });
   }
 
+  async getUserState(context: AuthorizedCollaborationContext) {
+    return this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, context);
+      await reauthorizeRead(trx, context, this.now());
+      requireCurrentEpoch(scope, context, await membershipEpoch(trx, context));
+      const row = await trx.selectFrom("chat_user_state")
+        .select(["read_through_seq", "pinned", "muted", "last_opened_at"])
+        .where("chat_id", "=", context.resourceId)
+        .where("principal_id", "=", context.actorId)
+        .executeTakeFirst();
+      return CollaborationUserStateSchema.parse(row ? {
+        readThroughSeq: String(row.read_through_seq),
+        pinned: row.pinned,
+        muted: row.muted,
+        ...(row.last_opened_at === null ? {} : { lastOpenedAt: toIso(row.last_opened_at) }),
+      } : { readThroughSeq: "0", pinned: false, muted: false });
+    });
+  }
+
+  async updateUserState(context: AuthorizedCollaborationContext, input: unknown) {
+    const patch = CollaborationUserStatePatchSchema.parse(input);
+    const now = this.now().toISOString();
+    return this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, context);
+      await reauthorizeRead(trx, context, this.now());
+      requireCurrentEpoch(scope, context, await membershipEpoch(trx, context));
+      await trx.insertInto("chat_user_state").values({
+        chat_id: context.resourceId,
+        principal_id: context.actorId,
+        read_through_seq: patch.readThroughSeq === undefined ? 0 : Number(patch.readThroughSeq),
+        pinned: patch.pinned ?? false,
+        muted: patch.muted ?? false,
+        attention_acknowledged_at: null,
+        last_opened_at: now,
+        updated_at: now,
+      }).onConflict((conflict) => conflict.columns(["chat_id", "principal_id"]).doUpdateSet({
+        ...(patch.readThroughSeq === undefined ? {} : {
+          read_through_seq: sql<number>`GREATEST(chat_user_state.read_through_seq, ${Number(patch.readThroughSeq)})`,
+        }),
+        ...(patch.pinned === undefined ? {} : { pinned: patch.pinned }),
+        ...(patch.muted === undefined ? {} : { muted: patch.muted }),
+        last_opened_at: now,
+        updated_at: now,
+      })).execute();
+      const row = await trx.selectFrom("chat_user_state")
+        .select(["read_through_seq", "pinned", "muted", "last_opened_at"])
+        .where("chat_id", "=", context.resourceId)
+        .where("principal_id", "=", context.actorId)
+        .executeTakeFirstOrThrow();
+      return CollaborationUserStateSchema.parse({
+        readThroughSeq: String(row.read_through_seq),
+        pinned: row.pinned,
+        muted: row.muted,
+        ...(row.last_opened_at === null ? {} : { lastOpenedAt: toIso(row.last_opened_at) }),
+      });
+    });
+  }
+
   private async humanMessage(message: CanonicalChatMessage): Promise<CollaborationHumanMessage> {
     const text = message.parts.find((part) => part.type === "text")?.text ?? "";
     const actor = message.actorId
@@ -301,6 +361,32 @@ async function reauthorizeDiscussion(
   if (!member || member.status !== "accepted" || !["owner", "editor"].includes(member.role)
     || (member.expires_at !== null && new Date(member.expires_at).getTime() <= now.getTime())) {
     throw new CollaborationAuthorizationError("forbidden", "Discussion access is required");
+  }
+}
+
+async function reauthorizeRead(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  context: AuthorizedCollaborationContext,
+  now: Date,
+): Promise<void> {
+  const member = await trx.selectFrom("collaboration_members")
+    .select(["status", "expires_at"])
+    .where("scope_id", "=", context.membershipScopeId)
+    .where("actor_id", "=", context.actorId)
+    .executeTakeFirst();
+  if (!member || member.status !== "accepted"
+    || (member.expires_at !== null && new Date(member.expires_at).getTime() <= now.getTime())) {
+    throw new CollaborationAuthorizationError("forbidden", "Current membership is required");
+  }
+}
+
+function requireCurrentEpoch(
+  scope: Selectable<CollaborationScopesTable>,
+  context: AuthorizedCollaborationContext,
+  inheritedEpoch: number,
+): void {
+  if (Math.max(Number(scope.auth_epoch), inheritedEpoch) !== context.authEpoch) {
+    throw new CollaborationRepositoryError("conflict", "Scope authority changed");
   }
 }
 

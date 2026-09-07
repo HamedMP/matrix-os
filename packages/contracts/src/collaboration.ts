@@ -6,6 +6,9 @@ import { boundedDisplayText, boundedText, referenceId } from "#legacy-contract-p
 export const COLLABORATION_HTTP_BODY_LIMIT = 96 * 1024;
 export const COLLABORATION_MESSAGE_BYTE_LIMIT = 64 * 1024;
 export const COLLABORATION_PAGE_LIMIT = 100;
+export const COLLABORATION_CLIENT_REQUEST_ID_HEADER = "x-matrix-client-request-id";
+export const COLLABORATION_EXPECTED_REVISION_HEADER = "x-matrix-expected-revision";
+export const COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER = "x-matrix-expected-member-revision";
 
 export const CollaborationIdSchema = z.uuid();
 export const CollaborationActorIdSchema = z.string()
@@ -160,6 +163,8 @@ export const CollaborationRevokeRequestSchema = CollaborationConditionalMutation
   expectedMemberRevision: CollaborationRevisionSchema,
 }).strict();
 
+export const CollaborationDeleteConditionSchema = CollaborationRevokeRequestSchema;
+
 export const CollaborationUserStateSchema = z.object({
   readThroughSeq: CollaborationRevisionSchema,
   pinned: z.boolean(),
@@ -268,6 +273,7 @@ export const CollaborationActorProofSchema = z.object({
   path: z.string().min(1).max(512).regex(/^\/(?!\/)[^?#]*$/, "Invalid canonical path"),
   query: z.string().max(512),
   bodyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  conditionalHeadersDigest: z.string().regex(/^[a-f0-9]{64}$/),
   nonce: z.string().regex(/^[a-f0-9]{32,128}$/),
   issuedAt: z.iso.datetime(),
   expiresAt: z.iso.datetime(),
@@ -366,6 +372,7 @@ export const CollaborationClientFrameSchema = z.discriminatedUnion("type", [
 ]);
 
 export type CollaborationActorProof = z.infer<typeof CollaborationActorProofSchema>;
+export type CollaborationDeleteCondition = z.infer<typeof CollaborationDeleteConditionSchema>;
 export type CollaborationCapabilities = z.infer<typeof CollaborationCapabilitiesSchema>;
 export type CollaborationEventFrame = z.infer<typeof CollaborationEventFrameSchema>;
 export type CollaborationHumanMessage = z.infer<typeof CollaborationHumanMessageSchema>;

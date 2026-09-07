@@ -2,6 +2,7 @@ import {
   COLLABORATION_HTTP_BODY_LIMIT,
   CollaborationActorIdSchema,
   CollaborationConnectionTicketRequestSchema,
+  CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -188,11 +189,20 @@ async function listDiscovery(
       }
     });
     c.header("Cache-Control", "private, no-store");
-    return c.json({
+    return c.json(CollaborationDiscoveryResponseSchema.parse({
       items: resources
         .filter((result): result is NonNullable<typeof result> => result !== null)
-        .map(({ entry, resource }) => ({ ...entry, resource })),
-    });
+        .map(({ entry, resource }) => ({
+          scopeId: entry.scopeId,
+          runtimeId: entry.runtimeId,
+          ownerId: entry.ownerId,
+          kind: entry.kind,
+          authorityGeneration: entry.authorityGeneration,
+          status: entry.status,
+          ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
+          resource,
+        })),
+    }));
   } catch (error: unknown) {
     console.warn("[platform-collaboration] discovery hydration failed", error instanceof Error ? error.name : "UnknownError");
     return safeJson(c, "Collaboration unavailable", 503);

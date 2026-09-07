@@ -210,4 +210,33 @@ describe("Chat collaboration sharing", () => {
     expect(screen.getByText(/Viewers can read this Chat/i)).toBeVisible();
     expect(api.post).not.toHaveBeenCalled();
   });
+
+  it("paginates canonical history instead of treating the first page as complete", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: `msg_${index}`, chatId, sequence: String(index + 1), role: "user" as const,
+      state: "committed" as const, purpose: "discussion" as const,
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${index + 1}` }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    }));
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("after=0&limit=100")) return { messages: firstPage };
+        if (path.endsWith("after=100&limit=100")) return { messages: [{
+          id: "msg_101", chatId, sequence: "101", role: "user", state: "committed", purpose: "discussion",
+          actor: { actorId: "user_editor", displayName: "Ada" }, parts: [{ type: "text", text: "Latest message" }],
+          createdAt: "2026-09-07T12:01:00.000Z",
+        }] };
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount: "101" };
+        return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+          revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
+          capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
+      }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load more messages" }));
+    expect(await screen.findByText("Latest message")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Load more messages" })).toBeNull();
+  });
 });

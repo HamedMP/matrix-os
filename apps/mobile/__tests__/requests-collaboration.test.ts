@@ -3,6 +3,7 @@ jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.c
 import {
   acceptCollaborationInvitation,
   fetchCollaborationInbox,
+  fetchSharedChatMessages,
   postSharedChatDiscussion,
 } from "@/lib/requests/collaboration";
 
@@ -36,6 +37,17 @@ describe("mobile collaboration requests", () => {
       expect.objectContaining({ method: "POST", body: JSON.stringify({
         clientRequestId: "40000000-0000-4000-8000-000000000001", expectedRevision: "1", text: "Ready",
       }) }),
+    );
+  });
+
+  it("requests the next bounded page of canonical history", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true, json: jest.fn().mockResolvedValue({ messages: [] }),
+    } as unknown as Response);
+    await fetchSharedChatMessages("clerk-token", scopeId, "100");
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/chat/messages?after=100&limit=100`,
+      expect.any(Object),
     );
   });
 });
