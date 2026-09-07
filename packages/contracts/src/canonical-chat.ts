@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { UserInputRequestSchema } from "#agent-thread-contracts";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { MAX_AGENT_ATTACHMENT_BYTES } from "#agent-thread-contracts";
 import {
@@ -530,6 +531,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     type: z.literal("input.requested"),
     requestId: canonicalReferenceId(128),
     title: canonicalSafeLabel(160, 640),
+    input: UserInputRequestSchema.optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.resolved"),

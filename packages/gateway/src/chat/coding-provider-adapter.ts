@@ -29,7 +29,7 @@ const MAX_ACTIVE_STEER_RUNS = 64;
 
 type CodingThreads = Pick<
   CodingAgentThreadStore & CodingAgentTurnStore,
-  "createThread" | "acceptTurn" | "steerTurn" | "getThread" | "abortThread" | "submitApproval" | "registerEventSink"
+  "createThread" | "acceptTurn" | "steerTurn" | "getThread" | "abortThread" | "submitApproval" | "submitInput" | "registerEventSink"
 >;
 
 type CodingState = { conversationId: string; providerThreadId?: string };
@@ -201,7 +201,11 @@ function normalizeEvent(
   if (event.type === "user_input.requested") {
     return [CanonicalProviderRunEventSchema.parse({
       type: "input.requested", requestId: event.request.requestId, title: event.request.title,
+      input: event.request,
     })];
+  }
+  if (event.type === "user_input.answered") {
+    return [CanonicalProviderRunEventSchema.parse({ type: "input.resolved", requestId: event.requestId })];
   }
   if (event.type === "thread.error") {
     return [CanonicalProviderRunEventSchema.parse({
@@ -553,6 +557,21 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         input.approvalId,
         { decision: input.decision, clientRequestId: input.clientRequestId, correlationId },
       );
+    },
+    async submitInput(input) {
+      if (!input.state) throw new Error("Input state unavailable");
+      const state = CodingAgentProviderResumeStateSchema.parse(input.state);
+      const current = await options.threads.getThread(principal(input.owner.ownerId), state.conversationId);
+      let pending: Extract<AgentThreadEvent, { type: "user_input.requested" }> | undefined;
+      for (const event of current.events.items) {
+        if (event.type === "user_input.requested" && event.request.requestId === input.requestId) pending = event;
+        if (event.type === "user_input.answered" && event.requestId === input.requestId) pending = undefined;
+      }
+      if (!pending) throw new Error("Input request unavailable");
+      await options.threads.submitInput(principal(input.owner.ownerId), state.conversationId, input.requestId, {
+        answer: "Structured response submitted.", structuredAnswers: input.answers,
+        clientRequestId: input.clientRequestId, correlationId: pending.request.correlationId,
+      });
     },
   };
 }

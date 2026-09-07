@@ -99,6 +99,9 @@ const CodexExecEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error") }).passthrough(),
 ]);
 const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("matrix.codex.approval.resolved"), approvalId: ApprovalIdSchema,
+    decision: z.literal("cancel"),
+  }).strict(),
   z.object({
     type: z.literal("matrix.codex.approval.requested"),
     approvalId: ApprovalIdSchema,
@@ -117,7 +120,15 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     title: SafeDisplayStringSchema,
     safeDescription: SafeDisplayStringSchema,
     questions: z.array(UserInputQuestionSchema).min(1).max(8),
+    required: z.boolean().optional(),
+    connectorActionId: z.string().min(1).max(128).optional(),
+    connectorUrl: z.url().max(2048).optional(),
     autoResolutionMs: z.number().int().min(60_000).max(240_000).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("matrix.codex.user_input.resolved"),
+    requestId: RequestIdSchema,
+    correlationId: CorrelationIdSchema,
   }).strict(),
   z.object({
     type: z.literal("matrix.codex.assistant.delta"),
@@ -214,6 +225,12 @@ function appServerRecordEvents(
   context: CodexEventContext,
   record: z.infer<typeof MatrixCodexRecordSchema>,
 ): AgentThreadEvent[] {
+  if (record.type === "matrix.codex.user_input.resolved") {
+    return [event(context, { type: "user_input.answered", requestId: record.requestId, correlationId: record.correlationId })];
+  }
+  if (record.type === "matrix.codex.approval.resolved") {
+    return [event(context, { type: "approval.resolved", approvalId: record.approvalId, decision: record.decision })];
+  }
   if (record.type === "matrix.codex.approval.requested") {
     return [event(context, {
       type: "approval.requested",
@@ -237,8 +254,10 @@ function appServerRecordEvents(
         threadId: context.threadId,
         title: record.title,
         safeDescription: record.safeDescription,
-        required: true,
+        required: record.required ?? true,
         questions: record.questions,
+        ...(record.connectorActionId ? { connectorActionId: record.connectorActionId } : {}),
+        ...(record.connectorUrl ? { connectorUrl: record.connectorUrl } : {}),
         ...(record.autoResolutionMs ? { autoResolutionMs: record.autoResolutionMs } : {}),
         correlationId: record.correlationId,
       },

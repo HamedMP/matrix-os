@@ -1,4 +1,8 @@
 import {
+  CanonicalSubmitChatInputRequestSchema,
+  CanonicalChatInputSubmissionResponseSchema,
+  type CanonicalSubmitChatInputRequest,
+  type CanonicalChatInputSubmissionResponse,
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
   CanonicalCancelQueuedChatTurnRequestSchema,
@@ -201,6 +205,8 @@ export interface CanonicalChatRouteService {
     approvalId: string,
     input: CanonicalSubmitChatApprovalRequest,
   ): Promise<CanonicalChatApprovalSubmissionResponse>;
+  submitInput(owner: ChatOwner, chatId: string, runId: string, requestId: string,
+    input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse>;
   retryTurn(
     principal: RequestPrincipal,
     owner: ChatOwner,
@@ -655,6 +661,17 @@ export function createCanonicalChatRoutes(options: {
     } catch (error: unknown) {
       return handleError(context, error);
     }
+  });
+
+  routes.post("/api/chats/:chatId/runs/:runId/inputs/:requestId", bodyLimit({ maxSize: 40 * 1024 }), async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+      const requestId = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).parse(context.req.param("requestId"));
+      const input = CanonicalSubmitChatInputRequestSchema.parse(await context.req.json());
+      const result = await options.service.submitInput(ownerFromPrincipal(options.getPrincipal(context)), chatId, runId, requestId, input);
+      return context.json(CanonicalChatInputSubmissionResponseSchema.parse(result));
+    } catch (error: unknown) { return handleError(context, error); }
   });
 
   routes.post("/api/chats/:chatId/turns/:turnId/runs", cancelBodyLimit, async (context) => {

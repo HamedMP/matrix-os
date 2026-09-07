@@ -66,6 +66,7 @@ describe("Codex app-server contract", () => {
         "item/fileChange/requestApproval",
         "item/tool/requestUserInput",
         "item/permissions/requestApproval",
+        "mcpServer/elicitation/request",
       ],
       requiredServerNotifications: [
         "item/started",

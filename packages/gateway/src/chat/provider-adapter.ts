@@ -1,5 +1,7 @@
 import {
   CanonicalChatAgentActivityPayloadSchema,
+  UserInputRequestSchema,
+  type UserInputAnswerRequest,
   CanonicalChatApprovalDecisionSchema,
   CanonicalChatMessagePartSchema,
   CanonicalChatModelSelectionSchema,
@@ -75,7 +77,9 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("input.requested"),
     requestId: SafeProviderRefSchema,
     title: z.string().trim().min(1).max(160),
+    input: UserInputRequestSchema.optional(),
   }).strict(),
+  z.object({ type: z.literal("input.resolved"), requestId: SafeProviderRefSchema }).strict(),
   z.object({ type: z.literal("state.updated"), state: z.unknown() }).strict(),
   z.object({
     type: z.literal("run.completed"),
@@ -131,6 +135,11 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     decision: CanonicalChatApprovalDecision;
     clientRequestId: string;
     state?: State;
+  }): Promise<void>;
+  submitInput?(input: {
+    owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string;
+    answers: NonNullable<UserInputAnswerRequest["structuredAnswers"]>;
+    clientRequestId: string; state?: State;
   }): Promise<void>;
 }
 

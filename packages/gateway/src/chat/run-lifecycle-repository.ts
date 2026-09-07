@@ -200,6 +200,25 @@ export class ChatRunLifecycleRepository {
     return pending;
   }
 
+  async getPendingInput(ownerInput: ChatOwner, input: { chatId: string; runId: string; requestId: string }): Promise<Extract<CanonicalChatRunActivity, { type: "input.requested" }> | null> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.runId, input.requestId].forEach(requireSafeRef);
+    const row = await this.kysely.selectFrom("chat_run_events")
+      .innerJoin("chat_runs", "chat_runs.id", "chat_run_events.run_id")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select("chat_run_events.event")
+      .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId).where("chat_runs.id", "=", input.runId)
+      .where("chat_runs.status", "in", [...ACTIVE_RUNS])
+      .where(sql<string>`chat_run_events.event->>'requestId'`, "=", input.requestId)
+      .where(sql<string>`chat_run_events.event->>'type'`, "in", ["input.requested", "input.resolved"])
+      .orderBy("chat_run_events.run_seq", "desc").limit(1).executeTakeFirst();
+    if (!row) return null;
+    const event = CanonicalChatRunActivitySchema.parse(row.event);
+    return event.type === "input.requested" ? event : null;
+  }
+
   async markRunRunning(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;

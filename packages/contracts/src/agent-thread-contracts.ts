@@ -108,6 +108,8 @@ export const UserInputQuestionSchema = z.object({
   options: UserInputOptionListSchema.optional(),
   allowOther: z.boolean().default(false),
   secret: z.boolean().default(false),
+  required: z.boolean().optional(),
+  multiple: z.boolean().optional(),
 }).strict();
 
 const UserInputQuestionListSchema = z.array(UserInputQuestionSchema).min(1).max(8)
@@ -129,6 +131,11 @@ export const UserInputRequestSchema = z.object({
   placeholder: SafeDisplayStringSchema.optional(),
   required: z.boolean().default(true),
   questions: UserInputQuestionListSchema.optional(),
+  connectorActionId: referenceId(128).optional(),
+  connectorUrl: z.url().max(2048).refine((value) => {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  }).optional(),
   autoResolutionMs: z.number().int().min(60_000).max(240_000).optional(),
   expiresAt: IsoTimestampSchema.optional(),
   correlationId: CorrelationIdSchema,
@@ -139,6 +146,8 @@ const BaseThreadEventSchema = z.object({
   threadId: ThreadIdSchema,
   occurredAt: IsoTimestampSchema,
 });
+
+export type UserInputRequest = z.infer<typeof UserInputRequestSchema>;
 
 export const AgentTurnLifecycleEventSchema = z.discriminatedUnion("type", [
   BaseThreadEventSchema.extend({

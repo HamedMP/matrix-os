@@ -1275,6 +1275,10 @@ export class ChatRepository {
     return this.runLifecycle.getPendingApproval(ownerInput, input);
   }
 
+  async getPendingInput(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string }) {
+    return this.runLifecycle.getPendingInput(owner, input);
+  }
+
   async getLatestAdapterStateForChat(ownerInput: ChatOwner, input: {
     chatId: string;
     driverKind: string;

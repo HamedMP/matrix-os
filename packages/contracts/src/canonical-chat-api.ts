@@ -29,6 +29,18 @@ export const CanonicalChatApiCursorSchema = z.string()
 
 export const CanonicalChatEventCursorSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
+export const CanonicalSubmitChatInputRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  answers: z.record(canonicalReferenceId(128), z.array(z.string().min(1).max(400)
+    .refine((value) => new TextEncoder().encode(value).length <= 700)).min(1).max(4))
+    .refine((answers) => Object.keys(answers).length >= 1 && Object.keys(answers).length <= 8),
+}).strict();
+export const CanonicalChatInputSubmissionResponseSchema = z.object({
+  requestId: canonicalReferenceId(128), submission: z.literal("accepted"),
+}).strict();
+export type CanonicalSubmitChatInputRequest = z.infer<typeof CanonicalSubmitChatInputRequestSchema>;
+export type CanonicalChatInputSubmissionResponse = z.infer<typeof CanonicalChatInputSubmissionResponseSchema>;
+
 export const CanonicalChatOutboxEventTypeSchema = z.enum([
   "chat.created",
   "chat.updated",
