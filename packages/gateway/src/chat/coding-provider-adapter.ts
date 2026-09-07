@@ -12,7 +12,7 @@ import type {
   CodingAgentTurnStore,
 } from "../coding-agents/thread-store.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
-import { CodingAgentProviderResumeStateSchema } from "../coding-agents/provider-adapter.js";
+import { CodingChatStateSchema, recoveryState, recoverCodingRun, type CodingChatState } from "./coding-run-recovery.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -21,8 +21,7 @@ import {
   type CanonicalProviderRunInput,
 } from "./provider-adapter.js";
 
-const MAX_BUFFERED_EVENTS = 10_000;
-const MAX_BUFFERED_EVENT_BYTES = 2 * 1024 * 1024;
+import { MAX_BUFFERED_EVENTS, MAX_BUFFERED_EVENT_BYTES, ThreadEventInbox } from "./thread-event-inbox.js";
 const MAX_RECENT_EVENT_IDS = MAX_BUFFERED_EVENTS * 2;
 const MAX_ACTIVE_TOOL_ACTIVITIES = 128;
 const MAX_ACTIVE_STEER_RUNS = 64;
@@ -32,7 +31,7 @@ type CodingThreads = Pick<
   "createThread" | "acceptTurn" | "steerTurn" | "getThread" | "abortThread" | "submitApproval" | "registerEventSink"
 >;
 
-type CodingState = { conversationId: string; providerThreadId?: string };
+type CodingState = CodingChatState;
 
 function driverKind(providerId: string): "codex" | "claude_code" | "opencode" | "pi" {
   if (providerId === "codex") return "codex";
@@ -245,72 +244,6 @@ function attachments(input: CanonicalProviderRunInput) {
   });
 }
 
-class ThreadEventInbox {
-  private readonly queued: AgentThreadEvent[] = [];
-  private queuedBytes = 0;
-  private failure: Error | undefined;
-  private wake: (() => void) | undefined;
-  private tokenUsage: AiTokenUsage | undefined;
-
-  constructor(private readonly signal: AbortSignal) {}
-
-  push(events: AgentThreadEvent[], tokenUsage?: AiTokenUsage): void {
-    if (this.signal.aborted || this.failure) return;
-    const incomingBytes = Buffer.byteLength(JSON.stringify(events), "utf8");
-    if (this.queued.length + events.length > MAX_BUFFERED_EVENTS
-      || this.queuedBytes + incomingBytes > MAX_BUFFERED_EVENT_BYTES) {
-      this.fail(new Error("Canonical coding Provider event buffer exceeded"));
-      return;
-    }
-    this.queued.push(...events);
-    this.queuedBytes += incomingBytes;
-    if (tokenUsage) this.tokenUsage = tokenUsage;
-    this.wake?.();
-    this.wake = undefined;
-  }
-
-  takeTokenUsage(): AiTokenUsage | undefined {
-    const tokenUsage = this.tokenUsage;
-    this.tokenUsage = undefined;
-    return tokenUsage;
-  }
-
-  fail(error: Error): void {
-    if (this.failure) return;
-    this.failure = error;
-    this.wake?.();
-    this.wake = undefined;
-  }
-
-  async next(): Promise<AgentThreadEvent[] | null> {
-    if (this.queued.length > 0) {
-      const events = this.queued.splice(0);
-      this.queuedBytes = 0;
-      return events;
-    }
-    if (this.failure) throw this.failure;
-    if (this.signal.aborted) return null;
-    await new Promise<void>((resolve) => {
-      const onAbort = () => {
-        this.wake = undefined;
-        resolve();
-      };
-      this.signal.addEventListener("abort", onAbort, { once: true });
-      this.wake = () => {
-        this.signal.removeEventListener("abort", onAbort);
-        resolve();
-      };
-    });
-    if (this.queued.length > 0) {
-      const events = this.queued.splice(0);
-      this.queuedBytes = 0;
-      return events;
-    }
-    if (this.failure) throw this.failure;
-    return null;
-  }
-}
-
 async function* normalizedEvents(
   initial: AgentThreadEvent[],
   inbox: ThreadEventInbox,
@@ -328,6 +261,7 @@ async function* normalizedEvents(
         if (oldest !== undefined) recentEventIds.delete(oldest);
       }
       recentEventIds.add(event.eventId);
+      inbox.lastEventId = event.eventId;
       if (event.type === "assistant.text.delta") {
         let delta = event.delta;
         while (index + 1 < batch.length) {
@@ -341,6 +275,7 @@ async function* normalizedEvents(
             if (oldest !== undefined) recentEventIds.delete(oldest);
           }
           recentEventIds.add(next.eventId);
+          inbox.lastEventId = next.eventId;
           delta += next.delta;
         }
         yield CanonicalProviderRunEventSchema.parse({
@@ -414,8 +349,14 @@ export function createCanonicalCodingChatProviderAdapter(options: {
   return {
     driverKind: kind,
     stateSchemaVersion: 1,
-    parseState: (value) => CodingAgentProviderResumeStateSchema.parse(value),
-    serializeState: (value) => CodingAgentProviderResumeStateSchema.parse(value),
+    parseState: (value) => CodingChatStateSchema.parse(value),
+    serializeState: (value) => CodingChatStateSchema.parse(value),
+    async recover(input) {
+      const state = CodingChatStateSchema.parse(input.state);
+      return recoverCodingRun({ ...input, state,
+        read: (cursor) => options.threads.getThread(principal(input.owner.ownerId), state.conversationId, cursor),
+      });
+    },
     async *start(inputValue) {
       const { input, mode } = validate(inputValue);
       const inbox = new ThreadEventInbox(input.signal);
@@ -466,7 +407,11 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         for (const published of buffered) {
           if (published.threadId === targetThreadId) inbox.push(published.events, published.tokenUsage);
         }
-        yield { type: "state.updated", state: { conversationId: targetThreadId } };
+        yield { type: "state.updated", state: recoveryState(targetThreadId, input.runId, created.snapshot.events.items) };
+        inbox.reconcileWith(async () => {
+          const recovered = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId!, inbox.lastEventId);
+          return recovered.events.items;
+        });
         yield* normalizedEvents(created.snapshot.events.items, inbox, options.providerId);
       } finally {
         releaseSteerRun?.();
@@ -475,7 +420,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     },
     async *resume(inputValue) {
       const { input } = validate(inputValue);
-      const state = CodingAgentProviderResumeStateSchema.parse(input.resumeState);
+      const state = CodingChatStateSchema.parse(input.resumeState);
       const targetThreadId = state.conversationId;
       const inbox = new ThreadEventInbox(input.signal);
       let releaseSteerRun: (() => void) | undefined;
@@ -500,6 +445,12 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           legacyTurnId: accepted.turnId,
         });
         const current = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId);
+        yield { type: "state.updated", state: recoveryState(targetThreadId, input.runId, current.events.items) };
+        inbox.lastEventId = current.events.items.at(-1)?.eventId;
+        inbox.reconcileWith(async () => {
+          const recovered = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId, inbox.lastEventId);
+          return recovered.events.items;
+        });
         yield* normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId);
       } finally {
         releaseSteerRun?.();
@@ -523,7 +474,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     },
     async cancel(input) {
       if (!input.state) return;
-      const state = CodingAgentProviderResumeStateSchema.parse(input.state);
+      const state = CodingChatStateSchema.parse(input.state);
       await options.threads.abortThread(
         principal(input.owner.ownerId),
         state.conversationId,
@@ -532,7 +483,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     },
     async submitApproval(input) {
       if (!input.state) throw new Error("Canonical coding Provider approval state unavailable");
-      const state = CodingAgentProviderResumeStateSchema.parse(input.state);
+      const state = CodingChatStateSchema.parse(input.state);
       const current = await options.threads.getThread(
         principal(input.owner.ownerId),
         state.conversationId,

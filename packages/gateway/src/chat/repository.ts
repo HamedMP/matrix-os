@@ -1333,6 +1333,7 @@ export class ChatRepository {
     messageId: string;
     delta: string;
     createdAt: string;
+    snapshot?: boolean;
   }): Promise<CanonicalChatMessage> {
     return this.runLifecycle.appendAssistantDelta(ownerInput, input);
   }

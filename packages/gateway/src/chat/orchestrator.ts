@@ -63,6 +63,7 @@ import {
   CanonicalQueueAdmissionError,
   enqueueCanonicalQueuedTurn,
 } from "./queue-admission.js";
+import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
@@ -1320,6 +1321,17 @@ export class CanonicalChatOrchestrator {
         ["retry"],
       );
       try {
+        if (await recoverOrphanedRun({
+          owner,
+          run: context.latestRun,
+          repository: this.options.repository,
+          adapter: this.options.adapters.get(context.latestRun.driverKind),
+          messageId: assistantMessageId,
+          completedAt,
+        })) {
+          reconciled += 1;
+          continue;
+        }
         try {
           await this.persistActivities(owner, context.latestRun, [{ type: "run.error", error }], completedAt);
         } catch (activityError: unknown) {

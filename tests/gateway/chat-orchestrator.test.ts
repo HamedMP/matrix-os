@@ -1572,7 +1572,8 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
-  it("reconciles accepted Runs after Gateway restart instead of guessing that a Provider is live", async () => {
+  it.each([[false, 1, false], [true, 1, false], [true, 3000, false], [true, 1, true]] as const)("reconciles after restart with a completed backing snapshot=%s size=%s conflicting=%s", async (completedBacking, repeats, conflicting) => {
+    const finalText = "Recovered final answer.".repeat(repeats);
     await repository.create(owner, {
       id: "chat_restarted",
       clientRequestId: "req_create_restarted",
@@ -1623,17 +1624,40 @@ describe("CanonicalChatOrchestrator", () => {
         updatedAt: "2026-08-26T00:00:00.000Z",
       },
     });
+    const neverStart = vi.fn(async function* () { throw new Error("Recovery must not execute tools again"); });
+    const recoveryProvider = { ...adapter(neverStart), recover: vi.fn(async () => ({
+      outcome: "completed" as const,
+      messages: [{ messageId: undefined, text: conflicting ? "Different answer." : finalText }],
+    })) };
+    if (completedBacking) {
+      await repository.updateAdapterState(owner, {
+        chatId: "chat_restarted", runId: "run_restarted", driverKind: "codex",
+        instanceId: "codex_default", schemaVersion: 1, state: { sessionId: "native_session" },
+      });
+      await repository.appendAssistantDelta(owner, {
+        chatId: "chat_restarted", runId: "run_restarted", messageId: "msg_restarted_assistant",
+        delta: "Recovered ", createdAt: inputMessage.createdAt,
+      });
+    }
     const restarted = new CanonicalChatOrchestrator({
       repository,
       catalog: { getCatalog: async () => catalog() },
-      adapters: new CanonicalChatProviderRegistry([]),
+      adapters: new CanonicalChatProviderRegistry(completedBacking ? [recoveryProvider] : []),
       now: () => new Date("2026-08-26T00:02:00.000Z"),
     });
 
     expect(await restarted.reconcileActiveRuns(owner)).toBe(1);
     const snapshot = await repository.exportChat(owner, "chat_restarted");
-    expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
-    expect(snapshot?.activities).toEqual([
+    expect(snapshot?.runs[0]).toMatchObject({ status: completedBacking && !conflicting ? "completed" : "failed" });
+    expect(neverStart).not.toHaveBeenCalled();
+    if (completedBacking && !conflicting) {
+      const messages = snapshot?.messages.filter((item) => item.role === "assistant");
+      expect(messages).toHaveLength(1);
+      expect(messages?.[0]?.state).toBe("committed");
+      expect(messages?.[0]?.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")).toBe(finalText);
+      expect(await restarted.reconcileActiveRuns(owner)).toBe(1);
+      expect((await repository.exportChat(owner, "chat_restarted"))?.messages).toEqual(snapshot?.messages);
+    } else expect(snapshot?.activities).toEqual([
       expect.objectContaining({
         type: "run.error",
         error: expect.objectContaining({ retryable: true, recoveryActions: ["retry"] }),
