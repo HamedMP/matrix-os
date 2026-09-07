@@ -513,9 +513,9 @@ export function ChatApp({
                       {msg.role === "user" ? (
                         <Message from="user">
                           {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
-                          <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
+                          {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
                             <span className="whitespace-pre-wrap">{msg.content}</span>
-                          </MessageContent>
+                          </MessageContent> : null}
                         </Message>
                       ) : msg.role === "system" ? (
                         <CanonicalApprovalMessage

@@ -31,6 +31,16 @@ it("does not allow unauthenticated share management or oversized mutations", asy
 
 afterEach(() => vi.unstubAllEnvs());
 
+it("isolates public readers by transport source and ignores spoofed forwarding headers", async () => {
+  const read = vi.fn(async () => ({ title: "Shared", messages: [{ role: "user", text: "Hello" }] }));
+  const app = createChatSharingRoutes({ read } as never);
+  const env = (address: string) => ({ incoming: { socket: { remoteAddress: address } } });
+  const path = `/api/share/chats/${"a".repeat(64)}`;
+  for (let i = 0; i < 120; i++) expect((await app.request(path, {}, env("203.0.113.1"))).status).toBe(200);
+  expect((await app.request(path, { headers: { "x-real-ip": "203.0.113.2", "x-forwarded-for": "203.0.113.2" } }, env("203.0.113.1"))).status).toBe(429);
+  expect((await app.request(path, {}, env("203.0.113.2"))).status).toBe(200);
+});
+
 it("exempts only exact GET capabilities from gateway authentication", async () => {
   const { authMiddleware } = await import("../../packages/gateway/src/auth");
   const app = new Hono();

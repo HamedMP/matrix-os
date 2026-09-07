@@ -392,7 +392,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
-    if (isAppDomain && reqPath.startsWith('/shared/chat/')) return proxyChatShare(c, db, customerVpsProxyDispatcher);
+    if (isAppDomain && reqPath.startsWith('/shared/chat/')) return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET);
     if (isAppDomain && reqPath === '/service-worker.js') {
       return appDomainServiceWorkerResponse();
     }

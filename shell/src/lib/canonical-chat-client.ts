@@ -236,7 +236,7 @@ function partText(part: CanonicalChatMessage["parts"][number]): string | null {
   if (part.type === "tool_result") return part.text ?? `Tool ${part.outcome}`;
   if (part.type === "approval_request") return `${part.title}: ${part.description}`;
   if (part.type === "approval_result") return `Approval ${part.decision.replaceAll("_", " ")}`;
-  if (part.type === "attachment_reference") return `Attached ${part.label}`;
+  if (part.type === "attachment_reference") return null;
   if (part.type === "resource_reference") return `Referenced ${part.resource.label}`;
   if (part.type === "invocation_reference") return part.invocation.invocation;
   return null;
@@ -250,7 +250,7 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
   return messages.flatMap((message) => {
     const attachments = message.parts.flatMap((part) => part.type === "attachment_reference" ? [{ id: part.attachmentId, label: part.label, kind: part.kind === "image" ? "image" as const : "file" as const, path: part.ownerReference, ...(part.kind === "image" && part.ownerReference ? { src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}` } : {}) }] : []);
     const content = message.parts.map(partText).filter((part): part is string => part !== null).join("\n");
-    if (!content) return [];
+    if (!content && !attachments.length) return [];
     const toolRequest = message.parts.find((part) => part.type === "tool_request");
     const approvalRequest = message.parts.find((part) => part.type === "approval_request");
     return [{

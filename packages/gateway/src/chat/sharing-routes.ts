@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { getConnInfo } from "@hono/node-server/conninfo";
+import { isIP } from "node:net";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { CanonicalChatIdSchema } from "@matrix-os/contracts";
@@ -12,7 +14,8 @@ import { shareHtml } from "@matrix-os/contracts";
 
 export function createChatSharingRoutes(shares: ChatSharing | null) {
   const routes = new Hono();
-  const limiter = createRateLimiter({ maxAttempts: 120, windowMs: 60_000, lockoutMs: 0, maxKeys: 1 });
+  const limiter = createRateLimiter({ maxAttempts: 120, windowMs: 60_000, lockoutMs: 0, maxKeys: 10_000 });
+  const capacity = createRateLimiter({ maxAttempts: 1200, windowMs: 60_000, lockoutMs: 0, maxKeys: 1 });
   const limit = bodyLimit({ maxSize: 4096, onError: (c) => c.json({ error: "Request too large" }, 413) });
   routes.use("/api/chats/:chatId/shares/*", async (c, next) => { c.header("Cache-Control", "no-store"); await next(); });
   routes.get("/api/share/chats/:token", async (c) => {
@@ -21,8 +24,23 @@ export function createChatSharingRoutes(shares: ChatSharing | null) {
     c.header("Referrer-Policy", "no-referrer");
     c.header("X-Robots-Tag", "noindex, nofollow");
     c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
-    if (!limiter.check("public")) return c.text("Try again later", 429);
     if (!ShareTokenSchema.safeParse(c.req.param("token")).success) return c.text("Shared Chat unavailable", 404);
+    let source = "unknown";
+    try {
+      const peer = getConnInfo(c).remote.address;
+      if (peer && isIP(peer)) {
+        source = peer;
+        // Host nginx overwrites X-Real-IP. Trust it only over local transport;
+        // direct network clients cannot choose a limiter key via headers.
+        if (["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(peer)) {
+          const forwarded = c.req.header("x-real-ip");
+          if (forwarded && isIP(forwarded)) source = forwarded;
+        }
+      }
+    } catch (error: unknown) {
+      if (!(error instanceof TypeError)) console.warn("[chat-sharing] transport unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
+    if (!limiter.check(source) || !capacity.check("public")) return c.text("Try again later", 429);
     try {
       const snapshot = await shares?.read(c.req.param("token"));
       return snapshot ? (c.req.header("accept") === "application/json" ? c.json(snapshot) : c.html(shareHtml(snapshot))) : c.text("Shared Chat unavailable", shares ? 404 : 503);
