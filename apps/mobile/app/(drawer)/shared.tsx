@@ -147,7 +147,7 @@ export default function SharedScreen() {
     try {
       const page = await fetchSharedChatMessages(await token(), view.scopeId, after);
       if (generation !== chatLoadGeneration.current) return;
-      const appended = page.messages.filter((message) => !messages.some((known) => known.id === message.id));
+      const appended = page.messages.filter((message) => !messages.some((existing) => existing.id === message.id));
       const combined = [...messages, ...appended];
       setMessages(combined);
       messagesRef.current = combined;
@@ -169,8 +169,9 @@ export default function SharedScreen() {
     ]);
     setScope(nextScope);
     setChat(nextChat);
-    const known = new Set(messagesRef.current.map((message) => message.id));
-    const combined = [...messagesRef.current, ...page.messages.filter((message) => !known.has(message.id))];
+    const combined = [...messagesRef.current, ...page.messages.filter(
+      (message) => !messagesRef.current.some((existing) => existing.id === message.id),
+    )];
     messagesRef.current = combined;
     setMessages(combined);
     latestSequenceRef.current = combined.at(-1)?.sequence ?? latestSequenceRef.current;

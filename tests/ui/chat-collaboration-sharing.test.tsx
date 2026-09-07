@@ -319,4 +319,31 @@ describe("Chat collaboration sharing", () => {
     expect(await screen.findByText("Latest message")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Load more messages" })).toBeNull();
   });
+
+  it("keeps loaded history visible when an older history page fails", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: `msg_${index}`, chatId, sequence: String(index + 1), role: "user" as const,
+      state: "committed" as const, purpose: "discussion" as const,
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${index + 1}` }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    }));
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("after=0&limit=100")) return { messages: firstPage };
+        if (path.endsWith("after=100&limit=100")) throw new Error("private upstream detail");
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount: "101" };
+        return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+          revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
+          capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
+      }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
+    expect(await screen.findByText("Message 1")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Load more messages" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("More messages could not be loaded");
+    expect(screen.getByText("Message 1")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Load more messages" })).toBeVisible();
+  });
 });

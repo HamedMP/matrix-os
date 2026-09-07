@@ -220,6 +220,7 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
   const [messages, setMessages] = useState<SharedMessage[]>([]);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
+  const [historyPageError, setHistoryPageError] = useState(false);
   const [draft, setDraft] = useState<CollaborationDraft>({ text: "", mode: "discussion" });
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -243,6 +244,7 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
       setScope(nextScope); setChat(nextChat); setMessages(nextMessages);
       setLoadingMoreMessages(false);
       setError((current) => clearForegroundError || current === "load" || current === "unavailable" ? null : current);
+      setHistoryPageError(false);
       setHasMoreMessages(BigInt(nextChat.messageCount) > BigInt(nextMessages.length));
       if (api.patch && nextMessages.length > 0) {
         const sequence = nextMessages.at(-1)!.sequence;
@@ -268,12 +270,13 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
     if (!after || !chat || loadingMoreMessages) return;
     const generation = loadGeneration.current;
     setLoadingMoreMessages(true);
+    setHistoryPageError(false);
     try {
       const next = CollaborationChatMessagesResponseSchema.parse(await api.get(
         `/api/collaboration/scopes/${encodeURIComponent(scopeId)}/chat/messages?after=${encodeURIComponent(after)}&limit=100`,
       )).messages;
       if (generation !== loadGeneration.current) return;
-      const appended = next.filter((message) => !messages.some((known) => known.id === message.id));
+      const appended = next.filter((message) => !messages.some((existing) => existing.id === message.id));
       const combined = [...messages, ...appended];
       setMessages(combined);
       setHasMoreMessages(appended.length > 0 && BigInt(chat.messageCount) > BigInt(combined.length));
@@ -287,7 +290,7 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
       }
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
-      if (generation === loadGeneration.current) setError("load");
+      if (generation === loadGeneration.current) setHistoryPageError(true);
     } finally {
       if (generation === loadGeneration.current) setLoadingMoreMessages(false);
     }
@@ -334,6 +337,7 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
         <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start the discussion</h2>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Messages here are visible to everyone in this shared Chat.</p>
       </div> : messages.map((message) => <SharedMessageView key={message.id} message={message} />)}
+      {historyPageError ? <p role="alert" className="text-center text-sm">More messages could not be loaded. Try again.</p> : null}
       {hasMoreMessages ? <div className="text-center"><button type="button" className={buttonClass}
         disabled={loadingMoreMessages} onClick={() => void loadMoreMessages()}>
         {loadingMoreMessages ? "Loading…" : "Load more messages"}
