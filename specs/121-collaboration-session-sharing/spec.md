@@ -281,7 +281,7 @@ The plan must assign finite operation timeouts, invitation/connection limits, re
 
 ### Approved Incremental Delivery
 
-The usable internal milestones are (1) shared Chat history and human discussion with shared AI disabled, (2) shared AI requests and controls, (3) standalone terminal sharing, and (4) whole-project sharing. Each milestone can be merged, enabled for an internal cohort, used and tested while later work continues. Smaller supporting PRs remain dormant until their connected milestone is ready.
+The usable internal milestones are (1) shared Chat history and human discussion with shared AI disabled, (2) shared AI requests and controls, (3) standalone terminal sharing, and (4) whole-project sharing. Each milestone can be merged, enabled for an internal cohort, used and tested while later work continues. The initial plan uses six implementation PRs, combining foundation and complete Chat discussion, isolating execution proof/build from shared AI, delivering Terminal end to end, and separating project backend/migration from final UI/integration. The two foundation PRs remain dormant until their connected milestone is ready. Documentation updates accompany releases without gating implementation merges or internal enablement.
 
 This sequence is delivery order, not a reduction of the final P1/P2 scope. Discussion-only M1 is not full P1 completion. Whole-project sharing stays unavailable until every owned resource can participate; no stage introduces partial sharing. Authorization, revocation, isolation, recovery and applicable surface parity are prerequisites for each enabled capability.
 

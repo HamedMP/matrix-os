@@ -83,7 +83,7 @@ A service unit or filesystem path is not sufficient evidence. M2's isolated adap
 
 ## 9. Milestone gates and additive merges
 
-**Decision:** Four separately enabled internal milestones: Chat discussion, shared AI, terminal, whole project. Every PR lands dormant or completes a tested vertical capability. One platform-owned policy supplies a versioned per-milestone cohort and mode (`off`, `internal`, `enabled`, `read_only`); gateways receive bounded signed policy snapshots and recheck capabilities. There is no client-only gate. Full project availability additionally requires the full resource inventory and all prerequisite capabilities.
+**Decision:** Four separately enabled internal milestones: Chat discussion, shared AI, terminal, whole project. The six-PR delivery plan combines contracts, backend, UI and tests where reviewable to reduce CI overhead; execution proof/build and project backend/migration retain separate PRs. Every PR lands dormant or completes a tested vertical capability. Documentation updates accompany releases without becoming implementation or internal enablement gates. One platform-owned policy supplies a versioned per-milestone cohort and mode (`off`, `internal`, `enabled`, `read_only`); gateways receive bounded signed policy snapshots and recheck capabilities. There is no client-only gate. Full project availability additionally requires the full resource inventory and all prerequisite capabilities.
 
 **Rationale:** Code can merge before use is enabled, and internal use can begin before later milestones finish. Disabling mutations must preserve owner export/revoke/recovery and existing data; an emergency access-off mode closes participant connections.
 

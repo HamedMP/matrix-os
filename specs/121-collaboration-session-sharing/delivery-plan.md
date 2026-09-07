@@ -1,138 +1,135 @@
 # Milestones and PR Delivery Plan
 
-**Status:** Approved milestone order, proposed engineering PR boundaries. No implementation PRs have been opened by this planning command.
+**Status:** Six planned implementation PRs across four approved usable milestones. These are planning IDs, not opened GitHub PRs.
 **Related:** [spec](spec.md), [technical plan](plan.md), [acceptance guide](quickstart.md).
 
 ## How work becomes usable
 
-A **merge gate** proves one PR can safely land on main. A **milestone gate** proves the connected feature is usable and may be enabled for an internal cohort. Merging a foundation PR never enables a half-wired feature automatically.
+A **merge gate** proves one PR can safely land on main. A **milestone gate** proves the connected feature is usable and may be enabled for an internal cohort. Contracts, backend wiring, UI and tests belong together where they form one reviewable change. Six implementation PRs are the starting plan to reduce repeated CI and review overhead; split further only when the actual diff is difficult to review or exceeds repository limits.
 
-The first usable milestone is shared Chat history and human discussion. Shared AI remains disabled there by the server, for owners as well as collaborators. This internal intermediate state is explicitly approved; the complete P1 commitment is not considered fulfilled until the remaining P1 capabilities are delivered.
-
-| Milestone | Usable outcome | PRs | Still unavailable at this point |
+| PR | Scope | Usable result | Depends on |
 | --- | --- | --- | --- |
-| M1 — Shared Chat discussion | Invite/accept, shared history, attributed human messages, viewer access, private drafts, live revoke/reconnect | C01–C05 | Shared AI, shared terminals, whole-project sharing |
-| M2 — Shared AI | M1 plus explicit AI requests, shared ordered queue, isolated execution, owner approvals, permitted cancel/retry | C06–C09 | Shared terminal participation and whole-project sharing; private-project files are not lent to a standalone Chat |
-| M3 — Shared Terminal | Invite to the same eligible pre-isolated session, observe bounded output, pass control, revoke access | C10–C13 | Whole-project sharing; unrestricted legacy personal sessions remain ineligible |
-| M4 — Whole project | One complete inventory confirmation, all contents shared, future inheritance, project files/apps/layout and lifecycle | C14, C15a, C15b, C16, C17 | Only the final spec's explicit exclusions |
+| PR1 | Common sharing foundation plus complete Chat discussion flow | **M1:** share a Chat and discuss together | Spec/plan |
+| PR2 | Prove and build isolated execution | Execution foundation; remains disabled until its milestone is complete | PR1 |
+| PR3 | Shared AI queue, controls and UI | **M2:** prompt AI together | PR2 |
+| PR4 | Terminal sharing, control and UI | **M3:** use the same terminal | PR2; M2 precedes M3 rollout |
+| PR5 | Project inventory, resource adapters and migration | Project foundation; remains disabled until M4 is complete | PR3, PR4 |
+| PR6 | Project sharing UI and full integration | **M4:** share an entire project | PR5 |
 
-There are 18 implementation PRs because C15 is deliberately split into two independent adapter slices. D1–D4 are additional documentation PRs in the site repository. These are review boundaries, not fixed effort estimates. If a slice exceeds 1,000 additions, inspect its responsibilities; do not exceed the repository's 3,000-addition/50-file hard split limit.
+The user rollout order stays M1 → M2 → M3 → M4. Terminal development can proceed after PR2 without depending on Chat queue internals. Project inventory research can begin earlier, but PR5 integrates the completed Chat/Terminal adapters. Earlier milestones remain usable while later work continues.
+
+Four PRs, one per milestone, are possible but are not the current plan: execution isolation and project migration each retain a separate review boundary. There is no automatic contract/backend/UI split, and internal commits or tasks do not imply additional PRs. All previously required behavior and tests remain in the consolidated scopes below.
 
 ## Dependency graph
 
 ```mermaid
 flowchart LR
-  C01 --> C02 --> C03 --> C04 --> C05
-  C05 --> M1[Enable M1 internally]
-  C04 --> C06 --> C07 --> C08 --> C09
-  C09 --> M2[Enable M2 internally]
-  C03 --> C10 --> C11 --> C12 --> C13
-  C06 -. reusable isolation proof .-> C10
-  C13 --> M3[Enable M3 internally]
-  C02 --> C14 --> C15a --> C16
-  C14 --> C15b --> C16
-  C09 --> C16
-  C13 --> C16
-  C16 --> C17 --> M4[Enable M4 internally]
+  PR1 --> M1[Enable M1 internally]
+  PR1 --> PR2 --> PR3 --> M2[Enable M2 internally]
+  PR2 --> PR4 --> M3[Enable M3 internally]
+  PR3 --> PR5
+  PR4 --> PR5 --> PR6 --> M4[Enable M4 internally]
 ```
 
-The **user rollout order** is M1 → M2 → M3 → M4. Engineering can prepare Terminal after C03 and project inventory after C02; those independent investigations must not delay M1. M3 can reuse M2's native isolation implementation, but is not coupled to its Chat queue internals. M4 depends on every adapter and applicable prerequisite milestone being ready.
+The graph shows implementation dependencies. Milestone rollout follows the explicit M1–M4 order even where development can overlap. PR2 and PR5 expose no usable participant capability by themselves.
 
 ## Universal merge gate
 
-Every implementation PR includes failing tests first, implementation, green focused tests, relevant repository checks, and current-head review with Greptile 5/5 before merging. A PR adds no endpoint before its auth/body/validation design is implemented. Every behavior includes failure, permission and recovery tests in that PR; a later UI PR is not a substitute for backend verification.
+Each implementation PR includes failing tests first, implementation, focused verification, relevant repository checks and current-head Greptile 5/5 before merge. Tests cover permissions, failure and recovery in the same PR as the behavior. No endpoint ships before its auth, body limits and validation are implemented. Fewer PRs do not remove checks or postpone authorization.
 
-Changes are additive and off by default. Personal workflows retain their behavior unless an item explicitly becomes shared; shared items reject old unsafe paths. Shared UI logic and permission derivation are reused. Backend seams are independently mergeable while UI stays unavailable. Cross-surface adapter commits may be split further, but a milestone gate stays closed until applicable surfaces are complete.
+Changes are additive and capabilities start off. Personal workflows retain their behavior unless an item explicitly becomes shared; shared items reject unsafe legacy paths. Applicable named surfaces reuse common contracts, permission derivation and controls. A milestone stays closed until its complete flow, error/recovery states and applicable surface parity pass.
 
-Implementation normally starts a new manual worktree from current origin/main after its dependencies merge. If concurrent development needs an actual stacked PR, use the repository's Graphite workflow and merge only after the base is main. This plan does not require retaining one long-lived feature branch until everything is complete.
+Use one manual worktree/PR per planned change, normally from current origin/main after dependencies merge. Use the repository's Graphite workflow if development actually needs stacked PRs. Keep reviewable internal commits for contracts, backend and UI within a PR. Inspect responsibilities above 1,000 additions and follow the repository's 3,000-addition/50-file hard split limit. Make any necessary split from the actual diff while preserving the milestone gate; do not pre-expand the plan back into separate technical-layer PRs.
 
-## M1 — Shared Chat history and human discussion
+## PR1 — Complete shared Chat discussion (M1)
 
-**First daily-use target:** two internal accounts open one Chat, discuss the work, and see the same history without sharing their computers.
+**Proposed title:** `feat(collaboration): share Chat history and discussion`
 
-| PR | Proposed title and responsibility | Depends on | Evidence required in this PR |
-| --- | --- | --- | --- |
-| C01 | `feat(contracts): define collaboration scopes and actions` — direct/inherited scope, roles, actor/owner distinction, error/capability projection, event envelopes and schema limits | Spec/plan accepted | Contract tests reject role/owner injection, invalid scope/reference combinations and malformed frames. No runtime routes exposed. |
-| C02 | `feat(gateway): add collaboration membership authority` — versioned owner-Postgres scopes/members, invitations, cap/expiry, role changes, revoke/export/lifecycle guards, audit/outbox, server availability evaluator | C01 | Real-Postgres invite/accept cap races, stale revision, last-owner guard, expiry, revoke-versus-mutation, outbox atomicity and rollback. No cross-user ingress yet. |
-| C03 | `feat(platform): route scoped collaboration sessions` — discovery/index reconciliation, signed actor/runtime/scope proof, exact HTTP/WS namespace, one-use connection tickets, cohort policy | C02 | Two distinct accounts route only to the selected scope; wrong runtime/path/purpose/digest rejected; personal routes/token minting denied; stale directory cannot grant access; no primary VPS needed for invitee. |
-| C04 | `feat(chat): add shared discussion and scoped delivery` — message actor/purpose, member-private state, discussion append/outbox, scoped read/search/replay, revocation drain, all-route AI gate and safe conversion of idle existing Chats | C03 | Discussion starts zero runs; owner legacy start/queue/steer/retry/approval bypass denied; full history/reference privacy; reconnect dedupe; actor-isolated state; accepted writes race safely with revoke. |
-| C05 | `feat(collaboration): expose shared Chat discussion` — shared invitation/accept/member/revoke controls and “Shared with me”, participant labels, private drafts, explicit discussion-only availability in applicable clients | C04 | Whole two-account journey and named-surface evidence; viewer cannot send; owner can revoke from UI; old/unsupported client has a truthful disabled state. |
+Include shared scope/action schemas; actor/owner distinction; owner-Postgres membership, invitations, capacity/expiry, role changes, revoke/export/lifecycle guards and audit/outbox; platform discovery and actor-preserving HTTP/WS routing, one-use tickets and cohort policy; attributed canonical discussion, private member state, scoped read/search/replay; common invitation/member controls, Shared with me and discussion UI across applicable clients.
 
-**Internal enablement gate M1:** C01–C05 merged, D1 ready, capability versions installed on one disposable VPS-native environment, and owner/editor/viewer/outsider tests pass. Invitee without a primary computer can join. Removing either actor from the cohort closes access as specified. Revoke/export/recovery remain usable. Existing active private runs prevent conversion; there is no personal AI streaming into a discussion-only shared Chat.
+M1 is discussion-only. Gate shared AI start, queue, dispatch, steering, retry and approval on every path, including owner legacy routes. Conversion waits for active/pending private work to settle and fences further personal dispatch. This intermediate delivery does not claim final P1 completion.
 
-**Rollback:** switch M1 to read_only to stop shared mutations and preserve reads/export, or off to close guest access. Owner can revoke/recover/export. Do not delete scopes, messages or grants, and do not return a shared Chat to old unrestricted personal execution automatically.
+**Tests and enablement:** contract/frame validation; real-Postgres invitation/acceptance/capacity/revoke races; outbox atomicity; proof tampering and route escape; outsider/viewer rejection; two-account invite/accept/open/discuss/downgrade/revoke/reconnect journey; zero AI runs from discussion; private drafts and state; no sibling/parent reference access. Include an invitee without a primary computer and truthful unsupported-client states. Install exact compatible versions on a disposable VPS-native environment before internal enablement. Owner revoke/export/recovery remains available.
 
-## M2 — Shared AI requests and control
+**Rollback:** read_only stops shared mutations while preserving permitted reads/export; off closes participant access. Preserve scopes, grants and history. Do not return shared Chats to unrestricted personal execution automatically.
 
-**Daily-use target:** both participants intentionally request AI work, follow one queue and shared output, and understand who initiated and controlled each attempt.
+## PR2 — Prove and build isolated execution
 
-| PR | Proposed title and responsibility | Depends on | Evidence required in this PR |
-| --- | --- | --- | --- |
-| C06 | `test(collaboration): prove scoped AI execution boundaries` — bounded native/SDK spike, fixed isolation profile and adapter eligibility contract; no feature enablement | C04 | Actual supported harness on disposable Linux host: no personal memory/home/environment/socket/network escape, no private resume reuse, scoped context preserved. Commit public-safe evidence and failure cases. If proof fails, stop that adapter's integration; M1 stays usable. |
-| C07 | `feat(chat): bind shared runs to isolated scope context` — implement proven native supervisor/broker and canonical adapter seam, scope/generation provenance, supported-capability advertisement, lifecycle ownership | C06 | Registration failure closes capability, non-root execution, secret-free child environment, current scope recheck at dispatch, clean fresh shared context, shutdown/restart reconciliation; legacy full-access adapter rejected. |
-| C08 | `feat(chat): coordinate participant requests and decisions` — extend existing queue to 32, immutable shared order, actor-keyed idempotency, one-run guard, durable approval/cancel/retry commands and attribution | C07 | Idle and busy concurrent submissions, 33rd pending rejection, duplicate IDs across actors, revoke-before-start, two approvals, editor-own controls, unknown external outcome, restart without automatic duplicated effects. |
-| C09 | `feat(chat): expose shared AI queue and run controls` — shared discussion/AI composer mode, queue, pending approvals, action states and failure-preserved drafts across applicable clients | C08 | Two-account AI round trip, ordering/authorship, decision permissions and mode clarity; all named applicable surfaces; M1 remains available if M2 is off. |
+**Proposed title:** `feat(collaboration): add proven scope-isolated execution`
 
-**Internal enablement gate M2:** C06–C09 merged and real supported-adapter proof recorded, D2 ready, exact bundle/profile and existing access-source readiness verified, and full two-account queue/control/restart tests pass. Inference funding remains existing policy; no billing product is added. Standalone Chat cannot gain parent project files through its tools. At least one adapter must actually pass and be usable; an all-disabled catalog does not complete M2.
+First run the bounded native/SDK spike against the real supported harness. Record the fixed isolation profile, measured resource quotas, adapter eligibility and public-safe evidence. Only after proof succeeds, build the native supervisor/broker and canonical adapter seam, scoped execution/resume provenance, capability advertisement and lifecycle ownership in this same PR. Failure stops the affected adapter integration while M1 stays usable. Proof-first ordering remains mandatory inside the PR; it does not require a separate spike PR.
 
-**Rollback:** disable new shared AI requests and dispatch, preserve discussion and queue records with an explicit paused/unavailable state, and fence late accepted commands. Already-running work follows existing safe cancellation/recovery policy; it is not silently restarted. Do not resume a private owner session as fallback.
+**Tests:** no personal home/memory/environment/credentials/socket/process/network access, supervisor injection or private resume reuse; non-root execution, bounded broker calls, unavailable dependency/profile handling, dispatch reauthorization, restart/shutdown and unknown-outcome reconciliation. Use actual disposable Linux host and harness versions. A cwd or mock-only test is not isolation evidence.
 
-## M3 — Standalone terminal sharing
+**Merge result:** tested reusable execution infrastructure. Shared execution stays disabled until its consumer milestone passes: M2 through PR3, terminal participation through PR4. Existing access-source policy remains authoritative; no new billing/credential product or unrestricted adapter fallback.
 
-**Daily-use target:** invite a colleague into an eligible running terminal, see identical output, and pass control without starting another process.
+## PR3 — Complete shared AI (M2)
 
-| PR | Proposed title and responsibility | Depends on | Evidence required in this PR |
-| --- | --- | --- | --- |
-| C10 | `feat(terminal): launch scope-isolated shareable sessions` — native profile integration, eligible session creation before sharing, stable identity/incarnation, bounded restore and eligibility checks; reuse C07 where available | C03; C06 isolation contract/proof before enablement | Real native-host shell escape probes, no owner credentials/home/process/network access, same process survives invitation, restore cannot bind another incarnation. Unrestricted existing sessions remain private and intact. |
-| C11 | `feat(terminal): authorize shared control and lifecycle` — actor/role/creator authority and mandatory epoch across input, paste, resize, takeover, stop, REST and WS paths | C10 | Simultaneous acquisition, delayed REST paste after transfer/revoke, editor stop-own rule, viewer input rejection, creator identity and last-controller expiry. No optional-lease bypass for shared sessions. |
-| C12 | `feat(terminal): stream scoped replay and session state` — membership-aware attach, bounded replay/live output, exit state, stale-sender cleanup and shutdown drain | C11 | No sibling replay or stale incarnation leak, disconnect/reconnect, buffer saturation, exit continuity, <=60s connection closure, immediate mutation fencing. |
-| C13 | `feat(collaboration): expose terminal invitations and control` — reuse common sharing UI, watch/control labels, request/pass/resume interaction and CLI/native adapters | C12 | Owner/editor/viewer journey across applicable Web/Electron/mobile/CLI surfaces; same running session; no new terminal creation authority from standalone sharing. |
+**Proposed title:** `feat(chat): add shared AI queue and controls`
 
-**Internal enablement gate M3:** C10–C13 merged, D3 ready, execution profile and controller race tests pass, and at least one real eligible running session is shared end to end. Gate is not satisfied by a UI that marks every terminal unavailable. No dependency on the unmerged terminal-workspace PR stack is assumed; if that stack lands first, adapt the tested stable session seam without broadening this feature's scope.
+Extend the existing canonical queue to 32 pending requests with immutable accepted order, actor-scoped idempotency, one active run and explicit attempt lineage. Add durable approval/cancel/retry decisions, original-actor reauthorization and attribution. Wire PR2's isolated adapter and deliver discussion/AI composer mode, queue, approvals, control/error states and preserved drafts in applicable clients.
 
-**Rollback:** remove shared input capability, release control, discard stale pending input, preserve process/replay data and owner recovery. For emergency access-off, close participant attachments. Never fall back to the unrestricted owner terminal route or terminate processes merely because a viewer closes a tab.
+**Tests and enablement:** simultaneous idle/busy submissions, 33rd pending rejection, duplicate IDs across actors, revoke-before-start, competing approvals, editor-own cancellation/retry, interrupted dispatch and restart without duplicate external effects. Demonstrate a complete two-account AI round trip and named-surface parity with at least one real supported adapter. Verify exact bundle/profile and existing access-source readiness. An all-disabled adapter catalog does not complete M2. Standalone Chat gains no parent-project files; M1 remains available when M2 is off.
 
-## M4 — Whole-project sharing
+**Rollback:** disable new shared AI requests/dispatch; preserve discussion and truthful paused/interrupted queue state. Fence late commands and follow existing safe running-work recovery. Never resume an unrestricted private session as fallback.
 
-**Daily-use target:** inspect one complete inventory, confirm once, then collaborate on every project-owned resource with automatic inheritance for new contents.
+## PR4 — Complete standalone terminal sharing (M3)
 
-| PR | Proposed title and responsibility | Depends on | Evidence required in this PR |
-| --- | --- | --- | --- |
-| C14 | `feat(collaboration): model project inventory and inheritance` — authoritative containment inventory, fingerprint, direct-to-inherited conversion effects, readiness and lifecycle/fence schema | C02 | Existing/new child inheritance, scope collision, external reference vs ownership, child grant reconciliation; unsupported owned item blocks complete readiness. No publication yet. |
-| C15a | `feat(projects): authorize shared files and source control` — scoped file/read/write/search/export/git adapters and writer fence through existing/legacy routes | C14 | Traversal/symlink/moved-root rejection, viewer indirect-write denial, private-project isolation, save/revoke and source-write/cutover races; export/delete scoped correctly. |
-| C15b | `feat(projects): authorize shared apps and layout` — project app-data/bridge and shared spatial state adapters, per-member viewport/read state, compatible app readiness | C14 | App cookie/bridge cannot become owner credentials, viewer mutation denial, app data ownership, common layout with personal viewport, unsupported app safe state and complete inventory. |
-| C16 | `feat(projects): commit recoverable sharing transitions` — stage/fence/final inventory check, authority-pointer publication, membership and child grant reconciliation, rollback journal, inherited Chat/Terminal creation | C15a, C15b, C09, C13 | Crash at every transition step; no two writable authorities; changed inventory reconfirms; unmovable owned session blocks without replacement; replay of confirm is idempotent; future resources inherit; retained source is backup. |
-| C17 | `feat(collaboration): expose whole-project sharing` — one inventory confirmation, no exclusions, inherited-access display, project discovery, owner lifecycle controls and full journey | C16 | Complete mixed project including files, Chat, app/data, layout and running eligible terminal; all roles; all applicable surfaces; revoke, export/delete, recovery and future creation. |
+**Proposed title:** `feat(terminal): share sessions with controlled input`
 
-**Internal enablement gate M4:** all listed slices merged, D4 ready, representative complete-project fixture passes every resource adapter and lifecycle path, inventory cannot omit an incompatible owned resource, and source/destination authority is validated on an isolated VPS. Empty-project-only validation does not complete M4.
+Reuse PR2 isolation for eligible sessions launched inside the boundary before sharing. Preserve the same stable session/incarnation/process. Implement actor/role/creator authorization and mandatory lease epochs across input, paste, resize, takeover, stop and every REST/WS path; scoped bounded replay/live output, exit/restore state, stale cleanup and shutdown. Deliver common sharing controls, watch/control labels and applicable Web/Electron/mobile/CLI adapters in this PR.
 
-**Rollback:** disable new project conversions first. Existing shared projects retain one declared authority; use read_only/off modes as needed, leaving owner export/revoke/recovery. Never restore a writable personal peer, revive old direct grants, delete the backup automatically, or run an older binary that ignores writer fences.
+**Tests and enablement:** real native-host escape probes; simultaneous control acquisition; editor waits for release/expiry while owner can take over; delayed paste/input/resize after transfer or revoke; viewer input/creation denial; editor stop-own rule; stale incarnation rejection; reconnect and buffer saturation without replayed input; same process survives invitation. At least one actual eligible running terminal must work end to end. Existing unrestricted sessions remain private and intact; replacement processes do not count. No dependency on an unmerged terminal-workspace stack is assumed. M2 rollout precedes M3 rollout.
 
-## Documentation PRs
+**Rollback:** remove shared input, release control and discard delayed input while preserving process/replay and owner recovery. Emergency off closes participant attachments. Never fall back to unrestricted owner routes or stop a process because an observer disconnects.
 
-| ID | Repository | Deliverable / dependency |
+## PR5 — Project inventory, adapters and migration
+
+**Proposed title:** `feat(projects): prepare complete sharing transitions`
+
+Combine complete ownership inventory/fingerprint, direct-to-inherited grant effects and readiness with scoped files/search/export/Git adapters, project app-data/bridge and shared layout adapters. Preserve member-private viewport/read state. Include legacy writer fences, staged migration journal, final inventory validation, one authority-publication point, child grant reconciliation and inherited Chat/Terminal creation. Reuse PR3/PR4 adapters.
+
+**Tests:** existing/new child inheritance; external reference versus actual ownership; conflicting item grants; traversal/symlink/moved-root and private-project isolation; viewer indirect-write denial through files/Git/apps/agents/Terminal; app bridge credential isolation; layout versus personal viewport; save/revoke and source-write/cutover races; crash at every journal step, idempotent confirmation and retained backup; changed inventory requires reconfirmation; unmovable owned terminal blocks intact. Prove no partial participant access or two writable authorities. Backend integration and migration tests belong here, not only in PR6.
+
+**Merge result:** complete tested project backend, still disabled until PR6 completes M4. No partial-project pilot or publication through hidden/direct endpoints. Preparation leaves staged content inaccessible. Supported project contents are never silently omitted from inventory.
+
+## PR6 — Complete project sharing (M4)
+
+**Proposed title:** `feat(collaboration): expose whole-project sharing`
+
+Add the single full-inventory confirmation, membership-effect review, inherited-access display, project discovery and lifecycle controls across applicable clients. Wire the complete PR5 transition and every resource adapter; no exclusions or per-child private overrides. Complete the full user journey and integration evidence.
+
+**Tests and enablement:** a mixed project with files, Chat, app/data, shared layout and an eligible running terminal; all roles and applicable surfaces; new-content inheritance; no silent promotion of item-only members; changed inventory/reconfirmation, revoke, export/delete, transfer and recovery. Validate source/destination authority on disposable VPS-native infrastructure. An empty-project fixture or omitted incompatible resource does not complete M4.
+
+**Rollback:** disable new conversions first; keep one authority for existing shared projects, using read_only/off and owner export/revoke/recovery as necessary. Do not revive a writable personal copy or old item grants, discard protected backups, or downgrade to a binary that ignores fences.
+
+## Documentation alongside releases
+
+Four documentation updates remain explicit deliverables in separate `FinnaAI/matrix-os-site` PRs under `content/docs/`. They accompany milestone releases and do not gate implementation PR merges or internal milestone enablement. Their work does not add implementation PRs or dependencies to the six-PR graph.
+
+| Update | Accompanies | Content |
 | --- | --- | --- |
-| D1 | `FinnaAI/matrix-os-site` | Explain internal discussion-only Chat scope, invitations, roles, revocation, unavailable AI and recovery; accompanies C05. |
-| D2 | `FinnaAI/matrix-os-site` | Explain explicit AI requests, ordering, supported adapter/context limitations and run controls; accompanies C09. |
-| D3 | `FinnaAI/matrix-os-site` | Explain eligible terminal sessions, watch/control, disconnection and owner recovery; accompanies C13. |
-| D4 | `FinnaAI/matrix-os-site` | Explain whole inventory, future inheritance, transition blockers, backup/export/delete and no partial sharing; accompanies C17. |
+| D1 | M1 / PR1 release | Discussion-only Chat scope, invitations, roles, revoke, unavailable AI and recovery. |
+| D2 | M2 / PR3 release | Explicit AI requests, ordering, supported context/adapter limitations and run controls. |
+| D3 | M3 / PR4 release | Eligible terminals, watch/control, disconnection and owner recovery. |
+| D4 | M4 / PR6 release | Whole inventory, future inheritance, transition blockers, backup/export/delete and no partial sharing. |
 
-Public documentation must accurately label internal-only availability; publishing docs does not promote a cohort or promise future milestones. Keep private participant identifiers and host evidence out of public docs.
+Keep docs accurate about actual availability and keep participant/host identifiers private. Documentation publication does not change capability policy or promise a later milestone. Track these release deliverables alongside the feature without making them extra implementation gates.
 
-## Release promotion and evidence ownership
+## Promotion and evidence
 
-Each milestone record contains: merged PR/head SHAs, installed host/platform/client versions, supported execution-profile generation where applicable, cohort policy revision, individual surface evidence, Postgres race results, known limitations, and a tested disable/recovery action. The implementation owner assembles it; the feature owner reviews internal enablement. Nothing in this planning PR provisions machines, changes cohorts, promotes releases, or merges runtime work.
+Each milestone record contains merged PR/head SHAs, installed host/platform/client versions, applicable execution-profile generation, cohort policy revision, named-surface evidence, Postgres race results, limitations and a tested disable/recovery action. The implementation owner assembles it; the feature owner reviews internal enablement. This planning PR creates no implementation PRs, machines, cohorts or deployments.
 
-Promotion sequence is off → internal cohort → reviewed wider cohort → enabled. Pilot duration is evidence-driven, not an invented deadline. New capabilities start off even when an earlier milestone is enabled. A capability can be disabled without erasing data. Before public promotion, re-run revocation/isolation and complete-user-flow tests on the release artifact; passing a backend unit suite alone is not milestone acceptance.
+Promote off → internal cohort → reviewed wider cohort → enabled. Duration follows evidence, not a fixed date. New capabilities start off even if earlier milestones are enabled. Re-run revocation/isolation and complete journeys on the release artifact before public promotion. Disabling a capability never erases data or bypasses scope checks.
 
-## Spec coverage by milestone
+## Spec coverage
 
 | Scope | Requirements | Completion |
 | --- | --- | --- |
-| Common grants, identity, access, lifecycle foundation | FR-001–010, FR-031–038 | C01–C05 establish reusable authority and standalone Chat; C13 adds terminal; C17 completes project inheritance. |
-| Shared Chat | FR-011–019 | M1 history/discussion/attribution/drafts and execution-denied state; M2 completes queued AI and controls. |
-| Shared Terminal | FR-020–024 | M3; M4 applies inherited membership and transition behavior. |
-| Whole project/files/apps/layout | FR-003–006, FR-025–030 | M4; no partial-project enablement in M1–M3. |
-| End-to-end acceptance | SC-001–014 | Relevant criteria at every milestone; all final criteria, including complete-project fixtures, by M4. |
+| Common grants, identity, access, lifecycle | FR-001–010, FR-031–038 | PR1 establishes common authority and standalone Chat; PR4 adds Terminal; PR5/PR6 complete project inheritance. |
+| Shared Chat | FR-011–019 | M1 discussion/history/attribution/drafts; PR2/PR3 complete M2 AI and controls. |
+| Shared Terminal | FR-020–024 | PR4/M3; PR5/PR6 apply project inheritance and transition. |
+| Whole project/files/apps/layout | FR-003–006, FR-025–030 | PR5/PR6/M4; no partial-project enablement earlier. |
+| Acceptance | SC-001–014 | Relevant criteria at each milestone; every final criterion by M4. |
 
-The proposed 18 slices may become more PRs after `/speckit-tasks`; scope, dependencies, and milestone gates stay explicit. Do not combine all slices into one implementation PR to meet an arbitrary milestone date.
+`/speckit-tasks` should organize implementation tasks and test-first work inside these six PRs. Reconsider a boundary only with concrete reviewability or repository-limit evidence; preserving the current CI/review overhead reduction is part of delivery planning.

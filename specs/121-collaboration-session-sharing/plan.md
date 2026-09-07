@@ -5,7 +5,7 @@
 
 ## Summary
 
-Deliver four usable internal milestones: shared Chat discussion, shared AI, shared Terminal, and whole-project sharing. Small PRs merge safely into main with capabilities dormant until the milestone's complete authorization, recovery, UI parity, and two-account evidence passes. Internal rollout is independent of public availability. Whole-project sharing remains all-or-nothing.
+Deliver four usable internal milestones: shared Chat discussion, shared AI, shared Terminal, and whole-project sharing. Six implementation PRs merge safely into main with capabilities dormant until the milestone's complete authorization, recovery, UI parity, and two-account evidence passes. Internal rollout is independent of public availability. Whole-project sharing remains all-or-nothing.
 
 Reuse canonical Chat history, queue, outbox, and per-member state; add a common owner-local collaboration authority and narrow actor-preserving platform ingress. Preserve existing terminal session identity through a scope-runtime adapter, proving native execution isolation before enabling shared input. Use project-owned state adapters and a guarded migration journal for final whole-project cutover.
 
@@ -21,7 +21,7 @@ The detailed work breakdown, acceptance gates, and dependency graph are in [deli
 **Project Type**: Existing multi-package OS with platform routing, gateway, shared contracts, and multiple renderers.
 **Performance Goals**: Eight members/scope; 32 pending requests/Chat; 95% of Chat/terminal live updates within 2s; control transfer within 3s; invite/accept/open within 3min excluding provisioning; connections closed within 60s of revoke, new access/writes rejected immediately at authoritative commit.
 **Constraints**: Owner/editor/viewer only; one active AI request per Chat; one terminal controller; no implicit parent/sibling access; no partial project share; no owner impersonation; no private drafts in shared records; no new billing or document collaboration product.
-**Scale/Scope**: Four milestones, 18 planned implementation PR slices plus four milestone-specific site documentation PRs. Large slices must split further if diff limits are exceeded; evidence gates remain unchanged.
+**Scale/Scope**: Four milestones in six planned implementation PRs, with four site documentation updates alongside releases. Contracts, backend wiring, UI and tests are combined where reviewable to reduce CI overhead. Split further only when actual reviewability or repository limits require it. PR2 execution and PR5 project foundations remain disabled until their consumer milestones complete.
 
 ## Constitution Check
 
@@ -39,7 +39,7 @@ Pre-research and post-design gate result: **PASS for the proposed design**. This
 | VIII. Defense in depth | Exact auth/route matrix, validation, bounded resources, current membership checks, execution isolation and shutdown below and in contracts. |
 | IX. TDD | Each PR has red/green contract, race, failure and integration tests; isolated runtime spike before committing to harness compatibility. |
 | X. Worktree/PR review | All future implementation slices use manual worktrees and Conventional Commit PRs; required checks and current-head Greptile 5/5 before merging. |
-| Documentation | A separate `FinnaAI/matrix-os-site` `content/docs/` PR accompanies each milestone; no docs claim for unavailable later milestones. |
+| Documentation | Separate `FinnaAI/matrix-os-site` `content/docs/` PRs accompany milestone releases as documentation deliverables, without gating implementation merges or internal enablement; no docs claim for unavailable later milestones. |
 
 The setup script only recognizes numeric feature names. Run it and agent-context tooling with `SPECIFY_FEATURE=121-collaboration-session-sharing`; keep the actual git branch's required `codex/` prefix. The optional before/after planning auto-commit hooks are disabled by project configuration; normal reviewed commits publish this plan.
 
