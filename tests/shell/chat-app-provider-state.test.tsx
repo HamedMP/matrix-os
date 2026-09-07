@@ -83,6 +83,18 @@ beforeEach(() => {
 });
 
 describe("Chat canonical provider state", () => {
+  it("renders attachment-only user messages without an empty text bubble", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const { container } = render(<ChatApp
+      messages={[{ id: "attachment-only", role: "user", content: " \n ", timestamp: 1000,
+        attachments: [{ id: "file", kind: "file", label: "notes.txt", path: "temporary/notes.txt" }] }]}
+      sessionId="chat_shared" busy={false} connected onSubmit={vi.fn()} conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()}
+    />);
+    expect(await screen.findByRole("button", { name: "Preview notes.txt" })).toBeTruthy();
+    expect(container.querySelector(".is-user")?.children).toHaveLength(1);
+  });
+
   it("renames the shared Web Desktop and Web Canvas Chat from the header, rail double-click, and context menu", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     const onSwitchConversation = vi.fn();

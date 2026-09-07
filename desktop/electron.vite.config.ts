@@ -55,6 +55,9 @@ export default defineConfig({
       allowedHosts: [DESKTOP_DEV_RENDERER_HOST],
     },
     resolve: {
+      // Workspace UI peers may resolve another React patch version. Hooks must
+      // share the renderer's React instance in development and packaged builds.
+      dedupe: ["react", "react-dom"],
       alias: {
         "@renderer": resolve(__dirname, "src/renderer/src"),
       },

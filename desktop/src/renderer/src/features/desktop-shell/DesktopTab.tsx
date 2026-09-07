@@ -1,5 +1,5 @@
 import { cloneElement, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
-import { Minus, X } from "@renderer/lib/hugeicons";
+import { Minimize2, X } from "@renderer/lib/hugeicons";
 
 export type DesktopTabProps = {
   mode: "full" | "iconOnly";
@@ -9,7 +9,7 @@ export type DesktopTabProps = {
   canClose?: boolean;
   onClick: () => void;
   onDoubleClick?: () => void;
-  onMinimize?: () => void;
+  onRestore?: () => void;
   onClose?: () => void;
   children?: ReactNode;
   isLast?: boolean;
@@ -35,7 +35,7 @@ export default function DesktopTab({
   canClose = false,
   onClick,
   onDoubleClick,
-  onMinimize,
+  onRestore,
   onClose,
   children,
   isLast = false,
@@ -84,18 +84,18 @@ export default function DesktopTab({
         {iconElement}
         <span className="min-w-0 flex-1 truncate">{children ?? label}</span>
       </button>
-      {onMinimize ? (
+      {onRestore ? (
         <button
           type="button"
-          aria-label={`Minimize ${label} tab`}
-          title={`Minimize ${label}`}
+          aria-label={`Restore ${label} as window`}
+          title={`Restore ${label} as window`}
           className="no-drag flex size-5 shrink-0 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
           onClick={(event) => {
             event.stopPropagation();
-            onMinimize();
+            onRestore();
           }}
         >
-          <Minus size={12} aria-hidden="true" />
+          <Minimize2 size={12} aria-hidden="true" />
         </button>
       ) : null}
       {canClose && onClose ? (

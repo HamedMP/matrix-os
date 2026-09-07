@@ -239,7 +239,7 @@ describe("TerminalPane session replay privacy", () => {
       { container: host },
     );
     await Promise.resolve();
-    const root = container.firstElementChild as HTMLElement;
+    const root = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const event = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "clipboardData", {
       value: {
@@ -296,7 +296,7 @@ describe("TerminalPane session replay privacy", () => {
       />,
     );
     await Promise.resolve();
-    const root = container.firstElementChild as HTMLElement;
+    const root = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const event = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "clipboardData", {
       value: {
@@ -348,7 +348,7 @@ describe("TerminalPane session replay privacy", () => {
       />,
     );
     await Promise.resolve();
-    const root = container.firstElementChild as HTMLElement;
+    const root = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const event = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "clipboardData", {
       value: {
@@ -398,7 +398,7 @@ describe("TerminalPane session replay privacy", () => {
       />,
     );
     await Promise.resolve();
-    const root = container.firstElementChild as HTMLElement;
+    const root = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const event = new Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "dataTransfer", {
       value: {

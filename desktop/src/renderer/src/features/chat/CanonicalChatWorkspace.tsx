@@ -1,3 +1,6 @@
+import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { ChatSharingButton } from "./ChatSharingButton";
+import { openChatWebLink } from "./chat-web-navigation";
 import type {
   CanonicalChatClient,
   CanonicalChatEventSource,
@@ -16,7 +19,9 @@ import { ConversationTranscript } from "../../components/conversation/transcript
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
-import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
+import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
+import { useChatFileNavigation } from "../work/ChatFileNavigation";
+import { resolveChatInspectorTarget, resolveWorkFilesScope } from "../work/work-files-scope";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -103,6 +108,8 @@ export function CanonicalChatWorkspace({
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const projects = useBoard((state) => state.projects);
+  const fileNavigation = useChatFileNavigation();
+  const chromeHost = useSurfaceChromeHost();
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
@@ -270,6 +277,10 @@ export function CanonicalChatWorkspace({
       && queuedTurns.some((turn) => turn.id === editingQueuedTurn.id);
     if (!editStillExists) setEditingQueuedTurn(null);
   }, [controller.detail, editingQueuedTurn, queuedTurns]);
+  const loadChatImage = useCallback((src: string) => {
+    if (!api) return Promise.reject(new Error("ChatUnavailable"));
+    return api.getBlob(src, { maxBytes: 8 * 1024 * 1024 });
+  }, [api]);
   const copyText = useCallback(async (text: string) => {
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
     await navigator.clipboard.writeText(text);
@@ -732,10 +743,25 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail && globalView === "conversation" ? (
           <>
+            {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
             <ConversationTranscript turns={transcript} callbacks={{
               copyText,
-              openFile: openFileInDesktopEditor,
-              ...(api ? { loadImage: (src: string) => api.getBlob(src, { maxBytes: 10 * 1024 * 1024 }) } : {}),
+              openAttachment: (rawPath) => {
+                const path = normalizeDesktopEditorPath(rawPath);
+                if (!path || !fileNavigation || !controller.detail) return false;
+                fileNavigation.open({ chatId: controller.detail.record.chat.id, target: { kind: "home", path, label: path.split("/").at(-1) ?? path } });
+                return true;
+              },
+              openWebLink: openChatWebLink,
+              openFile: (rawPath) => {
+                if (!fileNavigation || !controller.detail) return false;
+                const scope = resolveWorkFilesScope(controller.detail, projects);
+                const target = resolveChatInspectorTarget(rawPath, scope);
+                if (!target) return false;
+                fileNavigation.open({ chatId: scope.chatId, target });
+                return true;
+              },
+              ...(api ? { loadImage: loadChatImage } : {}),
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
             }} />

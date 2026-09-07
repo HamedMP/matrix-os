@@ -1,3 +1,5 @@
+import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
+import { createChatSharingRoutes } from "./chat/sharing-routes.js";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
@@ -72,6 +74,7 @@ import { createZellijRuntime } from "./zellij-runtime.js";
 import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
 import { resolveUserSystemdTerminalActivation } from "./terminal-user-systemd-activation.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
+import { reconcilePendingShellSessionDeletions } from "./shell/session-deletion-reconciler.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -337,6 +340,7 @@ import {
   ShellPreferencesStore,
   createShellCommandRunner,
   createTerminalAcceptanceRoutes,
+  createTerminalWindowLayoutRoutes,
   createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
@@ -344,6 +348,7 @@ import {
   createUserSystemdZellijAdapter,
   loadInstalledTerminalRuntimeGeneration,
   ShellRegistry as ZellijShellRegistry,
+  TerminalWindowLayoutStore,
   shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
@@ -469,8 +474,30 @@ export async function createGateway(config: GatewayConfig) {
         generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
       })
     : null;
+  let terminalOrphanSweepTimer: ReturnType<typeof setInterval> | null = null;
+  let terminalOrphanSweepPromise: Promise<void> | null = null;
+  const runTerminalOrphanSweep = () => {
+    if (!userSystemdTerminalController || terminalOrphanSweepPromise) return;
+    const promise = userSystemdTerminalController.sweepOrphanedSessions()
+      .then((result) => {
+        console.info("[terminal-runtime]", {
+          event: "terminal.runtime.orphan.sweep.completed",
+          ...result,
+        });
+      })
+      .catch((err: unknown) => {
+        console.warn("[terminal-runtime] orphan sweep failed:", err instanceof Error ? err.name : "UnknownError");
+      });
+    terminalOrphanSweepPromise = promise;
+    void promise.finally(() => {
+      if (terminalOrphanSweepPromise === promise) terminalOrphanSweepPromise = null;
+    });
+  };
   if (userSystemdTerminalController) {
     await userSystemdTerminalController.assertInstallationReady();
+    runTerminalOrphanSweep();
+    terminalOrphanSweepTimer = setInterval(runTerminalOrphanSweep, 15 * 60 * 1_000);
+    terminalOrphanSweepTimer.unref?.();
   }
   const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
     ? createUserSystemdZellijRuntime({
@@ -502,12 +529,23 @@ export async function createGateway(config: GatewayConfig) {
       })
     : zellijAdapter;
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
+  const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
     preferencesStore: shellPreferencesStore,
   });
+  const pendingShellDeletionReconciliation = await reconcilePendingShellSessionDeletions({
+    registry: zellijShellRegistry,
+    lifecycle: terminalWindowLayoutStore,
+  });
+  if (pendingShellDeletionReconciliation.completed > 0 || pendingShellDeletionReconciliation.failed > 0) {
+    console.info("[terminal-lifecycle]", {
+      event: "terminal.session.pending_deletions.reconciled",
+      ...pendingShellDeletionReconciliation,
+    });
+  }
   const chatZellijShellRegistry = chatZellijAdapter === zellijAdapter
     ? zellijShellRegistry
     : new ZellijShellRegistry({
@@ -524,6 +562,7 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellWs = createShellWsHandler({
     registry: zellijShellRegistry,
     adapter: zellijAdapter,
+    isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
     scrollbackStore: shellScrollbackStore,
     persistCanonicalSize: (name, size) => {
       void zellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
@@ -536,6 +575,7 @@ export async function createGateway(config: GatewayConfig) {
     : createShellWsHandler({
         registry: chatZellijShellRegistry,
         adapter: chatZellijAdapter,
+        isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
         scrollbackStore: shellScrollbackStore,
         persistCanonicalSize: (name, size) => {
           void chatZellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
@@ -990,6 +1030,7 @@ export async function createGateway(config: GatewayConfig) {
       await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
+      await bootstrapChatSharing(chatRepository.kysely);
       canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
@@ -1918,6 +1959,7 @@ export async function createGateway(config: GatewayConfig) {
     repository: chatRepository,
     getPrincipal: (c) => requireRequestPrincipal(c),
     registry: chatZellijShellRegistry,
+    paneActions: chatZellijAdapter,
     shellWs: chatZellijShellWs,
     onUnexpectedSendFailure: logUnexpectedWsSendFailure,
   });
@@ -1932,6 +1974,7 @@ export async function createGateway(config: GatewayConfig) {
     commandRunner: shellCommandRunner,
     terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
+    sessionLifecycle: terminalWindowLayoutStore,
     chatTerminals: {
       prepare: async (principal: RequestPrincipal, chatId: string) => {
         if (!chatRepository || !canonicalChatExecutionRoots) {
@@ -1984,6 +2027,10 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  app.route(
+    "/api/terminal/window-layouts",
+    createTerminalWindowLayoutRoutes({ store: terminalWindowLayoutStore }),
+  );
   const runtimeHandle = process.env.MATRIX_HANDLE ?? "";
   const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)
     && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
@@ -4366,6 +4413,7 @@ export async function createGateway(config: GatewayConfig) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
   }
+  app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
@@ -4689,6 +4737,11 @@ export async function createGateway(config: GatewayConfig) {
         logBestEffortFailure("Temporary Chat attachment cleanup shutdown failed", error);
       });
 
+      if (terminalOrphanSweepTimer) {
+        clearInterval(terminalOrphanSweepTimer);
+        terminalOrphanSweepTimer = null;
+      }
+      await terminalOrphanSweepPromise;
       // T939: Fire gateway_stop hook
       await hookRunner.fireVoidHook("gateway_stop", {}).catch((err: unknown) => {
         logBestEffortFailure("gateway_stop hook failed", err);

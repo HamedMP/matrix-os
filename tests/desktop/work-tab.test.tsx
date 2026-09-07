@@ -515,7 +515,7 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("main").getAttribute("aria-hidden")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     expect(sideBySideInspector.className).toContain("shrink-0");
-    expect(sideBySideInspector.style.width).toBe("380px");
+    expect(sideBySideInspector.style.width).toBe("344px");
   });
 
   it.each([
@@ -558,7 +558,7 @@ describe("WorkTab rail integration", () => {
     expect(screen.queryByRole("separator", { name: "Resize Chat navigation" })).toBeNull();
     expect(screen.getByRole("navigation", { name: "Chat navigation" }).className).not.toContain("border-r-0");
     expect(inspectorSeparator.getAttribute("aria-valuemin")).toBe("240");
-    expect(inspectorSeparator.getAttribute("aria-valuemax")).toBe("380");
+    expect(inspectorSeparator.getAttribute("aria-valuemax")).toBe("800");
     expect(inspectorSeparator.getAttribute("aria-valuenow")).toBe("380");
     expect(inspectorSeparator.querySelector("span")?.style.background).toBe("transparent");
 
@@ -574,12 +574,12 @@ describe("WorkTab rail integration", () => {
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
     fireEvent.pointerDown(inspectorSeparator, { button: 0, clientX: 760, pointerId: 17 });
     fireEvent.pointerMove(window, { clientX: 700, pointerId: 17 });
-    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("380");
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
 
     fireEvent.pointerCancel(window, { pointerId: 17 });
     fireEvent.pointerMove(window, { clientX: -1_000, pointerId: 17 });
 
-    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("380");
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
   });
 
   it("keeps navigation visible while the inspector divider collapses past its minimum", async () => {
@@ -594,6 +594,20 @@ describe("WorkTab rail integration", () => {
     expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
+  });
+
+  it("widens beyond the default and clamps when the container shrinks without losing Chat", async () => {
+    render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
+    await screen.findByRole("button", { name: "Global chat" });
+    const divider = () => screen.getByRole("separator", { name: "Resize Chat inspector" });
+    fireEvent.keyDown(divider(), { key: "ArrowLeft" });
+    expect(divider().getAttribute("aria-valuenow")).toBe("396");
+    for (let i = 0; i < 80; i += 1) fireEvent.keyDown(divider(), { key: "ArrowLeft" });
+    expect(divider().getAttribute("aria-valuenow")).toBe("800");
+    divider().focus();
+    resizeWork(900);
+    expect(Number(divider().getAttribute("aria-valuenow"))).toBeLessThanOrEqual(540);
+    expect(screen.getByText("Chat center")).toBeTruthy();
   });
 
   it("makes the Files inspector available on a new Global Chat draft", async () => {
@@ -699,6 +713,8 @@ describe("WorkTab rail integration", () => {
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     const hideInspector = screen.getByRole("button", { name: "Hide inspector" });
     expect(within(chromeTitle.closest("header")!).queryByRole("button", { name: /Chat navigation/ })).toBeNull();
+    expect(within(chromeTitle.closest("header")!).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+    expect(hostedMain.queryByRole("button", { name: "Share", exact: true })).toBeNull();
     expect(hideInspector.className).toContain("size-7");
     expect(hideInspector.className).toContain("rounded-md");
     expect(hideInspector.className).toContain("pointer-events-auto");

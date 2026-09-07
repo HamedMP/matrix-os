@@ -42,12 +42,28 @@ describe("Web OS-view state client", () => {
     ];
     document.desktop.windows = [
       { path: "__chat__", x: 40, y: 60, width: 900, height: 640 },
-      { path: "__terminal__", x: 80, y: 100, width: 840, height: 560 },
+      {
+        path: "__terminal__",
+        x: 80,
+        y: 100,
+        width: 840,
+        height: 560,
+        terminalLayoutId: "term-layout_0123456789abcdef0123456789abcdef",
+      },
     ];
 
     expect(layoutWindowsFromOsViewState({ ...latest, document }, "canvas")).toEqual([
       { path: "__chat__", title: "Chat", state: "open", x: 40, y: 60, width: 900, height: 640 },
-      { path: "__terminal__", title: "Terminal", state: "minimized", x: 80, y: 100, width: 840, height: 560 },
+      {
+        path: "__terminal__",
+        title: "Terminal",
+        state: "minimized",
+        x: 80,
+        y: 100,
+        width: 840,
+        height: 560,
+        terminalLayoutId: "term-layout_0123456789abcdef0123456789abcdef",
+      },
     ]);
   });
 

@@ -238,6 +238,7 @@ export default function DesktopSurfaceFrame({
     ? surfaceChrome?.title ?? tab.chatTitle ?? "Chat"
     : undefined;
   const showsSurfaceTopBar = isWindow
+    || isWorkSurface
     || Boolean(workChatTitle)
     || Boolean(surfaceChrome && (!isWorkSurface || surfaceChrome.rightActions));
 
@@ -258,9 +259,9 @@ export default function DesktopSurfaceFrame({
           title={workChatTitle ?? (sidebarHidesTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
           leftActions={surfaceChrome?.leftActions}
           rightActions={surfaceChrome?.rightActions}
-          leftPaneWidth={surfaceChrome?.leftPaneWidth ?? (workChatTitle ? HOSTED_WORK_SIDEBAR_WIDTH : undefined)}
+          leftPaneWidth={surfaceChrome?.leftPaneWidth ?? (isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined)}
           rightPaneWidth={surfaceChrome?.rightPaneWidth}
-          showSidebarTrigger={Boolean(workChatTitle)}
+          showSidebarTrigger={isWorkSurface}
           sidebarTriggerLabel="Toggle Chat sidebar"
           showWindowControls={isWindow}
           chromePlacement={sidebarOwnsChrome ? "sidebar" : "full-width"}
