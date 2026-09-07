@@ -142,7 +142,7 @@ describe('customer VPS host bundle', () => {
       'timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"',
     );
     expect(script).toContain(
-      'timeout --signal=KILL 35s node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"',
+      'node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"',
     );
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/zellij"');
     expect(script).toContain(

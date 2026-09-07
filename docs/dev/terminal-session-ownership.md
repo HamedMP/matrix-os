@@ -55,8 +55,10 @@ Do not remove it merely because a newly created session passes a typing test.
 The host-bundle build runs `scripts/smoke-zellij-session-config.ts` against its
 staged Zellij binary. It creates isolated servers with Normal and Locked saved
 configurations, attaches through the real gateway adapter using the updated
-configuration, and checks typing, backspace, paste, and repeated attachment
-without replacing the pane process. Run it locally with:
+configuration, and checks typing, backspace, paste, and repeated/indexed
+attachment without replacing the pane process. A supervisor owns the temporary
+directories and session cleanup, including when the test worker times out or
+is interrupted. Run it locally with:
 
 ```bash
 pnpm exec tsx scripts/smoke-zellij-session-config.ts /absolute/path/to/zellij
