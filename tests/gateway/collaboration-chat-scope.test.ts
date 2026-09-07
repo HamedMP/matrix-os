@@ -64,6 +64,13 @@ describe("CollaborationChatScopeService", () => {
       executionFenced: true,
     });
     expect(Number(chat.revision)).toBe(1);
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox")
+      .select(["scope_id", "recipient_actor_ids", "discovery_state"])
+      .execute()).toEqual([{
+      scope_id: collaborationIds.scope,
+      recipient_actor_ids: [collaborationActors.owner],
+      discovery_state: "accepted",
+    }]);
   });
 
   it("returns the existing logical scope for an idempotent retry without reusing preflight authority", async () => {

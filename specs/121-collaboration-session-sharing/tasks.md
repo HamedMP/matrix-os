@@ -47,7 +47,7 @@
 - [x] T017 (PR1) Add versioned owner-Postgres collaboration tables, constraints, indexes, Chat actor/purpose columns, and migration bookkeeping in `packages/gateway/src/collaboration/database.ts`
 - [x] T018 (PR1) Implement transactional scope, member, operation, audit, event, and directory-outbox persistence without owning the injected pool in `packages/gateway/src/collaboration/repository.ts`
 - [x] T019 (PR1) Implement current-member resolution, role/action authorization, capacity/expiry, lifecycle, auth-epoch, idempotency, and owner-protection rules in `packages/gateway/src/collaboration/authority.ts`
-- [ ] T020 [P] (PR1) Implement bounded directory-outbox delivery with idempotent event IDs, capped retry/backoff, safe errors, and shutdown drain in `packages/gateway/src/collaboration/directory-outbox.ts`
+- [x] T020 [P] (PR1) Implement bounded directory-outbox delivery with idempotent event IDs, capped retry/backoff, safe errors, and shutdown drain in `packages/gateway/src/collaboration/directory-outbox.ts`
 - [x] T021 [P] (PR1) Add platform Kysely tables and additive migrations for directory/index/policy/tickets in `packages/platform/src/collaboration/database.ts`
 - [x] T022 (PR1) Implement content-free platform directory/index and server-managed rollout policy repositories in `packages/platform/src/collaboration/repository.ts`
 - [x] T023 (PR1) Implement short-lived signed actor proofs and signed policy snapshots using managed keys in `packages/platform/src/collaboration/proof.ts`

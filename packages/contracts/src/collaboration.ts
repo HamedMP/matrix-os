@@ -252,6 +252,20 @@ export const CollaborationConnectionTicketResponseSchema = z.object({
   expiresAt: z.iso.datetime(),
 }).strict();
 
+export const CollaborationDirectoryEventSchema = z.object({
+  eventId: CollaborationIdSchema,
+  scopeId: CollaborationIdSchema,
+  runtimeId: CollaborationRuntimeIdSchema,
+  ownerId: CollaborationActorIdSchema,
+  kind: CollaborationScopeKindSchema,
+  authorityGeneration: z.number().int().positive(),
+  metadataRevision: z.number().int().nonnegative(),
+  recipients: z.array(z.object({
+    actorId: CollaborationActorIdSchema,
+    status: z.enum(["invited", "accepted", "revoked"]),
+  }).strict()).max(8),
+}).strict();
+
 const CollaborationEventBaseSchema = z.object({
   version: z.literal(1),
   scopeId: CollaborationIdSchema,

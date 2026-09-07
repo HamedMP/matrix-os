@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { ChatOwner } from "../chat/records.js";
@@ -50,7 +50,7 @@ export class CollaborationChatScopeService {
       throw new Error("Collaboration preflight secret is unavailable");
     }
     this.now = options.now ?? (() => new Date());
-    this.createScopeId = options.createScopeId ?? (() => crypto.randomUUID());
+    this.createScopeId = options.createScopeId ?? randomUUID;
   }
 
   async preflight(input: { ownerId: string; chatId: string }): Promise<{
@@ -202,6 +202,40 @@ export class CollaborationChatScopeService {
         .returningAll()
         .executeTakeFirst();
       if (!activated) throw new CollaborationChatScopeError("conflict", "Chat scope state changed");
+      const eventId = randomUUID();
+      await trx.insertInto("collaboration_events").values({
+        scope_id: scope.id,
+        scope_seq: 1,
+        event_id: eventId,
+        resource_kind: "chat",
+        resource_id: input.chatId,
+        revision: 1,
+        authority_generation: 1,
+        event_type: "scope.shared",
+        payload: jsonb({}),
+        created_at: now,
+      }).execute();
+      await trx.insertInto("collaboration_audit").values({
+        scope_id: scope.id,
+        actor_id: input.ownerId,
+        action: "scope.shared",
+        outcome: "completed",
+        revision: 1,
+        reason_code: null,
+        created_at: now,
+      }).execute();
+      await trx.insertInto("collaboration_directory_outbox").values({
+        event_id: eventId,
+        scope_id: scope.id,
+        recipient_actor_ids: jsonb([input.ownerId]),
+        authority_runtime_id: this.options.runtimeId,
+        authority_generation: 1,
+        resource_kind: "chat",
+        discovery_state: "accepted",
+        retry_after: now,
+        delivered_at: null,
+        created_at: now,
+      }).execute();
       return scopeRecord(activated);
     });
   }
