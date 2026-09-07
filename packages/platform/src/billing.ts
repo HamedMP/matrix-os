@@ -127,6 +127,8 @@ export interface RuntimeAccessDecision {
 }
 
 export interface PublicBillingEntitlementDetails {
+  /** Account customer linkage, independent of runtime entitlement or support overrides. */
+  portalAvailable?: boolean;
   recurringPrice?: MatrixBillingPublicEntitlement['recurringPrice'];
   runtimePlacement?: MatrixBillingPublicEntitlement['runtimePlacement'];
 }
@@ -164,7 +166,7 @@ export function projectPublicBillingEntitlement(
     addonRuntimeSlots: entitlement.addonRuntimeSlots,
     allowedPlanSlugs,
     allowedSelections,
-    portalAvailable: entitlement.source === 'stripe' && entitlement.stripeSubscriptionId !== null,
+    portalAvailable: details.portalAvailable === true,
     billingInterval: entitlement.billingInterval ?? null,
     recurringPrice: details.recurringPrice ?? null,
     runtimePlacement: details.runtimePlacement ?? null,
