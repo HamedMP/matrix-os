@@ -8,6 +8,7 @@ import {
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
 } from "@matrix-os/contracts";
+import { createHash } from "node:crypto";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import type { ChatDatabase, ChatsTable } from "./database.js";
@@ -76,6 +77,75 @@ function railTransitionForActivity(activity: CanonicalChatRunActivity): {
     default:
       return undefined;
   }
+}
+
+// Run activities (CanonicalChatRunActivity, dot-namespaced: "approval.requested")
+// are an internal, ephemeral event stream — the run's status/attention fields
+// already react to them via railTransitionForActivity above. But the chat UI
+// (specifically CanonicalApprovalMessage) only ever renders approval controls
+// from CanonicalChatMessage.parts entries typed "approval_request" /
+// "approval_result" (snake_case, the persisted message schema — see
+// packages/contracts/src/canonical-chat.ts). Nothing previously projected one
+// stream into the other, so an agent's approval request was tracked correctly
+// server-side but never became a message the browser could act on.
+// approvalMessageId/approvalRequestDescription/approvalMessageParts below
+// produce that projection; see their single call site in appendRunActivities,
+// which mirrors the existing terminal.bound side effect in the same function.
+// Scoped by runId, not just approvalId: chat_messages.id is a global primary
+// key (not chat- or run-scoped — see database.ts), so a bare hash of
+// approvalId alone would let two different runs that happen to reuse the
+// same provider-supplied approvalId collide onto the same row, silently
+// dropping the second projection via the onConflict do-nothing below.
+// Matches the same scoping activityPersistenceId (orchestrator.ts) already
+// uses for run activities.
+function approvalMessageId(kind: "request" | "result", runId: string, approvalId: string): string {
+  const digest = createHash("sha256").update(`${runId}\0${approvalId}`).digest("hex").slice(0, 32);
+  return `msg_approval_${kind}_${digest}`;
+}
+
+// CanonicalChatRunActivity's "approval.requested" variant intentionally carries
+// only { approvalId, title, risk, allowedDecisions } — no free-text description
+// (see canonical-chat.ts). The approval_request message part requires one, so
+// this synthesizes a generic, provider-neutral sentence from risk alone rather
+// than widening the canonical contract.
+function approvalRequestDescription(risk: "low" | "medium" | "high"): string {
+  if (risk === "high") {
+    return "This action needs your approval before the agent can continue — it may have a significant or hard-to-reverse effect.";
+  }
+  if (risk === "medium") {
+    return "This action needs your approval before the agent can continue.";
+  }
+  return "This action needs your approval before the agent can continue. It's expected to be low-risk.";
+}
+
+function approvalMessageParts(activity: CanonicalChatRunActivity): {
+  id: string;
+  parts: CanonicalChatMessage["parts"];
+} | undefined {
+  if (activity.type === "approval.requested") {
+    return {
+      id: approvalMessageId("request", activity.runId, activity.approvalId),
+      parts: [CanonicalChatMessagePartSchema.parse({
+        type: "approval_request",
+        approvalId: activity.approvalId,
+        title: activity.title,
+        description: approvalRequestDescription(activity.risk),
+        risk: activity.risk,
+        allowedDecisions: activity.allowedDecisions,
+      })],
+    };
+  }
+  if (activity.type === "approval.resolved") {
+    return {
+      id: approvalMessageId("result", activity.runId, activity.approvalId),
+      parts: [CanonicalChatMessagePartSchema.parse({
+        type: "approval_result",
+        approvalId: activity.approvalId,
+        decision: activity.decision,
+      })],
+    };
+  }
+  return undefined;
 }
 
 function canTransitionAgentActivity(
@@ -298,7 +368,7 @@ export class ChatRunLifecycleRepository {
     return this.transact(async (trx) => {
       const current = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(chatId), true);
       if (!current) throw new ChatNotFoundError(chatId);
-      const run = await trx.selectFrom("chat_runs").select("id")
+      const run = await trx.selectFrom("chat_runs").select(["id", "turn_id"])
         .where("id", "=", runId).where("chat_id", "=", chatId)
         .where("status", "in", [...ACTIVE_RUNS]).executeTakeFirst();
       const existingRun = run ?? await trx.selectFrom("chat_runs").select("id")
@@ -344,6 +414,21 @@ export class ChatRunLifecycleRepository {
       let nextSequence = Number(latestSequence?.sequence ?? 0);
       let changed = 0;
       let railTransition: ReturnType<typeof railTransitionForActivity>;
+      // Lazily fetched: most batches contain no approval activity, so avoid
+      // the extra chat_messages seq lookup unless we actually need one.
+      let nextMessageSeq: number | undefined;
+      const allocateMessageSeq = async (): Promise<number> => {
+        if (nextMessageSeq === undefined) {
+          const latestMessage = await trx.selectFrom("chat_messages")
+            .select(({ fn }) => fn.max("seq").as("seq"))
+            .where("chat_id", "=", chatId)
+            .executeTakeFirst();
+          nextMessageSeq = Number(latestMessage?.seq ?? 0);
+        }
+        nextMessageSeq += 1;
+        return nextMessageSeq;
+      };
+      const insertedApprovalMessageIds: string[] = [];
       for (const activity of activities) {
         if (existingIds.has(activity.id)) {
           const row = existingById.get(activity.id);
@@ -395,6 +480,41 @@ export class ChatRunLifecycleRepository {
               session_created_at: sequenced.terminalSessionCreatedAt,
             })).execute();
           }
+          // Project approval.requested / approval.resolved into a chat message
+          // the browser can actually render (see approvalMessageParts above).
+          // Only fires for a genuinely new chat_run_events row (we're inside
+          // `if (row)`), and the chat_messages insert below is itself
+          // deduplicated on a deterministic id, so replaying or retrying the
+          // same activity can never produce a duplicate approval card.
+          const approvalMessage = approvalMessageParts(sequenced);
+          if (approvalMessage) {
+            const messageSeq = await allocateMessageSeq();
+            const message = CanonicalChatMessageSchema.parse({
+              id: approvalMessage.id,
+              chatId,
+              seq: messageSeq,
+              role: "system",
+              state: "committed",
+              turnId: run.turn_id,
+              runId,
+              parts: approvalMessage.parts,
+              createdAt: sequenced.occurredAt,
+            });
+            const messageRow = await trx.insertInto("chat_messages").values({
+              id: message.id,
+              chat_id: message.chatId,
+              seq: message.seq,
+              role: message.role,
+              state: message.state,
+              turn_id: message.turnId ?? null,
+              run_id: message.runId ?? null,
+              parts: jsonb(message.parts),
+              byte_count: encoded.encode(JSON.stringify(message)).byteLength,
+              search_text: messageSearchText(message),
+              created_at: message.createdAt,
+            }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
+            if (messageRow) insertedApprovalMessageIds.push(message.id);
+          }
         }
       }
       if (changed > 0) {
@@ -408,9 +528,15 @@ export class ChatRunLifecycleRepository {
         await trx.updateTable("chats").set({
           revision,
           ...(railTransition ? { attention: railTransition.attention } : {}),
+          ...(insertedApprovalMessageIds.length > 0
+            ? { message_count: sql<number>`message_count + ${insertedApprovalMessageIds.length}` }
+            : {}),
           updated_at: sql`now()`,
         }).where("id", "=", chatId).execute();
         await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId });
+        for (const messageId of insertedApprovalMessageIds) {
+          await this.appendOutbox(trx, owner, chatId, revision, "run.message", { runId, messageId });
+        }
       }
       return changed;
     });
@@ -539,6 +665,16 @@ export class ChatRunLifecycleRepository {
         return { run: toRun(current), transitioned: false };
       }
       const expectedState = input.outcome === "completed" ? "committed" : "failed";
+      // Finalizes whatever assistant message(s) appendAssistantDelta already
+      // streamed for this run (state "pending" -> committed/failed). A
+      // non-streaming adapter that never called appendAssistantDelta can
+      // instead pass its complete output here via `output` -- that's the
+      // `else` branch below. Neither branch trusts a caller-supplied seq:
+      // the streaming branch keeps the pending row's existing seq (already
+      // allocated when appendAssistantDelta first inserted it), and the
+      // `output` branch allocates its own seq from MAX(seq)+1 itself, same
+      // as appendAssistantDelta and the approval projection -- so this
+      // remains the single, repository-owned seq allocator for the chat.
       const pendingRows = await trx.selectFrom("chat_messages").selectAll()
         .where("chat_id", "=", input.chatId)
         .where("run_id", "=", input.runId)
@@ -553,14 +689,12 @@ export class ChatRunLifecycleRepository {
         if (pendingMessages.some((pending) => pending.state !== "pending")) {
           throw new ChatConflictError(input.chatId, Number(chat.revision));
         }
-        if (output !== undefined && !pendingMessages.some((pending) => (
-          output.id === pending.id && output.seq === pending.seq
-        ))) {
+        if (output !== undefined && !pendingMessages.some((pending) => output.id === pending.id)) {
           throw new ChatConflictError(input.chatId, Number(chat.revision));
         }
         for (const pending of pendingMessages) {
           const finalized = CanonicalChatMessageSchema.parse({
-            ...(output?.id === pending.id ? output : pending),
+            ...(output?.id === pending.id ? { ...output, seq: pending.seq } : pending),
             state: expectedState,
           });
           await trx.updateTable("chat_messages").set({
@@ -581,23 +715,21 @@ export class ChatRunLifecycleRepository {
           .select(({ fn }) => fn.max("seq").as("seq"))
           .where("chat_id", "=", input.chatId)
           .executeTakeFirst();
-        if (output.seq !== Number(latest?.seq ?? 0) + 1) {
-          throw new ChatConflictError(input.chatId, Number(chat.revision));
-        }
+        const finalized = CanonicalChatMessageSchema.parse({ ...output, seq: Number(latest?.seq ?? 0) + 1 });
         await trx.insertInto("chat_messages").values({
-          id: output.id,
-          chat_id: output.chatId,
-          seq: output.seq,
-          role: output.role,
-          state: output.state,
-          turn_id: output.turnId ?? null,
-          run_id: output.runId ?? null,
-          parts: jsonb(output.parts),
-          byte_count: encoded.encode(JSON.stringify(output)).byteLength,
-          search_text: messageSearchText(output),
-          created_at: output.createdAt,
+          id: finalized.id,
+          chat_id: finalized.chatId,
+          seq: finalized.seq,
+          role: finalized.role,
+          state: finalized.state,
+          turn_id: finalized.turnId ?? null,
+          run_id: finalized.runId ?? null,
+          parts: jsonb(finalized.parts),
+          byte_count: encoded.encode(JSON.stringify(finalized)).byteLength,
+          search_text: messageSearchText(finalized),
+          created_at: finalized.createdAt,
         }).execute();
-        finalizedOutput = output;
+        finalizedOutput = finalized;
         insertedOutput = true;
       }
       const updated = await trx.updateTable("chat_runs").set({

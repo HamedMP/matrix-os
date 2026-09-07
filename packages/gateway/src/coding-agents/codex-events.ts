@@ -111,6 +111,11 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
       .min(1).max(4),
   }).strict(),
   z.object({
+    type: z.literal("matrix.codex.approval.resolved"),
+    approvalId: ApprovalIdSchema,
+    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
+  }).strict(),
+  z.object({
     type: z.literal("matrix.codex.user_input.requested"),
     requestId: RequestIdSchema,
     correlationId: CorrelationIdSchema,
@@ -227,6 +232,13 @@ function appServerRecordEvents(
         allowedDecisions: record.allowedDecisions,
         correlationId: record.correlationId,
       },
+    })];
+  }
+  if (record.type === "matrix.codex.approval.resolved") {
+    return [event(context, {
+      type: "approval.resolved",
+      approvalId: record.approvalId,
+      decision: record.decision,
     })];
   }
   if (record.type === "matrix.codex.user_input.requested") {

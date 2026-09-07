@@ -525,6 +525,132 @@ describe("ChatRepository", () => {
     expect(transitionEvents.map((event) => event.revision)).toEqual([2, 3, 4, 5]);
   });
 
+  // The rail (chat.attention / run.status) reacting to approval.requested /
+  // approval.resolved is covered above. It is not the only thing the browser
+  // needs: CanonicalApprovalMessage only ever renders approve/decline
+  // controls from a CanonicalChatMessage.parts entry typed "approval_request"
+  // / "approval_result" (role "system" -- see projectCanonicalMessages in
+  // shell/src/lib/canonical-chat-client.ts). Nothing previously projected the
+  // activity stream into that message stream, so an approval was tracked
+  // correctly server-side but never became something the browser could act
+  // on. These tests cover that projection.
+  it("projects approval.requested into a browser-renderable approval_request message", async () => {
+    const admitted = await admitChat(repository, "approval_projection_request");
+    await appendActivity(repository, admitted, {
+      id: "activity_approval_projection_request",
+      occurredAt: "2026-08-25T00:00:40.000Z",
+      type: "approval.requested",
+      approvalId: "approval_projection_1",
+      title: "Allow the command",
+      risk: "high",
+      allowedDecisions: ["approve", "decline"],
+    });
+
+    const messages = await repository.getMessages(owner, admitted.chatId, { afterSeq: 0, limit: 50 });
+    expect(messages).toHaveLength(2); // admitChat's user turn message, then the projected card
+    const message = messages[1];
+    expect(message.role).toBe("system");
+    expect(message.state).toBe("committed");
+    expect(message.runId).toBe(admitted.runId);
+    const part = message.parts.find((p) => p.type === "approval_request");
+    expect(part).toMatchObject({
+      approvalId: "approval_projection_1",
+      title: "Allow the command",
+      risk: "high",
+      allowedDecisions: ["approve", "decline"],
+    });
+
+    const record = await repository.get(owner, admitted.chatId);
+    expect(record?.chat.messageCount).toBe(2);
+  });
+
+  it("projects approval.resolved into an approval_result message and does not duplicate cards on replay", async () => {
+    const admitted = await admitChat(repository, "approval_projection_resolved");
+    const requested: ActivityInput = {
+      id: "activity_approval_projection_resolved_req",
+      occurredAt: "2026-08-25T00:00:40.000Z",
+      type: "approval.requested",
+      approvalId: "approval_projection_2",
+      title: "Allow the command",
+      risk: "medium",
+      allowedDecisions: ["approve", "decline"],
+    };
+    await appendActivity(repository, admitted, requested);
+    // Exact replay of the same requested activity must not add a second card.
+    await appendActivity(repository, admitted, requested);
+    await appendActivity(repository, admitted, {
+      id: "activity_approval_projection_resolved_res",
+      occurredAt: "2026-08-25T00:00:50.000Z",
+      type: "approval.resolved",
+      approvalId: "approval_projection_2",
+      decision: "approve",
+    });
+
+    const messages = await repository.getMessages(owner, admitted.chatId, { afterSeq: 0, limit: 50 });
+    expect(messages).toHaveLength(3); // admitChat's user turn message, then request, then result
+    expect(messages[1].seq).toBeLessThan(messages[2].seq);
+    expect(messages[2].role).toBe("system");
+    expect(messages[2].parts.find((p) => p.type === "approval_result")).toMatchObject({
+      approvalId: "approval_projection_2",
+      decision: "approve",
+    });
+
+    const record = await repository.get(owner, admitted.chatId);
+    expect(record?.chat.messageCount).toBe(3);
+  });
+
+  // Regression test: appendAssistantDelta and the approval projection above
+  // both insert into chat_messages and both used to compute their own target
+  // seq independently. A card projected mid-run could allocate a seq the
+  // caller of appendAssistantDelta didn't know about, so the next assistant
+  // message's caller-predicted seq would collide with it. Both call sites now
+  // allocate from MAX(seq)+1 themselves, inside the same chats-row FOR UPDATE
+  // transaction, making the repository the single seq allocator for a chat.
+  it("allocates a collision-free seq for a new assistant message after an approval resolves mid-run", async () => {
+    const admitted = await admitChat(repository, "approval_projection_seq");
+    const first = await repository.appendAssistantDelta(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      messageId: `msg_${admitted.chatId}_assistant_1`,
+      delta: "I need to change a file outside the workspace.",
+      createdAt: "2026-08-25T00:00:35.000Z",
+    });
+    await appendActivity(repository, admitted, {
+      id: "activity_approval_projection_seq_req",
+      occurredAt: "2026-08-25T00:00:40.000Z",
+      type: "approval.requested",
+      approvalId: "approval_projection_3",
+      title: "Allow the command",
+      risk: "medium",
+      allowedDecisions: ["approve", "decline"],
+    });
+    await appendActivity(repository, admitted, {
+      id: "activity_approval_projection_seq_res",
+      occurredAt: "2026-08-25T00:00:50.000Z",
+      type: "approval.resolved",
+      approvalId: "approval_projection_3",
+      decision: "approve",
+    });
+    const resumed = await repository.appendAssistantDelta(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      messageId: `msg_${admitted.chatId}_assistant_2`,
+      delta: "Resuming the change now that it's approved.",
+      createdAt: "2026-08-25T00:00:55.000Z",
+    });
+
+    const messages = await repository.getMessages(owner, admitted.chatId, { afterSeq: 0, limit: 50 });
+    expect(messages).toHaveLength(5); // user turn, text, approval_request, approval_result, text
+    const seqs = messages.map((m) => m.seq);
+    expect(new Set(seqs).size).toBe(seqs.length);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(resumed.seq).toBeGreaterThan(first.seq);
+    expect(resumed.seq).toBe(Math.max(...seqs));
+
+    const record = await repository.get(owner, admitted.chatId);
+    expect(record?.activeRun?.status).toBe("running");
+  });
+
   it("projects failed and exact successful completion state without treating aborted or idle as complete", async () => {
     const failed = await admitChat(repository, "rail_terminal_failed");
     const unseen = await admitChat(repository, "rail_terminal_unseen");

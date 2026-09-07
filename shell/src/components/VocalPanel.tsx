@@ -8,6 +8,7 @@ import type { ChatState } from "@/hooks/useChatState";
 import { AgentStatusCard } from "./AgentStatusCard";
 import { ShellNotificationCard } from "./ShellNotificationCard";
 import { ShellNotificationPortal } from "./ShellNotificationPortal";
+import { findRecentSystemErrorMessage } from "./vocal-panel-approval-guard.js";
 
 const GLOW_OPACITY: Record<string, number> = {
   idle: 0.68,
@@ -244,16 +245,9 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
         reported = true;
         // Extract the last error from chat messages so Aoede can explain
         // what went wrong when the build fails.
-        let errorMessage: string | undefined;
-        if (newAppName === undefined) {
-          const msgs = chatMessagesRef.current;
-          for (let i = msgs.length - 1; i >= current.messageStartIdx; i--) {
-            if (msgs[i].role === "system") {
-              errorMessage = msgs[i].content.slice(0, 500);
-              break;
-            }
-          }
-        }
+        const errorMessage = newAppName === undefined
+          ? findRecentSystemErrorMessage(chatMessagesRef.current, current.messageStartIdx)
+          : undefined;
         notifyDelegationComplete({
           kind: "create_app",
           description: current.description,
