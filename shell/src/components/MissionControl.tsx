@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { appsQueryOptions } from "@/api/apps";
@@ -105,6 +106,8 @@ export function MissionControl({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mounted]);
+
+  useGettingStartedBlocker(open || mounted);
 
   if (!mounted) return null;
 

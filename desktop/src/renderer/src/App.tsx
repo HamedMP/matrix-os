@@ -1,3 +1,4 @@
+import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { useEffect } from "react";
 import { Toaster } from "sonner";
@@ -9,6 +10,7 @@ import { useAppearance } from "./stores/appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
 
 export default function App() {
+  const scope = useConnection((s) => JSON.stringify([s.platformHost, s.handle, s.runtimeSlot, s.authGeneration, s.status === "signed-out"]));
   const status = useConnection((s) => s.status);
   const refresh = useConnection((s) => s.refresh);
   const loadAppearance = useAppearance((s) => s.load);
@@ -22,6 +24,7 @@ export default function App() {
   }, [loadAppearance, refresh]);
 
   return (
+    <GettingStartedVisibilityProvider scope={scope}>
     <Tooltip.Provider delayDuration={400} skipDelayDuration={200}>
       <div className="flex h-full flex-col" style={{ background: "var(--bg-app)" }}>
         {status === "loading" ? (
@@ -49,5 +52,6 @@ export default function App() {
         }}
       />
     </Tooltip.Provider>
+    </GettingStartedVisibilityProvider>
   );
 }

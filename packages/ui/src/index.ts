@@ -50,3 +50,5 @@ export type {
 export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
+
+export { GettingStartedVisibilityProvider, GettingStartedBlocker, useGettingStartedVisibility, useGettingStartedBlocker, useGettingStartedPopoverFocus } from "./getting-started-visibility.js";

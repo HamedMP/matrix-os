@@ -1,5 +1,6 @@
 // UI primitives on the token system, built on Radix for focus management,
 // dismissal, and accessibility.
+import { GettingStartedBlocker } from "@matrix-os/ui";
 import * as RadixContextMenu from "@radix-ui/react-context-menu";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
@@ -112,6 +113,7 @@ export function Dialog({
             } : { top }),
           }}
         >
+          <GettingStartedBlocker />
           <RadixDialog.Title className="sr-only">{title}</RadixDialog.Title>
           {children}
         </RadixDialog.Content>

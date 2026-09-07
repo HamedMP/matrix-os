@@ -1,3 +1,4 @@
+import { useGettingStartedBlocker } from "./getting-started-visibility.js";
 import { useEffect, useEffectEvent, useRef, type HTMLAttributes, type ReactNode } from "react";
 import { cn } from "./cn.js";
 
@@ -29,6 +30,7 @@ const contentStyle: React.CSSProperties = {
 };
 
 export function Dialog({ open, onClose, className, style, children, ...rest }: DialogProps) {
+  useGettingStartedBlocker(open);
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   // Read the latest onClose from the listeners without re-subscribing them.
