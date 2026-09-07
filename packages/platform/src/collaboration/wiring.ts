@@ -83,19 +83,18 @@ export async function createPlatformCollaboration(options: {
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
   const hydrate = async (input: { actorId: string; entry: import("./repository.js").CollaborationDirectoryEntry }) => {
-    const path = input.entry.status === "invited" && input.entry.invitationId
-      ? `/api/collaboration/invitations/${input.entry.invitationId}`
-      : `/api/collaboration/scopes/${input.entry.scopeId}`;
-    const response = await proxy.forward({
-      actorId: input.actorId,
-      method: "GET",
-      path,
-      query: "",
-      body: new Uint8Array(),
-      headers: new Headers({ accept: "application/json" }),
-    });
-    if (!response.ok) throw new Error("Collaboration projection unavailable");
-    return response.json() as Promise<unknown>;
+    if (input.entry.status === "invited" && input.entry.invitationId) {
+      return proxyJson(proxy, input.actorId, `/api/collaboration/invitations/${input.entry.invitationId}`);
+    }
+    if (input.entry.status === "accepted" && input.entry.kind === "chat") {
+      const scopePath = `/api/collaboration/scopes/${input.entry.scopeId}`;
+      const [scope, chat] = await Promise.all([
+        proxyJson(proxy, input.actorId, scopePath),
+        proxyJson(proxy, input.actorId, `${scopePath}/chat`),
+      ]);
+      return { scope, chat };
+    }
+    throw new Error("Collaboration projection unavailable");
   };
   const routes = createPlatformCollaborationRoutes({
     repository,
@@ -126,6 +125,23 @@ export async function createPlatformCollaboration(options: {
       closing = true;
     },
   };
+}
+
+async function proxyJson(
+  proxy: CollaborationProxy,
+  actorId: string,
+  path: string,
+): Promise<unknown> {
+  const response = await proxy.forward({
+    actorId,
+    method: "GET",
+    path,
+    query: "",
+    body: new Uint8Array(),
+    headers: new Headers({ accept: "application/json" }),
+  });
+  if (!response.ok) throw new Error("Collaboration projection unavailable");
+  return response.json() as Promise<unknown>;
 }
 
 export type PlatformCollaborationRuntime = Awaited<ReturnType<typeof createPlatformCollaboration>>;

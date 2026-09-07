@@ -35,7 +35,11 @@ describe("platform collaboration wiring", () => {
   });
 
   it("registers local and exact proxy routes after migrations", async () => {
-    const upstream = vi.fn(async () => new Response(JSON.stringify({ id: scopeId, role: "editor" }), {
+    const upstream = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
+      String(input).endsWith("/chat")
+        ? { id: "chat_one", scopeId, title: "Shared planning", lifecycle: "active", revision: "2", messageCount: "3" }
+        : { id: scopeId, role: "editor" },
+    ), {
       headers: { "content-type": "application/json" },
     }));
     const runtime = await createPlatformCollaboration({
@@ -84,6 +88,15 @@ describe("platform collaboration wiring", () => {
     expect(upstream).toHaveBeenCalledOnce();
     const [, init] = upstream.mock.calls[0]!;
     expect(new Headers(init?.headers).has("x-matrix-collaboration-proof")).toBe(true);
+
+    const discovery = await app.request("/api/collaboration/shared", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(discovery.status).toBe(200);
+    expect(await discovery.json()).toMatchObject({ items: [{ resource: {
+      scope: { id: scopeId, role: "editor" },
+      chat: { id: "chat_one", title: "Shared planning" },
+    } }] });
     await runtime.shutdown();
   });
 });

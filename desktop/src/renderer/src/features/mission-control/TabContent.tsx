@@ -14,6 +14,7 @@ import WorkTab from "../work/WorkTab";
 import BrowserTab from "../browser/BrowserTab";
 import DesktopEditorWorkspace from "../editor/DesktopEditorWorkspace";
 import NotesWorkspace from "../notes/NotesWorkspace";
+import DesktopChatCollaboration from "../chat/DesktopChatCollaboration";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -107,6 +108,8 @@ export function TabPane({
         : null;
     case "settings":
       return <SettingsView section={settingsSection} onSectionChange={onSettingsSectionChange} />;
+    case "shared":
+      return <DesktopChatCollaboration />;
     default:
       return null;
   }

@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 
+import { CanonicalChatMessagePartSchema } from "#canonical-chat";
 import { boundedDisplayText, boundedText, referenceId } from "#legacy-contract-primitives";
 
 export const COLLABORATION_HTTP_BODY_LIMIT = 96 * 1024;
@@ -198,6 +199,55 @@ export const CollaborationChatSchema = z.object({
   revision: CollaborationRevisionSchema,
   messageCount: CollaborationRevisionSchema,
   lastMessagePreview: boundedDisplayText(512, 2_048).optional(),
+}).strict();
+
+export const CollaborationSharedChatMessageSchema = z.object({
+  id: CollaborationResourceIdSchema,
+  chatId: CollaborationResourceIdSchema,
+  sequence: CollaborationRevisionSchema,
+  role: z.enum(["user", "assistant", "tool", "system"]),
+  state: z.enum(["pending", "committed", "failed"]),
+  purpose: z.enum(["discussion", "ai_request", "assistant", "system"]),
+  actor: CollaborationParticipantSchema,
+  parts: z.array(CanonicalChatMessagePartSchema).min(1).max(64),
+  createdAt: z.iso.datetime(),
+}).strict().superRefine((message, context) => {
+  message.parts.forEach((part, index) => {
+    if (part.type === "attachment_reference" && part.ownerReference !== undefined) {
+      context.addIssue({ code: "custom", path: ["parts", index, "ownerReference"], message: "Owner references are private" });
+    }
+  });
+});
+
+export const CollaborationChatMessagesResponseSchema = z.object({
+  messages: z.array(CollaborationSharedChatMessageSchema).max(COLLABORATION_PAGE_LIMIT),
+}).strict();
+
+const CollaborationDirectoryBaseSchema = z.object({
+  scopeId: CollaborationIdSchema,
+  runtimeId: CollaborationRuntimeIdSchema,
+  ownerId: CollaborationActorIdSchema,
+  kind: z.literal("chat"),
+  authorityGeneration: z.number().int().positive(),
+});
+
+export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
+  CollaborationDirectoryBaseSchema.extend({
+    status: z.literal("invited"),
+    invitationId: CollaborationIdSchema,
+    resource: CollaborationInvitationSchema,
+  }).strict(),
+  CollaborationDirectoryBaseSchema.extend({
+    status: z.literal("accepted"),
+    resource: z.object({
+      scope: CollaborationScopeSchema,
+      chat: CollaborationChatSchema,
+    }).strict(),
+  }).strict(),
+]);
+
+export const CollaborationDiscoveryResponseSchema = z.object({
+  items: z.array(CollaborationDiscoveryItemSchema).max(100),
 }).strict();
 
 export const CollaborationPageRequestSchema = z.object({
