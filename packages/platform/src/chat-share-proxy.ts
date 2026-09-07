@@ -30,7 +30,7 @@ export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Age
     const machine = await getActiveUserMachineByHandle(db, route.handle, route.runtimeSlot);
     if (!machine || !isCustomerVpsProxyMachineRoutable(machine)) return c.text("Shared Chat unavailable", 404);
     // Address comes from the operator-controlled machine registry, never a request URL.
-    const url = buildCustomerVpsProxyUrl(machine, `/share/chats/${route.token}`, "");
+    const url = buildCustomerVpsProxyUrl(machine, `/api/share/chats/${route.token}`, "");
     if (!url) return c.text("Shared Chat unavailable", 404);
     const response = await fetch(url, {
       method: "GET", headers: { accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(10_000), dispatcher,

@@ -47,7 +47,7 @@ export function ChatSharingButton({ api, chatId, copyText, handle, runtimeSlot, 
         const created = CreatedSchema.parse(await api.post(path, { revision: preview.revision, fingerprint: preview.fingerprint, confirmed: true }));
         const url = handle && platformHost
           ? new URL(`/shared/chat/${encodeURIComponent(handle)}/${encodeURIComponent(runtimeSlot)}/${created.token}`, platformHost).href
-          : new URL(`/share/chats/${created.token}`, api.baseUrl).href;
+          : new URL(`/api/share/chats/${created.token}`, api.baseUrl).href;
         return { id: created.id, url };
       }} /> : null}
   </div>;

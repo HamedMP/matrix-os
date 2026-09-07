@@ -67,9 +67,9 @@ it("wires owner preview, listing, creation, public read, and revocation", async 
   expect(createdResponse.status).toBe(201);
   const created = await createdResponse.json();
   expect((await (await app.request(path)).json()).shares).toHaveLength(1);
-  expect((await app.request("/share/chats/" + created.token)).status).toBe(200);
+  expect((await app.request("/api/share/chats/" + created.token)).status).toBe(200);
   expect((await app.request(path + "/" + created.id, { method: "DELETE" })).status).toBe(200);
-  expect((await app.request("/share/chats/" + created.token)).status).toBe(404);
+  expect((await app.request("/api/share/chats/" + created.token)).status).toBe(404);
 });
 
 it("normalizes PostgreSQL bigint revisions for preview and confirmed creation", async () => {

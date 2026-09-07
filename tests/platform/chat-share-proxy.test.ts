@@ -24,6 +24,7 @@ it("renders validated snapshots without forwarding caller credentials", async ()
   app.all("*", (c) => proxyChatShare(c, {} as never, {} as never));
   const response = await app.request("/shared/chat/example/primary/" + "a".repeat(64), { headers: { authorization: "Bearer private", cookie: "session=private" } });
   expect(response.status).toBe(200);
+  expect(fetcher.mock.calls[0]?.[0]).toBe("https://203.0.113.10:443/api/share/chats/" + "a".repeat(64));
   expect(await response.text()).toContain("&lt;img");
   expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ headers: { accept: "application/json" }, redirect: "error" });
   expect(Object.keys(fetcher.mock.calls[0]?.[1].headers)).toEqual(["accept"]);

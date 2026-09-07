@@ -8,7 +8,7 @@ it("renders shared text as inert content and sets restrictive headers", async ()
   expect(shareHtml(snapshot)).not.toContain("<script>");
   expect(shareHtml(snapshot)).toContain("&lt;img");
   const app = createChatSharingRoutes({ read: async () => snapshot } as never);
-  const response = await app.request(`/share/chats/${"a".repeat(64)}`);
+  const response = await app.request(`/api/share/chats/${"a".repeat(64)}`);
   expect(response.status).toBe(200);
   expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
   expect(response.headers.get("cache-control")).toBe("no-store");
@@ -16,7 +16,7 @@ it("renders shared text as inert content and sets restrictive headers", async ()
 
 it("rejects malformed capability paths without querying storage", async () => {
   const app = createChatSharingRoutes({ read: async () => { throw new Error("Must not read"); } } as never);
-  expect((await app.request("/share/chats/not-a-token")).status).toBe(404);
+  expect((await app.request("/api/share/chats/not-a-token")).status).toBe(404);
 });
 
 it("does not allow unauthenticated share management or oversized mutations", async () => {
@@ -36,7 +36,7 @@ it("exempts only exact GET capabilities from gateway authentication", async () =
   const app = new Hono();
   app.use("*", authMiddleware("test-secret"));
   app.all("*", (c) => c.text("public"));
-  const path = "/share/chats/" + "a".repeat(64);
+  const path = "/api/share/chats/" + "a".repeat(64);
   expect((await app.request(path)).status).toBe(200);
   expect((await app.request(path, { method: "POST" })).status).toBe(401);
   expect((await app.request(path + "/files")).status).toBe(401);

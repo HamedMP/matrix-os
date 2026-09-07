@@ -15,7 +15,7 @@ export function createChatSharingRoutes(shares: ChatSharing | null) {
   const limiter = createRateLimiter({ maxAttempts: 120, windowMs: 60_000, lockoutMs: 0, maxKeys: 1 });
   const limit = bodyLimit({ maxSize: 4096, onError: (c) => c.json({ error: "Request too large" }, 413) });
   routes.use("/api/chats/:chatId/shares/*", async (c, next) => { c.header("Cache-Control", "no-store"); await next(); });
-  routes.get("/share/chats/:token", async (c) => {
+  routes.get("/api/share/chats/:token", async (c) => {
     c.header("Cache-Control", "no-store");
     c.header("CDN-Cache-Control", "no-store");
     c.header("Referrer-Policy", "no-referrer");
