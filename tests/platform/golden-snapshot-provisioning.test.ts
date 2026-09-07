@@ -856,6 +856,7 @@ describe('golden snapshot provisioning activation', () => {
     await db.transaction(async (trx) => {
       await trx.executor.updateTable('user_machines').set({
         hetzner_server_id: 901,
+        public_ipv4: '203.0.113.91',
         registration_token_hash: hashRegistrationToken('clean-registration-token'),
         registration_token_expires_at: '2026-07-03T01:00:00.000Z',
       }).where('machine_id', '=', machineId).execute();
@@ -1060,7 +1061,11 @@ describe('golden snapshot provisioning activation', () => {
       S3_ACCESS_KEY_ID: 'access-key', S3_SECRET_ACCESS_KEY: 'secret-key', S3_ENDPOINT: 'https://r2.example',
     });
     const service = createCustomerVpsService({
-      db, config: customerConfig, hetzner: createMockHetznerClient(),
+      db, config: customerConfig, hetzner: createMockHetznerClient({
+        getServer: vi.fn().mockResolvedValue({
+          id: 909, status: 'running', publicIPv4: '203.0.113.19',
+        }),
+      }),
       systemStore: createMockCustomerVpsSystemStore(), now: () => new Date('2026-07-03T00:03:00.000Z'),
     });
 
