@@ -56,6 +56,17 @@ function rewriteGatewayRequest(request: ProxyRequestLike) {
   return NextResponse.rewrite(url, { request: { headers } });
 }
 
+function completedSignupResponse(request: ProxyRequestLike): NextResponse {
+  const publicOrigin = getConfiguredAppOrigin();
+  if (!publicOrigin) {
+    console.error("[auth] completed signup recovery unavailable: app origin is not configured");
+    return new NextResponse("Matrix OS authentication unavailable", { status: 503 });
+  }
+  const redirectPath = resolveCompletedSignupRedirect(request.nextUrl.search, publicOrigin);
+  console.info("[auth] recovered completed signup");
+  return NextResponse.redirect(new URL(redirectPath, publicOrigin), 303);
+}
+
 function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | null {
   const requestHeaders = new Headers(request.headers);
   const platformAuthHeader = request.headers.get("authorization");
@@ -86,6 +97,10 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
     });
   }
 
+  if (isSignUpShellPath(request.nextUrl.pathname)) {
+    return completedSignupResponse(request);
+  }
+
   if (isGatewayProxy(request)) {
     return rewriteGatewayRequest(request);
   }
@@ -106,15 +121,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   if (isSignUpShellPath(request.nextUrl.pathname)) {
     const { userId } = await auth();
     if (!userId) return NextResponse.next();
-
-    const publicOrigin = getConfiguredAppOrigin();
-    if (!publicOrigin) {
-      console.error("[auth] completed signup recovery unavailable: app origin is not configured");
-      return new NextResponse("Matrix OS authentication unavailable", { status: 503 });
-    }
-    const redirectPath = resolveCompletedSignupRedirect(request.nextUrl.search, publicOrigin);
-    console.info("[auth] recovered completed signup");
-    return NextResponse.redirect(new URL(redirectPath, publicOrigin), 303);
+    return completedSignupResponse(request);
   }
 
   // Layer 1: Clerk authentication (skip public routes)

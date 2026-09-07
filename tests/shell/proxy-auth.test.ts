@@ -176,14 +176,26 @@ describe("proxy auth: completed signup recovery", () => {
     vi.doUnmock("next/server");
   });
 
-  async function loadProxy(userId: string | null, configuredAppUrl = "https://app.matrix-os.com") {
+  async function loadProxy(
+    userId: string | null,
+    configuredAppUrl = "https://app.matrix-os.com",
+    additionalEnv: Record<string, string> = {},
+  ) {
     vi.resetModules();
     vi.stubEnv("NEXT_PUBLIC_MATRIX_APP_URL", configuredAppUrl);
+    for (const [key, value] of Object.entries(additionalEnv)) {
+      vi.stubEnv(key, value);
+    }
     const recoveryLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const recoveryError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
+    const clerkRequestHandler = vi.fn(async (
+      handler: (...args: unknown[]) => unknown,
+      request: unknown,
+      event: unknown,
+    ) => handler(async () => ({ userId }), request, event));
     const clerkMiddleware = vi.fn((handler) => async (request: unknown, event: unknown) =>
-      handler(async () => ({ userId }), request, event)
+      clerkRequestHandler(handler, request, event)
     );
     vi.doMock("@clerk/nextjs/server", () => ({ clerkMiddleware }));
 
@@ -201,7 +213,15 @@ describe("proxy auth: completed signup recovery", () => {
     vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
 
     const { proxy } = await import("../../shell/src/proxy");
-    return { proxy, nextResponseNext, nextResponseRedirect, recoveryLog, recoveryError };
+    return {
+      proxy,
+      clerkMiddleware,
+      clerkRequestHandler,
+      nextResponseNext,
+      nextResponseRedirect,
+      recoveryLog,
+      recoveryError,
+    };
   }
 
   function signupRequest(
@@ -290,6 +310,44 @@ describe("proxy auth: completed signup recovery", () => {
       url: new URL("https://app.matrix-os.com/"),
       status: 303,
     });
+  });
+
+  it("recovers a provisioned user through the trusted platform fast path", async () => {
+    const platformSecret = "platform-secret-123";
+    const handle = "alice";
+    const platformToken = buildPlatformVerificationToken(handle, platformSecret);
+    const { proxy, clerkMiddleware, clerkRequestHandler } = await loadProxy(
+      null,
+      "https://app.matrix-os.com",
+      {
+        UPGRADE_TOKEN: platformToken,
+        MATRIX_CLERK_USER_ID: "user_alice",
+        MATRIX_HANDLE: handle,
+        MATRIX_RUNTIME_SLOT: "primary",
+      },
+    );
+    const request = signupRequest(
+      "?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    request.headers.set("authorization", `Bearer ${platformToken}`);
+    request.headers.set("x-platform-user-id", "user_alice");
+    request.headers.set(
+      "x-platform-verified",
+      buildPlatformUserProof(handle, "user_alice", platformSecret),
+    );
+
+    const response = await proxy(
+      request as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toEqual({
+      kind: "redirect",
+      url: new URL("https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK"),
+      status: 303,
+    });
+    expect(clerkMiddleware).toHaveBeenCalledOnce();
+    expect(clerkRequestHandler).not.toHaveBeenCalled();
   });
 
   it("continues rendering the Clerk flow for an anonymous signup", async () => {
