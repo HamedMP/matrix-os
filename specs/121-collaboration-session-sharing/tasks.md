@@ -8,7 +8,7 @@
 
 **Task format**: `[ID] [P?] [Story] (PRn) action with exact path`. `[P]` means the task can proceed in parallel after its declared prerequisites because it changes different files.
 
-**Active implementation**: PR1 uses branch `codex/collaboration-chat-discussion` in the persistent manual worktree `/home/nima/matrix-os/.worktrees/collaboration-chat-discussion`, based on planning commit `d033116a7c4abe3683916a2d9fd5b563553abdcc` from PR #1558.
+**Active implementation**: PR1 uses the eight-layer Graphite review stack #1571–#1578 in the persistent manual worktree `/home/nima/matrix-os/.worktrees/collaboration-chat-discussion`, with top branch `codex/collaboration-chat-validation`, based on planning commit `d033116a7c4abe3683916a2d9fd5b563553abdcc` from PR #1558. These layers are one PR1 product milestone split only to satisfy the repository's review-size limits.
 
 ## Phase 1: Setup and Delivery Guardrails
 

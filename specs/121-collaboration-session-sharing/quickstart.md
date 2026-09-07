@@ -1,6 +1,6 @@
 # Implementation and Internal Acceptance Guide
 
-This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented on `codex/collaboration-chat-discussion`; it has not been deployed, enabled for a cohort, or validated on a production-equivalent VPS. Later milestones remain unimplemented and disabled.
+This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented in the Graphite review stack #1571–#1578, topped by `codex/collaboration-chat-validation`; the review layers remain one PR1 product milestone and exist only to satisfy repository size limits. It has not been deployed, enabled for a cohort, or validated on a production-equivalent VPS. Later milestones remain unimplemented and disabled.
 
 ## PR1 local evidence — 2026-09-07
 
