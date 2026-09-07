@@ -199,6 +199,12 @@ export const CollaborationPolicySchema = z.object({
   expiresAt: z.iso.datetime(),
 }).strict();
 
+export const CollaborationSignedPolicySchema = z.object({
+  policy: CollaborationPolicySchema,
+  keyId: referenceId(80),
+  signature: z.string().min(43).max(172).regex(/^[A-Za-z0-9_-]+$/),
+}).strict();
+
 export const CollaborationConnectionTicketRequestSchema = z.object({
   clientRequestId: CollaborationIdSchema,
   purpose: z.enum(["events", "terminal"]),

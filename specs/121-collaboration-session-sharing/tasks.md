@@ -18,7 +18,7 @@
 - [x] T002 (PR1) Revalidate the merged #1551 snapshot implementation and current canonical Chat/platform seams against `specs/121-collaboration-session-sharing/research.md`
 - [x] T003 (PR1) Resolve the existing Zod/AnySchema and package-local install prerequisite failures in `packages/integrations-mcp/src/server.ts` and `pnpm-lock.yaml`, or record unchanged upstream failures without claiming downstream checks ran
 - [x] T004 [P] (PR1) Add shared real-Postgres collaboration fixture helpers for distinct owner/editor/viewer/outsider identities in `tests/gateway/collaboration-test-support.ts`
-- [ ] T005 [P] (PR1) Add platform collaboration routing fixture helpers for provisioned and no-computer recipients in `tests/platform/collaboration-test-support.ts`
+- [x] T005 [P] (PR1) Add platform collaboration routing fixture helpers for provisioned and no-computer recipients in `tests/platform/collaboration-test-support.ts`
 - [ ] T006 [P] (PR1) Add reusable two-account collaboration journey fixtures in `tests/e2e/fixtures/collaboration.ts`
 
 **Checkpoint**: PR1 has an isolated worktree, known baseline, and executable test fixtures; no capability is enabled.
@@ -35,9 +35,9 @@
 - [x] T008 [P] (PR1) Write red additive migration and existing-schema upgrade tests for owner collaboration tables and Chat attribution columns in `tests/gateway/collaboration-database.test.ts`
 - [ ] T009 [P] (PR1) Write red real-Postgres transaction tests for scope singleton creation, eight-seat capacity, invitation expiry, actor-scoped idempotency, and revoke/write serialization in `tests/gateway/collaboration-repository.test.ts`
 - [x] T010 [P] (PR1) Write red authority matrix tests for owner/editor/viewer/pending/expired/revoked/outsider and inherited-resolution rejection in `tests/gateway/collaboration-authority.test.ts`
-- [ ] T011 [P] (PR1) Write red platform migration/repository tests for content-free directory, user index, rollout policy, and one-use ticket limits in `tests/platform/collaboration-repository.test.ts`
-- [ ] T012 [P] (PR1) Write red proof tests for actor preservation, body digest, method/path/query/audience binding, expiry, replay, key ID, header stripping, and constant-time verification in `tests/platform/collaboration-proof.test.ts`
-- [ ] T013 [P] (PR1) Write red exact-route proxy tests for no-computer recipients, route escape, owner-token separation, safe failures, API timeouts, and directory-not-authority behavior in `tests/platform/collaboration-proxy.test.ts`
+- [x] T011 [P] (PR1) Write red platform migration/repository tests for content-free directory, user index, rollout policy, and one-use ticket limits in `tests/platform/collaboration-repository.test.ts`
+- [x] T012 [P] (PR1) Write red proof tests for actor preservation, body digest, method/path/query/audience binding, expiry, replay, key ID, header stripping, and constant-time verification in `tests/platform/collaboration-proof.test.ts`
+- [x] T013 [P] (PR1) Write red exact-route proxy tests for no-computer recipients, route escape, owner-token separation, safe failures, API timeouts, and directory-not-authority behavior in `tests/platform/collaboration-proxy.test.ts`
 - [ ] T014 [P] (PR1) Write red realtime registry tests for exact query-ticket paths, async authorization, caps, stale eviction, per-send isolation, scoped replay, revoke drains, and shutdown in `tests/gateway/collaboration-events.test.ts`
 
 ### Implementation
@@ -48,11 +48,11 @@
 - [x] T018 (PR1) Implement transactional scope, member, operation, audit, event, and directory-outbox persistence without owning the injected pool in `packages/gateway/src/collaboration/repository.ts`
 - [x] T019 (PR1) Implement current-member resolution, role/action authorization, capacity/expiry, lifecycle, auth-epoch, idempotency, and owner-protection rules in `packages/gateway/src/collaboration/authority.ts`
 - [ ] T020 [P] (PR1) Implement bounded directory-outbox delivery with idempotent event IDs, capped retry/backoff, safe errors, and shutdown drain in `packages/gateway/src/collaboration/directory-outbox.ts`
-- [ ] T021 [P] (PR1) Add platform Kysely tables and additive migrations for directory/index/policy/tickets in `packages/platform/src/collaboration/database.ts`
-- [ ] T022 (PR1) Implement content-free platform directory/index and server-managed rollout policy repositories in `packages/platform/src/collaboration/repository.ts`
-- [ ] T023 (PR1) Implement short-lived signed actor proofs and signed policy snapshots using managed keys in `packages/platform/src/collaboration/proof.ts`
-- [ ] T024 (PR1) Implement gateway proof verification that constructs `AuthorizedCollaborationContext` without configured-owner fallback in `packages/gateway/src/collaboration/actor-proof.ts`
-- [ ] T025 (PR1) Implement exact collaboration HTTP proxying, caller-header stripping, bounded fetch timeouts, and safe response mapping in `packages/platform/src/collaboration/proxy.ts`
+- [x] T021 [P] (PR1) Add platform Kysely tables and additive migrations for directory/index/policy/tickets in `packages/platform/src/collaboration/database.ts`
+- [x] T022 (PR1) Implement content-free platform directory/index and server-managed rollout policy repositories in `packages/platform/src/collaboration/repository.ts`
+- [x] T023 (PR1) Implement short-lived signed actor proofs and signed policy snapshots using managed keys in `packages/platform/src/collaboration/proof.ts`
+- [x] T024 (PR1) Implement gateway proof verification that constructs `AuthorizedCollaborationContext` without configured-owner fallback in `packages/gateway/src/collaboration/actor-proof.ts`
+- [x] T025 (PR1) Implement exact collaboration HTTP proxying, caller-header stripping, bounded fetch timeouts, and safe response mapping in `packages/platform/src/collaboration/proxy.ts`
 - [ ] T026 (PR1) Implement hashed one-use connection tickets and exact collaboration WebSocket forwarding in `packages/platform/src/collaboration/websocket.ts`
 - [ ] T027 (PR1) Implement the capped scope-event registry, authorized replay, heartbeat/stale sweep, failed-sender eviction, revoke notification, and drain in `packages/gateway/src/collaboration/events.ts`
 - [ ] T028 (PR1) Register gateway dependencies, migrations, recovery, exact HTTP/WS routes, workers, and shutdown ordering in `packages/gateway/src/collaboration/wiring.ts`
