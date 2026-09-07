@@ -12,8 +12,10 @@ import type { ReactNode } from "react";
 import {
   CheckIcon,
   ChevronDownIcon,
+  AlertCircleIcon,
   Loader2Icon,
   MapPinIcon,
+  RefreshCwIcon,
 } from "@/lib/hugeicons";
 import { useUser } from "@clerk/nextjs";
 import {
@@ -81,6 +83,37 @@ function BillingSessionRefreshingPanel() {
         <span className="leading-6 text-sky-900/70">
           Matrix is refreshing your desktop session before checking billing.
         </span>
+      </div>
+    </div>
+  );
+}
+
+function reloadBillingPage(): void {
+  window.location.reload();
+}
+
+function BillingStatusUnavailablePanel({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      className="flex min-h-48 items-center justify-center rounded-xl border border-ember/25 bg-ember/10 p-4"
+      role="alert"
+    >
+      <div className="flex max-w-md flex-col items-center gap-3 text-center text-sm text-deep">
+        <span className="flex size-10 items-center justify-center rounded-lg border border-ember/25 bg-card">
+          <AlertCircleIcon className="size-4 text-ember" aria-hidden="true" />
+        </span>
+        <span className="font-semibold">Billing status is unavailable</span>
+        <span className="leading-6 text-forest/70">
+          We could not refresh your billing details. Your billing settings were not changed.
+        </span>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="inline-flex items-center gap-2 rounded-lg border border-forest/20 bg-card px-3 py-2 font-semibold text-deep transition-colors hover:bg-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest/40"
+        >
+          <RefreshCwIcon className="size-4" aria-hidden="true" />
+          Try again
+        </button>
       </div>
     </div>
   );
@@ -443,6 +476,7 @@ export function BillingPanel({
   trialOffer,
   accessReason,
   accessIssue,
+  onRetry,
   mode = "settings",
   onCheckoutIntent,
   onCheckoutNavigate,
@@ -454,6 +488,7 @@ export function BillingPanel({
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
+  onRetry?: () => void;
   mode?: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -471,6 +506,7 @@ export function BillingPanel({
     trialOffer,
     accessReason,
     accessIssue,
+    onRetry,
     mode,
     onCheckoutIntent,
     onCheckoutNavigate,
@@ -489,6 +525,7 @@ function ManagedBillingPanel(props: {
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
+  onRetry?: () => void;
   mode: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -505,6 +542,7 @@ function BillingPanelInner({
   trialOffer,
   accessReason,
   accessIssue,
+  onRetry,
   mode = "settings",
   onCheckoutIntent,
   onCheckoutNavigate,
@@ -517,6 +555,7 @@ function BillingPanelInner({
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
+  onRetry?: () => void;
   mode?: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -678,6 +717,10 @@ function BillingPanelInner({
 
   if (accessIssue === "auth") {
     return <BillingSessionRefreshingPanel />;
+  }
+
+  if (accessIssue === "status") {
+    return <BillingStatusUnavailablePanel onRetry={onRetry ?? reloadBillingPage} />;
   }
 
   if (active === null) {

@@ -399,6 +399,41 @@ describe("BillingSection", () => {
     await waitForBillingConfigurator();
   });
 
+  it("shows a recoverable error after repeated invalid billing responses", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    const invalidResponse = () => new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: true, reason: "active" },
+      entitlement: { effectiveFrom: "2026-09-07 12:34:56.123456+00" },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(
+      "Billing status is unavailable",
+    ));
+    expect(screen.queryByText("Checking billing status")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitForBillingConfigurator();
+  });
+
   it("sends only the selected Matrix plan, region, and agents to monthly checkout", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;

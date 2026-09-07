@@ -2,11 +2,46 @@
 
 import { Badge } from "@/components/ui/badge";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
+import type { BillingAccessIssue } from "@/hooks/useMatrixBillingAccess";
 import {
   BillingPanel,
   type BillingPanelMode,
   type ComputerSetupSelection,
 } from "./BillingPanel";
+
+function BillingStatusBadge({
+  active,
+  startsNewSubscription,
+  accessIssue,
+}: {
+  active: boolean | null;
+  startsNewSubscription: boolean;
+  accessIssue: BillingAccessIssue;
+}) {
+  if (active === false && !startsNewSubscription) return null;
+
+  let className = "border-border/30 bg-muted/30 text-muted-foreground";
+  let label = "Checking";
+  if (startsNewSubscription) {
+    className = "border-[#BED77B] bg-[#F4F7ED] text-[#0E3422]";
+    label = "New subscription";
+  } else if (active === true) {
+    className = "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]";
+    label = "Active";
+  } else if (accessIssue === "auth") {
+    className = "border-sky-500/30 bg-sky-500/10 text-sky-700";
+    label = "Reconnecting";
+  } else if (accessIssue === "status") {
+    className = "border-ember/30 bg-ember/10 text-ember";
+    label = "Unavailable";
+  }
+
+  return (
+    <Badge variant="outline" className={className}>
+      {label}
+    </Badge>
+  );
+}
 
 export function BillingSection({
   mode = "settings",
@@ -21,7 +56,7 @@ export function BillingSection({
   checkoutReturnPath?: string;
   checkoutRuntimeSlot?: string;
 }) {
-  const { active, entitlement, trialOffer, accessReason, accessIssue } = useMatrixBillingAccess();
+  const { active, entitlement, trialOffer, accessReason, accessIssue, retry } = useMatrixBillingAccess();
   const startsNewSubscription = mode === "add-computer" && entitlement?.source !== "override";
 
   return (
@@ -30,28 +65,11 @@ export function BillingSection({
         <h2 className="font-[family-name:var(--font-bricolage)] text-xl font-semibold tracking-tight text-[#1F2D1D]">
           Billing
         </h2>
-        {active !== false || startsNewSubscription ? (
-          <Badge
-            variant="outline"
-            className={
-              startsNewSubscription
-                ? "border-[#BED77B] bg-[#F4F7ED] text-[#0E3422]"
-                : active === true
-                  ? "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]"
-                  : accessIssue === "auth"
-                    ? "border-sky-500/30 bg-sky-500/10 text-sky-700"
-                    : "border-border/30 bg-muted/30 text-muted-foreground"
-            }
-          >
-            {startsNewSubscription
-              ? "New subscription"
-              : active === true
-                ? "Active"
-                : accessIssue === "auth"
-                  ? "Reconnecting"
-                  : "Checking"}
-          </Badge>
-        ) : null}
+        <BillingStatusBadge
+          active={active}
+          startsNewSubscription={startsNewSubscription}
+          accessIssue={accessIssue}
+        />
       </div>
 
       <BillingPanel
@@ -60,6 +78,7 @@ export function BillingSection({
         trialOffer={trialOffer}
         accessReason={accessReason}
         accessIssue={accessIssue}
+        onRetry={retry}
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
         onCheckoutNavigate={onCheckoutNavigate}
