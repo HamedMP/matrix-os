@@ -1,10 +1,11 @@
 import { Dialog } from "../Dialog.js";
 import { useState } from "react";
 
-export function ChatShareDialog({ title, messages, createLink, copyText, revoke, onClose, existing = [] }: {
+export function ChatShareDialog({ title, messages, createLink, copyText, revoke, onClose, existing = [], notice }: {
   title: string;
   messages: Array<{ role: string; text: string }>;
-  createLink: () => Promise<{ id: string; url: string }>;
+  createLink: () => Promise<{ id: string; url: string } | null>;
+  notice?: string;
   copyText: (value: string) => Promise<void>;
   revoke: (id: string) => Promise<void>;
   onClose: () => void;
@@ -61,12 +62,13 @@ export function ChatShareDialog({ title, messages, createLink, copyText, revoke,
           })}>Copy link</button>
           <button className={buttonClass} disabled={pending} onClick={() => void remove(link.id)}>Revoke link</button>
         </div> : <button className={buttonClass} disabled={!confirmed || pending || messages.length === 0} onClick={() => void action(async () => {
-          setLink(await createLink()); setFeedback("Link created.");
+          const created = await createLink();
+          if (created) { setLink(created); setFeedback("Link created."); }
         })}>{pending ? "Creating…" : "Create link"}</button>}
         {existing.filter((share) => !revokedIds.includes(share.id) && share.id !== link?.id).map((share) => <div key={share.id} className="flex justify-between gap-2 text-xs">
           <span>Link expires {new Date(share.expiresAt).toLocaleDateString()}</span>
           <button className={buttonClass} disabled={pending} onClick={() => void remove(share.id)}>Revoke previous link</button>
         </div>)}
-        {error ? <p role="alert" className="text-sm">{error}</p> : <p role="status" className="text-sm">{feedback}</p>}
+        {error ? <p role="alert" className="text-sm">{error}</p> : <p role="status" className="text-sm">{feedback || notice}</p>}
   </Dialog>;
 }

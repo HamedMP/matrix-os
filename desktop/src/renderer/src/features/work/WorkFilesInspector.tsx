@@ -433,7 +433,7 @@ function WorkInspectorContent({
                 background: "var(--bg-sunken)",
               }}
             >
-              <InspectorFilesPanel scope={scope} browserOnly forceList onOpenFile={openFile} />
+              <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList onOpenFile={openFile} />
             </section>
           ) : null}
           {selected.kind === "files" && selectedFile ? (

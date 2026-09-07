@@ -144,6 +144,16 @@ describe("InspectorFilesPanel", () => {
     );
   }
 
+  it("reveals and selects the previewed file in its parent folder", async () => {
+    const { rerender } = render(<InspectorFilesPanel browserOnly selectedFile={{ kind: "home", path: "workspaces/app.ts", label: "app.ts" }} />);
+    const file = await screen.findByRole("button", { name: "Open file workspaces/app.ts" });
+    expect(file.getAttribute("aria-current")).toBe("true");
+    expect(screen.getByRole("button", { name: "Collapse folder workspaces" })).toBeTruthy();
+    rerender(<InspectorFilesPanel browserOnly selectedFile={{ kind: "home", path: "workspaces/hero.png", label: "hero.png" }} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open file workspaces/hero.png" }).getAttribute("aria-current")).toBe("true"));
+    expect(file.getAttribute("aria-current")).toBeNull();
+  });
+
   it("opens with the browser and a preview placeholder", async () => {
     renderPanel();
 

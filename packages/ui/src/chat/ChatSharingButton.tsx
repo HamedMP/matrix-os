@@ -21,13 +21,14 @@ export function ChatSharingButton({ api, chatId, copyText, handle, runtimeSlot, 
 }) {
   const [preview, setPreview] = useState<z.infer<typeof PreviewSchema> | null>(null);
   const [existing, setExisting] = useState<z.infer<typeof SharesSchema>["shares"]>([]);
+  const [notice, setNotice] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const path = `/api/chats/${encodeURIComponent(chatId)}/shares`;
   const open = async () => {
-    setPending(true); setError(false);
+    setPending(true); setError(false); setNotice("");
     try {
       const [snapshot, links] = await Promise.all([api.get(`${path}/preview`), api.get(path)]);
       if (!alive.current) return;
@@ -41,10 +42,28 @@ export function ChatSharingButton({ api, chatId, copyText, handle, runtimeSlot, 
   return <div className="relative inline-flex shrink-0 items-center gap-2 text-xs">
     {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">Sharing unavailable. Try again.</span> : null}
     <button type="button" disabled={pending} onClick={() => void open()} className="rounded-lg px-3 py-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
-    {preview ? <ChatShareDialog title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
+    {preview ? <ChatShareDialog key={`${preview.fingerprint}:${preview.revision}`} notice={notice} title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
       onClose={() => setPreview(null)} revoke={async (id) => { await api.delete(`${path}/${encodeURIComponent(id)}`); }}
       createLink={async () => {
-        const created = CreatedSchema.parse(await api.post(path, { revision: preview.revision, fingerprint: preview.fingerprint, confirmed: true }));
+        const refresh = (latest: z.infer<typeof PreviewSchema>) => {
+          if (alive.current) {
+            setNotice("This Chat changed. Review the updated preview and confirm again.");
+            setPreview(latest);
+          }
+          return null;
+        };
+        const latest = PreviewSchema.parse(await api.get(`${path}/preview`));
+        if (!alive.current) return null;
+        if (latest.fingerprint !== preview.fingerprint) return refresh(latest);
+        let created: z.infer<typeof CreatedSchema>;
+        try {
+          created = CreatedSchema.parse(await api.post(path, { revision: latest.revision, fingerprint: latest.fingerprint, confirmed: true }));
+        } catch (failure: unknown) {
+          // A reply may commit between the preflight and the atomic create.
+          const current = PreviewSchema.parse(await api.get(`${path}/preview`));
+          if (current.fingerprint !== latest.fingerprint || current.revision !== latest.revision) return refresh(current);
+          throw failure;
+        }
         const url = handle && platformHost
           ? new URL(`/shared/chat/${encodeURIComponent(handle)}/${encodeURIComponent(runtimeSlot)}/${created.token}`, platformHost).href
           : new URL(`/api/share/chats/${created.token}`, api.baseUrl).href;
