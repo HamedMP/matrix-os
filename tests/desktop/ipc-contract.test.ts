@@ -44,6 +44,7 @@ describe("IPC contract", () => {
       "state:set",
       "embed:open",
       "embed:set-bounds",
+      "embed:deactivate",
       "embed:suspend-all",
       "embed:reload",
       "embed:close",
@@ -990,6 +991,16 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ embedId: "e1", state: "loading" }).success).toBe(true);
     expect(schema.safeParse({ embedId: "e1" }).success).toBe(false);
     expect(schema.safeParse({ embedId: "e1", state: "auth-required", token: "secret" }).success).toBe(false);
+  });
+
+  it("bounds retained embed frames to local JPEG data URLs", () => {
+    const schema = INVOKE_CHANNELS["embed:deactivate"].response;
+    expect(schema.safeParse({
+      ok: true,
+      snapshotDataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+    }).success).toBe(true);
+    expect(schema.safeParse({ ok: true, snapshotDataUrl: "https://example.com/private.png" }).success).toBe(false);
+    expect(schema.safeParse({ ok: false, snapshotDataUrl: null }).success).toBe(true);
   });
 
   it("requires kind-specific embed:open payloads", () => {

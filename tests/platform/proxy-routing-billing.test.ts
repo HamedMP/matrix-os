@@ -72,7 +72,10 @@ describe("platform proxy routing billing and provisioning", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
-      entitlement: { planSlug: "matrix_builder" },
+      entitlement: {
+        planSlug: "matrix_builder",
+        allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+      },
       access: { runtimeProxyAllowed: true },
     });
     expect(fetchMock).not.toHaveBeenCalled();

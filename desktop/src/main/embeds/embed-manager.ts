@@ -17,6 +17,7 @@ export interface EmbedViewLike {
   setBounds(bounds: Bounds): void;
   setScale(factor: number): void;
   loadUrl(url: string): Promise<void>;
+  captureSnapshot?(): Promise<string | null>;
   attach(): void;
   detach(): void;
   destroy(): void;
@@ -44,6 +45,7 @@ export type EmbedManagerOptions = {
 
 export const MAX_TOTAL_EMBEDS = 12;
 const DEFAULT_MAX_LIVE = 3;
+const EMBED_SNAPSHOT_TIMEOUT_MS = 400;
 const SAFE_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 const ERR_ABORTED = -3;
 
@@ -54,6 +56,8 @@ interface EmbedRecord {
   live: boolean;
   loadFailed: boolean;
   loadGeneration: number;
+  activationGeneration: number;
+  retainedSnapshotDataUrl: string | null;
   lastUsed: number;
   onState: (state: "loading" | "ready" | "failed") => void;
   onDispose?: () => void;
@@ -156,6 +160,8 @@ export class EmbedManager {
       live: active,
       loadFailed: false,
       loadGeneration: 0,
+      activationGeneration: 0,
+      retainedSnapshotDataUrl: null,
       lastUsed: ++this.tick,
       onState: emitState,
       onDispose: options?.onDispose,
@@ -190,6 +196,7 @@ export class EmbedManager {
   setActive(embedId: string, active: boolean): boolean {
     const record = this.records.get(embedId);
     if (!record) return false;
+    record.activationGeneration += 1;
     if (active) {
       if (!record.live) {
         record.view.attach();
@@ -206,6 +213,43 @@ export class EmbedManager {
       record.live = false;
     }
     return true;
+  }
+
+  async deactivate(embedId: string): Promise<{ ok: boolean; snapshotDataUrl: string | null }> {
+    const record = this.records.get(embedId);
+    if (!record) return { ok: false, snapshotDataUrl: null };
+    const generation = ++record.activationGeneration;
+    let snapshotDataUrl: string | null = null;
+    try {
+      if (record.view.captureSnapshot) {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const capturedSnapshotDataUrl = await Promise.race([
+            record.view.captureSnapshot(),
+            new Promise<null>((resolve) => {
+              timeout = setTimeout(() => resolve(null), EMBED_SNAPSHOT_TIMEOUT_MS);
+            }),
+          ]);
+          if (capturedSnapshotDataUrl) {
+            record.retainedSnapshotDataUrl = capturedSnapshotDataUrl;
+          }
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      }
+    } catch (error: unknown) {
+      console.warn(
+        "[embeds] retained frame capture failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
+    const current = this.records.get(embedId);
+    if (current === record && record.activationGeneration === generation && record.live) {
+      record.view.detach();
+      record.live = false;
+    }
+    snapshotDataUrl ??= record.retainedSnapshotDataUrl;
+    return { ok: true, snapshotDataUrl };
   }
 
   suspendAll(): boolean {

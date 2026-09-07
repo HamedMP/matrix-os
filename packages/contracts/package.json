@@ -10,6 +10,7 @@
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",
     "#ai-provider": "./src/ai-provider.ts",
+    "#billing-public": "./src/billing-public.ts",
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
@@ -21,6 +22,7 @@
     "#canonical-chat-provider": "./src/canonical-chat-provider.ts",
     "#canonical-chat-surface": "./src/canonical-chat-surface.ts",
     "#contract-primitives": "./src/primitives.ts",
+    "#custom-mcp-policy": "./src/custom-mcp-policy.ts",
     "#hermes-configuration": "./src/hermes-configuration.ts",
     "#kernel-result": "./src/kernel-result.ts",
     "#legacy-contract-primitives": "./src/legacy-contract-primitives.ts",
@@ -34,6 +36,7 @@
     "#safe-client-error": "./src/safe-client-error.ts",
     "#support-chat-properties": "./src/support-chat-properties.ts",
     "#terminal-clipboard": "./src/terminal-clipboard.ts",
+    "#terminal-keyboard": "./src/terminal-keyboard.ts",
     "#terminal-links": "./src/terminal-links.ts"
   },
   "main": "src/index.ts",

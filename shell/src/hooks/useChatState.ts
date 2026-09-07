@@ -32,6 +32,8 @@ export interface ChatState {
   queue: QueuedMessage[];
   providerSelection?: CanonicalChatModelSelection;
   conversations: ReturnType<typeof useConversation>["conversations"];
+  activeConversationTitle?: string;
+  renameConversation?: (id: string, title: string) => Promise<boolean>;
   composerDraftRequest: { id: number; text: string } | null;
   requestComposerDraft: (text: string) => void;
   consumeComposerDraft: (id: number) => void;

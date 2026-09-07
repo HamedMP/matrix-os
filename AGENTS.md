@@ -477,6 +477,8 @@ Read these on demand, not every session:
 - N/A; selection, context-menu snapshots, and clipboard operation state are transient and must not be persisted (118-fix-terminal-clipboard)
 - Node.js 24+, TypeScript 5.5+ strict, ES modules + Claude Agent SDK V1 `query()`/`resume`, Hono, Zod 4 (`zod/v4`), Kysely, PostgreSQL, Next.js 16, React 19, Cloudflare AI Gateway, OpenRouter OAuth/API (118-ai-gateway-provider-auth)
 - owner configuration/secret files for provider credentials; owner Postgres only if provider account orchestration needs durable multi-instance state; platform PostgreSQL/Kysely for later entitlements, reservations, and content-free usage records (118-ai-gateway-provider-auth)
+- TypeScript 5.9 strict, ES modules; Node.js 24 production target (published CLI remains compatible with Node.js 20+) + `@modelcontextprotocol/sdk` 1.29, Zod 4, citty, native Fetch/AbortSignal, existing Matrix CLI shell/file/profile clients (120-remote-computer-mcp)
+- No new storage; reads existing owner-scoped Matrix CLI profile/auth files and Matrix computer data (120-remote-computer-mcp)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -533,5 +535,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/118-fix-terminal-clipboard/plan.md`.
+Current Spec Kit plan: `specs/120-remote-computer-mcp/plan.md`.
 <!-- SPECKIT END -->

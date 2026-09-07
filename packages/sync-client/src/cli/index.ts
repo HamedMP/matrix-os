@@ -11,6 +11,7 @@ import { instanceCommand } from "./commands/instance.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import { statusCommand } from "./commands/status.js";
 import { completionCommand } from "./commands/completion.js";
+import { mcpCommand } from "./commands/mcp.js";
 import { runCommand } from "./commands/run.js";
 import { uploadCommand } from "./commands/upload.js";
 import { downloadCommand } from "./commands/download.js";
@@ -41,6 +42,7 @@ const subCommands = {
   doctor: doctorCommand,
   instance: instanceCommand,
   completion: completionCommand,
+  mcp: mcpCommand,
 };
 
 const main = defineCommand({

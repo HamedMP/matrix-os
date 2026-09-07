@@ -212,10 +212,27 @@ test.describe("Visual regression", () => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();
     await expect(page.getByText("Free trial active")).toBeVisible();
-    await expect(page.getByText("Your first monthly charge is on Sep 1, 2026.")).toBeVisible();
+    await expect(page.getByText("Your $20/month subscription starts on Sep 1, 2026.")).toBeVisible();
     await expect(page.getByText(/Your first \$100 monthly charge/)).toHaveCount(0);
     await page.mouse.move(720, 450);
     await expect(page).toHaveScreenshot("billing-legacy-trial.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
+  test("billing active provider-neutral", async ({ page }) => {
+    await page.goto("/?e2e_billing_state=active");
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(page.getByRole("heading", { name: "Builder" })).toBeVisible();
+    await expect(page.getByText("Billing", { exact: true }).last()).toBeVisible();
+    await expect(page.getByText("$20/month", { exact: true })).toBeVisible();
+    await expect(page.getByText("Ashburn, Virginia", { exact: true })).toBeVisible();
+    await expect(page.getByText(/\$100/)).toHaveCount(0);
+    await expect(page.getByText(/cpx\d+/i)).toHaveCount(0);
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-active-provider-neutral.png", {
       maxDiffPixelRatio: 0.001,
     });
   });

@@ -90,6 +90,24 @@ describe("canonical Chat service", () => {
     expect(moved.projectId).toBe("project_1");
   });
 
+  it("renames a Chat through the revision-guarded repository update", async () => {
+    const renamed = {
+      ...record(),
+      chat: { ...record().chat, title: "Release plan", revision: 1 },
+    };
+    const update = vi.fn(async () => renamed);
+    const service = createCanonicalChatService(repository({ update }));
+
+    await expect(service.updateTitle(owner, "chat_service_test", {
+      baseRevision: 0,
+      title: "  Release plan  ",
+    })).resolves.toEqual(renamed);
+    expect(update).toHaveBeenCalledWith(owner, "chat_service_test", {
+      baseRevision: 0,
+      title: "Release plan",
+    });
+  });
+
   it("delegates canonical deletion to the existing atomic repository tombstone flow", async () => {
     const hardDelete = vi.fn(async () => ({
       chatId: "chat_service_test",

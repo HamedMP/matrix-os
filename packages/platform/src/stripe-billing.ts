@@ -144,6 +144,29 @@ export function createStripeBillingClient(options: {
       };
     },
 
+    async retrieveRecurringPrice(id) {
+      const price = await stripe.prices.retrieve(id);
+      const interval = price.recurring?.interval;
+      if (
+        price.unit_amount === null
+        || !Number.isInteger(price.unit_amount)
+        || price.unit_amount < 0
+        || !/^[a-z]{3}$/.test(price.currency)
+        || (interval !== 'month' && interval !== 'year')
+        || !Number.isInteger(price.recurring?.interval_count)
+        || (price.recurring?.interval_count ?? 0) < 1
+      ) {
+        throw new Error('Stripe recurring price is incomplete');
+      }
+      return {
+        priceId: price.id,
+        unitAmountMinor: price.unit_amount,
+        currency: price.currency,
+        interval: interval === 'month' ? 'monthly' : 'annual',
+        intervalCount: price.recurring!.interval_count,
+      };
+    },
+
     async createPortalSession(input) {
       const session = await stripe.billingPortal.sessions.create({
         customer: input.customerId,
@@ -172,6 +195,7 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
     createCheckoutSession: unavailable,
     createAiCreditCheckoutSession: unavailable,
     retrieveCheckoutSession: unavailable,
+    retrieveRecurringPrice: unavailable,
     createPortalSession: unavailable,
     constructWebhookEvent() {
       throw new Error('Stripe billing is not configured');

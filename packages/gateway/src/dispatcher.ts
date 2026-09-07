@@ -30,6 +30,7 @@ import {
 } from "./kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "./funded-ai-credential-manager.js";
 import type { KernelEffort, KernelModel } from "./kernel-settings.js";
+import type { RequestApprovalFn } from "@matrix-os/kernel";
 
 export type SpawnFn = typeof spawnKernel;
 
@@ -62,6 +63,8 @@ export interface KernelDispatchOverrides {
   accessSourceId?: KernelCredentialAccessSourceId;
   /** Internal, validated execution root. Never accepted from client frames. */
   workingDirectory?: string;
+  /** Per-client native approval bridge. Never accepted from request JSON. */
+  requestApproval?: RequestApprovalFn;
 }
 
 export interface BatchEntry {
@@ -227,6 +230,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         workingDirectory: entry.kernelOverrides?.workingDirectory,
         maxTurns: opts.maxTurns,
         env: credentialLaunch.env,
+        requestApproval: entry.kernelOverrides?.requestApproval,
       };
       try {
         for await (const event of spawnFn(message, config, deadline.controller)) {

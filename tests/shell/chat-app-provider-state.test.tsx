@@ -2,7 +2,7 @@
 
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
@@ -83,6 +83,92 @@ beforeEach(() => {
 });
 
 describe("Chat canonical provider state", () => {
+  it("renames the shared Web Desktop and Web Canvas Chat from the header, rail double-click, and context menu", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const onSwitchConversation = vi.fn();
+    const renameConversation = vi.fn(async () => true);
+    const conversation = {
+      id: "chat_shared", title: "Old title", preview: "Last message", messageCount: 1, updatedAt: Date.now(),
+    };
+
+    const { rerender } = render(<ChatApp
+      messages={[]} sessionId="chat_shared" busy={false} connected conversations={[conversation]}
+      activeConversationTitle="Old title" onRenameConversation={renameConversation}
+      onNewChat={vi.fn()} onSwitchConversation={onSwitchConversation} onSubmit={vi.fn()}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Rename Old title" }));
+    const headerEditor = await screen.findByRole("textbox", { name: "Rename Old title" });
+    fireEvent.click(headerEditor);
+    expect(screen.getByRole("textbox", { name: "Rename Old title" })).toBeVisible();
+    fireEvent.change(headerEditor, { target: { value: "Header title" } });
+    fireEvent.keyDown(headerEditor, { key: "Enter" });
+    await waitFor(() => expect(renameConversation).toHaveBeenCalledWith("chat_shared", "Header title"));
+
+    renameConversation.mockClear();
+    rerender(<ChatApp
+      messages={[]} sessionId="chat_shared" busy={false} connected
+      conversations={[{ ...conversation, title: "Header title" }]}
+      activeConversationTitle="Header title" onRenameConversation={renameConversation}
+      onNewChat={vi.fn()} onSwitchConversation={onSwitchConversation} onSubmit={vi.fn()}
+    />);
+    const row = screen.getByRole("button", { name: "Header title" });
+    fireEvent.click(row, { detail: 1 });
+    fireEvent.click(row, { detail: 2 });
+    fireEvent.doubleClick(row, { detail: 2 });
+    expect(await screen.findByRole("textbox", { name: "Rename Header title" })).toBeVisible();
+    expect(onSwitchConversation).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Rename Header title" }), { key: "Escape" });
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Header title" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    expect(await screen.findByRole("textbox", { name: "Rename Header title" })).toBeVisible();
+  });
+
+  it("keeps the shared Web Mobile Chat header rename touch-accessible", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const renameConversation = vi.fn(async () => true);
+    render(<ChatApp
+      mobile messages={[]} sessionId="chat_mobile" busy={false} connected
+      conversations={[{ id: "chat_mobile", title: "Mobile title", preview: "", messageCount: 0, updatedAt: Date.now() }]}
+      activeConversationTitle="Mobile title" onRenameConversation={renameConversation}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    />);
+
+    const titleButton = await screen.findByRole("button", { name: "Rename Mobile title" });
+    expect(titleButton.className).toContain("min-h-11");
+    fireEvent.click(titleButton);
+    const editor = await screen.findByRole("textbox", { name: "Rename Mobile title" });
+    fireEvent.change(editor, { target: { value: "Renamed on mobile" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+
+    await waitFor(() => expect(renameConversation).toHaveBeenCalledWith("chat_mobile", "Renamed on mobile"));
+  });
+
+  it("does not let an earlier pending rename close a later editor", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    let resolveRename!: (value: boolean) => void;
+    const renameConversation = vi.fn(() => new Promise<boolean>((resolve) => { resolveRename = resolve; }));
+    render(<ChatApp
+      messages={[]} sessionId="chat_a" busy={false} connected
+      conversations={[
+        { id: "chat_a", title: "Alpha", preview: "", messageCount: 0, updatedAt: Date.now() },
+        { id: "chat_b", title: "Beta", preview: "", messageCount: 0, updatedAt: Date.now() - 1 },
+      ]}
+      activeConversationTitle="Alpha" onRenameConversation={renameConversation}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rename Alpha" }));
+    const editor = await screen.findByRole("textbox", { name: "Rename Alpha" });
+    fireEvent.change(editor, { target: { value: "Alpha pending" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await waitFor(() => expect(renameConversation).toHaveBeenCalledOnce());
+
+    expect(screen.getByRole("button", { name: "Beta" })).toHaveProperty("ondblclick", null);
+    expect(screen.getByRole("textbox", { name: "Rename Alpha" })).toBeDisabled();
+    await act(async () => resolveRename(true));
+  });
+
   it("coalesces a focus refresh that arrives while the provider catalog is in flight", async () => {
     let resolveFirst: ((response: Response) => void) | undefined;
     const first = new Promise<Response>((resolve) => { resolveFirst = resolve; });

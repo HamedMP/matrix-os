@@ -175,6 +175,13 @@ describe("desktop release workflows", () => {
     expect(bundledPreloadDependencies).toHaveLength(1);
   });
 
+  it("keeps native macOS window controls in the reserved titlebar region", () => {
+    const main = readFileSync(join(root, "desktop/src/main/index.ts"), "utf8");
+
+    expect(main).not.toContain("win.setWindowButtonVisibility(false)");
+    expect(main).toContain("trafficLightPosition: { x: 14, y: 13 }");
+  });
+
   it("emits one self-contained sandbox preload for the shell and native apps", () => {
     const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
     const preload = readFileSync(join(root, "desktop/src/preload/index.ts"), "utf8");

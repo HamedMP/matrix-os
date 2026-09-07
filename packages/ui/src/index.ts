@@ -59,3 +59,7 @@ export type {
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
+
+export { TerminalControls } from './terminal/TerminalControls.js';
+export { useTerminalControls } from './terminal/use-terminal-controls.js';
+export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';

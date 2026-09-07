@@ -71,6 +71,7 @@ import { createZellijRuntime } from "./zellij-runtime.js";
 import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
 import { resolveUserSystemdTerminalActivation } from "./terminal-user-systemd-activation.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
+import { reconcilePendingShellSessionDeletions } from "./shell/session-deletion-reconciler.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -224,6 +225,7 @@ import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
+import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
 import {
   createIntegrationRoutes,
   validateActionParams,
@@ -336,6 +338,7 @@ import {
   ShellPreferencesStore,
   createShellCommandRunner,
   createTerminalAcceptanceRoutes,
+  createTerminalWindowLayoutRoutes,
   createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
@@ -343,6 +346,7 @@ import {
   createUserSystemdZellijAdapter,
   loadInstalledTerminalRuntimeGeneration,
   ShellRegistry as ZellijShellRegistry,
+  TerminalWindowLayoutStore,
   shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
@@ -468,8 +472,30 @@ export async function createGateway(config: GatewayConfig) {
         generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
       })
     : null;
+  let terminalOrphanSweepTimer: ReturnType<typeof setInterval> | null = null;
+  let terminalOrphanSweepPromise: Promise<void> | null = null;
+  const runTerminalOrphanSweep = () => {
+    if (!userSystemdTerminalController || terminalOrphanSweepPromise) return;
+    const promise = userSystemdTerminalController.sweepOrphanedSessions()
+      .then((result) => {
+        console.info("[terminal-runtime]", {
+          event: "terminal.runtime.orphan.sweep.completed",
+          ...result,
+        });
+      })
+      .catch((err: unknown) => {
+        console.warn("[terminal-runtime] orphan sweep failed:", err instanceof Error ? err.name : "UnknownError");
+      });
+    terminalOrphanSweepPromise = promise;
+    void promise.finally(() => {
+      if (terminalOrphanSweepPromise === promise) terminalOrphanSweepPromise = null;
+    });
+  };
   if (userSystemdTerminalController) {
     await userSystemdTerminalController.assertInstallationReady();
+    runTerminalOrphanSweep();
+    terminalOrphanSweepTimer = setInterval(runTerminalOrphanSweep, 15 * 60 * 1_000);
+    terminalOrphanSweepTimer.unref?.();
   }
   const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
     ? createUserSystemdZellijRuntime({
@@ -501,12 +527,23 @@ export async function createGateway(config: GatewayConfig) {
       })
     : zellijAdapter;
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
+  const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
     preferencesStore: shellPreferencesStore,
   });
+  const pendingShellDeletionReconciliation = await reconcilePendingShellSessionDeletions({
+    registry: zellijShellRegistry,
+    lifecycle: terminalWindowLayoutStore,
+  });
+  if (pendingShellDeletionReconciliation.completed > 0 || pendingShellDeletionReconciliation.failed > 0) {
+    console.info("[terminal-lifecycle]", {
+      event: "terminal.session.pending_deletions.reconciled",
+      ...pendingShellDeletionReconciliation,
+    });
+  }
   const chatZellijShellRegistry = chatZellijAdapter === zellijAdapter
     ? zellijShellRegistry
     : new ZellijShellRegistry({
@@ -523,6 +560,7 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellWs = createShellWsHandler({
     registry: zellijShellRegistry,
     adapter: zellijAdapter,
+    isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
     scrollbackStore: shellScrollbackStore,
     persistCanonicalSize: (name, size) => {
       void zellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
@@ -535,6 +573,7 @@ export async function createGateway(config: GatewayConfig) {
     : createShellWsHandler({
         registry: chatZellijShellRegistry,
         adapter: chatZellijAdapter,
+        isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
         scrollbackStore: shellScrollbackStore,
         persistCanonicalSize: (name, size) => {
           void chatZellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
@@ -1252,9 +1291,13 @@ export async function createGateway(config: GatewayConfig) {
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
 
-  function buildIntegrationProxyUrl(c: Context, targetBase: string): string {
+  function buildIntegrationProxyUrl(
+    c: Context,
+    targetBase: string,
+    routePrefix = "/api/integrations",
+  ): string {
     const targetUrl = new URL(targetBase);
-    const suffix = c.req.path.replace("/api/integrations", "") || "";
+    const suffix = c.req.path.replace(routePrefix, "") || "";
     const decodedSuffix = decodeURIComponent(suffix);
     if (decodedSuffix.split("/").some((segment) => segment === "..")) {
       throw new Error("Invalid integration proxy path");
@@ -1290,11 +1333,12 @@ export async function createGateway(config: GatewayConfig) {
   async function proxyIntegrationRequest(
     c: Context,
     targetBase: string,
-    includeInternalAuth: boolean,
+    internalAuthToken?: string,
+    routePrefix = "/api/integrations",
   ): Promise<Response> {
     let upstreamUrl: string;
     try {
-      upstreamUrl = buildIntegrationProxyUrl(c, targetBase);
+      upstreamUrl = buildIntegrationProxyUrl(c, targetBase, routePrefix);
     } catch (err: unknown) {
       console.warn(
         "[integrations] rejected proxy path:",
@@ -1308,8 +1352,8 @@ export async function createGateway(config: GatewayConfig) {
         headers.set(key, value);
       }
     }
-    if (includeInternalAuth && internalPlatformToken) {
-      headers.set("authorization", `Bearer ${internalPlatformToken}`);
+    if (internalAuthToken) {
+      headers.set("authorization", `Bearer ${internalAuthToken}`);
     }
 
     const upstream = await fetch(upstreamUrl, {
@@ -1915,6 +1959,7 @@ export async function createGateway(config: GatewayConfig) {
     repository: chatRepository,
     getPrincipal: (c) => requireRequestPrincipal(c),
     registry: chatZellijShellRegistry,
+    paneActions: chatZellijAdapter,
     shellWs: chatZellijShellWs,
     onUnexpectedSendFailure: logUnexpectedWsSendFailure,
   });
@@ -1929,6 +1974,7 @@ export async function createGateway(config: GatewayConfig) {
     commandRunner: shellCommandRunner,
     terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
+    sessionLifecycle: terminalWindowLayoutStore,
     chatTerminals: {
       prepare: async (principal: RequestPrincipal, chatId: string) => {
         if (!chatRepository || !canonicalChatExecutionRoots) {
@@ -1981,6 +2027,10 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  app.route(
+    "/api/terminal/window-layouts",
+    createTerminalWindowLayoutRoutes({ store: terminalWindowLayoutStore }),
+  );
   const runtimeHandle = process.env.MATRIX_HANDLE ?? "";
   const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)
     && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
@@ -1990,7 +2040,6 @@ export async function createGateway(config: GatewayConfig) {
       run: (input) => shellCommandRunner.run(input),
     }));
   }
-
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
   // ephemeral process-scoped secret so the HKDF input is never predictable — an
@@ -2016,7 +2065,7 @@ export async function createGateway(config: GatewayConfig) {
     console.log("[platform-db] Integration routes mounted (after auth)");
   } else if (internalIntegrationBaseUrl && internalPlatformToken && internalPlatformUrl) {
     app.all("/api/integrations", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) =>
-      proxyIntegrationRequest(c, internalIntegrationBaseUrl, true),
+      proxyIntegrationRequest(c, internalIntegrationBaseUrl, internalPlatformToken),
     );
     app.all("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) => {
       const isPublic =
@@ -2025,10 +2074,30 @@ export async function createGateway(config: GatewayConfig) {
       const targetBase = isPublic
         ? `${internalPlatformUrl}/api/integrations`
         : internalIntegrationBaseUrl;
-      return proxyIntegrationRequest(c, targetBase, !isPublic);
+      return proxyIntegrationRequest(c, targetBase, isPublic ? undefined : internalPlatformToken);
     });
     console.log("[platform-db] Integration routes proxied via platform internal API");
   }
+  registerCustomMcpGatewayRoutes(app, {
+    homePath,
+    clerkUserId: process.env.MATRIX_CLERK_USER_ID ?? process.env.MATRIX_USER_ID,
+    projectionToken: process.env.UPGRADE_TOKEN,
+    ...(internalPlatformUrl && internalHandle && internalPlatformToken
+      ? {
+          platformProxy: {
+            internalPlatformUrl,
+            handle: internalHandle,
+            token: internalPlatformToken,
+            request: (
+              context: Context,
+              targetBase: string,
+              routePrefix: "/api/mcp-servers",
+              token: string,
+            ) => proxyIntegrationRequest(context, targetBase, token, routePrefix),
+          },
+        }
+      : {}),
+  });
 
   const processManager = registerAppRuntimeRoutes(app, {
     homePath,
@@ -2384,7 +2453,7 @@ export async function createGateway(config: GatewayConfig) {
               };
 
               dispatcher
-                .dispatch(parsed.text, dispatchSessionId, async (event) => {
+              .dispatch(parsed.text, dispatchSessionId, async (event) => {
                   const msg = withReplayId(kernelEventToServerMessage(event, requestId));
 
                   if (msg.type === "kernel:init") {
@@ -2458,11 +2527,12 @@ export async function createGateway(config: GatewayConfig) {
                     conversations.addSystemMessage(activeSessionId, "Stopped.");
                     void finalizeWithSummary(activeSessionId);
                   }
-                }, undefined, abortController, {
+              }, undefined, abortController, {
                 model: parsed.model,
                 effort: parsed.effort,
                 accessSourceId: parsed.accessSourceId,
                 workingDirectory,
+                requestApproval: approvalBridge?.requestApproval,
               })
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
@@ -4670,6 +4740,11 @@ export async function createGateway(config: GatewayConfig) {
         logBestEffortFailure("Temporary Chat attachment cleanup shutdown failed", error);
       });
 
+      if (terminalOrphanSweepTimer) {
+        clearInterval(terminalOrphanSweepTimer);
+        terminalOrphanSweepTimer = null;
+      }
+      await terminalOrphanSweepPromise;
       // T939: Fire gateway_stop hook
       await hookRunner.fireVoidHook("gateway_stop", {}).catch((err: unknown) => {
         logBestEffortFailure("gateway_stop hook failed", err);

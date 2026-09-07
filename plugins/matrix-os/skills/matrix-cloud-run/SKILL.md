@@ -5,17 +5,27 @@ description: Run commands and coding-agent tasks in observable Matrix OS session
 
 # Run Work on Matrix OS
 
-Execute every remote workflow in a uniquely named Matrix CLI session so the user can observe and reattach it.
+Use the hosted Matrix MCP tools for remote work. Authenticate HTTP connections with the coding client's browser OAuth flow; no local Matrix CLI is required. The Matrix CLI fallback has separate authentication and is only for users who choose it or clients without remote MCP support.
 
-## Session policy
+## MCP-first execution
+
+1. Call `list_computers` and choose the explicit `runtimeSlot`; never guess or silently fall back to another computer.
+2. Use `run_command` with the `command` argv array for short probes that need captured output. Hosted HTTP defaults to and caps commands at 45 seconds; use persistent terminals for longer work.
+3. For observable or long-running work, use `create_terminal`, `create_terminal_tab` when useful, `select_terminal_tab`, and `send_terminal_input`. Report the terminal and tab names so the user can reconnect in Matrix.
+4. Use `list_files`, `read_file`, `download_file`, and `upload_file` for bounded Matrix-home files. These tools never read or write arbitrary local paths.
+5. Use `list_chats`, `search_chats`, and `get_chat` only when prior Matrix chat context is relevant; these tools are read-only.
+
+For HTTP authentication failures, reconnect using `codex mcp login <configured-server-name>` or Claude Code's `/mcp` authentication flow. Do not collect tokens in chat. `matrix login` only repairs stdio/CLI authentication, not HTTP OAuth. If hosted MCP is unavailable, explain that status and offer the CLI fallback explicitly.
+
+## CLI fallback session policy
 
 - Always use `matrix run -it --session <session-name> ... -- <argv...>` for remote commands.
-- Never create or use shell tabs. When another terminal or concurrent task is needed, create a separate uniquely named session.
+- When using the CLI fallback, create a separate uniquely named session for every additional terminal or concurrent task because the current CLI workflow does not address tabs directly.
 - Use a short collision-resistant suffix in names such as `readiness-<suffix>`, `inspect-<slug>-<suffix>`, or `task-<slug>-<suffix>`.
 - Report every session name and `matrix shell connect <session-name>` command immediately.
 - Pass prompts as command arguments after `--`; never interpolate user input into `sh -c`, `bash -lc`, substitutions, or a single shell string.
 
-## Minimal readiness gate
+## CLI fallback readiness gate
 
 Verify the local CLI, hosted profile, login, identity, and instance:
 

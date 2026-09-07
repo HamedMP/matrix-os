@@ -16,6 +16,7 @@ WORKDIR /app
 
 # Copy only dependency manifests -- changes here bust the install cache
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY patches/ patches/
 COPY packages/kernel/package.json packages/kernel/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/observability/package.json packages/observability/
@@ -143,7 +144,7 @@ RUN apk add --no-cache \
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
 # AI coding CLIs. Codex advances only after both provider protocols are verified.
-ARG CODEX_VERSION=0.153.0
+ARG CODEX_VERSION=0.153.4
 ARG OPENCODE_AI_VERSION=latest
 ARG PI_CODING_AGENT_VERSION=latest
 RUN npm install -g \

@@ -28,7 +28,7 @@ export async function authorizeStandaloneTerminalAttach(input: {
   }
 }
 
-export async function authorizeChatTerminalAttach(input: {
+export async function getAuthorizedChatTerminal(input: {
   repository: {
     getTerminalBinding(
       owner: ChatOwner,
@@ -40,14 +40,14 @@ export async function authorizeChatTerminalAttach(input: {
   owner: ChatOwner;
   chatId: string;
   sessionId: string;
-}): Promise<boolean> {
+}): Promise<{ sessionId: string; createdAt: string } | null> {
   try {
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     const sessionId = validateSessionName(input.sessionId);
     const binding = await input.repository.getTerminalBinding(input.owner, chatId, sessionId);
-    if (!binding?.sessionCreatedAt) return false;
+    if (!binding?.sessionCreatedAt) return null;
     const session = await input.registry.get(sessionId);
-    if (!session || typeof session !== "object") return false;
+    if (!session || typeof session !== "object") return null;
     const candidate = session as {
       name?: unknown;
       status?: unknown;
@@ -55,16 +55,24 @@ export async function authorizeChatTerminalAttach(input: {
       createdAt?: unknown;
       incarnationVerified?: unknown;
     };
-    return candidate.name === sessionId
-      && candidate.status === "active"
-      && candidate.recoverable !== true
-      && candidate.incarnationVerified === true
-      && candidate.createdAt === binding.sessionCreatedAt;
+    if (candidate.name !== sessionId
+      || candidate.status !== "active"
+      || candidate.recoverable === true
+      || candidate.incarnationVerified !== true
+      || candidate.createdAt !== binding.sessionCreatedAt) return null;
+    return { sessionId, createdAt: binding.sessionCreatedAt };
   } catch (err: unknown) {
     console.warn(
       "[chat] terminal attach authorization failed:",
       err instanceof Error ? err.message : String(err),
     );
-    return false;
+    return null;
   }
+}
+
+/** Boolean compatibility helper for existing attach callers. */
+export async function authorizeChatTerminalAttach(
+  input: Parameters<typeof getAuthorizedChatTerminal>[0],
+): Promise<boolean> {
+  return (await getAuthorizedChatTerminal(input)) !== null;
 }

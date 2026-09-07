@@ -1,0 +1,10 @@
+{
+  "name": "matrix-os",
+  "version": "0.4.0",
+  "description": "Run development work on your Matrix computer through skills and remote MCP tools",
+  "author": { "name": "Matrix OS" },
+  "homepage": "https://matrix-os.com/docs/mcp",
+  "repository": "https://github.com/HamedMP/matrix-os",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

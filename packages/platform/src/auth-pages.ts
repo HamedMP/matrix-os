@@ -1494,47 +1494,6 @@ export function getVpsBootPage(input: { status: string }) {
 </html>`;
 }
 
-const SERVER_STRENGTHS: Record<string, { vcpu: number; memoryGiB: number; diskGiB?: number }> = {
-  cpx11: { vcpu: 2, memoryGiB: 2, diskGiB: 40 },
-  cpx21: { vcpu: 3, memoryGiB: 4, diskGiB: 80 },
-  cpx22: { vcpu: 2, memoryGiB: 4, diskGiB: 80 },
-  cpx31: { vcpu: 4, memoryGiB: 8, diskGiB: 160 },
-  cpx41: { vcpu: 8, memoryGiB: 16, diskGiB: 240 },
-  cpx51: { vcpu: 16, memoryGiB: 32, diskGiB: 360 },
-  cx22: { vcpu: 2, memoryGiB: 4, diskGiB: 40 },
-  cx32: { vcpu: 4, memoryGiB: 8, diskGiB: 80 },
-  cx42: { vcpu: 8, memoryGiB: 16, diskGiB: 160 },
-  cx52: { vcpu: 16, memoryGiB: 32, diskGiB: 320 },
-};
-
-function machineStrength(machine: UserMachineRecord): {
-  serverType: string;
-  label: string;
-  detail: string;
-} {
-  const serverType = machine.serverType;
-  if (!serverType) {
-    return {
-      serverType: 'Unknown plan',
-      label: 'Unknown',
-      detail: 'CPU/RAM unavailable',
-    };
-  }
-  const strength = SERVER_STRENGTHS[serverType.toLowerCase()];
-  if (!strength) {
-    return {
-      serverType,
-      label: serverType,
-      detail: 'CPU/RAM unavailable',
-    };
-  }
-  return {
-    serverType,
-    label: `${strength.vcpu} vCPU`,
-    detail: `${strength.memoryGiB} GB RAM${strength.diskGiB ? ` · ${strength.diskGiB} GB disk` : ''}`,
-  };
-}
-
 export type RuntimePickerMachine = UserMachineRecord & {
   displayVersion: string;
 };
@@ -1544,7 +1503,6 @@ export function getRuntimePickerPage(input: {
   selectedHandle: string | null;
 }): string {
   const rows = input.machines.map((machine) => {
-    const strength = machineStrength(machine);
     const isSelected = machine.handle === input.selectedHandle;
     const version = machine.displayVersion;
     const title = machine.runtimeSlot === 'primary' ? 'Main Computer' : `${machine.runtimeSlot} Computer`;
@@ -1565,9 +1523,6 @@ export function getRuntimePickerPage(input: {
       </div>
       <div class="details">
         <span>${escapeHtml(version)}</span>
-        <span>${escapeHtml(strength.label)}</span>
-        <span>${escapeHtml(strength.detail)}</span>
-        <span>${escapeHtml(strength.serverType)}</span>
         <span>Created ${escapeHtml(started)}</span>
       </div>
     </a>`;

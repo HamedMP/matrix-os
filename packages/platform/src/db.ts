@@ -499,6 +499,10 @@ interface BillingSubscriptionsTable {
   plan_slug: string;
   stripe_price_id: string;
   billing_interval: string | null;
+  price_unit_amount_minor: number | null;
+  price_currency: string | null;
+  price_interval_count: number | null;
+  price_quantity: number | null;
   status: string;
   current_period_end: string | null;
   grace_period_ends_at: string | null;
@@ -1025,6 +1029,10 @@ export interface BillingSubscriptionRecord {
   planSlug: MatrixBillingPlanSlug;
   stripePriceId: string;
   billingInterval: MatrixBillingInterval | null;
+  priceUnitAmountMinor: number | null;
+  priceCurrency: string | null;
+  priceIntervalCount: number | null;
+  priceQuantity: number | null;
   status: BillingEntitlementStatus;
   currentPeriodEnd: string | null;
   gracePeriodEndsAt: string | null;
@@ -1040,12 +1048,20 @@ export interface BillingSubscriptionRecord {
 export type NewBillingSubscription = Omit<
   BillingSubscriptionRecord,
   | 'billingInterval'
+  | 'priceUnitAmountMinor'
+  | 'priceCurrency'
+  | 'priceIntervalCount'
+  | 'priceQuantity'
   | 'trialStartedAt'
   | 'trialEndsAt'
   | 'trialConvertedAt'
   | 'firstTrialPaymentFailedAt'
 > & {
   billingInterval: MatrixBillingInterval;
+  priceUnitAmountMinor?: number | null;
+  priceCurrency?: string | null;
+  priceIntervalCount?: number | null;
+  priceQuantity?: number | null;
   trialStartedAt?: string | null;
   trialEndsAt?: string | null;
   trialConvertedAt?: string | null;
@@ -1821,6 +1837,10 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       plan_slug TEXT NOT NULL,
       stripe_price_id TEXT NOT NULL,
       billing_interval TEXT,
+      price_unit_amount_minor INTEGER,
+      price_currency TEXT,
+      price_interval_count INTEGER,
+      price_quantity INTEGER,
       status TEXT NOT NULL,
       current_period_end TEXT,
       grace_period_ends_at TEXT,
@@ -1836,6 +1856,10 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`ALTER TABLE billing_subscriptions ALTER COLUMN billing_interval DROP NOT NULL`.execute(db);
+  await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS price_unit_amount_minor INTEGER`.execute(db);
+  await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS price_currency TEXT`.execute(db);
+  await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS price_interval_count INTEGER`.execute(db);
+  await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS price_quantity INTEGER`.execute(db);
   await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS trial_started_at TEXT`.execute(db);
   await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS trial_ends_at TEXT`.execute(db);
   await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS trial_converted_at TEXT`.execute(db);
@@ -3022,6 +3046,10 @@ function mapBillingSubscription(row: BillingSubscriptionsTable): BillingSubscrip
     planSlug: row.plan_slug as MatrixBillingPlanSlug,
     stripePriceId: row.stripe_price_id,
     billingInterval: row.billing_interval as MatrixBillingInterval | null,
+    priceUnitAmountMinor: row.price_unit_amount_minor,
+    priceCurrency: row.price_currency,
+    priceIntervalCount: row.price_interval_count,
+    priceQuantity: row.price_quantity,
     status: row.status as BillingEntitlementStatus,
     currentPeriodEnd: row.current_period_end,
     gracePeriodEndsAt: row.grace_period_ends_at,
@@ -3044,6 +3072,10 @@ function toBillingSubscriptionRow(record: NewBillingSubscription): BillingSubscr
     plan_slug: record.planSlug,
     stripe_price_id: record.stripePriceId,
     billing_interval: record.billingInterval,
+    price_unit_amount_minor: record.priceUnitAmountMinor ?? null,
+    price_currency: record.priceCurrency ?? null,
+    price_interval_count: record.priceIntervalCount ?? null,
+    price_quantity: record.priceQuantity ?? null,
     status: record.status,
     current_period_end: record.currentPeriodEnd,
     grace_period_ends_at: record.gracePeriodEndsAt,
@@ -3368,6 +3400,26 @@ export async function upsertBillingSubscription(db: PlatformDB, record: NewBilli
       plan_slug: row.plan_slug,
       stripe_price_id: row.stripe_price_id,
       billing_interval: row.billing_interval,
+      price_unit_amount_minor: sql<number | null>`CASE
+        WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
+          THEN COALESCE(EXCLUDED.price_unit_amount_minor, billing_subscriptions.price_unit_amount_minor)
+        ELSE EXCLUDED.price_unit_amount_minor
+      END`,
+      price_currency: sql<string | null>`CASE
+        WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
+          THEN COALESCE(EXCLUDED.price_currency, billing_subscriptions.price_currency)
+        ELSE EXCLUDED.price_currency
+      END`,
+      price_interval_count: sql<number | null>`CASE
+        WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
+          THEN COALESCE(EXCLUDED.price_interval_count, billing_subscriptions.price_interval_count)
+        ELSE EXCLUDED.price_interval_count
+      END`,
+      price_quantity: sql<number | null>`CASE
+        WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
+          THEN COALESCE(EXCLUDED.price_quantity, billing_subscriptions.price_quantity)
+        ELSE EXCLUDED.price_quantity
+      END`,
       status: row.status,
       current_period_end: row.current_period_end,
       grace_period_ends_at: row.grace_period_ends_at,
@@ -3405,6 +3457,37 @@ export async function upsertBillingSubscription(db: PlatformDB, record: NewBilli
     .returning('stripe_subscription_id')
     .executeTakeFirst();
   return Boolean(applied);
+}
+
+export async function persistBillingSubscriptionPriceSnapshot(
+  db: PlatformDB,
+  input: {
+    stripeSubscriptionId: string;
+    expectedStripePriceId: string;
+    unitAmountMinor: number;
+    currency: string;
+    interval: MatrixBillingInterval;
+    intervalCount: number;
+    quantity: number;
+    updatedAt: string;
+  },
+): Promise<boolean> {
+  await db.ready;
+  const updated = await db.executor
+    .updateTable('billing_subscriptions')
+    .set({
+      price_unit_amount_minor: input.unitAmountMinor,
+      price_currency: input.currency,
+      billing_interval: input.interval,
+      price_interval_count: input.intervalCount,
+      price_quantity: input.quantity,
+      updated_at: input.updatedAt,
+    })
+    .where('stripe_subscription_id', '=', input.stripeSubscriptionId)
+    .where('stripe_price_id', '=', input.expectedStripePriceId)
+    .returning('stripe_subscription_id')
+    .executeTakeFirst();
+  return Boolean(updated);
 }
 
 export async function getBillingSubscription(
