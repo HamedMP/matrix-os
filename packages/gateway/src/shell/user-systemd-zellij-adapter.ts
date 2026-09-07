@@ -166,6 +166,56 @@ export function createUserSystemdZellijAdapter(options: {
     return operation(adapterFor(descriptor), descriptor.sessionName);
   }
 
+  async function createTerminalSession(input: {
+    name: string;
+    cwd?: string;
+    layout?: string;
+    cmd?: string;
+  }): Promise<void> {
+    const existing = await options.controller.findByDisplayName("terminal", input.name);
+    if (existing) {
+      throw shellError("session_interrupted", "Session requires explicit recovery", 409);
+    }
+    const health = await baseAdapter.health();
+    if (!health.ok) throw shellError("zellij_failed", "Shell operation failed", 500);
+    const nextRuntimeId = generateRuntimeId();
+    const cwd = input.cwd ?? homePath;
+    const layoutPath = join(homePath, "system", "zellij", "runtime-layouts", `${nextRuntimeId}.kdl`);
+    let layoutContent: string;
+    if (input.cmd) {
+      layoutContent = commandLayout(input.cmd, input.cwd, configPaths.shellFile);
+    } else if (input.layout) {
+      layoutContent = await readFile(join(homePath, "system", "layouts", `${input.layout}.kdl`), "utf8");
+    } else {
+      layoutContent = await readFile(configPaths.layoutFile, "utf8");
+    }
+    if (Buffer.byteLength(layoutContent) > 100_000) throw shellError("invalid_layout", "Invalid layout", 400);
+    await writeTextExclusive(layoutPath, layoutContent);
+    let created;
+    try {
+      created = await options.controller.create({
+        runtimeId: nextRuntimeId,
+        scope: "terminal",
+        kind: "shell",
+        displayName: input.name,
+        cwd,
+        layoutPath,
+      });
+    } catch (err: unknown) {
+      let persisted: UserSystemdTerminalDescriptor | null;
+      try {
+        persisted = await options.controller.get(nextRuntimeId);
+      } catch (lookupErr: unknown) {
+        if (!(lookupErr instanceof Error)) throw lookupErr;
+        console.warn("[terminal-runtime] failed to reconcile shell runtime after create failure");
+        throw err;
+      }
+      if (persisted?.layoutPath !== layoutPath) await rm(layoutPath, { force: true });
+      throw err;
+    }
+    cacheDescriptor(created);
+  }
+
   return {
     health: () => baseAdapter.health(),
 
@@ -185,49 +235,16 @@ export function createUserSystemdZellijAdapter(options: {
       return delegate(name, (adapter, sessionName) => adapter.focusedPaneRuntime(sessionName));
     },
 
-    async createSession(input) {
+    createSession: createTerminalSession,
+
+    async recoverSession(input) {
       const existing = await options.controller.findByDisplayName("terminal", input.name);
-      if (existing) {
-        throw shellError("session_interrupted", "Session requires explicit recovery", 409);
+      if (!existing) {
+        await createTerminalSession(input);
+        return;
       }
-      const health = await baseAdapter.health();
-      if (!health.ok) throw shellError("zellij_failed", "Shell operation failed", 500);
-      const nextRuntimeId = generateRuntimeId();
-      const cwd = input.cwd ?? homePath;
-      const layoutPath = join(homePath, "system", "zellij", "runtime-layouts", `${nextRuntimeId}.kdl`);
-      let layoutContent: string;
-      if (input.cmd) {
-        layoutContent = commandLayout(input.cmd, input.cwd, configPaths.shellFile);
-      } else if (input.layout) {
-        layoutContent = await readFile(join(homePath, "system", "layouts", `${input.layout}.kdl`), "utf8");
-      } else {
-        layoutContent = await readFile(configPaths.layoutFile, "utf8");
-      }
-      if (Buffer.byteLength(layoutContent) > 100_000) throw shellError("invalid_layout", "Invalid layout", 400);
-      await writeTextExclusive(layoutPath, layoutContent);
-      let created;
-      try {
-        created = await options.controller.create({
-          runtimeId: nextRuntimeId,
-          scope: "terminal",
-          kind: "shell",
-          displayName: input.name,
-          cwd,
-          layoutPath,
-        });
-      } catch (err: unknown) {
-        let persisted: UserSystemdTerminalDescriptor | null;
-        try {
-          persisted = await options.controller.get(nextRuntimeId);
-        } catch (lookupErr: unknown) {
-          if (!(lookupErr instanceof Error)) throw lookupErr;
-          console.warn("[terminal-runtime] failed to reconcile shell runtime after create failure");
-          throw err;
-        }
-        if (persisted?.layoutPath !== layoutPath) await rm(layoutPath, { force: true });
-        throw err;
-      }
-      cacheDescriptor(created);
+      const recovered = await options.controller.start(existing.runtimeId);
+      cacheDescriptor(recovered);
     },
 
     async deleteSession(name, deleteOptions = {}) {

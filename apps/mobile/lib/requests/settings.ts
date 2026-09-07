@@ -1,4 +1,8 @@
 import { z } from "zod/v4";
+import {
+  MatrixBillingStatusSchema,
+  type MatrixBillingStatus,
+} from "@matrix-os/contracts";
 
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
@@ -11,21 +15,11 @@ const SystemInfoSchema = z.object({
   release: z.object({ version: z.string() }).passthrough().optional(),
 }).passthrough();
 
-const BillingStatusSchema = z.object({
-  entitlement: z.object({
-    planSlug: z.enum(["matrix_starter", "matrix_builder", "matrix_max", "internal"]),
-    status: z.string(),
-    source: z.string(),
-    stripeSubscriptionId: z.string().nullable(),
-    billingInterval: z.enum(["monthly", "annual"]).nullable().optional(),
-  }).passthrough().nullable(),
-}).passthrough();
-
 const OkResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
 const BillingPortalSchema = z.object({ url: z.url() }).strict();
 
 export type MobileSystemInfo = z.infer<typeof SystemInfoSchema>;
-export type MobileBillingStatus = z.infer<typeof BillingStatusSchema>;
+export type MobileBillingStatus = MatrixBillingStatus;
 
 export function fetchMobileSystemInfo(
   clerkToken: string,
@@ -48,7 +42,7 @@ export function fetchMobileBillingStatus(
   return fetchAuthenticatedJson({
     url: url.toString(),
     token: clerkToken,
-    schema: BillingStatusSchema,
+    schema: MatrixBillingStatusSchema,
     errorMessage: "Billing information unavailable. Try again.",
   });
 }

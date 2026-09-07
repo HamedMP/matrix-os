@@ -7,6 +7,8 @@
     ".": "./src/index.ts"
   },
   "imports": {
+    "#chat-links": "./src/chat-links.ts",
+    "#chat-sharing": "./src/chat-sharing.ts",
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",
     "#ai-provider": "./src/ai-provider.ts",
@@ -44,6 +46,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

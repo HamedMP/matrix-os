@@ -79,6 +79,22 @@ describe("TerminalView keyboard control wiring", () => {
     useConnection.setState({ api: null });
   });
 
+  it("renders controls in the supplied header without remounting the terminal", async () => {
+    const header = document.createElement("div");
+    document.body.append(header);
+    const view = render(<TerminalView sessionName="session-one" controlsHost={header} />);
+    act(() => events.onState("attached"));
+    expect(header.querySelector('[data-testid="terminal-controls"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid="terminal-controls"]')).toBeNull();
+    expect(header.textContent).not.toContain("Pane controls");
+    view.rerender(<TerminalView sessionName="session-one" controlsHost={header} active={false} />);
+    expect(terminals).toHaveLength(1);
+    expect((header.querySelector('button[aria-label="Split right"]') as HTMLButtonElement).disabled).toBe(true);
+    view.unmount();
+    expect(header.childElementCount).toBe(0);
+    header.remove();
+  });
+
   it("uses the latest attached controller without remounting xterm and preserves select-all", async () => {
     const { rerender } = render(<TerminalView sessionName="session-one" />);
     act(() => events.onState("attached"));

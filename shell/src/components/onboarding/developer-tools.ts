@@ -14,7 +14,9 @@ export const defaultDeveloperTools: DeveloperToolId[] = developerToolOptions.map
 export function nextDeveloperToolsSelection(
   selectedTools: readonly DeveloperToolId[],
   tool: DeveloperToolId,
+  singleChoice = false,
 ): DeveloperToolId[] {
+  if (singleChoice) return [tool];
   const selectedToolSet = new Set(selectedTools);
   const removeTool = selectedToolSet.has(tool);
   const nextTools: DeveloperToolId[] = [];
@@ -25,4 +27,12 @@ export function nextDeveloperToolsSelection(
     }
   }
   return nextTools;
+}
+
+export function constrainDeveloperToolsSelection(
+  selectedTools: readonly DeveloperToolId[],
+  limit: number | null,
+): DeveloperToolId[] {
+  if (limit === null) return [...selectedTools];
+  return selectedTools.slice(0, limit);
 }

@@ -942,7 +942,8 @@ describe("native desktop shell", () => {
     const terminalWindow = screen.getByRole("dialog", { name: "Terminal window" });
     const workChrome = workWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
     const terminalChrome = terminalWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
-    expect(workChrome?.style.width).toBe("280px");
+    expect(workChrome?.style.gridTemplateColumns).toBe("240px minmax(0, 1fr) 0px");
+    expect(within(workWindow).getByRole("button", { name: "Toggle Chat sidebar" }).getAttribute("aria-expanded")).toBe("true");
     expect(workChrome?.textContent).not.toContain("Chat");
     expect(terminalChrome?.style.width).toBe("280px");
     expect(terminalChrome?.textContent).not.toContain("Terminal");
