@@ -22,18 +22,18 @@ function BillingStatusBadge({
 
   let className = "border-border/30 bg-muted/30 text-muted-foreground";
   let label = "Checking";
-  if (startsNewSubscription) {
-    className = "border-[#BED77B] bg-[#F4F7ED] text-[#0E3422]";
-    label = "New subscription";
-  } else if (active === true) {
-    className = "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]";
-    label = "Active";
-  } else if (accessIssue === "auth") {
+  if (accessIssue === "auth") {
     className = "border-sky-500/30 bg-sky-500/10 text-sky-700";
     label = "Reconnecting";
   } else if (accessIssue === "status") {
     className = "border-ember/30 bg-ember/10 text-ember";
     label = "Unavailable";
+  } else if (startsNewSubscription) {
+    className = "border-[#BED77B] bg-[#F4F7ED] text-[#0E3422]";
+    label = "New subscription";
+  } else if (active === true) {
+    className = "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]";
+    label = "Active";
   }
 
   return (

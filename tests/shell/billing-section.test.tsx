@@ -434,6 +434,29 @@ describe("BillingSection", () => {
     await waitForBillingConfigurator();
   });
 
+  it("does not label an unavailable add-computer status as a new subscription", async () => {
+    const invalidResponse = () => new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: true, reason: "active" },
+      entitlement: { effectiveFrom: "2026-09-07 12:34:56.123456+00" },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(invalidResponse());
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="add-computer" />);
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(
+      "Billing status is unavailable",
+    ), { timeout: 5_000 });
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.queryByText("New subscription")).toBeNull();
+  });
+
   it("sends only the selected Matrix plan, region, and agents to monthly checkout", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
