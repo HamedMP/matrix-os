@@ -932,6 +932,57 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice-staging");
   });
 
+  it("preserves completed-signup recovery from a provisioned user's VPS shell", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff154",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123498,
+      publicIPv4: "203.0.113.68",
+      imageVersion: "matrix-os-host-2026.09.07-1",
+      provisionedAt: "2026-09-07T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 303,
+        headers: { location: "https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/sign-up/verify-email-address?redirect_url=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          authorization: "Bearer clerk-session",
+        },
+      },
+    );
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(
+      "https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK",
+    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://203.0.113.68:443/sign-up/verify-email-address?redirect_url=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    const forwardedHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers as HeadersInit);
+    expect(forwardedHeaders.get("x-platform-user-id")).toBe("user_alice");
+    expect(forwardedHeaders.get("x-platform-verified")).toMatch(/^[0-9a-f]{64}$/);
+    expect(forwardedHeaders.get("authorization")).not.toBe("Bearer clerk-session");
+  });
+
   it("does not persist a selected runtime slot through the Clerk sign-in handoff", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
     const app = createApp({
