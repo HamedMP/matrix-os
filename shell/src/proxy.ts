@@ -8,8 +8,10 @@ import {
   isGatewayProxyPath,
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
+  isSignUpShellPath,
+  resolveCompletedSignupRedirect,
 } from "./lib/proxy-routes";
-import { getPublicOrigin } from "./lib/public-origin";
+import { getConfiguredAppOrigin, getPublicOrigin } from "./lib/public-origin";
 import {
   canPlatformUserAccessShell,
   isPlatformBearerValid,
@@ -97,6 +99,24 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
 
 // Clerk handler for authenticated routes
 const withClerk = clerkMiddleware(async (auth, request) => {
+  // Clerk normally performs this navigation in the browser after signup. If
+  // that one-shot redirect is interrupted, Clerk has already established the
+  // session and its <SignUp> component renders nothing. Recover at the request
+  // boundary for both the verification POST and later page reloads.
+  if (isSignUpShellPath(request.nextUrl.pathname)) {
+    const { userId } = await auth();
+    if (!userId) return NextResponse.next();
+
+    const publicOrigin = getConfiguredAppOrigin();
+    if (!publicOrigin) {
+      console.error("[auth] completed signup recovery unavailable: app origin is not configured");
+      return new NextResponse("Matrix OS authentication unavailable", { status: 503 });
+    }
+    const redirectPath = resolveCompletedSignupRedirect(request.nextUrl.search, publicOrigin);
+    console.info("[auth] recovered completed signup");
+    return NextResponse.redirect(new URL(redirectPath, publicOrigin), 303);
+  }
+
   // Layer 1: Clerk authentication (skip public routes)
   if (!isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search)) {
     const { userId } = await auth();
@@ -170,7 +190,10 @@ export function proxy(
   ) {
     return new NextResponse("Forbidden", { status: 403 });
   }
-  if (isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search)) {
+  if (
+    isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search) &&
+    !isSignUpShellPath(request.nextUrl.pathname)
+  ) {
     return NextResponse.next();
   }
   // All requests -- including gateway-proxy paths -- flow through Clerk so the

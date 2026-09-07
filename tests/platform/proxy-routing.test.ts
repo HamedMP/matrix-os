@@ -3098,6 +3098,53 @@ describe("platform proxy routing", () => {
     delete process.env.AUTH_SHELL_PORT;
   });
 
+  it("preserves the auth-shell completed-signup redirect before a VPS exists", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    await deleteContainer(db, "alice");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 303,
+        headers: { location: "https://app.matrix-os.com/" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/sign-up/verify-email-address?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          cookie: "__session=clerk-new",
+        },
+      },
+    );
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("https://app.matrix-os.com/");
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://auth-shell.test:3200/sign-up/verify-email-address?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: "GET",
+        redirect: "manual",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
+  });
+
   it("serves anonymous app-domain sign-in from auth-shell before a VPS exists", async () => {
     process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
     process.env.AUTH_SHELL_HOST = "auth-shell.test";
