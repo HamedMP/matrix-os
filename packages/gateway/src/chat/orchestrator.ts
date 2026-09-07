@@ -285,6 +285,9 @@ export class CanonicalChatOrchestrator {
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     executionRoots?: ChatExecutionRootResolver;
+    collaborationGuard?: {
+      assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
+    };
     onAiGeneration?: (input: AiGenerationInput) => void;
     now?: () => Date;
     shutdownDrainMs?: number;
@@ -317,6 +320,19 @@ export class CanonicalChatOrchestrator {
     }
   }
 
+  private async assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void> {
+    if (!this.options.collaborationGuard) return;
+    try {
+      await this.options.collaborationGuard.assertPersonalExecutionAllowed(owner, chatId);
+    } catch (error: unknown) {
+      if (!(error instanceof Error && "code" in error && error.code === "shared_execution_disabled")) throw error;
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "AI is unavailable while this shared Chat is in discussion-only mode."),
+        409,
+      );
+    }
+  }
+
   private reservePendingDispatch(runId: string): void {
     if (!this.pendingDispatch.has(runId) && this.pendingDispatch.size >= MAX_ACTIVE_RUNS_GLOBAL) {
       throw new CanonicalChatOrchestrationError(
@@ -334,6 +350,7 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalCreateChatTurnRequest,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
     this.assertOpen();
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     await this.reconcileActiveRuns(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
     const record = await this.options.repository.get(owner, chatId);
@@ -516,6 +533,7 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalQueueChatTurnRequest,
   ): Promise<CanonicalChatQueueAdmissionResponse> {
     this.assertOpen();
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     try {
       return await enqueueCanonicalQueuedTurn({
         principal,
@@ -544,6 +562,7 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalRetryChatTurnRequest,
   ): Promise<CanonicalChatRunAdmissionResponse> {
     this.assertOpen();
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     await this.reconcileActiveRuns(owner);
     const input = CanonicalRetryChatTurnRequestSchema.parse(inputValue);
     const context = await this.options.repository.getTurnRunContext(owner, chatId, turnId);
@@ -725,6 +744,12 @@ export class CanonicalChatOrchestrator {
 
   private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
     if (this.closing || this.atCapacity(owner)) return;
+    try {
+      await this.assertPersonalExecutionAllowed(owner, chatId);
+    } catch (error: unknown) {
+      if (error instanceof CanonicalChatOrchestrationError) return;
+      throw error;
+    }
     for (const entry of this.active.values()) {
       if (entry.chatId === chatId && entry.owner.type === owner.type
         && entry.owner.ownerId === owner.ownerId) return;
@@ -804,6 +829,7 @@ export class CanonicalChatOrchestrator {
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     try {
+      await this.assertPersonalExecutionAllowed(owner, run.chatId);
       if (resolvedRoot && this.options.executionRoots) {
         const provenance: ChatExecutionRootProvenance = {
           ref: resolvedRoot.ref!,
@@ -977,6 +1003,7 @@ export class CanonicalChatOrchestrator {
     chatId: string,
     runId: string,
   ): Promise<CanonicalChatRunCancellationResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     const active = this.active.get(runId);
     let providerCancellation: Promise<void> | undefined;
     if (active && active.chatId === chatId && active.owner.type === owner.type
@@ -1034,6 +1061,7 @@ export class CanonicalChatOrchestrator {
     runId: string,
     inputValue: CanonicalSteerChatRunRequest,
   ): Promise<CanonicalChatRunSteeringResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     this.assertOpen();
     const input = CanonicalSteerChatRunRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
@@ -1139,6 +1167,7 @@ export class CanonicalChatOrchestrator {
     queuedTurnId: string,
     inputValue: CanonicalSteerQueuedChatTurnRequest,
   ): Promise<CanonicalChatRunSteeringResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     this.assertOpen();
     const input = CanonicalSteerQueuedChatTurnRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
@@ -1247,6 +1276,7 @@ export class CanonicalChatOrchestrator {
     approvalId: string,
     inputValue: CanonicalSubmitChatApprovalRequest,
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
@@ -1313,6 +1343,19 @@ export class CanonicalChatOrchestrator {
     for (const context of contexts) {
       if (this.active.has(context.latestRun.id) || this.pendingDispatch.has(context.latestRun.id)) continue;
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
+      try {
+        await this.assertPersonalExecutionAllowed(owner, context.latestRun.chatId);
+      } catch (error: unknown) {
+        if (!(error instanceof CanonicalChatOrchestrationError)) throw error;
+        const finished = await this.options.repository.finishRun(owner, {
+          chatId: context.latestRun.chatId,
+          runId: context.latestRun.id,
+          outcome: "failed",
+          completedAt,
+        });
+        if (finished.transitioned) reconciled += 1;
+        continue;
+      }
       const error = safeError(
         "run_unavailable",
         "The Run was interrupted when Matrix restarted.",

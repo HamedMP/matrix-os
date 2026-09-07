@@ -54,7 +54,7 @@
 - [x] T024 (PR1) Implement gateway proof verification that constructs `AuthorizedCollaborationContext` without configured-owner fallback in `packages/gateway/src/collaboration/actor-proof.ts`
 - [x] T025 (PR1) Implement exact collaboration HTTP proxying, caller-header stripping, bounded fetch timeouts, and safe response mapping in `packages/platform/src/collaboration/proxy.ts`
 - [ ] T026 (PR1) Implement hashed one-use connection tickets and exact collaboration WebSocket forwarding in `packages/platform/src/collaboration/websocket.ts`
-- [ ] T027 (PR1) Implement the capped scope-event registry, authorized replay, heartbeat/stale sweep, failed-sender eviction, revoke notification, and drain in `packages/gateway/src/collaboration/events.ts`
+- [x] T027 (PR1) Implement the capped scope-event registry, authorized replay, heartbeat/stale sweep, failed-sender eviction, revoke notification, and drain in `packages/gateway/src/collaboration/events.ts`
 - [ ] T028 (PR1) Register gateway dependencies, migrations, recovery, exact HTTP/WS routes, workers, and shutdown ordering in `packages/gateway/src/collaboration/wiring.ts`
 - [ ] T029 (PR1) Register platform database, policy, exact proxy/WS paths, internal directory/policy endpoints, and shutdown ownership in `packages/platform/src/collaboration/wiring.ts`
 
@@ -70,7 +70,7 @@
 
 ### Tests first
 
-- [ ] T030 [P] [US2] (PR1) Write red Chat preflight/create tests for unique scope creation, active/private-work conversion fence, whole-history semantics, and no project grant in `tests/gateway/collaboration-chat-scope.test.ts`
+- [x] T030 [P] [US2] (PR1) Write red Chat preflight/create tests for unique scope creation, active/private-work conversion fence, whole-history semantics, and no project grant in `tests/gateway/collaboration-chat-scope.test.ts`
 - [ ] T031 [P] [US2] (PR1) Write red boundary tests denying parent/sibling/file/app/terminal access and unsafe attachment destinations from a standalone Chat in `tests/gateway/collaboration-chat-isolation.test.ts`
 - [ ] T032 [P] [US2] (PR1) Write red snapshot-token/live-proof substitution and independent snapshot/member revocation tests in `tests/gateway/chat-sharing-routes.test.ts`
 - [ ] T033 [P] [US2] (PR4) Write red standalone terminal scope, same-incarnation, and sibling/session-creation denial tests in `tests/gateway/collaboration-terminal-scope.test.ts`
@@ -78,7 +78,7 @@
 
 ### Implementation
 
-- [ ] T035 [US2] (PR1) Implement Chat scope preflight/create binding with active-work settlement and personal-dispatch fencing in `packages/gateway/src/collaboration/chat-scope.ts`
+- [x] T035 [US2] (PR1) Implement Chat scope preflight/create binding with active-work settlement and personal-dispatch fencing in `packages/gateway/src/collaboration/chat-scope.ts`
 - [ ] T036 [US2] (PR1) Implement canonical Chat-only read/search/history projection with inert unauthorized references in `packages/gateway/src/collaboration/chat-adapter.ts`
 - [ ] T037 [US2] (PR1) Register validated/body-limited standalone Chat scope and member routes in `packages/gateway/src/collaboration/routes.ts`
 - [ ] T038 [US2] (PR4) Implement eligible terminal scope binding without replacement or sibling authority in `packages/gateway/src/collaboration/terminal-adapter.ts`
@@ -96,9 +96,9 @@
 
 ### Tests first — M1 / PR1
 
-- [ ] T040 [P] [US3] (PR1) Write red canonical message attribution, purpose, historical-unknown-author, and discussion-no-run tests in `tests/gateway/collaboration-chat-discussion.test.ts`
+- [x] T040 [P] [US3] (PR1) Write red canonical message attribution, purpose, historical-unknown-author, and discussion-no-run tests in `tests/gateway/collaboration-chat-discussion.test.ts`
 - [ ] T041 [P] [US3] (PR1) Write red actor-scoped message idempotency and commit-with-outbox tests in `tests/gateway/collaboration-chat-discussion-postgres.test.ts`
-- [ ] T042 [P] [US3] (PR1) Write red owner legacy bypass tests for start, queue, dispatch, steer, retry, approval, and reconnect paths in `tests/gateway/collaboration-m1-ai-gate.test.ts`
+- [x] T042 [P] [US3] (PR1) Write red owner legacy bypass tests for start, queue, dispatch, steer, retry, approval, and reconnect paths in `tests/gateway/collaboration-m1-ai-gate.test.ts`
 - [ ] T043 [P] [US3] (PR1) Write red private draft/mode/account-switch and member-local read/pin/mute state tests in `tests/ui/collaboration-chat-state.test.tsx`
 - [ ] T044 [P] [US3] (PR1) Write red scoped event/reconnect tests proving no owner-wide cursor or duplicate discussion delivery in `tests/gateway/collaboration-chat-events.test.ts`
 
@@ -106,8 +106,8 @@
 
 - [x] T045 [US3] (PR1) Extend canonical Chat record types and repository projections with immutable server-derived actor and message purpose in `packages/gateway/src/chat/records.ts`
 - [ ] T046 [US3] (PR1) Add transactional attributed discussion append with actor-scoped replay and collaboration outbox in `packages/gateway/src/chat/repository.ts`
-- [ ] T047 [US3] (PR1) Add the discussion-only adapter operation and safe paginated canonical history projection in `packages/gateway/src/collaboration/chat-adapter.ts`
-- [ ] T048 [US3] (PR1) Enforce the M1 execution fence in canonical owner routes, queue admission, dispatch, steering, retry, and approval seams in `packages/gateway/src/chat/service.ts`
+- [x] T047 [US3] (PR1) Add the discussion-only adapter operation and safe paginated canonical history projection in `packages/gateway/src/collaboration/chat-adapter.ts`
+- [x] T048 [US3] (PR1) Enforce the M1 execution fence in canonical owner routes, queue admission, dispatch, steering, retry, and approval seams in `packages/gateway/src/chat/service.ts`
 - [ ] T049 [US3] (PR1) Replace owner-wide delivery for shared Chats with scope-authorized invalidations and replay in `packages/gateway/src/chat/event-stream.ts`
 - [ ] T050 [US3] (PR1) Implement shared-client draft keying and stable permission/presentation derivation in `packages/ui/src/collaboration/chat-state.ts`
 
