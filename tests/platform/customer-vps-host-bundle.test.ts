@@ -1747,8 +1747,11 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).toContain('runtime_ready()');
+    expect(launcher).toContain('selected_developer_tools_settled()');
     expect(launcher).toContain('/api/terminal/health');
     expect(launcher).toContain('/var/lib/matrix-developer-tools/installed-tools');
+    expect(launcher).toContain('/var/lib/matrix-developer-tools/failed-tools');
+    expect(launcher).toContain('grep -qxF "$tool" "$failed_file" && continue');
     expect(launcher).toContain('authorization: Bearer ${MATRIX_AUTH_TOKEN}');
     expect(launcher).toContain('if ! runtime_ready; then');
     expect(launcher).not.toContain('MATRIX_OPTIONAL_TOOLS_START_DELAY_SECONDS');
