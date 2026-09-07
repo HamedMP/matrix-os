@@ -42,6 +42,10 @@ export default function SharedScreen() {
   const { theme } = useUnistyles();
   const [view, setView] = useState<ViewState>({ kind: "home" });
   const [items, setItems] = useState<DiscoveryItem[]>([]);
+  const [inboxCursor, setInboxCursor] = useState<string | null>(null);
+  const [sharedCursor, setSharedCursor] = useState<string | null>(null);
+  const [loadingMoreItems, setLoadingMoreItems] = useState(false);
+  const [paginationError, setPaginationError] = useState("");
   const [scope, setScope] = useState<Scope | null>(null);
   const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -69,12 +73,35 @@ export default function SharedScreen() {
         fetchCollaborationInbox(actorToken), fetchSharedCollaborations(actorToken),
       ]);
       setItems([...inbox.items, ...shared.items]);
+      setInboxCursor(inbox.nextCursor ?? null);
+      setSharedCursor(shared.nextCursor ?? null);
+      setPaginationError("");
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] discovery failed", failure instanceof Error ? failure.name : "UnknownError");
       setError("Shared Chats are unavailable. Pull down or return later to try again.");
     } finally { setLoading(false); }
   }, [token]);
   useEffect(() => { void loadHome(); }, [loadHome]);
+  const loadMoreItems = async () => {
+    if (loadingMoreItems || (!inboxCursor && !sharedCursor)) return;
+    setLoadingMoreItems(true); setPaginationError("");
+    try {
+      const actorToken = await token();
+      const [inbox, shared] = await Promise.all([
+        inboxCursor ? fetchCollaborationInbox(actorToken, inboxCursor) : null,
+        sharedCursor ? fetchSharedCollaborations(actorToken, sharedCursor) : null,
+      ]);
+      const additions = [...(inbox?.items ?? []), ...(shared?.items ?? [])];
+      setItems((current) => additions.reduce<DiscoveryItem[]>((combined, item) => (
+        combined.some((existing) => discoveryKey(existing) === discoveryKey(item)) ? combined : [...combined, item]
+      ), current));
+      if (inbox) setInboxCursor(inbox.nextCursor ?? null);
+      if (shared) setSharedCursor(shared.nextCursor ?? null);
+    } catch (failure: unknown) {
+      console.warn("[mobile-collaboration] discovery page failed", failure instanceof Error ? failure.name : "UnknownError");
+      setPaginationError("More shared items could not be loaded. Try again.");
+    } finally { setLoadingMoreItems(false); }
+  };
   const loadChat = useCallback(async (scopeId: string) => {
     const generation = ++chatLoadGeneration.current;
     if (eventScopeRef.current !== scopeId) {
@@ -331,7 +358,14 @@ export default function SharedScreen() {
       <Text style={styles.cardTitle}>{item.resource.chat.title}</Text><Text style={styles.muted}>Shared Chat · {roleLabel(item.resource.scope.role)}</Text>
       <Action label={`Open ${item.resource.chat.title}`} onPress={() => void loadChat(item.scopeId)} />
     </View>)}
+    {paginationError ? <Text accessibilityRole="alert" style={styles.error}>{paginationError}</Text> : null}
+    {inboxCursor || sharedCursor ? <Action label={loadingMoreItems ? "Loading…" : "Load more shared items"}
+      disabled={loadingMoreItems} onPress={() => void loadMoreItems()} /> : null}
   </ScrollView>;
+}
+
+function discoveryKey(item: DiscoveryItem): string {
+  return item.status === "invited" ? `invite:${item.invitationId}` : `scope:${item.scopeId}`;
 }
 
 function Action({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {

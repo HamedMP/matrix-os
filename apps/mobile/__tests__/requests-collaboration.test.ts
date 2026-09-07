@@ -25,6 +25,18 @@ describe("mobile collaboration requests", () => {
     }));
   });
 
+  it("requests an opaque next discovery page without interpreting the cursor", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ items: [] }),
+    } as unknown as Response);
+    await fetchCollaborationInbox("clerk-token", "opaque/+ cursor");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/collaboration/inbox?limit=50&cursor=opaque%2F%2B+cursor",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it("accepts and discusses with conditional actor-scoped requests", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,

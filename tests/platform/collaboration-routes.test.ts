@@ -153,6 +153,35 @@ describe("platform collaboration routes", () => {
     });
   });
 
+  it("returns opaque actor/status-bound discovery pages and rejects malformed cursors", async () => {
+    await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("accepted"),
+      eventId: "20000000-0000-4000-8000-000000000099",
+      scopeId: "10000000-0000-4000-8000-000000000099",
+      metadataRevision: 2,
+      recipients: [{
+        actorId: platformCollaborationActors.recipientWithoutComputer,
+        status: "accepted",
+      }],
+    });
+    const first = await app.request("/api/collaboration/shared?limit=1", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(first.status).toBe(200);
+    const firstPage = await first.json() as { items: Array<{ scopeId: string }>; nextCursor: string };
+    expect(firstPage.items).toHaveLength(1);
+    expect(firstPage.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/);
+    const second = await app.request(`/api/collaboration/shared?limit=1&cursor=${firstPage.nextCursor}`, {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(second.status).toBe(200);
+    expect((await second.json() as { items: Array<{ scopeId: string }> }).items).toHaveLength(1);
+    expect((await app.request("/api/collaboration/shared?cursor=not-a-cursor", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    })).status).toBe(422);
+  });
+
   it("issues an events-only ticket to an accepted current member", async () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
     await repository.setPolicy({

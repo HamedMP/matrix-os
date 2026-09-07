@@ -5,6 +5,7 @@ import {
   CollaborationDiscoveryItemSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
+  CollaborationPageRequestSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -26,6 +27,13 @@ const POLICY_LIFETIME_MS = 30_000;
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
 const MilestoneSchema = z.enum(["m1", "m2", "m3", "m4"]);
+const DiscoveryCursorSchema = z.object({
+  version: z.literal(1),
+  actorId: CollaborationActorIdSchema,
+  status: z.enum(["invited", "accepted"]),
+  updatedAt: z.iso.datetime(),
+  scopeId: z.uuid(),
+}).strict();
 
 type RouteContext = Context;
 
@@ -176,9 +184,18 @@ async function listDiscovery(
 ) {
   const actorId = await resolveValidatedActor(c, options.resolveActor);
   if (!actorId) return safeJson(c, "Unauthorized", 401);
+  const pageRequest = CollaborationPageRequestSchema.safeParse(exactDiscoveryQuery(c));
+  if (!pageRequest.success) return safeJson(c, "Invalid request", 422);
+  const after = pageRequest.data.cursor
+    ? decodeDiscoveryCursor(pageRequest.data.cursor, actorId, status)
+    : undefined;
+  if (pageRequest.data.cursor && !after) return safeJson(c, "Invalid request", 422);
   try {
-    const entries = (await options.repository.listForActor(actorId)).filter((entry) => entry.status === status);
-    const resources = await mapLimited(entries, MAX_HYDRATION_CONCURRENCY, async (entry) => {
+    const page = await options.repository.listForActorPage(actorId, status, {
+      limit: pageRequest.data.limit,
+      ...(after ? { after } : {}),
+    });
+    const resources = await mapLimited(page.items, MAX_HYDRATION_CONCURRENCY, async (entry) => {
       try {
         const resource = await options.hydrate({ actorId, entry });
         return CollaborationDiscoveryItemSchema.parse({
@@ -203,10 +220,47 @@ async function listDiscovery(
     return c.json(CollaborationDiscoveryResponseSchema.parse({
       items: resources
         .filter((result): result is NonNullable<typeof result> => result !== null),
+      ...(page.nextCursor ? { nextCursor: encodeDiscoveryCursor(actorId, status, page.nextCursor) } : {}),
     }));
   } catch (error: unknown) {
     console.warn("[platform-collaboration] discovery hydration failed", error instanceof Error ? error.name : "UnknownError");
     return safeJson(c, "Collaboration unavailable", 503);
+  }
+}
+
+function exactDiscoveryQuery(c: RouteContext): Record<string, string> {
+  const parameters = new URL(c.req.url).searchParams;
+  const output: Record<string, string> = {};
+  for (const key of parameters.keys()) {
+    if (!["cursor", "limit"].includes(key) || key in output) return { invalid: "true" };
+    output[key] = parameters.get(key)!;
+  }
+  return output;
+}
+
+function encodeDiscoveryCursor(
+  actorId: string,
+  status: "invited" | "accepted",
+  cursor: { updatedAt: string; scopeId: string },
+): string {
+  return Buffer.from(JSON.stringify({ version: 1, actorId, status, ...cursor })).toString("base64url");
+}
+
+function decodeDiscoveryCursor(
+  value: string,
+  actorId: string,
+  status: "invited" | "accepted",
+): { updatedAt: string; scopeId: string } | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  try {
+    const parsed = DiscoveryCursorSchema.safeParse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown);
+    if (!parsed.success || parsed.data.actorId !== actorId || parsed.data.status !== status) return null;
+    return { updatedAt: parsed.data.updatedAt, scopeId: parsed.data.scopeId };
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[platform-collaboration] cursor decode failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return null;
   }
 }
 

@@ -57,17 +57,25 @@ function CollaborationHome({ api, openInvitation, openChat }: {
   openChat: (scopeId: string) => void;
 }) {
   const [items, setItems] = useState<DiscoveryItem[]>([]);
+  const [inboxCursor, setInboxCursor] = useState<string | null>(null);
+  const [sharedCursor, setSharedCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
+  const [paginationError, setPaginationError] = useState(false);
   useEffect(() => {
     let active = true;
     void Promise.all([api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared")])
       .then(([inbox, shared]) => {
         if (!active) return;
+        const inboxPage = CollaborationDiscoveryResponseSchema.parse(inbox);
+        const sharedPage = CollaborationDiscoveryResponseSchema.parse(shared);
         setItems([
-          ...CollaborationDiscoveryResponseSchema.parse(inbox).items,
-          ...CollaborationDiscoveryResponseSchema.parse(shared).items,
+          ...inboxPage.items,
+          ...sharedPage.items,
         ]);
+        setInboxCursor(inboxPage.nextCursor ?? null);
+        setSharedCursor(sharedPage.nextCursor ?? null);
         setError(false);
       })
       .catch((failure: unknown) => {
@@ -77,6 +85,30 @@ function CollaborationHome({ api, openInvitation, openChat }: {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api]);
+  const loadMore = async () => {
+    if (loadingMore || (!inboxCursor && !sharedCursor)) return;
+    setLoadingMore(true);
+    setPaginationError(false);
+    try {
+      const [inbox, shared] = await Promise.all([
+        inboxCursor ? api.get(`/api/collaboration/inbox?limit=50&cursor=${encodeURIComponent(inboxCursor)}`) : null,
+        sharedCursor ? api.get(`/api/collaboration/shared?limit=50&cursor=${encodeURIComponent(sharedCursor)}`) : null,
+      ]);
+      const inboxPage = inbox ? CollaborationDiscoveryResponseSchema.parse(inbox) : null;
+      const sharedPage = shared ? CollaborationDiscoveryResponseSchema.parse(shared) : null;
+      const additions = [...(inboxPage?.items ?? []), ...(sharedPage?.items ?? [])];
+      setItems((current) => additions.reduce<DiscoveryItem[]>((combined, item) => (
+        combined.some((existing) => discoveryKey(existing) === discoveryKey(item)) ? combined : [...combined, item]
+      ), current));
+      if (inboxPage) setInboxCursor(inboxPage.nextCursor ?? null);
+      if (sharedPage) setSharedCursor(sharedPage.nextCursor ?? null);
+    } catch (failure: unknown) {
+      console.warn("[chat-collaboration] discovery page failed", failure instanceof Error ? failure.name : "UnknownError");
+      setPaginationError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   return <main className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-5 p-5 sm:p-8">
     <header>
@@ -111,7 +143,15 @@ function CollaborationHome({ api, openInvitation, openChat }: {
           <button type="button" className={buttonClass} onClick={() => openChat(item.scopeId)}>Open Chat</button>
         </article>)}
     </div>
+    {paginationError ? <p role="alert" className="text-sm">More shared items could not be loaded. Try again.</p> : null}
+    {inboxCursor || sharedCursor ? <button type="button" className={buttonClass} disabled={loadingMore} onClick={() => void loadMore()}>
+      {loadingMore ? "Loading…" : "Load more shared items"}
+    </button> : null}
   </main>;
+}
+
+function discoveryKey(item: DiscoveryItem): string {
+  return item.status === "invited" ? `invite:${item.invitationId}` : `scope:${item.scopeId}`;
 }
 
 function InvitationView({ api, invitationId, openChat }: {

@@ -7,6 +7,7 @@ const mockFetchScope = jest.fn();
 const mockFetchChat = jest.fn();
 const mockFetchMessages = jest.fn();
 const mockPostDiscussion = jest.fn();
+const mockFetchEventTicket = jest.fn();
 
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: mockGetToken, userId: "user_editor" }) }));
 jest.mock("@/lib/requests/collaboration", () => ({
@@ -18,6 +19,8 @@ jest.mock("@/lib/requests/collaboration", () => ({
   fetchSharedChat: (...args: unknown[]) => mockFetchChat(...args),
   fetchSharedChatMessages: (...args: unknown[]) => mockFetchMessages(...args),
   postSharedChatDiscussion: (...args: unknown[]) => mockPostDiscussion(...args),
+  fetchCollaborationEventTicket: (...args: unknown[]) => mockFetchEventTicket(...args),
+  collaborationEventsUrl: jest.fn(() => "wss://app.matrix-os.com/ws/collaboration/events?ticket=test"),
   updateSharedChatReadState: jest.fn(async () => undefined),
 }));
 
@@ -55,6 +58,7 @@ describe("native shared Chat screen", () => {
       createdAt: "2026-09-07T12:00:00.000Z",
     }] });
     mockPostDiscussion.mockResolvedValue({});
+    mockFetchEventTicket.mockResolvedValue({ ticket: "t".repeat(43), expiresAt: "2026-09-07T12:00:30.000Z" });
   });
 
   it("accepts an invitation and opens attributed discussion without AI controls", async () => {
@@ -119,5 +123,34 @@ describe("native shared Chat screen", () => {
     resolveOldPage({ messages: [messageFor("msg_a2", "chat_a", "2", "A stale")] });
     await waitFor(() => expect(screen.queryByText("A stale")).toBeNull());
     expect(screen.getByText("B current")).toBeTruthy();
+  });
+
+  it("loads another discovery page without replacing the first page", async () => {
+    const secondInvitation = {
+      ...invitation,
+      id: "30000000-0000-4000-8000-000000000002",
+      scopeId: "10000000-0000-4000-8000-000000000002",
+      owner: { actorId: "user_owner_two", displayName: "Grace" },
+    };
+    mockFetchInbox
+      .mockResolvedValueOnce({ items: [
+        {
+          scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+          status: "invited", invitationId, resource: invitation,
+        },
+      ], nextCursor: "opaque-next-page" })
+      .mockResolvedValueOnce({ items: [
+        {
+          scopeId: secondInvitation.scopeId, runtimeId: "runtime_owner", ownerId: "user_owner_two", kind: "chat", authorityGeneration: 1,
+          status: "invited", invitationId: secondInvitation.id, resource: secondInvitation,
+        },
+      ] });
+
+    render(<SharedScreen />);
+    expect(await screen.findByText("Nima invited you")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Load more shared items"));
+    expect(await screen.findByText("Grace invited you")).toBeTruthy();
+    expect(screen.getByText("Nima invited you")).toBeTruthy();
+    expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "opaque-next-page");
   });
 });

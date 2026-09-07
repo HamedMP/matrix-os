@@ -6,6 +6,7 @@ import {
   CollaborationHumanMessageSchema,
   CollaborationIdSchema,
   CollaborationInvitationSchema,
+  CollaborationPageRequestSchema,
   CollaborationRevisionSchema,
   CollaborationScopeSchema,
   CollaborationUserStateSchema,
@@ -26,12 +27,19 @@ function url(path: string): string {
   return `${HOSTED_GATEWAY_URL}${path}`;
 }
 
-export function fetchCollaborationInbox(token: string) {
-  return fetchAuthenticatedJson({ url: url("/api/collaboration/inbox"), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
+function discoveryUrl(path: "inbox" | "shared", cursor?: string): string {
+  if (!cursor) return url(`/api/collaboration/${path}`);
+  const page = CollaborationPageRequestSchema.parse({ cursor, limit: 50 });
+  const query = new URLSearchParams({ limit: String(page.limit), cursor: page.cursor! });
+  return url(`/api/collaboration/${path}?${query.toString()}`);
 }
 
-export function fetchSharedCollaborations(token: string) {
-  return fetchAuthenticatedJson({ url: url("/api/collaboration/shared"), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
+export function fetchCollaborationInbox(token: string, cursor?: string) {
+  return fetchAuthenticatedJson({ url: discoveryUrl("inbox", cursor), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
+}
+
+export function fetchSharedCollaborations(token: string, cursor?: string) {
+  return fetchAuthenticatedJson({ url: discoveryUrl("shared", cursor), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
 }
 
 export function fetchCollaborationInvitation(token: string, invitationId: string) {

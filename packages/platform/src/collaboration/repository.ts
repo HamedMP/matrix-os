@@ -257,6 +257,56 @@ export class PlatformCollaborationRepository {
     });
   }
 
+  async listForActorPage(
+    actorId: string,
+    status: "invited" | "accepted",
+    options: { limit: number; after?: { updatedAt: string; scopeId: string } },
+  ): Promise<{
+    items: CollaborationDirectoryEntry[];
+    nextCursor?: { updatedAt: string; scopeId: string };
+  }> {
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit)));
+    let query = this.db.selectFrom("collaboration_user_index as user_index")
+      .innerJoin("collaboration_directory as directory", "directory.scope_id", "user_index.scope_id")
+      .select([
+        "directory.scope_id",
+        "directory.runtime_id",
+        "directory.owner_id",
+        "directory.kind",
+        "directory.authority_generation",
+        "user_index.status",
+        "user_index.invitation_id",
+        "user_index.updated_at",
+      ])
+      .where("user_index.actor_id", "=", actorId)
+      .where("user_index.status", "=", status);
+    if (options.after) {
+      query = query.where(({ and, eb, or }) => or([
+        eb("user_index.updated_at", "<", options.after!.updatedAt),
+        and([
+          eb("user_index.updated_at", "=", options.after!.updatedAt),
+          eb("directory.scope_id", ">", options.after!.scopeId),
+        ]),
+      ]));
+    }
+    const rows = await query.orderBy("user_index.updated_at", "desc")
+      .orderBy("directory.scope_id", "asc").limit(limit + 1).execute();
+    const page = rows.slice(0, limit);
+    const last = rows.length > limit ? page.at(-1) : undefined;
+    return {
+      items: page.map((row) => ({
+        scopeId: row.scope_id,
+        runtimeId: row.runtime_id,
+        ownerId: row.owner_id,
+        kind: row.kind,
+        authorityGeneration: Number(row.authority_generation),
+        status: row.status,
+        ...(row.invitation_id === null ? {} : { invitationId: row.invitation_id }),
+      })),
+      ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
+    };
+  }
+
   async getPolicy(
     milestone: "m1" | "m2" | "m3" | "m4",
   ): Promise<CollaborationRolloutPolicyRecord> {

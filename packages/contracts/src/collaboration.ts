@@ -346,6 +346,7 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
 
 export const CollaborationDiscoveryResponseSchema = z.object({
   items: z.array(CollaborationDiscoveryItemSchema).max(100),
+  nextCursor: z.string().min(1).max(512).optional(),
 }).strict();
 
 export const CollaborationPageRequestSchema = z.object({

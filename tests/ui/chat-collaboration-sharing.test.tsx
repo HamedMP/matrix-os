@@ -100,6 +100,46 @@ describe("Chat collaboration sharing", () => {
     expect(openChat).toHaveBeenCalledWith(scopeId);
   });
 
+  it("loads additional opaque discovery pages without replacing the first page", async () => {
+    const invitation = (index: number, ownerName: string) => ({
+      id: `30000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+      scopeId: `10000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+      owner: { actorId: `user_owner_${index}`, displayName: ownerName },
+      target: { actorId: "user_editor", displayName: "Ada" },
+      scopeKind: "chat" as const,
+      role: "editor" as const,
+      status: "pending" as const,
+      expiresAt: "2026-09-14T12:00:00.000Z",
+      revision: "1",
+    });
+    const first = invitation(1, "Owner One");
+    const second = invitation(2, "Owner Two");
+    const item = (resource: ReturnType<typeof invitation>) => ({
+      scopeId: resource.scopeId,
+      runtimeId: "runtime_owner",
+      ownerId: resource.owner.actorId,
+      kind: "chat" as const,
+      authorityGeneration: 1,
+      status: "invited" as const,
+      invitationId: resource.id,
+      resource,
+    });
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path === "/api/collaboration/inbox"
+        ? { items: [item(first)], nextCursor: "opaque-inbox-page" }
+        : path.includes("cursor=opaque-inbox-page")
+          ? { items: [item(second)] }
+          : { items: [] }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" />);
+    expect(await screen.findByText("Owner One invited you")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Load more shared items" }));
+    expect(await screen.findByText("Owner Two invited you")).toBeVisible();
+    expect(screen.getByText("Owner One invited you")).toBeVisible();
+  });
+
   it("renders attributed canonical history and preserves a private draft after failure", async () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "chat" as const, resourceId: chatId,
