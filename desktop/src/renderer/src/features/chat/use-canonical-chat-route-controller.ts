@@ -1,4 +1,5 @@
 import type {
+  CanonicalSubmitChatInputRequest,
   CanonicalChatDetailResponse,
   CanonicalChatApprovalDecision,
   CanonicalChatRecord,
@@ -729,6 +730,20 @@ export function useCanonicalChatRouteController({
     }
   }, [client, loadDetail]);
 
+  const submitInput = useCallback(async (requestId: string, answers: CanonicalSubmitChatInputRequest["answers"]) => {
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    if (!current || !activeRun) throw new Error("InputUnavailable");
+    const routeScope = routeScopeRef.current;
+    try {
+      await client.submitInput(current.record.chat.id, activeRun.runId, requestId, { answers, clientRequestId: canonicalChatRequestId() });
+      if (routeScope?.active && routeScopeRef.current === routeScope) await loadDetail(current.record.chat.id);
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] input failed:", diagnosticErrorKind(error));
+      throw new Error("InputSubmissionFailed");
+    }
+  }, [client, loadDetail]);
+
   const retryTurn = useCallback(async (turnId: string) => {
     const current = detailRef.current;
     if (!current || current.record.activeRun) return null;
@@ -803,6 +818,7 @@ export function useCanonicalChatRouteController({
     reorderQueuedTurns,
     cancelQueuedTurn,
     submitApproval,
+    submitInput,
     retryTurn,
     deleteChat,
     startNewChat: () => selectChat(null),

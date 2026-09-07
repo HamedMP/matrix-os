@@ -6,6 +6,7 @@ import { useConversation } from "@/hooks/useConversation";
 import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
 import { getGatewayUrl } from "@/lib/gateway";
 import type { CanonicalChatApprovalDecision, CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
@@ -46,11 +47,13 @@ export interface ChatState {
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
+  cancelRun?: (runId: string) => Promise<boolean>;
   submitApproval?: (
     runId: string,
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
   ) => Promise<boolean>;
+  submitInput?: (runId: string, inputRequestId: string, answers: CanonicalSubmitChatInputRequest["answers"]) => Promise<boolean>;
 }
 
 export interface ChatSubmitOptions {

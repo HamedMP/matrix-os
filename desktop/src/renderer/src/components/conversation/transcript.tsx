@@ -1,3 +1,4 @@
+import { StructuredInputForm } from "./StructuredInputForm";
 import {
   CheckCircle2,
   ChevronRight,
@@ -38,6 +39,7 @@ function TurnReceipt({
   startedAt,
   endedAt,
   active,
+  waitingFor,
   expanded,
   canToggle,
   onToggle,
@@ -45,6 +47,7 @@ function TurnReceipt({
   startedAt: number;
   endedAt: number;
   active: boolean;
+  waitingFor?: "approval" | "input";
   expanded: boolean;
   canToggle: boolean;
   onToggle: () => void;
@@ -57,7 +60,8 @@ function TurnReceipt({
   }, [active]);
 
   const elapsed = active ? now - startedAt : endedAt - startedAt;
-  const label = `${active ? "Working" : "Worked"} for ${formatTurnDuration(elapsed)}`;
+  const label = waitingFor ? `Waiting for your ${waitingFor === "approval" ? "approval" : "response"}`
+    : `${active ? "Working" : "Worked"} for ${formatTurnDuration(elapsed)}`;
   return (
     <ConversationItem messageId={`receipt:${startedAt}`} className="-mb-1">
       <Marker variant="border" className="min-h-10 pb-1">
@@ -421,7 +425,9 @@ function Request({
               ) : null}
             </div>
             {request.detail ? <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{request.detail}</p> : null}
-            {request.state === "waiting" && inputAction ? (
+            {request.state === "waiting" && request.input?.questions && callbacks.submitInput ? (
+              <StructuredInputForm key={request.id} request={request.input} submit={(answers) => callbacks.submitInput!(request.requestId, answers)} />
+            ) : request.state === "waiting" && inputAction ? (
               <form
                 className="mt-2 flex min-w-0 gap-2"
                 onSubmit={(event) => {
@@ -514,6 +520,8 @@ function ConversationTurn({
   initialFinalIds: ReadonlySet<string>;
 }) {
   const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
+  const pendingRequests = turn.active ? turn.work.filter((item) => item.kind === "request" && item.state === "waiting") : [];
+  const pendingIds = new Set(pendingRequests.map((item) => item.id));
   const showWork = turn.active || expanded;
   const hasWork = turn.work.length > 0;
   const terminalPartial = !turn.active
@@ -521,19 +529,21 @@ function ConversationTurn({
     && (turn.final.tone === "failed" || turn.final.tone === "stopped")
     ? [...turn.work].reverse().find((item) => item.kind === "message")
     : undefined;
-  const visibleWork = showWork ? turn.work : terminalPartial ? [terminalPartial] : [];
+  const visibleWork = (showWork ? turn.work : terminalPartial ? [terminalPartial] : []).filter((item) => !pendingIds.has(item.id));
   const timeline = turn.timeline;
   const visibleTimeline = timeline?.filter((entry) => (
-    entry.kind === "user-followup" || showWork || (terminalPartial !== undefined && entry.item.id === terminalPartial.id)
+    entry.kind === "user-followup" || (!pendingIds.has(entry.item.id) && (showWork || (terminalPartial !== undefined && entry.item.id === terminalPartial.id)))
   ));
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={callbacks} /> : null}
+      {pendingRequests.map((item) => <PresentationItem key={item.id} item={item} callbacks={callbacks} />)}
       {hasWork || turn.final || turn.active ? (
         <TurnReceipt
           startedAt={turn.startedAt}
           endedAt={turn.endedAt}
           active={turn.active}
+          waitingFor={turn.waitingFor}
           expanded={showWork}
           canToggle={!turn.active && hasWork}
           onToggle={() => setExpanded((value) => !value)}

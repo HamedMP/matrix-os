@@ -2,12 +2,14 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import type {
+  CanonicalSubmitChatInputRequest,
   CanonicalChatApprovalDecision,
   CanonicalChatModelSelection,
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
+import { CanonicalInputMessage, canonicalInput } from "./chat/CanonicalInputMessage";
 import {
   Conversation,
   ConversationContent,
@@ -128,6 +130,8 @@ interface ChatAppProps {
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
   ) => Promise<boolean>;
+  onSubmitInput?: (runId: string, requestId: string, answers: CanonicalSubmitChatInputRequest["answers"]) => Promise<boolean>;
+  onStopRun?: (runId: string) => void;
   composerDraftRequest?: { id: number; text: string } | null;
   onComposerDraftConsumed?: (id: number) => void;
   onProviderSetupAction?: (
@@ -177,6 +181,8 @@ export function ChatApp({
   onSubmit,
   providerSelection,
   onSubmitApproval,
+  onSubmitInput,
+  onStopRun,
   composerDraftRequest,
   onComposerDraftConsumed,
   onProviderSetupAction,
@@ -486,6 +492,7 @@ export function ChatApp({
                           </MessageContent>
                         </Message>
                       ) : msg.role === "system" ? (
+                        canonicalInput(msg) ? <CanonicalInputMessage message={msg} onSubmit={onSubmitInput} onStop={onStopRun} /> :
                         <CanonicalApprovalMessage
                           message={msg}
                           submitting={(() => {
@@ -507,7 +514,9 @@ export function ChatApp({
                   );
                 })}
 
-                {busy && (
+                {busy && messages.some((message) => canonicalApproval(message)?.pending || canonicalInput(message)?.pending) ? (
+                  <p role="status" className="text-sm text-muted-foreground">A request needs your attention above.</p>
+                ) : busy && (
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground py-1">
                     <div className="flex gap-1">
                       <span className="size-1.5 rounded-full bg-foreground/40 animate-pulse" style={{ animationDelay: "0ms" }} />

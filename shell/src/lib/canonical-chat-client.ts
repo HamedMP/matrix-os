@@ -1,4 +1,8 @@
 import {
+  CanonicalSubmitChatInputRequestSchema,
+  CanonicalChatInputSubmissionResponseSchema,
+  type CanonicalSubmitChatInputRequest,
+  type CanonicalChatInputSubmissionResponse,
   CanonicalChatDetailResponseSchema,
   CanonicalChatApprovalDecisionSchema,
   CanonicalChatApprovalSubmissionResponseSchema,
@@ -31,6 +35,7 @@ import type { ChatMessage } from "@/lib/chat";
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
+  submitInput(chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse>;
   list(): Promise<CanonicalChatListResponse>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
@@ -224,6 +229,16 @@ export function createCanonicalShellChatClient(options: {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
+      ));
+    },
+    async submitInput(chatId, runId, requestId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const parsedRequestId = safeReference(requestId);
+      const body = CanonicalSubmitChatInputRequestSchema.parse(input);
+      return CanonicalChatInputSubmissionResponseSchema.parse(await request(
+        `/api/chats/${encodeURIComponent(id)}/runs/${encodeURIComponent(parsedRunId)}/inputs/${encodeURIComponent(parsedRequestId)}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
       ));
     },
   };

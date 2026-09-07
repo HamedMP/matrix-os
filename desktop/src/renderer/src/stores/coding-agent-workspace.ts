@@ -141,6 +141,7 @@ interface CodingAgentWorkspaceState {
     threadId: string;
     inputRequestId: string;
     answer: UserInputAnswerRequest["answer"];
+    structuredAnswers?: UserInputAnswerRequest["structuredAnswers"];
     correlationId: string;
   }) => Promise<void>;
   requestComposerFocus: () => void;
@@ -907,7 +908,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     }
   },
 
-  submitInputAnswer: async ({ threadId, inputRequestId, answer, correlationId }) => {
+  submitInputAnswer: async ({ threadId, inputRequestId, answer, structuredAnswers, correlationId }) => {
     const inputKey = codingAgentInputActionKey(threadId, inputRequestId);
     const { pendingInputRequestKeys } = useCodingAgentWorkspace.getState();
     if (pendingInputRequestKeys.includes(inputKey)) return;
@@ -924,6 +925,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         threadId,
         inputRequestId,
         answer,
+        ...(structuredAnswers ? { structuredAnswers } : {}),
         correlationId,
         clientRequestId: nextActionRequestId(),
       });

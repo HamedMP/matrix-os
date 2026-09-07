@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CanonicalSubmitChatInputRequest,
   CanonicalChatApprovalDecision,
   CanonicalChatDetailResponse,
   CanonicalChatRecord,
@@ -9,6 +10,7 @@ import type {
 import { useSocket } from "@/hooks/useSocket";
 import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
+import { projectCanonicalRequests } from "@/lib/canonical-chat-requests";
 import {
   createCanonicalShellChatClient,
   isDefinitiveCanonicalChatRejection,
@@ -239,16 +241,25 @@ export function useCanonicalChatState(): ChatState {
     setSafeError(null);
   }, []);
 
-  const abortCurrent = useCallback(() => {
+  const cancelRun = useCallback(async (runId: string) => {
     const current = detailRef.current;
-    if (!current?.record.activeRun) return;
-    void client.cancelRun(current.record.chat.id, current.record.activeRun.runId, requestId())
-      .then(() => loadDetail(current.record.chat.id))
-      .catch((error: unknown) => {
-        console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("The run could not be stopped. Try again.");
-      });
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current
+      || current.record.activeRun.runId !== runId) return false;
+    try {
+      await client.cancelRun(current.record.chat.id, runId, requestId());
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
+      setSafeError("The run could not be stopped. Try again.");
+      return false;
+    }
   }, [client, loadDetail]);
+
+  const abortCurrent = useCallback(() => {
+    const runId = detailRef.current?.record.activeRun?.runId;
+    if (runId) void cancelRun(runId);
+  }, [cancelRun]);
 
   const submitApproval = useCallback(async (
     runId: string,
@@ -275,6 +286,19 @@ export function useCanonicalChatState(): ChatState {
       console.warn("[canonical-chat] Shell approval failed:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("The approval could not be submitted. Refresh and try again.");
       await loadDetail(current.record.chat.id);
+      return false;
+    }
+  }, [client, loadDetail]);
+
+  const submitInput = useCallback(async (runId: string, inputRequestId: string, answers: CanonicalSubmitChatInputRequest["answers"]) => {
+    const current = detailRef.current;
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current || current.record.activeRun.runId !== runId) return false;
+    try {
+      await client.submitInput(current.record.chat.id, runId, inputRequestId, { answers, clientRequestId: requestId() });
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell input failed:", error instanceof Error ? error.name : "UnknownError");
       return false;
     }
   }, [client, loadDetail]);
@@ -318,7 +342,8 @@ export function useCanonicalChatState(): ChatState {
     }
   }, [client, records]);
 
-  const messages = detail ? projectCanonicalMessages(detail.messages) : [];
+  const messages = detail ? projectCanonicalRequests(detail.activities, detail.runs,
+    projectCanonicalMessages(detail.messages)) : [];
   if (safeError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: safeError, timestamp: Date.now() });
   }
@@ -344,6 +369,8 @@ export function useCanonicalChatState(): ChatState {
     newChat,
     switchConversation,
     abortCurrent,
+    cancelRun,
     submitApproval,
+    submitInput,
   };
 }
