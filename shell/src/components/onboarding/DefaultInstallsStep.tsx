@@ -280,8 +280,8 @@ export function DeveloperToolsSelector({
               className={`group flex min-h-14 cursor-pointer items-center justify-between rounded-xl border px-3 py-2 transition-all duration-200 active:scale-[0.995] ${
                 selectedTools.length === 0
                   ? billingLayout
-                    ? "border-[#0E3422] bg-[#F4F7ED] shadow-[0_8px_24px_rgba(14,52,34,0.08)]"
-                    : "translate-x-1 border-ember bg-[#fff7ec] shadow-[0_10px_28px_rgba(83,68,48,0.10)]"
+                    ? "border-forest bg-forest/5 shadow-sm"
+                    : "translate-x-1 border-ember bg-ember/5 shadow-sm"
                   : "border-forest/10 bg-white/90 hover:translate-x-0.5 hover:border-forest/25"
               }`}
             >
@@ -291,7 +291,7 @@ export function DeveloperToolsSelector({
                   className={`grid size-7 shrink-0 place-items-center rounded-lg border font-mono text-[11px] transition-colors ${
                     selectedTools.length === 0
                       ? billingLayout
-                        ? "border-[#BED77B] bg-[#BED77B] text-[#0E3422]"
+                        ? "border-forest bg-forest text-white"
                         : "border-ember/35 bg-ember text-white"
                       : "border-forest/15 bg-white text-forest/55 group-hover:text-forest"
                   }`}
@@ -299,7 +299,7 @@ export function DeveloperToolsSelector({
                   {developerToolOptions.length + 1}
                 </kbd>
                 <span
-                  className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-[#2F392C] text-white shadow-sm"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-deep text-white shadow-sm"
                   aria-hidden="true"
                 >
                   <ServerIcon className="size-5" />
@@ -320,7 +320,7 @@ export function DeveloperToolsSelector({
                 className={`flex size-5 items-center justify-center rounded-full border transition-colors ${
                   selectedTools.length === 0
                     ? billingLayout
-                      ? "border-[#0E3422] bg-[#BED77B] text-[#0E3422]"
+                      ? "border-forest bg-forest text-white"
                       : "border-ember bg-ember text-white"
                     : "border-forest/20 bg-white"
                 }`}

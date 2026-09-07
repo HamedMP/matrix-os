@@ -37,10 +37,10 @@ describe('developer tool selection schema', () => {
     expect(parseDeveloperToolsJson('[]')).toEqual([]);
   });
 
-  it('resolves explicit, checkout, and default provisioning selections distinctly', () => {
+  it('resolves explicit and checkout selections while preserving omission', () => {
     expect(resolveProvisioningDeveloperTools([], ['codex'])).toEqual([]);
     expect(resolveProvisioningDeveloperTools(undefined, ['pi'])).toEqual(['pi']);
-    expect(resolveProvisioningDeveloperTools(undefined, undefined)).toEqual(DEFAULT_DEVELOPER_TOOLS);
+    expect(resolveProvisioningDeveloperTools(undefined, undefined)).toBeUndefined();
   });
 
   it('deduplicates and serializes selected tools in canonical order', () => {

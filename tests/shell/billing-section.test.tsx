@@ -696,6 +696,12 @@ describe("BillingSection", () => {
     render(<BillingSection mode="provisioning" />);
     await waitForBillingConfigurator();
     fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Builder\b/i }));
+    for (const agent of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      expect((screen.getByRole("checkbox", { name: agent }) as HTMLInputElement).checked).toBe(true);
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
     fireEvent.click(screen.getByRole("radio", { name: "None" }));
     expect((screen.getByRole("radio", { name: "None" }) as HTMLInputElement).checked).toBe(true);
 

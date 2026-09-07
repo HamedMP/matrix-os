@@ -656,10 +656,6 @@ function BillingPanelInner({
     ) ? selectedRegion : nextAllowedRegions[0] ?? selectedRegion;
     const nextProfile = resolveMatrixServerProfile(nextPlanProfile, nextRegion);
     setSelectedProfileSlug(nextPlanProfile.featureSlug);
-    setDeveloperTools((current) => constrainDeveloperToolsSelection(
-      current,
-      getMatrixDeveloperToolPreinstallLimit(nextProfile.hetznerType),
-    ));
     if (nextRegion.featureSlug !== selectedRegion.featureSlug) {
       setSelectedRegionOverride(nextRegion.featureSlug);
     }
@@ -678,11 +674,6 @@ function BillingPanelInner({
       allowedRegions.find((region) => region.featureSlug === featureSlug) ??
       selectedRegion;
     setSelectedRegionOverride(featureSlug);
-    const nextProfile = resolveMatrixServerProfile(selectedPlanProfile, nextRegion);
-    setDeveloperTools((current) => constrainDeveloperToolsSelection(
-      current,
-      getMatrixDeveloperToolPreinstallLimit(nextProfile.hetznerType),
-    ));
     setOpenPicker(null);
     captureBillingTelemetry("region_select", {
       ...telemetryProperties,
