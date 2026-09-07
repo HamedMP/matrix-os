@@ -58,6 +58,8 @@ describe("collaboration browser client", () => {
       send: ReturnType<typeof vi.fn>;
       close: ReturnType<typeof vi.fn>;
     }> = [];
+    let rejectRefresh!: (error: Error) => void;
+    const refresh = new Promise<void>((_resolve, reject) => { rejectRefresh = reject; });
     const api = createCollaborationBrowserApi({
       baseUrl: "https://app.matrix-os.com",
       fetchImpl: async () => new Response(JSON.stringify({
@@ -75,7 +77,7 @@ describe("collaboration browser client", () => {
     });
     const unsubscribe = api.subscribe!(
       "10000000-0000-4000-8000-000000000001",
-      async () => { throw new Error("refresh failed"); },
+      async () => refresh,
       vi.fn(),
     );
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
@@ -87,6 +89,23 @@ describe("collaboration browser client", () => {
       authorityGeneration: "1",
       sequence: "103",
     }) });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1,
+      type: "heartbeat",
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      resourceId: "chat_one",
+      authorityGeneration: "1",
+      sequence: "104",
+    }) });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1,
+      type: "ready",
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      resourceId: "chat_one",
+      authorityGeneration: "1",
+      sequence: "105",
+    }) });
+    rejectRefresh(new Error("refresh failed"));
     await vi.waitFor(() => expect(sockets[0]!.close).toHaveBeenCalled());
     sockets[0]!.onclose?.();
     await vi.advanceTimersByTimeAsync(500);

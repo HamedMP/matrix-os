@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChatSharingButton } from "@matrix-os/ui";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -16,8 +16,9 @@ function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platform
   const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null }>({
     handle: null, runtimeSlot: "primary", runtimeId: null,
   });
-  const api = createChatSharingApi(getGatewayUrl());
-  const collaborationApi = createShellCollaborationApi(platformHost);
+  const gatewayUrl = getGatewayUrl();
+  const api = useMemo(() => createChatSharingApi(gatewayUrl), [gatewayUrl]);
+  const collaborationApi = useMemo(() => createShellCollaborationApi(platformHost), [platformHost]);
   useEffect(() => {
     let active = true;
     void api.get("/api/system/info").then((value) => {

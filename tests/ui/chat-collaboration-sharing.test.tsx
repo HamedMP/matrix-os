@@ -348,4 +348,44 @@ describe("Chat collaboration sharing", () => {
     expect(screen.getByText("Message 1")).toBeVisible();
     expect(screen.getByRole("button", { name: "Load more messages" })).toBeVisible();
   });
+
+  it("recovers every canonical page without collapsing already loaded history", async () => {
+    const message = (sequence: number) => ({
+      id: `msg_${sequence}`, chatId, sequence: String(sequence), role: "user" as const,
+      state: "committed" as const, purpose: "discussion" as const,
+      actor: { actorId: "user_owner", displayName: "Nima" },
+      parts: [{ type: "text" as const, text: `Message ${sequence}` }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    const firstPage = Array.from({ length: 100 }, (_, index) => message(index + 1));
+    const secondPage = Array.from({ length: 100 }, (_, index) => message(index + 101));
+    let refresh = async () => undefined;
+    let messageCount = "200";
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("after=0&limit=100")) return { messages: firstPage };
+        if (path.endsWith("after=100&limit=100")) return { messages: secondPage };
+        if (path.endsWith("after=200&limit=100")) return { messages: [message(201), message(202)] };
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount };
+        return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+          revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
+          capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
+      }),
+      post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load more messages" }));
+    expect(await screen.findByText("Message 200")).toBeVisible();
+    messageCount = "202";
+    await act(async () => refresh());
+    expect(await screen.findByText("Message 202")).toBeVisible();
+    expect(screen.getByText("Message 1")).toBeVisible();
+    expect(screen.getByText("Message 200")).toBeVisible();
+    expect(api.get).toHaveBeenCalledWith(expect.stringContaining("after=200&limit=100"));
+  });
 });

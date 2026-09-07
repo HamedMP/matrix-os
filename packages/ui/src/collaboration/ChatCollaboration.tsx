@@ -281,6 +281,8 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
 }) {
   const [state, dispatch] = useReducer(reduceSharedChat, initialSharedChatState);
   const loadGeneration = useRef(0);
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
   const draftStore = useMemo(() => createCollaborationDraftStore(storage ?? browserStorage()), [storage]);
   const draftKey = useMemo(() => collaborationDraftKey({
     actorId, runtimeId, scopeId, chatId: state.scope?.resourceId ?? "pending_chat",
@@ -303,6 +305,27 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
       if (generation === loadGeneration.current) dispatch({ type: "load_failed" });
     }
   }, [api, scopeId]);
+  const recoverCanonical = useCallback(async () => {
+    const generation = loadGeneration.current;
+    const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
+    const [scopeValue, chatValue] = await Promise.all([api.get(base), api.get(`${base}/chat`)]);
+    const nextScope = CollaborationScopeSchema.parse(scopeValue);
+    const nextChat = CollaborationChatSchema.parse(chatValue);
+    let combined = stateRef.current.messages;
+    const targetCount = BigInt(nextChat.messageCount);
+    while (BigInt(combined.length) < targetCount) {
+      const after = combined.at(-1)?.sequence ?? "0";
+      const page = CollaborationChatMessagesResponseSchema.parse(await api.get(
+        `${base}/chat/messages?after=${encodeURIComponent(after)}&limit=100`,
+      )).messages;
+      const additions = page.filter((message) => !combined.some((existing) => existing.id === message.id));
+      if (additions.length === 0) throw new Error("CollaborationRecoveryIncomplete");
+      combined = [...combined, ...additions];
+    }
+    if (generation !== loadGeneration.current) throw new Error("CollaborationRecoverySuperseded");
+    dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: combined, clearForegroundError: false });
+    markRead(api, base, combined);
+  }, [api, scopeId]);
   useEffect(() => {
     dispatch({ type: "reset" });
     void load(true);
@@ -318,10 +341,11 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
         `/api/collaboration/scopes/${encodeURIComponent(scopeId)}/chat/messages?after=${encodeURIComponent(after)}&limit=100`,
       )).messages;
       if (generation !== loadGeneration.current) return;
-      const appended = next.filter((message) => !state.messages.some((existing) => existing.id === message.id));
-      const combined = [...state.messages, ...appended];
+      const current = stateRef.current;
+      const appended = next.filter((message) => !current.messages.some((existing) => existing.id === message.id));
+      const combined = [...current.messages, ...appended];
       dispatch({ type: "page_loaded", messages: combined,
-        hasMore: appended.length > 0 && BigInt(state.chat.messageCount) > BigInt(combined.length) });
+        hasMore: appended.length > 0 && BigInt(current.chat?.messageCount ?? "0") > BigInt(combined.length) });
       markRead(api, `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`, combined);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -333,7 +357,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
     const key = collaborationDraftKey({ actorId, runtimeId, scopeId, chatId: state.scope.resourceId });
     dispatch({ type: "draft_changed", draft: draftStore.load(key) });
   }, [actorId, draftStore, runtimeId, state.scope, scopeId]);
-  useEffect(() => api.subscribe?.(scopeId, () => load(false), () => dispatch({ type: "unavailable" })), [api, load, scopeId]);
+  useEffect(() => api.subscribe?.(scopeId, recoverCanonical, () => dispatch({ type: "unavailable" })), [api, recoverCanonical, scopeId]);
   const updateDraft = (text: string) => {
     const next = { text, mode: "discussion" as const };
     dispatch({ type: "draft_changed", draft: next });
@@ -348,13 +372,18 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
       });
       draftStore.clear(draftKey);
       dispatch({ type: "draft_changed", draft: { text: "", mode: "discussion" } });
-      await load(false);
+      dispatch({ type: "send_finished" });
+      try {
+        await recoverCanonical();
+      } catch (failure: unknown) {
+        console.warn("[chat-collaboration] sent message refresh failed", failure instanceof Error ? failure.name : "UnknownError");
+        dispatch({ type: "load_failed" });
+      }
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] discussion send failed", failure instanceof Error ? failure.name : "UnknownError");
       dispatch({ type: "send_failed" });
       return;
     }
-    dispatch({ type: "send_finished" });
   };
   return { state, loadMoreMessages, updateDraft, send };
 }
@@ -435,6 +464,7 @@ function SharedMessageView({ message }: { message: SharedMessage }) {
   const texts = keyedValues(message.parts.flatMap((part) => part.type === "text" || part.type === "summary" ? [part.text] : []), "text");
   const notices = keyedValues(message.parts.flatMap((part) => part.type === "status" ? [part.detail ?? part.label]
     : part.type === "tool_request" ? [`Tool request: ${part.label}`]
+      : part.type === "tool_result" ? [part.text ?? `Tool ${part.outcome}`] : []), "notice");
   return <article className="rounded-2xl border p-4">
     <header className="mb-2 flex items-center justify-between gap-3">
       <span className="font-medium">{message.actor.displayName}</span>

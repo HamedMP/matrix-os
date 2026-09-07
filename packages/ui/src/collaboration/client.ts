@@ -93,6 +93,18 @@ export function createCollaborationBrowserApi(options: {
           socket = next;
           let usable = true;
           let refreshQueue = Promise.resolve();
+          const enqueueAfterRecovery = (operation: () => void | Promise<void>) => {
+            refreshQueue = refreshQueue.then(async () => {
+              if (!usable || closed) return;
+              await operation();
+            }).catch((error: unknown) => {
+              console.warn("[chat-collaboration] canonical refresh failed", error instanceof Error ? error.name : "UnknownError");
+              if (usable && !closed) {
+                usable = false;
+                next.close(1011, "Refresh failed");
+              }
+            });
+          };
           next.onopen = () => { attempt = 0; };
           next.onmessage = (event) => {
             if (!usable) return;
@@ -104,22 +116,18 @@ export function createCollaborationBrowserApi(options: {
               const frame = CollaborationEventFrameSchema.parse(JSON.parse(event.data) as unknown);
               if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
               if (frame.type === "heartbeat") {
-                sequence = frame.sequence;
                 next.send(JSON.stringify({ version: 1, type: "heartbeat" }));
+                enqueueAfterRecovery(() => { sequence = frame.sequence; });
               } else if (frame.type === "ready") {
-                sequence = frame.sequence;
+                enqueueAfterRecovery(() => { sequence = frame.sequence; });
               } else if (frame.type === "unavailable") {
                 closed = true;
                 onUnavailable();
                 next.close(1008, "Unavailable");
               } else if (frame.type === "changed" || frame.type === "capabilities_changed" || frame.type === "refresh_required") {
-                refreshQueue = refreshQueue.then(async () => {
-                  if (!usable || closed) return;
+                enqueueAfterRecovery(async () => {
                   await onEvent();
                   if (usable && !closed) sequence = frame.sequence;
-                }).catch((error: unknown) => {
-                  console.warn("[chat-collaboration] canonical refresh failed", error instanceof Error ? error.name : "UnknownError");
-                  if (usable && !closed) next.close(1011, "Refresh failed");
                 });
               }
             } catch (error: unknown) {

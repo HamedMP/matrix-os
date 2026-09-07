@@ -224,14 +224,19 @@ export default function SharedScreen() {
   };
   const refreshLiveChat = useCallback(async (scopeId: string) => {
     const actorToken = await token();
-    const [nextScope, nextChat, page] = await Promise.all([
+    const [nextScope, nextChat] = await Promise.all([
       fetchCollaborationScope(actorToken, scopeId),
       fetchSharedChat(actorToken, scopeId),
-      fetchSharedChatMessages(actorToken, scopeId, latestSequenceRef.current),
     ]);
-    const combined = [...messagesRef.current, ...page.messages.filter(
-      (message) => !messagesRef.current.some((existing) => existing.id === message.id),
-    )];
+    let combined = messagesRef.current;
+    const targetCount = BigInt(nextChat.messageCount);
+    while (BigInt(combined.length) < targetCount) {
+      const page = await fetchSharedChatMessages(actorToken, scopeId, combined.at(-1)?.sequence ?? "0");
+      const additions = page.messages.filter((message) => !combined.some((existing) => existing.id === message.id));
+      if (additions.length === 0) throw new Error("CollaborationRecoveryIncomplete");
+      combined = [...combined, ...additions];
+    }
+    if (eventScopeRef.current !== scopeId) throw new Error("CollaborationRecoverySuperseded");
     messagesRef.current = combined;
     latestSequenceRef.current = combined.at(-1)?.sequence ?? latestSequenceRef.current;
     dispatch({ type: "patch", patch: {
@@ -240,7 +245,7 @@ export default function SharedScreen() {
       messages: combined,
       hasMoreMessages: BigInt(nextChat.messageCount) > BigInt(combined.length),
     } });
-    const sequence = page.messages.at(-1)?.sequence;
+    const sequence = combined.at(-1)?.sequence;
     if (sequence) void updateSharedChatReadState(actorToken, scopeId, sequence).catch((failure: unknown) => {
       console.warn("[mobile-collaboration] realtime read state failed", failure instanceof Error ? failure.name : "UnknownError");
     });
@@ -276,6 +281,19 @@ export default function SharedScreen() {
         socket = next;
         let usable = true;
         let refreshQueue = Promise.resolve();
+        const enqueueAfterRecovery = (operation: () => void | Promise<void>) => {
+          refreshQueue = refreshQueue.then(async () => {
+            if (!usable || closed) return;
+            await operation();
+          }).catch((failure: unknown) => {
+            console.warn("[mobile-collaboration] realtime refresh failed", failure instanceof Error ? failure.name : "UnknownError");
+            dispatch({ type: "patch", patch: { error: "This shared Chat could not be refreshed. Try again." } });
+            if (usable && !closed) {
+              usable = false;
+              next.close(1011, "Refresh failed");
+            }
+          });
+        };
         next.onopen = () => { attempt = 0; };
         next.onmessage = (event) => {
           if (!usable) return;
@@ -287,23 +305,18 @@ export default function SharedScreen() {
             const frame = CollaborationEventFrameSchema.parse(JSON.parse(event.data) as unknown);
             if (frame.scopeId !== activeScopeId) throw new Error("ScopeMismatch");
             if (frame.type === "heartbeat") {
-              eventSequenceRef.current = frame.sequence;
               if (next.readyState === WebSocket.OPEN) next.send(JSON.stringify({ version: 1, type: "heartbeat" }));
+              enqueueAfterRecovery(() => { eventSequenceRef.current = frame.sequence; });
             } else if (frame.type === "ready") {
-              eventSequenceRef.current = frame.sequence;
+              enqueueAfterRecovery(() => { eventSequenceRef.current = frame.sequence; });
             } else if (frame.type === "unavailable") {
               closed = true;
               dispatch({ type: "patch", patch: { scope: null, error: "This shared Chat is unavailable. Your access may have changed." } });
               next.close(1008, "Unavailable");
             } else if (frame.type === "changed" || frame.type === "capabilities_changed" || frame.type === "refresh_required") {
-              refreshQueue = refreshQueue.then(async () => {
-                if (!usable || closed) return;
+              enqueueAfterRecovery(async () => {
                 await refreshLiveChat(activeScopeId);
                 if (usable && !closed) eventSequenceRef.current = frame.sequence;
-              }).catch((failure: unknown) => {
-                console.warn("[mobile-collaboration] realtime refresh failed", failure instanceof Error ? failure.name : "UnknownError");
-                dispatch({ type: "patch", patch: { error: "This shared Chat could not be refreshed. Try again." } });
-                if (usable && !closed) next.close(1011, "Refresh failed");
               });
             }
           } catch (failure: unknown) {
