@@ -12,7 +12,7 @@ export interface CollaborationApi {
   post(path: string, body: unknown): Promise<unknown>;
   patch?(path: string, body: unknown): Promise<unknown>;
   delete(path: string, body?: unknown): Promise<unknown>;
-  subscribe?(scopeId: string, onEvent: () => void, onUnavailable: () => void): () => void;
+  subscribe?(scopeId: string, onEvent: () => void | Promise<void>, onUnavailable: () => void): () => void;
 }
 
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
@@ -102,7 +102,6 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       setPending(false);
     }
   };
-
   return <Dialog open onClose={() => { if (!pending) onClose(); }} aria-label="Invite collaborators"
     className="ph-no-capture flex max-h-[85vh] w-[min(92vw,640px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6">
     <div className="flex items-start justify-between gap-4">

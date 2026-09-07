@@ -447,6 +447,7 @@ export const CollaborationEventFrameSchema = z.discriminatedUnion("type", [
   }).strict(),
   CollaborationEventBaseSchema.extend({
     type: z.literal("refresh_required"),
+    sequence: CollaborationRevisionSchema,
   }).strict(),
   CollaborationEventBaseSchema.extend({
     type: z.literal("unavailable"),

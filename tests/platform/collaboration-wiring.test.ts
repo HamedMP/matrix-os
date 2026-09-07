@@ -39,18 +39,18 @@ describe("platform collaboration wiring", () => {
       String(input).endsWith("/chat")
         ? { id: "chat_one", scopeId, title: "Shared planning", lifecycle: "active", revision: "2", messageCount: "3" }
         : {
-            id: scopeId,
-            ownerId: platformCollaborationActors.owner,
-            kind: "chat",
-            resourceId: "chat_one",
-            membershipMode: "direct",
-            lifecycle: "shared",
-            revision: "2",
-            authEpoch: "2",
-            authorityGeneration: "1",
-            role: "editor",
-            capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
-          },
+          id: scopeId,
+          ownerId: platformCollaborationActors.owner,
+          kind: "chat",
+          resourceId: "chat_one",
+          membershipMode: "direct",
+          lifecycle: "shared",
+          revision: "2",
+          authEpoch: "1",
+          authorityGeneration: "1",
+          role: "editor",
+          capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+        },
     ), {
       headers: { "content-type": "application/json" },
     }));

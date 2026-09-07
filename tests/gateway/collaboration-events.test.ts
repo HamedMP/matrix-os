@@ -88,6 +88,31 @@ describe("CollaborationEventRegistry", () => {
     ]);
   });
 
+  it("advances an overflowed replay cursor after requiring a canonical refresh", async () => {
+    for (let sequence = 3; sequence <= 103; sequence += 1) await insertEvent(fixture, sequence);
+    const ws = socket();
+    const session = await registry.open({
+      connectionId: "connection_overflow",
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      authorityGeneration: 1,
+      socket: ws,
+    });
+
+    expect(session.sequence).toBe(103);
+    expect(ws.send.mock.calls.map(([value]) => JSON.parse(value as string))).toEqual([
+      expect.objectContaining({ type: "refresh_required", sequence: "103" }),
+      expect.objectContaining({ type: "ready", sequence: "103" }),
+    ]);
+
+    ws.send.mockClear();
+    await registry.broadcastScope(collaborationIds.scope);
+    expect(ws.send).not.toHaveBeenCalled();
+    await insertEvent(fixture, 104);
+    await registry.broadcastScope(collaborationIds.scope);
+    expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"sequence":"104"'));
+  });
+
   it("rechecks current membership for every broadcast and drains revoked actors", async () => {
     const ownerSocket = socket();
     const editorSocket = socket();

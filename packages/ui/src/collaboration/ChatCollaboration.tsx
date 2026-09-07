@@ -7,7 +7,7 @@ import {
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { z } from "zod/v4";
@@ -176,7 +176,7 @@ function InvitationView({ api, invitationId, openChat }: {
     if (!invitation) return;
     setPending(true); setError(false);
     try {
-      const result = z.object({ scopeId: z.uuid() }).loose().parse(await api.post(
+      const result = z.looseObject({ scopeId: z.uuid() }).parse(await api.post(
         `/api/collaboration/invitations/${encodeURIComponent(invitation.id)}/accept`,
         { clientRequestId: crypto.randomUUID(), expectedRevision: invitation.revision },
       ));
@@ -208,28 +208,83 @@ function InvitationView({ api, invitationId, openChat }: {
   </main>;
 }
 
-function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
+type SharedScope = z.infer<typeof CollaborationScopeSchema>;
+type SharedChat = z.infer<typeof CollaborationChatSchema>;
+type SharedChatError = "load" | "send" | "unavailable" | null;
+
+interface SharedChatState {
+  scope: SharedScope | null;
+  chat: SharedChat | null;
+  messages: SharedMessage[];
+  hasMoreMessages: boolean;
+  loadingMoreMessages: boolean;
+  historyPageError: boolean;
+  draft: CollaborationDraft;
+  loading: boolean;
+  sending: boolean;
+  error: SharedChatError;
+}
+
+type SharedChatAction =
+  | { type: "reset" }
+  | { type: "loaded"; scope: SharedScope; chat: SharedChat; messages: SharedMessage[]; clearForegroundError: boolean }
+  | { type: "load_failed" }
+  | { type: "page_started" }
+  | { type: "page_loaded"; messages: SharedMessage[]; hasMore: boolean }
+  | { type: "page_failed" }
+  | { type: "draft_changed"; draft: CollaborationDraft }
+  | { type: "send_started" }
+  | { type: "send_finished" }
+  | { type: "send_failed" }
+  | { type: "unavailable" };
+
+const initialSharedChatState: SharedChatState = {
+  scope: null,
+  chat: null,
+  messages: [],
+  hasMoreMessages: false,
+  loadingMoreMessages: false,
+  historyPageError: false,
+  draft: { text: "", mode: "discussion" },
+  loading: true,
+  sending: false,
+  error: null,
+};
+
+function reduceSharedChat(state: SharedChatState, action: SharedChatAction): SharedChatState {
+  switch (action.type) {
+    case "reset": return initialSharedChatState;
+    case "loaded":
+      return { ...state, scope: action.scope, chat: action.chat, messages: action.messages,
+        hasMoreMessages: BigInt(action.chat.messageCount) > BigInt(action.messages.length),
+        loadingMoreMessages: false, historyPageError: false, loading: false,
+        error: action.clearForegroundError || state.error === "load" || state.error === "unavailable" ? null : state.error };
+    case "load_failed": return { ...state, loading: false, error: "load" };
+    case "page_started": return { ...state, loadingMoreMessages: true, historyPageError: false };
+    case "page_loaded": return { ...state, messages: action.messages, hasMoreMessages: action.hasMore,
+      loadingMoreMessages: false, historyPageError: false };
+    case "page_failed": return { ...state, loadingMoreMessages: false, historyPageError: true };
+    case "draft_changed": return { ...state, draft: action.draft };
+    case "send_started": return { ...state, sending: true, error: null };
+    case "send_finished": return { ...state, sending: false };
+    case "send_failed": return { ...state, sending: false, error: "send" };
+    case "unavailable": return { ...state, error: "unavailable" };
+  }
+}
+
+function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: {
   api: CollaborationApi;
   actorId: string;
   runtimeId: string;
   scopeId: string;
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 }) {
-  const [scope, setScope] = useState<z.infer<typeof CollaborationScopeSchema> | null>(null);
-  const [chat, setChat] = useState<z.infer<typeof CollaborationChatSchema> | null>(null);
-  const [messages, setMessages] = useState<SharedMessage[]>([]);
-  const [hasMoreMessages, setHasMoreMessages] = useState(false);
-  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
-  const [historyPageError, setHistoryPageError] = useState(false);
-  const [draft, setDraft] = useState<CollaborationDraft>({ text: "", mode: "discussion" });
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<"load" | "send" | "unavailable" | null>(null);
+  const [state, dispatch] = useReducer(reduceSharedChat, initialSharedChatState);
   const loadGeneration = useRef(0);
   const draftStore = useMemo(() => createCollaborationDraftStore(storage ?? browserStorage()), [storage]);
   const draftKey = useMemo(() => collaborationDraftKey({
-    actorId, runtimeId, scopeId, chatId: scope?.resourceId ?? "pending_chat",
-  }), [actorId, runtimeId, scope?.resourceId, scopeId]);
+    actorId, runtimeId, scopeId, chatId: state.scope?.resourceId ?? "pending_chat",
+  }), [actorId, runtimeId, state.scope?.resourceId, scopeId]);
   const load = useCallback(async (clearForegroundError = false) => {
     const generation = ++loadGeneration.current;
     const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
@@ -241,149 +296,153 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
       const nextChat = CollaborationChatSchema.parse(chatValue);
       const nextMessages = CollaborationChatMessagesResponseSchema.parse(messagesValue).messages;
       if (generation !== loadGeneration.current) return;
-      setScope(nextScope); setChat(nextChat); setMessages(nextMessages);
-      setLoadingMoreMessages(false);
-      setError((current) => clearForegroundError || current === "load" || current === "unavailable" ? null : current);
-      setHistoryPageError(false);
-      setHasMoreMessages(BigInt(nextChat.messageCount) > BigInt(nextMessages.length));
-      if (api.patch && nextMessages.length > 0) {
-        const sequence = nextMessages.at(-1)!.sequence;
-        void api.patch(`${base}/user-state`, { readThroughSeq: sequence }).catch((failure: unknown) => {
-          console.warn("[chat-collaboration] read state update failed", failure instanceof Error ? failure.name : "UnknownError");
-        });
-      }
+      dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: nextMessages, clearForegroundError });
+      markRead(api, base, nextMessages);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] Chat load failed", failure instanceof Error ? failure.name : "UnknownError");
-      if (generation === loadGeneration.current) setError("load");
-    } finally {
-      if (generation === loadGeneration.current) setLoading(false);
+      if (generation === loadGeneration.current) dispatch({ type: "load_failed" });
     }
   }, [api, scopeId]);
   useEffect(() => {
-    setScope(null); setChat(null); setMessages([]); setDraft({ text: "", mode: "discussion" });
-    setLoading(true); setLoadingMoreMessages(false); setError(null);
+    dispatch({ type: "reset" });
     void load(true);
     return () => { loadGeneration.current += 1; };
   }, [load]);
   const loadMoreMessages = async () => {
-    const after = messages.at(-1)?.sequence;
-    if (!after || !chat || loadingMoreMessages) return;
+    const after = state.messages.at(-1)?.sequence;
+    if (!after || !state.chat || state.loadingMoreMessages) return;
     const generation = loadGeneration.current;
-    setLoadingMoreMessages(true);
-    setHistoryPageError(false);
+    dispatch({ type: "page_started" });
     try {
       const next = CollaborationChatMessagesResponseSchema.parse(await api.get(
         `/api/collaboration/scopes/${encodeURIComponent(scopeId)}/chat/messages?after=${encodeURIComponent(after)}&limit=100`,
       )).messages;
       if (generation !== loadGeneration.current) return;
-      const appended = next.filter((message) => !messages.some((existing) => existing.id === message.id));
-      const combined = [...messages, ...appended];
-      setMessages(combined);
-      setHasMoreMessages(appended.length > 0 && BigInt(chat.messageCount) > BigInt(combined.length));
-      const sequence = combined.at(-1)?.sequence;
-      if (sequence && api.patch) {
-        void api.patch(`/api/collaboration/scopes/${encodeURIComponent(scopeId)}/user-state`, {
-          readThroughSeq: sequence,
-        }).catch((failure: unknown) => {
-          console.warn("[chat-collaboration] read state update failed", failure instanceof Error ? failure.name : "UnknownError");
-        });
-      }
+      const appended = next.filter((message) => !state.messages.some((existing) => existing.id === message.id));
+      const combined = [...state.messages, ...appended];
+      dispatch({ type: "page_loaded", messages: combined,
+        hasMore: appended.length > 0 && BigInt(state.chat.messageCount) > BigInt(combined.length) });
+      markRead(api, `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`, combined);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
-      if (generation === loadGeneration.current) setHistoryPageError(true);
-    } finally {
-      if (generation === loadGeneration.current) setLoadingMoreMessages(false);
+      if (generation === loadGeneration.current) dispatch({ type: "page_failed" });
     }
   };
   useEffect(() => {
-    if (!scope) return;
-    const key = collaborationDraftKey({ actorId, runtimeId, scopeId, chatId: scope.resourceId });
-    setDraft(draftStore.load(key));
-  }, [actorId, draftStore, runtimeId, scope, scopeId]);
-  useEffect(() => api.subscribe?.(scopeId, () => { void load(false); }, () => setError("unavailable")), [api, load, scopeId]);
+    if (!state.scope) return;
+    const key = collaborationDraftKey({ actorId, runtimeId, scopeId, chatId: state.scope.resourceId });
+    dispatch({ type: "draft_changed", draft: draftStore.load(key) });
+  }, [actorId, draftStore, runtimeId, state.scope, scopeId]);
+  useEffect(() => api.subscribe?.(scopeId, () => load(false), () => dispatch({ type: "unavailable" })), [api, load, scopeId]);
   const updateDraft = (text: string) => {
     const next = { text, mode: "discussion" as const };
-    setDraft(next);
-    if (scope) draftStore.save(draftKey, next);
+    dispatch({ type: "draft_changed", draft: next });
+    if (state.scope) draftStore.save(draftKey, next);
   };
   const send = async () => {
-    if (!scope || !draft.text.trim() || !deriveChatPermissions(scope).canDiscuss) return;
-    setSending(true); setError(null);
+    if (!state.scope || !state.draft.text.trim() || !deriveChatPermissions(state.scope).canDiscuss) return;
+    dispatch({ type: "send_started" });
     try {
       await api.post(`/api/collaboration/scopes/${encodeURIComponent(scopeId)}/chat/messages`, {
-        clientRequestId: crypto.randomUUID(), expectedRevision: scope.revision, text: draft.text.trim(),
+        clientRequestId: crypto.randomUUID(), expectedRevision: state.scope.revision, text: state.draft.text.trim(),
       });
       draftStore.clear(draftKey);
-      setDraft({ text: "", mode: "discussion" });
+      dispatch({ type: "draft_changed", draft: { text: "", mode: "discussion" } });
       await load(false);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] discussion send failed", failure instanceof Error ? failure.name : "UnknownError");
-      setError("send");
-    } finally { setSending(false); }
+      dispatch({ type: "send_failed" });
+      return;
+    }
+    dispatch({ type: "send_finished" });
   };
-  if (loading) return <p role="status" className="p-8">Loading shared Chat…</p>;
-  if (!scope || !chat || error === "load" || error === "unavailable") return <SafeError title="Shared Chat unavailable" />;
-  const permissions = deriveChatPermissions(scope);
+  return { state, loadMoreMessages, updateDraft, send };
+}
+
+function SharedChatView(props: Parameters<typeof useSharedChatController>[0]) {
+  const { state, loadMoreMessages, updateDraft, send } = useSharedChatController(props);
+  if (state.loading) return <p role="status" className="p-8">Loading shared Chat…</p>;
+  if (!state.scope || !state.chat || state.error === "load" || state.error === "unavailable") {
+    return <SafeError title="Shared Chat unavailable" />;
+  }
+  const permissions = deriveChatPermissions(state.scope);
   return <main className="mx-auto flex h-full min-h-[32rem] w-full max-w-4xl flex-col">
     <header className="border-b p-4 sm:px-6">
       <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0"><h1 className="truncate text-lg font-semibold">{chat.title}</h1>
+        <div className="min-w-0"><h1 className="truncate text-lg font-semibold">{state.chat.title}</h1>
           <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Shared Chat · {permissions.roleLabel}</p></div>
         <span className="rounded-full border px-2.5 py-1 text-xs">Discussion only</span>
       </div>
     </header>
-    <section aria-label="Chat history" className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-      {messages.length === 0 ? <div className="py-12 text-center">
-        <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start the discussion</h2>
-        <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Messages here are visible to everyone in this shared Chat.</p>
-      </div> : messages.map((message) => <SharedMessageView key={message.id} message={message} />)}
-      {historyPageError ? <p role="alert" className="text-center text-sm">More messages could not be loaded. Try again.</p> : null}
-      {hasMoreMessages ? <div className="text-center"><button type="button" className={buttonClass}
-        disabled={loadingMoreMessages} onClick={() => void loadMoreMessages()}>
-        {loadingMoreMessages ? "Loading…" : "Load more messages"}
-      </button></div> : null}
-    </section>
-    <footer className="border-t p-4 sm:px-6">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
-        <span>{permissions.composerExplanation}</span><span>{permissions.aiExplanation}</span>
-      </div>
-      {error === "send" ? <p role="alert" className="mb-2 text-sm">Message was not sent. Your draft is still here—try again.</p> : null}
-      <div className="flex items-end gap-2">
-        <label className="min-w-0 flex-1"><span className="sr-only">Message everyone</span>
-          <textarea aria-label="Message everyone" rows={3} value={draft.text} disabled={!permissions.canDiscuss || sending}
-            placeholder={permissions.canDiscuss ? "Message everyone…" : "Read-only access"}
-            onChange={(event) => updateDraft(event.target.value)} className="block w-full resize-none rounded-xl border bg-transparent px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" />
-        </label>
-        <button type="button" className={buttonClass} disabled={!permissions.canDiscuss || sending || !draft.text.trim()} onClick={() => void send()}>
-          {sending ? "Sending…" : "Send message"}
-        </button>
-      </div>
-    </footer>
+    <SharedChatHistory state={state} loadMoreMessages={loadMoreMessages} />
+    <SharedChatComposer state={state} permissions={permissions} updateDraft={updateDraft} send={send} />
   </main>;
+}
+
+function SharedChatHistory({ state, loadMoreMessages }: {
+  state: SharedChatState;
+  loadMoreMessages: () => Promise<void>;
+}) {
+  return <section aria-label="Chat history" className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
+    {state.messages.length === 0 ? <div className="py-12 text-center">
+      <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start the discussion</h2>
+      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Messages here are visible to everyone in this shared Chat.</p>
+    </div> : state.messages.map((message) => <SharedMessageView key={message.id} message={message} />)}
+    {state.historyPageError ? <p role="alert" className="text-center text-sm">More messages could not be loaded. Try again.</p> : null}
+    {state.hasMoreMessages ? <div className="text-center"><button type="button" className={buttonClass}
+      disabled={state.loadingMoreMessages} onClick={() => void loadMoreMessages()}>
+      {state.loadingMoreMessages ? "Loading…" : "Load more messages"}
+    </button></div> : null}
+  </section>;
+}
+
+function SharedChatComposer({ state, permissions, updateDraft, send }: {
+  state: SharedChatState;
+  permissions: ReturnType<typeof deriveChatPermissions>;
+  updateDraft: (text: string) => void;
+  send: () => Promise<void>;
+}) {
+  return <footer className="border-t p-4 sm:px-6">
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+      <span>{permissions.composerExplanation}</span><span>{permissions.aiExplanation}</span>
+    </div>
+    {state.error === "send" ? <p role="alert" className="mb-2 text-sm">Message was not sent. Your draft is still here—try again.</p> : null}
+    <div className="flex items-end gap-2">
+      <label className="min-w-0 flex-1"><span className="sr-only">Message everyone</span>
+        <textarea aria-label="Message everyone" rows={3} value={state.draft.text} disabled={!permissions.canDiscuss || state.sending}
+          placeholder={permissions.canDiscuss ? "Message everyone…" : "Read-only access"}
+          onChange={(event) => updateDraft(event.target.value)} className="block w-full resize-none rounded-xl border bg-transparent px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" />
+      </label>
+      <button type="button" className={buttonClass} disabled={!permissions.canDiscuss || state.sending || !state.draft.text.trim()} onClick={() => void send()}>
+        {state.sending ? "Sending…" : "Send message"}
+      </button>
+    </div>
+  </footer>;
+}
+
+function markRead(api: CollaborationApi, base: string, messages: readonly SharedMessage[]): void {
+  const sequence = messages.at(-1)?.sequence;
+  if (!sequence || !api.patch) return;
+  void api.patch(`${base}/user-state`, { readThroughSeq: sequence }).catch((failure: unknown) => {
+    console.warn("[chat-collaboration] read state update failed", failure instanceof Error ? failure.name : "UnknownError");
+  });
 }
 
 function SharedMessageView({ message }: { message: SharedMessage }) {
   const attachments: ChatMessageAttachment[] = message.parts.flatMap((part) => part.type === "attachment_reference"
     ? [{ id: part.attachmentId, label: part.label, kind: part.kind === "image" ? "image" as const : "file" as const }]
     : []);
-  const texts = message.parts.flatMap((part, partIndex) => part.type === "text" || part.type === "summary"
-    ? [{ key: `${message.id}:text:${partIndex}`, text: part.text }]
-    : []);
-  const notices = message.parts.flatMap((part, partIndex) => part.type === "status"
-    ? [{ key: `${message.id}:status:${partIndex}`, text: part.detail ?? part.label }]
-    : part.type === "tool_request"
-      ? [{ key: `${message.id}:tool-request:${partIndex}`, text: `Tool request: ${part.label}` }]
-      : part.type === "tool_result"
-        ? [{ key: `${message.id}:tool-result:${partIndex}`, text: part.text ?? `Tool ${part.outcome}` }]
-        : []);
+  const texts = keyedValues(message.parts.flatMap((part) => part.type === "text" || part.type === "summary" ? [part.text] : []), "text");
+  const notices = keyedValues(message.parts.flatMap((part) => part.type === "status" ? [part.detail ?? part.label]
+    : part.type === "tool_request" ? [`Tool request: ${part.label}`]
   return <article className="rounded-2xl border p-4">
     <header className="mb-2 flex items-center justify-between gap-3">
       <span className="font-medium">{message.actor.displayName}</span>
       <time className="text-xs" style={{ color: "var(--text-tertiary)" }} dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
     </header>
     <div className="prose prose-sm max-w-none break-words">
-      {texts.map((entry) => <ReactMarkdown key={entry.key} remarkPlugins={[remarkGfm]} urlTransform={safeMarkdownUrl}>{entry.text}</ReactMarkdown>)}
-      {notices.map((entry) => <p key={entry.key} className="text-sm" style={{ color: "var(--text-secondary)" }}>{entry.text}</p>)}
+      {texts.map((item) => <ReactMarkdown key={item.key} remarkPlugins={[remarkGfm]} urlTransform={safeMarkdownUrl}>{item.value}</ReactMarkdown>)}
+      {notices.map((item) => <p key={item.key} className="text-sm" style={{ color: "var(--text-secondary)" }}>{item.value}</p>)}
     </div>
     {attachments.length > 0 ? <div className="mt-3"><ChatAttachments attachments={attachments} /></div> : null}
   </article>;
@@ -424,13 +483,21 @@ function roleLabel(role: "owner" | "editor" | "viewer"): string {
   return role[0]!.toUpperCase() + role.slice(1);
 }
 
-const collaborationDateTimeFormat = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+const messageTimeFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 function formatTime(value: string): string {
-  return collaborationDateTimeFormat.format(new Date(value));
+  return messageTimeFormatter.format(new Date(value));
+}
+
+function keyedValues(values: readonly string[], kind: string): Array<{ key: string; value: string }> {
+  // Message parts are contract-capped at 64; a plain record avoids retaining
+  // collection state beyond this render.
+  const occurrences: Record<string, number> = Object.create(null) as Record<string, number>;
+  return values.map((value) => {
+    const occurrence = (occurrences[value] ?? 0) + 1;
+    occurrences[value] = occurrence;
+    return { key: `${kind}:${value}:${occurrence}`, value };
+  });
 }
 
 const buttonClass = "rounded-xl border px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";

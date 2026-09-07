@@ -11,6 +11,7 @@ import type { PlatformCollaborationRepository } from "./repository.js";
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const ACTOR = "[A-Za-z0-9_-]{1,128}";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_EXPORT_BYTES = 512 * 1024 * 1024;
 const PROOF_HEADER = "x-matrix-collaboration-proof";
 const RUNTIME = "[A-Za-z0-9:_-]{1,128}";
 
@@ -131,6 +132,7 @@ export class CollaborationProxy {
       }
       const baseUrl = parseRuntimeBaseUrl(runtime.baseUrl);
       if (!baseUrl) return safeResponse("Collaboration unavailable", 503);
+      const exportRequest = isExportRequest(input.method, input.path);
 
       const signedProof = this.options.signer.signHttp({
         actorId: input.actorId,
@@ -160,7 +162,7 @@ export class CollaborationProxy {
           headers,
           body: input.body.byteLength === 0 ? undefined : Uint8Array.from(input.body).buffer,
           redirect: "error",
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(exportRequest ? 30_000 : 10_000),
         },
       );
       if (!response.ok) {
@@ -176,6 +178,20 @@ export class CollaborationProxy {
           safeStatus(response.status),
         );
       }
+      if (exportRequest) {
+        const body = boundedResponseStream(response, MAX_EXPORT_BYTES);
+        if (!body) {
+          await response.body?.cancel();
+          return safeResponse("Collaboration unavailable", 503);
+        }
+        const headers = new Headers({
+          "cache-control": "private, no-store",
+          "content-type": safeContentType(response.headers.get("content-type")),
+        });
+        const contentLength = response.headers.get("content-length");
+        if (contentLength && Number(contentLength) <= MAX_EXPORT_BYTES) headers.set("content-length", contentLength);
+        return new Response(body, { status: response.status, headers });
+      }
       const bytes = await readBounded(response, MAX_RESPONSE_BYTES);
       if (!bytes) return safeResponse("Collaboration unavailable", 503);
       return new Response(Uint8Array.from(bytes).buffer, {
@@ -190,6 +206,42 @@ export class CollaborationProxy {
       return safeResponse("Collaboration unavailable", 503);
     }
   }
+}
+
+function isExportRequest(method: string, path: string): boolean {
+  return method === "GET" && new RegExp(`^/api/collaboration/scopes/${UUID}/exports/${UUID}$`).test(path);
+}
+
+function boundedResponseStream(response: Response, maxBytes: number): ReadableStream<Uint8Array> | null {
+  const declared = Number(response.headers.get("content-length") ?? 0);
+  if (!Number.isFinite(declared) || declared < 0 || declared > maxBytes || !response.body) return null;
+  const reader = response.body.getReader();
+  let size = 0;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          controller.close();
+          reader.releaseLock();
+          return;
+        }
+        size += chunk.value.byteLength;
+        if (size > maxBytes) {
+          await reader.cancel();
+          controller.error(new Error("Collaboration export exceeds safe limits"));
+          return;
+        }
+        controller.enqueue(chunk.value);
+      } catch (error: unknown) {
+        console.warn("[collaboration-proxy] export stream unavailable", error instanceof Error ? error.name : "UnknownError");
+        controller.error(new Error("Collaboration unavailable"));
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason);
+    },
+  });
 }
 
 function policyAllows(
