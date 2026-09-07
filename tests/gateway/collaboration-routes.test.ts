@@ -22,6 +22,10 @@ const invitationRequestId = "50000000-0000-4000-8000-000000000001";
 const acceptanceRequestId = "50000000-0000-4000-8000-000000000002";
 const discussionRequestId = "50000000-0000-4000-8000-000000000003";
 
+function request(index: number): string {
+  return `50000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
+}
+
 describe("collaboration gateway routes", () => {
   let fixture: CollaborationTestDatabase;
   let app: Hono;
@@ -254,6 +258,86 @@ describe("collaboration gateway routes", () => {
       expect(response.status).toBe(400);
     }
     expect(await fixture.db.selectFrom("chat_user_state").selectAll().execute()).toEqual([]);
+  });
+
+  it("exposes owner-only Chat archive, restore, export, operation, and delete routes", async () => {
+    await shareChat();
+    const lifecyclePath = `/api/collaboration/scopes/${collaborationIds.scope}/lifecycle`;
+    const archived = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "archive", clientRequestId: request(30), expectedRevision: "1" },
+    });
+    expect(archived.status).toBe(200);
+    expect(await archived.json()).toMatchObject({ type: "archive", revision: "2" });
+    const archivedScope = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}`,
+    });
+    expect(await archivedScope.json()).toMatchObject({
+      lifecycle: "archived",
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+    });
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/chat/messages`,
+      body: { clientRequestId: request(31), expectedRevision: "2", text: "Archived write" },
+    })).status).toBe(503);
+
+    const restored = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "restore", clientRequestId: request(32), expectedRevision: "2" },
+    });
+    expect(restored.status).toBe(200);
+    const exported = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "export", clientRequestId: request(33), expectedRevision: "3" },
+    });
+    expect(exported.status).toBe(200);
+    expect(await exported.json()).toMatchObject({ exportId: request(33), status: "completed" });
+    const operation = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/operations/${request(33)}`,
+    });
+    expect(operation.status).toBe(200);
+    expect(await operation.json()).toMatchObject({ type: "export", exportId: request(33) });
+    const artifact = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/exports/${request(33)}`,
+    });
+    expect(artifact.status).toBe(200);
+    expect(await artifact.json()).toMatchObject({ scopeId: collaborationIds.scope, chat: { id: collaborationIds.chat } });
+
+    const deleted = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "delete", clientRequestId: request(34), expectedRevision: "3" },
+    });
+    expect(deleted.status).toBe(200);
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}`,
+    })).status).toBe(404);
   });
 
   it("applies downgrade immediately and revocation removes all live scope access", async () => {

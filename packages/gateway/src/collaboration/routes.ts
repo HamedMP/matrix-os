@@ -11,6 +11,8 @@ import {
   CollaborationCreateScopeRequestSchema,
   CollaborationIdSchema,
   CollaborationInvitationSchema,
+  CollaborationLifecycleRequestSchema,
+  CollaborationOperationSchema,
   CollaborationMemberPatchRequestSchema,
   CollaborationMemberSchema,
   CollaborationRevisionSchema,
@@ -19,6 +21,7 @@ import {
   CollaborationScopePreflightRequestSchema,
   CollaborationScopePreflightResponseSchema,
   CollaborationScopeSchema,
+  CollaborationScopeExportSchema,
   CollaborationUserStatePatchSchema,
   CollaborationUserStateSchema,
 } from "@matrix-os/contracts";
@@ -291,6 +294,47 @@ export function createCollaborationRoutes(options: {
     return c.json(await options.chatAdapter.appendDiscussion(context, input), 201);
   }));
 
+  routes.post("/api/collaboration/scopes/:scopeId/lifecycle", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const proof = await verifyHttp(options.verifier, c, bytes);
+    requireOwnerLifecycleProof(proof, scopeId);
+    const input = CollaborationLifecycleRequestSchema.parse(value);
+    if (["transfer", "recover"].includes(input.type)) {
+      throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
+    }
+    const result = await options.repository.applyChatLifecycle({
+      scopeId,
+      actorId: proof.actorId,
+      type: input.type,
+      clientRequestId: input.clientRequestId,
+      expectedRevision: Number(input.expectedRevision),
+      payloadHash: digest(bytes),
+    });
+    await notifyScope(options, scopeId);
+    return c.json(CollaborationOperationSchema.parse(result));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/operations/:operationId", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const operationId = CollaborationIdSchema.parse(c.req.param("operationId"));
+    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
+    requireOwnerLifecycleProof(proof, scopeId);
+    const operation = await options.repository.getLifecycleOperation(scopeId, proof.actorId, operationId);
+    if (!operation) throw new CollaborationRepositoryError("not_found", "Lifecycle operation not found");
+    return c.json(CollaborationOperationSchema.parse(operation));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/exports/:exportId", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const exportId = CollaborationIdSchema.parse(c.req.param("exportId"));
+    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
+    requireOwnerLifecycleProof(proof, scopeId);
+    const exported = await options.repository.getScopeExport(scopeId, proof.actorId, exportId);
+    if (!exported) throw new CollaborationRepositoryError("not_found", "Scope export not found");
+    return c.json(CollaborationScopeExportSchema.parse(exported));
+  }));
+
   return routes;
 }
 
@@ -373,7 +417,17 @@ function requireOwnerCreationProof(
   }
 }
 
+function requireOwnerLifecycleProof(
+  proof: { actorId: string; ownerId: string; scopeId?: string },
+  scopeId: string,
+): void {
+  if (proof.scopeId !== scopeId || proof.actorId !== proof.ownerId) {
+    throw new CollaborationAuthorizationError("forbidden", "Owner lifecycle access is required");
+  }
+}
+
 function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCollaborationContext) {
+  const mutable = scope.lifecycle === "shared";
   return CollaborationScopeSchema.parse({
     id: scope.id,
     ownerId: scope.ownerId,
@@ -388,8 +442,8 @@ function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCol
     role: context.role,
     capabilities: {
       read: true,
-      discuss: context.role !== "viewer" && scope.lifecycle === "shared",
-      manageMembers: context.role === "owner" && scope.membershipMode === "direct",
+      discuss: context.role !== "viewer" && mutable,
+      manageMembers: context.role === "owner" && scope.membershipMode === "direct" && mutable,
       requestAi: false,
     },
   });

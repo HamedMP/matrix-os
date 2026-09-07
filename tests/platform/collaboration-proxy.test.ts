@@ -159,6 +159,50 @@ describe("CollaborationProxy", () => {
     expect(signedProof.proof.scopeId).toBeUndefined();
   });
 
+  it("routes only the exact owner lifecycle, operation, and export paths", () => {
+    const operationId = "50000000-0000-4000-8000-000000000001";
+    expect(parseCollaborationProxyRoute("POST", `/api/collaboration/scopes/${scopeId}/lifecycle`))
+      .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `/api/collaboration/scopes/${scopeId}/operations/${operationId}`))
+      .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `/api/collaboration/scopes/${scopeId}/exports/${operationId}`))
+      .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `/api/collaboration/scopes/${scopeId}/exports/${operationId}/raw`))
+      .toBeNull();
+  });
+
+  it("keeps owner lifecycle recovery available while the M1 rollout policy is off", async () => {
+    await repository.setPolicy({
+      milestone: "m1",
+      expectedRevision: 1,
+      mode: "off",
+      cohort: [],
+      changedBy: "operator_rollback",
+    });
+    const path = `/api/collaboration/scopes/${scopeId}/lifecycle`;
+    const body = new TextEncoder().encode(JSON.stringify({
+      type: "export",
+      clientRequestId: "50000000-0000-4000-8000-000000000009",
+      expectedRevision: "1",
+    }));
+    expect((await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "POST",
+      path,
+      query: "",
+      body,
+      headers: new Headers({ "content-type": "application/json" }),
+    })).status).toBe(200);
+    expect((await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "POST",
+      path,
+      query: "",
+      body,
+      headers: new Headers({ "content-type": "application/json" }),
+    })).status).toBe(404);
+  });
+
   it.each([
     ["GET", `/api/collaboration/scopes/${scopeId}/../../files`],
     ["POST", `/api/collaboration/scopes/${scopeId}/terminal/input`],

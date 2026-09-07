@@ -165,6 +165,99 @@ export const CollaborationRevokeRequestSchema = CollaborationConditionalMutation
 
 export const CollaborationDeleteConditionSchema = CollaborationRevokeRequestSchema;
 
+const CollaborationLifecycleBaseSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  expectedRevision: CollaborationRevisionSchema,
+}).strict();
+
+export const CollaborationLifecycleRequestSchema = z.discriminatedUnion("type", [
+  CollaborationLifecycleBaseSchema.extend({ type: z.literal("archive") }).strict(),
+  CollaborationLifecycleBaseSchema.extend({ type: z.literal("restore") }).strict(),
+  CollaborationLifecycleBaseSchema.extend({ type: z.literal("export") }).strict(),
+  CollaborationLifecycleBaseSchema.extend({ type: z.literal("delete") }).strict(),
+  CollaborationLifecycleBaseSchema.extend({
+    type: z.literal("transfer"),
+    successorActorId: CollaborationActorIdSchema,
+    expectedMemberRevision: CollaborationRevisionSchema,
+  }).strict(),
+  CollaborationLifecycleBaseSchema.extend({ type: z.literal("recover") }).strict(),
+]);
+
+export const CollaborationOperationSchema = z.object({
+  id: CollaborationIdSchema,
+  scopeId: CollaborationIdSchema,
+  type: z.enum(["archive", "restore", "export", "delete", "transfer", "recover"]),
+  status: z.enum(["accepted", "completed", "failed"]),
+  revision: CollaborationRevisionSchema,
+  exportId: CollaborationIdSchema.optional(),
+  createdAt: z.iso.datetime(),
+}).strict();
+
+const CollaborationExportMemberSchema = z.object({
+  actorId: CollaborationActorIdSchema,
+  role: CollaborationRoleSchema,
+  status: CollaborationMemberStatusSchema,
+  revision: CollaborationRevisionSchema,
+  joinedAt: z.iso.datetime().optional(),
+}).strict();
+
+const CollaborationExportAuditSchema = z.object({
+  actorId: CollaborationActorIdSchema,
+  action: z.string().min(1).max(80),
+  outcome: z.string().min(1).max(40),
+  revision: CollaborationRevisionSchema,
+  reasonCode: z.string().min(1).max(80).optional(),
+  createdAt: z.iso.datetime(),
+}).strict();
+
+const CollaborationExportChatMessageSchema = z.object({
+  id: CollaborationResourceIdSchema,
+  sequence: CollaborationRevisionSchema,
+  role: z.enum(["user", "assistant", "tool", "system"]),
+  state: z.enum(["pending", "committed", "failed"]),
+  purpose: z.enum(["discussion", "ai_request", "assistant", "system"]),
+  actorId: CollaborationActorIdSchema.optional(),
+  parts: z.array(CanonicalChatMessagePartSchema).min(1).max(64),
+  createdAt: z.iso.datetime(),
+}).strict().superRefine((message, context) => {
+  message.parts.forEach((part, index) => {
+    if (part.type === "attachment_reference" && part.ownerReference !== undefined) {
+      context.addIssue({ code: "custom", path: ["parts", index, "ownerReference"], message: "Owner references are private" });
+    }
+  });
+});
+
+export const CollaborationScopeExportSchema = z.object({
+  version: z.literal(1),
+  id: CollaborationIdSchema,
+  scopeId: CollaborationIdSchema,
+  exportedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+  scope: z.object({
+    kind: z.literal("chat"),
+    resourceId: CollaborationResourceIdSchema,
+    lifecycle: CollaborationLifecycleSchema,
+    revision: CollaborationRevisionSchema,
+  }).strict(),
+  members: z.array(CollaborationExportMemberSchema).max(8),
+  audit: z.array(CollaborationExportAuditSchema).max(10_000),
+  chat: z.object({
+    id: CollaborationResourceIdSchema,
+    title: boundedDisplayText(200, 1_024),
+    lifecycle: z.enum(["active", "archived"]),
+    revision: CollaborationRevisionSchema,
+    messages: z.array(CollaborationExportChatMessageSchema).max(100_000),
+    attachments: z.array(z.object({
+      id: CollaborationResourceIdSchema,
+      messageId: CollaborationResourceIdSchema,
+      kind: z.enum(["file", "image", "diff", "structured_ref"]),
+      label: boundedDisplayText(512, 2_048),
+      mimeType: z.string().min(1).max(256).optional(),
+      sizeBytes: z.number().int().nonnegative().optional(),
+    }).strict()).max(100_000),
+  }).strict(),
+}).strict();
+
 export const CollaborationUserStateSchema = z.object({
   readThroughSeq: CollaborationRevisionSchema,
   pinned: z.boolean(),
@@ -377,8 +470,11 @@ export type CollaborationCapabilities = z.infer<typeof CollaborationCapabilities
 export type CollaborationEventFrame = z.infer<typeof CollaborationEventFrameSchema>;
 export type CollaborationHumanMessage = z.infer<typeof CollaborationHumanMessageSchema>;
 export type CollaborationInvitation = z.infer<typeof CollaborationInvitationSchema>;
+export type CollaborationLifecycleRequest = z.infer<typeof CollaborationLifecycleRequestSchema>;
 export type CollaborationMember = z.infer<typeof CollaborationMemberSchema>;
+export type CollaborationOperation = z.infer<typeof CollaborationOperationSchema>;
 export type CollaborationPolicy = z.infer<typeof CollaborationPolicySchema>;
 export type CollaborationRole = z.infer<typeof CollaborationRoleSchema>;
 export type CollaborationScope = z.infer<typeof CollaborationScopeSchema>;
+export type CollaborationScopeExport = z.infer<typeof CollaborationScopeExportSchema>;
 export type CollaborationUserState = z.infer<typeof CollaborationUserStateSchema>;

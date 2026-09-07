@@ -181,13 +181,18 @@ export class CollaborationChatAdapter {
       || current.ownerId !== context.ownerId || input.limit < 1 || input.limit > 100) {
       throw new CollaborationAuthorizationError("unavailable", "Shared Chat history is unavailable");
     }
-    const rows = await this.options.db.selectFrom("chat_messages")
-      .selectAll()
-      .where("chat_id", "=", current.resourceId)
-      .where("seq", ">", Number(input.afterSequence))
-      .orderBy("seq", "asc")
-      .limit(input.limit)
-      .execute();
+    const rows = await this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, current);
+      await reauthorizeRead(trx, current, this.now());
+      requireCurrentEpoch(scope, current, await membershipEpoch(trx, current));
+      return trx.selectFrom("chat_messages")
+        .selectAll()
+        .where("chat_id", "=", current.resourceId)
+        .where("seq", ">", Number(input.afterSequence))
+        .orderBy("seq", "asc")
+        .limit(input.limit)
+        .execute();
+    });
     const authors = new Map<string, { actorId: string; displayName: string }>();
     for (const row of rows) {
       if (!row.actor_id || authors.has(row.actor_id)) continue;
@@ -221,12 +226,17 @@ export class CollaborationChatAdapter {
       || current.ownerId !== context.ownerId) {
       throw new CollaborationAuthorizationError("unavailable", "Shared Chat is unavailable");
     }
-    const chat = await this.options.db.selectFrom("chats")
-      .select(["id", "title", "lifecycle", "revision", "message_count", "last_message_preview", "collaboration"])
-      .where("id", "=", current.resourceId)
-      .where("owner_type", "=", "personal")
-      .where("owner_id", "=", current.ownerId)
-      .executeTakeFirst();
+    const chat = await this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, current);
+      await reauthorizeRead(trx, current, this.now());
+      requireCurrentEpoch(scope, current, await membershipEpoch(trx, current));
+      return trx.selectFrom("chats")
+        .select(["id", "title", "lifecycle", "revision", "message_count", "last_message_preview", "collaboration"])
+        .where("id", "=", current.resourceId)
+        .where("owner_type", "=", "personal")
+        .where("owner_id", "=", current.ownerId)
+        .executeTakeFirst();
+    });
     if (!chat || !bindingMatches(chat.collaboration, current.scopeId)) {
       throw new CollaborationAuthorizationError("unavailable", "Shared Chat is unavailable");
     }

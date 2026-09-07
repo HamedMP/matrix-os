@@ -31,6 +31,9 @@ const SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/messages$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/messages$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/lifecycle$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/operations/${UUID}$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/exports/${UUID}$`)],
 ] as const;
 
 const INVITATION_ROUTES = [
@@ -119,7 +122,7 @@ export class CollaborationProxy {
       const participants = scopeId
         ? await this.options.repository.listScopeActors(scopeId)
         : [input.actorId];
-      if (!policyAllows(policy, input.actorId, ownerId, participants, input.method)) {
+      if (!policyAllows(policy, input.actorId, ownerId, participants, input.method, input.path)) {
         return safeResponse("Collaboration unavailable", policy.mode === "read_only" ? 403 : 404);
       }
       runtime ??= await this.options.resolveRuntime(directory!.runtimeId);
@@ -195,12 +198,33 @@ function policyAllows(
   ownerId: string,
   participants: string[],
   method: string,
+  path: string,
 ): boolean {
+  if (ownerRecoveryRoute(actorId, ownerId, method, path)) return true;
   if (policy.mode === "off") return false;
   if (policy.mode === "read_only") return method === "GET";
   if (policy.mode === "enabled") return true;
   const cohort = new Set(policy.cohort);
   return cohort.has(actorId) && cohort.has(ownerId) && participants.every((actor) => cohort.has(actor));
+}
+
+function ownerRecoveryRoute(
+  actorId: string,
+  ownerId: string,
+  method: string,
+  path: string,
+): boolean {
+  if (actorId !== ownerId) return false;
+  if (method === "DELETE") {
+    return new RegExp(`^/api/collaboration/scopes/${UUID}/(?:invitations/${UUID}|members/${ACTOR})$`).test(path);
+  }
+  if (method === "POST") {
+    return new RegExp(`^/api/collaboration/scopes/${UUID}/lifecycle$`).test(path);
+  }
+  if (method === "GET") {
+    return new RegExp(`^/api/collaboration/scopes/${UUID}(?:|/members|/operations/${UUID}|/exports/${UUID})$`).test(path);
+  }
+  return false;
 }
 
 function parseRuntimeBaseUrl(value: string): URL | null {

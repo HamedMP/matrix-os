@@ -31,6 +31,7 @@ describe("collaboration owner database", () => {
       "collaboration_audit",
       "collaboration_directory_outbox",
       "collaboration_events",
+      "collaboration_exports",
       "collaboration_members",
       "collaboration_operations",
       "collaboration_schema_migrations",
@@ -43,6 +44,7 @@ describe("collaboration owner database", () => {
     `.execute(fixture.db);
     expect(indexes.rows.map((row) => row.indexname).sort()).toEqual(expect.arrayContaining([
       "idx_collaboration_events_replay",
+      "idx_collaboration_exports_expiry",
       "idx_collaboration_invitation_identity",
       "idx_collaboration_outbox_delivery",
       "idx_collaboration_scope_binding",

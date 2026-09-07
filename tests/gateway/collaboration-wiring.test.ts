@@ -6,6 +6,7 @@ import {
   createGatewayCollaboration,
   loadGatewayCollaborationConfig,
 } from "../../packages/gateway/src/collaboration/wiring.js";
+import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
   collaborationIds,
   createCollaborationTestDatabase,
@@ -76,5 +77,50 @@ describe("gateway collaboration wiring", () => {
       .toEqual([{ version: 1 }]);
     await runtime.shutdown();
     await expect(runtime.outbox.runOnce()).resolves.toBe(0);
+  });
+
+  it("removes expired owner-local export artifacts during startup recovery", async () => {
+    await bootstrapCollaborationDatabase(fixture.db);
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: collaborationIds.scope,
+      owner_type: "personal",
+      owner_id: "user_owner",
+      kind: "chat",
+      resource_id: collaborationIds.chat,
+      parent_scope_id: null,
+      membership_mode: "direct",
+      lifecycle: "shared",
+      authority_runtime_id: collaborationIds.runtime,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:00:00.000Z",
+      deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_exports").values({
+      id: "50000000-0000-4000-8000-000000000001",
+      scope_id: collaborationIds.scope,
+      owner_id: "user_owner",
+      payload: {},
+      created_at: "2026-09-01T00:00:00.000Z",
+      expires_at: "2026-09-02T00:00:00.000Z",
+    }).execute();
+
+    const runtime = await createGatewayCollaboration({
+      db: fixture.db,
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    expect(await fixture.db.selectFrom("collaboration_exports").select("id").execute()).toEqual([]);
+    await runtime.shutdown();
   });
 });

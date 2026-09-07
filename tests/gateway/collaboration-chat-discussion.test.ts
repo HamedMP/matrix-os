@@ -142,6 +142,33 @@ describe("CollaborationChatAdapter discussion", () => {
       .toMatchObject({ pinned: false });
   });
 
+  it("rechecks membership in the same transaction as canonical history reads", async () => {
+    const staleContext = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+    const racingAdapter = new CollaborationChatAdapter({
+      db: fixture.db,
+      authority: {
+        authorize: async () => {
+          await fixture.db.updateTable("collaboration_members").set({ status: "revoked" })
+            .where("scope_id", "=", collaborationIds.scope)
+            .where("actor_id", "=", collaborationActors.editor)
+            .execute();
+          return staleContext;
+        },
+      },
+      now: () => new Date(now),
+      resolveParticipant: async (actorId) => ({ actorId, displayName: "Participant" }),
+    });
+
+    await expect(racingAdapter.listMessages(staleContext, { afterSequence: "0", limit: 50 }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    await expect(racingAdapter.getChat(staleContext))
+      .rejects.toMatchObject({ code: "forbidden" });
+  });
+
   it("returns canonical history while making owner-home attachment destinations inert", async () => {
     await fixture.db.insertInto("chat_messages").values({
       id: "msg_historical",
