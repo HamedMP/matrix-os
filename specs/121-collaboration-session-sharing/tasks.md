@@ -8,13 +8,15 @@
 
 **Task format**: `[ID] [P?] [Story] (PRn) action with exact path`. `[P]` means the task can proceed in parallel after its declared prerequisites because it changes different files.
 
+**Active implementation**: PR1 uses branch `codex/collaboration-chat-discussion` in the persistent manual worktree `/home/nima/matrix-os/.worktrees/collaboration-chat-discussion`, based on planning commit `d033116a7c4abe3683916a2d9fd5b563553abdcc` from PR #1558.
+
 ## Phase 1: Setup and Delivery Guardrails
 
 **Purpose**: Establish the six-layer implementation workflow, confirm the current source seams, and repair the prerequisite toolchain before runtime claims.
 
-- [ ] T001 (PR1) Create the persistent PR1 manual worktree and conventional branch from the reviewed planning dependency, recording the branch/base in `specs/121-collaboration-session-sharing/tasks.md`
-- [ ] T002 (PR1) Revalidate the merged #1551 snapshot implementation and current canonical Chat/platform seams against `specs/121-collaboration-session-sharing/research.md`
-- [ ] T003 (PR1) Resolve the existing Zod/AnySchema and package-local install prerequisite failures in `packages/integrations-mcp/src/server.ts` and `pnpm-lock.yaml`, or record unchanged upstream failures without claiming downstream checks ran
+- [x] T001 (PR1) Create the persistent PR1 manual worktree and conventional branch from the reviewed planning dependency, recording the branch/base in `specs/121-collaboration-session-sharing/tasks.md`
+- [x] T002 (PR1) Revalidate the merged #1551 snapshot implementation and current canonical Chat/platform seams against `specs/121-collaboration-session-sharing/research.md`
+- [x] T003 (PR1) Resolve the existing Zod/AnySchema and package-local install prerequisite failures in `packages/integrations-mcp/src/server.ts` and `pnpm-lock.yaml`, or record unchanged upstream failures without claiming downstream checks ran
 - [ ] T004 [P] (PR1) Add shared real-Postgres collaboration fixture helpers for distinct owner/editor/viewer/outsider identities in `tests/gateway/collaboration-test-support.ts`
 - [ ] T005 [P] (PR1) Add platform collaboration routing fixture helpers for provisioned and no-computer recipients in `tests/platform/collaboration-test-support.ts`
 - [ ] T006 [P] (PR1) Add reusable two-account collaboration journey fixtures in `tests/e2e/fixtures/collaboration.ts`
@@ -29,7 +31,7 @@
 
 ### Tests first
 
-- [ ] T007 [P] (PR1) Write red schema tests for scope, invitation, membership, lifecycle, user-state, event, actor-proof, policy, and connection-ticket contracts in `tests/contracts/collaboration.test.ts`
+- [x] T007 [P] (PR1) Write red schema tests for scope, invitation, membership, lifecycle, user-state, event, actor-proof, policy, and connection-ticket contracts in `tests/contracts/collaboration.test.ts`
 - [ ] T008 [P] (PR1) Write red additive migration and existing-schema upgrade tests for owner collaboration tables and Chat attribution columns in `tests/gateway/collaboration-database.test.ts`
 - [ ] T009 [P] (PR1) Write red real-Postgres transaction tests for scope singleton creation, eight-seat capacity, invitation expiry, actor-scoped idempotency, and revoke/write serialization in `tests/gateway/collaboration-repository.test.ts`
 - [ ] T010 [P] (PR1) Write red authority matrix tests for owner/editor/viewer/pending/expired/revoked/outsider and inherited-resolution rejection in `tests/gateway/collaboration-authority.test.ts`
@@ -40,8 +42,8 @@
 
 ### Implementation
 
-- [ ] T015 (PR1) Define strict Zod 4 collaboration HTTP/realtime schemas, bounds, roles, capability modes, and safe error codes in `packages/contracts/src/collaboration.ts`
-- [ ] T016 (PR1) Export collaboration contracts without changing snapshot schemas in `packages/contracts/src/index.ts`
+- [x] T015 (PR1) Define strict Zod 4 collaboration HTTP/realtime schemas, bounds, roles, capability modes, and safe error codes in `packages/contracts/src/collaboration.ts`
+- [x] T016 (PR1) Export collaboration contracts without changing snapshot schemas in `packages/contracts/src/index.ts`
 - [ ] T017 (PR1) Add versioned owner-Postgres collaboration tables, constraints, indexes, Chat actor/purpose columns, and migration bookkeeping in `packages/gateway/src/collaboration/database.ts`
 - [ ] T018 (PR1) Implement transactional scope, member, operation, audit, event, and directory-outbox persistence without owning the injected pool in `packages/gateway/src/collaboration/repository.ts`
 - [ ] T019 (PR1) Implement current-member resolution, role/action authorization, capacity/expiry, lifecycle, auth-epoch, idempotency, and owner-protection rules in `packages/gateway/src/collaboration/authority.ts`
