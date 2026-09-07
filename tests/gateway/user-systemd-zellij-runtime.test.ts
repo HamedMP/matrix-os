@@ -14,6 +14,7 @@ function fakeAdapter(): ZellijAdapter {
     focusedPaneRuntime: vi.fn(async () => ({ cwd: null, command: null, observed: false })), createSession: vi.fn(async () => undefined),
     deleteSession: vi.fn(async () => undefined), renameSession: vi.fn(async () => undefined),
     validateLayout: vi.fn(async () => undefined), attachSession: vi.fn() as never,
+    paneAction: vi.fn(async () => undefined),
     sendInput: vi.fn(async () => undefined), listTabs: vi.fn(async () => []),
     createTab: vi.fn(async () => ({})), switchTab: vi.fn(async () => ({})), switchTabById: vi.fn(async () => ({})),
     closeTab: vi.fn(async () => ({})),

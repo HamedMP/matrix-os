@@ -50,3 +50,6 @@ export type {
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";
 export { ChatAttachments, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
+export { TerminalControls } from './terminal/TerminalControls.js';
+export { useTerminalControls } from './terminal/use-terminal-controls.js';
+export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';

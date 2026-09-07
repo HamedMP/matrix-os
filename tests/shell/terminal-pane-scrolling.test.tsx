@@ -505,6 +505,49 @@ describe("TerminalPane scrolling", () => {
     }
   });
 
+  it("reattaches a changed canonical session before enabling its pane actions", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ preferences: { keyboard: { profile: "mac" } } }))));
+    try {
+      const props = { paneId: "pane-renamed", cwd: "", theme, isFocused: true, shouldCacheOnUnmount: () => false, shouldDestroyOnUnmount: () => false };
+      const view = render(<TerminalPane {...props} sessionId="main" />);
+      await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+      act(() => WebSocketMock.instances[0]?.onmessage?.({ data: JSON.stringify({ type: "attached", sessionId: "main", state: "running" }) }));
+      view.rerender(<TerminalPane {...props} sessionId="renamed" />);
+      await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+      expect(WebSocketMock.instances[1]?.url).toContain("session=renamed");
+      expect(screen.getByRole("button", { name: "Split right" }).hasAttribute("disabled")).toBe(true);
+      expect(createdTerminals).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("routes split to the attached session and stops actions after lease loss without rebuilding xterm", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ preferences: { keyboard: { profile: "mac" } } })));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      render(<TerminalPane paneId="pane-zellij" cwd="" theme={theme} isFocused sessionId="main" shouldCacheOnUnmount={() => false} shouldDestroyOnUnmount={() => false} />);
+      await waitFor(() => expect(createdTerminals[0]?.customKeyEventHandler).toBeTypeOf("function"));
+      const terminal = createdTerminals[0]!;
+      const socket = WebSocketMock.instances[0]!;
+      act(() => socket.onmessage?.({ data: JSON.stringify({ type: "attached", sessionId: "main", state: "running" }) }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Split right" }).hasAttribute("disabled")).toBe(false));
+      const key = new KeyboardEvent("keydown", { key: "d", metaKey: true, cancelable: true });
+      act(() => { terminal.customKeyEventHandler?.(key); });
+      expect(key.defaultPrevented).toBe(true);
+      await waitFor(() => expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/terminal/sessions/main/pane-actions"), expect.objectContaining({ method: "POST", body: JSON.stringify({ type: "split", direction: "right" }) })));
+      expect(createdTerminals).toHaveLength(1);
+      act(() => socket.onmessage?.({ data: JSON.stringify({ type: "lease-revoked" }) }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Split right" }).hasAttribute("disabled")).toBe(true));
+      const requests = fetcher.mock.calls.length;
+      act(() => { terminal.customKeyEventHandler?.(new KeyboardEvent("keydown", { key: "d", metaKey: true })); });
+      expect(fetcher).toHaveBeenCalledTimes(requests);
+      expect(createdTerminals).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each([
     { label: "Command+C", metaKey: true, ctrlKey: false, shiftKey: false },
     { label: "Command+Shift+C", metaKey: true, ctrlKey: false, shiftKey: true },
@@ -1355,7 +1398,7 @@ describe("TerminalPane scrolling", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(WebSocketMock.instances).toHaveLength(0);
 
-    const pane = container.firstElementChild as HTMLElement;
+    const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 1_010 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 660 });
     createdFitAddons[0].proposeDimensions.mockReturnValue({ cols: 999, rows: 999 });
@@ -1416,7 +1459,7 @@ describe("TerminalPane scrolling", () => {
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
     const terminal = createdTerminals[0];
     const fitAddon = createdFitAddons[0];
-    const pane = container.firstElementChild as HTMLElement;
+    const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     fitAddon.proposeDimensions.mockReturnValue({ cols: 154, rows: 51 });
 
     await act(async () => {
@@ -1502,7 +1545,7 @@ describe("TerminalPane scrolling", () => {
     const terminal = createdTerminals[0];
     const fitAddon = createdFitAddons[0];
     const socket = WebSocketMock.instances[0];
-    const pane = container.firstElementChild as HTMLElement;
+    const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 700 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 800 });
 
