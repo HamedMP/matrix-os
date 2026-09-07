@@ -1,41 +1,51 @@
-import React, { useState, type CSSProperties } from "react";
-import {
-  TERMINAL_COMMANDS,
-  TERMINAL_COMMAND_LABELS,
-  terminalBindings,
-  type TerminalKeyboardPreferences,
-  type TerminalPaneAction,
-} from "@matrix-os/contracts";
+import React, { useRef, useState, type CSSProperties } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import * as Menu from "@radix-ui/react-dropdown-menu";
+import type { TerminalPaneAction } from "@matrix-os/contracts";
 import type { TerminalControlsState } from "./use-terminal-controls.js";
-const buttonStyle: CSSProperties = {
-  font: "inherit",
-  fontSize: 12,
-  color: "inherit",
-  background: "transparent",
-  border: "1px solid currentColor",
-  borderRadius: 5,
-  padding: "3px 7px",
-  cursor: "pointer",
-};
-const ACTIONS: Array<{
+import {
+  TerminalControlIcon,
+  type TerminalControlIconName,
+} from "./TerminalControlIcon.js";
+import { TerminalKeyboardSettings } from "./TerminalKeyboardSettings.js";
+import "./terminal-controls.css";
+
+const PRIMARY_ACTIONS: Array<{
   label: string;
+  icon: TerminalControlIconName;
   action: TerminalPaneAction;
 }> = [
-  { label: "Split right", action: { type: "split", direction: "right" } },
-  { label: "Split below", action: { type: "split", direction: "down" } },
-  ...(["left", "up", "down", "right"] as const).map((direction) => ({
-    label: `Focus ${direction}`,
-    action: { type: "focus" as const, direction },
-  })),
-  { label: "Maximize / restore", action: { type: "fullscreen" } },
+  {
+    label: "Split right",
+    icon: "split-right",
+    action: { type: "split", direction: "right" },
+  },
+  {
+    label: "Split below",
+    icon: "split-down",
+    action: { type: "split", direction: "down" },
+  },
+  {
+    label: "Maximize / restore",
+    icon: "maximize",
+    action: { type: "fullscreen" },
+  },
 ];
+const DIRECTIONS = ["left", "down", "up", "right"] as const;
+
 export function TerminalControls({
   controls,
+  theme,
 }: {
   controls: TerminalControlsState;
+  theme?: { background?: string; foreground?: string };
 }) {
   const [draft, setDraft] = useState(controls.preferences);
   const [closing, setClosing] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const skipMenuFocus = useRef(false);
   const [previousPreferences, setPreviousPreferences] = useState(
     controls.preferences,
   );
@@ -48,191 +58,208 @@ export function TerminalControls({
   if (previousTarget !== target) {
     setPreviousTarget(target);
     setClosing(false);
+    setMenuOpen(false);
+    setShortcutsOpen(false);
   }
-  const bindings = terminalBindings(draft, controls.isMac);
+  // Portals need the same explicit terminal palette as the inline controls.
+  const palette = {
+    "--terminal-control-bg":
+      theme?.background ?? "var(--matrix-background, #101218)",
+    "--terminal-control-fg": theme?.foreground ?? "var(--matrix-fg, #e4e4e7)",
+  } as CSSProperties;
+  const disabled = !controls.paneActionsEnabled || controls.busy;
+  function runAction(action: TerminalPaneAction) {
+    skipMenuFocus.current = true;
+    void controls.runAction(action);
+  }
   return (
     <div
       data-testid="terminal-controls"
-      style={{
-        fontFamily: "inherit",
-        fontSize: 12,
-        color: "inherit",
-        padding: "4px 8px",
-        flexShrink: 0,
-        borderBottom:
-          "1px solid color-mix(in srgb, currentColor 15%, transparent)",
-      }}
+      className="matrix-terminal-controls"
+      style={palette}
     >
       <div
-        role="toolbar"
+        role="group"
         aria-label="Terminal pane controls"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 5,
-          flexWrap: "wrap",
-        }}
+        className="matrix-terminal-toolbar"
       >
-        {ACTIONS.map(({ label, action }) => (
-          <button
-            type="button"
-            style={buttonStyle}
-            key={label}
-            disabled={!controls.paneActionsEnabled || controls.busy}
-            onClick={() => void controls.runAction(action)}
-          >
-            {label}
-          </button>
-        ))}
-        <details>
-          <summary style={{ cursor: "pointer" }}>More pane actions</summary>
-          <div
-            style={{ display: "flex", gap: 5, flexWrap: "wrap", padding: 6 }}
-          >
-            {(["left", "right", "up", "down"] as const).map((direction) => (
-              <button
-                key={direction}
-                type="button"
-                style={buttonStyle}
-                disabled={!controls.paneActionsEnabled || controls.busy}
-                onClick={() =>
-                  void controls.runAction({ type: "resize", direction })
-                }
-              >
-                Resize {direction}
-              </button>
-            ))}
-            {(["top", "bottom"] as const).map((edge) => (
-              <button
-                key={edge}
-                type="button"
-                style={buttonStyle}
-                disabled={!controls.paneActionsEnabled || controls.busy}
-                onClick={() =>
-                  void controls.runAction({ type: "scroll", edge })
-                }
-              >
-                History {edge}
-              </button>
-            ))}
+        <span className="matrix-terminal-hint" aria-hidden="true">
+          Pane controls <kbd>⌃ G</kbd>
+        </span>
+        <div className="matrix-terminal-primary">
+          {PRIMARY_ACTIONS.map(({ label, icon, action }) => (
             <button
               type="button"
-              style={buttonStyle}
-              disabled={!controls.paneActionsEnabled || controls.busy}
-              onClick={() => setClosing(true)}
+              className="matrix-terminal-icon-button"
+              key={label}
+              aria-label={label}
+              title={label}
+              disabled={disabled}
+              onClick={() => void controls.runAction(action)}
             >
-              Close pane
+              <TerminalControlIcon name={icon} />
             </button>
-          </div>
-        </details>
-        <details>
-          <summary style={{ cursor: "pointer" }}>Keyboard shortcuts</summary>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void controls.savePreferences(draft);
-            }}
-            style={{ padding: 8, maxHeight: 280, overflow: "auto" }}
-          >
-            <label>
-              Shortcut profile{" "}
-              <select
-                aria-label="Shortcut profile"
-                disabled={controls.saving}
-                value={draft.profile}
-                onChange={(e) =>
-                  setDraft({
-                    profile: e.target
-                      .value as TerminalKeyboardPreferences["profile"],
-                    overrides: {},
-                  })
-                }
-              >
-                <option value="mac">Mac editing</option>
-                <option value="standard">Standard terminal</option>
-                <option value="passthrough">Pass through to application</option>
-              </select>
-            </label>
-            <p>
-              Ctrl+G, then H/J/K/L or arrows: focus. V/S: split right/below. F:
-              maximize. X: close. T/B: history. Shift+arrows: resize. Escape
-              cancels; prefix expires after 2 seconds.
-            </p>
-            <p>
-              Use Ctrl, Alt, Shift, Meta (Command), for example Meta+ArrowLeft.
-              Empty disables a shortcut. Browser shortcuts may require the
-              prefix alternative.
-            </p>
-            {TERMINAL_COMMANDS.map((command) => (
-              <label
-                key={command}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 10,
-                  marginBottom: 4,
+          ))}
+        </div>
+        <span className="matrix-terminal-divider" aria-hidden="true" />
+        <Dialog.Root open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
+          <Dialog.Trigger asChild>
+            <button
+              type="button"
+              className="matrix-terminal-icon-button"
+              aria-label="Keyboard shortcuts"
+              title="Keyboard shortcuts"
+            >
+              <TerminalControlIcon name="keyboard" />
+            </button>
+          </Dialog.Trigger>
+          <Dialog.Portal>
+            <Dialog.Overlay className="matrix-terminal-overlay" />
+            <Dialog.Content className="matrix-terminal-dialog" style={palette}>
+              <div className="matrix-terminal-dialog-header">
+                <Dialog.Title>Keyboard shortcuts</Dialog.Title>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="matrix-terminal-icon-button"
+                    aria-label="Close keyboard shortcuts"
+                  >
+                    <TerminalControlIcon name="close" />
+                  </button>
+                </Dialog.Close>
+              </div>
+              <Dialog.Description>
+                Customize editing and pane controls for your terminal.
+              </Dialog.Description>
+              <TerminalKeyboardSettings
+                controls={controls}
+                draft={draft}
+                setDraft={setDraft}
+              />
+              {controls.error && (
+                <p role="alert" className="matrix-terminal-error">
+                  {controls.error}
+                </p>
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+        <Menu.Root open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
+          <Menu.Trigger asChild>
+            <button
+              ref={moreButton}
+              type="button"
+              className="matrix-terminal-icon-button"
+              aria-label="More pane actions"
+              title="More pane actions"
+            >
+              <TerminalControlIcon name="more" />
+            </button>
+          </Menu.Trigger>
+          <Menu.Portal>
+            <Menu.Content
+              className="matrix-terminal-menu"
+              style={palette}
+              align="end"
+              sideOffset={6}
+              collisionPadding={12}
+              onCloseAutoFocus={(event) => {
+                if (skipMenuFocus.current) event.preventDefault();
+                skipMenuFocus.current = false;
+              }}
+            >
+              {(["focus", "resize"] as const).map((type) => (
+                <Menu.Group key={type}>
+                  <Menu.Label>
+                    {type === "focus" ? "Move focus" : "Resize pane"}
+                  </Menu.Label>
+                  {DIRECTIONS.map((direction) => (
+                    <Menu.Item
+                      key={direction}
+                      disabled={disabled}
+                      onSelect={() => runAction({ type, direction })}
+                    >
+                      <TerminalControlIcon name={direction} />
+                      {type === "focus" ? "Focus" : "Resize"} {direction}
+                    </Menu.Item>
+                  ))}
+                  <Menu.Separator />
+                </Menu.Group>
+              ))}
+              {(["top", "bottom"] as const).map((edge) => (
+                <Menu.Item
+                  key={edge}
+                  disabled={disabled}
+                  onSelect={() => runAction({ type: "scroll", edge })}
+                >
+                  <TerminalControlIcon name={`history-${edge}`} />
+                  History {edge}
+                </Menu.Item>
+              ))}
+              <Menu.Separator />
+              <Menu.Item
+                disabled={disabled}
+                className="matrix-terminal-destructive"
+                onSelect={() => {
+                  skipMenuFocus.current = true;
+                  setClosing(true);
                 }}
               >
-                {TERMINAL_COMMAND_LABELS[command]}
-                <input
-                  aria-label={TERMINAL_COMMAND_LABELS[command]}
-                  maxLength={64}
-                  value={bindings[command] ?? ""}
-                  disabled={controls.saving || draft.profile === "passthrough"}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      overrides: {
-                        ...draft.overrides,
-                        [command]: e.target.value || null,
-                      },
-                    })
-                  }
-                />
-              </label>
-            ))}
-            <button
-              type="submit"
-              style={buttonStyle}
-              disabled={!controls.enabled || controls.saving}
-            >
-              Save shortcuts
-            </button>{" "}
-            <button
-              type="button"
-              style={buttonStyle}
-              disabled={controls.saving}
-              onClick={() => setDraft({ profile: "mac", overrides: {} })}
-            >
-              Reset defaults
-            </button>
-          </form>
-        </details>
+                <TerminalControlIcon name="close" />
+                Close pane
+              </Menu.Item>
+            </Menu.Content>
+          </Menu.Portal>
+        </Menu.Root>
       </div>
-      {closing && (
-        <div role="alertdialog" aria-label="Close terminal pane">
-          Closing ends the process in this pane.{" "}
-          <button
-            type="button"
-            onClick={() => {
-              setClosing(false);
-              void controls.runAction({ type: "close" });
+      <Dialog.Root open={closing} onOpenChange={setClosing}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="matrix-terminal-overlay" />
+          <Dialog.Content
+            role="alertdialog"
+            className="matrix-terminal-dialog matrix-terminal-confirm"
+            style={palette}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              moreButton.current?.focus();
             }}
           >
-            Close this pane
-          </button>{" "}
-          <button type="button" onClick={() => setClosing(false)}>
-            Cancel
-          </button>
-        </div>
-      )}
+            <Dialog.Title>Close terminal pane</Dialog.Title>
+            <Dialog.Description>
+              Closing ends the process in this pane. Other panes stay open.
+            </Dialog.Description>
+            <div className="matrix-terminal-dialog-actions">
+              <Dialog.Close asChild>
+                <button type="button" className="matrix-terminal-button">
+                  Cancel
+                </button>
+              </Dialog.Close>
+              <button
+                type="button"
+                className="matrix-terminal-button matrix-terminal-destructive"
+                disabled={disabled}
+                onClick={() => {
+                  setClosing(false);
+                  void controls.runAction({ type: "close" });
+                }}
+              >
+                Close this pane
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       {controls.prefixActive && (
-        <div role="status">
+        <div role="status" className="matrix-terminal-prefix">
           Pane command: H/J/K/L focus · V/S split · F maximize · X close · Esc
           cancel
         </div>
       )}
-      {controls.error && <div role="alert">{controls.error}</div>}
+      {controls.error && !shortcutsOpen && (
+        <div role="alert" className="matrix-terminal-error">
+          {controls.error}
+        </div>
+      )}
     </div>
   );
 }

@@ -732,7 +732,7 @@ export default function TerminalView({
       data-terminal-surface
       style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
     >
-      <TerminalControls controls={controls} />
+      <TerminalControls controls={controls} theme={terminalTheme} />
       <div
         ref={hostRef}
         className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"

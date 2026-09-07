@@ -19,16 +19,12 @@ const setup = () => ({
   sendInput: vi.fn(),
   focus: vi.fn(),
   transport: {
-    getPreferences: vi
-      .fn()
-      .mockResolvedValue({
-        preferences: { keyboard: { profile: "mac", overrides: {} } },
-      }),
-    savePreferences: vi
-      .fn()
-      .mockResolvedValue({
-        preferences: { keyboard: { profile: "standard", overrides: {} } },
-      }),
+    getPreferences: vi.fn().mockResolvedValue({
+      preferences: { keyboard: { profile: "mac", overrides: {} } },
+    }),
+    savePreferences: vi.fn().mockResolvedValue({
+      preferences: { keyboard: { profile: "standard", overrides: {} } },
+    }),
     paneAction: vi.fn().mockResolvedValue({ ok: true }),
   },
 });
@@ -154,8 +150,11 @@ it("cancels a pending close confirmation when the terminal target changes", asyn
     return <TerminalControls controls={controls} />;
   }
   const view = render(<Harness name="alpha" />);
+  fireEvent.keyDown(view.getByRole("button", { name: "More pane actions" }), {
+    key: "ArrowDown",
+  });
   fireEvent.click(
-    view.getByRole("button", { name: "Close pane", exact: true, hidden: true }),
+    view.getByRole("menuitem", { name: "Close pane", exact: true }),
   );
   expect(view.getByRole("alertdialog")).toBeTruthy();
   view.rerender(<Harness name="beta" />);
@@ -169,6 +168,7 @@ it("edits and saves custom keyboard settings through the shared toolbar", async 
   }
   const view = render(<Harness />);
   await waitFor(() => expect(opts.transport.getPreferences).toHaveBeenCalled());
+  fireEvent.click(view.getByRole("button", { name: "Keyboard shortcuts" }));
   fireEvent.change(view.getByLabelText("Shortcut profile"), {
     target: { value: "standard" },
   });
@@ -219,6 +219,7 @@ it("disables edits while keyboard settings are saving", async () => {
   }
   const view = render(<Harness />);
   await waitFor(() => expect(opts.transport.getPreferences).toHaveBeenCalled());
+  fireEvent.click(view.getByRole("button", { name: "Keyboard shortcuts" }));
   fireEvent.click(view.getByText("Save shortcuts"));
   expect(
     (view.getByLabelText("Shortcut profile") as HTMLSelectElement).disabled,
@@ -262,4 +263,53 @@ it("keeps a pane action serialized while its transport refreshes", async () => {
     await pending;
   });
   expect(result.current.busy).toBe(false);
+});
+
+it("keeps secondary actions and shortcut inputs out of the terminal layout", () => {
+  const opts = setup();
+  function Harness() {
+    return <TerminalControls controls={useTerminalControls(opts)} />;
+  }
+  const view = render(<Harness />);
+  expect(view.queryByText("Focus left")).toBeNull();
+  expect(view.queryByLabelText("Shortcut profile")).toBeNull();
+  expect(view.getByRole("button", { name: "Split right" }).textContent).toBe(
+    "",
+  );
+  expect(view.getByRole("button", { name: "Split below" }).textContent).toBe(
+    "",
+  );
+  expect(view.getByRole("button", { name: "Maximize / restore" })).toBeTruthy();
+});
+it("runs secondary actions from a keyboard-accessible menu and dismisses it", async () => {
+  const opts = setup();
+  function Harness() {
+    return <TerminalControls controls={useTerminalControls(opts)} />;
+  }
+  const view = render(<Harness />);
+  fireEvent.keyDown(view.getByRole("button", { name: "More pane actions" }), {
+    key: "ArrowDown",
+  });
+  fireEvent.click(view.getByRole("menuitem", { name: "Resize left" }));
+  await waitFor(() =>
+    expect(opts.transport.paneAction).toHaveBeenCalledWith("alpha", {
+      type: "resize",
+      direction: "left",
+    }),
+  );
+  expect(view.queryByRole("menu")).toBeNull();
+});
+it("opens shortcuts in an overlay and restores focus when dismissed", async () => {
+  const opts = setup();
+  function Harness() {
+    return <TerminalControls controls={useTerminalControls(opts)} />;
+  }
+  const view = render(<Harness />);
+  const trigger = view.getByRole("button", { name: "Keyboard shortcuts" });
+  fireEvent.click(trigger);
+  const dialog = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+  expect(view.getByTestId("terminal-controls").contains(dialog)).toBe(false);
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  await waitFor(() => expect(view.queryByRole("dialog")).toBeNull());
+  expect(document.activeElement).toBe(trigger);
 });

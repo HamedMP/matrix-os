@@ -1,3 +1,4 @@
+import { TerminalPaneActionsUnavailableError } from "./terminal-pane-request.js";
 import {
   useCallback,
   useEffect,
@@ -125,7 +126,9 @@ export function useTerminalControls(
       } catch (err) {
         console.warn("[terminal-controls] pane action failed", err);
         if (current === generation.current)
-          setError("The pane action could not be completed.");
+          setError(err instanceof TerminalPaneActionsUnavailableError
+            ? "Update this computer to use this pane control."
+            : "The pane action could not be completed. Try again.");
       } finally {
         pendingAction.current = false;
         setBusy(false);
