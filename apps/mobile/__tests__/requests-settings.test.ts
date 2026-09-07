@@ -52,7 +52,7 @@ describe("settings requests", () => {
       overrideBillingStatus,
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://app.matrix-os.com/billing/status?runtimeSlot=primary",
+      "https://app.matrix-os.com/billing/status?runtimeSlot=primary&details=management",
       expect.objectContaining({
         headers: { Authorization: "Bearer clerk-token" },
         signal: expect.any(AbortSignal),

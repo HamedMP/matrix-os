@@ -18,7 +18,10 @@ import {
 import type { StripeBillingClient } from './billing-routes.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
-const BillingStatusQuerySchema = z.object({ runtimeSlot: RuntimeSlotSchema.optional() }).strict();
+const BillingStatusQuerySchema = z.object({
+  runtimeSlot: RuntimeSlotSchema.optional(),
+  details: z.literal('management').optional(),
+}).strict();
 const BILLING_UNAVAILABLE_RESPONSE = { error: 'Billing unavailable', code: 'billing_unavailable' } as const;
 
 export function createBillingStatusHandler(options: {
@@ -88,9 +91,9 @@ export function createBillingStatusHandler(options: {
         eligible: reservedTrialDays !== null || (offerEligible && !activeAttempt),
         durationDays: reservedTrialDays ?? cardTrialDays,
       };
-      const recurringPrice = entitlement?.source === 'stripe'
-        && selectedSubscription
-        && selectedSubscription.planSlug === entitlement.planSlug
+      const recurringPrice = selectedSubscription
+        && (query.data.details === 'management' || (entitlement?.source === 'stripe'
+          && selectedSubscription.planSlug === entitlement.planSlug))
         ? await options.resolvePublicRecurringPrice(
           options.db,
           options.stripe,
@@ -104,11 +107,39 @@ export function createBillingStatusHandler(options: {
         runtimeSlot,
       );
       const placement = options.resolveRuntimePlacement(machine?.location);
+      // Only opted-in clients receive new fields: older installed clients parse a strict contract.
+      const inventory = query.data.details === 'management'
+        ? await options.db.executor.selectFrom('user_machines')
+          .select((eb) => eb.fn.countAll<string>().as('count'))
+          .where('clerk_user_id', '=', clerkUserId)
+          .where('deleted_at', 'is', null)
+          .executeTakeFirstOrThrow()
+        : null;
+      const runtimePlacement = placement ? {
+        regionSlug: placement.slug, label: placement.label,
+        countryLabel: placement.countryLabel, networkZone: placement.networkZone,
+      } : null;
       const response = MatrixBillingStatusSchema.safeParse({
+        ...(inventory ? { management: {
+          portalAvailable: customer !== undefined,
+          runtimeSlot,
+          computerCount: Number(inventory.count),
+          runtimePlacement,
+          subscription: selectedSubscription ? {
+            planSlug: selectedSubscription.planSlug,
+            status: selectedSubscription.status,
+            billingInterval: selectedSubscription.billingInterval,
+            recurringPrice,
+            currentPeriodEnd: selectedSubscription.currentPeriodEnd,
+            trialEndsAt: selectedSubscription.trialEndsAt,
+            trialConvertedAt: selectedSubscription.trialConvertedAt,
+            firstTrialPaymentFailedAt: selectedSubscription.firstTrialPaymentFailedAt,
+          } : null,
+        } } : {}),
         entitlement: entitlement
           ? projectPublicBillingEntitlement(entitlement, loadRuntimeCatalog(env), {
             portalAvailable: customer !== undefined,
-            recurringPrice,
+            recurringPrice: entitlement.source === 'stripe' && selectedSubscription?.planSlug === entitlement.planSlug ? recurringPrice : null,
             runtimePlacement: placement ? {
               regionSlug: placement.slug,
               label: placement.label,

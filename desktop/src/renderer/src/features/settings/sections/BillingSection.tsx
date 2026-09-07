@@ -1,6 +1,7 @@
 import { CreditCard, ExternalLink } from "@renderer/lib/hugeicons";
 import {
   MatrixBillingStatusSchema,
+  deriveBillingManagementView,
   closestMatrixRegionSlug,
   type MatrixBillingPublicEntitlement,
   type MatrixBillingStatus,
@@ -48,13 +49,6 @@ const INITIAL_BILLING_UI_STATE: BillingUiState = {
   actionLoading: null,
 };
 
-const PLAN_LABELS: Record<string, string> = {
-  matrix_starter: "Starter",
-  matrix_builder: "Builder",
-  matrix_max: "Max",
-  internal: "Internal",
-};
-
 const PLANS: Array<{ slug: BillingPlan; label: string }> = [
   { slug: "matrix_starter", label: "Starter · $20/month" },
   { slug: "matrix_builder", label: "Builder · $100/month" },
@@ -75,19 +69,6 @@ function closestBillingRegion(): BillingRegion {
     console.warn("[billing] unable to detect closest server location:", error instanceof Error ? error.name : typeof error);
     return "region_fsn1";
   }
-}
-
-function planLabel(slug: string): string {
-  return PLAN_LABELS[slug] ?? slug.replace(/^matrix_/, "").replaceAll("_", " ");
-}
-
-function formatStatus(status: string): string {
-  return status.replaceAll("_", " ");
-}
-
-function entitlementSummary(entitlement: BillingEntitlement | null): string {
-  if (!entitlement) return "No billing entitlement found.";
-  return `${planLabel(entitlement.planSlug)} · ${formatStatus(entitlement.status)}`;
 }
 
 function billingUiReducer(state: BillingUiState, action: BillingUiAction): BillingUiState {
@@ -111,6 +92,7 @@ async function openBillingUrl(url: string): Promise<void> {
 
 function useBillingStatus() {
   const api = useConnection((s) => s.api);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const [status, setStatus] = useState<MatrixBillingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -125,7 +107,7 @@ function useBillingStatus() {
     setLoading(true);
     setError(false);
     try {
-      const raw = await api.get<unknown>("/billing/status");
+      const raw = await api.get<unknown>(`/billing/status?details=management&runtimeSlot=${encodeURIComponent(runtimeSlot ?? "primary")}`);
       const parsed = MatrixBillingStatusSchema.parse(raw);
       setStatus(parsed);
     } catch (err: unknown) {
@@ -135,7 +117,7 @@ function useBillingStatus() {
     } finally {
       setLoading(false);
     }
-  }, [api]);
+  }, [api, runtimeSlot]);
 
   useEffect(() => {
     void refresh();
@@ -156,14 +138,15 @@ export default function BillingSection() {
 
   const active = status?.access.runtimeProxyAllowed === true;
   const entitlement = status?.entitlement ?? null;
-  const portalAvailable = entitlement?.portalAvailable === true;
+  const view = deriveBillingManagementView(entitlement, status?.management);
+  const portalAvailable = view.portalAvailable;
   const settingsUrl = useMemo(() => {
     const base = platformHost.startsWith("https://") ? platformHost : "https://app.matrix-os.com";
     return `${base.replace(/\/$/, "")}/?billing=setup`;
   }, [platformHost]);
 
   async function startCheckout(): Promise<void> {
-    if (!api || ui.actionLoading) return;
+    if (!api || loading || error || ui.actionLoading) return;
     dispatchUi({ type: "start-action", action: "checkout" });
     try {
       const raw = await api.post<unknown>("/billing/checkout", {
@@ -210,10 +193,10 @@ export default function BillingSection() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              {loading ? "Checking billing..." : active ? "Billing active" : "Billing required"}
+              {loading ? "Checking billing..." : "Billing summary"}
             </p>
             <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-              {loading ? "Reading your platform billing status." : entitlementSummary(entitlement)}
+              {loading ? "Reading your platform billing status." : view.accessDescription}
             </p>
           </div>
           <Button onClick={() => void refresh()} disabled={loading}>
@@ -228,14 +211,15 @@ export default function BillingSection() {
         ) : null}
 
         <Row label="Access" value={loading ? "Checking" : active ? "Runtime allowed" : "Runtime locked"} />
-        {entitlement ? (
+        {!loading && !error && api ? (
           <>
-            <Row label="Plan" value={planLabel(entitlement.planSlug)} />
-            <Row label="Status" value={formatStatus(entitlement.status)} />
-            <Row
-              label="Runtime slots"
-              value={`${entitlement.includedRuntimeSlots + entitlement.addonRuntimeSlots} of ${entitlement.maxRuntimeSlots}`}
-            />
+            <Row label="Plan" value={view.planName} />
+            <Row label={view.subscription ? "Subscription status" : "Access status"} value={view.statusLabel} />
+            <Row label="Computer allowance" value={view.allowanceLabel} />
+            {view.computerCount !== null && <Row label="Computers on this account" value={String(view.computerCount)} />}
+            <Row label="Billing" value={view.billingLabel} />
+            <Row label="Location" value={view.locationLabel} />
+            {view.paymentRequired && <p role="alert">Payment required. Update your payment method in the billing portal.</p>}
           </>
         ) : null}
 
@@ -249,11 +233,7 @@ export default function BillingSection() {
                 ? "Checking billing management availability."
                 : error || !api
                   ? "Refresh your billing status to check whether billing management is available."
-                  : portalAvailable
-                    ? "Manage your subscription, invoices, and payment methods in your browser."
-                    : entitlement?.source === "override"
-                      ? "This account has no linked billing customer. Contact the Matrix team for billing help."
-                      : "Billing management is not available for this account yet."}
+                  : view.portalMessage}
             </p>
           </div>
           <Button
@@ -266,7 +246,7 @@ export default function BillingSection() {
           </Button>
         </div>
 
-        {!active ? (
+        {!active && !loading && !error ? (
           <div className="flex flex-col gap-3 border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
             <div className="grid gap-3">
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>

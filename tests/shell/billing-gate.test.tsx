@@ -224,7 +224,7 @@ describe("BillingGate", () => {
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/billing/status",
+      "/billing/status?details=management",
       expect.objectContaining({
         credentials: "include",
         method: "GET",
@@ -575,7 +575,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     clerkState.getToken.mockResolvedValue("clerk-token");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (input === "/billing/status") {
+      if (input === "/billing/status?details=management") {
         return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
           status: 200,
           headers: { "content-type": "application/json" },

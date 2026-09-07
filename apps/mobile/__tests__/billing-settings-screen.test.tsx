@@ -42,7 +42,7 @@ describe("native mobile billing settings", () => {
     const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
     render(<BillingSettingsScreen />);
 
-    fireEvent.press(screen.getByLabelText("Change plan"));
+    fireEvent.press(screen.getByLabelText("Manage billing"));
 
     await waitFor(() => {
       expect(mockOpenPortal).toHaveBeenCalledTimes(1);
@@ -51,16 +51,33 @@ describe("native mobile billing settings", () => {
     expect(openUrl).not.toHaveBeenCalledWith("https://matrix-os.com/pricing");
   });
 
-  it("opens pricing when billing management is unavailable", async () => {
-    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+  it("does not offer subscription actions for team access without a customer", () => {
     mockUseSettingsBilling.mockReturnValue(settingsBillingState(false));
     render(<BillingSettingsScreen />);
-
-    fireEvent.press(screen.getByLabelText("Change plan"));
-
-    await waitFor(() => {
-      expect(openUrl).toHaveBeenCalledWith("https://matrix-os.com/pricing");
-    });
+    expect(screen.queryByLabelText("Manage billing")).toBeNull();
+    expect(screen.queryByLabelText("View plans")).toBeNull();
     expect(mockOpenPortal).not.toHaveBeenCalled();
   });
+
+  it("shows team access without calling it an internal subscription", () => {
+    mockUseSettingsBilling.mockReturnValue(settingsBillingState(false));
+    render(<BillingSettingsScreen />);
+    expect(screen.getByText("Team-provided access")).toBeTruthy();
+    expect(screen.queryByText("Monthly")).toBeNull();
+  });
+
+  it("shows the paid subscription under an override", () => {
+    const state = settingsBillingState(true);
+    mockUseSettingsBilling.mockReturnValue({ ...state, billing: {
+      ...state.billing, management: {
+        portalAvailable: true, runtimeSlot: "primary", computerCount: 1, runtimePlacement: null,
+        subscription: { planSlug: "matrix_max", status: "active", billingInterval: "annual", recurringPrice: null,
+          currentPeriodEnd: null, trialEndsAt: null, trialConvertedAt: null, firstTrialPaymentFailedAt: null },
+      },
+    } });
+    render(<BillingSettingsScreen />);
+    expect(screen.getByText("Max")).toBeTruthy();
+    expect(screen.getByText("Annual")).toBeTruthy();
+  });
+
 });
