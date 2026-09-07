@@ -16,7 +16,7 @@ interface ClaimedDirectoryEvent {
   kind: "chat" | "terminal" | "project";
   authorityGeneration: number;
   metadataRevision: number;
-  recipientActorIds: string[];
+  recipientEntries: Array<{ actorId: string; invitationId?: string }>;
   discoveryState: "invited" | "accepted" | "revoked" | "deleted";
   attempt: number;
 }
@@ -87,8 +87,8 @@ export class CollaborationDirectoryOutbox {
         kind: event.kind,
         authorityGeneration: event.authorityGeneration,
         metadataRevision: event.metadataRevision,
-        recipients: event.recipientActorIds.map((actorId) => ({
-          actorId,
+        recipients: event.recipientEntries.map((recipient) => ({
+          ...recipient,
           status: event.discoveryState === "deleted" ? "revoked" : event.discoveryState,
         })),
       });
@@ -163,9 +163,9 @@ export class CollaborationDirectoryOutbox {
           .returning("event_id")
           .executeTakeFirst();
         if (!updated) continue;
-        let recipientActorIds: string[];
+        let recipientEntries: Array<{ actorId: string; invitationId?: string }>;
         try {
-          recipientActorIds = parseActorIds(row.recipient_actor_ids);
+          recipientEntries = parseRecipientEntries(row.recipient_actor_ids);
         } catch (error: unknown) {
           console.warn(
             "[collaboration-directory] quarantined malformed outbox event",
@@ -186,7 +186,7 @@ export class CollaborationDirectoryOutbox {
           kind: row.resource_kind,
           authorityGeneration: Number(row.authority_generation),
           metadataRevision: Number(row.revision),
-          recipientActorIds,
+          recipientEntries,
           discoveryState: row.discovery_state,
           attempt,
         });
@@ -196,11 +196,13 @@ export class CollaborationDirectoryOutbox {
   }
 }
 
-function parseActorIds(value: unknown): string[] {
+function parseRecipientEntries(value: unknown): Array<{ actorId: string; invitationId?: string }> {
   const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
   return CollaborationDirectoryEventSchema.shape.recipients
-    .parse((Array.isArray(parsed) ? parsed : []).map((actorId) => ({ actorId, status: "accepted" })))
-    .map(({ actorId }) => actorId);
+    .parse((Array.isArray(parsed) ? parsed : []).map((entry) => (
+      typeof entry === "string" ? { actorId: entry, status: "accepted" } : { ...entry, status: "accepted" }
+    )))
+    .map(({ actorId, invitationId }) => ({ actorId, ...(invitationId ? { invitationId } : {}) }));
 }
 
 function backoffMs(attempt: number): number {

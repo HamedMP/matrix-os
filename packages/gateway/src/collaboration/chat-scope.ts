@@ -245,7 +245,7 @@ export class CollaborationChatScopeService {
       await trx.insertInto("collaboration_directory_outbox").values({
         event_id: eventId,
         scope_id: scope.id,
-        recipient_actor_ids: jsonb([input.ownerId]),
+        recipient_actor_ids: jsonb([{ actorId: input.ownerId }]),
         authority_runtime_id: this.options.runtimeId,
         authority_generation: 1,
         resource_kind: "chat",
