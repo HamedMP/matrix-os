@@ -1,3 +1,44 @@
+const MAX_AUTH_REDIRECT_LENGTH = 2_048;
+const MAX_AUTH_REDIRECT_SEARCH_LENGTH = 4_096;
+
+export function isSignUpShellPath(pathname: string): boolean {
+  return pathname === "/sign-up" || pathname.startsWith("/sign-up/");
+}
+
+function isAuthShellPath(pathname: string): boolean {
+  return (
+    pathname === "/sign-in" ||
+    pathname.startsWith("/sign-in/") ||
+    isSignUpShellPath(pathname)
+  );
+}
+
+/**
+ * Resolve Clerk's client-controlled post-signup destination without allowing
+ * cross-origin redirects or loops back into an auth route. The path is kept
+ * relative so callers choose the configured public origin explicitly.
+ */
+export function resolveCompletedSignupRedirect(search: string, appOrigin: string): string {
+  if (search.length > MAX_AUTH_REDIRECT_SEARCH_LENGTH) return "/";
+  const searchParams = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const requested = searchParams.get("redirect_url");
+  if (!requested || requested.length > MAX_AUTH_REDIRECT_LENGTH) return "/";
+
+  if (!URL.canParse(appOrigin)) return "/";
+  const canonical = new URL(appOrigin);
+  if (canonical.protocol !== "http:" && canonical.protocol !== "https:") return "/";
+
+  const base = `${canonical.origin}/`;
+  if (!URL.canParse(requested, base)) return "/";
+  const destination = new URL(requested, base);
+  if (destination.origin !== canonical.origin || destination.username || destination.password) {
+    return "/";
+  }
+  if (isAuthShellPath(destination.pathname)) return "/";
+
+  return `${destination.pathname}${destination.search}`;
+}
+
 export function isPublicShellPath(pathname: string, search = ""): boolean {
   const searchParams = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   return (
@@ -10,8 +51,7 @@ export function isPublicShellPath(pathname: string, search = ""): boolean {
     (pathname === "/" && searchParams.get("billing") === "setup") ||
     pathname === "/sign-in" ||
     pathname.startsWith("/sign-in/") ||
-    pathname === "/sign-up" ||
-    pathname.startsWith("/sign-up/")
+    isSignUpShellPath(pathname)
   );
 }
 
