@@ -394,7 +394,7 @@ describe("zellij adapter", () => {
 
     expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["attach", "main"],
+      ["attach", "main", "options", "--default-mode", "normal"],
       expect.objectContaining({
         cols: 120,
         rows: 40,
@@ -441,7 +441,7 @@ describe("zellij adapter", () => {
 
     expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["attach", "main"],
+      ["attach", "main", "options", "--default-mode", "normal"],
       expect.objectContaining({
         env: expect.objectContaining({
           HOME: "/srv/matrix/home",
@@ -476,7 +476,7 @@ describe("zellij adapter", () => {
 
     expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["attach", "setup"],
+      ["attach", "setup", "options", "--default-mode", "normal"],
       expect.objectContaining({ name: "xterm-256color", cols: 120, rows: 40 }),
     );
     expect(pty.writes).toEqual(["claude\r"]);

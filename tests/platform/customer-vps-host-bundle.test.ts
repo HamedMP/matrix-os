@@ -141,6 +141,9 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain(
       'timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"',
     );
+    expect(script).toContain(
+      'node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"',
+    );
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/zellij"');
     expect(script).toContain(
       'tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json',
