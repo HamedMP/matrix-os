@@ -44,11 +44,18 @@ const Form = z.object({
 }).strict();
 
 function compileField(name, field, index, digest, required, safeText) {
+  if ((field.minLength ?? 0) > Math.min(field.maxLength ?? 400, 400) || field.maxLength === 0
+    || (field.minItems ?? 0) > Math.min(field.maxItems ?? 4, 4) || field.maxItems === 0
+    || (field.minimum != null && field.maximum != null && field.minimum > field.maximum)
+    || (field.type === "integer" && Math.ceil(field.minimum ?? -Number.MAX_SAFE_INTEGER) > Math.floor(field.maximum ?? Number.MAX_SAFE_INTEGER))) {
+    throw new Error("Unrepresentable form constraints");
+  }
   const questionId = `question_codex_${createHash("sha256").update(`${digest}:${index}`).digest("hex").slice(0, 24)}`;
   const enumValues = field.type === "array" ? field.items?.enum : field.enum;
   const titled = field.type === "array" ? field.items?.anyOf : field.oneOf;
   if (field.type === "array" && !enumValues && !titled) throw new Error("Unsupported array form");
   const values = field.type === "boolean" ? [true, false] : titled?.map((entry) => entry.const) ?? enumValues;
+  if (field.type === "array" && (field.minItems ?? 0) > new Set(values).size) throw new Error("Unrepresentable selection count");
   const labels = values?.map((value, i) => field.type === "boolean" ? (value ? "True" : "False")
     : `${i + 1}. ${safeText(titled?.[i]?.title ?? field.enumNames?.[i] ?? String(value), `Option ${i + 1}`, 100, 400)}`);
   const options = labels?.map((label) => ({ label, description: "Choose this value." }));

@@ -187,6 +187,7 @@ function normalizeEvent(
       type: "approval.requested",
       approvalId: event.approval.approvalId,
       title: event.approval.title,
+      description: event.approval.safeDescription,
       risk: event.approval.risk,
       allowedDecisions: event.approval.allowedDecisions,
     })];

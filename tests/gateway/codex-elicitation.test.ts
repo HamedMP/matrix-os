@@ -34,6 +34,13 @@ describe("connector elicitation", () => {
     { type: "object", properties: { value: { type: "number", enum: ["one"] } } },
     { type: "object", properties: { value: { type: "boolean", minimum: 1 } } },
     { type: "object", properties: { value: { type: "string", items: { enum: ["one"] } } } },
+    { type: "object", properties: { value: { type: "string", minLength: 401 } }, required: ["value"] },
+    { type: "object", properties: { value: { type: "string", maxLength: 0 } }, required: ["value"] },
+    { type: "object", properties: { value: { type: "string", minLength: 4, maxLength: 3 } } },
+    { type: "object", properties: { value: { type: "array", items: { enum: ["a", "b", "c", "d", "e"] }, minItems: 5 } }, required: ["value"] },
+    { type: "object", properties: { value: { type: "array", items: { enum: ["a"] }, maxItems: 0 } }, required: ["value"] },
+    { type: "object", properties: { value: { type: "array", items: { enum: ["a"] }, minItems: 2 } } },
+    { type: "object", properties: { value: { type: "integer", minimum: 1.1, maximum: 1.9 } } },
   ])("fails unsupported schemas closed", (schema) => {
     expect(() => compileElicitation(request(schema), safeText)).toThrow();
   });
