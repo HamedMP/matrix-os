@@ -46,6 +46,8 @@ describe("CollaborationChatScopeService", () => {
     const scope = await service.shareChat({
       ownerId: collaborationActors.owner,
       chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
       expectedChatRevision: 0,
       confirmationToken: preflight.confirmationToken!,
     });
@@ -78,16 +80,28 @@ describe("CollaborationChatScopeService", () => {
     const first = await service.shareChat({
       ownerId: collaborationActors.owner,
       chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
       expectedChatRevision: 0,
       confirmationToken: preflight.confirmationToken!,
     });
     const repeated = await service.shareChat({
       ownerId: collaborationActors.owner,
       chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
       expectedChatRevision: 0,
       confirmationToken: "expired-or-already-consumed-confirmation",
     });
     expect(repeated).toEqual(first);
+    await expect(service.shareChat({
+      ownerId: collaborationActors.owner,
+      chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "b".repeat(64),
+      expectedChatRevision: 0,
+      confirmationToken: "expired-or-already-consumed-confirmation",
+    })).rejects.toMatchObject({ code: "conflict" });
   });
 
   it("refuses conversion while private execution is active and leaves it intact", async () => {
@@ -97,6 +111,8 @@ describe("CollaborationChatScopeService", () => {
     await expect(service.shareChat({
       ownerId: collaborationActors.owner,
       chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
       expectedChatRevision: 0,
       confirmationToken: "invalid",
     })).rejects.toBeInstanceOf(CollaborationChatScopeError);
@@ -110,6 +126,8 @@ describe("CollaborationChatScopeService", () => {
     await service.shareChat({
       ownerId: collaborationActors.owner,
       chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
       expectedChatRevision: 0,
       confirmationToken: preflight.confirmationToken!,
     });
@@ -133,6 +151,8 @@ describe("CollaborationChatScopeService", () => {
     await service.shareChat({
       ownerId: collaborationActors.owner,
       chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
       expectedChatRevision: 0,
       confirmationToken: preflight.confirmationToken!,
     });

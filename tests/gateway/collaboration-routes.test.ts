@@ -241,6 +241,21 @@ describe("collaboration gateway routes", () => {
     expect(await ownerState.json()).toMatchObject({ pinned: false, muted: false });
   });
 
+  it("rejects unsafe and future read cursors without mutating private state", async () => {
+    await shareChat();
+    for (const readThroughSeq of ["9007199254740992", "1"]) {
+      const response = await signedJson({
+        actorId: collaborationActors.owner,
+        scopeId: collaborationIds.scope,
+        method: "PATCH",
+        path: `/api/collaboration/scopes/${collaborationIds.scope}/user-state`,
+        body: { readThroughSeq },
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(await fixture.db.selectFrom("chat_user_state").selectAll().execute()).toEqual([]);
+  });
+
   it("applies downgrade immediately and revocation removes all live scope access", async () => {
     await shareChat();
     await signedJson({

@@ -67,6 +67,7 @@ export class CollaborationProofSigner {
     scopeId: string;
     purpose: "events" | "terminal";
     path: string;
+    query?: string;
   }) {
     const issuedAt = this.now();
     const proof = CollaborationActorProofSchema.parse({
@@ -79,7 +80,7 @@ export class CollaborationProofSigner {
       purpose: input.purpose,
       method: "GET",
       path: input.path,
-      query: "",
+      query: input.query ?? "",
       bodyDigest: digestBody(new Uint8Array()),
       nonce: this.createNonce(),
       issuedAt: issuedAt.toISOString(),

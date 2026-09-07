@@ -7,6 +7,7 @@ import type { CollaborationScopeRecord } from "./repository.js";
 
 const ACTIVE_RUN_STATES = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
 const PREFLIGHT_LIFETIME_MS = 60_000;
+const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 const PreflightPayloadSchema = z.object({
   version: z.literal(1),
@@ -88,6 +89,8 @@ export class CollaborationChatScopeService {
   async shareChat(input: {
     ownerId: string;
     chatId: string;
+    clientRequestId: string;
+    payloadHash: string;
     expectedChatRevision: number;
     confirmationToken: string;
   }): Promise<CollaborationScopeRecord> {
@@ -106,7 +109,22 @@ export class CollaborationChatScopeService {
       if (existingBinding) {
         const existing = await selectScope(trx, existingBinding.scopeId);
         if (existing && existing.kind === "chat" && existing.resource_id === input.chatId
-          && existing.lifecycle === "shared") return scopeRecord(existing);
+          && existing.lifecycle === "shared") {
+          const replay = await trx.selectFrom("collaboration_operations")
+            .select(["payload_hash", "status"])
+            .where("scope_id", "=", existing.id)
+            .where("actor_id", "=", input.ownerId)
+            .where("client_request_id", "=", input.clientRequestId)
+            .where("operation_kind", "=", "scope.create")
+            .executeTakeFirst();
+          if (replay && (replay.payload_hash !== input.payloadHash || replay.status !== "completed")) {
+            throw new CollaborationChatScopeError("conflict", "Scope creation request changed");
+          }
+          if (!replay) {
+            await writeCreateOperation(trx, existing, input, now);
+          }
+          return scopeRecord(existing);
+        }
         throw new CollaborationChatScopeError("conflict", "Chat collaboration binding is invalid");
       }
       this.verifyConfirmation(input);
@@ -236,6 +254,7 @@ export class CollaborationChatScopeService {
         delivered_at: null,
         created_at: now,
       }).execute();
+      await writeCreateOperation(trx, activated, input, now);
       return scopeRecord(activated);
     });
   }
@@ -269,6 +288,33 @@ export class CollaborationChatScopeService {
       || payload.data.chatRevision !== input.expectedChatRevision
       || Date.parse(payload.data.expiresAt) <= this.now().getTime()) throw invalidConfirmation();
   }
+}
+
+async function writeCreateOperation(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  scope: Awaited<ReturnType<typeof selectScope>> & {},
+  input: {
+    ownerId: string;
+    clientRequestId: string;
+    payloadHash: string;
+    expectedChatRevision: number;
+  },
+  now: string,
+): Promise<void> {
+  if (!scope) throw new CollaborationChatScopeError("conflict", "Chat scope is unavailable");
+  await trx.insertInto("collaboration_operations").values({
+    scope_id: scope.id,
+    actor_id: input.ownerId,
+    client_request_id: input.clientRequestId,
+    operation_kind: "scope.create",
+    payload_hash: input.payloadHash,
+    status: "completed",
+    result_ref: jsonb({ scopeId: scope.id }),
+    expected_revision: input.expectedChatRevision,
+    accepted_auth_epoch: Number(scope.auth_epoch),
+    created_at: now,
+    expires_at: new Date(new Date(now).getTime() + OPERATION_RETENTION_MS).toISOString(),
+  }).execute();
 }
 
 export function createDiscussionOnlyChatExecutionGuard(db: Kysely<OwnerCollaborationDatabase>): {

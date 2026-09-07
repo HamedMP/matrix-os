@@ -99,6 +99,8 @@ export function createCollaborationRoutes(options: {
     const scope = await options.chatScope.shareChat({
       ownerId: proof.ownerId,
       chatId: input.resourceId,
+      clientRequestId: input.clientRequestId,
+      payloadHash: digest(bytes),
       expectedChatRevision: Number(input.expectedRevision),
       confirmationToken: input.confirmationToken,
     });
@@ -263,10 +265,18 @@ export function createCollaborationRoutes(options: {
     const context = await authorize(options, c, bytes, "read", scopeId);
     requireChatContext(context);
     const input = CollaborationUserStatePatchSchema.parse(value);
+    const readThroughSeq = input.readThroughSeq === undefined ? undefined : Number(input.readThroughSeq);
+    if (readThroughSeq !== undefined) {
+      const latest = await options.repository.db.selectFrom("chat_messages")
+        .select(({ fn }) => fn.max("seq").as("sequence"))
+        .where("chat_id", "=", context.resourceId)
+        .executeTakeFirst();
+      z.number().int().safe().min(0).max(Number(latest?.sequence ?? 0)).parse(readThroughSeq);
+    }
     await options.repository.updateChatUserState({
       chatId: context.resourceId,
       actorId: context.actorId,
-      ...(input.readThroughSeq === undefined ? {} : { readThroughSeq: Number(input.readThroughSeq) }),
+      ...(readThroughSeq === undefined ? {} : { readThroughSeq }),
       ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
       ...(input.muted === undefined ? {} : { muted: input.muted }),
       openedAt: now().toISOString(),

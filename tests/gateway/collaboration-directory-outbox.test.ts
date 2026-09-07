@@ -90,6 +90,57 @@ describe("CollaborationDirectoryOutbox", () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
     await worker.shutdown();
   });
+
+  it("quarantines malformed rows without blocking valid rows in the same batch", async () => {
+    await fixture.db.updateTable("collaboration_directory_outbox")
+      .set({ recipient_actor_ids: JSON.stringify([""]) })
+      .where("event_id", "=", "60000000-0000-4000-8000-000000000001")
+      .execute();
+    await fixture.db.insertInto("collaboration_events").values({
+      scope_id: collaborationIds.scope,
+      scope_seq: 2,
+      event_id: "60000000-0000-4000-8000-000000000002",
+      resource_kind: "chat",
+      resource_id: collaborationIds.chat,
+      revision: 2,
+      authority_generation: 1,
+      event_type: "member.accepted",
+      payload: JSON.stringify({}),
+      created_at: now.toISOString(),
+    }).execute();
+    await fixture.db.insertInto("collaboration_directory_outbox").values({
+      event_id: "60000000-0000-4000-8000-000000000002",
+      scope_id: collaborationIds.scope,
+      recipient_actor_ids: JSON.stringify([collaborationActors.editor]),
+      authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 1,
+      resource_kind: "chat",
+      discovery_state: "accepted",
+      retry_after: now.toISOString(),
+      delivered_at: null,
+      created_at: now.toISOString(),
+    }).execute();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const worker = new CollaborationDirectoryOutbox({
+      db: fixture.db,
+      platformBaseUrl: "https://platform.internal",
+      runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef",
+      fetchImpl,
+      now: () => now,
+      startTimer: false,
+    });
+
+    expect(await worker.runOnce()).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const rows = await fixture.db.selectFrom("collaboration_directory_outbox")
+      .select(["event_id", "attempts", "delivered_at"])
+      .orderBy("event_id")
+      .execute();
+    expect(rows[0]).toMatchObject({ attempts: 20, delivered_at: null });
+    expect(rows[1]?.delivered_at).not.toBeNull();
+    await worker.shutdown();
+  });
 });
 
 async function seedScopeAndOutbox(fixture: CollaborationTestDatabase): Promise<void> {

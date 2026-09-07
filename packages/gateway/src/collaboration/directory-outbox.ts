@@ -162,6 +162,22 @@ export class CollaborationDirectoryOutbox {
           .returning("event_id")
           .executeTakeFirst();
         if (!updated) continue;
+        let recipientActorIds: string[];
+        try {
+          recipientActorIds = parseActorIds(row.recipient_actor_ids);
+        } catch (error: unknown) {
+          console.warn(
+            "[collaboration-directory] quarantined malformed outbox event",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          await trx.updateTable("collaboration_directory_outbox").set({
+            attempts: MAX_ATTEMPTS,
+          }).where("event_id", "=", row.event_id)
+            .where("attempts", "=", attempt)
+            .where("delivered_at", "is", null)
+            .execute();
+          continue;
+        }
         claimed.push({
           eventId: row.event_id,
           scopeId: row.scope_id,
@@ -169,7 +185,7 @@ export class CollaborationDirectoryOutbox {
           kind: row.resource_kind,
           authorityGeneration: Number(row.authority_generation),
           metadataRevision: Number(row.revision),
-          recipientActorIds: parseActorIds(row.recipient_actor_ids),
+          recipientActorIds,
           discoveryState: row.discovery_state,
           attempt,
         });

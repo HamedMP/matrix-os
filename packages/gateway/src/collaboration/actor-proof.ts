@@ -99,6 +99,7 @@ export class CollaborationActorProofVerifier {
     signedProof: unknown;
     purpose: "events" | "terminal";
     path: string;
+    query?: string;
   }): Promise<CollaborationActorProof> {
     const parsed = CollaborationSignedActorProofSchema.safeParse(input.signedProof);
     if (!parsed.success) throw invalidProof();
@@ -115,7 +116,7 @@ export class CollaborationActorProofVerifier {
       || proof.purpose !== input.purpose
       || proof.method !== "GET"
       || proof.path !== input.path
-      || proof.query !== ""
+      || proof.query !== (input.query ?? "")
       || proof.bodyDigest !== digestBody(new Uint8Array())
       || !proof.scopeId
       || issuedAt > now + MAX_CLOCK_SKEW_MS

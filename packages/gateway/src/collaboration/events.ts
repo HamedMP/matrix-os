@@ -33,6 +33,7 @@ interface Connection {
   lastSequence: number;
   lastTouchedAt: number;
   socket: CollaborationEventSocket;
+  delivery: Promise<void>;
 }
 
 export class CollaborationEventRegistry {
@@ -68,12 +69,13 @@ export class CollaborationEventRegistry {
     authorityGeneration: number;
     afterSequence?: number;
     socket: CollaborationEventSocket;
-  }): Promise<{ sequence: number; close(): void; touch(): void }> {
+  }): Promise<{ sequence: number; close(): void; touch(): void; resume(sequence: number, authorityGeneration: number): Promise<void> }> {
     if (this.closing) throw new CollaborationEventRegistryError("unavailable", "Event delivery is shutting down");
     const context = await this.options.authorize(input.scopeId, input.actorId);
     if (context.authorityGeneration !== input.authorityGeneration) {
       throw new CollaborationEventRegistryError("unavailable", "Event authority changed");
     }
+    await this.requireValidCursor(input.scopeId, input.afterSequence ?? 0);
     this.requireCapacity(input.scopeId, input.actorId, input.connectionId);
     const existing = this.connections.get(input.connectionId);
     if (existing) this.remove(existing.connectionId, 1000, "Replaced");
@@ -87,17 +89,20 @@ export class CollaborationEventRegistry {
       lastSequence: input.afterSequence ?? 0,
       lastTouchedAt: this.now().getTime(),
       socket: input.socket,
+      delivery: Promise.resolve(),
     };
     this.connections.set(connection.connectionId, connection);
     try {
-      await this.sendReplay(connection);
-      this.send(connection, {
-        version: 1,
-        type: "ready",
-        scopeId: connection.scopeId,
-        resourceId: connection.resourceId,
-        authorityGeneration: String(connection.authorityGeneration),
-        sequence: String(connection.lastSequence),
+      await this.enqueueDelivery(connection, async () => {
+        await this.sendReplay(connection);
+        this.send(connection, {
+          version: 1,
+          type: "ready",
+          scopeId: connection.scopeId,
+          resourceId: connection.resourceId,
+          authorityGeneration: String(connection.authorityGeneration),
+          sequence: String(connection.lastSequence),
+        });
       });
     } catch (error: unknown) {
       this.remove(connection.connectionId, 1011, "Unavailable");
@@ -110,6 +115,22 @@ export class CollaborationEventRegistry {
         const current = this.connections.get(connection.connectionId);
         if (current) current.lastTouchedAt = this.now().getTime();
       },
+      resume: async (sequence, authorityGeneration) => {
+        const current = this.connections.get(connection.connectionId);
+        if (!current || authorityGeneration !== current.authorityGeneration) {
+          throw new CollaborationEventRegistryError("unavailable", "Event cursor is unavailable");
+        }
+        await this.enqueueDelivery(current, async () => {
+          const authorized = await this.options.authorize(current.scopeId, current.actorId);
+          if (authorized.authorityGeneration !== current.authorityGeneration) {
+            throw new CollaborationEventRegistryError("unavailable", "Event authority changed");
+          }
+          await this.requireValidCursor(current.scopeId, sequence);
+          current.lastSequence = Math.max(current.lastSequence, sequence);
+          current.lastTouchedAt = this.now().getTime();
+          await this.sendReplay(current);
+        });
+      },
     };
   }
 
@@ -118,9 +139,11 @@ export class CollaborationEventRegistry {
     const remove: string[] = [];
     for (const connection of targets) {
       try {
-        const context = await this.options.authorize(connection.scopeId, connection.actorId);
-        if (context.authorityGeneration !== connection.authorityGeneration) throw new Error("authority changed");
-        await this.sendReplay(connection);
+        await this.enqueueDelivery(connection, async () => {
+          const context = await this.options.authorize(connection.scopeId, connection.actorId);
+          if (context.authorityGeneration !== connection.authorityGeneration) throw new Error("authority changed");
+          await this.sendReplay(connection);
+        });
       } catch (error: unknown) {
         console.warn("[collaboration-events] subscriber unavailable", error instanceof Error ? error.name : "UnknownError");
         this.sendBestEffort(connection, {
@@ -220,6 +243,30 @@ export class CollaborationEventRegistry {
         revision: String(row.revision),
       });
       connection.lastSequence = Number(row.scope_seq);
+    }
+  }
+
+  private enqueueDelivery(connection: Connection, operation: () => Promise<void>): Promise<void> {
+    const active = connection.delivery.then(operation);
+    connection.delivery = active.catch((error: unknown) => {
+      console.warn(
+        "[collaboration-events] serialized delivery failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    });
+    return active;
+  }
+
+  private async requireValidCursor(scopeId: string, sequence: number): Promise<void> {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) {
+      throw new CollaborationEventRegistryError("unavailable", "Event cursor is unavailable");
+    }
+    const row = await this.options.db.selectFrom("collaboration_events")
+      .select(({ fn }) => fn.max("scope_seq").as("sequence"))
+      .where("scope_id", "=", scopeId)
+      .executeTakeFirst();
+    if (sequence > Number(row?.sequence ?? 0)) {
+      throw new CollaborationEventRegistryError("unavailable", "Event cursor is unavailable");
     }
   }
 

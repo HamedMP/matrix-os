@@ -55,7 +55,7 @@
 - [x] T025 (PR1) Implement exact collaboration HTTP proxying, caller-header stripping, bounded fetch timeouts, and safe response mapping in `packages/platform/src/collaboration/proxy.ts`
 - [x] T026 (PR1) Implement hashed one-use connection tickets and exact collaboration WebSocket forwarding in `packages/platform/src/collaboration/websocket.ts`
 - [x] T027 (PR1) Implement the capped scope-event registry, authorized replay, heartbeat/stale sweep, failed-sender eviction, revoke notification, and drain in `packages/gateway/src/collaboration/events.ts`
-- [ ] T028 (PR1) Register gateway dependencies, migrations, recovery, exact HTTP/WS routes, workers, and shutdown ordering in `packages/gateway/src/collaboration/wiring.ts`
+- [x] T028 (PR1) Register gateway dependencies, migrations, recovery, exact HTTP/WS routes, workers, and shutdown ordering in `packages/gateway/src/collaboration/wiring.ts`
 - [ ] T029 (PR1) Register platform database, policy, exact proxy/WS paths, internal directory/policy endpoints, and shutdown ownership in `packages/platform/src/collaboration/wiring.ts`
 
 **Checkpoint**: A common authority and transport exist, but no story-specific resource adapter is advertised or enabled.
@@ -100,7 +100,7 @@
 - [ ] T041 [P] [US3] (PR1) Write red actor-scoped message idempotency and commit-with-outbox tests in `tests/gateway/collaboration-chat-discussion-postgres.test.ts`
 - [x] T042 [P] [US3] (PR1) Write red owner legacy bypass tests for start, queue, dispatch, steer, retry, approval, and reconnect paths in `tests/gateway/collaboration-m1-ai-gate.test.ts`
 - [ ] T043 [P] [US3] (PR1) Write red private draft/mode/account-switch and member-local read/pin/mute state tests in `tests/ui/collaboration-chat-state.test.tsx`
-- [ ] T044 [P] [US3] (PR1) Write red scoped event/reconnect tests proving no owner-wide cursor or duplicate discussion delivery in `tests/gateway/collaboration-chat-events.test.ts`
+- [x] T044 [P] [US3] (PR1) Write red scoped event/reconnect tests proving no owner-wide cursor or duplicate discussion delivery in `tests/gateway/collaboration-chat-events.test.ts`
 
 ### Implementation — M1 / PR1
 
