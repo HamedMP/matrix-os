@@ -1,3 +1,4 @@
+import type { UserInputRequest, UserInputAnswerRequest } from "@matrix-os/contracts";
 export type ConversationMessageRole = "user" | "assistant";
 
 export interface ConversationAttachmentPresentation {
@@ -78,6 +79,7 @@ export interface ConversationNoticePresentation {
 }
 
 export interface ConversationRequestPresentation {
+  input?: UserInputRequest;
   kind: "request";
   id: string;
   phase: "commentary" | "final";
@@ -111,6 +113,7 @@ export type ConversationTurnTimelinePresentation =
   | { kind: "user-followup"; message: ConversationMessagePresentation };
 
 export interface ConversationTurnPresentation {
+  waitingFor?: "approval" | "input";
   id: string;
   startedAt: number;
   endedAt: number;
@@ -124,6 +127,7 @@ export interface ConversationTurnPresentation {
 }
 
 export interface ConversationPresentationCallbacks {
+  submitInput?: (requestId: string, answers: NonNullable<UserInputAnswerRequest["structuredAnswers"]>) => Promise<void>;
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;

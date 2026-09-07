@@ -1,4 +1,8 @@
 import {
+  CanonicalSubmitChatInputRequestSchema,
+  CanonicalChatInputSubmissionResponseSchema,
+  type CanonicalSubmitChatInputRequest,
+  type CanonicalChatInputSubmissionResponse,
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
   CanonicalCancelQueuedChatTurnRequestSchema,
@@ -486,6 +490,7 @@ export interface CanonicalChatClient {
     approvalId: string,
     input: CanonicalSubmitChatApprovalRequest,
   ): Promise<CanonicalChatApprovalSubmissionResponse>;
+  submitInput(chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse>;
   retryTurn(
     chatId: string,
     turnId: string,
@@ -733,6 +738,15 @@ export function createCanonicalChatClient(
       return CanonicalChatApprovalSubmissionResponseSchema.parse(await api.post(
         `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/approvals/${encodeURIComponent(parsedApprovalId)}`,
         request,
+      ));
+    },
+    async submitInput(chatId, runId, requestId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const parsedRequestId = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).parse(requestId);
+      return CanonicalChatInputSubmissionResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/inputs/${encodeURIComponent(parsedRequestId)}`,
+        CanonicalSubmitChatInputRequestSchema.parse(input),
       ));
     },
 

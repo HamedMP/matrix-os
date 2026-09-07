@@ -247,6 +247,7 @@ function selectedModelDisplayName(run: CanonicalChatRun): string {
 
 function activeModelStatus(run: CanonicalChatRun | undefined): ConversationWorkPresentation | undefined {
   if (!run || !isActiveRun(run)) return undefined;
+  if (run.status === "waiting_for_approval" || run.status === "waiting_for_input") return undefined;
   const model = selectedModelDisplayName(run);
   const id = `${run.id}:selected-model`;
   return {
@@ -437,6 +438,7 @@ function runPresentation(
         requestId: activity.requestId,
         state: "waiting",
         label: activity.title,
+        ...(activity.input ? { input: activity.input } : {}),
         timestamp: Date.parse(activity.occurredAt),
         actions: [{ kind: "input", requestId: activity.requestId, label: "Submit" }],
       }, MAX_RUN_ACTIVITY_PROJECTIONS) && isNew) requestOrder.push(key);
@@ -637,6 +639,8 @@ export function canonicalChatPresentation(input: {
       startedAt,
       endedAt,
       active: isActiveRun(run),
+      ...(run?.status === "waiting_for_approval" ? { waitingFor: "approval" as const }
+        : run?.status === "waiting_for_input" ? { waitingFor: "input" as const } : {}),
       ...(userMessage ? { user: messagePresentation(userMessage, "commentary") } : {}),
       ...(userFollowups.length > 0
         ? { userFollowups: userFollowups.map((message) => messagePresentation(message, "commentary")) }

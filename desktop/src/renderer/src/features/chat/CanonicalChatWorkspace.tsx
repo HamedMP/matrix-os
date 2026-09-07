@@ -737,6 +737,7 @@ export function CanonicalChatWorkspace({
               openFile: openFileInDesktopEditor,
               ...(api ? { loadImage: (src: string) => api.getBlob(src, { maxBytes: 10 * 1024 * 1024 }) } : {}),
               performAction: performTranscriptAction,
+              submitInput: controller.submitInput,
               canPerformAction: canPerformTranscriptAction,
             }} />
             <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>{composer}</div>

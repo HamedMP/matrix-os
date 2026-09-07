@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CanonicalSubmitChatInputRequest,
   CanonicalChatApprovalDecision,
   CanonicalChatDetailResponse,
   CanonicalChatRecord,
@@ -9,6 +10,7 @@ import type {
 import { useSocket } from "@/hooks/useSocket";
 import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
+import { projectCanonicalRequests } from "@/lib/canonical-chat-requests";
 import {
   createCanonicalShellChatClient,
   isDefinitiveCanonicalChatRejection,
@@ -279,6 +281,19 @@ export function useCanonicalChatState(): ChatState {
     }
   }, [client, loadDetail]);
 
+  const submitInput = useCallback(async (runId: string, inputRequestId: string, answers: CanonicalSubmitChatInputRequest["answers"]) => {
+    const current = detailRef.current;
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current || current.record.activeRun.runId !== runId) return false;
+    try {
+      await client.submitInput(current.record.chat.id, runId, inputRequestId, { answers, clientRequestId: requestId() });
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell input failed:", error instanceof Error ? error.name : "UnknownError");
+      return false;
+    }
+  }, [client, loadDetail]);
+
   const renameConversation = useCallback(async (chatId: string, title: string) => {
     const current = detailRef.current?.record.chat.id === chatId
       ? detailRef.current.record
@@ -318,7 +333,8 @@ export function useCanonicalChatState(): ChatState {
     }
   }, [client, records]);
 
-  const messages = detail ? projectCanonicalMessages(detail.messages) : [];
+  const messages = detail ? projectCanonicalRequests(detail.activities, detail.runs,
+    projectCanonicalMessages(detail.messages)) : [];
   if (safeError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: safeError, timestamp: Date.now() });
   }
@@ -345,5 +361,6 @@ export function useCanonicalChatState(): ChatState {
     switchConversation,
     abortCurrent,
     submitApproval,
+    submitInput,
   };
 }
