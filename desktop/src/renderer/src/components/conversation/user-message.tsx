@@ -21,6 +21,11 @@ export function UserMessage({
     ? `${lines.slice(0, 10).join("\n").slice(0, 700)}…`
     : message.markdown;
   const renderStructuredContent = Boolean(message.content?.length) && (!collapsible || expanded);
+  const hasBubbleContent = renderStructuredContent
+    ? message.content!.some((segment) => segment.kind === "text"
+      ? segment.text.trim().length > 0
+      : segment.kind === "reference" && segment.referenceKind !== "file")
+    : visibleMarkdown.trim().length > 0 || references.length > 0;
   return (
     <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
       <Message align="end">
@@ -29,7 +34,7 @@ export function UserMessage({
             ? [{ ...segment, kind: "image" as const }]
             : segment.kind === "reference" && segment.referenceKind === "file" ? [{ ...segment, kind: "file" as const }] : [])}
             open={callbacks.openAttachment} loadImage={callbacks.loadImage} />
-          <Bubble variant="secondary" align="end" className="max-w-[min(85%,48rem)]">
+          {hasBubbleContent ? <Bubble variant="secondary" align="end" className="max-w-[min(85%,48rem)]">
             <BubbleContent className="max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
               style={{ background: "color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface))", borderColor: "color-mix(in srgb, var(--text-primary) 6%, transparent)" }} data-selectable>
               {renderStructuredContent ? message.content!.map((segment, index) => {
@@ -77,7 +82,7 @@ export function UserMessage({
                 </button>
               ) : null}
             </BubbleContent>
-          </Bubble>
+          </Bubble> : null}
           <MessageMetadata
             content={message.copyText}
             timestamp={message.timestamp}
