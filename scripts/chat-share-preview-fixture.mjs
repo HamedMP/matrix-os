@@ -9,7 +9,7 @@ export function selectSharePreviewMachine(fleet, pr) {
   if (matches.length !== 1) throw new Error("Expected one active preview");
   const machine = matches[0];
   const address = machine.publicIPv4;
-  if (machine.runtimeSlot !== handle || machine.provisioningClass !== "preview" || machine.status !== "running" || isIP(address ?? "") !== 4) throw new Error("Not a running PR preview");
+  if (machine.runtimeSlot !== handle || (machine.provisioningClass !== undefined && machine.provisioningClass !== "preview") || machine.status !== "running" || isIP(address ?? "") !== 4) throw new Error("Not a running PR preview");
   const [first, second] = address.split(".").map(Number);
   if ([0, 10, 127].includes(first) || first >= 224 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168)) throw new Error("Invalid preview address");
   return { handle, address };
