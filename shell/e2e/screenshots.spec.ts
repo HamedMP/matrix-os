@@ -223,6 +223,9 @@ test.describe("Visual regression", () => {
   for (const scenario of ["team-access", "override-paid"] as const) {
     for (const surface of ["web-canvas", "web-desktop", "web-mobile"] as const) {
       test(`billing management ${scenario} in ${surface}`, async ({ page }, testInfo) => {
+        await page.addInitScript(() => {
+          localStorage.setItem("matrix:getting-started:auto-opened:web:%2F", "1");
+        });
         if (surface === "web-mobile") await page.setViewportSize({ width: 390, height: 844 });
         await page.goto(`/?e2e_billing_state=${scenario}`);
         if (surface === "web-mobile") {
@@ -233,8 +236,7 @@ test.describe("Visual regression", () => {
           const gettingStarted = page.getByRole("dialog", { name: "Getting started" });
           if (await gettingStarted.isVisible()) await page.keyboard.press("Escape");
           await page.keyboard.press("Meta+k");
-          await page.keyboard.type("Mode: Canvas");
-          await page.keyboard.press("Enter");
+          await page.getByRole("option", { name: "Mode: Canvas", exact: true }).click();
           await page.getByTestId("dock-settings").click();
         } else {
           await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
