@@ -86,10 +86,10 @@ describe("desktop billing settings", () => {
 
     render(<BillingSection />);
 
-    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
-    expect(api.get).toHaveBeenCalledWith("/billing/status");
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
+    expect(api.get).toHaveBeenCalledWith("/billing/status?details=management&runtimeSlot=primary");
     expect(screen.getByText("Builder")).not.toBeNull();
-    expect(screen.getByText("2 of 2")).not.toBeNull();
+    expect(screen.getByText("Up to 2 computers")).not.toBeNull();
     expect(screen.queryByText("Default machine")).toBeNull();
     expect(screen.queryByText(/cpx\d+/i)).toBeNull();
   });
@@ -99,7 +99,7 @@ describe("desktop billing settings", () => {
     useConnection.setState({ api: api as never });
 
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
     fireEvent.click(screen.getByRole("button", { name: /Manage billing/i }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/billing/portal", {}));
@@ -115,11 +115,11 @@ describe("desktop billing settings", () => {
     });
     useConnection.setState({ api: api as never });
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
 
     const button = screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
-    expect(screen.getByText(/no linked billing customer/)).not.toBeNull();
+    expect(screen.getByText(/Billing management is not available/)).not.toBeNull();
     fireEvent.click(button);
     expect(api.post).not.toHaveBeenCalled();
   });
@@ -130,7 +130,7 @@ describe("desktop billing settings", () => {
       entitlement: { ...activeBilling.entitlement, portalAvailable: false },
     }) as never });
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
 
     expect((screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Billing management is not available for this account yet/)).not.toBeNull();
@@ -142,7 +142,7 @@ describe("desktop billing settings", () => {
     useConnection.setState({ api: api as never });
     render(<BillingSection />);
     expect((screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement).disabled).toBe(true);
-    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
     let rejectRefresh!: (reason: Error) => void;
     api.get.mockImplementationOnce(() => new Promise((_, reject) => { rejectRefresh = reject; }));
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -153,6 +153,7 @@ describe("desktop billing settings", () => {
     rejectRefresh(new Error("status unavailable"));
     await waitFor(() => expect(screen.getByText(/Refresh your billing status/)).not.toBeNull());
     expect(button.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /Continue to checkout/i })).toBeNull();
     expect(screen.queryByText(/no linked billing customer/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(button.disabled).toBe(false));
@@ -166,7 +167,7 @@ describe("desktop billing settings", () => {
     const api = makeApi(activeBilling);
     useConnection.setState({ api: api as never });
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
     fireEvent.click(screen.getByRole("button", { name: /Manage billing/i }));
     await waitFor(() => expect(window.operator.invoke).toHaveBeenCalled());
     const opening = screen.getByRole("button", { name: /Opening/i }) as HTMLButtonElement;
@@ -184,7 +185,7 @@ describe("desktop billing settings", () => {
     if (failure === "browser") vi.mocked(window.operator.invoke).mockRejectedValueOnce(new Error("private filesystem path"));
     useConnection.setState({ api: api as never });
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
     fireEvent.click(screen.getByRole("button", { name: /Manage billing/i }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Billing portal is unavailable. Try again in a moment."));
     expect((screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement).disabled).toBe(false);
@@ -205,7 +206,8 @@ describe("desktop billing settings", () => {
     useConnection.setState({ api: api as never });
 
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Billing required")).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
+    fireEvent.change(screen.getByRole("combobox", { name: "Change server location" }), { target: { value: "region_fsn1" } });
     fireEvent.click(screen.getByRole("button", { name: /Continue to checkout/i }));
 
     await waitFor(() =>
@@ -231,9 +233,25 @@ describe("desktop billing settings", () => {
     useConnection.setState({ api: api as never });
 
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Billing required")).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Billing summary")).not.toBeNull());
 
     expect(screen.getByRole("button", { name: /Manage billing/i })).not.toBeNull();
     expect(screen.getByRole("button", { name: /Continue to checkout/i })).not.toBeNull();
   });
+  it("keeps the paid plan visible when runtime access is provided by the team", async () => {
+    useConnection.setState({ api: makeApi({
+      ...activeBilling,
+      entitlement: { ...activeBilling.entitlement, source: "override", planSlug: "internal", billingInterval: null },
+      management: {
+        portalAvailable: true, runtimeSlot: "primary", computerCount: 1, runtimePlacement: null,
+        subscription: { planSlug: "matrix_max", status: "active", billingInterval: "annual", recurringPrice: null,
+          currentPeriodEnd: null, trialEndsAt: null, trialConvertedAt: null, firstTrialPaymentFailedAt: null },
+      },
+    }) as never });
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Max")).toBeTruthy());
+    expect(screen.getByText("Annual")).toBeTruthy();
+    expect(screen.queryByText("Internal")).toBeNull();
+  });
+
 });

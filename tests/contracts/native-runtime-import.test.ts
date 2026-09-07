@@ -8,7 +8,7 @@ describe("contracts native Node runtime", () => {
       [
         "--input-type=module",
         "-e",
-        'import("@matrix-os/contracts").then(({ OS_VIEW_MODES }) => console.log(OS_VIEW_MODES.join(",")))',
+        'import("@matrix-os/contracts").then(({ OS_VIEW_MODES, deriveBillingManagementView }) => console.log(OS_VIEW_MODES.join(","), deriveBillingManagementView(null).planName))',
       ],
       {
         cwd: process.cwd(),
@@ -17,6 +17,6 @@ describe("contracts native Node runtime", () => {
       },
     );
 
-    expect(output.trim()).toBe("desktop,canvas");
+    expect(output.trim()).toBe("desktop,canvas No subscription");
   });
 });

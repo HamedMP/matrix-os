@@ -58,7 +58,28 @@ export const MatrixBillingPublicEntitlementSchema = z.object({
   updatedAt: IsoTimestampSchema,
 }).strict();
 
+/** Opt-in management details; runtime authorization continues to use entitlement/access. */
+export const MatrixBillingSubscriptionSummarySchema = MatrixBillingPublicEntitlementSchema.pick({
+  planSlug: true, status: true, billingInterval: true, recurringPrice: true,
+  trialEndsAt: true, trialConvertedAt: true, firstTrialPaymentFailedAt: true,
+}).extend({
+  planSlug: z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS),
+  currentPeriodEnd: IsoTimestampSchema.nullable(),
+}).strict();
+
+export const MatrixBillingManagementSchema = z.strictObject({
+  subscription: MatrixBillingSubscriptionSummarySchema.nullable(),
+  portalAvailable: z.boolean(),
+  runtimeSlot: z.string().min(1).max(32).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/),
+  computerCount: z.number().int().nonnegative(),
+  runtimePlacement: MatrixBillingPublicEntitlementSchema.shape.runtimePlacement,
+});
+
+export type MatrixBillingManagement = z.infer<typeof MatrixBillingManagementSchema>;
+export type MatrixBillingSubscriptionSummary = z.infer<typeof MatrixBillingSubscriptionSummarySchema>;
+
 export const MatrixBillingStatusSchema = z.object({
+  management: MatrixBillingManagementSchema.optional(),
   entitlement: MatrixBillingPublicEntitlementSchema.nullable(),
   access: z.object({
     runtimeProxyAllowed: z.boolean(),

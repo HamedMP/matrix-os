@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import {
   MatrixBillingStatusSchema,
   type MatrixBillingStatus,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/billing-public";
 
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
@@ -39,6 +39,7 @@ export function fetchMobileBillingStatus(
 ): Promise<MobileBillingStatus> {
   const url = new URL(`${HOSTED_GATEWAY_URL}/billing/status`);
   url.searchParams.set("runtimeSlot", runtimeSlot);
+  url.searchParams.set("details", "management");
   return fetchAuthenticatedJson({
     url: url.toString(),
     token: clerkToken,

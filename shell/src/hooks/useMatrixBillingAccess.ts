@@ -3,6 +3,8 @@
 import { useAuth } from "@clerk/nextjs";
 import {
   MatrixBillingPublicEntitlementSchema,
+  MatrixBillingManagementSchema,
+  type MatrixBillingManagement,
   type MatrixBillingPublicEntitlement,
 } from "@matrix-os/contracts";
 import {
@@ -13,6 +15,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { billingManagementScenario } from "./billing-e2e-management";
 import { hasMatrixBillingAccess } from "@/lib/billing";
 
 const BILLING_STATUS_TIMEOUT_MS = 10_000;
@@ -37,6 +40,7 @@ type BillingAccessState = {
   active: boolean | null;
   checking: boolean;
   entitlement: BillingEntitlementSummary | null;
+  management?: MatrixBillingManagement;
   trialOffer: BillingTrialOffer | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
@@ -55,6 +59,7 @@ export type BillingEntitlementSummary = MatrixBillingPublicEntitlement;
 type BillingAccessRemoteState = {
   active: boolean | null;
   entitlement: BillingEntitlementSummary | null;
+  management?: MatrixBillingManagement;
   trialOffer: BillingTrialOffer | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
@@ -91,6 +96,11 @@ export function useMatrixBillingAccess(): BillingAccessState {
     getServerE2eBillingScenario,
   );
   if (!e2eBillingBypass) return state;
+  const managementScenario = billingManagementScenario(e2eBillingScenario);
+  if (managementScenario) return {
+    ...managementScenario, active: true, checking: false, trialOffer: null,
+    accessReason: "e2e_test_bypass", accessIssue: null, retry: state.retry,
+  };
   if (e2eBillingScenario === "legacy-trial") {
     return {
       active: true,
@@ -214,7 +224,14 @@ export function useMatrixBillingAccess(): BillingAccessState {
   };
 }
 
+function readBillingRuntimeSlot(): string | null {
+  if (typeof window === "undefined") return null;
+  const pathSlot = window.location.pathname.match(/\/~runtime\/([^/]+)/)?.[1];
+  return pathSlot ?? new URLSearchParams(window.location.search).get("runtime");
+}
+
 function useManagedMatrixBillingAccess(): BillingAccessState {
+  const runtimeSlot = useSyncExternalStore(subscribeToE2eBillingScenario, readBillingRuntimeSlot, getServerE2eBillingScenario);
   const { isLoaded, isSignedIn, has, userId } = useAuth();
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const legacyActive = useMemo(
@@ -246,7 +263,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       setRemoteChecked(true);
       return;
     }
-    const billingCacheKey = isSignedIn ? userId : PLATFORM_SESSION_BILLING_CACHE_KEY;
+    const billingCacheKey = `${isSignedIn ? userId : PLATFORM_SESSION_BILLING_CACHE_KEY}:${runtimeSlot ?? "primary"}`;
     if (previousCacheKeyRef.current !== billingCacheKey) {
       previousCacheKeyRef.current = billingCacheKey;
       failedAttemptsRef.current = 0;
@@ -265,6 +282,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
     let retryTimeoutId: number | undefined;
     setRemoteChecked(false);
     readRemoteBillingStatus(billingCacheKey, {
+      runtimeSlot,
       skipCache: !shouldUseSnapshotCache,
       skipInactiveCache: checkoutReturnRequested,
     })
@@ -307,7 +325,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       disposed = true;
       if (retryTimeoutId !== undefined) window.clearTimeout(retryTimeoutId);
     };
-  }, [isLoaded, isSignedIn, legacyActive, retryTick, userId]);
+  }, [isLoaded, isSignedIn, legacyActive, retryTick, userId, runtimeSlot]);
 
   if (!isLoaded) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null, retry: retryBillingStatus };
   if (legacyActive) {
@@ -348,6 +366,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
     active: remoteState?.active === true,
     checking: false,
     entitlement: remoteState?.entitlement ?? null,
+    management: remoteState?.management,
     trialOffer: remoteState?.trialOffer ?? null,
     accessReason: remoteState?.accessReason ?? null,
     accessIssue: null,
@@ -373,13 +392,14 @@ function isCheckoutSuccessReturn(): boolean {
 
 function readRemoteBillingStatus(
   cacheKey: string,
-  options: { skipCache?: boolean; skipInactiveCache?: boolean } = {},
+  options: { skipCache?: boolean; skipInactiveCache?: boolean; runtimeSlot?: string | null } = {},
 ): Promise<BillingAccessRemoteState> {
   if (billingStatusRequest?.cacheKey === cacheKey) return billingStatusRequest.promise;
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), BILLING_STATUS_TIMEOUT_MS);
-  const promise = fetch("/billing/status", {
+  const slotQuery = options.runtimeSlot ? `&runtimeSlot=${encodeURIComponent(options.runtimeSlot)}` : "";
+  const promise = fetch(`/billing/status?details=management${slotQuery}`, {
     method: "GET",
     credentials: "include",
     headers: { accept: "application/json" },
@@ -402,12 +422,11 @@ function readRemoteBillingStatus(
           accessIssue: "auth",
         };
       }
-      if (!response.ok) {
-        return { active: false, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null };
-      }
+      if (!response.ok) throw new Error("billing_status_unavailable");
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
         entitlement?: unknown;
+        management?: unknown;
         trialOffer?: { eligible?: unknown; durationDays?: unknown };
       };
       const parsedEntitlement = body.entitlement === null || body.entitlement === undefined
@@ -417,6 +436,7 @@ function readRemoteBillingStatus(
       return {
         active: body.access?.runtimeProxyAllowed === true,
         entitlement: parsedEntitlement?.data ?? null,
+        management: body.management === undefined ? undefined : MatrixBillingManagementSchema.parse(body.management),
         trialOffer: parseBillingTrialOffer(body.trialOffer),
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
         accessIssue: null,

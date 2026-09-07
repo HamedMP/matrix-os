@@ -220,6 +220,45 @@ test.describe("Visual regression", () => {
     });
   });
 
+  for (const scenario of ["team-access", "override-paid"] as const) {
+    for (const surface of ["web-canvas", "web-desktop", "web-mobile"] as const) {
+      test(`billing management ${scenario} in ${surface}`, async ({ page }, testInfo) => {
+        await page.addInitScript(() => {
+          localStorage.setItem("matrix:getting-started:auto-opened:web:%2F", "1");
+        });
+        if (surface === "web-mobile") await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(`/?e2e_billing_state=${scenario}`);
+        if (surface === "web-mobile") {
+          await page.getByRole("button", { name: "Quick actions" }).click();
+          await page.getByRole("button", { name: "Settings", exact: true }).click();
+        } else if (surface === "web-canvas") {
+          await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+          const gettingStarted = page.getByRole("dialog", { name: "Getting started" });
+          if (await gettingStarted.isVisible()) await page.keyboard.press("Escape");
+          await page.keyboard.press("Meta+k");
+          await page.getByRole("option", { name: "Mode: Canvas", exact: true }).click();
+          await page.getByTestId("dock-settings").click();
+        } else {
+          await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+        }
+        await page.getByRole("button", { name: "Billing", exact: true }).click();
+        await expect(page.getByText("Up to 3 computers")).toBeVisible();
+        await expect(page.getByText("Internal", { exact: true })).toHaveCount(0);
+        await expect(page.getByText("Monthly", { exact: true })).toHaveCount(0);
+        if (scenario === "team-access") {
+          await expect(page.getByRole("heading", { name: "Team-provided access" })).toBeVisible();
+          await expect(page.getByRole("button", { name: "Change plan" })).toHaveCount(0);
+        } else {
+          await expect(page.getByRole("heading", { name: "Builder", exact: true })).toBeVisible();
+          await expect(page.getByText("$990/year", { exact: true })).toBeVisible();
+        }
+        await testInfo.attach(`billing-${scenario}-${surface}`, {
+          body: await page.screenshot(), contentType: "image/png",
+        });
+      });
+    }
+  }
+
   test("billing active provider-neutral", async ({ page }) => {
     await page.goto("/?e2e_billing_state=active");
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();

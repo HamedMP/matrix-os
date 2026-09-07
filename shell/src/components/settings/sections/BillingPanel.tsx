@@ -1,5 +1,7 @@
 "use client";
 
+import { deriveBillingManagementView, type MatrixBillingManagement } from "@matrix-os/contracts";
+
 import {
   getMatrixDeveloperToolPreinstallLimit,
 } from "@matrix-os/contracts";
@@ -481,6 +483,7 @@ function SelectionTriggerCards({
 export function BillingPanel({
   active,
   entitlement,
+  management,
   trialOffer,
   accessReason,
   accessIssue,
@@ -493,6 +496,7 @@ export function BillingPanel({
 }: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
+  management?: MatrixBillingManagement;
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
@@ -511,6 +515,7 @@ export function BillingPanel({
   const props = {
     active,
     entitlement,
+    management,
     trialOffer,
     accessReason,
     accessIssue,
@@ -530,6 +535,7 @@ export function BillingPanel({
 function ManagedBillingPanel(props: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
+  management?: MatrixBillingManagement;
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
@@ -547,6 +553,7 @@ function ManagedBillingPanel(props: {
 function BillingPanelInner({
   active,
   entitlement,
+  management,
   trialOffer,
   accessReason,
   accessIssue,
@@ -560,6 +567,7 @@ function BillingPanelInner({
 }: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
+  management?: MatrixBillingManagement;
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
@@ -721,8 +729,8 @@ function BillingPanelInner({
     });
   };
 
-  if (active === true && mode !== "add-computer") {
-    return <ActiveBillingPanel entitlement={entitlement ?? null} accessReason={accessReason ?? null} />;
+  if ((active === true && mode !== "add-computer") || (mode === "settings" && active === false && (management?.subscription || management?.portalAvailable))) {
+    return <ActiveBillingPanel entitlement={entitlement ?? null} management={management} accessReason={accessReason ?? null} />;
   }
 
   if (accessIssue === "auth") {
@@ -767,13 +775,13 @@ function BillingPanelInner({
       data-testid="billing-configurator-layout"
     >
       <div className="space-y-4" data-testid="billing-configurator-main">
-        {mode !== "add-computer" && entitlement?.portalAvailable === true && (
+        {mode !== "add-computer" && deriveBillingManagementView(entitlement, management).portalAvailable && (
           <section className="rounded-2xl border border-forest/15 bg-card p-4">
             <h4 className="text-sm font-semibold text-deep">Receipts and payment</h4>
             <p className="my-2 text-sm text-forest/65">
               Your invoices and payment settings remain available while runtime access is paused.
             </p>
-            <BillingPortalButton entitlement={entitlement} label="View receipts" />
+            <BillingPortalButton entitlement={entitlement ?? null} portalAvailable={management?.portalAvailable} label="View receipts" />
           </section>
         )}
         <div>

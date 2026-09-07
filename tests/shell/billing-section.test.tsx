@@ -269,6 +269,7 @@ describe("BillingSection", () => {
   });
 
   it("does not replace a legacy trial price with the current catalog price", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-20T00:00:00.000Z"));
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         access: { runtimeProxyAllowed: true, reason: "active" },
@@ -302,7 +303,7 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     await waitFor(() => expect(screen.getByText("Free trial active")).toBeTruthy());
-    expect(screen.getByText("Your first monthly charge is on Aug 26, 2026.")).toBeTruthy();
+    expect(screen.getByText("Your trial ends on Aug 26, 2026.")).toBeTruthy();
     expect(screen.queryByText("Your first $100 monthly charge is on Aug 26, 2026.")).toBeNull();
     expect(screen.getByText("Cancel before Aug 26, 2026 to avoid being charged.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Manage trial" })).toBeTruthy();
@@ -352,7 +353,7 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/billing/status",
+      "/billing/status?details=management",
       expect.objectContaining({
         credentials: "include",
         method: "GET",
@@ -965,8 +966,8 @@ describe("BillingSection", () => {
 
     await waitFor(() => expect(screen.getAllByText("Builder").length).toBeGreaterThanOrEqual(1));
     expect(screen.getByText("Current plan")).toBeTruthy();
-    expect(screen.getByText("3")).toBeTruthy();
-    expect(screen.getByText("2 included, 1 add-on")).toBeTruthy();
+    expect(screen.getByText("Up to 3 computers")).toBeTruthy();
+    expect(screen.queryByText("2 included, 1 add-on")).toBeNull();
     expect(screen.getByText("$20/month")).toBeTruthy();
     expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
     expect(screen.queryByText("Machine")).toBeNull();
