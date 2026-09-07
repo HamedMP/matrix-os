@@ -66,7 +66,7 @@ describe("CollaborationChatScopeService", () => {
     expect(Number(chat.revision)).toBe(1);
   });
 
-  it("returns the existing logical scope for a confirmed retry", async () => {
+  it("returns the existing logical scope for an idempotent retry without reusing preflight authority", async () => {
     const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
     const first = await service.shareChat({
       ownerId: collaborationActors.owner,
@@ -78,7 +78,7 @@ describe("CollaborationChatScopeService", () => {
       ownerId: collaborationActors.owner,
       chatId: collaborationIds.chat,
       expectedChatRevision: 0,
-      confirmationToken: preflight.confirmationToken!,
+      confirmationToken: "expired-or-already-consumed-confirmation",
     });
     expect(repeated).toEqual(first);
   });

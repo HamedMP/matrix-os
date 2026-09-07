@@ -80,7 +80,7 @@
 
 - [x] T035 [US2] (PR1) Implement Chat scope preflight/create binding with active-work settlement and personal-dispatch fencing in `packages/gateway/src/collaboration/chat-scope.ts`
 - [ ] T036 [US2] (PR1) Implement canonical Chat-only read/search/history projection with inert unauthorized references in `packages/gateway/src/collaboration/chat-adapter.ts`
-- [ ] T037 [US2] (PR1) Register validated/body-limited standalone Chat scope and member routes in `packages/gateway/src/collaboration/routes.ts`
+- [x] T037 [US2] (PR1) Register validated/body-limited standalone Chat scope and member routes in `packages/gateway/src/collaboration/routes.ts`
 - [ ] T038 [US2] (PR4) Implement eligible terminal scope binding without replacement or sibling authority in `packages/gateway/src/collaboration/terminal-adapter.ts`
 - [ ] T039 [US2] (PR6) Reconcile direct Chat/terminal grants into sole project inheritance at the publication point in `packages/gateway/src/collaboration/project-membership-transition.ts`
 

@@ -91,7 +91,6 @@ export class CollaborationChatScopeService {
     expectedChatRevision: number;
     confirmationToken: string;
   }): Promise<CollaborationScopeRecord> {
-    this.verifyConfirmation(input);
     const now = this.now().toISOString();
     return this.db.transaction().execute(async (trx) => {
       const chat = await trx.selectFrom("chats")
@@ -110,6 +109,7 @@ export class CollaborationChatScopeService {
           && existing.lifecycle === "shared") return scopeRecord(existing);
         throw new CollaborationChatScopeError("conflict", "Chat collaboration binding is invalid");
       }
+      this.verifyConfirmation(input);
       if (Number(chat.revision) !== input.expectedChatRevision) {
         throw new CollaborationChatScopeError("conflict", "Chat revision changed");
       }

@@ -4,12 +4,14 @@ import {
   CollaborationConnectionTicketRequestSchema,
   CollaborationCreateDiscussionRequestSchema,
   CollaborationCreateInvitationRequestSchema,
+  CollaborationCreateScopeRequestSchema,
   CollaborationEventFrameSchema,
   CollaborationInvitationSchema,
   CollaborationMemberPatchRequestSchema,
   CollaborationPolicySchema,
   CollaborationRoleSchema,
   CollaborationScopeSchema,
+  CollaborationScopePreflightRequestSchema,
   CollaborationUserStatePatchSchema,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
@@ -113,11 +115,31 @@ describe("collaboration contracts", () => {
       role: "viewer",
       clientRequestId: requestId,
       expectedRevision: "9",
+      expectedMemberRevision: "2",
     }).role).toBe("viewer");
     expect(CollaborationMemberPatchRequestSchema.safeParse({
       role: "owner",
       clientRequestId: requestId,
       expectedRevision: "9",
+      expectedMemberRevision: "2",
+    }).success).toBe(false);
+  });
+
+  it("keeps owner scope conversion bound to one selected resource and preflight", () => {
+    expect(CollaborationScopePreflightRequestSchema.parse({
+      kind: "chat",
+      resourceId: "chat_release",
+    })).toEqual({ kind: "chat", resourceId: "chat_release" });
+    expect(CollaborationCreateScopeRequestSchema.parse({
+      kind: "chat",
+      resourceId: "chat_release",
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      confirmationToken: "a".repeat(64),
+    })).toMatchObject({ kind: "chat", resourceId: "chat_release" });
+    expect(CollaborationScopePreflightRequestSchema.safeParse({
+      kind: "document",
+      resourceId: "private-file",
     }).success).toBe(false);
   });
 
