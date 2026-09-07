@@ -241,16 +241,25 @@ export function useCanonicalChatState(): ChatState {
     setSafeError(null);
   }, []);
 
-  const abortCurrent = useCallback(() => {
+  const cancelRun = useCallback(async (runId: string) => {
     const current = detailRef.current;
-    if (!current?.record.activeRun) return;
-    void client.cancelRun(current.record.chat.id, current.record.activeRun.runId, requestId())
-      .then(() => loadDetail(current.record.chat.id))
-      .catch((error: unknown) => {
-        console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("The run could not be stopped. Try again.");
-      });
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current
+      || current.record.activeRun.runId !== runId) return false;
+    try {
+      await client.cancelRun(current.record.chat.id, runId, requestId());
+      await loadDetail(current.record.chat.id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
+      setSafeError("The run could not be stopped. Try again.");
+      return false;
+    }
   }, [client, loadDetail]);
+
+  const abortCurrent = useCallback(() => {
+    const runId = detailRef.current?.record.activeRun?.runId;
+    if (runId) void cancelRun(runId);
+  }, [cancelRun]);
 
   const submitApproval = useCallback(async (
     runId: string,
@@ -360,6 +369,7 @@ export function useCanonicalChatState(): ChatState {
     newChat,
     switchConversation,
     abortCurrent,
+    cancelRun,
     submitApproval,
     submitInput,
   };

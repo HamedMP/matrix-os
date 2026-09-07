@@ -14,7 +14,7 @@ export function canonicalInput(message: ChatMessage) {
 
 export function CanonicalInputMessage({ message, onSubmit, onStop }: {
   message: ChatMessage;
-  onStop?: () => void;
+  onStop?: (runId: string) => void;
   onSubmit?: (runId: string, requestId: string, answers: CanonicalSubmitChatInputRequest["answers"]) => Promise<boolean>;
 }) {
   const input = canonicalInput(message);
@@ -23,7 +23,7 @@ export function CanonicalInputMessage({ message, onSubmit, onStop }: {
     <p className="font-medium">{"request" in input ? input.request.title : input.title}</p>
     {input.pending ? <>
       <p>This request cannot be answered in this view. Stop the run, then retry with your clarification.</p>
-      {onStop ? <button type="button" className="mt-2 rounded border px-3 py-1" onClick={onStop}>Stop run to retry</button> : null}
+      {onStop ? <button type="button" className="mt-2 rounded border px-3 py-1" onClick={() => onStop(input.runId)}>Stop run to retry</button> : null}
     </> : <p>Resolved</p>}
   </div>;
   return <div className="rounded-md border border-warning/30 bg-warning/5 p-3 text-sm">

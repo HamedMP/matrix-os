@@ -131,7 +131,7 @@ interface ChatAppProps {
     decision: CanonicalChatApprovalDecision,
   ) => Promise<boolean>;
   onSubmitInput?: (runId: string, requestId: string, answers: CanonicalSubmitChatInputRequest["answers"]) => Promise<boolean>;
-  onStopRun?: () => void;
+  onStopRun?: (runId: string) => void;
   composerDraftRequest?: { id: number; text: string } | null;
   onComposerDraftConsumed?: (id: number) => void;
   onProviderSetupAction?: (

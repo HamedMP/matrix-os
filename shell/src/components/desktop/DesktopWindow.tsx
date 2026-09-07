@@ -219,7 +219,7 @@ export function DesktopWindow({
                 onSubmit={chat.submitMessage}
                 onSubmitApproval={chat.submitApproval}
                 onSubmitInput={chat.submitInput}
-                onStopRun={chat.abortCurrent}
+                onStopRun={chat.cancelRun}
                 providerSelection={chat.providerSelection}
                 composerDraftRequest={chat.composerDraftRequest}
                 onComposerDraftConsumed={chat.consumeComposerDraft}

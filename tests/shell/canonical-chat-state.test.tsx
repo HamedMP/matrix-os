@@ -3,6 +3,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
 
@@ -34,6 +35,39 @@ beforeEach(() => {
 });
 
 describe("canonical shell Chat state", () => {
+  it("never cancels a replacement run from a stale input recovery action", async () => {
+    const currentRecord = { ...record("chat_a", "A"), activeRun: { runId: "run_current", turnId: "cturn_current", status: "waiting_for_input" as const } };
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [currentRecord] });
+      if (url.includes("/api/chats/chat_a?") && !init?.method) return Response.json({ ...detail("chat_a", "A"), record: currentRecord });
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
+    await act(async () => { expect(await result.current.cancelRun!("run_previous")).toBe(false); });
+    expect(fetchFn.mock.calls.some(([url]) => url.includes("/cancel"))).toBe(false);
+  });
+  it("cancels only the notice run and surfaces cancellation failures safely", async () => {
+    const currentRecord = { ...record("chat_a", "A"), activeRun: { runId: "run_current", turnId: "cturn_current", status: "waiting_for_input" as const } };
+    let fail = false;
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [currentRecord] });
+      if (url.includes("/api/chats/chat_a?") && !init?.method) return Response.json({ ...detail("chat_a", "A"), record: currentRecord });
+      if (url.endsWith("/api/chats/chat_a/runs/run_current/cancel") && init?.method === "POST") {
+        if (fail) return Response.json({ error: "private detail" }, { status: 503 });
+        return Response.json({ run: { ...createCanonicalChatFixture("aborted").snapshot.runs[0], id: "run_current", chatId: "chat_a", turnId: "cturn_current" }, cancellation: "aborted" });
+      }
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
+    await act(async () => { expect(await result.current.cancelRun!("run_current")).toBe(true); });
+    fail = true;
+    await act(async () => { expect(await result.current.cancelRun!("run_current")).toBe(false); });
+    expect(result.current.messages.at(-1)?.content).toBe("The run could not be stopped. Try again.");
+  });
   it("renames through canonical persistence and synchronizes list and active title projections", async () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?") && init?.method === undefined) {

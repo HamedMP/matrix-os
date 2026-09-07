@@ -47,6 +47,7 @@ export interface ChatState {
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
+  cancelRun?: (runId: string) => Promise<boolean>;
   submitApproval?: (
     runId: string,
     approvalId: string,

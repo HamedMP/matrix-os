@@ -12,7 +12,7 @@ it("shows unsupported unstructured requests with an explicit stop-and-retry reco
   expect(screen.getByText("Clarification needed")).toBeTruthy();
   expect(screen.getByText(/cannot be answered in this view/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Stop run to retry" }));
-  expect(stop).toHaveBeenCalledTimes(1);
+  expect(stop).toHaveBeenCalledWith("run_coding");
 });
 it("keeps web connector consent visible and submits only an explicit choice", async () => {
   const request = { requestId: "req_connector", threadId: "thread_native", title: "Connector request", safeDescription: "Review", correlationId: "corr_connector", required: false,
