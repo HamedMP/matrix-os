@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import {
   CollaborationConnectionTicketRequestSchema,
   CollaborationConnectionTicketResponseSchema,
@@ -16,6 +17,14 @@ const COLLABORATION_SOCKET_PATH = new RegExp(
 const TICKET_LIFETIME_MS = 30_000;
 const MAX_RAW_PATH_LENGTH = 1_024;
 const MAX_ALLOWED_ORIGINS = 16;
+const FORWARDED_SOCKET_HEADERS = new Set([
+  "connection",
+  "upgrade",
+  "sec-websocket-key",
+  "sec-websocket-version",
+  "sec-websocket-protocol",
+  "sec-websocket-extensions",
+]);
 
 type SignedProof = ReturnType<CollaborationProofSigner["signSocket"]>;
 type Purpose = "events" | "terminal";
@@ -41,6 +50,47 @@ export interface CollaborationWebSocketUpgrade {
   scopeId: string;
   purpose: Purpose;
   signedProof: SignedProof;
+}
+
+export function isCollaborationWebSocketPath(rawPath: string): boolean {
+  if (rawPath.length > MAX_RAW_PATH_LENGTH || /[\r\n]/.test(rawPath)) return false;
+  try {
+    return COLLABORATION_SOCKET_PATH.test(new URL(rawPath, "https://platform.invalid").pathname);
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) {
+      console.warn("[collaboration-websocket] path classification failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return false;
+  }
+}
+
+export function isCollaborationWebSocketCandidate(rawPath: string): boolean {
+  if (rawPath.length > MAX_RAW_PATH_LENGTH || /[\r\n]/.test(rawPath)) return false;
+  try {
+    return new URL(rawPath, "https://platform.invalid").pathname.startsWith("/ws/collaboration/");
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) {
+      console.warn("[collaboration-websocket] candidate classification failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return false;
+  }
+}
+
+export function buildCollaborationWebSocketUpgradeHeaders(input: {
+  incomingHeaders: IncomingMessage["headers"];
+  externalHost: string;
+  signedProof: unknown;
+}): string {
+  const headers = Object.entries(input.incomingHeaders).flatMap(([name, raw]) => {
+    if (!FORWARDED_SOCKET_HEADERS.has(name) || raw === undefined) return [];
+    const value = Array.isArray(raw) ? raw.join(", ") : raw;
+    if (value.length > 8_192 || /[\r\n]/.test(value)) return [];
+    return `${name}: ${value}`;
+  });
+  headers.push(`x-forwarded-host: ${input.externalHost}`);
+  headers.push("x-forwarded-proto: https");
+  headers.push(`x-matrix-collaboration-proof: ${Buffer.from(JSON.stringify(input.signedProof)).toString("base64url")}`);
+  return headers.join("\r\n");
 }
 
 export class CollaborationWebSocketAuthorizer {

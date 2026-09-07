@@ -59,9 +59,13 @@ import {
   createStorageGatedHetznerClient,
   type R2CapabilityGate,
 } from './r2-capability.js';
-import { bootstrapPlatformCollaborationDatabase, type CollaborationPlatformDatabase } from './collaboration/database.js';
-import { createInternalCollaborationRoutes } from './collaboration/internal-routes.js';
-import { PlatformCollaborationRepository } from './collaboration/repository.js';
+import { createJourneyUserResolver } from './journey-routes.js';
+import type { CollaborationPlatformDatabase } from './collaboration/database.js';
+import {
+  createPlatformCollaboration,
+  loadPlatformCollaborationConfig,
+  type PlatformCollaborationRuntime,
+} from './collaboration/wiring.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -205,8 +209,8 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
-  internalCollaborationRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
+  collaboration?: PlatformCollaborationRuntime;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -300,29 +304,6 @@ async function startPlatformServerWithCleanup(
   const atsDatabaseUrl = resolveAtsDatabaseUrl(process.env);
   const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
   await db.ready;
-  let internalCollaborationRoutes: Hono | undefined;
-  if (process.env.MATRIX_COLLABORATION_ENABLED === 'true') {
-    if (!platformSecret) throw new Error('Platform collaboration runtime authentication is unavailable');
-    const collaborationDb = db.kysely as unknown as Kysely<CollaborationPlatformDatabase>;
-    await bootstrapPlatformCollaborationDatabase(collaborationDb);
-    internalCollaborationRoutes = createInternalCollaborationRoutes({
-      repository: new PlatformCollaborationRepository(collaborationDb),
-      authenticateRuntime: async ({ runtimeId, bearerToken }) => {
-        const machineId = parseCollaborationRuntimeId(runtimeId);
-        if (!machineId) return null;
-        const machine = await getUserMachine(db, machineId);
-        if (!machine || machine.status !== 'running'
-          || !timingSafeTokenEquals(bearerToken, buildPlatformVerificationToken(machine.handle, platformSecret))) {
-          return null;
-        }
-        return { runtimeId, ownerId: machine.clerkUserId };
-      },
-      resolveParticipant: async (actorId) => {
-        const user = await getPlatformUserByClerkId(db, actorId);
-        return user ? { actorId, displayName: user.displayName } : null;
-      },
-    });
-  }
   const fundedAiConfig = loadAiFundedControlPlaneConfig({
     ...process.env,
     PLATFORM_SECRET: platformSecret,
@@ -416,6 +397,50 @@ async function startPlatformServerWithCleanup(
         return payload as { sub: string; [key: string]: unknown };
       },
       revokeSession: createClerkSessionRevoker({ secretKey: clerkSecretKey }),
+    });
+  }
+
+  const collaborationConfig = loadPlatformCollaborationConfig(process.env);
+  if (process.env.MATRIX_COLLABORATION_ENABLED === 'true' && !collaborationConfig) {
+    throw new Error('Platform collaboration configuration is incomplete');
+  }
+  let collaboration: PlatformCollaborationRuntime | undefined;
+  if (collaborationConfig) {
+    if (!platformSecret) throw new Error('Platform collaboration runtime authentication is unavailable');
+    collaboration = await createPlatformCollaboration({
+      db: db.kysely as unknown as Kysely<CollaborationPlatformDatabase>,
+      config: collaborationConfig,
+      resolveActor: createJourneyUserResolver({ clerkAuth, syncJwtSecret: platformJwtSecret }),
+      authenticateRuntime: async ({ runtimeId, bearerToken }) => {
+        const machineId = parseVpsRuntimeId(runtimeId);
+        if (!machineId) return null;
+        const machine = await getUserMachine(db, machineId);
+        if (!machine || machine.status !== 'running'
+          || !timingSafeTokenEquals(bearerToken, buildPlatformVerificationToken(machine.handle, platformSecret))) {
+          return null;
+        }
+        return { runtimeId, ownerId: machine.clerkUserId };
+      },
+      resolveParticipant: async (actorId) => {
+        const user = await getPlatformUserByClerkId(db, actorId);
+        return user ? { actorId, displayName: user.displayName } : null;
+      },
+      resolveRuntime: async (runtimeId) => {
+        const machineId = parseVpsRuntimeId(runtimeId);
+        if (!machineId) return null;
+        const machine = await getUserMachine(db, machineId);
+        if (!machine || machine.status !== 'running' || !machine.publicIPv4) return null;
+        return {
+          runtimeId,
+          ownerId: machine.clerkUserId,
+          baseUrl: `https://${machine.publicIPv4}:443`,
+        };
+      },
+      fetchImpl: (input, init) => fetch(input, {
+        ...init,
+        signal: init?.signal ?? AbortSignal.timeout(10_000),
+        dispatcher: customerVpsProxyDispatcher,
+      } as RequestInit & { dispatcher: import('undici').Dispatcher }),
     });
   }
 
@@ -1108,8 +1133,8 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
-    internalCollaborationRoutes,
     fundedAiRepository,
+    collaboration,
     customerVpsService,
     goldenSnapshotService,
     goldenSnapshotConfig,
@@ -1161,6 +1186,7 @@ async function startPlatformServerWithCleanup(
         }
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
+          collaboration?.shutdown(),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),
@@ -1199,6 +1225,7 @@ async function startPlatformServerWithCleanup(
     codeServerPort,
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
+    collaborationSockets: collaboration?.sockets,
   });
 }
 
@@ -1221,7 +1248,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   }
 }
 
-function parseCollaborationRuntimeId(runtimeId: string): string | null {
+function parseVpsRuntimeId(runtimeId: string): string | null {
   const match = /^vps:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.exec(runtimeId);
   return match?.[1] ?? null;
 }

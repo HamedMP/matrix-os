@@ -4,8 +4,11 @@ import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import {
+  buildCollaborationWebSocketUpgradeHeaders,
   CollaborationWebSocketAuthorizer,
   CollaborationWebSocketError,
+  isCollaborationWebSocketCandidate,
+  isCollaborationWebSocketPath,
 } from "../../packages/platform/src/collaboration/websocket.js";
 import {
   createPlatformCollaborationTestDatabase,
@@ -157,5 +160,35 @@ describe("CollaborationWebSocketAuthorizer", () => {
       rawPath: `${eventPath}?ticket=${encodeURIComponent(issued.ticket)}`,
       origin: "https://app.matrix-os.com",
     })).rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it("recognizes only exact collaboration socket paths and strips caller credentials upstream", () => {
+    expect(isCollaborationWebSocketPath(eventPath)).toBe(true);
+    expect(isCollaborationWebSocketPath(`${eventPath}?after=2`)).toBe(true);
+    expect(isCollaborationWebSocketPath(`${eventPath}/child`)).toBe(false);
+    expect(isCollaborationWebSocketPath(`/ws/collaboration/scopes/${scopeId}/unknown`)).toBe(false);
+    expect(isCollaborationWebSocketCandidate(`${eventPath}/child`)).toBe(true);
+
+    const headers = buildCollaborationWebSocketUpgradeHeaders({
+      incomingHeaders: {
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-key": "safe-key",
+        "sec-websocket-version": "13",
+        authorization: "Bearer caller-secret",
+        cookie: "__session=caller-secret",
+        "x-platform-user-id": "forged-owner",
+        "x-matrix-collaboration-proof": "forged-proof",
+      },
+      externalHost: "app.matrix-os.com",
+      signedProof: { proof: { value: "safe" }, signature: "signed" },
+    });
+    expect(headers).toContain("sec-websocket-key: safe-key");
+    expect(headers).toContain("x-matrix-collaboration-proof:");
+    expect(headers).not.toContain("caller-secret");
+    expect(headers).not.toContain("forged-owner");
+    expect(headers).not.toContain("forged-proof");
+    expect(headers).not.toContain("authorization:");
+    expect(headers).not.toContain("cookie:");
   });
 });

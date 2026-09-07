@@ -125,6 +125,7 @@ import {
   collectTenantPublicTelemetryEnv,
 } from './platform-startup-env.js';
 import type { PlatformApp } from './platform-app-types.js';
+import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
 export { escapeInlineScriptJson } from './auth-pages.js';
 export { buildPostAuthRedirectPath } from './request-routing.js';
 export type { PlatformApp } from './platform-app-types.js';
@@ -249,8 +250,8 @@ export function createApp(deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
-  internalCollaborationRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
+  collaboration?: PlatformCollaborationRuntime;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -587,9 +588,9 @@ export function createApp(deps: {
     }));
   }
 
-  if (deps.internalCollaborationRoutes) {
-    app.route('/', deps.internalCollaborationRoutes);
-  }
+  // Collaboration routes must precede personal session routing so recipients
+  // without a provisioned computer reach the owner's registered authority.
+  deps.collaboration?.register(app);
 
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway

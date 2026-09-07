@@ -8,6 +8,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import type { CollaborationProofSigner } from "./proof.js";
+import { parseCollaborationProxyRoute, type CollaborationProxy } from "./proxy.js";
 import {
   PlatformCollaborationRepositoryError,
   type CollaborationDirectoryEntry,
@@ -30,6 +31,7 @@ export function createPlatformCollaborationRoutes(options: {
   repository: PlatformCollaborationRepository;
   signer: CollaborationProofSigner;
   sockets: CollaborationWebSocketAuthorizer;
+  proxy?: CollaborationProxy;
   resolveActor(c: RouteContext): Promise<string | null>;
   authenticateRuntime(input: {
     runtimeId: string;
@@ -44,6 +46,30 @@ export function createPlatformCollaborationRoutes(options: {
 }): Hono {
   const app = new Hono();
   const now = options.now ?? (() => new Date());
+
+  app.on(
+    ["POST", "PUT", "PATCH", "DELETE"],
+    "/api/collaboration/*",
+    bodyLimit({ maxSize: COLLABORATION_HTTP_BODY_LIMIT, onError: (c) => safeJson(c, "Request too large", 413) }),
+  );
+  app.use("/api/collaboration/*", async (c, next) => {
+    c.header("Cache-Control", "private, no-store");
+    if (!options.proxy || !parseCollaborationProxyRoute(c.req.method, c.req.path)) {
+      await next();
+      return;
+    }
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    const body = new Uint8Array(await c.req.arrayBuffer());
+    return options.proxy.forward({
+      actorId,
+      method: c.req.method,
+      path: c.req.path,
+      query: new URL(c.req.url).search.slice(1),
+      body,
+      headers: c.req.raw.headers,
+    });
+  });
 
   app.put(
     "/internal/collaboration/directory",
@@ -150,12 +176,23 @@ async function listDiscovery(
   if (!actorId) return safeJson(c, "Unauthorized", 401);
   try {
     const entries = (await options.repository.listForActor(actorId)).filter((entry) => entry.status === status);
-    const resources = await mapLimited(entries, MAX_HYDRATION_CONCURRENCY, async (entry) => ({
-      entry,
-      resource: await options.hydrate({ actorId, entry }),
-    }));
+    const resources = await mapLimited(entries, MAX_HYDRATION_CONCURRENCY, async (entry) => {
+      try {
+        return { entry, resource: await options.hydrate({ actorId, entry }) };
+      } catch (error: unknown) {
+        console.warn(
+          "[platform-collaboration] discovery entry unavailable",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        return null;
+      }
+    });
     c.header("Cache-Control", "private, no-store");
-    return c.json({ items: resources.map(({ entry, resource }) => ({ ...entry, resource })) });
+    return c.json({
+      items: resources
+        .filter((result): result is NonNullable<typeof result> => result !== null)
+        .map(({ entry, resource }) => ({ ...entry, resource })),
+    });
   } catch (error: unknown) {
     console.warn("[platform-collaboration] discovery hydration failed", error instanceof Error ? error.name : "UnknownError");
     return safeJson(c, "Collaboration unavailable", 503);

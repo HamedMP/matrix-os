@@ -21,6 +21,7 @@ describe("platform collaboration routes", () => {
   let fixture: PlatformCollaborationTestDatabase;
   let repository: PlatformCollaborationRepository;
   let app: Hono;
+  let hydrate: (input: { actorId: string; entry: { scopeId: string; invitationId?: string; kind: string } }) => Promise<unknown>;
 
   beforeEach(async () => {
     fixture = await createPlatformCollaborationTestDatabase();
@@ -40,6 +41,11 @@ describe("platform collaboration routes", () => {
       now: () => now,
       createToken: () => "c".repeat(43),
     });
+    hydrate = async ({ actorId, entry }) => ({
+      id: entry.invitationId ?? entry.scopeId,
+      actorId,
+      kind: entry.kind,
+    });
     app = new Hono();
     app.route("/", createPlatformCollaborationRoutes({
       repository,
@@ -51,11 +57,7 @@ describe("platform collaboration routes", () => {
           ? { runtimeId, ownerId: platformCollaborationActors.owner }
           : null,
       resolveParticipant: async (actorId) => ({ actorId, displayName: `Name ${actorId}` }),
-      hydrate: async ({ actorId, entry }) => ({
-        id: entry.invitationId ?? entry.scopeId,
-        actorId,
-        kind: entry.kind,
-      }),
+      hydrate: (input) => hydrate(input),
       now: () => now,
     }));
   });
@@ -102,6 +104,34 @@ describe("platform collaboration routes", () => {
     });
     expect(shared.status).toBe(200);
     expect(await shared.json()).toMatchObject({ items: [{ status: "accepted", resource: { id: inviteId } }] });
+  });
+
+  it("keeps healthy discovery entries when one owner runtime cannot hydrate", async () => {
+    await repository.applyDirectoryEvent(directoryEvent("invited"));
+    const unavailableScopeId = "10000000-0000-4000-8000-000000000002";
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("invited"),
+      eventId: "20000000-0000-4000-8000-000000000002",
+      scopeId: unavailableScopeId,
+      metadataRevision: 2,
+      recipients: [{
+        actorId: platformCollaborationActors.recipientWithoutComputer,
+        status: "invited",
+        invitationId: "30000000-0000-4000-8000-000000000002",
+      }],
+    });
+    hydrate = async ({ entry }) => {
+      if (entry.scopeId === unavailableScopeId) throw new Error("owner runtime stopped");
+      return { id: entry.invitationId ?? entry.scopeId };
+    };
+
+    const response = await app.request("/api/collaboration/inbox", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      items: [{ scopeId, resource: { id: inviteId } }],
+    });
   });
 
   it("issues an events-only ticket to an accepted current member", async () => {

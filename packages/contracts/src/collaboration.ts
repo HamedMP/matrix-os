@@ -116,6 +116,7 @@ export const CollaborationMemberSchema = z.object({
   actor: CollaborationParticipantSchema,
   role: CollaborationRoleSchema,
   status: CollaborationMemberStatusSchema,
+  invitationId: CollaborationIdSchema.optional(),
   revision: CollaborationRevisionSchema,
   joinedAt: z.iso.datetime().optional(),
   updatedAt: z.iso.datetime(),

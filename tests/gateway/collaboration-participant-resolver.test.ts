@@ -23,11 +23,14 @@ describe("CollaborationParticipantResolver", () => {
     })).not.toThrow();
   });
 
-  it("returns a validated platform label and caches it", async () => {
+  it("returns a validated platform label without forwarding provider errors", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init).toMatchObject({ method: "GET", redirect: "error" });
       expect(init?.signal).toBeInstanceOf(AbortSignal);
-      return new Response(JSON.stringify({ actorId: "user_editor", displayName: "Editor Person" }));
+      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${"s".repeat(32)}`);
+      return new Response(JSON.stringify({ actorId: "user_editor", displayName: "Editor Person" }), {
+        headers: { "content-type": "application/json" },
+      });
     });
     const resolver = new CollaborationParticipantResolver({
       platformBaseUrl: "https://platform.internal",
@@ -35,15 +38,19 @@ describe("CollaborationParticipantResolver", () => {
       serviceToken: "s".repeat(32),
       fetchImpl,
     });
-    await expect(resolver.resolve("user_editor")).resolves.toMatchObject({ displayName: "Editor Person" });
+    await expect(resolver.resolve("user_editor")).resolves.toEqual({
+      actorId: "user_editor",
+      displayName: "Editor Person",
+    });
     await expect(resolver.resolve("user_editor")).resolves.toMatchObject({ displayName: "Editor Person" });
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
-  it("rejects mismatched and oversized identity projections generically", async () => {
+  it("rejects mismatched, oversized, and unavailable identity projections generically", async () => {
     const responses = [
       new Response(JSON.stringify({ actorId: "user_other", displayName: "Wrong" })),
       new Response("x".repeat(8_193)),
+      new Response("provider database exploded", { status: 503 }),
     ];
     const resolver = new CollaborationParticipantResolver({
       platformBaseUrl: "https://platform.internal",
@@ -51,7 +58,7 @@ describe("CollaborationParticipantResolver", () => {
       serviceToken: "s".repeat(32),
       fetchImpl: async () => responses.shift()!,
     });
-    for (const actorId of ["user_editor", "user_viewer"]) {
+    for (const actorId of ["user_editor", "user_viewer", "user_outsider"]) {
       await expect(resolver.resolve(actorId)).rejects.toBeInstanceOf(CollaborationParticipantResolverError);
     }
   });
