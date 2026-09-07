@@ -37,6 +37,35 @@ and reacquires ownership when the user returns. If another renderer takes over
 while mobile is visible, mobile closes the displaced socket and requires an
 explicit **Resume here** action before it requests a new exclusive lease.
 
+## Compatibility with sessions created before an update
+
+The shared gateway adapter attaches with `options --default-mode normal`.
+Zellij 0.44 initializes the attached client's current mode from the running
+server's saved configuration, while interpreting keys against the new client's
+default-mode options. If a server saved Normal and an updated client defaults
+to Locked, unbound ordinary keys become no-ops. Paste follows a separate action
+path and can still work, making the terminal appear to freeze after pasting.
+
+Normal is the attachment fallback for both supported saved modes: Normal then
+writes unbound keys, and Locked always writes them regardless of the fallback.
+New Matrix sessions still start Locked. This override changes neither session
+identity nor running processes, and all gateway-coordinated surfaces inherit it.
+Do not remove it merely because a newly created session passes a typing test.
+
+The host-bundle build runs `scripts/smoke-zellij-session-config.ts` against its
+staged Zellij binary. It creates isolated servers with Normal and Locked saved
+configurations, attaches through the real gateway adapter using the updated
+configuration, and checks typing, backspace, paste, and repeated attachment
+without replacing the pane process. Run it locally with:
+
+```bash
+pnpm exec tsx scripts/smoke-zellij-session-config.ts /absolute/path/to/zellij
+```
+
+An affected running session needs a fresh gateway attachment after the fixed
+gateway is installed. Closing a Terminal window alone does not restart its
+durable shell, and deleting/recreating sessions is unnecessary for this defect.
+
 ## Direct Zellij attachment
 
 `zellij attach <session>` talks directly to the Zellij server and bypasses the
