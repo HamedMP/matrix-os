@@ -244,7 +244,9 @@ export interface ChatDatabase {
   chat_migrations: ChatMigrationsTable;
 }
 
-export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<void> {
+export async function bootstrapChatDatabase<Database extends ChatDatabase>(
+  db: Kysely<Database>,
+): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS chats (
       id TEXT PRIMARY KEY,

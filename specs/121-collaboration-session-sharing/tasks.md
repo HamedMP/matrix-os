@@ -19,7 +19,7 @@
 - [x] T003 (PR1) Resolve the existing Zod/AnySchema and package-local install prerequisite failures in `packages/integrations-mcp/src/server.ts` and `pnpm-lock.yaml`, or record unchanged upstream failures without claiming downstream checks ran
 - [x] T004 [P] (PR1) Add shared real-Postgres collaboration fixture helpers for distinct owner/editor/viewer/outsider identities in `tests/gateway/collaboration-test-support.ts`
 - [x] T005 [P] (PR1) Add platform collaboration routing fixture helpers for provisioned and no-computer recipients in `tests/platform/collaboration-test-support.ts`
-- [ ] T006 [P] (PR1) Add reusable two-account collaboration journey fixtures in `tests/e2e/fixtures/collaboration.ts`
+- [x] T006 [P] (PR1) Add reusable two-account collaboration journey fixtures in `tests/e2e/fixtures/collaboration.ts`
 
 **Checkpoint**: PR1 has an isolated worktree, known baseline, and executable test fixtures; no capability is enabled.
 
@@ -33,7 +33,7 @@
 
 - [x] T007 [P] (PR1) Write red schema tests for scope, invitation, membership, lifecycle, user-state, event, actor-proof, policy, and connection-ticket contracts in `tests/contracts/collaboration.test.ts`
 - [x] T008 [P] (PR1) Write red additive migration and existing-schema upgrade tests for owner collaboration tables and Chat attribution columns in `tests/gateway/collaboration-database.test.ts`
-- [ ] T009 [P] (PR1) Write red real-Postgres transaction tests for scope singleton creation, eight-seat capacity, invitation expiry, actor-scoped idempotency, and revoke/write serialization in `tests/gateway/collaboration-repository.test.ts`
+- [x] T009 [P] (PR1) Write red real-Postgres transaction tests for scope singleton creation, eight-seat capacity, invitation expiry, actor-scoped idempotency, and revoke/write serialization in `tests/gateway/collaboration-repository-postgres.test.ts`
 - [x] T010 [P] (PR1) Write red authority matrix tests for owner/editor/viewer/pending/expired/revoked/outsider and inherited-resolution rejection in `tests/gateway/collaboration-authority.test.ts`
 - [x] T011 [P] (PR1) Write red platform migration/repository tests for content-free directory, user index, rollout policy, and one-use ticket limits in `tests/platform/collaboration-repository.test.ts`
 - [x] T012 [P] (PR1) Write red proof tests for actor preservation, body digest, method/path/query/audience binding, expiry, replay, key ID, header stripping, and constant-time verification in `tests/platform/collaboration-proof.test.ts`
@@ -97,7 +97,7 @@
 ### Tests first — M1 / PR1
 
 - [x] T040 [P] [US3] (PR1) Write red canonical message attribution, purpose, historical-unknown-author, and discussion-no-run tests in `tests/gateway/collaboration-chat-discussion.test.ts`
-- [ ] T041 [P] [US3] (PR1) Write red actor-scoped message idempotency and commit-with-outbox tests in `tests/gateway/collaboration-chat-discussion-postgres.test.ts`
+- [x] T041 [P] [US3] (PR1) Write red actor-scoped message idempotency and commit-with-outbox tests in `tests/gateway/collaboration-chat-discussion-postgres.test.ts`
 - [x] T042 [P] [US3] (PR1) Write red owner legacy bypass tests for start, queue, dispatch, steer, retry, approval, and reconnect paths in `tests/gateway/collaboration-m1-ai-gate.test.ts`
 - [x] T043 [P] [US3] (PR1) Write red private draft/mode/account-switch and member-local read/pin/mute state tests in `tests/ui/collaboration-chat-state.test.tsx`
 - [x] T044 [P] [US3] (PR1) Write red scoped event/reconnect tests proving no owner-wide cursor or duplicate discussion delivery in `tests/gateway/collaboration-chat-events.test.ts`
@@ -161,7 +161,7 @@
 ### Tests first
 
 - [x] T066 [P] [US7] (PR1) Write red invitation/member/lifecycle HTTP contract tests including body limits, Zod boundary validation, generic not-found, expected revisions, and safe errors in `tests/gateway/collaboration-routes.test.ts`
-- [ ] T067 [P] [US7] (PR1) Write red real-Postgres simultaneous invite/accept/downgrade/revoke tests and final-owner protection in `tests/gateway/collaboration-membership-races.test.ts`
+- [x] T067 [P] [US7] (PR1) Write red real-Postgres simultaneous invite/accept/downgrade/revoke tests and final-owner protection in `tests/gateway/collaboration-membership-races.test.ts`
 - [x] T068 [P] [US7] (PR1) Write red audit retention/content-exclusion, scope export, soft-delete, and unrelated-data preservation tests in `tests/gateway/collaboration-lifecycle.test.ts`
 - [ ] T069 [P] [US7] (PR6) Write red project archive/restore/transfer/delete/recovery integration tests in `tests/gateway/collaboration-project-lifecycle.test.ts`
 

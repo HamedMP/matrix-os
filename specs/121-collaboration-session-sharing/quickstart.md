@@ -17,7 +17,8 @@ Validation results:
 
 | Check | Result |
 | --- | --- |
-| `pnpm exec vitest run collaboration chat-sharing` | 28 files and 148 tests passed; the one real-Postgres file (2 tests) skipped because `MATRIX_TEST_POSTGRES_URL` is unset. |
+| `pnpm exec vitest run collaboration chat-sharing` | 28 files and 148 tests passed; three real-Postgres files (12 tests) skipped because `MATRIX_TEST_POSTGRES_URL` is unset. The opt-in suites cover scope/capacity/expiry/idempotency, revoke/write serialization, discussion-event atomic rollback, and membership races. |
+| Two-account fixture validation | `pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/fixtures/collaboration-fixture.e2e.test.ts` passed 2/2 tests. The fixture uses separate authenticated browser contexts and only session or `/vm/<handle>` runtime routes. |
 | Native mobile collaboration Jest | 2 suites and 7 tests passed. |
 | Root typecheck command | `bun run typecheck` could not be invoked because `bun` is absent. Its pnpm-equivalent kernel prerequisite and observability, integrations-mcp, gateway, platform, proxy, edge-router, and desktop TypeScript checks all passed; additional contracts, UI, and shell checks passed. |
 | Native mobile TypeScript | The project-wide check still fails in unchanged React Native dependency typings (`Image`, `Swipeable`, `WebView`, gesture/PostHog view props, and theme preference); it reports no error in the PR1 collaboration files. |
