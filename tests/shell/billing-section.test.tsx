@@ -93,6 +93,26 @@ describe("BillingSection", () => {
     vi.unstubAllEnvs();
   });
 
+  it("uses a recoverable unavailable fixture in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    window.history.replaceState({}, "", "/?e2e_billing_state=unavailable");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    expect(screen.getByRole("alert").textContent).toContain("Billing status is unavailable");
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.queryByText("Checking billing status")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Builder" })).toBeTruthy());
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllEnvs();
+  });
+
   it("waits for Clerk before rendering a subscription state", async () => {
     clerkState.isLoaded = false;
     clerkState.activePlan = "matrix_starter";

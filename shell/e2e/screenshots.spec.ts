@@ -237,6 +237,28 @@ test.describe("Visual regression", () => {
     });
   });
 
+  test("billing unavailable state recovers on retry", async ({ page }) => {
+    await page.goto("/?e2e_billing_state=unavailable");
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Billing" }).click();
+    const billingAlert = page.getByRole("alert").filter({ hasText: "Billing status is unavailable" });
+    await expect(billingAlert).toBeVisible();
+    await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-status-unavailable.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByRole("heading", { name: "Builder" })).toBeVisible();
+    await expect(billingAlert).toHaveCount(0);
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("billing-status-recovered.png", {
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
   test("billing computer plans", async ({ page }) => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();

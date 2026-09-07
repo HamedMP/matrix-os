@@ -68,8 +68,10 @@ const BILLING_STATUS_UNAVAILABLE_STATE: BillingAccessRemoteState = {
   accessIssue: "status",
 };
 
-function subscribeToE2eBillingScenario(): () => void {
-  return () => undefined;
+function subscribeToE2eBillingScenario(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener("popstate", onStoreChange);
+  return () => window.removeEventListener("popstate", onStoreChange);
 }
 
 function readE2eBillingScenario(): string | null {
@@ -185,6 +187,18 @@ export function useMatrixBillingAccess(): BillingAccessState {
       accessReason: "e2e_test_bypass",
       accessIssue: null,
       retry: state.retry,
+    };
+  }
+  if (e2eBillingScenario === "unavailable") {
+    return {
+      ...BILLING_STATUS_UNAVAILABLE_STATE,
+      checking: false,
+      retry: () => {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set("e2e_billing_state", "active");
+        window.history.replaceState({}, "", nextUrl);
+        window.dispatchEvent(new Event("popstate"));
+      },
     };
   }
   return {
