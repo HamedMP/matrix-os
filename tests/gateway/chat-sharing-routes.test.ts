@@ -53,3 +53,10 @@ it("formats the public snapshot as safe Markdown with contained code and tables"
   expect(html).not.toContain('href="javascript:');
   expect(html).not.toContain("<img");
 });
+
+it("keeps private file references readable without linking to nonexistent public files", () => {
+  const html = shareHtml({ title: "Links", messages: [{role:"assistant", text:"[App.tsx](/home/matrix/home/apps/chess/App.tsx) and [website](https://matrix-os.com/)"}] });
+  expect(html).toContain("App.tsx");
+  expect(html).not.toContain('href="/home/');
+  expect(html).toContain('href="https://matrix-os.com/"');
+});
