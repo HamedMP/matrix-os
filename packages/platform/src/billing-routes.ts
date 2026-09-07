@@ -55,7 +55,12 @@ import {
   type StripePriceCatalog,
   type StripeSubscriptionProjection,
 } from './billing.js';
-import { DeveloperToolsWithDefaultSchema, type DeveloperToolId } from './developer-tools.js';
+import {
+  DeveloperToolsWithDefaultSchema,
+  defaultDeveloperToolsForServerType,
+  developerToolsAllowedForServerType,
+  type DeveloperToolId,
+} from './developer-tools.js';
 import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 import {
   AiCreditCheckoutRequestSchema,
@@ -371,7 +376,19 @@ export function createBillingRoutes(options: {
     const parsed = CheckoutRequestSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
 
-    const checkoutProperties = buildCheckoutTelemetryProperties(parsed.data);
+    const selectedPlan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((plan) => plan.slug === parsed.data.planSlug);
+    const serverType = selectedPlan
+      ? resolveServerType(loadRuntimeCatalog(env), selectedPlan.defaultCatalogSku, parsed.data.regionSlug)
+        ?? undefined
+      : undefined;
+    const developerToolsWereOmitted = typeof body === 'object'
+      && body !== null
+      && !Object.hasOwn(body, 'developerTools');
+    const developerTools = developerToolsWereOmitted && serverType
+      ? defaultDeveloperToolsForServerType(serverType)
+      : parsed.data.developerTools;
+
+    const checkoutProperties = buildCheckoutTelemetryProperties({ ...parsed.data, developerTools });
     emitTelemetry(BILLING_CHECKOUT_STARTED_EVENT, {
       distinctId: clerkUserId,
       properties: checkoutProperties,
@@ -439,12 +456,10 @@ export function createBillingRoutes(options: {
       ) {
         return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
       }
-      const selectedPlan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((plan) => plan.slug === parsed.data.planSlug);
-      const serverType = selectedPlan
-        ? resolveServerType(loadRuntimeCatalog(env), selectedPlan.defaultCatalogSku, parsed.data.regionSlug)
-          ?? undefined
-        : undefined;
       if (parsed.data.serverType && parsed.data.serverType !== serverType) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      if (serverType && !developerToolsAllowedForServerType(serverType, developerTools)) {
         return c.json({ error: 'Invalid request' }, 400);
       }
       if (primaryPrebillingRequired && parsed.data.runtimeSlot === 'primary' && !options.prebilling) {
@@ -453,7 +468,7 @@ export function createBillingRoutes(options: {
       const checkoutClaim = {
         clerkUserId,
         createdAt: currentTime.toISOString(),
-        developerTools: parsed.data.developerTools,
+        developerTools,
         runtimeSlot: parsed.data.runtimeSlot,
         planSlug: parsed.data.planSlug,
         billingInterval: parsed.data.interval,
@@ -569,7 +584,7 @@ export function createBillingRoutes(options: {
             billingInterval: parsed.data.interval,
             serverType,
             regionSlug: parsed.data.regionSlug,
-            developerTools: parsed.data.developerTools,
+            developerTools,
             now: currentTime.toISOString(),
           });
         } catch (err: unknown) {

@@ -228,7 +228,9 @@ describe('platform/customer-vps', () => {
   });
 
   it('provisions a user machine idempotently by clerkUserId', async () => {
-    const { service, hetzner } = createService();
+    const { service, hetzner } = createService({
+      config: createTestConfig({ serverType: 'cpx42' }),
+    });
 
     const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice', developerTools: ['codex', 'pi'] });
     const second = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -340,6 +342,27 @@ describe('platform/customer-vps', () => {
     await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
       serverType: 'cpx22',
     });
+  });
+
+  it('rejects a CPX22 provisioning request with multiple developer tools before creating a machine', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        defaultServerType: 'CPX22',
+        allowedServerTypes: ['CPX22'],
+      })),
+    });
+
+    await expect(service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      serverType: 'cpx22',
+      developerTools: ['codex', 'pi'],
+    })).rejects.toMatchObject({
+      status: 400,
+      publicMessage: 'Invalid request',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toBeUndefined();
   });
 
   it.each(['ash', 'hil'] as const)(
