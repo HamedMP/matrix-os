@@ -261,6 +261,12 @@ test.describe("Visual regression", () => {
 
   test("billing unavailable state in Web Canvas", async ({ page }) => {
     await page.goto("/?e2e_billing_state=unavailable");
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    const gettingStartedDialog = page.getByRole("dialog", { name: "Getting started" });
+    if (await gettingStartedDialog.isVisible()) {
+      await page.keyboard.press("Escape");
+      await expect(gettingStartedDialog).toHaveCount(0);
+    }
     await page.keyboard.press("Meta+k");
     await page.keyboard.type("Mode: Canvas");
     await page.keyboard.press("Enter");

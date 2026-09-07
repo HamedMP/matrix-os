@@ -2,6 +2,7 @@
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { desktopPalette } from "@matrix-os/brand";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
@@ -37,6 +38,12 @@ async function loadBillingSection() {
 
 async function waitForBillingConfigurator() {
   await waitFor(() => expect(screen.getByTestId("billing-configurator-layout")).toBeTruthy());
+}
+
+function normalizedCssColor(color: string): string {
+  const element = document.createElement("span");
+  element.style.color = color;
+  return element.style.color;
 }
 
 describe("BillingSection", () => {
@@ -89,6 +96,10 @@ describe("BillingSection", () => {
     expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
     expect(screen.queryByText(/\$100/)).toBeNull();
     expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    const activeBadge = document.querySelector<HTMLElement>('[data-slot="badge"]');
+    expect(activeBadge?.style.backgroundColor).toBe(normalizedCssColor(desktopPalette.surfaceMuted));
+    expect(activeBadge?.style.borderColor).toBe(normalizedCssColor(desktopPalette.forestHover));
+    expect(activeBadge?.style.color).toBe(normalizedCssColor(desktopPalette.forest));
     window.history.replaceState({}, "", "/");
     vi.unstubAllEnvs();
   });
@@ -201,7 +212,10 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="add-computer" checkoutRuntimeSlot="studio" />);
 
-    await waitFor(() => expect(screen.getByText("New subscription")).toBeTruthy());
+    const subscriptionBadge = await waitFor(() => screen.getByText("New subscription"));
+    expect(subscriptionBadge.style.backgroundColor).toBe(normalizedCssColor(desktopPalette.canvas));
+    expect(subscriptionBadge.style.borderColor).toBe(normalizedCssColor(desktopPalette.green));
+    expect(subscriptionBadge.style.color).toBe(normalizedCssColor(desktopPalette.forest));
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByText("Start your 7-day free trial")).toBeNull();
   });

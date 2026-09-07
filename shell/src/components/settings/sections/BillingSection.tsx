@@ -1,5 +1,7 @@
 "use client";
 
+import type { CSSProperties } from "react";
+import { desktopPalette, palette } from "@matrix-os/brand";
 import { Badge } from "@/components/ui/badge";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import type { BillingAccessIssue } from "@/hooks/useMatrixBillingAccess";
@@ -21,6 +23,7 @@ function BillingStatusBadge({
   if (active === false && !startsNewSubscription) return null;
 
   let className = "border-border/30 bg-muted/30 text-muted-foreground";
+  let style: CSSProperties | undefined;
   let label = "Checking";
   if (accessIssue === "auth") {
     className = "border-sky-500/30 bg-sky-500/10 text-sky-700";
@@ -29,15 +32,25 @@ function BillingStatusBadge({
     className = "border-ember/30 bg-ember/10 text-ember";
     label = "Unavailable";
   } else if (startsNewSubscription) {
-    className = "border-[#BED77B] bg-[#F4F7ED] text-[#0E3422]";
+    className = "";
+    style = {
+      backgroundColor: desktopPalette.canvas,
+      borderColor: desktopPalette.green,
+      color: desktopPalette.forest,
+    };
     label = "New subscription";
   } else if (active === true) {
-    className = "border-[#288A5B]/30 bg-[#EEF7F2] text-[#13492F]";
+    className = "";
+    style = {
+      backgroundColor: desktopPalette.surfaceMuted,
+      borderColor: desktopPalette.forestHover,
+      color: desktopPalette.forest,
+    };
     label = "Active";
   }
 
   return (
-    <Badge variant="outline" className={className}>
+    <Badge variant="outline" className={className} style={style}>
       {label}
     </Badge>
   );
@@ -61,8 +74,14 @@ export function BillingSection({
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-2 font-[family-name:var(--font-geist-sans)] sm:p-4">
-      <div className="flex items-center justify-between gap-3 border-b border-[#E0E1CA] pb-3">
-        <h2 className="font-[family-name:var(--font-bricolage)] text-xl font-semibold tracking-tight text-[#1F2D1D]">
+      <div
+        className="flex items-center justify-between gap-3 border-b pb-3"
+        style={{ borderColor: palette.cream }}
+      >
+        <h2
+          className="font-[family-name:var(--font-bricolage)] text-xl font-semibold tracking-tight"
+          style={{ color: palette.brandInk }}
+        >
           Billing
         </h2>
         <BillingStatusBadge
