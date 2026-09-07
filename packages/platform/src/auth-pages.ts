@@ -1,3 +1,4 @@
+import { onboardingChecklist } from '@matrix-os/brand/tokens';
 import type { UserMachineRecord } from './db.js';
 import { normalizeDeviceReturnPath } from './request-routing.js';
 
@@ -1478,7 +1479,7 @@ export function getVpsBootPage(input: { status: string }) {
       height: 8px;
       overflow: hidden;
       border-radius: 999px;
-      background: rgba(47, 57, 44, 0.1);
+      background: ${onboardingChecklist.colors.progressTrack};
     }
     .progress::before {
       content: "";
@@ -1486,7 +1487,7 @@ export function getVpsBootPage(input: { status: string }) {
       width: 38%;
       height: 100%;
       border-radius: inherit;
-      background: #c4a265;
+      background: ${onboardingChecklist.colors.progressFill};
       animation: progress 1.8s ease-in-out infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
