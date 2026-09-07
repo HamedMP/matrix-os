@@ -11,9 +11,21 @@ describe("platform database startup migration", () => {
     expect(schemaStart).toBeGreaterThan(wrapperStart);
 
     const wrapper = source.slice(wrapperStart, schemaStart);
-    expect(wrapper).toContain("db.transaction().execute");
-    expect(wrapper).toContain("pg_advisory_xact_lock");
-    expect(wrapper).toContain("matrix_os_platform_schema_migration");
-    expect(wrapper).toContain("await migrateSchema(trx)");
+    const transactionStart = wrapper.indexOf("await db.transaction().execute");
+    const callbackStart = wrapper.indexOf("=> {", transactionStart);
+    const lockStart = wrapper.indexOf("pg_advisory_xact_lock", callbackStart);
+    const lockExecution = wrapper.indexOf(".execute(trx)", lockStart);
+    const schemaMigration = wrapper.indexOf("await migrateSchema(trx)", lockExecution);
+    const transactionEnd = wrapper.lastIndexOf("});");
+
+    expect(transactionStart).toBeGreaterThanOrEqual(0);
+    expect(callbackStart).toBeGreaterThan(transactionStart);
+    expect(lockStart).toBeGreaterThan(callbackStart);
+    expect(lockExecution).toBeGreaterThan(lockStart);
+    expect(schemaMigration).toBeGreaterThan(lockExecution);
+    expect(transactionEnd).toBeGreaterThan(schemaMigration);
+    expect(wrapper.slice(lockStart, lockExecution)).toContain(
+      "matrix_os_platform_schema_migration",
+    );
   });
 });
