@@ -31,8 +31,16 @@ describe("gateway shell routes", () => {
     reorder?: (order: string[]) => Promise<unknown[]>;
   }, shellBackend?: { health: () => Promise<{ ok: boolean; code: string }> }, extraDeps: Record<string, unknown> = {}) {
     const app = new Hono();
-    app.route("/api/terminal", createShellRoutes({ registry, shellBackend, ...extraDeps }));
-    app.route("/api", createShellRoutes({ registry, shellBackend, ...extraDeps }));
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      beginSessionDeletion: vi.fn(async () => undefined),
+      completeSessionDeletion: vi.fn(async () => undefined),
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => undefined),
+      listSessionTombstones: vi.fn(async () => []),
+    };
+    app.route("/api/terminal", createShellRoutes({ registry, shellBackend, sessionLifecycle, ...extraDeps }));
+    app.route("/api", createShellRoutes({ registry, shellBackend, sessionLifecycle, ...extraDeps }));
     return app;
   }
 
@@ -227,12 +235,18 @@ describe("gateway shell routes", () => {
       create: vi.fn(async (input: { name: string }) => ({ name: input.name })),
       delete: vi.fn(async () => undefined),
     };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
     const app = appWithRegistry(registry, undefined, {
       getPrincipal: () => ({ userId: "user_a", source: "jwt" }),
       chatTerminals: {
         prepare: vi.fn(async () => ({ runId: "run_selected" })),
         bind: vi.fn(async () => { throw new Error("private database failure"); }),
       },
+      sessionLifecycle,
     });
 
     const response = await app.request("/api/terminal/sessions", {
@@ -243,6 +257,7 @@ describe("gateway shell routes", () => {
 
     expect(response.status).toBe(500);
     expect(registry.delete).toHaveBeenCalledWith("chat-cleanup", { force: true });
+    expect(sessionLifecycle.deleteSessionReferences).toHaveBeenCalledWith("chat-cleanup");
   });
 
   it("serves reconciled aliases and stale pane recovery through the terminal sessions route", async () => {
@@ -330,6 +345,104 @@ describe("gateway shell routes", () => {
     expect(res.status).toBe(201);
     await expect(res.json()).resolves.toEqual({ name: "main", created: true });
     expect(registry.create).toHaveBeenCalledWith({ name: "main", cwd: "~/projects" });
+  });
+
+  it("keeps an explicit session tombstone until runtime creation succeeds", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "main" })),
+      delete: vi.fn(),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      deleteSessionReferences: vi.fn(),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(registry.create.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("preserves deletion protection when runtime creation fails", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => { throw new Error("runtime unavailable"); }),
+      delete: vi.fn(),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      deleteSessionReferences: vi.fn(),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+
+    expect(res.status).toBe(500);
+    expect(sessionLifecycle.clearSessionTombstone).not.toHaveBeenCalled();
+  });
+
+  it("removes a new runtime when committing its tombstone clear fails", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "main" })),
+      delete: vi.fn(async () => undefined),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      deleteSessionReferences: vi.fn(),
+      clearSessionTombstone: vi.fn(async () => { throw new Error("layout unavailable"); }),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+
+    expect(res.status).toBe(500);
+    expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
+  });
+
+  it("keeps a failed creation rollback tombstoned and hidden from session listings", async () => {
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      create: vi.fn(async () => ({ name: "main" })),
+      delete: vi.fn(async () => { throw new Error("runtime cleanup unavailable"); }),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => { throw new Error("layout unavailable"); }),
+      listSessionTombstones: vi.fn(async () => ["main"]),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const created = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+    const listed = await app.request("/api/terminal/sessions");
+
+    expect(created.status).toBe(500);
+    expect(sessionLifecycle.deleteSessionReferences).toHaveBeenCalledWith("main");
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual({ sessions: [] });
   });
 
   it("accepts optional recognized agent identity during session creation", async () => {
@@ -625,6 +738,241 @@ describe("gateway shell routes", () => {
 
     expect(res.status).toBe(200);
     expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
+  });
+
+  it("persists deletion intent before authoritative session deletion", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(async () => undefined),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      beginSessionDeletion: vi.fn(async () => undefined),
+      completeSessionDeletion: vi.fn(async () => undefined),
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    expect(sessionLifecycle.beginSessionDeletion.mock.invocationCallOrder[0]).toBeLessThan(
+      registry.delete.mock.invocationCallOrder[0],
+    );
+    expect(registry.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionLifecycle.completeSessionDeletion.mock.invocationCallOrder[0],
+    );
+    expect(sessionLifecycle.beginSessionDeletion).toHaveBeenCalledWith("main");
+    expect(sessionLifecycle.completeSessionDeletion).toHaveBeenCalledWith("main");
+  });
+
+  it("does not touch the runtime when persisting deletion intent fails", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(async () => undefined),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      beginSessionDeletion: vi.fn(async () => { throw new Error("layout unavailable"); }),
+      completeSessionDeletion: vi.fn(async () => undefined),
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+
+    expect(res.status).toBe(500);
+    expect(registry.delete).not.toHaveBeenCalled();
+    expect(sessionLifecycle.completeSessionDeletion).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the deletion lifecycle dependency is missing", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(async () => undefined),
+    };
+    const app = new Hono().route("/api/terminal", createShellRoutes({ registry }));
+
+    const res = await app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+
+    expect(res.status).toBe(500);
+    expect(registry.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps deletion pending when runtime cleanup fails so a retry can finish", async () => {
+    let deletionPending = false;
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn()
+        .mockRejectedValueOnce(new Error("runtime unavailable"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      beginSessionDeletion: vi.fn(async () => { deletionPending = true; }),
+      completeSessionDeletion: vi.fn(async () => { deletionPending = false; }),
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const first = await app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+    expect(first.status).toBe(500);
+    expect(deletionPending).toBe(true);
+    expect(sessionLifecycle.completeSessionDeletion).not.toHaveBeenCalled();
+
+    const retry = await app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+    expect(retry.status).toBe(200);
+    expect(deletionPending).toBe(false);
+  });
+
+  it("keeps deletion pending when finalization fails and completes it on retry", async () => {
+    let deletionPending = false;
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(async () => undefined),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      beginSessionDeletion: vi.fn(async () => { deletionPending = true; }),
+      completeSessionDeletion: vi.fn()
+        .mockRejectedValueOnce(new Error("layout unavailable"))
+        .mockImplementationOnce(async () => { deletionPending = false; }),
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const first = await app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+    expect(first.status).toBe(500);
+    expect(deletionPending).toBe(true);
+
+    const retry = await app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+    expect(retry.status).toBe(200);
+    expect(deletionPending).toBe(false);
+    expect(registry.delete).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers a missing session only through the explicit recover endpoint", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      recover: vi.fn(async () => ({ name: "bench", status: "active" })),
+      delete: vi.fn(),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      deleteSessionReferences: vi.fn(),
+      clearSessionTombstone: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const res = await app.request("/api/terminal/sessions/bench/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "projects/demo" }),
+    });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ session: { name: "bench", status: "active" } });
+    expect(registry.recover).toHaveBeenCalledWith("bench", { cwd: "projects/demo" });
+    expect(registry.create).not.toHaveBeenCalled();
+    expect(sessionLifecycle.clearSessionTombstone).toHaveBeenCalledWith("bench");
+    expect(registry.recover.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionLifecycle.clearSessionTombstone.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not destroy a recovered runtime when clearing its tombstone fails", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      recover: vi.fn(async () => ({ name: "bench", status: "active" })),
+      delete: vi.fn(async () => undefined),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: async <T>(_name: string, operation: () => Promise<T>) => operation(),
+      deleteSessionReferences: vi.fn(async () => undefined),
+      clearSessionTombstone: vi.fn()
+        .mockRejectedValueOnce(new Error("layout unavailable"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const first = await app.request("/api/terminal/sessions/bench/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(first.status).toBe(500);
+    expect(registry.delete).not.toHaveBeenCalled();
+
+    const retry = await app.request("/api/terminal/sessions/bench/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(retry.status).toBe(201);
+    expect(registry.delete).not.toHaveBeenCalled();
+  });
+
+  it("serializes delete and create across both route mounts until tombstone reconciliation commits", async () => {
+    const root = await tempRoot();
+    const { TerminalWindowLayoutStore } = await import(
+      "../../packages/gateway/src/shell/terminal-window-layout-store.js"
+    );
+    const store = new TerminalWindowLayoutStore({ homePath: root });
+    let releaseReconciliation!: () => void;
+    let reconciliationStarted!: () => void;
+    const reconciliationBarrier = new Promise<void>((resolve) => { releaseReconciliation = resolve; });
+    const reconciliationReached = new Promise<void>((resolve) => { reconciliationStarted = resolve; });
+    let runtimeExists = true;
+    const registry = {
+      list: vi.fn(async () => runtimeExists ? [{ name: "main", status: "active" }] : []),
+      create: vi.fn(async () => {
+        runtimeExists = true;
+        return { name: "main", status: "active" };
+      }),
+      delete: vi.fn(async () => {
+        runtimeExists = false;
+      }),
+    };
+    const sessionLifecycle = {
+      withSessionLifecycleLock: store.withSessionLifecycleLock.bind(store),
+      beginSessionDeletion: vi.fn(async (name: string) => {
+        reconciliationStarted();
+        await reconciliationBarrier;
+        await store.beginSessionDeletion(name);
+      }),
+      completeSessionDeletion: store.completeSessionDeletion.bind(store),
+      deleteSessionReferences: store.deleteSessionReferences.bind(store),
+      clearSessionTombstone: store.clearSessionTombstone.bind(store),
+      listSessionTombstones: store.listSessionTombstones.bind(store),
+    };
+    const app = appWithRegistry(registry, undefined, { sessionLifecycle });
+
+    const deletion = app.request("/api/terminal/sessions/main?force=1", { method: "DELETE" });
+    await reconciliationReached;
+    const creation = app.request("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+    await Promise.resolve();
+
+    expect(registry.create).not.toHaveBeenCalled();
+    releaseReconciliation();
+    expect((await deletion).status).toBe(200);
+    expect((await creation).status).toBe(201);
+    expect(runtimeExists).toBe(true);
+    await expect(store.listSessionTombstones()).resolves.toEqual([]);
   });
 
   it("deletes legacy matrix session names with force query support under both mounts", async () => {
