@@ -42,6 +42,11 @@ on:
         required: true
         type: string
 
+      connect_share_preview:
+        description: "Connect an existing PR platform tag to its share-only VPS route in staging"
+        type: boolean
+        default: false
+
 permissions:
   contents: read
   id-token: write
@@ -55,7 +60,7 @@ jobs:
   preview:
     name: Deploy preview revision
     if: >-
-      (github.event_name == 'workflow_dispatch' ||
+      ((github.event_name == 'workflow_dispatch' && !inputs.connect_share_preview) ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         github.event.action != 'closed' &&
         ((github.event.action == 'labeled' && github.event.label.name == 'preview-platform') ||
@@ -321,3 +326,51 @@ jobs:
               --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
             echo "Deleted revision $rev"
           done
+
+  connect-share-preview:
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Preview
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      PR_NUMBER: ${{ inputs.pr }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --filter . --ignore-scripts
+      - name: Register only the PR preview route in staging
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          test "$CLOUD_RUN_PREVIEW_SERVICE" = matrix-platform-preview
+          gcloud help secrets versions access >/dev/null
+          preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_db"
+          PREVIEW_DATABASE_URL="$preview_db" node scripts/chat-share-preview-fixture.mjs
+      - name: Enable the existing tagged host without moving traffic
+        run: |
+          set -euo pipefail
+          gcloud help run services describe >/dev/null
+          gcloud help run revisions describe >/dev/null
+          gcloud help run deploy >/dev/null
+          service="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json --quiet)"
+          revision="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<< "$service")"
+          url="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .url' <<< "$service")"
+          image="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)' --quiet)"
+          gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
+            --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}" --quiet
+          echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"

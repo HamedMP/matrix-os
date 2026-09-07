@@ -56,3 +56,13 @@ it("refreshes a reply committed between preflight and share creation without ret
   expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
   expect(screen.getByText("This Chat changed. Review the updated preview and confirm again.")).toBeTruthy();
 });
+
+it("renders readable Markdown in the consent preview without active HTML or remote images", () => {
+  render(<ChatShareDialog title="Preview" messages={[{ role: "assistant", text: "## Result\n\n**Ready** with `chess.js`.\n\n- First\n- Second\n\n```js\nconst ready = true;\n```\n\n| File | State |\n| --- | --- |\n| app.ts | Done |\n\n<script>alert(1)</script>\n\n![tracking](https://example.com/pixel)" }]} createLink={vi.fn()} copyText={vi.fn()} revoke={vi.fn()} onClose={vi.fn()} />);
+  expect(screen.getByRole("heading", { name: "Result" })).toBeTruthy();
+  expect(screen.getByRole("list").children).toHaveLength(2);
+  expect(screen.getByRole("table")).toBeTruthy();
+  expect(screen.getByText("Ready").tagName).toBe("STRONG");
+  expect(screen.getByText("const ready = true;").closest("pre")).toBeTruthy();
+  expect(document.querySelector("script, img")).toBeNull();
+});

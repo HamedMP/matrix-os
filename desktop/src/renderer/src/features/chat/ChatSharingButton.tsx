@@ -6,5 +6,5 @@ export function ChatSharingButton(props: { api: ApiClient; chatId: string; copyT
   const handle = useConnection((state) => state.handle);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const platformHost = useConnection((state) => state.platformHost);
-  return <SharedButton {...props} handle={handle} runtimeSlot={runtimeSlot} platformHost={platformHost} />;
+  return <SharedButton {...props} handle={handle} runtimeSlot={runtimeSlot} platformHost={import.meta.env.VITE_CHAT_SHARE_ORIGIN || platformHost} />;
 }
