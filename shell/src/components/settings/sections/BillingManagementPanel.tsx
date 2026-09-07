@@ -298,4 +298,3 @@ function formatDate(value: string): string {
   if (Number.isNaN(date.getTime())) return value;
   return billingDateFormatter.format(date);
 }
-

@@ -45,7 +45,7 @@ export default function BillingSettingsScreen() {
 
   async function openChangePlan() {
     if (isOpeningPortal) return;
-    if (!entitlement?.stripeSubscriptionId || entitlement.source !== "stripe") {
+    if (entitlement?.portalAvailable !== true) {
       await Linking.openURL(PRICING_URL);
       return;
     }
