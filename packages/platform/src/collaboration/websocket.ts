@@ -205,7 +205,9 @@ export class CollaborationWebSocketAuthorizer {
   }
 
   private requireOrigin(origin: string | undefined, authentication: "session" | "bearer" | "ticket"): void {
-    if (!origin && authentication === "bearer") return;
+    // Native clients do not send a browser Origin. They authenticate the
+    // upgrade separately and present a one-use, actor/scope-bound ticket.
+    if (!origin && (authentication === "bearer" || authentication === "ticket")) return;
     if (!origin || !this.allowedOrigins.includes(origin)) {
       throw new CollaborationWebSocketError("invalid_origin", "Collaboration socket origin is invalid");
     }

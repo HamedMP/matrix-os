@@ -1,6 +1,7 @@
 import {
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
+  CollaborationConnectionTicketResponseSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationHumanMessageSchema,
   CollaborationIdSchema,
@@ -92,4 +93,35 @@ export function updateSharedChatReadState(token: string, scopeId: string, readTh
     method: "PATCH", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ readThroughSeq: CollaborationRevisionSchema.parse(readThroughSeq) }),
   });
+}
+
+export function fetchCollaborationEventTicket(
+  token: string,
+  scopeId: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/connection-tickets`),
+    token,
+    schema: CollaborationConnectionTicketResponseSchema,
+    errorMessage: ERROR,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clientRequestId: CollaborationIdSchema.parse(clientRequestId),
+      purpose: "events",
+    }),
+  });
+}
+
+export function collaborationEventsUrl(scopeId: string, ticket: string, after = "0"): string {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const cursor = CollaborationRevisionSchema.parse(after);
+  const parsedTicket = CollaborationConnectionTicketResponseSchema.shape.ticket.parse(ticket);
+  const target = new URL(`/ws/collaboration/scopes/${id}/events`, HOSTED_GATEWAY_URL);
+  target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
+  target.searchParams.set("ticket", parsedTicket);
+  target.searchParams.set("after", cursor);
+  return target.toString();
 }

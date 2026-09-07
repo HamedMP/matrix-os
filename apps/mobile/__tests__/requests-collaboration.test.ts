@@ -2,6 +2,8 @@ jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.c
 
 import {
   acceptCollaborationInvitation,
+  collaborationEventsUrl,
+  fetchCollaborationEventTicket,
   fetchCollaborationInbox,
   fetchSharedChatMessages,
   postSharedChatDiscussion,
@@ -48,6 +50,26 @@ describe("mobile collaboration requests", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/chat/messages?after=100&limit=100`,
       expect.any(Object),
+    );
+  });
+
+  it("obtains a one-use event ticket and builds an exact WebSocket route", async () => {
+    const ticket = "t".repeat(43);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ ticket, expiresAt: "2026-09-07T12:00:30.000Z" }),
+    } as unknown as Response);
+    await expect(fetchCollaborationEventTicket(
+      "clerk-token",
+      scopeId,
+      "40000000-0000-4000-8000-000000000010",
+    )).resolves.toMatchObject({ ticket });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/connection-tickets`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(collaborationEventsUrl(scopeId, ticket, "12")).toBe(
+      `wss://app.matrix-os.com/ws/collaboration/scopes/${scopeId}/events?ticket=${ticket}&after=12`,
     );
   });
 });

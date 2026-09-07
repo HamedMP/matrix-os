@@ -3,6 +3,8 @@ import { CanonicalChatContentSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import type { ChatOutboxEvent } from "../../packages/gateway/src/chat/records.js";
+import { bootstrapChatSharing, ChatSharing } from "../../packages/gateway/src/chat/sharing.js";
+import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import {
@@ -18,16 +20,19 @@ describe("Chat collaboration lifecycle", () => {
   let fixture: CollaborationTestDatabase;
   let repository: CollaborationRepository;
   let delivered: Array<{ event: ChatOutboxEvent }>;
+  let shares: ChatSharing;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
+    await bootstrapChatSharing(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     await seed(fixture);
     const chatRepository = new ChatRepository(fixture.db);
     delivered = [];
     chatRepository.registerOutboxSink((event) => delivered.push(event));
     repository = new CollaborationRepository(fixture.db, { now: () => now, chatRepository });
+    shares = new ChatSharing(fixture.db);
   });
 
   afterEach(async () => fixture.destroy());
@@ -150,6 +155,46 @@ describe("Chat collaboration lifecycle", () => {
     expect(await fixture.db.selectFrom("chats").select("id").where("id", "=", collaborationIds.chat).executeTakeFirst())
       .toEqual({ id: collaborationIds.chat });
   });
+
+  it("keeps frozen snapshot and live membership revocation independent", async () => {
+    const firstSnapshot = await shares.create(
+      { type: "personal", ownerId: collaborationActors.owner },
+      collaborationIds.chat,
+      1,
+    );
+    await shares.revoke(
+      { type: "personal", ownerId: collaborationActors.owner },
+      collaborationIds.chat,
+      firstSnapshot.id,
+    );
+    const authority = new CollaborationAuthority(repository, { now: () => now });
+    await expect(authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    })).resolves.toMatchObject({ role: "editor" });
+
+    const secondSnapshot = await shares.create(
+      { type: "personal", ownerId: collaborationActors.owner },
+      collaborationIds.chat,
+      1,
+    );
+    await repository.revokeMember({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      clientRequestId: request(5),
+      expectedRevision: 1,
+      expectedMemberRevision: 1,
+      payloadHash: "e".repeat(64),
+    });
+    expect(await shares.read(secondSnapshot.token)).toMatchObject({ title: "Shared Chat" });
+    await expect(authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    })).rejects.toMatchObject({ code: "not_found" });
+  });
 });
 
 function request(index: number): string {
@@ -193,7 +238,10 @@ async function seed(fixture: CollaborationTestDatabase): Promise<void> {
     {
       id: "msg_shared", chat_id: collaborationIds.chat, seq: 1, role: "user", state: "committed",
       turn_id: null, run_id: null, actor_id: collaborationActors.editor, purpose: "discussion",
-      parts: JSON.stringify([{ type: "attachment_reference", attachmentId: "att_shared", kind: "file", label: "shared message", ownerReference: "projects/private-secret.txt" }]),
+      parts: JSON.stringify([
+        { type: "text", text: "shared message" },
+        { type: "attachment_reference", attachmentId: "att_shared", kind: "file", label: "shared message", ownerReference: "projects/private-secret.txt" },
+      ]),
       byte_count: 200, search_text: "shared message", created_at: now.toISOString(),
     },
     {

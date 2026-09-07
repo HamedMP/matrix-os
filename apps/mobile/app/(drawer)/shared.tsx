@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "@clerk/clerk-expo";
 import {
   CollaborationDiscoveryItemSchema,
+  CollaborationEventFrameSchema,
   CollaborationInvitationSchema,
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
@@ -15,8 +16,10 @@ import { renderChatMarkdown } from "@/lib/chat-markdown";
 import { loadCollaborationDraft, saveCollaborationDraft } from "@/lib/collaboration-drafts";
 import {
   acceptCollaborationInvitation,
+  collaborationEventsUrl,
   fetchCollaborationInbox,
   fetchCollaborationInvitation,
+  fetchCollaborationEventTicket,
   fetchCollaborationScope,
   fetchSharedChat,
   fetchSharedChatMessages,
@@ -49,6 +52,10 @@ export default function SharedScreen() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const chatLoadGeneration = useRef(0);
+  const latestSequenceRef = useRef("0");
+  const eventSequenceRef = useRef("0");
+  const eventScopeRef = useRef<string | null>(null);
+  const messagesRef = useRef<Message[]>([]);
   const token = useCallback(async () => {
     const value = await getTokenRef.current();
     if (!value) throw new Error("CollaborationUnavailable");
@@ -70,6 +77,12 @@ export default function SharedScreen() {
   useEffect(() => { void loadHome(); }, [loadHome]);
   const loadChat = useCallback(async (scopeId: string) => {
     const generation = ++chatLoadGeneration.current;
+    if (eventScopeRef.current !== scopeId) {
+      eventScopeRef.current = scopeId;
+      eventSequenceRef.current = "0";
+      latestSequenceRef.current = "0";
+      messagesRef.current = [];
+    }
     setLoading(true); setError(""); setView({ kind: "chat", scopeId });
     setScope(null); setChat(null); setMessages([]); setDraft(""); setLoadingMoreMessages(false);
     try {
@@ -82,6 +95,8 @@ export default function SharedScreen() {
       const nextDraft = await loadCollaborationDraft(AsyncStorage, { actorId: userId, scopeId, chatId: nextChat.id });
       if (generation !== chatLoadGeneration.current) return;
       setScope(nextScope); setChat(nextChat); setMessages(history.messages); setDraft(nextDraft);
+      messagesRef.current = history.messages;
+      latestSequenceRef.current = history.messages.at(-1)?.sequence ?? "0";
       setHasMoreMessages(BigInt(nextChat.messageCount) > BigInt(history.messages.length));
       const sequence = history.messages.at(-1)?.sequence;
       if (sequence) void updateSharedChatReadState(actorToken, scopeId, sequence).catch((failure: unknown) => {
@@ -108,6 +123,8 @@ export default function SharedScreen() {
       const appended = page.messages.filter((message) => !messages.some((known) => known.id === message.id));
       const combined = [...messages, ...appended];
       setMessages(combined);
+      messagesRef.current = combined;
+      latestSequenceRef.current = combined.at(-1)?.sequence ?? latestSequenceRef.current;
       setHasMoreMessages(appended.length > 0 && BigInt(chat.messageCount) > BigInt(combined.length));
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -116,6 +133,100 @@ export default function SharedScreen() {
       if (generation === chatLoadGeneration.current) setLoadingMoreMessages(false);
     }
   };
+  const refreshLiveChat = useCallback(async (scopeId: string) => {
+    const actorToken = await token();
+    const [nextScope, nextChat, page] = await Promise.all([
+      fetchCollaborationScope(actorToken, scopeId),
+      fetchSharedChat(actorToken, scopeId),
+      fetchSharedChatMessages(actorToken, scopeId, latestSequenceRef.current),
+    ]);
+    setScope(nextScope);
+    setChat(nextChat);
+    const known = new Set(messagesRef.current.map((message) => message.id));
+    const combined = [...messagesRef.current, ...page.messages.filter((message) => !known.has(message.id))];
+    messagesRef.current = combined;
+    setMessages(combined);
+    latestSequenceRef.current = combined.at(-1)?.sequence ?? latestSequenceRef.current;
+    setHasMoreMessages(BigInt(nextChat.messageCount) > BigInt(combined.length));
+    const sequence = page.messages.at(-1)?.sequence;
+    if (sequence) void updateSharedChatReadState(actorToken, scopeId, sequence).catch((failure: unknown) => {
+      console.warn("[mobile-collaboration] realtime read state failed", failure instanceof Error ? failure.name : "UnknownError");
+    });
+  }, [token]);
+  const activeScopeId = view.kind === "chat" ? view.scopeId : null;
+  useEffect(() => {
+    if (!activeScopeId) return;
+    let closed = false;
+    let socket: WebSocket | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    const connect = async () => {
+      try {
+        const actorToken = await token();
+        const ticket = await fetchCollaborationEventTicket(actorToken, activeScopeId, randomUuid());
+        if (closed) return;
+        const NativeWebSocket = WebSocket as unknown as new (
+          target: string,
+          protocols?: string | string[],
+          options?: { headers: Record<string, string> },
+        ) => WebSocket;
+        const next = new NativeWebSocket(
+          collaborationEventsUrl(activeScopeId, ticket.ticket, eventSequenceRef.current),
+          undefined,
+          { headers: { Authorization: `Bearer ${actorToken}` } },
+        );
+        socket = next;
+        next.onopen = () => { attempt = 0; };
+        next.onmessage = (event) => {
+          if (typeof event.data !== "string" || event.data.length > 64 * 1024) {
+            next.close(1008, "Invalid frame");
+            return;
+          }
+          try {
+            const frame = CollaborationEventFrameSchema.parse(JSON.parse(event.data) as unknown);
+            if (frame.scopeId !== activeScopeId) throw new Error("ScopeMismatch");
+            if ("sequence" in frame) eventSequenceRef.current = frame.sequence;
+            if (frame.type === "heartbeat") {
+              if (next.readyState === WebSocket.OPEN) next.send(JSON.stringify({ version: 1, type: "heartbeat" }));
+            } else if (frame.type === "unavailable") {
+              closed = true;
+              setScope(null);
+              setError("This shared Chat is unavailable. Your access may have changed.");
+              next.close(1008, "Unavailable");
+            } else if (["changed", "capabilities_changed", "refresh_required"].includes(frame.type)) {
+              void refreshLiveChat(activeScopeId).catch((failure: unknown) => {
+                console.warn("[mobile-collaboration] realtime refresh failed", failure instanceof Error ? failure.name : "UnknownError");
+                setError("This shared Chat could not be refreshed. Try again.");
+              });
+            }
+          } catch (failure: unknown) {
+            console.warn("[mobile-collaboration] event frame rejected", failure instanceof Error ? failure.name : "UnknownError");
+            next.close(1008, "Invalid frame");
+          }
+        };
+        next.onerror = () => next.close();
+        next.onclose = () => {
+          if (socket === next) socket = null;
+          if (closed) return;
+          const delay = Math.min(10_000, 500 * (2 ** Math.min(attempt, 5)));
+          attempt += 1;
+          retryTimer = setTimeout(() => { void connect(); }, delay);
+        };
+      } catch (failure: unknown) {
+        console.warn("[mobile-collaboration] event connection failed", failure instanceof Error ? failure.name : "UnknownError");
+        if (closed) return;
+        const delay = Math.min(10_000, 500 * (2 ** Math.min(attempt, 5)));
+        attempt += 1;
+        retryTimer = setTimeout(() => { void connect(); }, delay);
+      }
+    };
+    void connect();
+    return () => {
+      closed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      socket?.close(1000, "Closed");
+    };
+  }, [activeScopeId, refreshLiveChat, token]);
   const review = async (invitationId: string) => {
     setLoading(true); setError("");
     try { setView({ kind: "invitation", invitation: await fetchCollaborationInvitation(await token(), invitationId) }); }
@@ -145,7 +256,7 @@ export default function SharedScreen() {
     });
   };
   const send = async () => {
-    if (!scope || !chat || view.kind !== "chat" || !draft.trim() || scope.role === "viewer") return;
+    if (!scope || !chat || view.kind !== "chat" || !draft.trim() || !scope.capabilities.discuss) return;
     setSending(true); setError("");
     try {
       await postSharedChatDiscussion(await token(), view.scopeId, scope.revision, draft.trim(), randomUuid());
@@ -177,6 +288,7 @@ export default function SharedScreen() {
 
   if (view.kind === "chat") {
     const viewer = scope?.role === "viewer";
+    const canDiscuss = scope?.capabilities.discuss === true;
     return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={styles.header}><Back onPress={() => {
         chatLoadGeneration.current += 1;
@@ -197,12 +309,12 @@ export default function SharedScreen() {
         {hasMoreMessages ? <Action label={loadingMoreMessages ? "Loading…" : "Load more messages"}
           disabled={loadingMoreMessages} onPress={() => void loadMoreMessages()} /> : null}
       </ScrollView>
-      <View style={styles.composer}><Text style={styles.muted}>{viewer ? "Viewers can read this Chat but cannot post messages." : "Messages are shared with everyone in this Chat."}</Text>
+      <View style={styles.composer}><Text style={styles.muted}>{viewer ? "Viewers can read this Chat but cannot post messages." : canDiscuss ? "Messages are shared with everyone in this Chat." : "This Chat is read-only right now."}</Text>
         <Text style={styles.muted}>AI requests are unavailable in shared Chats during this milestone.</Text>
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-        <TextInput accessibilityLabel="Message everyone" multiline value={draft} editable={!viewer && !sending} onChangeText={updateDraft}
-          placeholder={viewer ? "Read-only access" : "Message everyone…"} style={styles.input} />
-        <Action label={sending ? "Sending…" : "Send message"} disabled={Boolean(viewer || sending || !draft.trim())} onPress={() => void send()} />
+        <TextInput accessibilityLabel="Message everyone" multiline value={draft} editable={canDiscuss && !sending} onChangeText={updateDraft}
+          placeholder={canDiscuss ? "Message everyone…" : "Read-only access"} style={styles.input} />
+        <Action label={sending ? "Sending…" : "Send message"} disabled={Boolean(!canDiscuss || sending || !draft.trim())} onPress={() => void send()} />
       </View>
     </KeyboardAvoidingView>;
   }
