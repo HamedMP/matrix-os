@@ -393,7 +393,9 @@ jobs:
           revision="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<< "$service")"
           url="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .url' <<< "$service")"
           image="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)' --quiet)"
+          # Match the existing platform VPS-origin TLS policy (tracked in #410).
+          # This applies only to the dedicated Preview service and registered VPS addresses.
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
-            --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}" --quiet
+            --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}@CUSTOMER_VPS_TLS_VERIFY=false" --quiet
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"
