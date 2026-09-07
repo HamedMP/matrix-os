@@ -10,8 +10,13 @@ const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 const evidence = join(root, "output/playwright/getting-started");
+const hasBuild = existsSync(main);
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasBuild) {
+  throw new Error("Run bun run build:desktop before the required Getting started regression suite");
+}
+const suite = hasBuild ? describe : describe.skip;
 
-describe("Electron Getting started overlay coexistence", () => {
+suite("Electron Getting started overlay coexistence", () => {
   let app: ElectronApplication | undefined;
   let page: Page;
   let gateway: StubGateway | undefined;
