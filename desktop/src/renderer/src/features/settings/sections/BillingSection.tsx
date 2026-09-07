@@ -252,7 +252,7 @@ export default function BillingSection() {
                   : portalAvailable
                     ? "Manage your subscription, invoices, and payment methods in your browser."
                     : entitlement?.source === "override"
-                      ? "This account is managed internally. Contact the Matrix team for receipts and plan changes."
+                      ? "This account has no linked billing customer. Contact the Matrix team for billing help."
                       : "Billing management is not available for this account yet."}
             </p>
           </div>

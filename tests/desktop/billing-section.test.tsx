@@ -108,7 +108,7 @@ describe("desktop billing settings", () => {
     });
   });
 
-  it("explains internally managed billing instead of hiding management", async () => {
+  it("explains missing billing linkage instead of hiding management", async () => {
     const api = makeApi({
       ...activeBilling,
       entitlement: { ...activeBilling.entitlement, source: "override", portalAvailable: false },
@@ -119,7 +119,7 @@ describe("desktop billing settings", () => {
 
     const button = screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
-    expect(screen.getByText(/managed internally/)).not.toBeNull();
+    expect(screen.getByText(/no linked billing customer/)).not.toBeNull();
     fireEvent.click(button);
     expect(api.post).not.toHaveBeenCalled();
   });
@@ -134,7 +134,7 @@ describe("desktop billing settings", () => {
 
     expect((screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Billing management is not available for this account yet/)).not.toBeNull();
-    expect(screen.queryByText(/managed internally/)).toBeNull();
+    expect(screen.queryByText(/no linked billing customer/)).toBeNull();
   });
 
   it("disables management while refreshing and explains a failed status check", async () => {
@@ -153,7 +153,7 @@ describe("desktop billing settings", () => {
     rejectRefresh(new Error("status unavailable"));
     await waitFor(() => expect(screen.getByText(/Refresh your billing status/)).not.toBeNull());
     expect(button.disabled).toBe(true);
-    expect(screen.queryByText(/managed internally/)).toBeNull();
+    expect(screen.queryByText(/no linked billing customer/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(button.disabled).toBe(false));
   });
