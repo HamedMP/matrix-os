@@ -5,7 +5,7 @@ const port = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "3000", 10);
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /(screenshots|terminal-sizing)\.spec\.ts/,
+  testMatch: /(screenshots|terminal-sizing|getting-started)\.spec\.ts/,
   snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

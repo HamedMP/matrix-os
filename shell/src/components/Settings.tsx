@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useState } from "react";
 import Image from "next/image";
 import {
@@ -280,6 +281,8 @@ function SettingsFrame({
   } else if (!open) {
     if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   }
+
+  useGettingStartedBlocker(open || mounted);
 
   if (!mounted) return null;
 

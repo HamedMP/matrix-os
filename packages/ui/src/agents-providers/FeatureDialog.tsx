@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { useGettingStartedBlocker } from "../getting-started-visibility.js";
 
 export function FeatureDialog({
   title,
@@ -9,6 +10,7 @@ export function FeatureDialog({
   children: ReactNode;
   onClose: () => void;
 }) {
+  useGettingStartedBlocker(true);
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     dialogRef.current?.querySelector<HTMLElement>("button, input, select")?.focus();
