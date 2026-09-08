@@ -21,7 +21,6 @@ import {
 import {
   asIso,
   jsonb,
-  messageAttribution,
   messageSearchText,
   toMessage,
   type ChatOutboxEventType,
@@ -380,7 +379,6 @@ export class ChatSteeringRepository {
           seq: Number(latest?.seq ?? 0) + 1,
           role: "user",
           state: "committed",
-          purpose: "ai_request",
           turnId: steer.turn_id,
           runId,
           parts,
@@ -397,7 +395,6 @@ export class ChatSteeringRepository {
           parts: jsonb(message.parts),
           byte_count: new TextEncoder().encode(JSON.stringify(message)).byteLength,
           search_text: messageSearchText(message),
-          ...messageAttribution(message),
           created_at: message.createdAt,
         }).execute();
         for (const part of message.parts) {

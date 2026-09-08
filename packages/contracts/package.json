@@ -22,7 +22,6 @@
     "#canonical-chat-compatibility-public": "./src/canonical-chat-compatibility-public.ts",
     "#canonical-chat-provider": "./src/canonical-chat-provider.ts",
     "#canonical-chat-surface": "./src/canonical-chat-surface.ts",
-    "#collaboration": "./src/collaboration.ts",
     "#contract-primitives": "./src/primitives.ts",
     "#custom-mcp-policy": "./src/custom-mcp-policy.ts",
     "#hermes-configuration": "./src/hermes-configuration.ts",
