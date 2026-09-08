@@ -1,9 +1,10 @@
 # Collaboration scope-runtime proof
 
-This directory contains the proof harness for PR2. It does **not** claim that
-the proposed native boundary is safe yet. Shared execution stays disabled until
-the real disposable-host experiment passes and the exact evidence below is
-filled in.
+This directory contains the proof harness for PR2. The native/SDK boundary
+experiment passed on the measured disposable host recorded below. This proves
+the selected systemd primitives and installed SDK/harness combination; it does
+not claim that the still-unimplemented production supervisor lifecycle is
+complete. Shared execution remains disabled through PR2.
 
 ## Safety and ordering
 
@@ -15,12 +16,14 @@ owner's Matrix computer.
 
 `native-isolation-acceptance.sh` is the root-side disposable-host harness. It
 also refuses to start without the marker. The harness creates temporary broker
-and supervisor sentinel sockets, runs the probe once as an intentionally
-unrestricted numeric non-root identity, and requires that baseline to fail.
+and supervisor sentinel sockets, runs the probe once as the intentionally
+unrestricted `matrix` service identity with only a fake sentinel secret, and
+requires that baseline to fail.
 It then runs the same probe through one fixed systemd 255-compatible profile
-with a minimal root, an isolated network, an exact broker socket mount, and
-bounded CPU, memory, process, and scratch-storage quotas. It always stops the
-transient unit and removes its sockets and temporary root on exit.
+using `DynamicUser=matrix-scope-probe`, a minimal root, an isolated network, an
+exact broker socket mount, and bounded CPU, memory, process, and scratch-storage
+quotas. It always stops the transient unit and removes its sockets and temporary
+root on exit.
 
 The acceptance harness expects the reviewed native probe, Agent SDK probe, and
 bounded broker fixture under `/var/tmp/` on the disposable host and the bundled
@@ -55,21 +58,29 @@ provider responses or private content.
 
 | Evidence | Measured value |
 | --- | --- |
-| Git commit | Pending |
-| Host image and kernel | Pending |
-| systemd version | Pending |
-| Node version | Pending |
-| Supervisor version | Pending |
-| Profile ID/version/digest | Pending |
-| Scope UID allocation | Pending |
-| MemoryMax | Pending |
-| CPUQuota | Pending |
-| TasksMax | Pending |
-| Writable storage maximum | Pending |
-| Supported adapter and harness version | Pending |
-| Unrestricted baseline result | Pending — must fail |
-| Fixed-profile result | Pending — must pass |
-| Timeout/crash/restart/shutdown result | Pending |
+| Git commit | `6ccdd768534d7bbd116784dd1e910067c4564128` |
+| Evidence workflow | GitHub Actions run `34264153999`; artifact retained for 7 days |
+| Host image and kernel | Ubuntu 24.04, Linux `6.8.0-138-generic`, x86_64 |
+| systemd version | 255 |
+| Node version | `v24.18.0` |
+| Supervisor version | Not implemented; T078/T082 remain pending |
+| Profile ID/version/digest | `scope-runtime-proof-v1`; SHA-256 `de0837f9a6a0c9e534d93fc375a30f1b30a9b6b641e88da367aa1b4cd89ad753` |
+| Scope UID allocation | systemd dynamic service identity; measured UID 62632 for this run (never treated as stable) |
+| MemoryMax | 1,073,741,824 bytes |
+| CPUQuota | 200% |
+| TasksMax | 256 |
+| Writable storage maximum | 10,737,418,240 bytes isolated tmpfs |
+| Supported adapter and harness version | `claude-code`; Agent SDK `0.3.240`; native harness `2.1.240` |
+| Unrestricted baseline result | Failed as required: owner home, fake owner sentinel, foreign processes, direct network/DNS, and supervisor socket were exposed |
+| Fixed-profile result | Passed every file, environment, process, descriptor, network, DNS, broker, supervisor-injection, and child-inheritance check |
+| SDK/broker result | Passed one real `query()` turn through the Unix-socket `inference.messages` fixture; rejected `host.fetch` |
+| Timeout/crash/restart/shutdown result | Pending production supervisor implementation and T082 acceptance |
+
+The disposable host was still running bundle `v2026.09.07-1176` because the
+current application bundle failed to activate independently of this experiment.
+The workflow therefore uploaded the immutable probe scripts from the commit
+above and required the host's installed Agent SDK to equal the same head's
+pinned `0.3.240` dependency before accepting the result.
 
 ## Probe coverage
 

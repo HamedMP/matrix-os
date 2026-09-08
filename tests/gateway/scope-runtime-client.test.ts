@@ -22,7 +22,7 @@ const catalog: ScopeRuntimeProfileCatalog = {
     profileVersion: 1,
     profileDigest: PROFILE_DIGEST,
     supportedAdapters: {
-      "claude-code": ["2.1.32"],
+      "claude-code": ["2.1.240"],
     },
   },
 };
@@ -93,7 +93,7 @@ function capabilityResponse(requestId = REQUEST_ID): ScopeRuntimeResponse {
         tasksMax: 256,
         storageMaxBytes: 10_737_418_240,
       },
-      adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.32" }],
+      adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240" }],
     },
   };
 }
@@ -108,7 +108,7 @@ describe("scope runtime protocol", () => {
       profileId: "matrix-scope-v1",
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.32",
+      harnessVersion: "2.1.240",
     })).toEqual(expect.objectContaining({ scopeHandle: SCOPE_HANDLE }));
 
     for (const injected of [
@@ -126,7 +126,7 @@ describe("scope runtime protocol", () => {
         profileId: "matrix-scope-v1",
         workload: "chat_ai",
         adapterId: "claude-code",
-        harnessVersion: "2.1.32",
+        harnessVersion: "2.1.240",
         ...injected,
       }).success).toBe(false);
     }
@@ -190,7 +190,7 @@ describe("scope runtime client", () => {
       scopeHandle: SCOPE_HANDLE,
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.32",
+      harnessVersion: "2.1.240",
     })).rejects.toBeInstanceOf(ScopeRuntimeClientError);
     await client.close();
   });
@@ -235,7 +235,7 @@ describe("scope runtime client", () => {
       scopeHandle: SCOPE_HANDLE,
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.32",
+      harnessVersion: "2.1.240",
     })).resolves.toEqual({
       runtimeHandle: RUNTIME_HANDLE,
       executionGeneration: "1",
