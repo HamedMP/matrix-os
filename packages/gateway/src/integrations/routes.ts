@@ -560,10 +560,12 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
   app.get("/available", async (c) => {
     let uid: string | null = null;
+    let capabilityIdentityFailed = false;
     if (mcpPresetBroker?.listAvailableActions) {
       try {
         uid = await resolveUserId(c);
       } catch (err: unknown) {
+        capabilityIdentityFailed = true;
         console.warn(
           "[integrations] Optional capability identity resolution failed:",
           err instanceof Error ? err.message : String(err),
@@ -574,7 +576,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       .filter((service) => service.connectorKind !== "mcp_preset" || mcpPresetBroker)
       .map(async (s) => {
         let actions = s.actions;
-        if (uid && s.connectorKind === "mcp_preset" && mcpPresetBroker?.listAvailableActions) {
+        if (capabilityIdentityFailed && s.connectorKind === "mcp_preset") {
+          actions = {};
+        } else if (uid && s.connectorKind === "mcp_preset" && mcpPresetBroker?.listAvailableActions) {
           try {
             const availableActions = await mcpPresetBroker.listAvailableActions(uid, s.id);
             if (availableActions) {
