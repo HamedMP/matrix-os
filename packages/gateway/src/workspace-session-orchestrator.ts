@@ -131,6 +131,7 @@ async function resolveAgentSandbox(options: {
   request: StartWorkspaceSessionRequest;
   sessionId: string;
   workspacePath: string;
+  reuseCodexScratch?: boolean;
 }): Promise<{ ok: true; sandbox?: AgentLaunchSandbox } | Failure> {
   const preflight = await options.agentSandbox.preflight({
     agent: options.agent,
@@ -141,7 +142,7 @@ async function resolveAgentSandbox(options: {
     approvalPolicy: toLaunchApprovalPolicy(options.request.approvalPolicy) ??
       (options.agent === "claude" ? "on-request" : "never"),
     sandboxMode: options.request.sandboxMode ?? "workspace_write",
-  });
+  }, ...(options.reuseCodexScratch ? [{ reuseCodexScratch: true as const }] : []));
   if (!preflight.ok) {
     return {
       ok: false,
@@ -359,6 +360,20 @@ export function createWorkspaceSessionOrchestrator(options: {
       let sandbox: AgentLaunchSandbox | undefined;
       let effectiveRequest = request;
       let ownsRootWorkspace = false;
+      let reuseCodexScratch = false;
+
+      // Only the internal, owner-scoped native-thread recovery path may reuse
+      // sandbox files. Ordinary starts retain exclusive-create semantics.
+      if (request.agent === "codex" && request.providerThreadId
+        && input.ownerScope.type === "user"
+        && input.recoveryThreadId === `thread_${sessionId.slice(5)}`) {
+        const previous = await options.agentSessionManager.getSession(sessionId);
+        reuseCodexScratch = previous.ok && previous.session.id === sessionId
+          && previous.session.ownerId === input.ownerScope.id
+          && previous.session.kind === "agent" && previous.session.agent === "codex"
+          && previous.session.projectSlug === request.projectSlug
+          && previous.session.worktreeId === request.worktreeId;
+      }
 
       if (request.agent === "codex" || request.agent === "claude") {
         let workspacePath: string;
@@ -407,6 +422,7 @@ export function createWorkspaceSessionOrchestrator(options: {
           request: effectiveRequest,
           sessionId,
           workspacePath,
+          reuseCodexScratch,
         });
         if (!preflight.ok) {
           if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
@@ -422,7 +438,7 @@ export function createWorkspaceSessionOrchestrator(options: {
         sandbox,
       });
       if (!result.ok) {
-        if (sandbox) await cleanupSessionScratch(sessionId);
+        if (sandbox && !reuseCodexScratch) await cleanupSessionScratch(sessionId);
         if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
         return result;
       }
