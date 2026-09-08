@@ -171,6 +171,28 @@ describe("CollaborationProxy", () => {
       .toBeNull();
   });
 
+  it("streams a completed owner export without applying the JSON API buffer limit", async () => {
+    const exportId = "50000000-0000-4000-8000-000000000002";
+    const payload = JSON.stringify({ data: "x".repeat((2 * 1024 * 1024) + 1) });
+    fetchImpl.mockResolvedValueOnce(new Response(payload, {
+      status: 200,
+      headers: { "content-type": "application/json", "content-length": String(payload.length) },
+    }));
+
+    const response = await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "GET",
+      path: `/api/collaboration/scopes/${scopeId}/exports/${exportId}`,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.text()).toBe(payload);
+  });
+
   it("keeps owner lifecycle recovery available while the M1 rollout policy is off", async () => {
     await repository.setPolicy({
       milestone: "m1",

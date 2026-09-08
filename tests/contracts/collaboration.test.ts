@@ -337,7 +337,10 @@ describe("collaboration contracts", () => {
     expect(CollaborationDiscoveryResponseSchema.parse({ items: [{
       scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat",
       authorityGeneration: 1, status: "accepted", resource: { scope, chat },
-    }] }).items[0]?.resource).toEqual({ scope, chat });
+    }], nextCursor: "opaque-page-two" })).toMatchObject({
+      nextCursor: "opaque-page-two",
+      items: [{ resource: { scope, chat } }],
+    });
 
     expect(CollaborationSharedChatMessageSchema.parse({
       id: "msg_one", chatId: "chat_release", sequence: "1", role: "user",

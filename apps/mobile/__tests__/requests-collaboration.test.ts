@@ -2,6 +2,8 @@ jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.c
 
 import {
   acceptCollaborationInvitation,
+  collaborationEventsUrl,
+  fetchCollaborationEventTicket,
   fetchCollaborationInbox,
   fetchSharedChatMessages,
   postSharedChatDiscussion,
@@ -21,6 +23,18 @@ describe("mobile collaboration requests", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://app.matrix-os.com/api/collaboration/inbox", expect.objectContaining({
       headers: { Authorization: "Bearer clerk-token" }, signal: expect.any(AbortSignal),
     }));
+  });
+
+  it("requests an opaque next discovery page without interpreting the cursor", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ items: [] }),
+    } as unknown as Response);
+    await fetchCollaborationInbox("clerk-token", "opaque/+ cursor");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/collaboration/inbox?limit=50&cursor=opaque%2F%2B+cursor",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("accepts and discusses with conditional actor-scoped requests", async () => {
@@ -48,6 +62,26 @@ describe("mobile collaboration requests", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/chat/messages?after=100&limit=100`,
       expect.any(Object),
+    );
+  });
+
+  it("obtains a one-use event ticket and builds an exact WebSocket route", async () => {
+    const ticket = "t".repeat(43);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ ticket, expiresAt: "2026-09-07T12:00:30.000Z" }),
+    } as unknown as Response);
+    await expect(fetchCollaborationEventTicket(
+      "clerk-token",
+      scopeId,
+      "40000000-0000-4000-8000-000000000010",
+    )).resolves.toMatchObject({ ticket });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/connection-tickets`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(collaborationEventsUrl(scopeId, ticket, "12")).toBe(
+      `wss://app.matrix-os.com/ws/collaboration/scopes/${scopeId}/events?ticket=${ticket}&after=12`,
     );
   });
 });

@@ -24,7 +24,6 @@ export function collaborationRuntimeFromSystemInfo(value: unknown): {
   };
 }
 
-export function createShellCollaborationApi() {
-  if (typeof window === "undefined") return null;
-  return createCollaborationBrowserApi({ baseUrl: window.location.origin });
+export function createShellCollaborationApi(baseUrl: string) {
+  return createCollaborationBrowserApi({ baseUrl });
 }

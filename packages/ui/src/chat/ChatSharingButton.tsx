@@ -92,7 +92,7 @@ export function ChatSharingButton({ api, collaborationApi, runtimeId, chatId, co
       className="rounded-lg px-3 py-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
     {surface === "choice" ? <ShareChoiceDialog collaborationAvailable={Boolean(collaborationApi && runtimeId)} pending={pending}
       onClose={close} onSnapshot={() => void openSnapshot()} onCollaborate={() => void openCollaborators()} /> : null}
-    {surface === "snapshot" && preview ? <ChatShareDialog key={`${preview.fingerprint}:${preview.revision}`} notice={notice} title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
+    {surface === "snapshot" && preview ? <ChatShareDialog confirmationKey={`${preview.fingerprint}:${preview.revision}`} notice={notice} title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
       onClose={close} revoke={async (id) => { await api.delete(`${path}/${encodeURIComponent(id)}`); }}
       createLink={async () => {
         const refresh = (latest: z.infer<typeof PreviewSchema>) => {

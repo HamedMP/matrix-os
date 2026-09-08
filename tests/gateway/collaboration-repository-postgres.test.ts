@@ -24,7 +24,9 @@ realDescribe("CollaborationRepository real PostgreSQL serialization", () => {
     repository = new CollaborationRepository(fixture.db, { now: () => now });
   });
 
-  afterEach(async () => fixture.destroy());
+  afterEach(async () => {
+    if (fixture) await fixture.destroy();
+  });
 
   async function createScope() {
     return repository.createDirectScope({
@@ -35,6 +37,26 @@ realDescribe("CollaborationRepository real PostgreSQL serialization", () => {
       authorityRuntimeId: collaborationIds.runtime,
     });
   }
+
+  it("creates one logical direct scope under concurrent retries", async () => {
+    const [first, second] = await Promise.all([
+      createScope(),
+      repository.createDirectScope({
+        scopeId: "10000000-0000-4000-8000-000000000002",
+        ownerId: collaborationActors.owner,
+        kind: "chat",
+        resourceId: collaborationIds.chat,
+        authorityRuntimeId: collaborationIds.runtime,
+      }),
+    ]);
+
+    expect(second.id).toBe(first.id);
+    expect(await repository.listMembers(first.id, { includePending: true })).toMatchObject([{
+      actorId: collaborationActors.owner,
+      role: "owner",
+      status: "accepted",
+    }]);
+  });
 
   it("serializes the eighth seat across concurrent invitations", async () => {
     const scope = await createScope();
@@ -54,6 +76,51 @@ realDescribe("CollaborationRepository real PostgreSQL serialization", () => {
     expect((await repository.listMembers(scope.id, { includePending: true })).filter(
       (member) => member.status === "accepted" || member.status === "pending",
     )).toHaveLength(8);
+  });
+
+  it("expires an invitation without admitting the invited actor", async () => {
+    const scope = await createScope();
+    const invitation = await repository.createInvitation({
+      scopeId: scope.id,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      role: "editor",
+      clientRequestId: uuid(30),
+      expectedRevision: 0,
+      payloadHash: "d".repeat(64),
+      expiresAt: "2026-09-07T11:59:59.000Z",
+    });
+
+    await expect(repository.acceptInvitation({
+      invitationId: invitation.invitationId,
+      actorId: collaborationActors.editor,
+      clientRequestId: uuid(31),
+      expectedRevision: 1,
+      payloadHash: "e".repeat(64),
+    })).rejects.toMatchObject({ code: "expired" });
+    await expect(repository.getMember(scope.id, collaborationActors.editor)).resolves.toMatchObject({
+      status: "expired",
+    });
+  });
+
+  it("replays idempotency only for the same actor and payload", async () => {
+    const scope = await createScope();
+    const input = {
+      scopeId: scope.id,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.viewer,
+      role: "viewer" as const,
+      clientRequestId: uuid(40),
+      expectedRevision: 0,
+      payloadHash: "f".repeat(64),
+      expiresAt: future,
+    };
+    const first = await repository.createInvitation(input);
+    await expect(repository.createInvitation(input)).resolves.toEqual(first);
+    await expect(repository.createInvitation({
+      ...input,
+      payloadHash: "0".repeat(64),
+    })).rejects.toMatchObject({ code: "conflict" });
   });
 
   it("uses one scope-first lock order for simultaneous accept and revoke", async () => {

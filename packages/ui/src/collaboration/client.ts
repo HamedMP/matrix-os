@@ -91,8 +91,23 @@ export function createCollaborationBrowserApi(options: {
           wsUrl.searchParams.set("after", sequence);
           const next = (options.webSocketFactory ?? ((url: string) => new WebSocket(url)))(wsUrl.href);
           socket = next;
+          let usable = true;
+          let refreshQueue = Promise.resolve();
+          const enqueueAfterRecovery = (operation: () => void | Promise<void>) => {
+            refreshQueue = refreshQueue.then(async () => {
+              if (!usable || closed) return;
+              await operation();
+            }).catch((error: unknown) => {
+              console.warn("[chat-collaboration] canonical refresh failed", error instanceof Error ? error.name : "UnknownError");
+              if (usable && !closed) {
+                usable = false;
+                next.close(1011, "Refresh failed");
+              }
+            });
+          };
           next.onopen = () => { attempt = 0; };
           next.onmessage = (event) => {
+            if (!usable) return;
             if (typeof event.data !== "string" || event.data.length > MAX_SOCKET_FRAME_CHARS) {
               next.close(1008, "Invalid frame");
               return;
@@ -100,15 +115,20 @@ export function createCollaborationBrowserApi(options: {
             try {
               const frame = CollaborationEventFrameSchema.parse(JSON.parse(event.data) as unknown);
               if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
-              if ("sequence" in frame) sequence = frame.sequence;
               if (frame.type === "heartbeat") {
                 next.send(JSON.stringify({ version: 1, type: "heartbeat" }));
+                enqueueAfterRecovery(() => { sequence = frame.sequence; });
+              } else if (frame.type === "ready") {
+                enqueueAfterRecovery(() => { sequence = frame.sequence; });
               } else if (frame.type === "unavailable") {
                 closed = true;
                 onUnavailable();
                 next.close(1008, "Unavailable");
               } else if (frame.type === "changed" || frame.type === "capabilities_changed" || frame.type === "refresh_required") {
-                onEvent();
+                enqueueAfterRecovery(async () => {
+                  await onEvent();
+                  if (usable && !closed) sequence = frame.sequence;
+                });
               }
             } catch (error: unknown) {
               console.warn("[chat-collaboration] event frame rejected", error instanceof Error ? error.name : "UnknownError");
@@ -117,6 +137,7 @@ export function createCollaborationBrowserApi(options: {
           };
           next.onerror = () => next.close();
           next.onclose = () => {
+            usable = false;
             if (socket === next) socket = null;
             if (closed) return;
             const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));

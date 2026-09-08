@@ -221,13 +221,20 @@ export class CollaborationEventRegistry {
       .limit(MAX_REPLAY_EVENTS + 1)
       .execute();
     if (rows.length > MAX_REPLAY_EVENTS) {
+      const latest = await this.options.db.selectFrom("collaboration_events")
+        .select(({ fn }) => fn.max("scope_seq").as("sequence"))
+        .where("scope_id", "=", connection.scopeId)
+        .executeTakeFirst();
+      const latestSequence = Number(latest?.sequence ?? connection.lastSequence);
       this.send(connection, {
         version: 1,
         type: "refresh_required",
         scopeId: connection.scopeId,
         resourceId: connection.resourceId,
         authorityGeneration: String(connection.authorityGeneration),
+        sequence: String(latestSequence),
       });
+      connection.lastSequence = latestSequence;
       return;
     }
     for (const row of rows) {

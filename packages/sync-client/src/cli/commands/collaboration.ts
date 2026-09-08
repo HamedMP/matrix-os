@@ -6,6 +6,7 @@ import {
   CollaborationCreateDiscussionRequestSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationInvitationSchema,
+  CollaborationPageRequestSchema,
   CollaborationScopeSchema,
 } from "@matrix-os/contracts/collaboration";
 import { defineCommand } from "citty";
@@ -81,6 +82,25 @@ const commonArgs = {
   json: { type: "boolean", required: false, default: false },
 } as const;
 
+const discoveryArgs = {
+  ...commonArgs,
+  cursor: { type: "string", required: false },
+  limit: { type: "string", required: false, default: "50" },
+} as const;
+
+export function collaborationDiscoveryPath(
+  kind: "inbox" | "shared",
+  input: { cursor?: unknown; limit?: unknown },
+): string {
+  const page = CollaborationPageRequestSchema.parse({
+    ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    ...(input.limit === undefined ? {} : { limit: input.limit }),
+  });
+  const query = new URLSearchParams({ limit: String(page.limit) });
+  if (page.cursor) query.set("cursor", page.cursor);
+  return `/api/collaboration/${kind}?${query.toString()}`;
+}
+
 function value(args: Record<string, unknown>, key: string, schema: z.ZodType<string>): string {
   const parsed = schema.safeParse(args[key]);
   if (!parsed.success) throw cliError("collaboration_failed");
@@ -125,18 +145,18 @@ export const collaborationCommand = defineCommand({
   subCommands: {
     inbox: defineCommand({
       meta: { name: "inbox", description: "List pending collaboration invitations" },
-      args: commonArgs,
+      args: discoveryArgs,
       run: async ({ args }) => run(args, async (platformUrl, token) =>
         CollaborationDiscoveryResponseSchema.parse(await collaborationRequest({
-          platformUrl, token, method: "GET", path: "/api/collaboration/inbox",
+          platformUrl, token, method: "GET", path: collaborationDiscoveryPath("inbox", args),
         }))),
     }),
     shared: defineCommand({
       meta: { name: "shared", description: "List accepted shared Chats" },
-      args: commonArgs,
+      args: discoveryArgs,
       run: async ({ args }) => run(args, async (platformUrl, token) =>
         CollaborationDiscoveryResponseSchema.parse(await collaborationRequest({
-          platformUrl, token, method: "GET", path: "/api/collaboration/shared",
+          platformUrl, token, method: "GET", path: collaborationDiscoveryPath("shared", args),
         }))),
     }),
     accept: defineCommand({

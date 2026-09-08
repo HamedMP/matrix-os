@@ -1,10 +1,12 @@
 import {
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
+  CollaborationConnectionTicketResponseSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationHumanMessageSchema,
   CollaborationIdSchema,
   CollaborationInvitationSchema,
+  CollaborationPageRequestSchema,
   CollaborationRevisionSchema,
   CollaborationScopeSchema,
   CollaborationUserStateSchema,
@@ -25,12 +27,19 @@ function url(path: string): string {
   return `${HOSTED_GATEWAY_URL}${path}`;
 }
 
-export function fetchCollaborationInbox(token: string) {
-  return fetchAuthenticatedJson({ url: url("/api/collaboration/inbox"), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
+function discoveryUrl(path: "inbox" | "shared", cursor?: string): string {
+  if (!cursor) return url(`/api/collaboration/${path}`);
+  const page = CollaborationPageRequestSchema.parse({ cursor, limit: 50 });
+  const query = new URLSearchParams({ limit: String(page.limit), cursor: page.cursor! });
+  return url(`/api/collaboration/${path}?${query.toString()}`);
 }
 
-export function fetchSharedCollaborations(token: string) {
-  return fetchAuthenticatedJson({ url: url("/api/collaboration/shared"), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
+export function fetchCollaborationInbox(token: string, cursor?: string) {
+  return fetchAuthenticatedJson({ url: discoveryUrl("inbox", cursor), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
+}
+
+export function fetchSharedCollaborations(token: string, cursor?: string) {
+  return fetchAuthenticatedJson({ url: discoveryUrl("shared", cursor), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
 }
 
 export function fetchCollaborationInvitation(token: string, invitationId: string) {
@@ -92,4 +101,35 @@ export function updateSharedChatReadState(token: string, scopeId: string, readTh
     method: "PATCH", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ readThroughSeq: CollaborationRevisionSchema.parse(readThroughSeq) }),
   });
+}
+
+export function fetchCollaborationEventTicket(
+  token: string,
+  scopeId: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/connection-tickets`),
+    token,
+    schema: CollaborationConnectionTicketResponseSchema,
+    errorMessage: ERROR,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clientRequestId: CollaborationIdSchema.parse(clientRequestId),
+      purpose: "events",
+    }),
+  });
+}
+
+export function collaborationEventsUrl(scopeId: string, ticket: string, after = "0"): string {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const cursor = CollaborationRevisionSchema.parse(after);
+  const parsedTicket = CollaborationConnectionTicketResponseSchema.shape.ticket.parse(ticket);
+  const target = new URL(`/ws/collaboration/scopes/${id}/events`, HOSTED_GATEWAY_URL);
+  target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
+  target.searchParams.set("ticket", parsedTicket);
+  target.searchParams.set("after", cursor);
+  return target.toString();
 }

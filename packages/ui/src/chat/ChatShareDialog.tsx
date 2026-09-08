@@ -4,9 +4,10 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function ChatShareDialog({ title, messages, createLink, copyText, revoke, onClose, existing = [], notice }: {
+export function ChatShareDialog({ title, messages, confirmationKey, createLink, copyText, revoke, onClose, existing = [], notice }: {
   title: string;
   messages: Array<{ role: string; text: string }>;
+  confirmationKey?: string;
   createLink: () => Promise<{ id: string; url: string } | null>;
   notice?: string;
   copyText: (value: string) => Promise<void>;
@@ -14,7 +15,8 @@ export function ChatShareDialog({ title, messages, createLink, copyText, revoke,
   onClose: () => void;
   existing?: Array<{ id: string; expiresAt: string }>;
 }) {
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmation, setConfirmation] = useState({ key: confirmationKey, checked: false });
+  const confirmed = confirmation.key === confirmationKey && confirmation.checked;
   const [link, setLink] = useState<{ id: string; url: string } | null>(null);
   const [revokedIds, setRevokedIds] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
@@ -57,7 +59,7 @@ export function ChatShareDialog({ title, messages, createLink, copyText, revoke,
             </div>
           </div>)}
         </section>
-        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmation({ key: confirmationKey, checked: event.target.checked })} />
           I reviewed the text for sensitive information and want anyone with the link to read it.
         </label>
         {link ? <div className="flex flex-wrap gap-2">

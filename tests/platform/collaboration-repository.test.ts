@@ -107,6 +107,40 @@ describe("PlatformCollaborationRepository", () => {
       .resolves.toEqual([]);
   });
 
+  it("paginates one actor and status without dropping entries at the same timestamp", async () => {
+    for (let index = 1; index <= 3; index += 1) {
+      await repository.applyDirectoryEvent({
+        eventId: `20000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+        scopeId: `10000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+        runtimeId: "runtime_owner",
+        ownerId: platformCollaborationActors.owner,
+        kind: "chat",
+        authorityGeneration: 1,
+        metadataRevision: 1,
+        recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
+      });
+    }
+    const first = await repository.listForActorPage(
+      platformCollaborationActors.recipientWithoutComputer,
+      "accepted",
+      { limit: 2 },
+    );
+    expect(first.items.map((entry) => entry.scopeId)).toEqual([
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+    ]);
+    expect(first.nextCursor).toBeDefined();
+    const second = await repository.listForActorPage(
+      platformCollaborationActors.recipientWithoutComputer,
+      "accepted",
+      { limit: 2, after: first.nextCursor },
+    );
+    expect(second.items.map((entry) => entry.scopeId)).toEqual([
+      "10000000-0000-4000-8000-000000000003",
+    ]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   it("keeps rollout policy server-managed, bounded, and initially off", async () => {
     expect(await repository.getPolicy("m1")).toMatchObject({ mode: "off", revision: 0, cohort: [] });
     await repository.setPolicy({

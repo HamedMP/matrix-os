@@ -20,6 +20,8 @@ describe("Chat collaboration sharing", () => {
     render(<ChatSharingButton api={api} collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
       handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect((screen.getByRole("dialog", { name: "Share Chat" }).firstElementChild as HTMLElement).style.background)
+      .toContain("--bg-surface");
     expect(screen.getByRole("button", { name: "Share snapshot" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Invite collaborators" })).toBeVisible();
     expect(screen.getByText(/frozen copy/i)).toBeVisible();
@@ -98,6 +100,46 @@ describe("Chat collaboration sharing", () => {
       expect.objectContaining({ expectedRevision: "1" }),
     ));
     expect(openChat).toHaveBeenCalledWith(scopeId);
+  });
+
+  it("loads additional opaque discovery pages without replacing the first page", async () => {
+    const invitation = (index: number, ownerName: string) => ({
+      id: `30000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+      scopeId: `10000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+      owner: { actorId: `user_owner_${index}`, displayName: ownerName },
+      target: { actorId: "user_editor", displayName: "Ada" },
+      scopeKind: "chat" as const,
+      role: "editor" as const,
+      status: "pending" as const,
+      expiresAt: "2026-09-14T12:00:00.000Z",
+      revision: "1",
+    });
+    const first = invitation(1, "Owner One");
+    const second = invitation(2, "Owner Two");
+    const item = (resource: ReturnType<typeof invitation>) => ({
+      scopeId: resource.scopeId,
+      runtimeId: "runtime_owner",
+      ownerId: resource.owner.actorId,
+      kind: "chat" as const,
+      authorityGeneration: 1,
+      status: "invited" as const,
+      invitationId: resource.id,
+      resource,
+    });
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path === "/api/collaboration/inbox"
+        ? { items: [item(first)], nextCursor: "opaque-inbox-page" }
+        : path.includes("cursor=opaque-inbox-page")
+          ? { items: [item(second)] }
+          : { items: [] }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" />);
+    expect(await screen.findByText("Owner One invited you")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Load more shared items" }));
+    expect(await screen.findByText("Owner Two invited you")).toBeVisible();
+    expect(screen.getByText("Owner One invited you")).toBeVisible();
   });
 
   it("renders attributed canonical history and preserves a private draft after failure", async () => {
@@ -278,5 +320,72 @@ describe("Chat collaboration sharing", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Load more messages" }));
     expect(await screen.findByText("Latest message")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Load more messages" })).toBeNull();
+  });
+
+  it("keeps loaded history visible when an older history page fails", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: `msg_${index}`, chatId, sequence: String(index + 1), role: "user" as const,
+      state: "committed" as const, purpose: "discussion" as const,
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${index + 1}` }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    }));
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("after=0&limit=100")) return { messages: firstPage };
+        if (path.endsWith("after=100&limit=100")) throw new Error("private upstream detail");
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount: "101" };
+        return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+          revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
+          capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
+      }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
+    expect(await screen.findByText("Message 1")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Load more messages" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("More messages could not be loaded");
+    expect(screen.getByText("Message 1")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Load more messages" })).toBeVisible();
+  });
+
+  it("recovers every canonical page without collapsing already loaded history", async () => {
+    const message = (sequence: number) => ({
+      id: `msg_${sequence}`, chatId, sequence: String(sequence), role: "user" as const,
+      state: "committed" as const, purpose: "discussion" as const,
+      actor: { actorId: "user_owner", displayName: "Nima" },
+      parts: [{ type: "text" as const, text: `Message ${sequence}` }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    const firstPage = Array.from({ length: 100 }, (_, index) => message(index + 1));
+    const secondPage = Array.from({ length: 100 }, (_, index) => message(index + 101));
+    let refresh = async () => undefined;
+    let messageCount = "200";
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("after=0&limit=100")) return { messages: firstPage };
+        if (path.endsWith("after=100&limit=100")) return { messages: secondPage };
+        if (path.endsWith("after=200&limit=100")) return { messages: [message(201), message(202)] };
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount };
+        return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+          revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
+          capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
+      }),
+      post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load more messages" }));
+    expect(await screen.findByText("Message 200")).toBeVisible();
+    messageCount = "202";
+    await act(async () => refresh());
+    expect(await screen.findByText("Message 202")).toBeVisible();
+    expect(screen.getByText("Message 1")).toBeVisible();
+    expect(screen.getByText("Message 200")).toBeVisible();
+    expect(api.get).toHaveBeenCalledWith(expect.stringContaining("after=200&limit=100"));
   });
 });

@@ -1,6 +1,34 @@
 # Implementation and Internal Acceptance Guide
 
-This is a future implementation guide, not instructions for an already-shipped feature. The planning PR changes no runtime, cohort, deployment or user data. Start with the [delivery plan](delivery-plan.md); expand individual slices using `/speckit-tasks` when implementation is requested.
+This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented in the Graphite review stack #1571–#1578, topped by `codex/collaboration-chat-validation`; the review layers remain one PR1 product milestone and exist only to satisfy repository size limits. It has not been deployed, enabled for a cohort, or validated on a production-equivalent VPS. Later milestones remain unimplemented and disabled.
+
+## PR1 local evidence — 2026-09-07
+
+PR1 adds the common owner-local authority, actor-preserving platform ingress, standalone Chat binding, attributed human discussion, member-private state, scoped realtime recovery, lifecycle/export, and common Web/Electron/native/CLI clients. Existing frozen snapshots remain a separate owner-only feature. M1 execution is denied server-side for every collaboration role.
+
+Current public-safe component evidence:
+
+- [Shared Chat discussion](evidence/m1-shared-chat.png)
+- [Snapshot versus live Share chooser](evidence/m1-share-chooser.png)
+
+The screenshots were captured from a temporary self-hosted Next.js route rendering the production `@matrix-os/ui` components at 1440×900. The Playwright check asserted the shared heading and attributed discussion, both Share actions, no framework error overlay, and no browser console errors; the temporary route/test were removed after capture. This is current UI evidence, not a substitute for the still-pending full Web Canvas, Web Desktop, Electron, Web Mobile, and native two-account journey.
+
+Validation results:
+
+| Check | Result |
+| --- | --- |
+| `pnpm exec vitest run collaboration chat-sharing` | 28 files and 148 tests passed; three real-Postgres files (12 tests) skipped because `MATRIX_TEST_POSTGRES_URL` is unset. The opt-in suites cover scope/capacity/expiry/idempotency, revoke/write serialization, discussion-event atomic rollback, and membership races. |
+| Real PostgreSQL transactions | 3 files and 12 tests passed against a disposable loopback-only PostgreSQL 16.13 database. The container and isolated test schemas were removed after the run. |
+| Two-account fixture validation | `pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/fixtures/collaboration-fixture.e2e.test.ts` passed 2/2 tests. The fixture uses separate authenticated browser contexts and only session or `/vm/<handle>` runtime routes. |
+| Native mobile collaboration Jest | 2 suites and 7 tests passed. |
+| Root typecheck command | `bun run typecheck` could not be invoked because `bun` is absent. Its pnpm-equivalent kernel prerequisite and observability, integrations-mcp, gateway, platform, proxy, edge-router, and desktop TypeScript checks all passed; additional contracts, UI, and shell checks passed. |
+| Native mobile TypeScript | The project-wide check still fails in unchanged React Native dependency typings (`Image`, `Swipeable`, `WebView`, gesture/PostHog view props, and theme preference); it reports no error in the PR1 collaboration files. |
+| `pnpm run check:patterns` | 0 violations; 5 warning groups in unchanged code. |
+| `pnpm run test` | 1,161 files / 13,619 tests passed; 44 files / 169 tests failed; 5 files / 23 tests skipped; 21 worker errors. Failures are outside the collaboration suite and include sandbox-denied listen/spawn/git operations and long-running app-build fixtures. |
+| React Doctor, changed scope | `packages/ui`, `shell`, and `apps/mobile` have no findings. Desktop has two inherited complexity warnings in `AccountMenu.tsx` and `TabContent.tsx`; the PR1 diff in those files is one menu row and one switch case. |
+| Local Playwright UI check | 1/1 passed after it exposed and drove a fix for transparent cross-shell collaboration dialogs. |
+
+Still required before M1 is review-ready or internally enabled: full named-surface screenshots/recordings, a disposable VPS-native two-account/no-computer-recipient journey, snapshot rollback regressions on the release artifact, and the rollout/rollback drill. No runtime acceptance or production enablement is claimed here.
 
 ## Prepare a slice
 

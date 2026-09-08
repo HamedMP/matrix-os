@@ -46,4 +46,72 @@ describe("collaboration browser client", () => {
     expect(new Headers(init?.headers).get("x-matrix-client-request-id"))
       .toBe("40000000-0000-4000-8000-000000000001");
   });
+
+  it("does not advance the realtime cursor when canonical refresh fails", async () => {
+    vi.useFakeTimers();
+    const urls: string[] = [];
+    const sockets: Array<{
+      onopen: (() => void) | null;
+      onmessage: ((event: { data: string }) => void) | null;
+      onerror: (() => void) | null;
+      onclose: (() => void) | null;
+      send: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+    }> = [];
+    let rejectRefresh!: (error: Error) => void;
+    const refresh = new Promise<void>((_resolve, reject) => { rejectRefresh = reject; });
+    const api = createCollaborationBrowserApi({
+      baseUrl: "https://app.matrix-os.com",
+      fetchImpl: async () => new Response(JSON.stringify({
+        ticket: "t".repeat(43), expiresAt: "2026-09-07T12:00:30.000Z",
+      }), { headers: { "content-type": "application/json" } }),
+      webSocketFactory: (url) => {
+        urls.push(url);
+        const socket = {
+          onopen: null, onmessage: null, onerror: null, onclose: null,
+          send: vi.fn(), close: vi.fn(),
+        };
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    });
+    const unsubscribe = api.subscribe!(
+      "10000000-0000-4000-8000-000000000001",
+      async () => refresh,
+      vi.fn(),
+    );
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1,
+      type: "refresh_required",
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      resourceId: "chat_one",
+      authorityGeneration: "1",
+      sequence: "103",
+    }) });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1,
+      type: "heartbeat",
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      resourceId: "chat_one",
+      authorityGeneration: "1",
+      sequence: "104",
+    }) });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1,
+      type: "ready",
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      resourceId: "chat_one",
+      authorityGeneration: "1",
+      sequence: "105",
+    }) });
+    rejectRefresh(new Error("refresh failed"));
+    await vi.waitFor(() => expect(sockets[0]!.close).toHaveBeenCalled());
+    sockets[0]!.onclose?.();
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    expect(new URL(urls[1]!).searchParams.get("after")).toBe("0");
+    unsubscribe();
+    vi.useRealTimers();
+  });
 });

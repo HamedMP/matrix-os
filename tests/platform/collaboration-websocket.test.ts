@@ -129,6 +129,20 @@ describe("CollaborationWebSocketAuthorizer", () => {
     expect(upgrade.signedProof.proof.actorId).toBe(platformCollaborationActors.owner);
   });
 
+  it("accepts a one-use ticket without a browser Origin for authenticated native clients", async () => {
+    const issued = await authorizer.issueTicket({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      scopeId,
+      purpose: "events",
+      clientRequestId: "40000000-0000-4000-8000-000000000019",
+    });
+    await expect(authorizer.authorizeUpgrade({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      authentication: "ticket",
+      rawPath: `${eventPath}?ticket=${encodeURIComponent(issued.ticket)}`,
+    })).resolves.toMatchObject({ scopeId, purpose: "events" });
+  });
+
   it.each([
     { rawPath: `${eventPath}?token=public-snapshot`, origin: "https://app.matrix-os.com" },
     { rawPath: `${eventPath}?ticket=unknown&extra=value`, origin: "https://app.matrix-os.com" },
