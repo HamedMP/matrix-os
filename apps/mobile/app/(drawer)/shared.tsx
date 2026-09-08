@@ -229,6 +229,7 @@ export default function SharedScreen() {
     }
   };
   const refreshLiveChat = useCallback(async (scopeId: string) => {
+    const generation = ++chatLoadGeneration.current;
     const actorToken = await token();
     const [nextScope, nextChat] = await Promise.all([
       fetchCollaborationScope(actorToken, scopeId),
@@ -242,7 +243,9 @@ export default function SharedScreen() {
       if (additions.length === 0) throw new Error("CollaborationRecoveryIncomplete");
       combined = [...combined, ...additions];
     }
-    if (eventScopeRef.current !== scopeId) throw new Error("CollaborationRecoverySuperseded");
+    if (generation !== chatLoadGeneration.current || eventScopeRef.current !== scopeId) {
+      throw new Error("CollaborationRecoverySuperseded");
+    }
     chatRef.current = nextChat;
     messagesRef.current = combined;
     latestSequenceRef.current = combined.at(-1)?.sequence ?? latestSequenceRef.current;
@@ -251,6 +254,7 @@ export default function SharedScreen() {
       chat: nextChat,
       messages: combined,
       hasMoreMessages: BigInt(nextChat.messageCount) > BigInt(combined.length),
+      loading: false,
     } });
     const sequence = combined.at(-1)?.sequence;
     if (sequence) void updateSharedChatReadState(actorToken, scopeId, sequence).catch((failure: unknown) => {

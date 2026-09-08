@@ -223,6 +223,56 @@ describe("native shared Chat screen", () => {
     expect(screen.getByText("Message 3")).toBeTruthy();
   });
 
+  it("does not let the initial Chat load overwrite a newer realtime refresh", async () => {
+    const scopeRecord = {
+      id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: "chat_one", membershipMode: "direct", lifecycle: "shared",
+      revision: "2", authEpoch: "1", authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+    };
+    const initialChat = {
+      id: "chat_one", scopeId, title: "Old title", lifecycle: "active", revision: "1", messageCount: "1",
+    };
+    const currentChat = { ...initialChat, title: "Current title", revision: "2" };
+    const message = (id: string, text: string) => ({
+      id, chatId: "chat_one", sequence: "1", role: "user", state: "committed", purpose: "discussion",
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: scopeRecord, chat: initialChat },
+    }] });
+    let resolveInitialScope!: (value: unknown) => void;
+    let resolveInitialChat!: (value: unknown) => void;
+    let resolveInitialHistory!: (value: unknown) => void;
+    mockFetchScope
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitialScope = resolve; }))
+      .mockResolvedValue(scopeRecord);
+    mockFetchChat
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitialChat = resolve; }))
+      .mockResolvedValue(currentChat);
+    mockFetchMessages
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitialHistory = resolve; }))
+      .mockResolvedValue({ messages: [message("msg_current", "Current message")] });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Old title"));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1, type: "refresh_required", scopeId, resourceId: "chat_one", authorityGeneration: "1", sequence: "2",
+    }) }));
+    expect(await screen.findByText("Current message")).toBeTruthy();
+    await act(async () => {
+      resolveInitialScope({ ...scopeRecord, revision: "1" });
+      resolveInitialChat(initialChat);
+      resolveInitialHistory({ messages: [message("msg_old", "Old message")] });
+    });
+    await waitFor(() => expect(screen.queryByText("Old message")).toBeNull());
+    expect(screen.getByText("Current message")).toBeTruthy();
+    expect(screen.getByText("Current title")).toBeTruthy();
+  });
+
   it("does not show an error from a realtime refresh superseded by leaving the Chat", async () => {
     mockFetchInbox.mockResolvedValue({ items: [] });
     mockFetchShared.mockResolvedValue({ items: [{
