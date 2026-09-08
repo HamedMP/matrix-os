@@ -38,7 +38,10 @@ import {
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { buildPlatformVerificationToken } from './platform-token.js';
 import { buildCustomMcpProjectionUrl } from './custom-mcp-projection.js';
-import { GRANOLA_PRESET, availableGranolaActions, planGranolaAction } from './granola-integration.js';
+import {
+  createGranolaPresetBroker,
+  type ManagedMcpPresetBroker,
+} from './granola-preset-broker.js';
 import { backfillFirstRunRecords } from './journey.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
@@ -413,13 +416,7 @@ async function startPlatformServerWithCleanup(
   let internalCustomMcpRoutes: Hono | undefined;
   let customMcpSweepInterval: NodeJS.Timeout | undefined;
   let customMcpShutdown: (() => Promise<void>) | undefined;
-  let managedMcpPresetBroker: {
-    listConnections(userId: string): Promise<any[]>;
-    listAvailableActions(userId: string, serviceId: string): Promise<readonly string[] | null>;
-    connect(userId: string, service: any): Promise<{ url: string }>;
-    call(input: { userId: string; service: any; actionId: string; params?: Record<string, unknown> }): Promise<unknown>;
-    disconnect(userId: string, connectionId: string): Promise<boolean>;
-  } | undefined;
+  let managedMcpPresetBroker: ManagedMcpPresetBroker | undefined;
   const managedMcpPresetProxy = {
     listConnections: (userId: string) => managedMcpPresetBroker?.listConnections(userId) ?? Promise.resolve([]),
     listAvailableActions: (userId: string, serviceId: string) =>
@@ -616,88 +613,7 @@ async function startPlatformServerWithCleanup(
       clientId: oauthClientId,
       redirectUri: oauthRedirectUri,
     });
-    managedMcpPresetBroker = {
-      listAvailableActions: async (userId, serviceId) => {
-        if (serviceId !== GRANOLA_PRESET.id) return null;
-        let row = await broker.getPreset(userId, GRANOLA_PRESET.id);
-        if (!row) return null;
-        if (row.status === 'disabled') {
-          try {
-            row = await broker.activatePreset({
-              userId,
-              presetId: GRANOLA_PRESET.id,
-              allowedTools: GRANOLA_PRESET.tools,
-              requiredTools: GRANOLA_PRESET.requiredTools,
-            });
-          } catch (error: unknown) {
-            console.warn('[granola] capability activation pending:', error instanceof Error ? error.message : String(error));
-            return [];
-          }
-        }
-        return row.status === 'ready' ? availableGranolaActions(row.tools) : [];
-      },
-      listConnections: async (userId) => {
-        let row = await broker.getPreset(userId, GRANOLA_PRESET.id);
-        if (!row) return [];
-        if (row.status === 'disabled') {
-          try {
-            row = await broker.activatePreset({
-              userId,
-              presetId: GRANOLA_PRESET.id,
-              allowedTools: GRANOLA_PRESET.tools,
-              requiredTools: GRANOLA_PRESET.requiredTools,
-            });
-          } catch (error: unknown) {
-            console.warn('[granola] preset activation pending:', error instanceof Error ? error.message : String(error));
-          }
-        }
-        return [{
-          id: row.id,
-          service: GRANOLA_PRESET.id,
-          account_label: GRANOLA_PRESET.name,
-          account_email: null,
-          scopes: [],
-          status: row.status === 'ready' ? 'active' : row.status,
-          connected_at: row.created_at,
-          last_used_at: null,
-        }];
-      },
-      connect: async (userId) => {
-        const row = await broker.ensurePreset({
-          userId,
-          presetId: GRANOLA_PRESET.id,
-          name: GRANOLA_PRESET.name,
-          url: GRANOLA_PRESET.url,
-        });
-        return { url: await oauthManager.start(userId, row.id) };
-      },
-      call: async ({ userId, actionId, params }) => {
-        const row = await broker.activatePreset({
-          userId,
-          presetId: GRANOLA_PRESET.id,
-          allowedTools: GRANOLA_PRESET.tools,
-          requiredTools: GRANOLA_PRESET.requiredTools,
-        });
-        const plan = planGranolaAction(actionId, params, row.tools);
-        const results: unknown[] = [];
-        for (const call of plan.calls) {
-          results.push(await broker.callSelectedTool({
-            userId,
-            serverId: row.id,
-            toolName: call.toolName,
-            arguments: call.arguments,
-            approvalGranted: true,
-          }));
-        }
-        return results[0];
-      },
-      disconnect: async (userId, connectionId) => {
-        const row = await broker.getPreset(userId, GRANOLA_PRESET.id);
-        if (!row || row.id !== connectionId) return false;
-        await broker.remove(userId, connectionId);
-        return true;
-      },
-    };
+    managedMcpPresetBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
     customMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
       oauth: oauthManager,

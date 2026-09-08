@@ -26,6 +26,6 @@ describe("Custom MCP platform startup wiring", () => {
     expect(source).not.toContain("!oauthClientId || !oauthRedirectUri");
     expect(source).not.toContain("Custom MCP requires MCP_OAUTH_CLIENT_ID");
     expect(source).toContain("clientId: oauthClientId");
-    expect(source).toContain("listAvailableActions: async (userId, serviceId)");
+    expect(source).toContain("createGranolaPresetBroker({ broker, oauth: oauthManager })");
   });
 });
