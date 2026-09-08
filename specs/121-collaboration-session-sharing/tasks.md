@@ -47,7 +47,7 @@
 - [x] T017 (PR1) Add versioned owner-Postgres collaboration tables, constraints, indexes, Chat actor/purpose columns, and migration bookkeeping in `packages/gateway/src/collaboration/database.ts`
 - [x] T018 (PR1) Implement transactional scope, member, operation, audit, event, and directory-outbox persistence without owning the injected pool in `packages/gateway/src/collaboration/repository.ts`
 - [x] T019 (PR1) Implement current-member resolution, role/action authorization, capacity/expiry, lifecycle, auth-epoch, idempotency, and owner-protection rules in `packages/gateway/src/collaboration/authority.ts`
-- [ ] T020 [P] (PR1) Implement bounded directory-outbox delivery with idempotent event IDs, capped retry/backoff, safe errors, and shutdown drain in `packages/gateway/src/collaboration/directory-outbox.ts`
+- [x] T020 [P] (PR1) Implement bounded directory-outbox delivery with idempotent event IDs, capped retry/backoff, safe errors, and shutdown drain in `packages/gateway/src/collaboration/directory-outbox.ts`
 - [x] T021 [P] (PR1) Add platform Kysely tables and additive migrations for directory/index/policy/tickets in `packages/platform/src/collaboration/database.ts`
 - [x] T022 (PR1) Implement content-free platform directory/index and server-managed rollout policy repositories in `packages/platform/src/collaboration/repository.ts`
 - [x] T023 (PR1) Implement short-lived signed actor proofs and signed policy snapshots using managed keys in `packages/platform/src/collaboration/proof.ts`
@@ -55,7 +55,7 @@
 - [x] T025 (PR1) Implement exact collaboration HTTP proxying, caller-header stripping, bounded fetch timeouts, and safe response mapping in `packages/platform/src/collaboration/proxy.ts`
 - [x] T026 (PR1) Implement hashed one-use connection tickets and exact collaboration WebSocket forwarding in `packages/platform/src/collaboration/websocket.ts`
 - [x] T027 (PR1) Implement the capped scope-event registry, authorized replay, heartbeat/stale sweep, failed-sender eviction, revoke notification, and drain in `packages/gateway/src/collaboration/events.ts`
-- [ ] T028 (PR1) Register gateway dependencies, migrations, recovery, exact HTTP/WS routes, workers, and shutdown ordering in `packages/gateway/src/collaboration/wiring.ts`
+- [x] T028 (PR1) Register gateway dependencies, migrations, recovery, exact HTTP/WS routes, workers, and shutdown ordering in `packages/gateway/src/collaboration/wiring.ts`
 - [ ] T029 (PR1) Register platform database, policy, exact proxy/WS paths, internal directory/policy endpoints, and shutdown ownership in `packages/platform/src/collaboration/wiring.ts`
 
 **Checkpoint**: A common authority and transport exist, but no story-specific resource adapter is advertised or enabled.
@@ -80,7 +80,7 @@
 
 - [x] T035 [US2] (PR1) Implement Chat scope preflight/create binding with active-work settlement and personal-dispatch fencing in `packages/gateway/src/collaboration/chat-scope.ts`
 - [ ] T036 [US2] (PR1) Implement canonical Chat-only read/search/history projection with inert unauthorized references in `packages/gateway/src/collaboration/chat-adapter.ts`
-- [ ] T037 [US2] (PR1) Register validated/body-limited standalone Chat scope and member routes in `packages/gateway/src/collaboration/routes.ts`
+- [x] T037 [US2] (PR1) Register validated/body-limited standalone Chat scope and member routes in `packages/gateway/src/collaboration/routes.ts`
 - [ ] T038 [US2] (PR4) Implement eligible terminal scope binding without replacement or sibling authority in `packages/gateway/src/collaboration/terminal-adapter.ts`
 - [ ] T039 [US2] (PR6) Reconcile direct Chat/terminal grants into sole project inheritance at the publication point in `packages/gateway/src/collaboration/project-membership-transition.ts`
 
@@ -100,7 +100,7 @@
 - [ ] T041 [P] [US3] (PR1) Write red actor-scoped message idempotency and commit-with-outbox tests in `tests/gateway/collaboration-chat-discussion-postgres.test.ts`
 - [x] T042 [P] [US3] (PR1) Write red owner legacy bypass tests for start, queue, dispatch, steer, retry, approval, and reconnect paths in `tests/gateway/collaboration-m1-ai-gate.test.ts`
 - [ ] T043 [P] [US3] (PR1) Write red private draft/mode/account-switch and member-local read/pin/mute state tests in `tests/ui/collaboration-chat-state.test.tsx`
-- [ ] T044 [P] [US3] (PR1) Write red scoped event/reconnect tests proving no owner-wide cursor or duplicate discussion delivery in `tests/gateway/collaboration-chat-events.test.ts`
+- [x] T044 [P] [US3] (PR1) Write red scoped event/reconnect tests proving no owner-wide cursor or duplicate discussion delivery in `tests/gateway/collaboration-chat-events.test.ts`
 
 ### Implementation — M1 / PR1
 

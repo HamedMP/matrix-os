@@ -100,6 +100,16 @@ export interface ChangeMemberRoleInput extends MemberMutationInput {
   role: "editor" | "viewer";
 }
 
+export interface RevokeInvitationInput {
+  scopeId: string;
+  invitationId: string;
+  actorId: string;
+  clientRequestId: string;
+  expectedRevision: number;
+  expectedMemberRevision: number;
+  payloadHash: string;
+}
+
 export interface InvitationMutationResult {
   invitationId: string;
   scopeId: string;
@@ -211,6 +221,14 @@ export class CollaborationRepository {
       .selectAll()
       .where("scope_id", "=", scopeId)
       .where("actor_id", "=", actorId)
+      .executeTakeFirst();
+    return row ? toMember(row) : null;
+  }
+
+  async getInvitation(invitationId: string): Promise<CollaborationMemberRecord | null> {
+    const row = await this.db.selectFrom("collaboration_members")
+      .selectAll()
+      .where("invitation_id", "=", invitationId)
       .executeTakeFirst();
     return row ? toMember(row) : null;
   }
@@ -425,6 +443,111 @@ export class CollaborationRepository {
       throw new CollaborationRepositoryError("expired", "Invitation expired");
     }
     return result.value;
+  }
+
+  async revokeInvitation(input: RevokeInvitationInput): Promise<MemberMutationResult> {
+    const nowDate = this.now();
+    const now = nowDate.toISOString();
+    const operationExpiresAt = new Date(nowDate.getTime() + OPERATION_RETENTION_MS).toISOString();
+    return this.db.transaction().execute(async (trx) => {
+      const scope = await lockDirectScope(trx, input.scopeId);
+      await requireAcceptedOwner(trx, input.scopeId, input.actorId);
+      const replay = await readOperationReplay<MemberMutationResult>(trx, input, "invitation.revoked");
+      if (replay) return replay;
+      if (Number(scope.revision) !== input.expectedRevision) {
+        throw new CollaborationRepositoryError("conflict", "Scope revision changed");
+      }
+      const member = await trx.selectFrom("collaboration_members")
+        .selectAll()
+        .where("scope_id", "=", input.scopeId)
+        .where("invitation_id", "=", input.invitationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!member) throw new CollaborationRepositoryError("not_found", "Invitation not found");
+      if (member.status !== "pending" || Number(member.revision) !== input.expectedMemberRevision) {
+        throw new CollaborationRepositoryError("conflict", "Invitation state changed");
+      }
+      const memberRevision = input.expectedMemberRevision + 1;
+      const updated = await trx.updateTable("collaboration_members").set({
+        status: "revoked",
+        revision: memberRevision,
+        updated_at: now,
+      }).where("scope_id", "=", input.scopeId)
+        .where("actor_id", "=", member.actor_id)
+        .where("status", "=", "pending")
+        .where("revision", "=", input.expectedMemberRevision)
+        .returning("actor_id")
+        .executeTakeFirst();
+      if (!updated) throw new CollaborationRepositoryError("conflict", "Invitation state changed");
+      const nextRevision = input.expectedRevision + 1;
+      await updateScopeRevision(trx, input.scopeId, input.expectedRevision, nextRevision, now);
+      const result: MemberMutationResult = {
+        scopeId: input.scopeId,
+        actorId: member.actor_id,
+        role: member.role as "editor" | "viewer",
+        status: "revoked",
+        scopeRevision: nextRevision,
+        memberRevision,
+      };
+      await writeOperation(trx, input, "invitation.revoked", scope, result, now, operationExpiresAt);
+      await appendMutationRecords(trx, {
+        scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
+        actorId: input.actorId,
+        action: "invitation.revoked",
+        recipients: [member.actor_id],
+        discoveryState: "revoked",
+        now,
+      });
+      return result;
+    });
+  }
+
+  async getChatUserState(chatId: string, actorId: string): Promise<{
+    readThroughSeq: number;
+    pinned: boolean;
+    muted: boolean;
+    lastOpenedAt?: string;
+  }> {
+    const row = await this.db.selectFrom("chat_user_state")
+      .select(["read_through_seq", "pinned", "muted", "last_opened_at"])
+      .where("chat_id", "=", chatId)
+      .where("principal_id", "=", actorId)
+      .executeTakeFirst();
+    return row ? {
+      readThroughSeq: Number(row.read_through_seq),
+      pinned: row.pinned,
+      muted: row.muted,
+      ...(row.last_opened_at === null ? {} : { lastOpenedAt: toIso(row.last_opened_at) }),
+    } : { readThroughSeq: 0, pinned: false, muted: false };
+  }
+
+  async updateChatUserState(input: {
+    chatId: string;
+    actorId: string;
+    readThroughSeq?: number;
+    pinned?: boolean;
+    muted?: boolean;
+    openedAt?: string;
+  }): Promise<void> {
+    const now = this.now().toISOString();
+    await this.db.insertInto("chat_user_state").values({
+      chat_id: input.chatId,
+      principal_id: input.actorId,
+      read_through_seq: input.readThroughSeq ?? 0,
+      pinned: input.pinned ?? false,
+      muted: input.muted ?? false,
+      attention_acknowledged_at: null,
+      last_opened_at: input.openedAt ?? null,
+      updated_at: now,
+    }).onConflict((conflict) => conflict.columns(["chat_id", "principal_id"]).doUpdateSet({
+      ...(input.readThroughSeq === undefined ? {} : {
+        read_through_seq: sql<number>`GREATEST(chat_user_state.read_through_seq, ${input.readThroughSeq})`,
+      }),
+      ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
+      ...(input.muted === undefined ? {} : { muted: input.muted }),
+      ...(input.openedAt === undefined ? {} : { last_opened_at: input.openedAt }),
+      updated_at: now,
+    })).execute();
   }
 
   async changeMemberRole(input: ChangeMemberRoleInput): Promise<MemberMutationResult> {

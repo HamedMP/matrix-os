@@ -14,6 +14,7 @@ export const collaborationActors = {
 
 export const collaborationIds = {
   scope: "10000000-0000-4000-8000-000000000001",
+  invitation: "30000000-0000-4000-8000-000000000001",
   chat: "chat_collaboration_primary",
   runtime: "runtime_collaboration_owner",
 } as const;

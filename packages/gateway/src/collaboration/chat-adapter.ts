@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   CanonicalChatMessageSchema,
+  CollaborationChatSchema,
   CollaborationCreateDiscussionRequestSchema,
   CollaborationHumanMessageSchema,
   type CanonicalChatMessage,
@@ -205,6 +206,36 @@ export class CollaborationChatAdapter {
         parts: sanitizeParts(message.parts),
         createdAt: message.createdAt,
       };
+    });
+  }
+
+  async getChat(context: AuthorizedCollaborationContext) {
+    const current = await this.options.authority.authorize({
+      scopeId: context.scopeId,
+      actorId: context.actorId,
+      action: "read",
+    });
+    if (current.resourceKind !== "chat" || current.resourceId !== context.resourceId
+      || current.ownerId !== context.ownerId) {
+      throw new CollaborationAuthorizationError("unavailable", "Shared Chat is unavailable");
+    }
+    const chat = await this.options.db.selectFrom("chats")
+      .select(["id", "title", "lifecycle", "revision", "message_count", "last_message_preview", "collaboration"])
+      .where("id", "=", current.resourceId)
+      .where("owner_type", "=", "personal")
+      .where("owner_id", "=", current.ownerId)
+      .executeTakeFirst();
+    if (!chat || !bindingMatches(chat.collaboration, current.scopeId)) {
+      throw new CollaborationAuthorizationError("unavailable", "Shared Chat is unavailable");
+    }
+    return CollaborationChatSchema.parse({
+      id: chat.id,
+      scopeId: current.scopeId,
+      title: chat.title,
+      lifecycle: chat.lifecycle,
+      revision: String(chat.revision),
+      messageCount: String(chat.message_count),
+      ...(chat.last_message_preview ? { lastMessagePreview: chat.last_message_preview } : {}),
     });
   }
 

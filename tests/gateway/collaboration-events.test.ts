@@ -80,6 +80,12 @@ describe("CollaborationEventRegistry", () => {
       expect.objectContaining({ type: "changed", scopeId: collaborationIds.scope, sequence: "2" }),
       expect.objectContaining({ type: "ready", scopeId: collaborationIds.scope, sequence: "2" }),
     ]);
+    ws.send.mockClear();
+    await insertEvent(fixture, 3);
+    await session.resume(2, 1);
+    expect(ws.send.mock.calls.map(([value]) => JSON.parse(value as string))).toEqual([
+      expect.objectContaining({ type: "changed", scopeId: collaborationIds.scope, sequence: "3" }),
+    ]);
   });
 
   it("rechecks current membership for every broadcast and drains revoked actors", async () => {
@@ -136,6 +142,30 @@ describe("CollaborationEventRegistry", () => {
     await registry.broadcastScope(collaborationIds.scope);
     expect(healthy.send).toHaveBeenCalled();
     expect(registry.connectionCount).toBe(1);
+  });
+
+  it("serializes overlapping resume and broadcast delivery for one connection", async () => {
+    const ws = socket();
+    const session = await registry.open({
+      connectionId: "connection_serialized",
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      authorityGeneration: 1,
+      afterSequence: 2,
+      socket: ws,
+    });
+    ws.send.mockClear();
+    await insertEvent(fixture, 3);
+
+    await Promise.all([
+      session.resume(2, 1),
+      registry.broadcastScope(collaborationIds.scope),
+    ]);
+
+    const changed = ws.send.mock.calls
+      .map(([value]) => JSON.parse(value as string) as { type: string; sequence?: string })
+      .filter((frame) => frame.type === "changed" && frame.sequence === "3");
+    expect(changed).toHaveLength(1);
   });
 
   it("enforces per-actor caps, evicts stale connections, and drains on shutdown", async () => {

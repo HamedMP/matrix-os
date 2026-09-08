@@ -175,6 +175,11 @@ import {
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
 import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
+import {
+  createGatewayCollaboration,
+  loadGatewayCollaborationConfig,
+  type GatewayCollaborationRuntime,
+} from "./collaboration/wiring.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -1013,7 +1018,15 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
+  let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
+  const collaborationConfig = loadGatewayCollaborationConfig(process.env);
+  if (process.env.MATRIX_COLLABORATION_ENABLED === "true" && !collaborationConfig) {
+    throw new Error("[collaboration] enabled with incomplete configuration");
+  }
+  if (collaborationConfig && !databaseUrl) {
+    throw new Error("[collaboration] enabled without owner Postgres");
+  }
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
@@ -1034,6 +1047,12 @@ export async function createGateway(config: GatewayConfig) {
       await chatRepository.bootstrap();
       canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
       await bootstrapChatSharing(chatRepository.kysely);
+      if (collaborationConfig) {
+        gatewayCollaboration = await createGatewayCollaboration({
+          db: chatRepository.kysely as Kysely<any>,
+          config: collaborationConfig,
+        });
+      }
       canonicalChatEventStream = createCanonicalChatEventStream({
         repository: chatRepository,
         reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
@@ -1143,7 +1162,10 @@ export async function createGateway(config: GatewayConfig) {
         console.error("[app-db] App registration error:", (regErr as Error).message);
       }
     } catch (err) {
+      await gatewayCollaboration?.shutdown();
+      gatewayCollaboration = null;
       console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
+      if (collaborationConfig) throw err;
       console.log("[app-db] Falling back to file-based storage");
       appDb = null;
       queryEngine = null;
@@ -4433,6 +4455,7 @@ export async function createGateway(config: GatewayConfig) {
     });
   }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
+  gatewayCollaboration?.register({ app, upgradeWebSocket });
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
@@ -4776,6 +4799,8 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await gatewayCollaboration?.shutdown();
+      gatewayCollaboration = null;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
       await codingAgentWorkspaceRuntime?.close();

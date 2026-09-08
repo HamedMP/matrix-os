@@ -249,6 +249,7 @@ export function createApp(deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
+  internalCollaborationRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -584,6 +585,10 @@ export function createApp(deps: {
       bookingBaseUrl: appEnv.ATS_BOOKING_BASE_URL,
       publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
     }));
+  }
+
+  if (deps.internalCollaborationRoutes) {
+    app.route('/', deps.internalCollaborationRoutes);
   }
 
   // Session-based routing:

@@ -136,9 +136,10 @@ export class CollaborationWebSocketAuthorizer {
       scopeId: route.scopeId,
       purpose: route.purpose,
       path: route.path,
+      query: route.query,
     });
     return {
-      upstreamPath: route.path,
+      upstreamPath: `${route.path}${route.query ? `?${route.query}` : ""}`,
       runtimeId: directory.runtimeId,
       ownerId: directory.ownerId,
       scopeId: route.scopeId,
@@ -184,7 +185,13 @@ export class CollaborationWebSocketAuthorizer {
   }
 }
 
-function parseRoute(rawPath: string): { path: string; scopeId: string; purpose: Purpose; ticket?: string } {
+function parseRoute(rawPath: string): {
+  path: string;
+  query: string;
+  scopeId: string;
+  purpose: Purpose;
+  ticket?: string;
+} {
   if (rawPath.length > MAX_RAW_PATH_LENGTH || /[\r\n]/.test(rawPath)) {
     throw new CollaborationWebSocketError("invalid_route", "Collaboration socket route is invalid");
   }
@@ -200,11 +207,24 @@ function parseRoute(rawPath: string): { path: string; scopeId: string; purpose: 
   const match = COLLABORATION_SOCKET_PATH.exec(parsed.pathname);
   const keys = [...parsed.searchParams.keys()];
   const ticket = parsed.searchParams.get("ticket") ?? undefined;
-  if (!match || keys.some((key) => key !== "ticket") || keys.filter((key) => key === "ticket").length > 1
+  const after = parsed.searchParams.get("after") ?? undefined;
+  if (!match || keys.some((key) => !["ticket", "after"].includes(key))
+    || keys.filter((key) => key === "ticket").length > 1
+    || keys.filter((key) => key === "after").length > 1
     || (ticket !== undefined && (ticket.length < 43 || ticket.length > 256 || !/^[A-Za-z0-9_-]+$/.test(ticket)))) {
     throw new CollaborationWebSocketError("invalid_route", "Collaboration socket route is invalid");
   }
-  return { path: parsed.pathname, scopeId: match[1]!, purpose: match[2] as Purpose, ...(ticket ? { ticket } : {}) };
+  const purpose = match[2] as Purpose;
+  if (after !== undefined && (purpose !== "events" || !/^(?:0|[1-9][0-9]{0,18})$/.test(after))) {
+    throw new CollaborationWebSocketError("invalid_route", "Collaboration socket route is invalid");
+  }
+  return {
+    path: parsed.pathname,
+    query: after === undefined ? "" : `after=${after}`,
+    scopeId: match[1]!,
+    purpose,
+    ...(ticket ? { ticket } : {}),
+  };
 }
 
 function requireOrigin(value: string): string {

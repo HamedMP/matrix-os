@@ -83,11 +83,11 @@ describe("CollaborationWebSocketAuthorizer", () => {
     const upgrade = await authorizer.authorizeUpgrade({
       actorId: platformCollaborationActors.recipientWithoutComputer,
       authentication: "ticket",
-      rawPath: `${eventPath}?ticket=${encodeURIComponent(issued.ticket)}`,
+      rawPath: `${eventPath}?ticket=${encodeURIComponent(issued.ticket)}&after=1`,
       origin: "https://app.matrix-os.com",
     });
     expect(upgrade).toMatchObject({
-      upstreamPath: eventPath,
+      upstreamPath: `${eventPath}?after=1`,
       runtimeId: "runtime_owner",
       ownerId: platformCollaborationActors.owner,
       scopeId,
@@ -102,6 +102,7 @@ describe("CollaborationWebSocketAuthorizer", () => {
       signedProof: upgrade.signedProof,
       purpose: "events",
       path: eventPath,
+      query: "after=1",
     })).resolves.toMatchObject({
       actorId: platformCollaborationActors.recipientWithoutComputer,
       scopeId,

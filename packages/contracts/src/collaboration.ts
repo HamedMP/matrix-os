@@ -81,6 +81,30 @@ export const CollaborationScopeSchema = z.object({
   }
 });
 
+export const CollaborationScopePreflightRequestSchema = z.object({
+  kind: CollaborationScopeKindSchema,
+  resourceId: CollaborationResourceIdSchema,
+}).strict();
+
+export const CollaborationScopePreflightResponseSchema = z.object({
+  eligible: z.boolean(),
+  reason: z.enum(["active_work", "unsupported", "unavailable"]).optional(),
+  resourceRevision: CollaborationRevisionSchema,
+  confirmationToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.eligible !== (value.confirmationToken !== undefined)) {
+    context.addIssue({ code: "custom", message: "Eligible preflights require confirmation" });
+  }
+});
+
+export const CollaborationCreateScopeRequestSchema = z.object({
+  kind: CollaborationScopeKindSchema,
+  resourceId: CollaborationResourceIdSchema,
+  clientRequestId: CollaborationIdSchema,
+  expectedRevision: CollaborationRevisionSchema,
+  confirmationToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/),
+}).strict();
+
 export const CollaborationMemberStatusSchema = z.enum([
   "pending",
   "accepted",
@@ -127,9 +151,12 @@ export const CollaborationMemberPatchRequestSchema = z.object({
   role: CollaborationInviteRoleSchema,
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,
+  expectedMemberRevision: CollaborationRevisionSchema,
 }).strict();
 
-export const CollaborationRevokeRequestSchema = CollaborationConditionalMutationSchema;
+export const CollaborationRevokeRequestSchema = CollaborationConditionalMutationSchema.extend({
+  expectedMemberRevision: CollaborationRevisionSchema,
+}).strict();
 
 export const CollaborationUserStateSchema = z.object({
   readThroughSeq: CollaborationRevisionSchema,
@@ -160,6 +187,16 @@ export const CollaborationHumanMessageSchema = z.object({
   actor: CollaborationParticipantSchema,
   text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
   createdAt: z.iso.datetime(),
+}).strict();
+
+export const CollaborationChatSchema = z.object({
+  id: CollaborationResourceIdSchema,
+  scopeId: CollaborationIdSchema,
+  title: boundedDisplayText(200, 1_024),
+  lifecycle: z.enum(["active", "archived"]),
+  revision: CollaborationRevisionSchema,
+  messageCount: CollaborationRevisionSchema,
+  lastMessagePreview: boundedDisplayText(512, 2_048).optional(),
 }).strict();
 
 export const CollaborationPageRequestSchema = z.object({
@@ -213,6 +250,20 @@ export const CollaborationConnectionTicketRequestSchema = z.object({
 export const CollaborationConnectionTicketResponseSchema = z.object({
   ticket: z.string().min(43).max(256).regex(/^[A-Za-z0-9_-]+$/),
   expiresAt: z.iso.datetime(),
+}).strict();
+
+export const CollaborationDirectoryEventSchema = z.object({
+  eventId: CollaborationIdSchema,
+  scopeId: CollaborationIdSchema,
+  runtimeId: CollaborationRuntimeIdSchema,
+  ownerId: CollaborationActorIdSchema,
+  kind: CollaborationScopeKindSchema,
+  authorityGeneration: z.number().int().positive(),
+  metadataRevision: z.number().int().nonnegative(),
+  recipients: z.array(z.object({
+    actorId: CollaborationActorIdSchema,
+    status: z.enum(["invited", "accepted", "revoked"]),
+  }).strict()).max(8),
 }).strict();
 
 const CollaborationEventBaseSchema = z.object({
