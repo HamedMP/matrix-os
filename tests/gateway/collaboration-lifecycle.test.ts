@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CanonicalChatContentSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import type { ChatOutboxEvent } from "../../packages/gateway/src/chat/records.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import {
@@ -15,7 +17,7 @@ const now = new Date("2026-09-07T12:00:00.000Z");
 describe("Chat collaboration lifecycle", () => {
   let fixture: CollaborationTestDatabase;
   let repository: CollaborationRepository;
-  let delivered: Array<{ event: { eventType: string } }>;
+  let delivered: Array<{ event: ChatOutboxEvent }>;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -43,6 +45,8 @@ describe("Chat collaboration lifecycle", () => {
     expect(await repository.getScope(collaborationIds.scope)).toMatchObject({ lifecycle: "archived", revision: 2 });
     expect(await fixture.db.selectFrom("chats").select(["lifecycle", "revision"])
       .where("id", "=", collaborationIds.chat).executeTakeFirst()).toMatchObject({ lifecycle: "archived", revision: 2 });
+    expect(CanonicalChatContentSchema.parse(delivered[0]?.event.payload.streamContent).record.chat)
+      .toMatchObject({ lifecycle: "archived", revision: 2 });
 
     const restored = await repository.applyChatLifecycle({
       scopeId: collaborationIds.scope,
@@ -55,6 +59,8 @@ describe("Chat collaboration lifecycle", () => {
     expect(restored).toMatchObject({ type: "restore", status: "completed", revision: "3" });
     expect(await repository.getScope(collaborationIds.scope)).toMatchObject({ lifecycle: "shared", revision: 3 });
     expect(delivered.map(({ event }) => event.eventType)).toEqual(["chat.updated", "chat.updated"]);
+    expect(CanonicalChatContentSchema.parse(delivered[1]?.event.payload.streamContent).record.chat)
+      .toMatchObject({ lifecycle: "active", revision: 3 });
   });
 
   it("exports only scope-owned content and necessary content-free metadata", async () => {
@@ -120,6 +126,7 @@ describe("Chat collaboration lifecycle", () => {
     ]);
     expect(await repository.getScopeExport(collaborationIds.scope, collaborationActors.owner, request(4))).toBeNull();
     expect(delivered.map(({ event }) => event.eventType)).toEqual(["chat.deleted"]);
+    expect(delivered[0]?.event.payload).not.toHaveProperty("streamContent");
   });
 
   it("does not deliver a canonical lifecycle event when the surrounding transaction rolls back", async () => {
@@ -160,7 +167,13 @@ async function seed(fixture: CollaborationTestDatabase): Promise<void> {
     lifecycle: "active" as const,
     attention: "none" as const,
     revision: 1,
-    collaboration: id === collaborationIds.chat ? JSON.stringify({ scopeId: collaborationIds.scope }) : null,
+    collaboration: id === collaborationIds.chat
+      ? JSON.stringify({
+          scopeId: collaborationIds.scope,
+          mode: "discussion_only",
+          executionFenced: true,
+        })
+      : null,
     user_state: userState,
     shell_state: null,
     fork_provenance: null,
@@ -173,7 +186,7 @@ async function seed(fixture: CollaborationTestDatabase): Promise<void> {
     updated_at: now.toISOString(),
   });
   await fixture.db.insertInto("chats").values([
-    chat(collaborationIds.chat, "Shared Chat", { draft: "private draft" }),
+    chat(collaborationIds.chat, "Shared Chat", { readThroughSeq: 0, pinned: false, muted: false }),
     chat("chat_unrelated", "Unrelated", null),
   ]).execute();
   await fixture.db.insertInto("chat_messages").values([

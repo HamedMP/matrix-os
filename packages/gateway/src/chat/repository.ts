@@ -11,6 +11,7 @@ import {
   CanonicalChatTurnSchema,
   CanonicalOwnerScopeSchema,
   TerminalSessionIdSchema,
+  type CanonicalChatCollaboration,
   type CanonicalChatMessage,
   type CanonicalChatQueuedTurn,
   type CanonicalChatModelSelection,
@@ -263,16 +264,18 @@ async function hydrateRecord(
   executor: Executor,
   owner: ChatOwner,
   chatId: string,
+  collaborationProjection?: CanonicalChatCollaboration,
 ): Promise<ChatRecord | null> {
   const row = await selectOwnedChat(executor, owner, chatId);
   if (!row) return null;
-  return toPrincipalRecord(executor, owner, row);
+  return toPrincipalRecord(executor, owner, row, collaborationProjection);
 }
 
 async function toPrincipalRecord(
   executor: Executor,
   owner: ChatOwner,
   row: Selectable<ChatsTable>,
+  collaborationProjection?: CanonicalChatCollaboration,
 ): Promise<ChatRecord> {
   const [activeRun, userState, latestSuccessfulCompletion] = await Promise.all([
     activeRunQuery(executor, row.id),
@@ -280,7 +283,9 @@ async function toPrincipalRecord(
     latestSuccessfulCompletionQuery(executor, row.id),
   ]);
   return toChatRecord(
-    row,
+    collaborationProjection
+      ? { ...row, collaboration: JSON.stringify(collaborationProjection) }
+      : row,
     activeRun,
     userState ? toUserState(userState) : undefined,
     latestSuccessfulCompletion,
@@ -388,11 +393,20 @@ export class ChatRepository {
     revision: number,
     eventType: ChatOutboxEventType,
     payload: Record<string, unknown> = {},
+    collaborationProjection?: CanonicalChatCollaboration,
   ): Promise<void> {
     const owner = validateOwner(ownerInput);
     CanonicalChatIdSchema.parse(chatId);
     z.number().int().nonnegative().parse(revision);
-    await this.transact((trx) => this.appendOutbox(trx, owner, chatId, revision, eventType, payload));
+    await this.transact((trx) => this.appendOutbox(
+      trx,
+      owner,
+      chatId,
+      revision,
+      eventType,
+      payload,
+      collaborationProjection,
+    ));
   }
 
   private async transact<T>(fn: (trx: Executor) => Promise<T>): Promise<T> {
@@ -416,9 +430,15 @@ export class ChatRepository {
     revision: number,
     eventType: ChatOutboxEventType,
     payload: Record<string, unknown> = {},
+    collaborationProjection?: CanonicalChatCollaboration,
   ): Promise<void> {
     const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
-      hydrateRecord.bind(null, executor));
+      (projectionOwner, projectionChatId) => hydrateRecord(
+        executor,
+        projectionOwner,
+        projectionChatId,
+        collaborationProjection,
+      ));
     const streamContent = captured && new TextEncoder().encode(JSON.stringify(captured)).byteLength < 512 * 1024 - 2048
       ? captured : undefined;
     const { messageDelta: _delta, activityIds: _activities, removedActivityIds: _removed, ...metadata } = payload;

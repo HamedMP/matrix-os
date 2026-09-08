@@ -146,24 +146,6 @@ export class ChatLifecycleRepository {
         .returningAll().executeTakeFirst();
       if (!updatedScope) throw new CollaborationRepositoryError("conflict", "Scope lifecycle changed");
 
-      if (canonicalChatRepository) {
-        await canonicalChatRepository.appendOutboxEvent(
-          { type: scope.owner_type, ownerId: scope.owner_id },
-          chat.id,
-          nextChatRevision,
-          input.type === "delete" ? "chat.deleted" : "chat.updated",
-        );
-      } else {
-        await trx.insertInto("chat_outbox").values({
-          owner_type: scope.owner_type,
-          owner_id: scope.owner_id,
-          chat_id: chat.id,
-          revision: nextChatRevision,
-          event_type: input.type === "delete" ? "chat.deleted" : "chat.updated",
-          payload: jsonb({}),
-          created_at: now,
-        }).execute();
-      }
       if (input.type === "delete") {
         const deletion = await trx.insertInto("chat_deletions").values({
           owner_type: scope.owner_type,
@@ -184,6 +166,37 @@ export class ChatLifecycleRepository {
         }).where("id", "=", chat.id).where("revision", "=", Number(chat.revision))
           .returning("id").executeTakeFirst();
         if (!updatedChat) throw new CollaborationRepositoryError("conflict", "Chat changed");
+      }
+
+      if (canonicalChatRepository) {
+        const acceptedMembers = input.type === "delete"
+          ? undefined
+          : await trx.selectFrom("collaboration_members")
+            .select(({ fn }) => fn.countAll<number>().as("count"))
+            .where("scope_id", "=", scope.id)
+            .where("status", "=", "accepted")
+            .executeTakeFirstOrThrow();
+        await canonicalChatRepository.appendOutboxEvent(
+          { type: scope.owner_type, ownerId: scope.owner_id },
+          chat.id,
+          nextChatRevision,
+          input.type === "delete" ? "chat.deleted" : "chat.updated",
+          {},
+          input.type === "delete" ? undefined : {
+            mode: "shared",
+            membership: { role: "owner", memberCount: Number(acceptedMembers?.count) },
+          },
+        );
+      } else {
+        await trx.insertInto("chat_outbox").values({
+          owner_type: scope.owner_type,
+          owner_id: scope.owner_id,
+          chat_id: chat.id,
+          revision: nextChatRevision,
+          event_type: input.type === "delete" ? "chat.deleted" : "chat.updated",
+          payload: jsonb({}),
+          created_at: now,
+        }).execute();
       }
 
       const result = CollaborationOperationSchema.parse({
