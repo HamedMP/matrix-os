@@ -224,6 +224,10 @@ const CollaborationEventBaseSchema = z.object({
 
 export const CollaborationEventFrameSchema = z.discriminatedUnion("type", [
   CollaborationEventBaseSchema.extend({
+    type: z.literal("heartbeat"),
+    sequence: CollaborationRevisionSchema,
+  }).strict(),
+  CollaborationEventBaseSchema.extend({
     type: z.literal("ready"),
     sequence: CollaborationRevisionSchema,
   }).strict(),

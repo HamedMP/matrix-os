@@ -135,8 +135,24 @@ export function createCanonicalChatService(
       "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn" | "reconcileActiveRuns"
     >;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
+    collaborationGuard?: {
+      assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
+    };
   } = {},
 ): CanonicalChatRouteService {
+  const assertPersonalExecutionAllowed = async (owner: ChatOwner, chatId: string): Promise<void> => {
+    if (!options.collaborationGuard) return;
+    try {
+      await options.collaborationGuard.assertPersonalExecutionAllowed(owner, chatId);
+    } catch (error: unknown) {
+      if (!(error instanceof Error && "code" in error && error.code === "shared_execution_disabled")) throw error;
+      throw new CanonicalChatOrchestrationError(CanonicalChatSafeErrorSchema.parse({
+        code: "capability_mismatch",
+        safeMessage: "AI is unavailable while this shared Chat is in discussion-only mode.",
+        retryable: false,
+      }), 409);
+    }
+  };
   return {
     async create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord> {
       const request = CanonicalCreateChatRequestSchema.parse(input);
@@ -295,6 +311,7 @@ export function createCanonicalChatService(
       chatId: string,
       input: CanonicalCreateChatTurnRequest,
     ): Promise<CanonicalChatTurnAdmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatTurnAdmissionResponseSchema.parse(await options.orchestrator.admitTurn(
         principal,
@@ -310,6 +327,7 @@ export function createCanonicalChatService(
       chatId: string,
       input: CanonicalQueueChatTurnRequest,
     ): Promise<CanonicalChatQueueAdmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatQueueAdmissionResponseSchema.parse(
         await options.orchestrator.enqueueQueuedTurn(
@@ -327,6 +345,7 @@ export function createCanonicalChatService(
       queuedTurnId: string,
       input: CanonicalCancelQueuedChatTurnRequest,
     ): Promise<CanonicalChatQueueCancellationResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       const request = CanonicalCancelQueuedChatTurnRequestSchema.parse(input);
       return CanonicalChatQueueCancellationResponseSchema.parse(
         await repository.cancelQueuedTurn(owner, {
@@ -344,6 +363,7 @@ export function createCanonicalChatService(
       chatId: string,
       input: CanonicalReorderQueuedChatTurnsRequest,
     ): Promise<CanonicalChatQueueReorderResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       const request = CanonicalReorderQueuedChatTurnsRequestSchema.parse(input);
       return CanonicalChatQueueReorderResponseSchema.parse(
         await repository.reorderQueuedTurns(owner, {
@@ -362,6 +382,7 @@ export function createCanonicalChatService(
       queuedTurnId: string,
       input: CanonicalUpdateQueuedChatTurnRequest,
     ): Promise<CanonicalChatQueueUpdateResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       const request = CanonicalUpdateQueuedChatTurnRequestSchema.parse(input);
       return CanonicalChatQueueUpdateResponseSchema.parse(await repository.updateQueuedTurn(owner, {
         chatId: CanonicalChatIdSchema.parse(chatId),
@@ -379,6 +400,7 @@ export function createCanonicalChatService(
       runId: string,
       _input: CanonicalCancelChatRunRequest,
     ): Promise<CanonicalChatRunCancellationResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatRunCancellationResponseSchema.parse(
         await options.orchestrator.cancelRun(owner, CanonicalChatIdSchema.parse(chatId), runId),
@@ -391,6 +413,7 @@ export function createCanonicalChatService(
       runId: string,
       input: CanonicalSteerChatRunRequest,
     ): Promise<CanonicalChatRunSteeringResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatRunSteeringResponseSchema.parse(await options.orchestrator.steerRun(
         owner,
@@ -407,6 +430,7 @@ export function createCanonicalChatService(
       queuedTurnId: string,
       input: CanonicalSteerQueuedChatTurnRequest,
     ): Promise<CanonicalChatRunSteeringResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatRunSteeringResponseSchema.parse(await options.orchestrator.steerQueuedTurn(
         owner,
@@ -424,6 +448,7 @@ export function createCanonicalChatService(
       approvalId: string,
       input: CanonicalSubmitChatApprovalRequest,
     ): Promise<CanonicalChatApprovalSubmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return options.orchestrator.submitApproval(
         owner,
@@ -441,6 +466,7 @@ export function createCanonicalChatService(
       turnId: string,
       input: CanonicalRetryChatTurnRequest,
     ): Promise<CanonicalChatRunAdmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatRunAdmissionResponseSchema.parse(await options.orchestrator.retryTurn(
         principal,

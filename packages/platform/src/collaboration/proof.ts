@@ -60,6 +60,37 @@ export class CollaborationProofSigner {
     });
   }
 
+  signSocket(input: {
+    actorId: string;
+    ownerId: string;
+    runtimeId: string;
+    scopeId: string;
+    purpose: "events" | "terminal";
+    path: string;
+  }) {
+    const issuedAt = this.now();
+    const proof = CollaborationActorProofSchema.parse({
+      version: 1,
+      keyId: this.keyring.activeKeyId,
+      actorId: input.actorId,
+      ownerId: input.ownerId,
+      runtimeId: input.runtimeId,
+      scopeId: input.scopeId,
+      purpose: input.purpose,
+      method: "GET",
+      path: input.path,
+      query: "",
+      bodyDigest: digestBody(new Uint8Array()),
+      nonce: this.createNonce(),
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + PROOF_LIFETIME_MS).toISOString(),
+    });
+    return CollaborationSignedActorProofSchema.parse({
+      proof,
+      signature: sign(input.purpose, proof, requireKey(this.keyring.keys[this.keyring.activeKeyId])),
+    });
+  }
+
   signPolicy(policyInput: CollaborationPolicy) {
     const policy = CollaborationPolicySchema.parse(policyInput);
     return CollaborationSignedPolicySchema.parse({
@@ -74,7 +105,11 @@ export function digestBody(body: Uint8Array): string {
   return createHash("sha256").update(body).digest("hex");
 }
 
-function sign(domain: "http" | "policy", value: CollaborationActorProof | CollaborationPolicy, key: string): string {
+function sign(
+  domain: "http" | "events" | "terminal" | "policy",
+  value: CollaborationActorProof | CollaborationPolicy,
+  key: string,
+): string {
   return createHmac("sha256", key).update(`${domain}\n${JSON.stringify(value)}`).digest("base64url");
 }
 

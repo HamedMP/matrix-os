@@ -118,16 +118,18 @@ export class PlatformCollaborationRepository {
     scopeId: string;
     runtimeId: string;
     ownerId: string;
+    kind: "chat" | "terminal" | "project";
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_directory")
-      .select(["scope_id", "runtime_id", "owner_id", "authority_generation"])
+      .select(["scope_id", "runtime_id", "owner_id", "kind", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
       scopeId: row.scope_id,
       runtimeId: row.runtime_id,
       ownerId: row.owner_id,
+      kind: row.kind,
       authorityGeneration: Number(row.authority_generation),
     } : null;
   }
@@ -164,6 +166,15 @@ export class PlatformCollaborationRepository {
     return rows.map((row) => row.actor_id);
   }
 
+  async getScopeActorStatus(scopeId: string, actorId: string): Promise<"invited" | "accepted" | "revoked" | null> {
+    const row = await this.db.selectFrom("collaboration_user_index")
+      .select("status")
+      .where("scope_id", "=", scopeId)
+      .where("actor_id", "=", actorId)
+      .executeTakeFirst();
+    return row?.status ?? null;
+  }
+
   async listForActor(actorId: string): Promise<CollaborationDirectoryEntry[]> {
     const rows = await this.db.selectFrom("collaboration_user_index as user_index")
       .innerJoin("collaboration_directory as directory", "directory.scope_id", "user_index.scope_id")
@@ -196,36 +207,50 @@ export class PlatformCollaborationRepository {
       throw new PlatformCollaborationRepositoryError("invalid_expiry", "Cleanup boundary is invalid");
     }
     return this.db.transaction().execute(async (trx) => {
-      const rows = await trx.selectFrom("collaboration_user_index")
-        .select(["actor_id", "scope_id"])
+      const candidates = await trx.selectFrom("collaboration_user_index")
+        .select(["actor_id", "scope_id", "updated_at"])
         .where("status", "=", "revoked")
         .where("updated_at", "<", input.olderThan)
         .orderBy("updated_at", "asc")
         .orderBy("actor_id", "asc")
         .limit(input.limit)
+        .execute();
+      const scopeIds = candidates.map((row) => row.scope_id).sort()
+        .filter((scopeId, index, values) => index === 0 || values[index - 1] !== scopeId);
+      if (scopeIds.length === 0) return 0;
+
+      const lockedDirectories = await trx.selectFrom("collaboration_directory")
+        .select("scope_id")
+        .where("scope_id", "in", scopeIds)
+        .orderBy("scope_id", "asc")
         .forUpdate()
         .execute();
-      for (const row of rows) {
-        await trx.deleteFrom("collaboration_user_index")
-          .where("actor_id", "=", row.actor_id)
-          .where("scope_id", "=", row.scope_id)
+      let deletedCount = 0;
+      for (const candidate of candidates) {
+        if (!lockedDirectories.some((directory) => directory.scope_id === candidate.scope_id)) continue;
+        const deleted = await trx.deleteFrom("collaboration_user_index")
+          .where("actor_id", "=", candidate.actor_id)
+          .where("scope_id", "=", candidate.scope_id)
           .where("status", "=", "revoked")
+          .where("updated_at", "=", candidate.updated_at)
           .where("updated_at", "<", input.olderThan)
-          .execute();
+          .returning("actor_id")
+          .executeTakeFirst();
+        if (deleted) deletedCount += 1;
       }
-      for (const scopeId of new Set(rows.map((row) => row.scope_id))) {
+      for (const directory of lockedDirectories) {
         const remaining = await trx.selectFrom("collaboration_user_index")
           .select("actor_id")
-          .where("scope_id", "=", scopeId)
+          .where("scope_id", "=", directory.scope_id)
           .limit(1)
           .executeTakeFirst();
         if (!remaining) {
           await trx.deleteFrom("collaboration_directory")
-            .where("scope_id", "=", scopeId)
+            .where("scope_id", "=", directory.scope_id)
             .execute();
         }
       }
-      return rows.length;
+      return deletedCount;
     });
   }
 

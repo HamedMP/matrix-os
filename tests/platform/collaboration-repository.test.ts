@@ -7,8 +7,10 @@ import {
 } from "../../packages/platform/src/collaboration/repository.js";
 import {
   createPlatformCollaborationTestDatabase,
+  createRealPlatformCollaborationTestDatabase,
   destroyPlatformCollaborationTestDatabase,
   platformCollaborationActors,
+  type RealPlatformCollaborationTestDatabase,
   type PlatformCollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -168,5 +170,72 @@ describe("PlatformCollaborationRepository", () => {
       policyRevision: 1,
       expiresAt: "2026-09-07T12:00:30.000Z",
     })).rejects.toBeInstanceOf(PlatformCollaborationRepositoryError);
+  });
+});
+
+describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("PlatformCollaborationRepository PostgreSQL cleanup races", () => {
+  let fixture: RealPlatformCollaborationTestDatabase;
+  let repository: PlatformCollaborationRepository;
+
+  beforeEach(async () => {
+    fixture = await createRealPlatformCollaborationTestDatabase();
+    await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+    repository = new PlatformCollaborationRepository(fixture.collaborationDb, { now: () => now });
+  });
+
+  afterEach(async () => {
+    await fixture.destroy();
+  });
+
+  it("preserves a fresh recipient committed while revoked cleanup waits on the directory", async () => {
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000030",
+      scopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "chat",
+      authorityGeneration: 1,
+      metadataRevision: 1,
+      recipients: [{ actorId: platformCollaborationActors.outsider, status: "revoked" }],
+    });
+
+    let directoryLocked!: () => void;
+    const locked = new Promise<void>((resolve) => { directoryLocked = resolve; });
+    let releaseWriter!: () => void;
+    const writerGate = new Promise<void>((resolve) => { releaseWriter = resolve; });
+    const writer = fixture.collaborationDb.transaction().execute(async (trx) => {
+      await trx.selectFrom("collaboration_directory")
+        .select("scope_id")
+        .where("scope_id", "=", scopeId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      directoryLocked();
+      await writerGate;
+      await trx.insertInto("collaboration_user_index").values({
+        actor_id: platformCollaborationActors.recipientWithoutComputer,
+        scope_id: scopeId,
+        status: "accepted",
+        invitation_id: null,
+        locator_generation: 1,
+        last_event_id: "20000000-0000-4000-8000-000000000031",
+        updated_at: now.toISOString(),
+      }).execute();
+    });
+    await locked;
+
+    let cleanupSettled = false;
+    const cleanup = repository.cleanupRevokedDirectoryEntries({
+      olderThan: "2026-09-07T12:00:01.000Z",
+      limit: 1,
+    }).finally(() => { cleanupSettled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(cleanupSettled).toBe(false);
+    releaseWriter();
+    await writer;
+
+    await expect(cleanup).resolves.toBe(1);
+    await expect(repository.listForActor(platformCollaborationActors.recipientWithoutComputer)).resolves.toHaveLength(1);
+    await expect(fixture.collaborationDb.selectFrom("collaboration_directory").select("scope_id").executeTakeFirst())
+      .resolves.toMatchObject({ scope_id: scopeId });
   });
 });

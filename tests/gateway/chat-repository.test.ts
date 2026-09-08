@@ -906,6 +906,33 @@ describe("ChatRepository", () => {
     })).rejects.toBeInstanceOf(ChatBusyError);
   });
 
+  it("rejects a new Turn after the locked Chat row becomes discussion-only shared", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_safence",
+      clientRequestId: "req_safence",
+      title: "Shared admission fence",
+    });
+    await repository.kysely.updateTable("chats").set({
+      collaboration: JSON.stringify({
+        scopeId: "10000000-0000-4000-8000-000000000099",
+        mode: "discussion_only",
+        executionFenced: true,
+      }),
+    }).where("id", "=", created.chat.id).execute();
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+
+    await expect(repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: run(created.chat.id, acceptedTurn),
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    await expect(repository.kysely.selectFrom("chat_runs").selectAll()
+      .where("chat_id", "=", created.chat.id).execute()).resolves.toEqual([]);
+  });
+
   it("durably enqueues an idempotent ordered Turn while a Run is active", async () => {
     const admitted = await admitChat(repository, "queued_turn");
     const queuedInput = {
