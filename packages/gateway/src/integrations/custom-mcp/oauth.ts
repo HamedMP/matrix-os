@@ -185,6 +185,8 @@ function parseClientRegistration(value: unknown): OAuthClientRegistrationRespons
 }
 
 export class CustomMcpOAuthManager {
+  private readonly configuredClientId: string | undefined;
+
   constructor(private readonly options: {
     db: PlatformDb;
     encryptionKey: Buffer;
@@ -197,6 +199,7 @@ export class CustomMcpOAuthManager {
   }) {
     const redirect = new URL(options.redirectUri);
     if (redirect.protocol !== "https:") throw new Error("Custom MCP OAuth redirect URI must use HTTPS");
+    this.configuredClientId = options.clientId?.trim() || undefined;
   }
 
   async start(userId: string, serverId: string): Promise<string> {
@@ -246,7 +249,7 @@ export class CustomMcpOAuthManager {
       ? existingCredential.oauth.clientId
       : undefined;
     const clientId = persistedClientId
-      ?? this.options.clientId
+      ?? this.configuredClientId
       ?? await this.registerClient(metadata);
     const credential: CustomMcpCredential = {
       oauth: {
@@ -357,7 +360,7 @@ export class CustomMcpOAuthManager {
       throw new CustomMcpBrokerError("action_required");
     }
     const extended = oauth as typeof oauth & { clientId?: string };
-    const clientId = extended.clientId ?? this.options.clientId;
+    const clientId = extended.clientId ?? this.configuredClientId;
     if (!clientId) throw new CustomMcpBrokerError("action_required");
     const token = await this.exchangeToken(oauth.tokenEndpoint, {
       grant_type: "refresh_token",
@@ -387,7 +390,7 @@ export class CustomMcpOAuthManager {
     if (!oauth?.revocationEndpoint) return;
     const token = oauth.refreshToken ?? oauth.accessToken;
     if (!token) return;
-    const clientId = oauth.clientId ?? this.options.clientId;
+    const clientId = oauth.clientId ?? this.configuredClientId;
     if (!clientId) throw new CustomMcpBrokerError("action_required");
     const body = new URLSearchParams({
       token,

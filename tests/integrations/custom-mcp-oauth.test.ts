@@ -47,87 +47,91 @@ describe("Custom MCP OAuth", () => {
     expect(credential.oauth.verifier.length).toBeGreaterThan(43);
   });
 
-  it("registers a public OAuth client dynamically when no client ID is configured", async () => {
-    const key = Buffer.alloc(32, 7);
-    let encrypted = "";
-    const row = {
-      id: "118b72f8-33e3-455f-9ee3-dc15069932bb",
-      user_id: "owner",
-      url: "https://mcp.granola.ai/mcp",
-      auth_mode: "oauth",
-      revision: 4,
-    };
-    const db = {
-      getCustomMcpServerForBroker: vi.fn(async () => row),
-      updateCustomMcpCredentials: vi.fn(async (_id, _user, _revision, value) => {
-        encrypted = value;
-        return true;
-      }),
-    } as unknown as PlatformDb;
-    const request = vi.fn()
-      .mockResolvedValueOnce({
-        status: 200,
-        body: {
-          resource: row.url,
-          authorization_servers: ["https://mcp-auth.granola.ai"],
-        },
-      })
-      .mockResolvedValueOnce({
-        status: 200,
-        body: {
-          issuer: "https://mcp-auth.granola.ai",
-          authorization_endpoint: "https://mcp-auth.granola.ai/authorize",
-          token_endpoint: "https://mcp-auth.granola.ai/token",
-          registration_endpoint: "https://mcp-auth.granola.ai/register",
-          code_challenge_methods_supported: ["S256"],
-        },
-      })
-      .mockResolvedValueOnce({
-        status: 201,
-        body: {
-          client_id: "granola-dynamic-client",
-          token_endpoint_auth_method: "none",
-        },
+  it.each([undefined, "   "])(
+    "registers a public OAuth client dynamically when the configured client ID is absent or blank (%#)",
+    async (configuredClientId) => {
+      const key = Buffer.alloc(32, 7);
+      let encrypted = "";
+      const row = {
+        id: "118b72f8-33e3-455f-9ee3-dc15069932bb",
+        user_id: "owner",
+        url: "https://mcp.granola.ai/mcp",
+        auth_mode: "oauth",
+        revision: 4,
+      };
+      const db = {
+        getCustomMcpServerForBroker: vi.fn(async () => row),
+        updateCustomMcpCredentials: vi.fn(async (_id, _user, _revision, value) => {
+          encrypted = value;
+          return true;
+        }),
+      } as unknown as PlatformDb;
+      const request = vi.fn()
+        .mockResolvedValueOnce({
+          status: 200,
+          body: {
+            resource: row.url,
+            authorization_servers: ["https://mcp-auth.granola.ai"],
+          },
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          body: {
+            issuer: "https://mcp-auth.granola.ai",
+            authorization_endpoint: "https://mcp-auth.granola.ai/authorize",
+            token_endpoint: "https://mcp-auth.granola.ai/token",
+            registration_endpoint: "https://mcp-auth.granola.ai/register",
+            code_challenge_methods_supported: ["S256"],
+          },
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          body: {
+            client_id: "granola-dynamic-client",
+            token_endpoint_auth_method: "none",
+          },
+        });
+      const validateUrl = vi.fn(async (url: string) => ({
+        url: new URL(url),
+        address: "93.184.216.34",
+        family: 4 as const,
+      }));
+      const oauth = new CustomMcpOAuthManager({
+        db,
+        encryptionKey: key,
+        clientId: configuredClientId,
+        redirectUri: "https://app.matrix-os.com/api/mcp-servers/oauth/callback",
+        request,
+        validateUrl,
       });
-    const validateUrl = vi.fn(async (url: string) => ({
-      url: new URL(url),
-      address: "93.184.216.34",
-      family: 4 as const,
-    }));
-    const oauth = new CustomMcpOAuthManager({
-      db,
-      encryptionKey: key,
-      redirectUri: "https://app.matrix-os.com/api/mcp-servers/oauth/callback",
-      request,
-      validateUrl,
-    });
 
-    const authorization = new URL(await oauth.start("owner", row.id));
+      const authorization = new URL(await oauth.start("owner", row.id));
 
-    expect(authorization.searchParams.get("client_id")).toBe("granola-dynamic-client");
-    expect(validateUrl).toHaveBeenCalledWith("https://mcp-auth.granola.ai/register");
-    expect(request).toHaveBeenNthCalledWith(3, {
-      method: "POST",
-      url: "https://mcp-auth.granola.ai/register",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_name: "Matrix OS",
-        redirect_uris: ["https://app.matrix-os.com/api/mcp-servers/oauth/callback"],
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-        application_type: "web",
-      }),
-    });
-    const credential = decryptCustomMcpCredential<any>(encrypted, key, {
-      userId: "owner",
-      serverId: row.id,
-    });
-    expect(credential.oauth).toMatchObject({
-      clientId: "granola-dynamic-client",
-      clientIssuer: "https://mcp-auth.granola.ai/",
-    });
-  });
+      expect(authorization.searchParams.get("client_id")).toBe("granola-dynamic-client");
+      expect(validateUrl).toHaveBeenCalledWith("https://mcp-auth.granola.ai/register");
+      expect(request).toHaveBeenNthCalledWith(3, {
+        method: "POST",
+        url: "https://mcp-auth.granola.ai/register",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "Matrix OS",
+          redirect_uris: ["https://app.matrix-os.com/api/mcp-servers/oauth/callback"],
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+          application_type: "web",
+        }),
+      });
+      const credential = decryptCustomMcpCredential<any>(encrypted, key, {
+        userId: "owner",
+        serverId: row.id,
+      });
+      expect(credential.oauth).toMatchObject({
+        clientId: "granola-dynamic-client",
+        clientIssuer: "https://mcp-auth.granola.ai/",
+      });
+    },
+  );
 
   it("rejects dynamic registrations that require a client secret", async () => {
     const row = {
