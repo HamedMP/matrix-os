@@ -147,6 +147,10 @@ export function parseCodingAgentProviderEvents(
 
 function providerMayEmit(event: AgentThreadEvent): boolean {
   switch (event.type) {
+    case "approval.resolved":
+      // Native expiry/turn shutdown can withdraw a request, never grant consent.
+      // Other decisions remain reserved for the authenticated approval route.
+      return event.decision === "cancel";
     case "thread.status":
     case "assistant.text.delta":
     case "assistant.text.completed":
