@@ -67,7 +67,7 @@ jobs:
         name: Resolve the exact disposable production preview
         run: |
           set -euo pipefail
-          deadline=$((SECONDS + 1200))
+          deadline=$((SECONDS + 2100))
           while [ "$SECONDS" -lt "$deadline" ]; do
             fleet="$(curl --fail --silent --show-error --max-time 30 \
               -H "authorization: Bearer $PLATFORM_SECRET" \
