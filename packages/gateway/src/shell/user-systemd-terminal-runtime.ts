@@ -576,10 +576,14 @@ export function createUserSystemdTerminalRuntime(options: {
       const { stdout } = await runSystemctl(["is-active", unitName(runtimeId)]);
       return ["inactive", "failed", "unknown"].includes(stdout.trim());
     } catch (error: unknown) {
-      if (!(error instanceof Error && "code" in error)) throw error;
-      if (error.code === 4 || error.code === "4") return true;
-      if ((error.code === 3 || error.code === "3") && "stdout" in error && typeof error.stdout === "string") {
-        return ["inactive", "failed"].includes(error.stdout.trim());
+      // execFile rejects the normal systemctl inactive result (exit 3).
+      // runSystemctl wraps it for safe outward errors; inspect the retained
+      // cause here rather than losing the state output at that boundary.
+      const commandError = error instanceof TerminalRuntimeUnavailableError ? error.cause : error;
+      if (!(commandError instanceof Error && "code" in commandError)) throw error;
+      if (commandError.code === 4 || commandError.code === "4") return true;
+      if ((commandError.code === 3 || commandError.code === "3") && "stdout" in commandError && typeof commandError.stdout === "string") {
+        return ["inactive", "failed"].includes(commandError.stdout.trim());
       }
       throw error;
     }

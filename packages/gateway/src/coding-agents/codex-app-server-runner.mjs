@@ -11,6 +11,7 @@ import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
 import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
+import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -374,10 +375,11 @@ const pendingApprovals = new Map();
 const sessionApprovalGrants = createCodexSessionApprovalGrants();
 const pendingInputs = new Map();
 const completedControls = new Map();
+const mcpElicitations = createCodexMcpElicitations({ send: sendProvider, persist, safeText: safeExternalText });
 const idleHibernation = createCodexIdleHibernation(() => ({
   providerThreadId: nativeThreadId, completedTurns: terminalEventCount,
   active: activeTurn || stopping,
-  pending: pendingTurns.length + pendingApprovals.size + pendingInputs.size + pendingRpc.size,
+  pending: pendingTurns.length + pendingApprovals.size + pendingInputs.size + pendingRpc.size + mcpElicitations.size,
   otherControls: controlSockets.size > 1,
 }));
 const assistantItemsWithDelta = new Set();
@@ -389,7 +391,7 @@ let toolBoundaryVersion = 0;
 let executionExpired = false;
 let rejectExecution;
 const executionWatchdog = createCodexExecutionWatchdog({
-  waitingForHuman: () => pendingApprovals.size > 0 || pendingInputs.size > 0,
+  waitingForHuman: () => pendingApprovals.size > 0 || pendingInputs.size > 0 || mcpElicitations.size > 0,
   expire: (diagnostic) => {
     if (!activeTurn) return;
     executionExpired = true;
@@ -824,7 +826,7 @@ async function handleItemLifecycle(raw) {
 
 async function handleProviderMessage(raw) {
   const response = RpcResponseSchema.safeParse(raw);
-  if (response.success && pendingRpc.has(response.data.id)) {
+  if (raw?.method === undefined && response.success && pendingRpc.has(response.data.id)) {
     const pending = pendingRpc.get(response.data.id);
     pendingRpc.delete(response.data.id);
     clearTimeout(pending.timeout);
@@ -834,12 +836,19 @@ async function handleProviderMessage(raw) {
   }
   // A deadline settles this execution once. Do not accept late tool results,
   // approvals or a final answer while interruption/shutdown is in flight.
-  if (executionExpired) return;
-  if (!activeTurn) return;
+  if (executionExpired || !activeTurn) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
   const notificationTurnId = raw?.params?.turnId ?? raw?.params?.turn?.id;
-  if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) return;
+  if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
   if (await handleApproval(raw)) return;
   if (await handleInput(raw)) return;
+  if (await mcpElicitations.handle(raw, nativeThreadId)) return;
+  if (rejectCodexServerRequest(raw, sendProvider)) return;
   if (await handleItemLifecycle(raw)) return;
   const outputDelta = ToolOutputDeltaSchema.safeParse(raw);
   if (outputDelta.success) {
@@ -993,17 +1002,19 @@ async function applyControl(control) {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
   } else if (control.type === "approval") {
-    const pending = pendingApprovals.get(control.approvalId);
-    if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
-    const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
-    sendProvider({
-      id: pending.nativeRequestId,
-      result: { decision: nativeDecision },
-    });
-    if (control.decision === "approve_for_session") {
-      sessionApprovalGrants.grant(pending.method);
+    if (!mcpElicitations.decide(control.approvalId, control.decision)) {
+      const pending = pendingApprovals.get(control.approvalId);
+      if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
+      const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
+      sendProvider({
+        id: pending.nativeRequestId,
+        result: { decision: nativeDecision },
+      });
+      if (control.decision === "approve_for_session") {
+        sessionApprovalGrants.grant(pending.method);
+      }
+      pendingApprovals.delete(control.approvalId);
     }
-    pendingApprovals.delete(control.approvalId);
   } else {
     const pending = pendingInputs.get(control.requestId);
     if (!pending) return { ok: false };
@@ -1070,6 +1081,7 @@ await chmod(controlPath, 0o600);
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
+  try { mcpElicitations.sweep(); } catch (_error) { stopping = true; }
   for (const [approvalId, pending] of pendingApprovals) {
     if (pending.expiresAt > now) continue;
     pendingApprovals.delete(approvalId);
@@ -1185,6 +1197,7 @@ function stop() {
 
 async function finishTurn(outcome) {
   executionWatchdog.stop();
+  mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
     assistantDeltaBuffers.size > 0 ||
     startedToolItems.size > 0 ||

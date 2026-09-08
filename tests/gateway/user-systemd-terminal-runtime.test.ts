@@ -186,6 +186,20 @@ describe("user-systemd terminal runtime", () => {
     expect(runCommand).not.toHaveBeenCalled();
   });
 
+  it.each(["inactive", "failed"])("cold-recovers when real systemctl reports %s with exit code 3", async (state) => {
+    const runtime = createUserSystemdTerminalRuntime({ homePath, generation: GENERATION,
+      readinessProbe: async () => true,
+      runCommand: async (_command, args) => {
+        if (args.includes("is-active")) throw Object.assign(new Error("systemctl exited"), { code: 3, stdout: `${state}\n` });
+        return { stdout: "", stderr: "" };
+      },
+    });
+    const input = { runtimeId: RUNTIME_ID, scope: "workspace" as const, kind: "agent" as const, displayName: "sess_test", cwd, layoutPath };
+    await runtime.create(input);
+    await expect(runtime.hibernateWorkspace(RUNTIME_ID)).resolves.toEqual({ ok: true });
+    await expect(runtime.create(input, { replaceInactiveWorkspace: true })).resolves.toMatchObject({ lifecycle: "running" });
+  });
+
   it("reconciles a failed stop after restart without replaying the original prompt", async () => {
     let failStop = true;
     const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => {
