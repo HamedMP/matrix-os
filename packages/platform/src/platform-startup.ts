@@ -8,15 +8,12 @@ import type { Hono, Context } from 'hono';
 import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
-import type { Kysely } from 'kysely';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
   createPlatformDb,
   getContainer,
-  getPlatformUserByClerkId,
   getRunningUserMachineByHandle,
-  getUserMachine,
   listContainers,
   sweepStaleCheckoutAttempts,
   updateContainerStatus,
@@ -39,7 +36,7 @@ import {
   loadPlatformRuntimeConfig,
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
-import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
+import { buildPlatformVerificationToken } from './platform-token.js';
 import { buildCustomMcpProjectionUrl } from './custom-mcp-projection.js';
 import { backfillFirstRunRecords } from './journey.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
@@ -59,13 +56,8 @@ import {
   createStorageGatedHetznerClient,
   type R2CapabilityGate,
 } from './r2-capability.js';
-import { createJourneyUserResolver } from './journey-routes.js';
-import type { CollaborationPlatformDatabase } from './collaboration/database.js';
-import {
-  createPlatformCollaboration,
-  loadPlatformCollaborationConfig,
-  type PlatformCollaborationRuntime,
-} from './collaboration/wiring.js';
+import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
+import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -400,49 +392,14 @@ async function startPlatformServerWithCleanup(
     });
   }
 
-  const collaborationConfig = loadPlatformCollaborationConfig(process.env);
-  if (process.env.MATRIX_COLLABORATION_ENABLED === 'true' && !collaborationConfig) {
-    throw new Error('Platform collaboration configuration is incomplete');
-  }
-  let collaboration: PlatformCollaborationRuntime | undefined;
-  if (collaborationConfig) {
-    if (!platformSecret) throw new Error('Platform collaboration runtime authentication is unavailable');
-    collaboration = await createPlatformCollaboration({
-      db: db.kysely as unknown as Kysely<CollaborationPlatformDatabase>,
-      config: collaborationConfig,
-      resolveActor: createJourneyUserResolver({ clerkAuth, syncJwtSecret: platformJwtSecret }),
-      authenticateRuntime: async ({ runtimeId, bearerToken }) => {
-        const machineId = parseVpsRuntimeId(runtimeId);
-        if (!machineId) return null;
-        const machine = await getUserMachine(db, machineId);
-        if (!machine || machine.status !== 'running'
-          || !timingSafeTokenEquals(bearerToken, buildPlatformVerificationToken(machine.handle, platformSecret))) {
-          return null;
-        }
-        return { runtimeId, ownerId: machine.clerkUserId };
-      },
-      resolveParticipant: async (actorId) => {
-        const user = await getPlatformUserByClerkId(db, actorId);
-        return user ? { actorId, displayName: user.displayName } : null;
-      },
-      resolveRuntime: async (runtimeId) => {
-        const machineId = parseVpsRuntimeId(runtimeId);
-        if (!machineId) return null;
-        const machine = await getUserMachine(db, machineId);
-        if (!machine || machine.status !== 'running' || !machine.publicIPv4) return null;
-        return {
-          runtimeId,
-          ownerId: machine.clerkUserId,
-          baseUrl: `https://${machine.publicIPv4}:443`,
-        };
-      },
-      fetchImpl: (input, init) => fetch(input, {
-        ...init,
-        signal: init?.signal ?? AbortSignal.timeout(10_000),
-        dispatcher: customerVpsProxyDispatcher,
-      } as RequestInit & { dispatcher: import('undici').Dispatcher }),
-    });
-  }
+  const collaboration = await bootstrapPlatformCollaboration({
+    env: process.env,
+    db,
+    platformSecret,
+    platformJwtSecret,
+    clerkAuth,
+    customerVpsProxyDispatcher,
+  });
 
   let matrixProvisioner: MatrixProvisioner | undefined;
   const homeserverUrl = process.env.MATRIX_HOMESERVER_URL;
@@ -1246,9 +1203,4 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     }
     throw startupError;
   }
-}
-
-function parseVpsRuntimeId(runtimeId: string): string | null {
-  const match = /^vps:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.exec(runtimeId);
-  return match?.[1] ?? null;
 }
