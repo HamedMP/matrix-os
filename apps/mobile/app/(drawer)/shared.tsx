@@ -244,7 +244,7 @@ export default function SharedScreen() {
       combined = [...combined, ...additions];
     }
     if (generation !== chatLoadGeneration.current || eventScopeRef.current !== scopeId) {
-      throw new Error("CollaborationRecoverySuperseded");
+      throw new CollaborationRecoverySupersededError();
     }
     chatRef.current = nextChat;
     messagesRef.current = combined;
@@ -297,6 +297,7 @@ export default function SharedScreen() {
             if (!usable || closed) return;
             await operation();
           }).catch((failure: unknown) => {
+            if (failure instanceof CollaborationRecoverySupersededError) return;
             console.warn("[mobile-collaboration] realtime refresh failed", failure instanceof Error ? failure.name : "UnknownError");
             if (!closed && eventScopeRef.current === activeScopeId) {
               dispatch({ type: "patch", patch: { error: "This shared Chat could not be refreshed. Try again." } });
@@ -324,7 +325,21 @@ export default function SharedScreen() {
               enqueueAfterRecovery(() => { eventSequenceRef.current = frame.sequence; });
             } else if (frame.type === "unavailable") {
               closed = true;
-              dispatch({ type: "patch", patch: { scope: null, error: "This shared Chat is unavailable. Your access may have changed." } });
+              chatLoadGeneration.current += 1;
+              eventScopeRef.current = null;
+              chatRef.current = null;
+              messagesRef.current = [];
+              latestSequenceRef.current = "0";
+              dispatch({ type: "patch", patch: {
+                scope: null,
+                chat: null,
+                messages: [],
+                hasMoreMessages: false,
+                loadingMoreMessages: false,
+                draft: "",
+                loading: false,
+                error: "This shared Chat is unavailable. Your access may have changed.",
+              } });
               next.close(1008, "Unavailable");
             } else if (frame.type === "changed" || frame.type === "capabilities_changed" || frame.type === "refresh_required") {
               enqueueAfterRecovery(async () => {
@@ -558,6 +573,13 @@ function keyedMessageParts(message: Message) {
 }
 
 type RetryTimer = { cancel: () => void };
+
+class CollaborationRecoverySupersededError extends Error {
+  constructor() {
+    super("Collaboration recovery was superseded");
+    this.name = "CollaborationRecoverySupersededError";
+  }
+}
 
 function createRetryTimer(callback: () => void, delay: number): RetryTimer {
   const timer = setTimeout(callback, delay);

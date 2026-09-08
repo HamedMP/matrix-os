@@ -273,6 +273,49 @@ describe("native shared Chat screen", () => {
     expect(screen.getByText("Current title")).toBeTruthy();
   });
 
+  it("removes retained Chat content when realtime reports that access is unavailable", async () => {
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    }] });
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    expect(await screen.findByText("Welcome")).toBeTruthy();
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1, type: "unavailable", code: "revoked", scopeId, resourceId: "chat_one", authorityGeneration: "1",
+    }) }));
+    expect(screen.queryByText("Welcome")).toBeNull();
+    expect(screen.queryByText("Launch plan")).toBeNull();
+    expect(screen.getByText("This shared Chat is unavailable. Your access may have changed.")).toBeTruthy();
+  });
+
+  it("treats a realtime refresh superseded by reloading the same Chat as cancellation", async () => {
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    }] });
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    expect(await screen.findByText("Welcome")).toBeTruthy();
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    let resolveRefresh!: (value: unknown) => void;
+    mockFetchScope.mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+    await act(async () => sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1, type: "refresh_required", scopeId, resourceId: "chat_one", authorityGeneration: "1", sequence: "2",
+    }) }));
+    await waitFor(() => expect(resolveRefresh).toBeDefined());
+    fireEvent.changeText(screen.getByLabelText("Message everyone"), "Reload safely");
+    fireEvent.press(screen.getByLabelText("Send message"));
+    await waitFor(() => expect(mockFetchMessages).toHaveBeenCalledTimes(2));
+    await act(async () => resolveRefresh(await mockFetchScope()));
+    await waitFor(() => expect(screen.queryByText("This shared Chat could not be refreshed. Try again.")).toBeNull());
+    expect(sockets[0]!.close).not.toHaveBeenCalledWith(1011, "Refresh failed");
+    expect(screen.getByText("Welcome")).toBeTruthy();
+  });
+
   it("does not show an error from a realtime refresh superseded by leaving the Chat", async () => {
     mockFetchInbox.mockResolvedValue({ items: [] });
     mockFetchShared.mockResolvedValue({ items: [{
