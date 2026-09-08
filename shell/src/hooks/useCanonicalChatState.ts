@@ -18,8 +18,8 @@ import { getGatewayUrl } from "@/lib/gateway";
 import {
   createCanonicalShellChatClient,
   isDefinitiveCanonicalChatRejection,
-  projectCanonicalMessages,
 } from "@/lib/canonical-chat-client";
+import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -408,7 +408,7 @@ export function useCanonicalChatState(): ChatState {
     }
   }, [client, records]);
 
-  const messages = detail ? projectCanonicalMessages(detail.messages) : [];
+  const messages = detail ? projectCanonicalTranscript(detail) : [];
   if (safeError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: safeError, timestamp: Date.now() });
   }

@@ -187,6 +187,48 @@ describe("workspace session orchestrator", () => {
     }));
   });
 
+  it.each([true, false])("reuses a root workspace without deleting it when launch succeeds=%s", async (succeeds) => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-root-recovery-"));
+    tempHomes.push(home);
+    const workspace = join(home, "temporary", "root-chat-workspaces", "sess_fixed");
+    await mkdir(workspace, { recursive: true });
+    const d = deps();
+    if (!succeeds) d.agentSandbox.preflight.mockResolvedValueOnce({
+      ok: false, status: 503, error: { code: "sandbox_unavailable", message: "Unavailable" },
+    } as never);
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d, homePath: home });
+    try {
+      const result = await orchestrator.startSession({
+        ownerScope: { type: "user", id: "user_workspace" },
+        request: { sessionId: "sess_fixed", kind: "agent", agent: "codex" },
+      });
+      expect(d.agentSandbox.preflight).toHaveBeenCalled();
+      expect(result.ok).toBe(succeeds);
+      await expect(access(workspace)).resolves.toBeUndefined();
+    } finally { await orchestrator.close(); }
+  });
+
+  it("rejects an existing root workspace symlink without touching its target", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-root-symlink-"));
+    tempHomes.push(home);
+    const root = join(home, "temporary", "root-chat-workspaces");
+    const target = join(home, "external");
+    await mkdir(root, { recursive: true });
+    await mkdir(target);
+    await symlink(target, join(root, "sess_fixed"));
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d, homePath: home });
+    try {
+      const result = await orchestrator.startSession({
+        ownerScope: { type: "user", id: "user_workspace" },
+        request: { sessionId: "sess_fixed", kind: "agent", agent: "codex" },
+      });
+      expect(result.ok).toBe(false);
+      expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+      await expect(access(target)).resolves.toBeUndefined();
+    } finally { await orchestrator.close(); }
+  });
+
   it("periodically protects every active root Chat status and stops the timer on close", async () => {
     vi.useFakeTimers();
     const d = deps();
