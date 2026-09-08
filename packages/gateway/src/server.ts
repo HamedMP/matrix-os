@@ -3636,6 +3636,7 @@ export async function createGateway(config: GatewayConfig) {
       const parts: string[] = [];
       if (paramValidation.missing.length > 0) parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
       if (paramValidation.typeErrors.length > 0) parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
+      if (paramValidation.valueErrors?.length) parts.push(`Invalid param value: ${paramValidation.valueErrors.join("; ")}`);
       return c.json({ error: parts.join(". ") }, 400);
     }
 

@@ -1083,6 +1083,27 @@ describe("Integration Routes", () => {
       const data = await res.json();
       expect(data.error).toMatch(/type/i);
     });
+
+    it("rejects malformed X identifiers before looking up a connection", async () => {
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "twitter",
+          action: "list_user_posts",
+          params: { userId: "../../admin", maxResults: 101 },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("Invalid param value");
+      expect(data.value_errors).toEqual([
+        "userId: must be a 1-19 digit X user ID",
+        "maxResults: must be at most 100",
+      ]);
+      expect(pipedream.proxyGet).not.toHaveBeenCalled();
+    });
   });
 
   describe("POST /call -- unconnected service error", () => {

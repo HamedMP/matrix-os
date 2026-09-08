@@ -71,9 +71,15 @@ function verifyHmac(payload: string, signature: string, secret: string): boolean
 export function validateActionParams(
   actionDef: ServiceAction,
   params: Record<string, unknown> | undefined,
-): { valid: true } | { valid: false; missing: string[]; typeErrors: string[] } {
+): { valid: true } | {
+  valid: false;
+  missing: string[];
+  typeErrors: string[];
+  valueErrors?: string[];
+} {
   const missing: string[] = [];
   const typeErrors: string[] = [];
+  const valueErrors: string[] = [];
 
   for (const [name, def] of Object.entries(actionDef.params)) {
     const value = params?.[name];
@@ -94,12 +100,38 @@ export function validateActionParams(
         typeErrors.push(`${name}: expected object, got ${actualType}`);
       } else if (expectedType === "array" && !Array.isArray(value)) {
         typeErrors.push(`${name}: expected array, got ${actualType}`);
+      } else if (expectedType === "string" && typeof value === "string") {
+        if (def.minLength !== undefined && value.length < def.minLength) {
+          valueErrors.push(`${name}: must contain at least ${def.minLength} character${def.minLength === 1 ? "" : "s"}`);
+        }
+        if (def.maxLength !== undefined && value.length > def.maxLength) {
+          valueErrors.push(`${name}: must contain at most ${def.maxLength} characters`);
+        }
+        if (def.pattern !== undefined && !new RegExp(def.pattern, "u").test(value)) {
+          valueErrors.push(`${name}: ${def.patternMessage ?? "has an invalid format"}`);
+        }
+      } else if (expectedType === "number" && typeof value === "number") {
+        if (!Number.isFinite(value)) {
+          valueErrors.push(`${name}: must be a finite number`);
+        } else {
+          if (def.minimum !== undefined && value < def.minimum) {
+            valueErrors.push(`${name}: must be at least ${def.minimum}`);
+          }
+          if (def.maximum !== undefined && value > def.maximum) {
+            valueErrors.push(`${name}: must be at most ${def.maximum}`);
+          }
+        }
       }
     }
   }
 
-  if (missing.length > 0 || typeErrors.length > 0) {
-    return { valid: false, missing, typeErrors };
+  if (missing.length > 0 || typeErrors.length > 0 || valueErrors.length > 0) {
+    return {
+      valid: false,
+      missing,
+      typeErrors,
+      ...(valueErrors.length > 0 ? { valueErrors } : {}),
+    };
   }
   return { valid: true };
 }
@@ -890,10 +922,14 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       if (paramValidation.typeErrors.length > 0) {
         parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
       }
+      if (paramValidation.valueErrors?.length) {
+        parts.push(`Invalid param value: ${paramValidation.valueErrors.join("; ")}`);
+      }
       return c.json({
         error: parts.join(". "),
         missing: paramValidation.missing.length > 0 ? paramValidation.missing : undefined,
         type_errors: paramValidation.typeErrors.length > 0 ? paramValidation.typeErrors : undefined,
+        value_errors: paramValidation.valueErrors?.length ? paramValidation.valueErrors : undefined,
       }, 400);
     }
 
