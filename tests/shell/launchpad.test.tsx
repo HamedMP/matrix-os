@@ -44,7 +44,7 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
     onRenameApp: vi.fn(),
     onRemoveFromCanvas: vi.fn(),
     onCreateApp: vi.fn(),
-    onAddToDesktop: vi.fn(),
+    onAddToDesktop: vi.fn(async () => "added" as const),
   };
   const props = {
     apps: opts.apps ?? defaultApps,
@@ -131,7 +131,7 @@ describe("Launchpad (macos-glass launcher)", () => {
 
     await waitFor(() => expect(queryClient.getQueryData(appKeys.list())).toEqual([{
       name: "Fresh App",
-      path: "/files/apps/fresh/index.html",
+      path: "apps/fresh/index.html",
       slug: "fresh",
     }]));
   });
@@ -176,6 +176,17 @@ describe("Launchpad (macos-glass launcher)", () => {
       expect(container.querySelector("[data-launchpad]")).toBeNull();
       unmount();
     }
+  });
+
+  it("closes Web Canvas launcher after a classic context-menu add succeeds", async () => {
+    setDesign("flat");
+    const { handlers } = await renderLauncher();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Add to Desktop" }));
+
+    await waitFor(() => expect(handlers.onClose).toHaveBeenCalledOnce());
+    expect(handlers.onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html", expect.any(Object));
   });
 
   it("renders Launchpad instead of the classic grid under macos-glass", async () => {
@@ -260,10 +271,33 @@ describe("Launchpad (macos-glass launcher)", () => {
     setDesign("macos-glass");
     const { handlers } = await renderLauncher();
 
-    fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }), { clientX: 1000, clientY: 760 });
+    expect(screen.getByRole("menu").style.left).toBe("760px");
+    expect(screen.getByRole("menu").style.top).toBe("708px");
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
 
-    expect(handlers.onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html");
+    await waitFor(() => expect(handlers.onClose).toHaveBeenCalledOnce());
+    expect(handlers.onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html", expect.any(Object));
+  });
+
+  it("dismisses its context menu without closing, then closes on the next Escape", async () => {
+    setDesign("macos-glass");
+    const { handlers } = await renderLauncher();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(handlers.onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(handlers.onClose).toHaveBeenCalledOnce();
+  });
+
+  it("outside click dismisses only the context menu", async () => {
+    setDesign("macos-glass");
+    const { handlers } = await renderLauncher();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
+    fireEvent.pointerDown(screen.getByRole("textbox", { name: "Search apps" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(handlers.onClose).not.toHaveBeenCalled();
   });
 
   it("keeps OS-view destinations launcher-only", async () => {

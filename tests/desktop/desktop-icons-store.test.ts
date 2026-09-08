@@ -32,7 +32,11 @@ describe("native Desktop icon layout", () => {
 
     await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
     await useDesktopIcons.getState().remove("__file-browser__", api as never);
-    await useDesktopIcons.getState().add("apps/notes/index.html", api as never);
+    expect(await useDesktopIcons.getState().add(
+      "apps/notes/index.html",
+      api as never,
+      { width: 400, height: 300 },
+    )).toBe("added");
 
     expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
     expect(useDesktopIcons.getState().icons.some((icon) => icon.path === "__file-browser__")).toBe(false);
@@ -40,6 +44,31 @@ describe("native Desktop icon layout", () => {
     expect(api.patch).toHaveBeenLastCalledWith("/api/os-view-state", expect.objectContaining({
       patch: { desktop: { icons: useDesktopIcons.getState().icons } },
     }));
+  });
+
+  it("reports duplicate and full Desktop placement outcomes without writing", async () => {
+    const api = { patch: vi.fn(async () => ({ ok: true })) };
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+    expect(await useDesktopIcons.getState().add("__chat__", api as never, { width: 200, height: 100 }))
+      .toBe("already-present");
+    expect(await useDesktopIcons.getState().add("apps/notes/index.html", api as never, { width: 80, height: 80 }))
+      .toBe("desktop-full");
+    expect(api.patch).not.toHaveBeenCalled();
+  });
+
+  it("reports failed and rolls back when adding cannot be committed", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT] })),
+      patch: vi.fn(async () => { throw new OsViewStateConflictExhaustedError(); }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT]);
+
+    expect(await useDesktopIcons.getState().add(
+      "apps/sushi-counter/index.html",
+      api as never,
+      { width: 400, height: 300 },
+    )).toBe("failed");
+    expect(useDesktopIcons.getState().icons).toEqual([CHAT]);
   });
 
   it("rolls the optimistic layout back when persistence fails", async () => {

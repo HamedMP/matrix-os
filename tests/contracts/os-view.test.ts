@@ -10,6 +10,9 @@ import {
   OS_VIEW_FIXED_APP_APPEARANCES,
   OS_VIEW_LABELS,
   isOsViewDestinationPath,
+  canonicalOsViewCatalogPath,
+  findOpenOsViewDesktopSlot,
+  fitOsViewDesktopIconsToViewport,
   legacyDesktopImportFromConfig,
   mergeOsViewStatePatch,
   normalizeOsViewMode,
@@ -21,6 +24,55 @@ import {
 } from "@matrix-os/contracts";
 
 describe("shared OS-view contract", () => {
+  it("normalizes current and legacy launcher records into canonical app paths", () => {
+    expect(canonicalOsViewCatalogPath({ path: "/files/apps/sushi-counter/index.html" }))
+      .toBe("apps/sushi-counter/index.html");
+    expect(canonicalOsViewCatalogPath({ file: "sushi-counter/index.html" }))
+      .toBe("apps/sushi-counter/index.html");
+    expect(canonicalOsViewCatalogPath({ file: "games/2048/index.html" }))
+      .toBe("apps/games/2048/index.html");
+    expect(canonicalOsViewCatalogPath({ file: "calculator.html" }))
+      .toBe("apps/calculator.html");
+    expect(canonicalOsViewCatalogPath({ path: "/files/apps/notes/dist/index.html" }))
+      .toBe("apps/notes/index.html");
+    expect(canonicalOsViewCatalogPath({ path: "/files/../system/desktop.json" })).toBeNull();
+    expect(canonicalOsViewCatalogPath({ file: "https://example.test/app.html" })).toBeNull();
+  });
+
+  it("places icons down usable rows before advancing columns", () => {
+    const icons = [
+      { path: "apps/one/index.html", x: 20, y: 20 },
+      { path: "apps/two/index.html", x: 20, y: 112 },
+      { path: "apps/three/index.html", x: 20, y: 204 },
+    ];
+    expect(findOpenOsViewDesktopSlot(icons, { width: 400, height: 300 })).toEqual({ x: 108, y: 20 });
+    expect(findOpenOsViewDesktopSlot([
+      { path: "apps/moved/index.html", x: 24, y: 24 },
+    ], { width: 400, height: 300 })).toEqual({ x: 20, y: 204 });
+    expect(findOpenOsViewDesktopSlot([
+      ...icons,
+      { path: "apps/four/index.html", x: 108, y: 20 },
+      { path: "apps/five/index.html", x: 108, y: 112 },
+      { path: "apps/six/index.html", x: 108, y: 204 },
+      { path: "apps/seven/index.html", x: 196, y: 20 },
+      { path: "apps/eight/index.html", x: 196, y: 112 },
+      { path: "apps/nine/index.html", x: 196, y: 204 },
+    ], { width: 280, height: 300 })).toBeNull();
+  });
+
+  it("derives safe viewport positions without mutating canonical coordinates", () => {
+    const canonical = [
+      { path: "apps/visible/index.html", x: 20, y: 20 },
+      { path: "apps/offscreen/index.html", x: 20, y: 900 },
+    ];
+    const fitted = fitOsViewDesktopIconsToViewport(canonical, { width: 400, height: 300 });
+    expect(fitted).toEqual([
+      canonical[0],
+      { path: "apps/offscreen/index.html", x: 20, y: 112 },
+    ]);
+    expect(canonical[1]).toEqual({ path: "apps/offscreen/index.html", x: 20, y: 900 });
+  });
+
   it("defines one canonical ten-icon Desktop layout for every renderer", () => {
     expect(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS).toEqual([
       "__chat__",

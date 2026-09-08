@@ -315,7 +315,10 @@ describe("Desktop config", () => {
 
     useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
     useDesktopConfigStore.getState().removeDesktopIcon("__terminal__");
-    useDesktopConfigStore.getState().addDesktopIcon("apps/notes/index.html");
+    await expect(useDesktopConfigStore.getState().addDesktopIcon(
+      "apps/notes/index.html",
+      { width: 400, height: 300 },
+    )).resolves.toBe("added");
 
     expect(useDesktopConfigStore.getState().desktopIcons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
     expect(useDesktopConfigStore.getState().desktopIcons?.some((icon) => icon.path === "__terminal__")).toBe(false);
@@ -324,6 +327,35 @@ describe("Desktop config", () => {
     expect(JSON.parse(mockFetch.mock.calls.at(-1)?.[1].body)).toEqual(expect.objectContaining({
       patch: { desktop: { icons: useDesktopConfigStore.getState().desktopIcons } },
     }));
+  });
+
+  it("reports duplicate and full web Desktop placements without persisting", async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+    useDesktopConfigStore.getState().setDesktopIcons([{ path: "__chat__", x: 20, y: 20 }]);
+
+    await expect(useDesktopConfigStore.getState().addDesktopIcon(
+      "__chat__",
+      { width: 200, height: 100 },
+    )).resolves.toBe("already-present");
+    await expect(useDesktopConfigStore.getState().addDesktopIcon(
+      "apps/notes/index.html",
+      { width: 80, height: 80 },
+    )).resolves.toBe("desktop-full");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("reports failed and rolls back when a web Desktop addition cannot be committed", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+    const confirmed = [{ path: "__chat__", x: 20, y: 20 }];
+    useDesktopConfigStore.getState().setDesktopIcons(confirmed);
+
+    await expect(useDesktopConfigStore.getState().addDesktopIcon(
+      "apps/sushi-counter/index.html",
+      { width: 400, height: 300 },
+    )).resolves.toBe("failed");
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual(confirmed);
   });
 
   it("restores the confirmed web Desktop icon layout after a failed PATCH", async () => {
