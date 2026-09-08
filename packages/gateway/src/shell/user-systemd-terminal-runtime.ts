@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { resolveWithinHome } from "../path-security.js";
 import { createTerminalCapacityAdmission } from "./terminal-runtime-capacity.js";
+import { probeKeeperReadiness } from "./terminal-runtime-readiness.js";
 
 const execFileAsync = promisify(execFile);
 const RuntimeIdSchema = z.string().regex(/^rt_[0-9a-f]{32}$/);
@@ -439,6 +440,9 @@ export function createUserSystemdTerminalRuntime(options: {
   }
 
   async function defaultReadinessProbe(descriptor: UserSystemdTerminalDescriptor): Promise<boolean> {
+    const ready = await probeKeeperReadiness({ descriptor, terminalRuntimeRoot, homePath,
+      env: systemdEnv, runCommand });
+    if (ready !== null) return ready;
     const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
     try {
       const { stdout } = await runCommand(zellijPath, ["list-sessions", "--no-formatting"], {
@@ -823,6 +827,7 @@ export function createUserSystemdTerminalRuntime(options: {
             await removePath(descriptor.layoutPath);
           }
           await removePath(join(descriptorRoot, `${parsed.data}.json`));
+          await removePath(join(descriptorRoot, `${parsed.data}.ready.json`));
         } catch (err: unknown) {
           if (err instanceof TerminalRuntimeUnavailableError) throw err;
           throw new TerminalRuntimeUnavailableError(err);
