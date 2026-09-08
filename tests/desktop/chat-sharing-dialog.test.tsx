@@ -51,11 +51,16 @@ it("refreshes a reply committed between preflight and share creation without ret
   render(<ChatSharingButton api={{ baseUrl: "https://matrix.test", get, post, delete: vi.fn() }} chatId="chat_test" handle="example" runtimeSlot="primary" platformHost="https://matrix.test" copyText={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "Share" }));
   fireEvent.click(screen.getByRole("button", { name: "Share snapshot" }));
-  fireEvent.click(await screen.findByRole("checkbox"));
+  const checkbox = await screen.findByRole("checkbox");
+  const dialog = checkbox.closest("dialog");
+  expect(dialog).not.toBeNull();
+  fireEvent.click(checkbox);
   fireEvent.click(screen.getByRole("button", { name: "Create link" }));
   expect(await screen.findByText("Racing reply")).toBeTruthy();
   expect(post).toHaveBeenCalledOnce();
-  expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+  const updatedCheckbox = screen.getByRole("checkbox") as HTMLInputElement;
+  expect(updatedCheckbox.closest("dialog")).toBe(dialog);
+  expect(updatedCheckbox.checked).toBe(false);
   expect(screen.getByText("This Chat changed. Review the updated preview and confirm again.")).toBeTruthy();
 });
 
