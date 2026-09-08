@@ -19,6 +19,9 @@ const EXPECTED_HARNESS_VERSION = "2.1.240";
 const MAX_FRAME_BYTES = 64 * 1024;
 const SUPERVISOR_QUERY_TIMEOUT_MS = 5_000;
 const SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000;
+const SYSTEMD_EXEC_STEPS = [
+  "ADDRESS_FAMILIES", "CAPABILITIES", "CHDIR", "CHROOT", "EXEC", "GROUP", "NAMESPACE", "SECCOMP", "USER",
+];
 
 class AcceptanceError extends Error {
   constructor(code) {
@@ -186,6 +189,20 @@ function unitForRuntime(runtimeHandle) {
   return `matrix-scope-runtime-${match[1]}.service`;
 }
 
+async function runtimeCreationFailureCode(since) {
+  const journal = await command("/usr/bin/journalctl", [
+    "--unit", "matrix-scope-runtime-*.service", "--since", since,
+    "--no-pager", "--output=cat", "--lines=80",
+  ]);
+  if (journal.code !== 0) return "runtime_create_failed";
+  const step = /Failed at step ([A-Z][A-Z0-9_-]{0,31})\b/.exec(journal.stdout)?.[1];
+  if (step && SYSTEMD_EXEC_STEPS.includes(step)) {
+    return `runtime_create_failed_step_${step.toLowerCase()}`;
+  }
+  const status = /status=([0-9]{1,3})\/[A-Z][A-Z0-9_-]{0,31}\b/.exec(journal.stdout)?.[1];
+  return status ? `runtime_create_failed_status_${status}` : "runtime_create_failed";
+}
+
 async function assertWorkloadBoundary(unit) {
   await waitFor(async () => (await command("/usr/bin/systemctl", ["is-active", "--quiet", unit])).code === 0,
     10_000, "workload_not_active");
@@ -224,6 +241,7 @@ async function assertWorkloadBoundary(unit) {
 }
 
 async function createRuntime(profile) {
+  const startedAt = new Date(Date.now() - 1_000).toISOString();
   const response = await supervisorRequest({
     version: 1,
     type: "runtime.create",
@@ -234,8 +252,9 @@ async function createRuntime(profile) {
     adapterId: "claude-code",
     harnessVersion: EXPECTED_HARNESS_VERSION,
   });
-  assert(response?.type === "runtime.result" && response.ok === true && response.state === "running",
-    "runtime_create_failed");
+  if (!(response?.type === "runtime.result" && response.ok === true && response.state === "running")) {
+    throw new AcceptanceError(await runtimeCreationFailureCode(startedAt));
+  }
   assert(response.executionGeneration === profile.executionGeneration, "runtime_generation_mismatch");
   return response.runtimeHandle;
 }

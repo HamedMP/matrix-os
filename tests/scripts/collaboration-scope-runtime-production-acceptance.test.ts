@@ -48,6 +48,17 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).not.toMatch(/import\s+\{\s*exec\s*\}/);
   });
 
+  it("reports only bounded systemd launch diagnostics when runtime creation fails", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    expect(source).toContain('"matrix-scope-runtime-*.service"');
+    expect(source).toContain('"--since"');
+    expect(source).toContain("SYSTEMD_EXEC_STEPS");
+    expect(source).toContain("runtime_create_failed_step_");
+    expect(source).toContain("runtime_create_failed_status_");
+    expect(source).not.toContain("runtime_create_failed:${journal.stdout}");
+  });
+
   it("crashes and restarts the supervisor while preserving truthful runtime reconciliation", async () => {
     const source = await readFile(acceptancePath, "utf8");
 
