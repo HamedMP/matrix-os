@@ -17,6 +17,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
+import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -40,8 +41,19 @@ const subscribeLaunchPathNoop = () => () => {};
 const getLaunchPathServerSnapshot = (): string | null => null;
 
 export function ShellHome() {
-  const isMobile = useMobileViewport();
+  if (isSelfHostedRuntime()) {
+    return <ShellHomeBody userId={SELF_HOSTED_SHELL_USER_ID} />;
+  }
+  return <ClerkShellHome />;
+}
+
+function ClerkShellHome() {
   const { userId } = useAuth();
+  return <ShellHomeBody userId={userId} />;
+}
+
+function ShellHomeBody({ userId }: { userId: string | null | undefined }) {
+  const isMobile = useMobileViewport();
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
   const cacheScope = createShellSnapshotScope({ userId, pathname: cachePathname });
   useTheme({ cacheScope });
