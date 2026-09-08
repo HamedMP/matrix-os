@@ -733,7 +733,7 @@ export default function WorkTab({
   }, [active, chromeSpec, surfaceChromeHost]);
 
   return (
-    <ChatFileNavigationProvider key={`${runtimeSlot}:${authGeneration}:${initialChatId ?? "draft"}`} reveal={openInspector}>
+    <ChatFileNavigationProvider key={`${runtimeSlot}:${authGeneration}`} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatId ?? "draft"}`} reveal={openInspector}>
     <div
       ref={workRef}
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
