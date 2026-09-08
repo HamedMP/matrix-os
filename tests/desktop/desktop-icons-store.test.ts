@@ -71,6 +71,25 @@ describe("native Desktop icon layout", () => {
     expect(useDesktopIcons.getState().icons).toEqual([CHAT]);
   });
 
+  it("coalesces repeated adds until the authoritative write settles", async () => {
+    let rejectPatch!: (error: Error) => void;
+    const patch = new Promise((_, reject) => { rejectPatch = reject; });
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT] })),
+      patch: vi.fn(() => patch),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT]);
+
+    const first = useDesktopIcons.getState().add("apps/sushi-counter/index.html", api as never);
+    const repeated = useDesktopIcons.getState().add("apps/sushi-counter/index.html", api as never);
+    rejectPatch(new Error("offline"));
+
+    await expect(first).resolves.toBe("failed");
+    await expect(repeated).resolves.toBe("failed");
+    expect(api.patch).toHaveBeenCalledOnce();
+    expect(useDesktopIcons.getState().icons).toEqual([CHAT]);
+  });
+
   it("rolls the optimistic layout back when persistence fails", async () => {
     const api = {
       get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),

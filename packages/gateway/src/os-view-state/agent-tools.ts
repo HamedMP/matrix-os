@@ -12,6 +12,7 @@ import { OsViewStateConflictError } from "./repository.js";
 
 const AGENT_DESKTOP_BOUNDS = { width: 1280, height: 640 } as const;
 const MAX_CONFLICT_ATTEMPTS = 3;
+const MAX_PLACEABLE_APPS = 512;
 const SAFE_CATALOG_APP_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/;
 
 export interface PlaceableApp {
@@ -47,6 +48,7 @@ export function createOsViewAgentTools(deps: {
     const result: PlaceableApp[] = OS_VIEW_PLACEABLE_BUILTIN_APPS.map((app) => ({ ...app }));
     const seen = new Set(result.map((app) => app.appId));
     for (const app of await readCatalog()) {
+      if (result.length >= MAX_PLACEABLE_APPS) break;
       const appId = typeof app.slug === "string" ? app.slug : "";
       const path = canonicalOsViewCatalogPath(app);
       if (!SAFE_CATALOG_APP_ID.test(appId) || !path || seen.has(appId)) continue;

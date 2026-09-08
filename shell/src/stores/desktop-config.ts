@@ -68,6 +68,7 @@ let unconfirmedDesktopRollbackIcons: DesktopIconPlacement[] | null = null;
 let deferredDesktopHydration: { icons: DesktopIconPlacement[] | undefined } | null = null;
 let replayableDesktopHydrationRange: { min: number; max: number } | null = null;
 let osViewConflictRetryTimer: ReturnType<typeof setTimeout> | undefined;
+const pendingDesktopAdds = new Map<string, Promise<OsViewDesktopAddResult>>();
 
 export function captureWebDesktopIconsHydrationRevision(): number {
   return desktopIconHydrationRevision;
@@ -86,6 +87,7 @@ export function resetWebDesktopIconsRuntime(): void {
   replayableDesktopHydrationRange = null;
   clearTimeout(osViewConflictRetryTimer);
   osViewConflictRetryTimer = undefined;
+  pendingDesktopAdds.clear();
   useDesktopConfigStore.setState({ desktopIcons: undefined });
 }
 
@@ -274,15 +276,26 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     const next = current.filter((icon) => icon.path !== path);
     applyDesktopIconMutation(current, next, set);
   },
-  addDesktopIcon: async (path, bounds = { width: 1280, height: 640 }) => {
-    const current = get().desktopIcons ?? [];
-    if (!path || path.length > 2048) return "failed";
-    if (current.some((icon) => icon.path === path)) return "already-present";
-    if (current.length >= MAX_DESKTOP_ICONS) return "desktop-full";
-    const slot = findOpenOsViewDesktopSlot(current, bounds);
-    if (!slot) return "desktop-full";
-    const next = [...current, { path, ...slot }];
-    return await applyDesktopIconMutation(current, next, set, true) ? "added" : "failed";
+  addDesktopIcon: (path, bounds = { width: 1280, height: 640 }) => {
+    if (!path || path.length > 2048) return Promise.resolve("failed");
+    const pending = pendingDesktopAdds.get(path);
+    if (pending) return pending;
+    if (pendingDesktopAdds.size >= MAX_DESKTOP_ICONS) return Promise.resolve("failed");
+    const operation = (async (): Promise<OsViewDesktopAddResult> => {
+      const current = get().desktopIcons ?? [];
+      if (current.some((icon) => icon.path === path)) return "already-present";
+      if (current.length >= MAX_DESKTOP_ICONS) return "desktop-full";
+      const slot = findOpenOsViewDesktopSlot(current, bounds);
+      if (!slot) return "desktop-full";
+      const next = [...current, { path, ...slot }];
+      return await applyDesktopIconMutation(current, next, set, true) ? "added" : "failed";
+    })();
+    pendingDesktopAdds.set(path, operation);
+    void operation.then(
+      () => pendingDesktopAdds.delete(path),
+      () => pendingDesktopAdds.delete(path),
+    );
+    return operation;
   },
   togglePin: (path) => {
     const current = get().pinnedApps ?? [];

@@ -358,6 +358,25 @@ describe("Desktop config", () => {
     expect(useDesktopConfigStore.getState().desktopIcons).toEqual(confirmed);
   });
 
+  it("coalesces repeated web Desktop adds until persistence settles", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let resolvePatch!: (response: { ok: boolean; status: number }) => void;
+    const response = new Promise<{ ok: boolean; status: number }>((resolve) => { resolvePatch = resolve; });
+    const mockFetch = vi.fn(() => response);
+    vi.stubGlobal("fetch", mockFetch);
+    const confirmed = [{ path: "__chat__", x: 20, y: 20 }];
+    useDesktopConfigStore.getState().setDesktopIcons(confirmed);
+
+    const first = useDesktopConfigStore.getState().addDesktopIcon("apps/sushi-counter/index.html");
+    const repeated = useDesktopConfigStore.getState().addDesktopIcon("apps/sushi-counter/index.html");
+    resolvePatch({ ok: false, status: 503 });
+
+    await expect(first).resolves.toBe("failed");
+    await expect(repeated).resolves.toBe("failed");
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual(confirmed);
+  });
+
   it("restores the confirmed web Desktop icon layout after a failed PATCH", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));

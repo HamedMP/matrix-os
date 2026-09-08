@@ -73,6 +73,20 @@ describe("shared OS-view contract", () => {
     expect(canonical[1]).toEqual({ path: "apps/offscreen/index.html", x: 20, y: 900 });
   });
 
+  it("preserves every icon in an overflow column when a short viewport cannot fit them all", () => {
+    const canonical = Array.from({ length: 5 }, (_, index) => ({
+      path: `apps/app-${index}/index.html`,
+      x: 20,
+      y: 20 + index * 92,
+    }));
+
+    const fitted = fitOsViewDesktopIconsToViewport(canonical, { width: 180, height: 100 });
+
+    expect(fitted).toHaveLength(canonical.length);
+    expect(new Set(fitted.map((icon) => icon.path)).size).toBe(canonical.length);
+    expect(fitted.some((icon) => icon.x + 64 > 180)).toBe(true);
+  });
+
   it("defines one canonical ten-icon Desktop layout for every renderer", () => {
     expect(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS).toEqual([
       "__chat__",

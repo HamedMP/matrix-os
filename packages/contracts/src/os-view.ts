@@ -160,7 +160,7 @@ export type OsViewDesktopAddResult = "added" | "already-present" | "desktop-full
 export function clampOsViewContextMenuPoint(
   point: { x: number; y: number },
   viewport: { width: number; height: number },
-  menu: { width: number; height: number } = { width: 256, height: 52 },
+  menu: { width: number; height: number } = { width: 256, height: 112 },
 ): { x: number; y: number } {
   const margin = 8;
   return {
@@ -255,7 +255,29 @@ export function fitOsViewDesktopIconsToViewport(
     const slot = findOpenOsViewDesktopSlot(placed, bounds);
     if (slot) {
       placed.push({ ...icon, ...slot });
+      continue;
     }
+    // When the viewport is too small for every icon, keep the full catalog
+    // reachable in overflow columns. Renderers expose this overflow by
+    // scrolling; canonical coordinates remain untouched.
+    const firstOverflowColumn = Math.max(0, Math.ceil(
+      (bounds.width - DEFAULT_DESKTOP_GRID.startX) / DEFAULT_DESKTOP_GRID.columnWidth,
+    ));
+    const displayY = Math.max(0, Math.min(
+      DEFAULT_DESKTOP_GRID.startY,
+      bounds.height - OS_VIEW_DESKTOP_GRID.iconHeight,
+    ));
+    const firstOverflowX = DEFAULT_DESKTOP_GRID.startX
+      + firstOverflowColumn * DEFAULT_DESKTOP_GRID.columnWidth;
+    const furthestPlacedX = placed.reduce(
+      (furthest, existing) => Math.max(furthest, existing.x),
+      firstOverflowX - DEFAULT_DESKTOP_GRID.columnWidth,
+    );
+    placed.push({
+      ...icon,
+      x: Math.max(firstOverflowX, furthestPlacedX + DEFAULT_DESKTOP_GRID.columnWidth),
+      y: displayY,
+    });
   }
   return placed;
 }

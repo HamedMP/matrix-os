@@ -83,6 +83,7 @@ export function Launchpad({
   const [pageIndex, setPageIndex] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ app: AppEntry; x: number; y: number } | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
+  const [placementPending, setPlacementPending] = useState(false);
   const filteredApps = filterLaunchpadApps(orderedApps, query);
 
   // Viewport-derived page size. window is only read inside this effect
@@ -122,6 +123,7 @@ export function Launchpad({
     else {
       setContextMenu(null);
       setContextError(null);
+      setPlacementPending(false);
     }
   }, [visible]);
 
@@ -215,6 +217,7 @@ export function Launchpad({
                   app={app}
                   onLaunch={() => launch(app)}
                   onContextMenu={isOsViewDestinationPath(app.path) ? undefined : (event) => {
+                    if (placementPending) return;
                     const point = clampOsViewContextMenuPoint(
                       { x: event.clientX, y: event.clientY },
                       { width: window.innerWidth, height: window.innerHeight },
@@ -254,9 +257,13 @@ export function Launchpad({
             <button
               type="button"
               role="menuitem"
+              disabled={placementPending}
+              aria-busy={placementPending}
               className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
               onClick={async () => {
+                if (placementPending) return;
                 let result: OsViewDesktopAddResult = "failed";
+                setPlacementPending(true);
                 try {
                   result = await onAddToDesktop(contextMenu.app.path, {
                     width: Math.max(1, window.innerWidth),
@@ -265,6 +272,7 @@ export function Launchpad({
                 } catch (error: unknown) {
                   console.warn("[launchpad] Desktop placement failed:", error instanceof Error ? error.name : "UnknownError");
                 }
+                setPlacementPending(false);
                 if (result === "added" || result === "already-present") {
                   setContextMenu(null);
                   setContextError(null);

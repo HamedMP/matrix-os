@@ -179,4 +179,20 @@ describe("OS-view agent tools", () => {
     await expect(tools.addAppToDesktop("sushi-counter")).resolves.toEqual({ status: "desktop-full" });
     expect(repository.patch).not.toHaveBeenCalled();
   });
+
+  it("caps catalog collection and deduplication work", async () => {
+    const tools = createOsViewAgentTools({
+      repository: { getOrCreate: vi.fn(), patch: vi.fn() } as never,
+      ownerId: "owner_one",
+      homePath: "/unused",
+      listCatalog: async () => Array.from({ length: 700 }, (_, index) => ({
+        slug: `generated-${index}`,
+        name: `Generated ${index}`,
+        file: `generated-${index}/index.html`,
+        path: `/files/apps/generated-${index}/index.html`,
+      })) as never,
+    });
+
+    await expect(tools.listPlaceableApps()).resolves.toHaveLength(512);
+  });
 });

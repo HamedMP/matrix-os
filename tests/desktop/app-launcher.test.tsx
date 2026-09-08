@@ -162,7 +162,7 @@ describe("AppLauncher", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: "Sushi Counter" }), { clientX: 1000, clientY: 760 });
     const menu = screen.getByRole("menu");
     expect(menu.style.left).toBe("760px");
-    expect(menu.style.top).toBe("708px");
+    expect(menu.style.top).toBe("648px");
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" }));
 
     await waitFor(() => expect(onCloseLauncher).toHaveBeenCalledOnce());
@@ -186,10 +186,27 @@ describe("AppLauncher", () => {
       onAddToDesktop={vi.fn(async () => "desktop-full" as const)}
       onCloseLauncher={vi.fn()}
     />);
-    fireEvent.contextMenu(screen.getByRole("button", { name: "Sushi Counter" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Sushi Counter" }), { clientX: 1000, clientY: 760 });
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Desktop is full");
-    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(screen.getByRole("menu").style.top).toBe("648px");
+  });
+
+  it("disables repeated placement while the first request is pending", async () => {
+    let resolvePlacement!: (result: "failed") => void;
+    const placement = new Promise<"failed">((resolve) => { resolvePlacement = resolve; });
+    const onAddToDesktop = vi.fn(() => placement);
+    render(<AppLauncher presentation="launchpad" onAddToDesktop={onAddToDesktop} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Sushi Counter" }));
+    const action = screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" });
+
+    fireEvent.click(action);
+    fireEvent.click(action);
+
+    expect((action as HTMLButtonElement).disabled).toBe(true);
+    expect(onAddToDesktop).toHaveBeenCalledOnce();
+    resolvePlacement("failed");
+    expect((await screen.findByRole("alert")).textContent).toContain("Could not add");
   });
 
   it("keeps the focused launcher search field free of a nested focus ring", () => {

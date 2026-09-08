@@ -88,6 +88,7 @@ let unconfirmedHydrationRevision: number | null = null;
 let unconfirmedRollbackIcons: DesktopIconPlacement[] | null = null;
 let deferredHydrationIcons: DesktopIconPlacement[] | null = null;
 let replayableHydrationRange: { min: number; max: number } | null = null;
+const pendingDesktopAdds = new Map<string, Promise<OsViewDesktopAddResult>>();
 
 function copyIcons(icons: readonly DesktopIconPlacement[]): DesktopIconPlacement[] {
   return icons.map((icon) => ({ ...icon }));
@@ -106,6 +107,7 @@ export function resetDesktopIconsRuntime(): void {
   unconfirmedRollbackIcons = null;
   deferredHydrationIcons = null;
   replayableHydrationRange = null;
+  pendingDesktopAdds.clear();
   useDesktopIcons.setState({ icons: [], loaded: false });
 }
 
@@ -384,14 +386,25 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     const next = current.filter((icon) => icon.path !== path);
     await applyOptimisticMutation(api, current, next, set);
   },
-  add: async (path, api, bounds = DEFAULT_DESKTOP_BOUNDS) => {
-    const current = get().icons;
-    if (!path || path.length > 2048) return "failed";
-    if (current.some((icon) => icon.path === path)) return "already-present";
-    if (current.length >= MAX_DESKTOP_ICONS) return "desktop-full";
-    const slot = findOpenOsViewDesktopSlot(current, bounds);
-    if (!slot) return "desktop-full";
-    const next = [...current, { path, ...slot }];
-    return await applyOptimisticMutation(api, current, next, set, true) ? "added" : "failed";
+  add: (path, api, bounds = DEFAULT_DESKTOP_BOUNDS) => {
+    if (!path || path.length > 2048) return Promise.resolve("failed");
+    const pending = pendingDesktopAdds.get(path);
+    if (pending) return pending;
+    if (pendingDesktopAdds.size >= MAX_DESKTOP_ICONS) return Promise.resolve("failed");
+    const operation = (async (): Promise<OsViewDesktopAddResult> => {
+      const current = get().icons;
+      if (current.some((icon) => icon.path === path)) return "already-present";
+      if (current.length >= MAX_DESKTOP_ICONS) return "desktop-full";
+      const slot = findOpenOsViewDesktopSlot(current, bounds);
+      if (!slot) return "desktop-full";
+      const next = [...current, { path, ...slot }];
+      return await applyOptimisticMutation(api, current, next, set, true) ? "added" : "failed";
+    })();
+    pendingDesktopAdds.set(path, operation);
+    void operation.then(
+      () => pendingDesktopAdds.delete(path),
+      () => pendingDesktopAdds.delete(path),
+    );
+    return operation;
   },
 }));

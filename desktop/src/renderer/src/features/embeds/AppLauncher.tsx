@@ -104,6 +104,7 @@ export default function AppLauncher({
   const [active, setActive] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ entry: LauncherEntry; x: number; y: number } | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
+  const [placementPending, setPlacementPending] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Launcher behavior: focus the search immediately like a desktop launcher.
@@ -112,6 +113,7 @@ export default function AppLauncher({
     else {
       setContextMenu(null);
       setContextError(null);
+      setPlacementPending(false);
     }
   }, [launcherActive]);
 
@@ -315,6 +317,7 @@ export default function AppLauncher({
                   onMouseEnter={() => setActive(i)}
                   onContextMenu={(event) => {
                     if (entry.type === "create" || entry.type === "os-view") return;
+                    if (placementPending) return;
                     event.preventDefault();
                     const point = clampOsViewContextMenuPoint(
                       { x: event.clientX, y: event.clientY },
@@ -368,8 +371,11 @@ export default function AppLauncher({
             <button
               type="button"
               role="menuitem"
+              disabled={placementPending}
+              aria-busy={placementPending}
               className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--bg-hover)]"
               onClick={async () => {
+                if (placementPending) return;
                 const entry = contextMenu.entry;
                 if (entry.type === "create" || entry.type === "os-view") return;
                 const path = entry.app.path;
@@ -378,6 +384,7 @@ export default function AppLauncher({
                   return;
                 }
                 let result: OsViewDesktopAddResult = "failed";
+                setPlacementPending(true);
                 try {
                   result = await onAddToDesktop(path, {
                     width: Math.max(1, window.innerWidth),
@@ -386,6 +393,7 @@ export default function AppLauncher({
                 } catch (error: unknown) {
                   console.warn("[app-launcher] Desktop placement failed:", error instanceof Error ? error.name : "UnknownError");
                 }
+                setPlacementPending(false);
                 if (result === "added" || result === "already-present") {
                   setContextMenu(null);
                   setContextError(null);

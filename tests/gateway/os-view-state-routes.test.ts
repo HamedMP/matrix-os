@@ -8,7 +8,7 @@ function appFor(repository: {
   getOrCreate: ReturnType<typeof vi.fn>;
   patch: ReturnType<typeof vi.fn>;
   importLegacyDesktop: ReturnType<typeof vi.fn>;
-}, ownerId = "owner-1", onChanged?: (state: OsViewStateResponse) => void) {
+}, ownerId = "owner-1", onChanged?: (ownerId: string, state: OsViewStateResponse) => void) {
   const app = new Hono();
   app.route("/api/os-view-state", createOsViewStateRoutes({ repository, getOwnerId: () => ownerId, onChanged }));
   return app;
@@ -61,7 +61,7 @@ describe("OS-view state routes", () => {
       }),
     });
     expect(response.status).toBe(200);
-    expect(onChanged).toHaveBeenCalledWith(updated);
+    expect(onChanged).toHaveBeenCalledWith("owner-1", updated);
   });
 
   it("maps optimistic conflicts without leaking database details", async () => {

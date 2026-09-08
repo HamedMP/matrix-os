@@ -40,7 +40,7 @@ export default function DesktopIconGrid({
     <nav
       ref={layerRef}
       aria-label="Desktop apps"
-      className="pointer-events-none absolute inset-0"
+      className="pointer-events-none absolute inset-0 overflow-auto"
       style={{ zIndex: DESKTOP_Z_INDEX.nativeDesktopIcons }}
     >
       {placements.map((placement) => {

@@ -273,7 +273,7 @@ describe("Launchpad (macos-glass launcher)", () => {
 
     fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }), { clientX: 1000, clientY: 760 });
     expect(screen.getByRole("menu").style.left).toBe("760px");
-    expect(screen.getByRole("menu").style.top).toBe("708px");
+    expect(screen.getByRole("menu").style.top).toBe("648px");
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
 
     await waitFor(() => expect(handlers.onClose).toHaveBeenCalledOnce());

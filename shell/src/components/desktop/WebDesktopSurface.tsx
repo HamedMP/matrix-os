@@ -329,7 +329,7 @@ export function WebDesktopSurface({
 
       <nav
         aria-label="Desktop apps"
-        className="pointer-events-auto absolute inset-0"
+        className="pointer-events-auto absolute inset-0 overflow-auto"
         style={{ zIndex: SHELL_Z_INDEX.desktopIcons }}
       >
         {placedApps.map(({ app, placement }) => (
