@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, open, readFile, readdir, readlink, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, readFile, readdir, readlink, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { lookup } from "node:dns/promises";
 
@@ -68,11 +69,13 @@ function errorCode(error: unknown): string {
 
 async function pathIsUnavailable(path: string): Promise<Check> {
   try {
-    await lstat(path);
-    return check(`filesystem:${path}`, false, "visible");
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    await handle.close();
+    return check(`filesystem:${path}`, false, "readable");
   } catch (error: unknown) {
     const code = errorCode(error);
-    return check(`filesystem:${path}`, code === "enoent" || code === "eacces", code);
+    const unavailable = ["eacces", "enodev", "enoent", "enotdir", "enxio", "eperm"].includes(code);
+    return check(`filesystem:${path}`, unavailable, code);
   }
 }
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const acceptancePath = "scripts/spikes/collaboration/native-isolation-acceptance.sh";
 const brokerFixturePath = "scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs";
+const probePath = "scripts/spikes/collaboration/scope-runtime-probe.ts";
 const sdkProbePath = "scripts/spikes/collaboration/scope-runtime-sdk-probe.mjs";
 
 describe("collaboration scope-runtime native isolation spike", () => {
@@ -127,5 +128,13 @@ describe("collaboration scope-runtime native isolation spike", () => {
     expect(sdkProbe).toContain('action: "host.fetch"');
     expect(sdkProbe).not.toContain("targetUrl");
     expect(sdkProbe).not.toContain("command:");
+  });
+
+  it("tests forbidden path access rather than rejecting protected mount placeholders", async () => {
+    const source = await readFile(probePath, "utf8");
+
+    expect(source).toContain("constants.O_NOFOLLOW");
+    expect(source).toContain("await handle.close()");
+    expect(source).not.toContain("await lstat(path)");
   });
 });
