@@ -50,6 +50,50 @@ async function tick(ms = 0) {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Web Desktop and Web Mobile shared Chat refresh", () => {
+  it.each(["focus", "stream"])("keeps an intentional new Chat empty after a %s list refresh", async (trigger) => {
+    vi.useFakeTimers();
+    const h = harness();
+    const hook = renderHook(() => useCanonicalChatState());
+    try {
+      await tick();
+      expect(hook.result.current.sessionId).toBe(record.chat.id);
+      await act(async () => { await hook.result.current.newChat(); });
+      h.list.mockImplementation(async () => Response.json({ items: [{
+        ...record, chat: { ...record.chat, title: "Refreshed list" },
+      }] }));
+      if (trigger === "focus") {
+        act(() => { window.dispatchEvent(new Event("focus")); });
+      } else {
+        h.emit(2, "run.completed");
+      }
+      await tick(250);
+      expect(hook.result.current.conversations[0]?.title).toBe("Refreshed list");
+      expect(hook.result.current.sessionId).toBeUndefined();
+      expect(hook.result.current.messages).toEqual([]);
+      expect(hook.result.current.busy).toBe(false);
+      act(() => { hook.result.current.switchConversation(record.chat.id); });
+      await tick();
+      expect(hook.result.current.messages[0]?.content).toBe("Before");
+    } finally { hook.unmount(); }
+  });
+
+  it("does not restore history when the initial list arrives after New chat", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    let resolveList!: (response: Response) => void;
+    h.list.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveList = resolve; }));
+    const hook = renderHook(() => useCanonicalChatState());
+    try {
+      await tick();
+      await act(async () => { await hook.result.current.newChat(); });
+      await act(async () => { resolveList(Response.json({ items: [record] })); });
+      await tick();
+      expect(hook.result.current.conversations[0]?.id).toBe(record.chat.id);
+      expect(hook.result.current.sessionId).toBeUndefined();
+      expect(hook.result.current.messages).toEqual([]);
+    } finally { hook.unmount(); }
+  });
+
   it("applies slow snapshots during continuous events without concurrent detail requests", async () => {
     vi.useFakeTimers();
     const h = harness();
