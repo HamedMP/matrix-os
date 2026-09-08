@@ -1,6 +1,7 @@
 import { CollaborationDirectoryEventSchema } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 
 const BATCH_SIZE = 25;
 const MAX_ATTEMPTS = 20;
@@ -37,7 +38,7 @@ export class CollaborationDirectoryOutbox {
     now?: () => Date;
     startTimer?: boolean;
   }) {
-    const baseUrl = requireBaseUrl(options.platformBaseUrl);
+    const baseUrl = requireSecureCollaborationPlatformBaseUrl(options.platformBaseUrl);
     if (Buffer.byteLength(options.serviceToken) < 32) {
       throw new Error("Collaboration directory service token is unavailable");
     }
@@ -204,20 +205,4 @@ function parseActorIds(value: unknown): string[] {
 
 function backoffMs(attempt: number): number {
   return Math.min(MAX_BACKOFF_MS, 1_000 * (2 ** Math.min(attempt - 1, 6)));
-}
-
-function requireBaseUrl(value: string): URL {
-  try {
-    const url = new URL(value);
-    if (!url.hostname || !["https:", "http:"].includes(url.protocol)
-      || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
-      throw new Error("invalid base URL");
-    }
-    return url;
-  } catch (error: unknown) {
-    if (!(error instanceof TypeError || error instanceof Error)) {
-      console.warn("[collaboration-directory] URL parse failed", "UnknownError");
-    }
-    throw new Error("Collaboration platform URL is unavailable");
-  }
 }

@@ -25,6 +25,29 @@ describe("CollaborationDirectoryOutbox", () => {
     await fixture.destroy();
   });
 
+  it("never sends its service token over remote cleartext HTTP", async () => {
+    const fetchImpl = vi.fn();
+    expect(() => new CollaborationDirectoryOutbox({
+      db: fixture.db,
+      platformBaseUrl: "http://platform.internal",
+      runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef",
+      fetchImpl,
+      startTimer: false,
+    })).toThrow("Collaboration platform URL is unavailable");
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    const loopback = new CollaborationDirectoryOutbox({
+      db: fixture.db,
+      platformBaseUrl: "http://localhost:8787",
+      runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef",
+      fetchImpl,
+      startTimer: false,
+    });
+    await loopback.shutdown();
+  });
+
   it("delivers bounded content-free directory metadata and marks it after success", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({ revision: 9 })
       .where("id", "=", collaborationIds.scope).execute();

@@ -3,6 +3,7 @@ import {
   CollaborationParticipantSchema,
   CollaborationRuntimeIdSchema,
 } from "@matrix-os/contracts";
+import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 8 * 1024;
@@ -34,7 +35,7 @@ export class CollaborationParticipantResolver {
     fetchImpl?: typeof fetch;
     now?: () => Date;
   }) {
-    const baseUrl = requireBaseUrl(options.platformBaseUrl);
+    const baseUrl = requireSecureCollaborationPlatformBaseUrl(options.platformBaseUrl);
     CollaborationRuntimeIdSchema.parse(options.runtimeId);
     if (Buffer.byteLength(options.serviceToken) < 32) {
       throw new Error("Collaboration participant service token is unavailable");
@@ -133,21 +134,5 @@ async function readBounded(response: Response, maxBytes: number): Promise<Uint8A
     return output;
   } finally {
     reader.releaseLock();
-  }
-}
-
-function requireBaseUrl(value: string): URL {
-  try {
-    const url = new URL(value);
-    if (!url.hostname || !["https:", "http:"].includes(url.protocol)
-      || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
-      throw new Error("invalid base URL");
-    }
-    return url;
-  } catch (error: unknown) {
-    if (!(error instanceof TypeError || error instanceof Error)) {
-      console.warn("[collaboration-participant] URL parse failed", "UnknownError");
-    }
-    throw new Error("Collaboration platform URL is unavailable");
   }
 }
