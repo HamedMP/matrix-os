@@ -25,6 +25,8 @@ describe("collaboration scope-runtime native isolation spike", () => {
 
     expect(source).toContain("run_unrestricted_baseline");
     expect(source).toContain("cd /tmp");
+    expect(source).toContain("--reuid=matrix");
+    expect(source).toContain("MATRIX_SCOPE_PROBE_OWNER_SECRET=baseline-leak");
     expect(source).toContain("baseline unexpectedly passed");
     expect(source).toContain("run_fixed_profile_candidate");
     expect(source.indexOf("run_unrestricted_baseline")).toBeLessThan(

@@ -142,9 +142,9 @@ fi
 run_unrestricted_baseline() (
   cd /tmp
   exec /usr/bin/setpriv \
-    --reuid="$scope_uid" \
-    --regid="$scope_gid" \
-    --clear-groups \
+    --reuid=matrix \
+    --regid=matrix \
+    --init-groups \
     --inh-caps=-all \
     --ambient-caps=-all \
     --bounding-set=-all \
