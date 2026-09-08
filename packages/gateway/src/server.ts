@@ -181,6 +181,9 @@ import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/no
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
+import { createChatIdleReaper } from "./coding-agents/chat-idle-reaper.js";
+import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
+import { terminalTasksUnderPressure } from "./shell/terminal-runtime-capacity.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -1012,6 +1015,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let chatRepository: ChatRepository | null = null;
+  let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
   let canonicalChatEventStream: ReturnType<typeof createCanonicalChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
@@ -4418,6 +4422,22 @@ export async function createGateway(config: GatewayConfig) {
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
+    if (userSystemdTerminalController && codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
+      const repository = chatRepository;
+      const bridge = codexEventBridge;
+      const uid = process.getuid?.();
+      chatIdleReaper = createChatIdleReaper({
+        controller: userSystemdTerminalController,
+        sessions: codingAgentWorkspaceRuntime,
+        threads: codingAgentThreadStore,
+        control: createCodexControlClient({ homePath }),
+        admitCanonical: (identity, reclaim) => withCanonicalIdleChat(repository.kysely, identity, reclaim),
+        unwatch: (sessionId) => bridge.unwatch(sessionId),
+        underPressure: () => terminalTasksUnderPressure(
+          `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/matrix.slice/matrix-terminal.slice`,
+        ),
+      });
+    }
   }
   if (canonicalChatEventStream) {
     registerCanonicalChatEventWebSocketRoute({
@@ -4743,6 +4763,10 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await chatIdleReaper?.close().catch((error: unknown) => {
+        logBestEffortFailure("Chat idle runtime reconciliation shutdown failed", error);
+      });
+      chatIdleReaper = null;
       chatAttachmentCleanup.close();
       await chatAttachmentCleanup.waitForIdle().catch((error: unknown) => {
         logBestEffortFailure("Temporary Chat attachment cleanup shutdown failed", error);

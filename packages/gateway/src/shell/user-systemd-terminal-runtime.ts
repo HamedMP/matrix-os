@@ -24,6 +24,8 @@ const DescriptorSchema = z.object({
   environmentPath: z.string().min(1).max(4096).optional(),
   generation: GenerationSchema,
   createdAt: z.iso.datetime(),
+  // A durable stop intent. Cold recovery must replace this descriptor before the keeper may start it.
+  hibernatedAt: z.iso.datetime().optional(),
 }).strict();
 
 export type UserSystemdTerminalDescriptor = z.infer<typeof DescriptorSchema>;
@@ -569,6 +571,20 @@ export function createUserSystemdTerminalRuntime(options: {
     await waitUntilReady(descriptor);
   }
 
+  async function isSettledInactive(runtimeId: string): Promise<boolean> {
+    try {
+      const { stdout } = await runSystemctl(["is-active", unitName(runtimeId)]);
+      return ["inactive", "failed", "unknown"].includes(stdout.trim());
+    } catch (error: unknown) {
+      if (!(error instanceof Error && "code" in error)) throw error;
+      if (error.code === 4 || error.code === "4") return true;
+      if ((error.code === 3 || error.code === "3") && "stdout" in error && typeof error.stdout === "string") {
+        return ["inactive", "failed"].includes(error.stdout.trim());
+      }
+      throw error;
+    }
+  }
+
   async function deleteExactZellijSession(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
     const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
     try {
@@ -605,7 +621,7 @@ export function createUserSystemdTerminalRuntime(options: {
       }
     },
 
-    async create(input: CreateUserSystemdRuntimeInput): Promise<UserSystemdRuntimeResult> {
+    async create(input: CreateUserSystemdRuntimeInput, recovery: { replaceInactiveWorkspace?: boolean } = {}): Promise<UserSystemdRuntimeResult> {
       const parsed = z.object({
         runtimeId: RuntimeIdSchema,
         scope: RuntimeScopeSchema,
@@ -651,10 +667,36 @@ export function createUserSystemdTerminalRuntime(options: {
         ) {
           throw new TerminalRuntimeUnavailableError();
         }
-        const persisted = await writeDescriptorExclusive(
-          join(descriptorRoot, `${descriptor.runtimeId}.json`),
-          descriptor,
-        );
+        const path = join(descriptorRoot, `${descriptor.runtimeId}.json`);
+        const existing = descriptors.find((entry) => entry.runtimeId === descriptor.runtimeId);
+        let persisted: UserSystemdTerminalDescriptor;
+        if (recovery.replaceInactiveWorkspace && existing) {
+          if (existing.scope !== "workspace" || descriptor.scope !== "workspace"
+            || existing.displayName !== descriptor.displayName || existing.cwd !== descriptor.cwd
+            || existing.kind !== descriptor.kind || !await isSettledInactive(descriptor.runtimeId)) {
+            throw new TerminalRuntimeUnavailableError();
+          }
+          await deleteExactZellijSession(existing);
+          await writeDescriptorAtomic(path, descriptor);
+          // Superseded OS-generated launch files are no longer referenced by the durable descriptor.
+          // Never remove user layouts, shared environment files, or any conversation/workspace data.
+          for (const [oldPath, nextPath, root, extension] of [
+            [existing.layoutPath, descriptor.layoutPath, join(homePath, "system", "zellij", "runtime-layouts"), ".kdl"],
+            [existing.environmentPath, descriptor.environmentPath, join(descriptorRoot, "env"), ".json"],
+          ]) {
+            if (!oldPath || oldPath === nextPath || dirname(oldPath) !== root
+              || !basename(oldPath).startsWith(`${descriptor.runtimeId}-`) || !oldPath.endsWith(extension!)) continue;
+            try { await removePath(oldPath); }
+            catch (cleanupError: unknown) {
+              console.warn("[terminal-runtime] superseded launch cleanup deferred", {
+                errorType: cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+              });
+            }
+          }
+          persisted = descriptor;
+        } else {
+          persisted = await writeDescriptorExclusive(path, descriptor);
+        }
         await startInterruptedRuntime(persisted);
         return { ...persisted, lifecycle: "running" };
       });
@@ -664,6 +706,7 @@ export function createUserSystemdTerminalRuntime(options: {
       return withMutationLock(async () => {
         const descriptor = await readDescriptor(runtimeId);
         if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
+        if (descriptor.hibernatedAt) throw new TerminalRuntimeUnavailableError();
         await startInterruptedRuntime(descriptor);
         return { ...descriptor, lifecycle: "running" };
       });
@@ -709,6 +752,27 @@ export function createUserSystemdTerminalRuntime(options: {
     },
 
     isRunning,
+
+    // Hibernation is not session deletion: keep the descriptor, owner files and worktree leases.
+    async hibernateWorkspace(runtimeId: string, expected?: Pick<UserSystemdTerminalDescriptor, "createdAt" | "layoutPath">): Promise<{ ok: true }> {
+      return withMutationLock(async () => {
+        const descriptor = await readDescriptor(runtimeId);
+        if (!descriptor || descriptor.scope !== "workspace" || !/^sess_[A-Za-z0-9_-]+$/.test(descriptor.displayName)) {
+          throw new InvalidTerminalRuntimeRequestError();
+        }
+        if (expected && (descriptor.createdAt !== expected.createdAt || descriptor.layoutPath !== expected.layoutPath)) {
+          throw new TerminalRuntimeUnavailableError();
+        }
+        if (!descriptor.hibernatedAt) {
+          await writeDescriptorAtomic(join(descriptorRoot, `${descriptor.runtimeId}.json`), { ...descriptor, hibernatedAt: now() });
+        }
+        await runSystemctl(["stop", unitName(descriptor.runtimeId)]);
+        if (!await isSettledInactive(descriptor.runtimeId)) throw new TerminalRuntimeUnavailableError();
+        // Remove only Zellij's exited runtime snapshot, preventing resurrection of the old prompt.
+        await deleteExactZellijSession(descriptor);
+        return { ok: true };
+      });
+    },
 
     async renameDisplayName(runtimeId: string, displayName: string): Promise<UserSystemdTerminalDescriptor> {
       const parsedName = DisplayNameSchema.safeParse(displayName);

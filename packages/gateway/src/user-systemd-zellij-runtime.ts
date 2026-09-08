@@ -148,15 +148,21 @@ export function createUserSystemdZellijRuntime(options: {
       await writeImmutableFileExclusive(environmentPath, environmentContent, 64 * 1024);
       let descriptor;
       try {
-        descriptor = await options.controller.create({
+        const createInput = {
           runtimeId,
-          scope: "workspace",
-          kind: input.launch.command === "bash" ? "shell" : "agent",
+          scope: "workspace" as const,
+          kind: input.launch.command === "bash" ? "shell" as const : "agent" as const,
           displayName: input.sessionId,
           cwd: input.launch.cwd,
           layoutPath,
           environmentPath,
-        });
+        };
+        const existing = await options.controller.get(runtimeId);
+        // A repeated start is a new prompt, not proof it was delivered to an existing live runner.
+        // The controller verifies settled inactivity again while holding its mutation lock.
+        descriptor = existing
+          ? await options.controller.create(createInput, { replaceInactiveWorkspace: true })
+          : await options.controller.create(createInput);
       } catch (err: unknown) {
         let persisted: UserSystemdTerminalDescriptor | null;
         try {

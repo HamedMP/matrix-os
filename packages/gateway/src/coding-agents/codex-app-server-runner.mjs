@@ -10,6 +10,7 @@ import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
+import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -291,6 +292,7 @@ const SteerControlSchema = z.object({
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
 const ControlSchema = z.discriminatedUnion("type", [
+  CodexHibernateControlSchema,
   TurnControlSchema,
   SteerControlSchema,
   InterruptControlSchema,
@@ -372,6 +374,12 @@ const pendingApprovals = new Map();
 const sessionApprovalGrants = createCodexSessionApprovalGrants();
 const pendingInputs = new Map();
 const completedControls = new Map();
+const idleHibernation = createCodexIdleHibernation(() => ({
+  providerThreadId: nativeThreadId, completedTurns: terminalEventCount,
+  active: activeTurn || stopping,
+  pending: pendingTurns.length + pendingApprovals.size + pendingInputs.size + pendingRpc.size,
+  otherControls: controlSockets.size > 1,
+}));
 const assistantItemsWithDelta = new Set();
 const assistantDeltaBuffers = new Map();
 const startedToolItems = new Set();
@@ -926,7 +934,7 @@ async function discardProviderErrors(stream) {
 }
 
 function controlResponse(socket, value) {
-  socket.end(`${JSON.stringify(value)}\n`);
+  socket.end(`${JSON.stringify(value)}\n`, () => { if (idleHibernation.closing) stop(); });
 }
 
 async function steerActiveTurn(control) {
@@ -970,6 +978,8 @@ async function steerActiveTurn(control) {
 }
 
 async function applyControl(control) {
+  if (control.type === "hibernate") return { ok: idleHibernation.prepare(control.providerThreadId) };
+  if (idleHibernation.closing) return { ok: false };
   const replay = completedControls.get(control.clientRequestId);
   if (replay) {
     const same = replay.fingerprint === digest([control]);
@@ -1122,7 +1132,7 @@ function enqueueTurn(line) {
 }
 
 function enqueuePendingTurn(turn) {
-  if (pendingTurns.length >= MAX_PENDING_TURNS) return false;
+  if (idleHibernation.closing || stopping || pendingTurns.length >= MAX_PENDING_TURNS) return false;
   pendingTurns.push(turn);
   wakeTurn?.();
   wakeTurn = undefined;
@@ -1200,7 +1210,7 @@ async function finishTurn(outcome) {
     await persist({
       type: "matrix.codex.tool.completed",
       toolCallId,
-      outcome: executionExpired ? "failed" : "cancelled",
+      outcome: outcome === "failed" ? "failed" : "cancelled",
     });
     startedToolItems.delete(toolCallId);
     toolItemsWithOutput.delete(toolCallId);
@@ -1301,6 +1311,10 @@ try {
   });
   nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
+  if (config.providerThreadId && nativeThreadId !== config.providerThreadId) {
+    throw new Error("provider_resume_identity_mismatch");
+  }
+  await persist({ type: "thread.started", thread_id: nativeThreadId });
   let turn = PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,

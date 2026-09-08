@@ -160,6 +160,106 @@ describe("user-systemd terminal runtime", () => {
     expect(runCommand.mock.calls.some(([, args]) => args.includes("stop"))).toBe(false);
   });
 
+  it("hibernates only a managed workspace runtime while retaining its files and descriptor", async () => {
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => ({ stdout: args.includes("is-active") ? "inactive\n" : "", stderr: "" }));
+    const runtime = createUserSystemdTerminalRuntime({ homePath, uid: 1001, generation: GENERATION,
+      runCommand, readinessProbe: async () => true });
+    await runtime.create({ runtimeId: RUNTIME_ID, scope: "workspace", kind: "agent", displayName: "sess_test", cwd, layoutPath });
+    const ownerFile = join(cwd, "user.txt");
+    await writeFile(ownerFile, "keep my work");
+    runCommand.mockClear();
+    await expect(runtime.hibernateWorkspace(RUNTIME_ID)).resolves.toEqual({ ok: true });
+    expect(await readFile(ownerFile, "utf8")).toBe("keep my work");
+    expect(await runtime.get(RUNTIME_ID)).toMatchObject({ scope: "workspace", cwd, layoutPath, hibernatedAt: expect.any(String) });
+    await expect(runtime.start(RUNTIME_ID)).rejects.toThrow("Terminal runtime unavailable");
+    expect(runCommand.mock.calls.some(([, args]) => args.includes("stop") && args.includes(`matrix-zellij@${RUNTIME_ID}.service`))).toBe(true);
+    await expect(runtime.hibernateWorkspace(RUNTIME_ID)).resolves.toEqual({ ok: true });
+  });
+
+  it("refuses to hibernate independent Terminal sessions", async () => {
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
+    const runtime = createUserSystemdTerminalRuntime({ homePath, uid: 1001, generation: GENERATION,
+      runCommand, readinessProbe: async () => true });
+    await runtime.create({ runtimeId: RUNTIME_ID, scope: "terminal", kind: "shell", displayName: "My terminal", cwd, layoutPath });
+    runCommand.mockClear();
+    await expect(runtime.hibernateWorkspace(RUNTIME_ID)).rejects.toThrow();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a failed stop after restart without replaying the original prompt", async () => {
+    let failStop = true;
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => {
+      if (args.includes("stop") && failStop) throw new Error("temporary systemd outage");
+      return { stdout: args.includes("is-active") ? "inactive\n" : "", stderr: "" };
+    });
+    const options = { homePath, uid: 1001, generation: GENERATION, runCommand, readinessProbe: async () => true };
+    const runtime = createUserSystemdTerminalRuntime(options);
+    await runtime.create({ runtimeId: RUNTIME_ID, scope: "workspace", kind: "agent", displayName: "sess_test", cwd, layoutPath });
+    await expect(runtime.hibernateWorkspace(RUNTIME_ID)).rejects.toThrow();
+    const restarted = createUserSystemdTerminalRuntime(options);
+    expect((await restarted.get(RUNTIME_ID))?.hibernatedAt).toBeDefined();
+    await expect(restarted.start(RUNTIME_ID)).rejects.toThrow();
+    failStop = false;
+    await expect(restarted.hibernateWorkspace(RUNTIME_ID)).resolves.toEqual({ ok: true });
+    expect(await readFile(layoutPath, "utf8")).toBeTruthy();
+  });
+
+  it("rejects a stale idle admission after the same runtime ID was rebound", async () => {
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => ({ stdout: args.includes("is-active") ? "inactive\n" : "", stderr: "" }));
+    let createdAt = "2026-09-08T00:00:00.000Z";
+    const runtime = createUserSystemdTerminalRuntime({ homePath, uid: 1001, generation: GENERATION,
+      runCommand, readinessProbe: async () => true, now: () => createdAt });
+    const input = { runtimeId: RUNTIME_ID, scope: "workspace" as const, kind: "agent" as const, displayName: "sess_test", cwd, layoutPath };
+    const old = await runtime.create(input);
+    createdAt = "2026-09-08T00:01:00.000Z";
+    await runtime.create(input, { replaceInactiveWorkspace: true });
+    runCommand.mockClear();
+    await expect(runtime.hibernateWorkspace(RUNTIME_ID, old)).rejects.toThrow();
+    expect(runCommand).not.toHaveBeenCalled();
+    expect((await runtime.get(RUNTIME_ID))?.hibernatedAt).toBeUndefined();
+  });
+
+  it("rebinds an explicitly recovered inactive workspace to the new launch without replaying its old layout", async () => {
+    let state = "inactive";
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => ({ stdout: args.includes("is-active") ? `${state}\n` : "", stderr: "" }));
+    const runtime = createUserSystemdTerminalRuntime({ homePath, uid: 1001, generation: GENERATION,
+      runCommand, readinessProbe: async () => true });
+    const input = { runtimeId: RUNTIME_ID, scope: "workspace" as const, kind: "agent" as const, displayName: "sess_test", cwd, layoutPath };
+    await runtime.create(input);
+    const newLayoutPath = join(homePath, "system", "zellij", "layouts", "resume.kdl");
+    await writeFile(newLayoutPath, "layout { pane }\n");
+    await runtime.create({ ...input, layoutPath: newLayoutPath }, { replaceInactiveWorkspace: true });
+    expect(await runtime.get(RUNTIME_ID)).toMatchObject({ layoutPath: newLayoutPath });
+    for (state of ["active", "activating", "deactivating"]) {
+      await expect(runtime.create(input, { replaceInactiveWorkspace: true })).rejects.toThrow();
+    }
+    expect(await runtime.get(RUNTIME_ID)).toMatchObject({ layoutPath: newLayoutPath });
+  });
+
+  it("reclaims only superseded generated launch artifacts during cold recovery", async () => {
+    const runtime = createUserSystemdTerminalRuntime({ homePath, uid: 1001, generation: GENERATION,
+      runCommand: async (_command, args) => ({ stdout: args.includes("is-active") ? "inactive\n" : "", stderr: "" }),
+      readinessProbe: async () => true });
+    const generatedRoot = join(homePath, "system", "zellij", "runtime-layouts");
+    const environmentRoot = join(homePath, "system", "terminal-runtimes", "env");
+    await mkdir(generatedRoot, { recursive: true });
+    await mkdir(environmentRoot, { recursive: true });
+    const oldLayout = join(generatedRoot, `${RUNTIME_ID}-0123456789abcdef.kdl`);
+    const oldEnvironment = join(environmentRoot, `${RUNTIME_ID}-0123456789abcdef.json`);
+    const nextLayout = join(generatedRoot, `${RUNTIME_ID}-fedcba9876543210.kdl`);
+    await writeFile(oldLayout, "old prompt");
+    await writeFile(nextLayout, "new prompt");
+    await writeFile(oldEnvironment, "{}");
+    const input = { runtimeId: RUNTIME_ID, scope: "workspace" as const, kind: "agent" as const, displayName: "sess_test", cwd,
+      layoutPath: oldLayout, environmentPath: oldEnvironment };
+    await runtime.create(input);
+    await runtime.create({ ...input, layoutPath: nextLayout }, { replaceInactiveWorkspace: true });
+    await expect(readFile(oldLayout)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(oldEnvironment, "utf8")).toBe("{}");
+    expect(await readFile(nextLayout, "utf8")).toBe("new prompt");
+    expect(await readFile(layoutPath, "utf8")).toBeTruthy();
+  });
+
   it("creates an owner descriptor atomically and starts only the derived user unit", async () => {
     const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
     const runtime = createUserSystemdTerminalRuntime({

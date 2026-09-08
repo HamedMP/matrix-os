@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUserSystemdZellijRuntime, workspaceRuntimeId } from "../../packages/gateway/src/user-systemd-zellij-runtime.js";
 import type { ZellijAdapter } from "../../packages/gateway/src/shell/zellij.js";
+import { createUserSystemdTerminalRuntime } from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
 
 const GENERATION = "gen_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const SESSION_ID = "sess_demo";
@@ -40,6 +41,22 @@ describe("user-systemd workspace Zellij runtime", () => {
     expect(workspaceRuntimeId(SESSION_ID)).toBe(workspaceRuntimeId(SESSION_ID));
     expect(workspaceRuntimeId(SESSION_ID)).toMatch(/^rt_[0-9a-f]{32}$/);
     expect(workspaceRuntimeId("sess_other")).not.toBe(workspaceRuntimeId(SESSION_ID));
+  });
+
+  it("cold-recovers a retained inactive descriptor using the next prompt's fresh layout", async () => {
+    const controller = createUserSystemdTerminalRuntime({ homePath, generation: GENERATION,
+      runCommand: async (_command, args) => ({ stdout: args.includes("is-active") ? "inactive\n" : "", stderr: "" }),
+      readinessProbe: async () => true });
+    const layoutPath = join(homePath, "system", "zellij", "layouts", `${SESSION_ID}.kdl`);
+    const runtime = createUserSystemdZellijRuntime({ homePath, generation: GENERATION, controller,
+      layoutRuntime: { generateLayout: async () => ({ sessionName: SESSION_ID, layoutPath }) }, baseAdapter: fakeAdapter() });
+    const launch = { command: "codex", args: [], cwd: homePath, env: {} };
+    const first = await runtime.start({ sessionId: SESSION_ID, launch });
+    await controller.hibernateWorkspace(workspaceRuntimeId(SESSION_ID));
+    await writeFile(layoutPath, "layout { pane name=\"cold resume\" }\n");
+    const second = await runtime.start({ sessionId: SESSION_ID, launch });
+    expect(second.layoutPath).not.toBe(first.layoutPath);
+    expect(await controller.get(workspaceRuntimeId(SESSION_ID))).toMatchObject({ layoutPath: second.layoutPath });
   });
 
   it("starts the generated agent layout in the typed user-systemd runtime", async () => {
@@ -91,6 +108,21 @@ describe("user-systemd workspace Zellij runtime", () => {
       publicSessionName: SESSION_ID,
       createdAt: "2026-07-31T12:00:00.000Z",
     });
+  });
+
+  it("does not claim a new prompt was delivered by returning an already-running workspace", async () => {
+    let active = false;
+    const controller = createUserSystemdTerminalRuntime({ homePath, generation: GENERATION,
+      runCommand: async (_command, args) => ({ stdout: args.includes("is-active") ? `${active ? "active" : "inactive"}\n` : "", stderr: "" }),
+      readinessProbe: async () => true });
+    const runtime = createUserSystemdZellijRuntime({ homePath, generation: GENERATION, controller,
+      layoutRuntime: { generateLayout: async () => ({ sessionName: SESSION_ID, layoutPath: join(homePath, "system", "zellij", "layouts", `${SESSION_ID}.kdl`) }) },
+      baseAdapter: fakeAdapter() });
+    const input = { sessionId: SESSION_ID, launch: { command: "codex", args: [], cwd: homePath, env: {} } };
+    await runtime.start(input);
+    active = true;
+    await expect(runtime.start(input)).rejects.toThrow();
+    expect(await runtime.isAlive(SESSION_ID)).toBe(true);
   });
 
   it("rejects launch environment keys outside the fixed runtime allowlist", async () => {

@@ -51,6 +51,9 @@ import {
 } from "./provider-adapter.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { createCodingAgentTurnDispatcher } from "./turn-dispatcher.js";
+import { withIdleWorkspaceState, type IdleWorkspaceIdentity } from "./idle-workspace-state.js";
+import { safeProviderRunError, safeProviderRunFailureEvents, defaultAbortEvents, terminalStoppedEvents,
+  defaultApprovalDecisionEvents, defaultInputAnswerEvents } from "./thread-fallback-events.js";
 import {
   deriveThreadProjectionChanges,
   publishThreadProjectionChanges,
@@ -184,6 +187,7 @@ export interface CodingAgentThreadStoreOptions {
 }
 
 export interface CodingAgentThreadStore {
+  withIdleWorkspace(sessionId: string, cutoff: number, action: (identity: IdleWorkspaceIdentity) => Promise<boolean>): Promise<boolean>;
   createThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   createShellThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   adoptLegacyThread(
@@ -597,129 +601,6 @@ function consumePendingTerminalStop(
   };
 }
 
-function safeProviderRunError() {
-  return SafeClientErrorSchema.parse({
-    code: "provider_run_failed",
-    safeMessage: "Agent run could not continue. Try again.",
-    retryable: true,
-    recoveryActions: ["retry"],
-  });
-}
-
-function safeProviderRunFailureEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
-  return [
-    AgentThreadEventSchema.parse({
-      type: "thread.error",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      error: safeProviderRunError(),
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.completed",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      outcome: "failed",
-    }),
-  ];
-}
-
-function defaultAbortEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
-  return [
-    AgentThreadEventSchema.parse({
-      type: "thread.status",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      status: "aborted",
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.completed",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      outcome: "aborted",
-    }),
-  ];
-}
-
-function terminalStoppedEvents(
-  threadId: string,
-  runtimeStatus: TerminalSessionStoppedReconciliation["runtimeStatus"],
-  now: () => Date,
-  eventId: () => string,
-): AgentThreadEvent[] {
-  const failed = runtimeStatus !== "exited";
-  return [
-    AgentThreadEventSchema.parse({
-      type: "thread.status",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      status: failed ? "failed" : "completed",
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.completed",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      outcome: failed ? "failed" : "completed",
-    }),
-  ];
-}
-
-function defaultApprovalDecisionEvents(
-  threadId: string,
-  approvalId: string,
-  request: ApprovalDecisionRequest,
-  now: () => Date,
-  eventId: () => string,
-): AgentThreadEvent[] {
-  return [
-    AgentThreadEventSchema.parse({
-      type: "approval.resolved",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      approvalId,
-      decision: request.decision,
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.status",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      status: "running",
-    }),
-  ];
-}
-
-function defaultInputAnswerEvents(
-  threadId: string,
-  inputRequestId: string,
-  request: UserInputAnswerRequest,
-  now: () => Date,
-  eventId: () => string,
-): AgentThreadEvent[] {
-  return [
-    AgentThreadEventSchema.parse({
-      type: "user_input.answered",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      requestId: inputRequestId,
-      correlationId: request.correlationId,
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.status",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      status: "running",
-    }),
-  ];
-}
 
 function invalidInputAnswer(message: string): never {
   throw new z.ZodError([{ code: "custom", message, path: ["structuredAnswers"] }]);
@@ -1392,6 +1273,9 @@ export function createCodingAgentThreadStore(
   return {
     createThread(principal, request) {
       return createThreadInternal(principal, request);
+    },
+    async withIdleWorkspace(sessionId, cutoff, action) {
+      return inspect((state) => withIdleWorkspaceState(state, sessionId, cutoff, action));
     },
     createShellThread(principal, request) {
       if (!options.relationValidator) {
