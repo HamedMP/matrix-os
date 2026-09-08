@@ -262,6 +262,23 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
         });
       });
     }
+  }, (message) => {
+    if (message.type !== "os-view:changed") return;
+    const desktopIconsHydrationRevision = captureWebDesktopIconsHydrationRevision();
+    void loadWebOsViewState(gatewayUrl).then((state) => {
+      if (state.revision < message.revision) return;
+      const next: DesktopConfig = {
+        ...config,
+        pinnedApps: state.document.pinnedApps,
+        desktopIcons: state.document.desktop.icons,
+      };
+      setConfig(next);
+      setPinnedApps(next.pinnedApps);
+      setDesktopIcons(next.desktopIcons, desktopIconsHydrationRevision);
+      saveShellSnapshot(cacheScope, { desktopConfig: next });
+    }).catch((error: unknown) => {
+      console.warn("[desktop-config] Live OS-view refresh failed:", error instanceof Error ? error.name : "UnknownError");
+    });
   });
 
   return config;

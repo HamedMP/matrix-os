@@ -32,7 +32,11 @@ describe("native Desktop icon layout", () => {
 
     await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
     await useDesktopIcons.getState().remove("__file-browser__", api as never);
-    await useDesktopIcons.getState().add("apps/notes/index.html", api as never);
+    expect(await useDesktopIcons.getState().add(
+      "apps/notes/index.html",
+      api as never,
+      { width: 400, height: 300 },
+    )).toBe("added");
 
     expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
     expect(useDesktopIcons.getState().icons.some((icon) => icon.path === "__file-browser__")).toBe(false);
@@ -40,6 +44,78 @@ describe("native Desktop icon layout", () => {
     expect(api.patch).toHaveBeenLastCalledWith("/api/os-view-state", expect.objectContaining({
       patch: { desktop: { icons: useDesktopIcons.getState().icons } },
     }));
+  });
+
+  it("reports duplicate and full Desktop placement outcomes without writing", async () => {
+    const api = { patch: vi.fn(async () => ({ ok: true })) };
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+    expect(await useDesktopIcons.getState().add("__chat__", api as never, { width: 200, height: 100 }))
+      .toBe("already-present");
+    expect(await useDesktopIcons.getState().add("apps/notes/index.html", api as never, { width: 80, height: 80 }))
+      .toBe("desktop-full");
+    expect(api.patch).not.toHaveBeenCalled();
+  });
+
+  it("reports failed and rolls back when adding cannot be committed", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT] })),
+      patch: vi.fn(async () => { throw new OsViewStateConflictExhaustedError(); }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT]);
+
+    expect(await useDesktopIcons.getState().add(
+      "apps/sushi-counter/index.html",
+      api as never,
+      { width: 400, height: 300 },
+    )).toBe("failed");
+    expect(useDesktopIcons.getState().icons).toEqual([CHAT]);
+  });
+
+  it("coalesces repeated adds until the authoritative write settles", async () => {
+    let rejectPatch!: (error: Error) => void;
+    const patch = new Promise((_, reject) => { rejectPatch = reject; });
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT] })),
+      patch: vi.fn(() => patch),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT]);
+
+    const first = useDesktopIcons.getState().add("apps/sushi-counter/index.html", api as never);
+    const repeated = useDesktopIcons.getState().add("apps/sushi-counter/index.html", api as never);
+    rejectPatch(new Error("offline"));
+
+    await expect(first).resolves.toBe("failed");
+    await expect(repeated).resolves.toBe("failed");
+    expect(api.patch).toHaveBeenCalledOnce();
+    expect(useDesktopIcons.getState().icons).toEqual([CHAT]);
+  });
+
+  it("does not let a stale runtime add release a newer coalesced add", async () => {
+    let rejectOldPatch!: (error: Error) => void;
+    let rejectNewPatch!: (error: Error) => void;
+    const oldApi = {
+      patch: vi.fn(() => new Promise((_, reject) => { rejectOldPatch = reject; })),
+    };
+    const newApi = {
+      patch: vi.fn(() => new Promise((_, reject) => { rejectNewPatch = reject; })),
+    };
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+
+    const stale = useDesktopIcons.getState().add("apps/sushi-counter/index.html", oldApi as never);
+    await vi.waitFor(() => expect(oldApi.patch).toHaveBeenCalledOnce());
+    resetDesktopIconsRuntime();
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+    const current = useDesktopIcons.getState().add("apps/sushi-counter/index.html", newApi as never);
+
+    rejectOldPatch(new Error("old runtime stopped"));
+    await expect(stale).resolves.toBe("failed");
+    const repeated = useDesktopIcons.getState().add("apps/sushi-counter/index.html", newApi as never);
+    expect(repeated).toBe(current);
+
+    rejectNewPatch(new Error("offline"));
+    await expect(current).resolves.toBe("failed");
+    await expect(repeated).resolves.toBe("failed");
+    expect(newApi.patch).toHaveBeenCalledOnce();
   });
 
   it("rolls the optimistic layout back when persistence fails", async () => {

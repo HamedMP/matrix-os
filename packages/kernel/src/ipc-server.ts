@@ -39,6 +39,7 @@ import {
   describeCustomMcpServerHandler,
   callCustomMcpToolHandler,
 } from "./tools/integrations.js";
+import type { OsViewDesktopAddResult } from "@matrix-os/contracts";
 const execAsync = promisify(execFile);
 
 const SAFE_GIT_REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -67,7 +68,12 @@ export function isSafeGitRemoteUrl(remoteUrl: string): boolean {
   }
 }
 
-export async function createIpcServer(db: MatrixDB, homePath?: string) {
+export interface OsViewAgentTools {
+  listPlaceableApps(): Promise<Array<{ appId: string; name: string; path: string }>>;
+  addAppToDesktop(appId: string): Promise<{ status: OsViewDesktopAddResult }>;
+}
+
+export async function createIpcServer(db: MatrixDB, homePath?: string, osViewTools?: OsViewAgentTools) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   return createSdkMcpServer({
     name: "matrix-os-ipc",
@@ -1111,6 +1117,25 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
           }
         },
       ),
+
+      ...(osViewTools ? [
+        tool(
+          "list_placeable_apps",
+          "List exact installed app IDs that can be added to Desktop. Use only when the user asks to place an app on Desktop.",
+          {},
+          async () => ({
+            content: [{ type: "text" as const, text: JSON.stringify(await osViewTools.listPlaceableApps()) }],
+          }),
+        ),
+        tool(
+          "add_app_to_desktop",
+          "Add one installed app to Desktop after the user explicitly requests it. Pass an exact appId returned by list_placeable_apps; paths and owner IDs are not accepted.",
+          { appId: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9_-]*$/) },
+          async ({ appId }) => ({
+            content: [{ type: "text" as const, text: JSON.stringify(await osViewTools.addAppToDesktop(appId)) }],
+          }),
+        ),
+      ] : []),
 
       ...(await createWebTools(homePath, tool)),
 

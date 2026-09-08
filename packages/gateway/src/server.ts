@@ -301,6 +301,7 @@ import {
 } from "./chat/attachment-cleanup.js";
 import { OsViewStateRepository } from "./os-view-state/repository.js";
 import { createOsViewStateRoutes } from "./os-view-state/routes.js";
+import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import { ChatRepository } from "./chat/repository.js";
 import {
   createGatewayChatTerminalWiring,
@@ -614,15 +615,6 @@ export async function createGateway(config: GatewayConfig) {
   const recordAiGeneration = createAiGenerationRecorder({
     capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
   });
-  const dispatcher: Dispatcher = createDispatcher({
-    homePath,
-    model: config.model,
-    maxTurns: config.maxTurns,
-    spawnFn: config.spawnFn,
-    onAiGeneration: recordAiGeneration,
-    fundedCredentialProvider,
-  });
-
   const watcher: Watcher = createWatcher(homePath);
   const conversationMutationLock = createConversationMutationLock({ maxKeys: 64 });
   const conversations: ConversationStore = createConversationStore(homePath, {
@@ -636,6 +628,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
   const clients = new Set<WSContext>();
+  const clientOwnerIds = new WeakMap<WSContext, string>();
   const readinessRepository = new InMemoryReadinessRepository();
   const toolPackRepository = new InMemoryToolPackRepository();
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
@@ -1172,6 +1165,31 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
+  const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
+  const osViewTools = osViewStateRepository
+    && trustedOsViewOwnerId
+    && trustedOsViewOwnerId.length <= 160
+    ? createOsViewAgentTools({
+        repository: osViewStateRepository,
+        ownerId: trustedOsViewOwnerId,
+        homePath,
+        onChanged: (state) => broadcastToOwner(trustedOsViewOwnerId, {
+          type: "os-view:changed",
+          revision: state.revision,
+          updatedAt: state.updatedAt,
+        }),
+      })
+    : undefined;
+  const dispatcher: Dispatcher = createDispatcher({
+    homePath,
+    model: config.model,
+    maxTurns: config.maxTurns,
+    spawnFn: config.spawnFn,
+    onAiGeneration: recordAiGeneration,
+    fundedCredentialProvider,
+    osViewTools,
+  });
+
   // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
   let syncR2: R2Client | null = null;
   let syncPeerRegistry: PeerRegistry | null = null;
@@ -1553,8 +1571,34 @@ export async function createGateway(config: GatewayConfig) {
 
   function broadcast(msg: ServerMessage) {
     const json = JSON.stringify(msg);
+    const dead: WSContext[] = [];
     for (const ws of clients) {
-      ws.send(json);
+      try {
+        ws.send(json);
+      } catch (error: unknown) {
+        console.warn("[gateway] WebSocket broadcast failed:", error instanceof Error ? error.name : "UnknownError");
+        dead.push(ws);
+      }
+    }
+    for (const ws of dead) {
+      if (clients.delete(ws)) wsConnectionsActive.dec();
+    }
+  }
+
+  function broadcastToOwner(ownerId: string, msg: ServerMessage) {
+    const json = JSON.stringify(msg);
+    const dead: WSContext[] = [];
+    for (const ws of clients) {
+      if (clientOwnerIds.get(ws) !== ownerId) continue;
+      try {
+        ws.send(json);
+      } catch (error: unknown) {
+        console.warn("[gateway] Owner WebSocket broadcast failed:", error instanceof Error ? error.name : "UnknownError");
+        dead.push(ws);
+      }
+    }
+    for (const ws of dead) {
+      if (clients.delete(ws)) wsConnectionsActive.dec();
     }
   }
 
@@ -2166,9 +2210,11 @@ export async function createGateway(config: GatewayConfig) {
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
       let conversationOwnerScope: ReturnType<typeof ownerScopeFromPrincipal> | undefined;
+      let connectionOwnerId: string | undefined;
       try {
         const wsPrincipal = requireRequestPrincipal(c);
         const wsSyncUserId = wsPrincipal.userId;
+        connectionOwnerId = wsSyncUserId;
         conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
           ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
@@ -2256,6 +2302,7 @@ export async function createGateway(config: GatewayConfig) {
           syncPeerSocket = ws;
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
+          if (connectionOwnerId) clientOwnerIds.set(ws, connectionOwnerId);
           wsConnectionsActive.inc();
           captureGatewayProductEvent("shell_ws_open", {
             active_clients: clients.size,
@@ -4385,6 +4432,11 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/os-view-state", createOsViewStateRoutes({
       repository: osViewStateRepository,
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      onChanged: (ownerId, state) => broadcastToOwner(ownerId, {
+        type: "os-view:changed",
+        revision: state.revision,
+        updatedAt: state.updatedAt,
+      }),
     }));
   } else {
     app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));

@@ -68,6 +68,10 @@ Defines the OS visual identity. The shell reads it on load and whenever it chang
 
 ## Desktop Configuration
 
+Desktop background and dock appearance remain file-configured. Desktop icon
+placement is authoritative Postgres OS-view state and must not be edited in
+`desktop.json`.
+
 ### File: ~/system/desktop.json
 
 Controls the desktop background and dock layout.
@@ -133,9 +137,11 @@ Controls the desktop background and dock layout.
 
 ## Notes
 
-- Use the `write_file` IPC tool to modify these files
+- Use `list_placeable_apps` and then `add_app_to_desktop` only when the user
+  explicitly asks to place an installed app on Desktop. Pass the exact catalog
+  `appId`; never pass a path or owner identity.
 - The shell detects file changes via WebSocket and applies immediately (no restart needed)
 - Wallpapers are stored in ~/system/wallpapers/
-- All changes persist across restarts (Everything Is a File)
+- Theme, background, and dock changes persist across restarts
 - The theme.json color keys map directly to CSS custom properties (--color-{key})
 - Apps and modules inherit theme via CSS variables automatically

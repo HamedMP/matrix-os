@@ -2,6 +2,8 @@
 // task events, native notifications, dock badge.
 import { invoke, onEvent } from "./operator";
 import { KernelSocket, type KernelServerMessage } from "./kernel-socket";
+import { createDefaultOsViewDesktopIcons } from "@matrix-os/contracts";
+import { useDesktopIcons } from "../stores/desktop-icons";
 import type { ChatEvent } from "./chat";
 import {
   useBoard,
@@ -107,6 +109,10 @@ export function wireKernel(): () => void {
   const activeSocket = socket;
 
   const unsubscribeMessages = activeSocket.subscribe((msg) => {
+    if (msg.type === "os-view:changed") {
+      const api = useConnection.getState().api;
+      if (api) void useDesktopIcons.getState().load(api, createDefaultOsViewDesktopIcons());
+    }
     // A kernel thread is "focused" only when the Work Chat route (where ThreadView
     // renders) is active and it's the selected thread; otherwise completions
     // raise a notification.

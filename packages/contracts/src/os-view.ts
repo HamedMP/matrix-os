@@ -114,6 +114,20 @@ export const DEFAULT_OS_VIEW_DESKTOP_APP_PATHS = Object.freeze([
   "apps/whiteboard/index.html",
 ] as const);
 
+/** Launcher entries that exist independently of the filesystem app catalog. */
+export const OS_VIEW_PLACEABLE_BUILTIN_APPS = Object.freeze([
+  { appId: "chat", name: "Chat", path: "__chat__" },
+  { appId: "terminal", name: "Terminal", path: "__terminal__" },
+  { appId: "files", name: "Files", path: "__file-browser__" },
+  { appId: "editor", name: "Editor", path: "__editor__" },
+  { appId: "vscode", name: "VS Code", path: "__vscode__" },
+  { appId: "settings", name: "Settings", path: "__settings__" },
+  { appId: "plugins", name: "Plugins", path: "__plugins__" },
+  { appId: "browser", name: "Browser", path: "__browser__" },
+  { appId: "notes", name: "Notes", path: "apps/notes/index.html" },
+  { appId: "whiteboard", name: "Whiteboard", path: "apps/whiteboard/index.html" },
+] as const);
+
 const DEFAULT_DESKTOP_GRID = Object.freeze({
   startX: 20,
   startY: 20,
@@ -121,6 +135,39 @@ const DEFAULT_DESKTOP_GRID = Object.freeze({
   rowHeight: 92,
   columns: 2,
 });
+
+export const OS_VIEW_DESKTOP_GRID = Object.freeze({
+  ...DEFAULT_DESKTOP_GRID,
+  iconWidth: 64,
+  iconHeight: 64,
+  maxIcons: 512,
+});
+
+export interface OsViewCatalogPathRecord {
+  path?: unknown;
+  file?: unknown;
+}
+
+export interface OsViewDesktopBounds {
+  /** Width available to desktop icons after shell chrome is reserved. */
+  width: number;
+  /** Height available to desktop icons after header and taskbar are reserved. */
+  height: number;
+}
+
+export type OsViewDesktopAddResult = "added" | "already-present" | "desktop-full" | "failed";
+
+export function clampOsViewContextMenuPoint(
+  point: { x: number; y: number },
+  viewport: { width: number; height: number },
+  menu: { width: number; height: number } = { width: 256, height: 112 },
+): { x: number; y: number } {
+  const margin = 8;
+  return {
+    x: Math.max(margin, Math.min(point.x, viewport.width - menu.width - margin)),
+    y: Math.max(margin, Math.min(point.y, viewport.height - menu.height - margin)),
+  };
+}
 
 const OS_VIEW_DESKTOP_APP_PATH_ALIASES: Readonly<Record<string, string>> = Object.freeze({
   "apps/browser/index.html": "__browser__",
@@ -132,6 +179,107 @@ const OS_VIEW_DESKTOP_APP_PATH_ALIASES: Readonly<Record<string, string>> = Objec
 
 export function normalizeOsViewDesktopAppPath(path: string): string {
   return OS_VIEW_DESKTOP_APP_PATH_ALIASES[path] ?? path;
+}
+
+function canonicalCatalogPathCandidate(value: unknown, fromFile: boolean): string | null {
+  if (typeof value !== "string" || value.length === 0 || value.length > 2048) return null;
+  if (value.includes("\\") || value.includes("?") || value.includes("#") || value.includes("%")) return null;
+  let path = value.trim().replace(/^\/+/, "");
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return null;
+  if (path.startsWith("files/")) path = path.slice("files/".length);
+  if (fromFile && !path.startsWith("apps/")) path = `apps/${path}`;
+  if (!path.startsWith("apps/") || !path.endsWith(".html")) return null;
+  const segments = path.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) return null;
+  return normalizeOsViewDesktopAppPath(path);
+}
+
+/** Convert current and legacy /api/apps rows to the one persisted OS-view path. */
+export function canonicalOsViewCatalogPath(record: OsViewCatalogPathRecord): string | null {
+  return canonicalCatalogPathCandidate(record.path, false)
+    ?? canonicalCatalogPathCandidate(record.file, true);
+}
+
+function desktopSlotsCollide(
+  left: Pick<OsViewDesktopIcon, "x" | "y">,
+  right: Pick<OsViewDesktopIcon, "x" | "y">,
+): boolean {
+  return Math.abs(left.x - right.x) < DEFAULT_DESKTOP_GRID.columnWidth
+    && Math.abs(left.y - right.y) < DEFAULT_DESKTOP_GRID.rowHeight;
+}
+
+function validDesktopSlot(x: number, y: number, bounds: OsViewDesktopBounds): boolean {
+  return x >= 0
+    && y >= 0
+    && x + OS_VIEW_DESKTOP_GRID.iconWidth <= bounds.width
+    && y + OS_VIEW_DESKTOP_GRID.iconHeight <= bounds.height;
+}
+
+/** Find the first collision-free slot, filling downward before moving right. */
+export function findOpenOsViewDesktopSlot(
+  icons: readonly Pick<OsViewDesktopIcon, "x" | "y">[],
+  bounds: OsViewDesktopBounds,
+): Pick<OsViewDesktopIcon, "x" | "y"> | null {
+  const rows = Math.max(0, Math.floor(
+    (bounds.height - DEFAULT_DESKTOP_GRID.startY - OS_VIEW_DESKTOP_GRID.iconHeight)
+      / DEFAULT_DESKTOP_GRID.rowHeight,
+  ) + 1);
+  const columns = Math.max(0, Math.floor(
+    (bounds.width - DEFAULT_DESKTOP_GRID.startX - OS_VIEW_DESKTOP_GRID.iconWidth)
+      / DEFAULT_DESKTOP_GRID.columnWidth,
+  ) + 1);
+  for (let column = 0; column < columns; column += 1) {
+    for (let row = 0; row < rows; row += 1) {
+      const candidate = {
+        x: DEFAULT_DESKTOP_GRID.startX + column * DEFAULT_DESKTOP_GRID.columnWidth,
+        y: DEFAULT_DESKTOP_GRID.startY + row * DEFAULT_DESKTOP_GRID.rowHeight,
+      };
+      if (!icons.some((icon) => desktopSlotsCollide(icon, candidate))) return candidate;
+    }
+  }
+  return null;
+}
+
+/** Derive render-only safe positions; callers must keep the canonical coordinates unchanged. */
+export function fitOsViewDesktopIconsToViewport(
+  icons: readonly OsViewDesktopIcon[],
+  bounds: OsViewDesktopBounds,
+): OsViewDesktopIcon[] {
+  const placed: OsViewDesktopIcon[] = [];
+  for (const icon of icons) {
+    if (validDesktopSlot(icon.x, icon.y, bounds)
+      && !placed.some((candidate) => desktopSlotsCollide(candidate, icon))) {
+      placed.push({ ...icon });
+      continue;
+    }
+    const slot = findOpenOsViewDesktopSlot(placed, bounds);
+    if (slot) {
+      placed.push({ ...icon, ...slot });
+      continue;
+    }
+    // When the viewport is too small for every icon, keep the full catalog
+    // reachable in overflow columns. Renderers expose this overflow by
+    // scrolling; canonical coordinates remain untouched.
+    const firstOverflowColumn = Math.max(0, Math.ceil(
+      (bounds.width - DEFAULT_DESKTOP_GRID.startX) / DEFAULT_DESKTOP_GRID.columnWidth,
+    ));
+    const displayY = Math.max(0, Math.min(
+      DEFAULT_DESKTOP_GRID.startY,
+      bounds.height - OS_VIEW_DESKTOP_GRID.iconHeight,
+    ));
+    const firstOverflowX = DEFAULT_DESKTOP_GRID.startX
+      + firstOverflowColumn * DEFAULT_DESKTOP_GRID.columnWidth;
+    const furthestPlacedX = placed.reduce(
+      (furthest, existing) => Math.max(furthest, existing.x),
+      firstOverflowX - DEFAULT_DESKTOP_GRID.columnWidth,
+    );
+    placed.push({
+      ...icon,
+      x: Math.max(firstOverflowX, furthestPlacedX + DEFAULT_DESKTOP_GRID.columnWidth),
+      y: displayY,
+    });
+  }
+  return placed;
 }
 
 export function normalizeOsViewMode(value: unknown): OsViewMode {

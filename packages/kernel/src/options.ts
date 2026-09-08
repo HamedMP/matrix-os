@@ -10,6 +10,7 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
+import type { OsViewAgentTools } from "./ipc-server.js";
 import { getCoreAgents, loadCustomAgents, loadCustomAgentMcpAllowlists } from "./agents.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { ensureSdkSkillsMirror } from "./skills.js";
@@ -54,6 +55,10 @@ const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__list_custom_mcp_servers",
   "mcp__matrix-os-ipc__describe_custom_mcp_server",
   "mcp__matrix-os-ipc__call_custom_mcp_tool",
+];
+const OS_VIEW_IPC_TOOL_NAMES = [
+  "mcp__matrix-os-ipc__list_placeable_apps",
+  "mcp__matrix-os-ipc__add_app_to_desktop",
 ];
 
 const BROWSER_TOOL_NAMES = [
@@ -234,6 +239,7 @@ export interface KernelConfig {
   maxTurns?: number;
   env?: Record<string, string | undefined>;
   requestApproval?: RequestApprovalFn;
+  osViewTools?: OsViewAgentTools;
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -250,7 +256,7 @@ export async function kernelOptions(config: KernelConfig) {
   const model = config.model ?? fileKernel.model;
   const controls = resolveKernelSdkControls(model, config.effort ?? fileKernel.effort);
 
-  const ipcServer = await createIpcServer(db, homePath);
+  const ipcServer = await createIpcServer(db, homePath, config.osViewTools);
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
   const customAgentMcpAllowlists = loadCustomAgentMcpAllowlists(`${homePath}/agents/custom`);
@@ -296,6 +302,7 @@ export async function kernelOptions(config: KernelConfig) {
       "WebSearch",
       "WebFetch",
       ...IPC_TOOL_NAMES,
+      ...(config.osViewTools ? OS_VIEW_IPC_TOOL_NAMES : []),
       ...browserToolNames,
     ],
     skills: "all" as const,

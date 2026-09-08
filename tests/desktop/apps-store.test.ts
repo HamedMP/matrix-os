@@ -40,7 +40,22 @@ describe("desktop app icon warmup", () => {
     }] })).toEqual([{
       slug: "2048",
       name: "2048",
+      path: "apps/games/2048/index.html",
       appIdentity: "games/2048",
+    }]);
+  });
+
+  it("makes existing generated apps placeable from either catalog path shape", () => {
+    expect(parseApps({ apps: [{
+      slug: "sushi-counter",
+      name: "Sushi Counter",
+      file: "sushi-counter/index.html",
+      path: "/files/apps/sushi-counter/index.html",
+    }] })).toEqual([{
+      slug: "sushi-counter",
+      name: "Sushi Counter",
+      path: "apps/sushi-counter/index.html",
+      appIdentity: "sushi-counter",
     }]);
   });
 
