@@ -256,12 +256,23 @@ profile_material="$(printf '%s\n' "${fixed_profile[@]}" |
 fixed_profile_sha256="$(printf '%s\n' "$profile_material" | /usr/bin/sha256sum | cut -d ' ' -f 1)"
 readonly fixed_profile_sha256
 
+emit_unit_failure() {
+  local unit="$1"
+  /usr/bin/systemctl show "$unit" --no-pager \
+    --property=LoadState \
+    --property=ActiveState \
+    --property=SubState \
+    --property=Result \
+    --property=ExecMainCode \
+    --property=ExecMainStatus 2>/dev/null |
+    sed -n -E '/^(LoadState|ActiveState|SubState|Result)=[a-z-]{0,32}$/p; /^(ExecMainCode|ExecMainStatus)=[0-9]{0,6}$/p'
+}
+
 run_fixed_profile_candidate() {
   /usr/bin/systemd-run \
     --unit="$candidate_unit" \
     --wait \
     --pipe \
-    --collect \
     --quiet \
     "${fixed_profile[@]}" \
     -- \
@@ -274,7 +285,6 @@ run_agent_sdk_candidate() {
     --unit="$sdk_candidate_unit" \
     --wait \
     --pipe \
-    --collect \
     --quiet \
     "${fixed_profile[@]}" \
     -- \
@@ -292,6 +302,7 @@ if [ "$candidate_status" != "0" ]; then
   printf 'scope_runtime_acceptance_candidate_failed\n' >&2
   printf 'failed_candidate_report_begin\n' >&2
   sed -n '1,240p' "$probe_root/candidate.json" >&2
+  emit_unit_failure "$candidate_unit" >&2
   printf 'failed_candidate_report_end\n' >&2
   exit 1
 fi
@@ -315,6 +326,7 @@ if [ "$sdk_candidate_status" != "0" ]; then
   printf 'failed_sdk_candidate_report_begin\n' >&2
   sed -n '1,120p' "$probe_root/sdk-candidate.json" >&2
   sed -n '/^scope_runtime_sdk_/p' "$probe_root/sdk-candidate.err" >&2
+  emit_unit_failure "$sdk_candidate_unit" >&2
   printf 'failed_sdk_candidate_report_end\n' >&2
   exit 1
 fi
