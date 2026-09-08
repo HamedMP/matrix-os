@@ -22,7 +22,7 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow).toContain(".status == \"running\"");
     expect(workflow).toContain(".healthy == true");
     expect(workflow).toContain('"${version##*-}" = "${HEAD_SHA:0:7}"');
-    expect(workflow).toContain("deadline=$((SECONDS + 300))");
+    expect(workflow).toContain("deadline=$((SECONDS + 1200))");
     expect(workflow).toContain("x-matrix-acceptance-signature");
     expect(workflow).toContain("x-matrix-acceptance-response-signature");
     expect(workflow).toContain("--resolve \"app.matrix-os.com:443:${ADDRESS}\"");
