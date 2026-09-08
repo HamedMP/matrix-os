@@ -90,6 +90,34 @@ describe("native Desktop icon layout", () => {
     expect(useDesktopIcons.getState().icons).toEqual([CHAT]);
   });
 
+  it("does not let a stale runtime add release a newer coalesced add", async () => {
+    let rejectOldPatch!: (error: Error) => void;
+    let rejectNewPatch!: (error: Error) => void;
+    const oldApi = {
+      patch: vi.fn(() => new Promise((_, reject) => { rejectOldPatch = reject; })),
+    };
+    const newApi = {
+      patch: vi.fn(() => new Promise((_, reject) => { rejectNewPatch = reject; })),
+    };
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+
+    const stale = useDesktopIcons.getState().add("apps/sushi-counter/index.html", oldApi as never);
+    await vi.waitFor(() => expect(oldApi.patch).toHaveBeenCalledOnce());
+    resetDesktopIconsRuntime();
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+    const current = useDesktopIcons.getState().add("apps/sushi-counter/index.html", newApi as never);
+
+    rejectOldPatch(new Error("old runtime stopped"));
+    await expect(stale).resolves.toBe("failed");
+    const repeated = useDesktopIcons.getState().add("apps/sushi-counter/index.html", newApi as never);
+    expect(repeated).toBe(current);
+
+    rejectNewPatch(new Error("offline"));
+    await expect(current).resolves.toBe("failed");
+    await expect(repeated).resolves.toBe("failed");
+    expect(newApi.patch).toHaveBeenCalledOnce();
+  });
+
   it("rolls the optimistic layout back when persistence fails", async () => {
     const api = {
       get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),

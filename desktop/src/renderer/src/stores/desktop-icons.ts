@@ -402,8 +402,12 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     })();
     pendingDesktopAdds.set(path, operation);
     void operation.then(
-      () => pendingDesktopAdds.delete(path),
-      () => pendingDesktopAdds.delete(path),
+      () => {
+        if (pendingDesktopAdds.get(path) === operation) pendingDesktopAdds.delete(path);
+      },
+      () => {
+        if (pendingDesktopAdds.get(path) === operation) pendingDesktopAdds.delete(path);
+      },
     );
     return operation;
   },

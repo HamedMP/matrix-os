@@ -377,6 +377,36 @@ describe("Desktop config", () => {
     expect(useDesktopConfigStore.getState().desktopIcons).toEqual(confirmed);
   });
 
+  it("does not let a stale web runtime add release a newer coalesced add", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let resolveOldPatch!: (response: { ok: boolean; status: number }) => void;
+    let resolveNewPatch!: (response: { ok: boolean; status: number }) => void;
+    const oldResponse = new Promise<{ ok: boolean; status: number }>((resolve) => { resolveOldPatch = resolve; });
+    const newResponse = new Promise<{ ok: boolean; status: number }>((resolve) => { resolveNewPatch = resolve; });
+    const mockFetch = vi.fn()
+      .mockImplementationOnce(() => oldResponse)
+      .mockImplementation(() => newResponse);
+    vi.stubGlobal("fetch", mockFetch);
+    const confirmed = [{ path: "__chat__", x: 20, y: 20 }];
+    useDesktopConfigStore.getState().setDesktopIcons(confirmed);
+
+    const stale = useDesktopConfigStore.getState().addDesktopIcon("apps/sushi-counter/index.html");
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledOnce());
+    resetWebDesktopIconsRuntime();
+    useDesktopConfigStore.getState().setDesktopIcons(confirmed);
+    const current = useDesktopConfigStore.getState().addDesktopIcon("apps/sushi-counter/index.html");
+
+    resolveOldPatch({ ok: false, status: 503 });
+    await expect(stale).resolves.toBe("failed");
+    const repeated = useDesktopConfigStore.getState().addDesktopIcon("apps/sushi-counter/index.html");
+    expect(repeated).toBe(current);
+
+    resolveNewPatch({ ok: false, status: 503 });
+    await expect(current).resolves.toBe("failed");
+    await expect(repeated).resolves.toBe("failed");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("restores the confirmed web Desktop icon layout after a failed PATCH", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
