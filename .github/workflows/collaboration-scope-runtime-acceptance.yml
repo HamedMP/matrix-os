@@ -293,13 +293,17 @@ jobs:
             stdout,
             stderr
           }' "$response" >"$evidence"
+          if ! jq -e 'select(.exitCode == 0 and .timedOut == false and
+            .truncated == false and .signal == null)' "$response" >/dev/null; then
+            echo "The native proof command failed; inspect the bounded evidence artifact." >&2
+            exit 1
+          fi
           if ! jq -er '.stdout' "$response" |
             grep -Fxq "agent_sdk_version=${expected_sdk_version}"; then
             echo "The disposable preview SDK does not match the immutable probe head." >&2
             exit 1
           fi
-          jq -e 'select(.exitCode == 0 and .timedOut == false and
-            .truncated == false and .signal == null and
+          jq -e 'select(
             (.stdout | contains("scope_runtime_acceptance=passed")))' "$response" >/dev/null
 
       - name: Upload public-safe native evidence

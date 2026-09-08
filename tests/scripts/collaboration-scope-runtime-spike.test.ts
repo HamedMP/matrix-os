@@ -24,6 +24,7 @@ describe("collaboration scope-runtime native isolation spike", () => {
     const source = await readFile(acceptancePath, "utf8");
 
     expect(source).toContain("run_unrestricted_baseline");
+    expect(source).toContain("cd /tmp");
     expect(source).toContain("baseline unexpectedly passed");
     expect(source).toContain("run_fixed_profile_candidate");
     expect(source.indexOf("run_unrestricted_baseline")).toBeLessThan(

@@ -139,8 +139,9 @@ if [ ! -S "$broker_socket" ] || [ ! -S "$supervisor_socket" ]; then
   exit 2
 fi
 
-run_unrestricted_baseline() {
-  /usr/bin/setpriv \
+run_unrestricted_baseline() (
+  cd /tmp
+  exec /usr/bin/setpriv \
     --reuid="$scope_uid" \
     --regid="$scope_gid" \
     --clear-groups \
@@ -153,7 +154,7 @@ run_unrestricted_baseline() {
       MATRIX_SCOPE_PROBE_DISPOSABLE=1 \
       MATRIX_SCOPE_PROBE_OWNER_SECRET=baseline-leak \
       "$node_bin" "$probe_source"
-}
+)
 
 baseline_status=0
 if run_unrestricted_baseline >"$probe_root/baseline.json" 2>"$probe_root/baseline.err"; then

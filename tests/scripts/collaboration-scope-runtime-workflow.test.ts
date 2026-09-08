@@ -34,6 +34,9 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow).toContain("packages/kernel/package.json");
     expect(workflow).toContain("expected_sdk_version");
     expect(workflow).toContain("agent_sdk_version=${expected_sdk_version}");
+    expect(workflow.indexOf(".exitCode == 0")).toBeLessThan(
+      workflow.indexOf("agent_sdk_version=${expected_sdk_version}"),
+    );
     expect(workflow).toContain("The disposable host bundle differs from the immutable probe head");
     expect(workflow).toContain("previewVersion: $version");
     expect(workflow).not.toContain("previewMachineId:");
