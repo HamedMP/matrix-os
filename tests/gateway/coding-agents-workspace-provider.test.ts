@@ -772,6 +772,7 @@ exec /bin/sh "$@"
 
     expect(startSession).toHaveBeenCalledWith({
       ownerScope: { type: "user", id: "owner_user" },
+      recoveryThreadId: "thread_workspace_dead_1",
       request: expect.objectContaining({
         sessionId: "sess_workspace_dead_1",
         providerThreadId: "native_thread_dead_1",

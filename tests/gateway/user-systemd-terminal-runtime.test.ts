@@ -148,6 +148,18 @@ describe("user-systemd terminal runtime", () => {
     await expect(runtime.assertInstallationReady()).rejects.toThrow("Terminal runtime unavailable");
   });
 
+  it("refuses a new runtime before systemd start when aggregate capacity is exhausted", async () => {
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
+    const capacityAdmission = vi.fn(async () => { throw new Error("capacity exhausted"); });
+    const runtime = createUserSystemdTerminalRuntime({ homePath, uid: 1001, generation: GENERATION,
+      runCommand, readinessProbe: async () => true, capacityAdmission });
+    await expect(runtime.create({ runtimeId: RUNTIME_ID, scope: "workspace", kind: "agent",
+      displayName: "Chat", cwd, layoutPath })).rejects.toThrow("Terminal runtime unavailable");
+    expect(capacityAdmission).toHaveBeenCalledWith(RUNTIME_ID);
+    expect(runCommand.mock.calls.some(([, args]) => args.includes("start"))).toBe(false);
+    expect(runCommand.mock.calls.some(([, args]) => args.includes("stop"))).toBe(false);
+  });
+
   it("creates an owner descriptor atomically and starts only the derived user unit", async () => {
     const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
     const runtime = createUserSystemdTerminalRuntime({

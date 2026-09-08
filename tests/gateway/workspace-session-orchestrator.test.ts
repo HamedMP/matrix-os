@@ -187,12 +187,38 @@ describe("workspace session orchestrator", () => {
     }));
   });
 
+  it.each(["public", "foreign-owner", "unrelated-thread", "missing-session"])("rejects root workspace reuse with %s provenance", async (scenario) => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-root-provenance-"));
+    tempHomes.push(home);
+    const workspace = join(home, "temporary", "root-chat-workspaces", "sess_fixed");
+    await mkdir(workspace, { recursive: true });
+    const d = deps();
+    d.agentSessionManager.getSession.mockResolvedValue({ ok: true, session: {
+      ...session, projectSlug: undefined, ownerId: scenario === "foreign-owner" ? "other" : "user_workspace",
+    } } as never);
+    if (scenario === "missing-session") d.agentSessionManager.getSession.mockResolvedValue({ ok: false, status: 404 } as never);
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d, homePath: home });
+    try {
+      const result = await orchestrator.startSession({
+        ownerScope: { type: "user", id: "user_workspace" },
+        ...(scenario === "public" ? {} : { recoveryThreadId: scenario === "unrelated-thread" ? "thread_other" : "thread_fixed" }),
+        request: { sessionId: "sess_fixed", kind: "agent", agent: "codex" },
+      });
+      expect(result.ok).toBe(false);
+      expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+      await expect(access(workspace)).resolves.toBeUndefined();
+    } finally { await orchestrator.close(); }
+  });
+
   it.each([true, false])("reuses a root workspace without deleting it when launch succeeds=%s", async (succeeds) => {
     const home = await mkdtemp(join(tmpdir(), "matrix-root-recovery-"));
     tempHomes.push(home);
     const workspace = join(home, "temporary", "root-chat-workspaces", "sess_fixed");
     await mkdir(workspace, { recursive: true });
     const d = deps();
+    d.agentSessionManager.getSession.mockResolvedValue({ ok: true, session: {
+      ...session, projectSlug: undefined, ownerId: "user_workspace",
+    } } as never);
     if (!succeeds) d.agentSandbox.preflight.mockResolvedValueOnce({
       ok: false, status: 503, error: { code: "sandbox_unavailable", message: "Unavailable" },
     } as never);
@@ -200,6 +226,7 @@ describe("workspace session orchestrator", () => {
     try {
       const result = await orchestrator.startSession({
         ownerScope: { type: "user", id: "user_workspace" },
+        recoveryThreadId: "thread_fixed",
         request: { sessionId: "sess_fixed", kind: "agent", agent: "codex" },
       });
       expect(d.agentSandbox.preflight).toHaveBeenCalled();

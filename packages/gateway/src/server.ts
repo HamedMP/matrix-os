@@ -70,7 +70,7 @@ import {
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
-import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
+import { createUserSystemdZellijRuntime, workspaceRuntimeId } from "./user-systemd-zellij-runtime.js";
 import { resolveUserSystemdTerminalActivation } from "./terminal-user-systemd-activation.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { reconcilePendingShellSessionDeletions } from "./shell/session-deletion-reconciler.js";
@@ -776,7 +776,11 @@ export async function createGateway(config: GatewayConfig) {
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
-      ? createCodexEventBridge({ homePath, codexExecutable })
+      ? createCodexEventBridge({ homePath, codexExecutable,
+        ...(userSystemdTerminalController ? {
+          isRuntimeAlive: (sessionId: string) => userSystemdTerminalController.isRunning(workspaceRuntimeId(sessionId)),
+        } : {}),
+      })
       : undefined;
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,

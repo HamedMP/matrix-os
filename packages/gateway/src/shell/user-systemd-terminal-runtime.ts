@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { resolveWithinHome } from "../path-security.js";
+import { createTerminalCapacityAdmission } from "./terminal-runtime-capacity.js";
 
 const execFileAsync = promisify(execFile);
 const RuntimeIdSchema = z.string().regex(/^rt_[0-9a-f]{32}$/);
@@ -317,11 +318,15 @@ export function createUserSystemdTerminalRuntime(options: {
   now?: () => string;
   readinessTimeoutMs?: number;
   readinessStabilityMs?: number;
+  capacityAdmission?: (runtimeId: string) => Promise<void>;
   generationLockHelperPath?: string;
   removePath?: (path: string) => Promise<void>;
 }) {
   const homePath = resolve(options.homePath);
   const uid = options.uid ?? process.getuid?.();
+  const admitCapacity = options.capacityAdmission ?? createTerminalCapacityAdmission({
+    root: `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/matrix.slice/matrix-terminal.slice`,
+  });
   const generation = GenerationSchema.parse(options.generation);
   const terminalRuntimeRoot = resolve(options.terminalRuntimeRoot ?? "/opt/matrix/terminal-runtime");
   const runCommand = options.runCommand ?? defaultRunCommand;
@@ -547,6 +552,8 @@ export function createUserSystemdTerminalRuntime(options: {
   }
 
   async function startInterruptedRuntime(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
+    try { await admitCapacity(descriptor.runtimeId); }
+    catch (error: unknown) { throw new TerminalRuntimeUnavailableError(error); }
     await runSystemctl(["start", unitName(descriptor.runtimeId)]);
     try {
       await waitUntilReady(descriptor);

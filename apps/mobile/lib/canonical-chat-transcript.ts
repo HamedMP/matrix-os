@@ -1,3 +1,4 @@
+import { canonicalChatTerminalNotices } from "@matrix-os/contracts";
 import type {
   CanonicalChatDetailResponse,
   CanonicalChatMessage,
@@ -203,5 +204,12 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
     });
   }
 
+  for (const notice of canonicalChatTerminalNotices(detail)) {
+    const index = notice.beforeMessageId ? transcript.findIndex((message) => message.id === notice.beforeMessageId) : -1;
+    transcript.splice(index < 0 ? 0 : index + 1, 0, {
+      id: notice.id, role: "system", text: notice.text, toolCalls: [], activities: [],
+      isRunning: false, createdAt: notice.timestamp,
+    });
+  }
   return transcript;
 }

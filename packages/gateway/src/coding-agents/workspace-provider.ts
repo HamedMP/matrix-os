@@ -349,6 +349,7 @@ export function createWorkspaceCodingAgentProvider(
           );
           const restarted = await options.runtime.startSession({
             ownerScope: { type: "user", id: principal.userId },
+            recoveryThreadId: thread.id,
             request: {
               sessionId,
               ...(resumeState.providerThreadId
