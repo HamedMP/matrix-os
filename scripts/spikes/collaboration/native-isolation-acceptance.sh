@@ -17,8 +17,6 @@ readonly sdk_probe_source=/var/tmp/matrix-scope-runtime-sdk-probe.mjs
 readonly broker_fixture_source=/var/tmp/matrix-scope-runtime-broker-fixture.mjs
 readonly broker_socket=/run/matrix-scope/broker.sock
 readonly supervisor_socket=/run/matrix-scope-runtime/supervisor.sock
-readonly scope_uid=62000
-readonly scope_gid=62000
 readonly sdk_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk/package.json
 readonly native_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/package.json
 
@@ -196,8 +194,8 @@ mkdir -p \
 
 readonly -a fixed_profile=(
   --property=Type=exec
-  --property=User=62000
-  --property=Group=62000
+  --property=User=matrix-scope-probe
+  --property=DynamicUser=yes
   --property=PrivateUsers=yes
   "--property=RootDirectory=$probe_root/root"
   --property=MountAPIVFS=yes
@@ -226,7 +224,7 @@ readonly -a fixed_profile=(
   --property=MemoryMax=1073741824
   --property=CPUQuota=200%
   --property=TasksMax=256
-  "--property=TemporaryFileSystem=/workspace:rw,size=10G,mode=0700,uid=62000,gid=62000"
+  "--property=TemporaryFileSystem=/workspace:rw,nosuid,nodev,size=10G,mode=1777"
   "--property=TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=64M,mode=1777"
   "--property=BindReadOnlyPaths=/lib"
   "--property=BindReadOnlyPaths=/lib64"
@@ -314,6 +312,17 @@ if ! "$node_bin" --input-type=module -e '
   printf 'scope_runtime_acceptance_candidate_report_invalid\n' >&2
   exit 1
 fi
+scope_uid="$("$node_bin" --input-type=module -e '
+  import { readFile } from "node:fs/promises";
+  const report = JSON.parse(await readFile(process.argv[1], "utf8"));
+  if (!Number.isInteger(report?.runtime?.uid) || report.runtime.uid < 61184 ||
+    report.runtime.uid > 65519) process.exit(1);
+  process.stdout.write(String(report.runtime.uid));
+' "$probe_root/candidate.json")" || {
+  printf 'scope_runtime_acceptance_dynamic_identity_invalid\n' >&2
+  exit 1
+}
+readonly scope_uid
 
 sdk_candidate_status=0
 if run_agent_sdk_candidate >"$probe_root/sdk-candidate.json" 2>"$probe_root/sdk-candidate.err"; then
@@ -395,6 +404,7 @@ printf 'storage_max_bytes=10737418240\n'
 printf 'agent_sdk_version=%s\n' "$sdk_version"
 printf 'native_harness_version=%s\n' "$native_harness_version"
 printf 'sdk_broker_result=passed\n'
+printf 'scope_identity=dynamic\n'
 printf 'scope_runtime_eligibility=passed\n'
 printf '%s\n' 'baseline_report_begin'
 sed -n '1,240p' "$probe_root/baseline.json"

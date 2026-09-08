@@ -38,8 +38,8 @@ describe("collaboration scope-runtime native isolation spike", () => {
     const source = await readFile(acceptancePath, "utf8");
 
     for (const property of [
-      "User=62000",
-      "Group=62000",
+      "User=matrix-scope-probe",
+      "DynamicUser=yes",
       "PrivateUsers=yes",
       "RootDirectory=",
       "PrivateNetwork=yes",
@@ -51,7 +51,7 @@ describe("collaboration scope-runtime native isolation spike", () => {
       "MemoryMax=1073741824",
       "CPUQuota=200%",
       "TasksMax=256",
-      "TemporaryFileSystem=/workspace:rw,size=10G,mode=0700,uid=62000,gid=62000",
+      "TemporaryFileSystem=/workspace:rw,nosuid,nodev,size=10G,mode=1777",
     ]) {
       expect(source).toContain(property);
     }
@@ -102,6 +102,7 @@ describe("collaboration scope-runtime native isolation spike", () => {
       "storage_max_bytes=",
       "agent_sdk_version=",
       "native_harness_version=",
+      "scope_identity=dynamic",
       "scope_runtime_eligibility=",
     ]) {
       expect(source).toContain(evidence);
