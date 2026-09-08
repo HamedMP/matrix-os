@@ -376,6 +376,7 @@ export interface IntegrationRoutesOpts {
       connected_at: Date | string;
       last_used_at: Date | string | null;
     }>>;
+    listAvailableActions?(userId: string, serviceId: string): Promise<readonly string[] | null>;
     connect(userId: string, service: ServiceDefinition): Promise<{ url: string }>;
     call(input: {
       userId: string;
@@ -557,12 +558,47 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     console.warn("[integrations] Startup logo warm failed:", err instanceof Error ? err.message : String(err));
   });
 
-  app.get("/available", (c) => {
-    const services = listServices()
+  app.get("/available", async (c) => {
+    let uid: string | null = null;
+    let capabilityIdentityFailed = false;
+    if (mcpPresetBroker?.listAvailableActions) {
+      try {
+        uid = await resolveUserId(c);
+      } catch (err: unknown) {
+        capabilityIdentityFailed = true;
+        console.warn(
+          "[integrations] Optional capability identity resolution failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    const services = await Promise.all(listServices()
       .filter((service) => service.connectorKind !== "mcp_preset" || mcpPresetBroker)
-      .map((s) => ({
-        ...s,
-        logoUrl: logoCache.get(s.id) || s.logoUrl,
+      .map(async (s) => {
+        let actions = s.actions;
+        if (capabilityIdentityFailed && s.connectorKind === "mcp_preset") {
+          actions = {};
+        } else if (uid && s.connectorKind === "mcp_preset" && mcpPresetBroker?.listAvailableActions) {
+          try {
+            const availableActions = await mcpPresetBroker.listAvailableActions(uid, s.id);
+            if (availableActions) {
+              actions = Object.fromEntries(
+                Object.entries(s.actions).filter(([actionId]) => availableActions.includes(actionId)),
+              );
+            }
+          } catch (err: unknown) {
+            console.warn(
+              `[integrations] ${s.id} capability projection failed:`,
+              err instanceof Error ? err.message : String(err),
+            );
+            actions = {};
+          }
+        }
+        return {
+          ...s,
+          actions,
+          logoUrl: logoCache.get(s.id) || s.logoUrl,
+        };
       }));
     return c.json(services);
   });

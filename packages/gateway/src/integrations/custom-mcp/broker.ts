@@ -31,6 +31,7 @@ export interface CustomMcpCredential {
     resource?: string;
     revocationEndpoint?: string;
     clientId?: string;
+    clientIssuer?: string;
     redirectUri?: string;
     scopes?: string[];
   };

@@ -24,9 +24,16 @@ Pipedream remains behind this boundary for OAuth and provider-token custody. It 
 The managed catalog contains 14 services. Google Docs, Notion, Figma, PostHog,
 Jira, and a customer-connected read-only Stripe account use the Pipedream
 lifecycle. Granola is a curated read-only Streamable HTTP preset backed by its
-public browser-OAuth MCP endpoint. Stripe, PostHog, and Granola expose no write
-actions; Stripe connections should use a restricted read-only key and are
-completely separate from Matrix billing.
+public browser-OAuth MCP endpoint. Matrix dynamically registers a public OAuth
+client when the authorization server advertises DCR, encrypts the resulting
+issuer-bound client ID with the owner's credential, and uses PKCE S256 for the
+browser handoff. Granola supports natural-language meeting search, folder and
+meeting listing, separate note and transcript reads, and connected-account
+inspection; all are read-only. The authenticated service catalog projects only
+actions backed by that connection's discovered tools, so plan-dependent tools
+are never advertised as invocable when absent. Stripe, PostHog, and Granola expose no write actions; Stripe connections
+should use a restricted read-only key and are completely separate from Matrix
+billing.
 
 Personal Custom MCP supports remote HTTPS Streamable HTTP only. Users add it
 in Canvas **Settings > Integrations** or desktop **Settings > MCPs**, authorize

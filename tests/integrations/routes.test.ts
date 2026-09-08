@@ -110,6 +110,62 @@ describe("Integration Routes", () => {
       const data = await res.json() as Array<{ id: string }>;
       expect(data.some((service) => service.id === "granola")).toBe(true);
     });
+
+    it("filters an authenticated MCP preset to the connection's invocable actions", async () => {
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["list_notes", "get_note", "get_account"]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      const granola = data.find((service) => service.id === "granola");
+      expect(Object.keys(granola?.actions ?? {})).toEqual(["list_notes", "get_note", "get_account"]);
+    });
+
+    it("fails closed when MCP capability identity resolution fails", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => {
+          throw new Error("identity unavailable");
+        },
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["list_notes"]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      const granola = data.find((service) => service.id === "granola");
+      expect(granola?.actions).toEqual({});
+      expect(warn).toHaveBeenCalledWith(
+        "[integrations] Optional capability identity resolution failed:",
+        "identity unavailable",
+      );
+      warn.mockRestore();
+    });
   });
 
   // -----------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # SDK verification — managed integration expansion
 
-Date: 2026-08-29
+Date: 2026-09-08
 
 ## Gate status
 
@@ -28,6 +28,25 @@ Sources consulted: Pipedream's official app catalog, app-discovery/API documenta
 
 ## Granola verification
 
-Granola's current official documentation confirms the public endpoint `https://mcp.granola.ai/mcp`, Streamable HTTP, browser OAuth with bearer tokens, and no MCP API-key/service-account mode. The upstream tools currently documented are `list_meetings`, `get_meetings`, and paid-plan-only `get_meeting_transcript`; Matrix maps these to stable `list_notes` and `get_note` actions after runtime schema discovery.
+Granola's [current official documentation](https://docs.granola.ai/help-center/sharing/integrations/mcp)
+confirms the public endpoint `https://mcp.granola.ai/mcp`, Streamable HTTP,
+browser OAuth with bearer tokens, and no MCP API-key/service-account mode. A
+standard connection uses Dynamic Client Registration (DCR), so Matrix registers
+an HTTPS-callback public client with PKCE rather than requiring an operator to
+pre-provision a Granola client ID. The issued client ID is encrypted with the
+owner-scoped credential and bound to the discovered authorization-server issuer.
 
-The live Granola OAuth/read spike is also account-gated and remains **BLOCKED** in this checkout.
+The currently documented upstream tools are `query_granola_meetings`,
+`list_meeting_folders`, `list_meetings`, `get_meetings`,
+`get_meeting_transcript`, and `get_account_info`. Matrix exposes stable
+`search_notes`, `list_folders`, `list_notes`, `get_note`, `get_transcript`, and
+`get_account` actions after runtime schema discovery. The authenticated catalog
+filters that action set against the connection's discovered tools. Folder
+listing, search, and transcripts remain plan-dependent; activation requires the
+baseline `list_meetings`, `get_meetings`, and `get_account_info` tools. All
+Granola actions are read-only.
+
+Automated tests cover DCR request/response validation, encrypted client-ID
+storage, public-client-only enforcement, the curated tool allowlist, and stable
+parameter mapping. The live Granola OAuth/read spike is account-gated and
+remains **BLOCKED** in this checkout.
