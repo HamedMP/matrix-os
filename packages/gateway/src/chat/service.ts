@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
+  CanonicalSubmitChatInputRequestSchema,
+  type CanonicalSubmitChatInputRequest,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
@@ -132,7 +134,7 @@ export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
     orchestrator?: Pick<CanonicalChatOrchestrator,
-      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn"
+      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitApproval" | "submitInput" | "retryTurn"
     >;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
   } = {},
@@ -430,6 +432,10 @@ export function createCanonicalChatService(
         CanonicalSubmitChatApprovalRequestSchema.parse(input),
       );
     },
+    async submitInput(owner: ChatOwner, chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest) {
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return options.orchestrator.submitInput(owner, CanonicalChatIdSchema.parse(chatId), CanonicalChatRunIdSchema.parse(runId), requestId, CanonicalSubmitChatInputRequestSchema.parse(input));
+    },
 
     async retryTurn(
       principal: RequestPrincipal,
@@ -475,6 +481,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     steerRun: unavailable,
     cancelRun: unavailable,
     submitApproval: unavailable,
+    submitInput: unavailable,
     retryTurn: unavailable,
   };
 }

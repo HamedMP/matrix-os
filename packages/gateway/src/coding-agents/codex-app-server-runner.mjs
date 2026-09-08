@@ -9,6 +9,8 @@ import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
+import { createConnectorRequests } from "./codex-connector-requests.mjs";
+import { expireNativeRequests } from "./codex-request-expiry.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -716,6 +718,7 @@ async function handleInput(raw) {
   });
   pendingInputs.set(identity.requestId, {
     nativeRequestId: parsed.data.id,
+    correlationId: identity.correlationId,
     questions: questions.map((question, index) => ({
       questionId: question.questionId,
       nativeQuestionId: parsed.data.params.questions[index].id,
@@ -805,6 +808,7 @@ async function handleProviderMessage(raw) {
   }
   if (await handleApproval(raw)) return;
   if (await handleInput(raw)) return;
+  if (await connectorRequests.handle(raw)) return;
   if (await handleItemLifecycle(raw)) return;
   const outputDelta = ToolOutputDeltaSchema.safeParse(raw);
   if (outputDelta.success) {
@@ -963,18 +967,22 @@ async function applyControl(control) {
     pendingApprovals.delete(control.approvalId);
   } else {
     const pending = pendingInputs.get(control.requestId);
-    if (!pending) return { ok: false };
-    const expected = new Set(pending.questions.map((question) => question.questionId));
-    const provided = Object.keys(control.structuredAnswers);
-    if (provided.length !== expected.size || provided.some((questionId) => !expected.has(questionId))) {
-      return { ok: false };
+    const handled = connectorRequests.answer(control.requestId, control.structuredAnswers);
+    if (handled === false) return { ok: false };
+    if (handled === undefined) {
+      if (!pending) return { ok: false };
+      const expected = new Set(pending.questions.map((question) => question.questionId));
+      const provided = Object.keys(control.structuredAnswers);
+      if (provided.length !== expected.size || provided.some((questionId) => !expected.has(questionId))) {
+        return { ok: false };
+      }
+      const answers = Object.fromEntries(pending.questions.map((question) => [
+        question.nativeQuestionId,
+        { answers: control.structuredAnswers[question.questionId] },
+      ]));
+      sendProvider({ id: pending.nativeRequestId, result: { answers } });
+      pendingInputs.delete(control.requestId);
     }
-    const answers = Object.fromEntries(pending.questions.map((question) => [
-      question.nativeQuestionId,
-      { answers: control.structuredAnswers[question.questionId] },
-    ]));
-    sendProvider({ id: pending.nativeRequestId, result: { answers } });
-    pendingInputs.delete(control.requestId);
   }
   if (completedControls.size >= MAX_COMPLETED_REQUESTS) {
     const oldest = completedControls.keys().next().value;
@@ -1025,18 +1033,22 @@ await new Promise((resolve, reject) => {
 });
 await chmod(controlPath, 0o600);
 
+const connectorRequests = createConnectorRequests({
+  send: sendProvider, persist, safeText: safeExternalText,
+  scope: () => ({ threadId: nativeThreadId, turnId: activeNativeTurnId }),
+});
+async function expireRequests(all = false, reply = true) {
+  await Promise.all([
+    connectorRequests.expire(all, reply),
+    expireNativeRequests({ approvals: pendingApprovals, inputs: pendingInputs, send: sendProvider, persist, now: Date.now(), all, reply }),
+  ]);
+}
 const cleanupTimer = setInterval(() => {
+  void expireRequests().catch(() => {
+    console.warn("[coding-agents] request expiry failed");
+    stop();
+  });
   const now = Date.now();
-  for (const [approvalId, pending] of pendingApprovals) {
-    if (pending.expiresAt > now) continue;
-    pendingApprovals.delete(approvalId);
-    try { sendProvider({ id: pending.nativeRequestId, result: { decision: "cancel" } }); } catch (_error) { stopping = true; }
-  }
-  for (const [requestId, pending] of pendingInputs) {
-    if (pending.expiresAt > now) continue;
-    pendingInputs.delete(requestId);
-    try { sendProvider({ id: pending.nativeRequestId, result: { answers: {} } }); } catch (_error) { stopping = true; }
-  }
   for (const [requestId, completed] of completedControls) {
     if (completed.expiresAt <= now) completedControls.delete(requestId);
   }
@@ -1135,12 +1147,16 @@ function stop() {
   input.close();
   wakeTurn?.();
   wakeTurn = undefined;
-  child.kill("SIGTERM");
+  void expireRequests(true).catch(() => {
+    console.warn("[coding-agents] shutdown request cleanup failed");
+  }).finally(() => child.kill("SIGTERM"));
   stopTimer = setTimeout(() => child.kill("SIGKILL"), PROVIDER_STOP_TIMEOUT_MS);
   stopTimer.unref();
 }
 
 async function finishTurn(outcome) {
+  // The native turn is terminal: clear stale controls, but never write into its closing pipe.
+  await expireRequests(true, false);
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
     assistantDeltaBuffers.size > 0 ||
     startedToolItems.size > 0 ||

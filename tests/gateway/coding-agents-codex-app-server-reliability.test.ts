@@ -182,6 +182,28 @@ const initialize = "if (message.method === 'initialize') console.log(JSON.string
 const startThread = "else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));";
 
 describe("Codex app-server runner reliability", () => {
+  it("surfaces connector consent and resumes only after an explicit answer", async () => {
+    const runtime = await startFakeRuntime("connector", [
+      initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      " console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      " console.log(JSON.stringify({ id: 42, method: 'mcpServer/elicitation/request', params: { threadId: 'native-thread', turnId: 'native-turn', serverName: 'connector', mode: 'openai/form', message: 'Allow this tool?', requestedSchema: null } }));",
+      "} else if (message.id === 42 && message.result?.action === 'accept') {",
+      " console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      " process.exit(0);",
+      "}",
+    ]);
+    try {
+      const transcript = await waitForTranscript(runtime.eventPath, /user_input\.requested/);
+      const event = transcript.trim().split("\n").map((line) => JSON.parse(line)).find((event) => event.type === "matrix.codex.user_input.requested");
+      expect((await replayTranscript(runtime.eventPath)).some((event) => event.type === "user_input.requested")).toBe(true);
+      expect(runtime.child.exitCode).toBeNull();
+      await expect(sendControl(runtime.controlPath, {
+        type: "input", requestId: event.requestId, structuredAnswers: { [event.questions[0].questionId]: ["Allow once"] }, clientRequestId: "req_connector_answer",
+      })).resolves.toEqual({ ok: true });
+      await expect(waitForExit(runtime.child)).resolves.toBe(0);
+    } finally { await cleanup(runtime); }
+  });
   it("settles an in-flight assistant item before a completed turn is replayed", async () => {
     const runtime = await startFakeRuntime("assistant_cleanup", [
       initialize,

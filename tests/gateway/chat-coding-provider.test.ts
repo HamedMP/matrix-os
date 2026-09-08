@@ -86,6 +86,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
   const abortThread = vi.fn(async () => snapshot([]));
   const steerTurn = vi.fn(async () => undefined);
   const submitApproval = vi.fn(async () => snapshot([]));
+  const submitInput = vi.fn(async () => snapshot([]));
   const registerEventSink = vi.fn((candidate: Sink) => {
     sink = candidate;
     return { dispose: vi.fn() };
@@ -97,6 +98,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     abortThread,
     steerTurn,
     submitApproval,
+    submitInput,
     registerEventSink,
   } as unknown as CodingAgentThreadStore & CodingAgentTurnStore;
   return {
@@ -107,6 +109,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
     abortThread,
     steerTurn,
     submitApproval,
+    submitInput,
     publish(events: AgentThreadEvent[], tokenUsage?: {
       inputTokens: number;
       outputTokens: number;
@@ -119,6 +122,23 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it("forwards structured answers with the pending request's correlation without transcript secrets", async () => {
+    const request = { requestId: "req_connector", threadId: "thread_native", title: "Connector", safeDescription: "Allow?",
+      correlationId: "corr_connector", required: true,
+      questions: [{ questionId: "question_connector", header: "Choice", question: "Choose", allowOther: false, secret: true }] };
+    const pending = event({ type: "user_input.requested", eventId: "evt_input", request });
+    const fake = fakeStore([pending]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const submission = { owner, chatId: "chat_coding", runId: "run_coding", requestId: request.requestId,
+      answers: { question_connector: ["private answer"] }, clientRequestId: "req_submit", state: { conversationId: "thread_native" } };
+    await adapter.submitInput!(submission);
+    expect(fake.submitInput).toHaveBeenCalledWith(expect.objectContaining({ userId: owner.ownerId }), "thread_native", request.requestId, {
+      structuredAnswers: submission.answers, answer: "Structured response submitted.", correlationId: request.correlationId, clientRequestId: "req_submit",
+    });
+    fake.getThread.mockResolvedValue(snapshot([pending, event({ type: "user_input.answered", eventId: "evt_answer", requestId: request.requestId, correlationId: request.correlationId })]));
+    await expect(adapter.submitInput!(submission)).rejects.toThrow("Input request unavailable");
+    expect(fake.submitInput).toHaveBeenCalledTimes(1);
+  });
   it("routes Pi through the shared coding seam with its exact model and enforceable sandbox", async () => {
     const createThread = vi.fn(async () => ({
       snapshot: {
@@ -371,6 +391,7 @@ describe("canonical coding Chat Provider adapter", () => {
       type: "approval.requested",
       approvalId: "appr_command",
       title: "Run command",
+      description: "Run a medium-risk command.",
       risk: "medium",
       allowedDecisions: ["approve", "approve_for_session", "decline"],
     });

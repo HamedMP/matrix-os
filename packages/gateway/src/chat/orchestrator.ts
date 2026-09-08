@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { submitCanonicalInput } from "./input-submission.js";
+import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import {
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
@@ -277,6 +279,7 @@ export class CanonicalChatOrchestrator {
       | "finishRun"
       | "getAdapterState"
       | "getPendingApproval"
+      | "getPendingInput"
       | "getLatestAdapterStateForChat"
       | "getTurnRunContext"
       | "admitRetry"
@@ -1289,6 +1292,12 @@ export class CanonicalChatOrchestrator {
       );
     }
     return { approvalId, decision: input.decision, submission: "accepted" };
+  }
+
+  async submitInput(owner: ChatOwner, chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest) {
+    return submitCanonicalInput({ repository: this.options.repository, active: this.active.get(runId),
+      unavailable: () => new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This input request is no longer available."), 409),
+    }, owner, chatId, runId, requestId, input);
   }
 
   async reconcileActiveRuns(owner: ChatOwner): Promise<number> {

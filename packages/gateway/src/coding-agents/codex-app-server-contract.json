@@ -65,7 +65,8 @@
     "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval",
     "item/tool/requestUserInput",
-    "item/permissions/requestApproval"
+    "item/permissions/requestApproval",
+    "mcpServer/elicitation/request"
   ],
   "requiredServerNotifications": [
     "item/started",
@@ -76,6 +77,7 @@
     "turn/completed"
   ],
   "requiredServerProtocolSchemaDigests": {
+    "mcpServer/elicitation/request": "7db52750b4b1e97486c99734d8a785fa3b112b29908458e3b166c6d6aa9bfecf",
     "item/commandExecution/requestApproval": {
       "schemaSha256ByTarget": {
         "darwin-arm64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
