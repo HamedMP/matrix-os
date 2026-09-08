@@ -298,6 +298,7 @@ import {
 } from "./chat/attachment-cleanup.js";
 import { OsViewStateRepository } from "./os-view-state/repository.js";
 import { createOsViewStateRoutes } from "./os-view-state/routes.js";
+import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import { ChatRepository } from "./chat/repository.js";
 import {
   createGatewayChatTerminalWiring,
@@ -621,15 +622,6 @@ export async function createGateway(config: GatewayConfig) {
   const recordAiGeneration = createAiGenerationRecorder({
     capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
   });
-  const dispatcher: Dispatcher = createDispatcher({
-    homePath,
-    model: config.model,
-    maxTurns: config.maxTurns,
-    spawnFn: config.spawnFn,
-    onAiGeneration: recordAiGeneration,
-    fundedCredentialProvider,
-  });
-
   const watcher: Watcher = createWatcher(homePath);
   const conversationMutationLock = createConversationMutationLock({ maxKeys: 64 });
   const conversations: ConversationStore = createConversationStore(homePath, {
@@ -1154,6 +1146,31 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
+  const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
+  const osViewTools = osViewStateRepository
+    && trustedOsViewOwnerId
+    && trustedOsViewOwnerId.length <= 160
+    ? createOsViewAgentTools({
+        repository: osViewStateRepository,
+        ownerId: trustedOsViewOwnerId,
+        homePath,
+        onChanged: (state) => broadcast({
+          type: "os-view:changed",
+          revision: state.revision,
+          updatedAt: state.updatedAt,
+        }),
+      })
+    : undefined;
+  const dispatcher: Dispatcher = createDispatcher({
+    homePath,
+    model: config.model,
+    maxTurns: config.maxTurns,
+    spawnFn: config.spawnFn,
+    onAiGeneration: recordAiGeneration,
+    fundedCredentialProvider,
+    osViewTools,
+  });
+
   // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
   let syncR2: R2Client | null = null;
   let syncPeerRegistry: PeerRegistry | null = null;
@@ -1535,9 +1552,16 @@ export async function createGateway(config: GatewayConfig) {
 
   function broadcast(msg: ServerMessage) {
     const json = JSON.stringify(msg);
+    const dead: WSContext[] = [];
     for (const ws of clients) {
-      ws.send(json);
+      try {
+        ws.send(json);
+      } catch (error: unknown) {
+        console.warn("[gateway] WebSocket broadcast failed:", error instanceof Error ? error.name : "UnknownError");
+        dead.push(ws);
+      }
     }
+    for (const ws of dead) clients.delete(ws);
   }
 
   function broadcastError(message: string) {
@@ -4464,6 +4488,11 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/os-view-state", createOsViewStateRoutes({
       repository: osViewStateRepository,
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      onChanged: (state) => broadcast({
+        type: "os-view:changed",
+        revision: state.revision,
+        updatedAt: state.updatedAt,
+      }),
     }));
   } else {
     app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));

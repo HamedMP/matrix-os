@@ -10,9 +10,12 @@ import {
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_CREATE_APP_APPEARANCE,
   OS_VIEW_LABELS,
+  clampOsViewContextMenuPoint,
   osViewFixedAppAppearanceForPath,
   otherOsViewMode,
   type OsViewMode,
+  type OsViewDesktopAddResult,
+  type OsViewDesktopBounds,
 } from "@matrix-os/contracts";
 type LauncherEntry =
   | { type: "create"; key: "__create-app__"; name: "Create app" }
@@ -72,6 +75,7 @@ export default function AppLauncher({
   onCreateApp,
   onOpenDesktopApp,
   onAddToDesktop,
+  onCloseLauncher,
   osViewMode,
   onSwitchOsView,
 }: {
@@ -80,7 +84,8 @@ export default function AppLauncher({
   onLaunch?: (tabId: string) => void;
   onCreateApp?: () => void;
   onOpenDesktopApp?: (app: DesktopAppConfig) => void;
-  onAddToDesktop?: (path: string) => void;
+  onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
+  onCloseLauncher?: () => void;
   osViewMode?: OsViewMode;
   onSwitchOsView?: (mode: OsViewMode) => void;
 } = {}) {
@@ -97,13 +102,35 @@ export default function AppLauncher({
   } = useAppsQuery();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const [contextEntry, setContextEntry] = useState<LauncherEntry | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ entry: LauncherEntry; x: number; y: number } | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Launcher behavior: focus the search immediately like a desktop launcher.
   useEffect(() => {
     if (launcherActive) inputRef.current?.focus();
+    else {
+      setContextMenu(null);
+      setContextError(null);
+    }
   }, [launcherActive]);
+
+  useEffect(() => {
+    if (presentation !== "launchpad" || !launcherActive) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (contextMenu) {
+        setContextMenu(null);
+        setContextError(null);
+      } else {
+        onCloseLauncher?.();
+      }
+    };
+    document.addEventListener("keydown", dismiss, true);
+    return () => document.removeEventListener("keydown", dismiss, true);
+  }, [contextMenu, launcherActive, onCloseLauncher, presentation]);
 
   const entries = useMemo<LauncherEntry[]>(() => {
     if (presentation !== "launchpad") {
@@ -230,6 +257,14 @@ export default function AppLauncher({
     <div
       data-app-launcher-presentation={presentation}
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      onPointerDownCapture={(event) => {
+        if (!contextMenu) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest("[data-launchpad-context-menu]")) return;
+        event.stopPropagation();
+        setContextMenu(null);
+        setContextError(null);
+      }}
     >
       <div className={`shrink-0 px-6 pb-3 ${presentation === "launchpad" ? "mx-auto w-full max-w-2xl pt-10" : "pt-6"}`}>
         <div
@@ -281,7 +316,12 @@ export default function AppLauncher({
                   onContextMenu={(event) => {
                     if (entry.type === "create" || entry.type === "os-view") return;
                     event.preventDefault();
-                    setContextEntry(entry);
+                    const point = clampOsViewContextMenuPoint(
+                      { x: event.clientX, y: event.clientY },
+                      { width: window.innerWidth, height: window.innerHeight },
+                    );
+                    setContextMenu({ entry, ...point });
+                    setContextError(null);
                   }}
                   onClick={() => open(entry)}
                 >
@@ -317,21 +357,49 @@ export default function AppLauncher({
             })}
           </div>
         )}
-        {contextEntry && contextEntry.type !== "os-view" && onAddToDesktop ? (
-          <div role="menu" data-launchpad-interactive className="fixed left-1/2 top-1/2 z-50 min-w-48 -translate-x-1/2 rounded-xl border bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-3)]">
+        {contextMenu && contextMenu.entry.type !== "os-view" && onAddToDesktop ? (
+          <div
+            role="menu"
+            data-launchpad-interactive
+            data-launchpad-context-menu
+            className="fixed z-50 min-w-48 max-w-64 rounded-xl border bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-3)]"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
             <button
               type="button"
               role="menuitem"
               className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--bg-hover)]"
-              onClick={() => {
-                if (contextEntry.type === "create") return;
-                const path = contextEntry.app.path;
-                if (path) onAddToDesktop(path);
-                setContextEntry(null);
+              onClick={async () => {
+                const entry = contextMenu.entry;
+                if (entry.type === "create" || entry.type === "os-view") return;
+                const path = entry.app.path;
+                if (!path) {
+                  setContextError("Could not add the app. Please try again.");
+                  return;
+                }
+                let result: OsViewDesktopAddResult = "failed";
+                try {
+                  result = await onAddToDesktop(path, {
+                    width: Math.max(1, window.innerWidth),
+                    height: Math.max(1, window.innerHeight - 126),
+                  });
+                } catch (error: unknown) {
+                  console.warn("[app-launcher] Desktop placement failed:", error instanceof Error ? error.name : "UnknownError");
+                }
+                if (result === "added" || result === "already-present") {
+                  setContextMenu(null);
+                  setContextError(null);
+                  onCloseLauncher?.();
+                  return;
+                }
+                setContextError(result === "desktop-full"
+                  ? "Desktop is full. Remove an icon and try again."
+                  : "Could not add the app. Please try again.");
               }}
             >
-              Add {contextEntry.name} to Desktop
+              Add {contextMenu.entry.name} to Desktop
             </button>
+            {contextError ? <p role="alert" className="max-w-60 px-3 pb-2 text-xs">{contextError}</p> : null}
           </div>
         ) : null}
       </div>

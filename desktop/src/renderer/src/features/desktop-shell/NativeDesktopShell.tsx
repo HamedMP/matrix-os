@@ -22,7 +22,11 @@ import DesktopAppDrawer from "./DesktopAppDrawer";
 import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import { useConnection } from "../../stores/connection";
 import { useDesktopIcons } from "../../stores/desktop-icons";
-import { createDefaultOsViewDesktopIcons } from "@matrix-os/contracts";
+import {
+  createDefaultOsViewDesktopIcons,
+  fitOsViewDesktopIconsToViewport,
+  type OsViewDesktopBounds,
+} from "@matrix-os/contracts";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
 import { appIconUrl, useAppsQuery } from "../apps/apps.api";
 import { LayoutGrid } from "@renderer/lib/hugeicons";
@@ -104,9 +108,13 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     primeDesktopIcons(defaultIconLayout);
   }, [defaultIconLayout, primeDesktopIcons]);
 
-  const effectiveDesktopIcons = desktopIcons.length > 0 || useDesktopIcons.getState().loaded
+  const canonicalDesktopIcons = desktopIcons.length > 0 || useDesktopIcons.getState().loaded
     ? desktopIcons
     : defaultIconLayout;
+  const effectiveDesktopIcons = useMemo(
+    () => fitOsViewDesktopIconsToViewport(canonicalDesktopIcons, viewport),
+    [canonicalDesktopIcons, viewport],
+  );
   const {
     durableState,
     recordCanonicalBounds,
@@ -333,9 +341,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     }
   }, [api, removeDesktopIcon]);
 
-  const addIcon = useCallback((path: string) => {
-    if (api) void addDesktopIcon(path, api);
-  }, [addDesktopIcon, api]);
+  const addIcon = useCallback(async (path: string, bounds?: OsViewDesktopBounds) => {
+    if (!api) return "failed" as const;
+    return await addDesktopIcon(path, api, bounds ?? viewport);
+  }, [addDesktopIcon, api, viewport]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
     const tabIds = useTabs.getState().tabs.map((tab) => tab.id);

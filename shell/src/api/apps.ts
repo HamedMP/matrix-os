@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { shellApi, type RequestOptions } from "./http";
+import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
 
 export interface ApiAppEntry {
   name: string;
@@ -27,12 +28,13 @@ export const appKeys = {
 export async function listApps(options?: RequestOptions): Promise<ApiAppEntry[]> {
   const value = await shellApi.get<unknown>("/api/apps", options);
   if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is ApiAppEntry => (
-    Boolean(entry)
-    && typeof entry === "object"
-    && typeof (entry as ApiAppEntry).name === "string"
-    && typeof (entry as ApiAppEntry).path === "string"
-  ));
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const raw = entry as Partial<ApiAppEntry> & { file?: unknown };
+    if (typeof raw.name !== "string" || raw.name.length === 0 || raw.name.length > 256) return [];
+    const path = canonicalOsViewCatalogPath({ path: raw.path, file: raw.file });
+    return path ? [{ ...raw, name: raw.name, path } as ApiAppEntry] : [];
+  });
 }
 
 export function hydrateAppIconUrls(

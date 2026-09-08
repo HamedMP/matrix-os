@@ -9,8 +9,11 @@ import {
 } from "../lib/os-view-state-client";
 import {
   createDefaultOsViewDocument,
+  findOpenOsViewDesktopSlot,
   normalizeOsViewDesktopAppPath,
   OsViewStateResponseSchema,
+  type OsViewDesktopAddResult,
+  type OsViewDesktopBounds,
 } from "@matrix-os/contracts";
 
 export interface DesktopIconPlacement {
@@ -21,12 +24,8 @@ export interface DesktopIconPlacement {
 
 const MAX_DESKTOP_ICONS = 512;
 const MAX_COORDINATE = 16_384;
-const GRID_X = 88;
-const GRID_Y = 92;
-const GRID_COLUMNS = 2;
-const START_X = 20;
-const START_Y = 20;
 const ICON_CONFLICT_RETRY_MS = 2_000;
+const DEFAULT_DESKTOP_BOUNDS = { width: 1280, height: 640 } as const;
 
 function validPlacement(value: unknown): value is DesktopIconPlacement {
   if (!value || typeof value !== "object") return false;
@@ -57,23 +56,13 @@ export function parseDesktopIcons(value: unknown): DesktopIconPlacement[] | null
 }
 
 export function defaultDesktopIcons(paths: readonly string[]): DesktopIconPlacement[] {
-  return paths.slice(0, MAX_DESKTOP_ICONS).map((path, index) => ({
-    path,
-    x: START_X + (index % GRID_COLUMNS) * GRID_X,
-    y: START_Y + Math.floor(index / GRID_COLUMNS) * GRID_Y,
-  }));
-}
-
-function nextOpenSlot(icons: readonly DesktopIconPlacement[]): Pick<DesktopIconPlacement, "x" | "y"> {
-  const occupied = new Set(icons.map((icon) => `${icon.x}:${icon.y}`));
-  for (let index = 0; index < MAX_DESKTOP_ICONS; index += 1) {
-    const candidate = {
-      x: START_X + (index % GRID_COLUMNS) * GRID_X,
-      y: START_Y + Math.floor(index / GRID_COLUMNS) * GRID_Y,
-    };
-    if (!occupied.has(`${candidate.x}:${candidate.y}`)) return candidate;
+  const icons: DesktopIconPlacement[] = [];
+  for (const path of paths.slice(0, MAX_DESKTOP_ICONS)) {
+    const slot = findOpenOsViewDesktopSlot(icons, DEFAULT_DESKTOP_BOUNDS);
+    if (!slot) break;
+    icons.push({ path, ...slot });
   }
-  return { x: START_X, y: START_Y };
+  return icons;
 }
 
 interface DesktopIconsState {
@@ -84,7 +73,7 @@ interface DesktopIconsState {
   hydrate(value: unknown, defaults: readonly DesktopIconPlacement[], expectedRevision: number): void;
   move(path: string, x: number, y: number, api: ApiClient): Promise<void>;
   remove(path: string, api: ApiClient): Promise<void>;
-  add(path: string, api: ApiClient): Promise<void>;
+  add(path: string, api: ApiClient, bounds?: OsViewDesktopBounds): Promise<OsViewDesktopAddResult>;
 }
 
 let loadSequence = 0;
@@ -172,7 +161,8 @@ async function applyOptimisticMutation(
   previousIcons: DesktopIconPlacement[],
   icons: DesktopIconPlacement[],
   set: (partial: Partial<DesktopIconsState>) => void,
-): Promise<void> {
+  rollbackOnConflictExhausted = false,
+): Promise<boolean> {
   const sequence = ++mutationSequence;
   const epoch = stateEpoch;
   pendingMutationCount += 1;
@@ -200,6 +190,7 @@ async function applyOptimisticMutation(
   } catch (error: unknown) {
     console.warn("[desktop-icons] persist failed:", error instanceof Error ? error.name : typeof error);
     if (error instanceof OsViewStateConflictExhaustedError
+      && !rollbackOnConflictExhausted
       && epoch === stateEpoch
       && sequence === mutationSequence
       && isCurrentRuntimeGeneration(runtimeGeneration)) {
@@ -219,8 +210,9 @@ async function applyOptimisticMutation(
         unconfirmedRollbackIcons = null;
         deferredHydrationIcons = null;
         replayableHydrationRange = null;
+        return true;
       }
-      return;
+      return false;
     }
     if (epoch === stateEpoch && sequence === mutationSequence && isCurrentRuntimeGeneration(runtimeGeneration)) {
       if (deferredHydrationIcons !== null) {
@@ -250,12 +242,14 @@ async function applyOptimisticMutation(
         }
       }
     }
+    return false;
   } finally {
     if (epoch === stateEpoch) {
       pendingMutationCount = Math.max(0, pendingMutationCount - 1);
       if (!restoredPendingHydration) hydrationRevision += 1;
     }
   }
+  return true;
 }
 
 export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
@@ -390,10 +384,14 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     const next = current.filter((icon) => icon.path !== path);
     await applyOptimisticMutation(api, current, next, set);
   },
-  add: async (path, api) => {
+  add: async (path, api, bounds = DEFAULT_DESKTOP_BOUNDS) => {
     const current = get().icons;
-    if (!path || path.length > 2048 || current.some((icon) => icon.path === path) || current.length >= MAX_DESKTOP_ICONS) return;
-    const next = [...current, { path, ...nextOpenSlot(current) }];
-    await applyOptimisticMutation(api, current, next, set);
+    if (!path || path.length > 2048) return "failed";
+    if (current.some((icon) => icon.path === path)) return "already-present";
+    if (current.length >= MAX_DESKTOP_ICONS) return "desktop-full";
+    const slot = findOpenOsViewDesktopSlot(current, bounds);
+    if (!slot) return "desktop-full";
+    const next = [...current, { path, ...slot }];
+    return await applyOptimisticMutation(api, current, next, set, true) ? "added" : "failed";
   },
 }));

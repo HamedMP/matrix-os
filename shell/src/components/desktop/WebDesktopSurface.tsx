@@ -1,12 +1,13 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { buildWebDesktopIconApps } from "@/lib/web-desktop-app-launch";
 import {
   createDefaultOsViewDesktopIcons,
+  fitOsViewDesktopIconsToViewport,
   normalizeOsViewDesktopAppPath,
 } from "@matrix-os/contracts";
 import {
@@ -259,13 +260,29 @@ export function WebDesktopSurface({
   onRemoveDesktopIcon,
 }: WebDesktopSurfaceProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window === "undefined" ? 1280 : window.innerWidth,
+    height: typeof window === "undefined" ? 594 : Math.max(1, window.innerHeight - 126),
+  }));
   const primeDesktopIcons = useDesktopConfigStore((state) => state.primeDesktopIcons);
   const desktopApps = useMemo(() => buildWebDesktopIconApps(apps).slice(0, 10), [apps]);
   const defaultPlacements = useMemo<DesktopIconPlacement[]>(createDefaultOsViewDesktopIcons, []);
   useLayoutEffect(() => {
     if (desktopIcons === undefined) primeDesktopIcons(defaultPlacements);
   }, [defaultPlacements, desktopIcons, primeDesktopIcons]);
-  const placements = desktopIcons ?? defaultPlacements;
+  useEffect(() => {
+    const updateViewport = () => setViewport({
+      width: window.innerWidth,
+      height: Math.max(1, window.innerHeight - 126),
+    });
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
+  const canonicalPlacements = desktopIcons ?? defaultPlacements;
+  const placements = useMemo(
+    () => fitOsViewDesktopIconsToViewport(canonicalPlacements, viewport),
+    [canonicalPlacements, viewport],
+  );
   const placedApps = useMemo(() => placements.flatMap((placement) => {
     const app = desktopApps.find((candidate) => (
       normalizeOsViewDesktopAppPath(candidate.path) === placement.path

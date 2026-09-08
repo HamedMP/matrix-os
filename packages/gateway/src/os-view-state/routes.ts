@@ -21,6 +21,7 @@ export interface OsViewStateRouteRepository {
 export function createOsViewStateRoutes(deps: {
   repository: OsViewStateRouteRepository;
   getOwnerId: (context: Context) => string;
+  onChanged?: (state: OsViewStateResponse) => void;
 }): Hono {
   const app = new Hono();
   const writeBodyLimit = bodyLimit({
@@ -53,6 +54,15 @@ export function createOsViewStateRoutes(deps: {
     return context.json({ error: "OS-view state request failed" }, 500);
   }
 
+  function changed(state: OsViewStateResponse): OsViewStateResponse {
+    try {
+      deps.onChanged?.(state);
+    } catch (error: unknown) {
+      console.warn("[os-view-state] Change notification failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+    return state;
+  }
+
   app.get("/", async (context) => {
     try {
       return context.json(await deps.repository.getOrCreate(ownerId(context)));
@@ -65,7 +75,7 @@ export function createOsViewStateRoutes(deps: {
     try {
       const parsed = LegacyDesktopImportSchema.safeParse(await context.req.json());
       if (!parsed.success) return context.json({ error: "Invalid legacy Desktop import" }, 400);
-      return context.json(await deps.repository.importLegacyDesktop(ownerId(context), parsed.data));
+      return context.json(changed(await deps.repository.importLegacyDesktop(ownerId(context), parsed.data)));
     } catch (error: unknown) {
       if (error instanceof SyntaxError) {
         return context.json({ error: "Invalid legacy Desktop import" }, 400);
@@ -78,7 +88,7 @@ export function createOsViewStateRoutes(deps: {
     try {
       const parsed = PatchOsViewStateRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return context.json({ error: "Invalid OS-view state mutation" }, 400);
-      return context.json(await deps.repository.patch(ownerId(context), parsed.data));
+      return context.json(changed(await deps.repository.patch(ownerId(context), parsed.data)));
     } catch (error: unknown) {
       if (error instanceof SyntaxError) {
         return context.json({ error: "Invalid OS-view state mutation" }, 400);
