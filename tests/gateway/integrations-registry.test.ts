@@ -1,8 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { getAction } from "../../packages/gateway/src/integrations/registry.js";
-import { validateActionParams } from "../../packages/gateway/src/integrations/routes.js";
+import {
+  formatActionParamValidationError,
+  validateActionParams,
+} from "../../packages/gateway/src/integrations/parameter-validation.js";
 
 describe("integrations registry", () => {
+  it("formats every parameter-validation failure through the shared helper", () => {
+    expect(formatActionParamValidationError({
+      valid: false,
+      missing: ["text"],
+      typeErrors: ["maxResults: expected number, got string"],
+      valueErrors: ["replyToPostId: must be a 1-19 digit X post ID"],
+    })).toBe(
+      "Missing required params: text. " +
+      "Invalid param type: maxResults: expected number, got string. " +
+      "Invalid param value: replyToPostId: must be a 1-19 digit X post ID",
+    );
+  });
+
   it("rejects malformed or out-of-range X action parameters at the route boundary", () => {
     const byUsername = getAction("twitter", "get_user_by_username");
     const listPosts = getAction("twitter", "list_user_posts");

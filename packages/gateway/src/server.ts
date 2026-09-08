@@ -237,15 +237,9 @@ import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
 import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
-import {
-  createIntegrationRoutes,
-  validateActionParams,
-  getErrorStatusCode,
-  getRetryAfterSeconds,
-  executeIntegrationAction,
-  IntegrationActionNotImplementedError,
-} from "./integrations/routes.js";
-import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
+import { createIntegrationRoutes } from "./integrations/routes.js";
+import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
+import { discoverComponentKeys } from "./integrations/registry.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
 import {
@@ -388,16 +382,6 @@ const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 function isSafeIconStem(value: unknown): value is string {
   return typeof value === "string" && SAFE_ICON_STEM.test(value);
 }
-
-// Mirrors CallBodySchema in integrations/routes.ts so the dev-only
-// /api/bridge/service POST validates its body the same way the public
-// /api/integrations/call endpoint does.
-const BridgeCallBodySchema = z.object({
-  service: z.string().min(1),
-  action: z.string().min(1),
-  label: z.string().trim().min(1).max(100).optional(),
-  params: z.record(z.string(), z.unknown()).optional(),
-});
 
 const ApiMessageBodySchema = z.object({
   text: z.string().refine((value) => value.trim().length > 0),
@@ -3576,128 +3560,11 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  // ---------------------------------------------------------------------------
-  // Bridge: Integration service calls (for apps in iframes)
-  // ---------------------------------------------------------------------------
-
-  app.get("/api/bridge/service", async (c) => {
-    if (!platformDb || !resolveIntegrationUserId) {
-      return c.json({ error: "Integrations not configured" }, 503);
-    }
-    const uid = await resolveIntegrationUserId(c);
-    if (!uid) return c.json({ error: "Unauthorized" }, 401);
-    const services = await platformDb.listConnectedServices(uid);
-    return c.json({
-      services: services.map((s) => ({
-        service: s.service,
-        account_label: s.account_label,
-        account_email: s.account_email,
-        status: s.status,
-      })),
-    });
-  });
-
-  app.post("/api/bridge/service", bodyLimit({ maxSize: 65536 }), async (c) => {
-    if (process.env.NODE_ENV === "production") {
-      return c.json({ error: "Bridge not available in production" }, 403);
-    }
-    if (!platformDb || !pipedreamClient || !resolveIntegrationUserId) {
-      return c.json({ error: "Integrations not configured" }, 503);
-    }
-
-    // Mirror CallBodySchema from integrations/routes.ts. The route is dev-only
-    // (production returns 403 above) so the security risk of an unvalidated
-    // body is minimal, but the cast was inconsistent with every other mutating
-    // endpoint in this PR and provided zero runtime protection.
-    let parsedJson: unknown;
-    try {
-      parsedJson = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON" }, 400);
-      }
-      console.error("[bridge/service] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-    const parsed = BridgeCallBodySchema.safeParse(parsedJson);
-    if (!parsed.success) {
-      return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
-    }
-
-    const { service, action, label, params } = parsed.data;
-
-    const def = getService(service);
-    if (!def) return c.json({ error: `Unknown service: ${service}` }, 400);
-    const actionDef = getAction(service, action);
-    if (!actionDef) return c.json({ error: `Unknown action: ${action}` }, 400);
-
-    const paramValidation = validateActionParams(actionDef, params);
-    if (!paramValidation.valid) {
-      const parts: string[] = [];
-      if (paramValidation.missing.length > 0) parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
-      if (paramValidation.typeErrors.length > 0) parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
-      if (paramValidation.valueErrors?.length) parts.push(`Invalid param value: ${paramValidation.valueErrors.join("; ")}`);
-      return c.json({ error: parts.join(". ") }, 400);
-    }
-
-    const uid = await resolveIntegrationUserId(c);
-    if (!uid) return c.json({ error: "Unauthorized" }, 401);
-
-    const connections = await platformDb.listConnectedServices(uid);
-    let connection;
-    if (label) {
-      connection = connections.find((s) => s.service === service && s.account_label === label);
-    } else {
-      connection = connections.find((s) => s.service === service);
-    }
-    if (!connection) {
-      return c.json({ error: `Service ${service} is not connected` }, 404);
-    }
-
-    const fullUser = await platformDb.getUserById(uid);
-    const externalId = fullUser?.pipedream_external_id || uid;
-    if (!fullUser?.pipedream_external_id) {
-      await platformDb.updatePipedreamExternalId(uid, externalId);
-    }
-
-    try {
-      const { data, summary } = await executeIntegrationAction({
-        pipedream: pipedreamClient,
-        externalUserId: externalId,
-        connection,
-        def,
-        actionDef,
-        serviceId: service,
-        actionId: action,
-        params,
-      });
-      await platformDb.touchServiceUsage(connection.id);
-      return c.json({ data, service, action, ...(summary ? { summary } : {}) });
-    } catch (err) {
-      if (err instanceof IntegrationActionNotImplementedError) {
-        return c.json({ error: err.message }, 501);
-      }
-      if (getErrorStatusCode(err) === 429) {
-        const retryAfter = getRetryAfterSeconds(err);
-        return c.json(
-          { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
-          { status: 429, headers: { "Retry-After": String(retryAfter) } },
-        );
-      }
-      const isAbort = err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
-      if (isAbort) {
-        console.error(`[bridge/service] ${service}/${action} timeout`);
-        return c.json({ error: "Integration call timed out" }, 504);
-      }
-      const msg = err instanceof Error ? err.message.toLowerCase() : "";
-      if (msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("enetunreach")) {
-        console.error(`[bridge/service] ${service}/${action} connection error:`, err);
-        return c.json({ error: "Integration service unavailable" }, 503);
-      }
-      console.error(`[bridge/service] ${service}/${action} error:`, err instanceof Error ? err.message : err);
-      return c.json({ error: "Integration call failed" }, 502);
-    }
-  });
+  app.route("/api/bridge/service", createIntegrationBridgeRoutes({
+    platformDb,
+    pipedream: pipedreamClient,
+    resolveUserId: resolveIntegrationUserId,
+  }));
 
   registerConversationHistoryRoutes(app, {
     conversations,
