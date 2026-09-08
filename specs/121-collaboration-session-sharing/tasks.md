@@ -184,10 +184,10 @@
 
 ### Tests and proof first — PR2
 
-- [ ] T074 [P] [US4] (PR2) Create a failing/positive native isolation probe for filesystem, environment, process, descriptors, sockets, DNS/egress, broker, and supervisor injection in `scripts/spikes/collaboration/scope-runtime-probe.ts`
+- [x] T074 [P] [US4] (PR2) Create a failing/positive native isolation probe for filesystem, environment, process, descriptors, sockets, DNS/egress, broker, and supervisor injection in `scripts/spikes/collaboration/scope-runtime-probe.ts`
 - [ ] T075 [P] [US4] (PR2) Record public-safe measured profile quotas, supported harness versions, failures, and eligibility in `scripts/spikes/collaboration/README.md`
-- [ ] T076 [P] [US4] (PR2) Write red supervisor protocol/profile validation, timeout, crash, restart, and shutdown tests in `tests/gateway/scope-runtime-client.test.ts`
-- [ ] T077 [P] [US4] (PR2) Write red scope-bound Chat execution provenance and private-resume rejection tests in `tests/gateway/collaboration-execution-context.test.ts`
+- [x] T076 [P] [US4] (PR2) Write red supervisor protocol/profile validation, timeout, crash, restart, and shutdown tests in `tests/gateway/scope-runtime-client.test.ts`
+- [x] T077 [P] [US4] (PR2) Write red scope-bound Chat execution provenance and private-resume rejection tests in `tests/gateway/collaboration-execution-context.test.ts`
 
 ### Implementation — PR2
 

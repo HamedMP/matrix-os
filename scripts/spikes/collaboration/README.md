@@ -13,6 +13,22 @@ actively tests loopback, link-local, private and public network denial and
 writes a disposable sentinel inside the scope workspace. Never run it on an
 owner's Matrix computer.
 
+`native-isolation-acceptance.sh` is the root-side disposable-host harness. It
+also refuses to start without the marker. The harness creates temporary broker
+and supervisor sentinel sockets, runs the probe once as an intentionally
+unrestricted numeric non-root identity, and requires that baseline to fail.
+It then runs the same probe through one fixed systemd 255-compatible profile
+with a minimal root, an isolated network, an exact broker socket mount, and
+bounded CPU, memory, process, and scratch-storage quotas. It always stops the
+transient unit and removes its sockets and temporary root on exit.
+
+The acceptance harness expects the reviewed probe at
+`/var/tmp/matrix-scope-runtime-probe.ts` on the disposable host and the bundled
+Node runtime at `/opt/matrix/runtime/node/bin/node`. Install the probe through
+the repository's authenticated exact-head preview acceptance channel; do not
+copy credentials or owner files into the profile. A successful stdout record
+contains only the bounded baseline/candidate reports and measured quota values.
+
 The experiment must run twice against the same release candidate:
 
 1. An intentionally unrestricted non-root baseline must fail the isolation
