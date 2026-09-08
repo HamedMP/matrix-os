@@ -13,21 +13,60 @@ fi
 
 readonly node_bin=/opt/matrix/runtime/node/bin/node
 readonly probe_source=/var/tmp/matrix-scope-runtime-probe.ts
+readonly sdk_probe_source=/var/tmp/matrix-scope-runtime-sdk-probe.mjs
+readonly broker_fixture_source=/var/tmp/matrix-scope-runtime-broker-fixture.mjs
 readonly broker_socket=/run/matrix-scope/broker.sock
 readonly supervisor_socket=/run/matrix-scope-runtime/supervisor.sock
 readonly scope_uid=62000
 readonly scope_gid=62000
+readonly sdk_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk/package.json
+readonly native_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/package.json
 
-for executable in "$node_bin" /usr/bin/setpriv /usr/bin/systemd-run /usr/bin/systemctl; do
+for executable in "$node_bin" /usr/bin/readlink /usr/bin/setpriv /usr/bin/systemd-run /usr/bin/systemctl; do
   if [ ! -x "$executable" ]; then
     printf 'scope_runtime_acceptance_dependency_unavailable\n' >&2
     exit 2
   fi
 done
-if [ ! -f "$probe_source" ] || [ -L "$probe_source" ]; then
-  printf 'scope_runtime_acceptance_probe_unavailable\n' >&2
+for source_file in "$probe_source" "$sdk_probe_source" "$broker_fixture_source"; do
+  if [ ! -f "$source_file" ] || [ -L "$source_file" ]; then
+    printf 'scope_runtime_acceptance_probe_unavailable\n' >&2
+    exit 2
+  fi
+done
+if [ ! -f "$sdk_manifest" ] || [ ! -f "$native_manifest" ]; then
+  printf 'scope_runtime_acceptance_sdk_unavailable\n' >&2
   exit 2
 fi
+if [ "$(uname -m)" != "x86_64" ]; then
+  printf 'scope_runtime_acceptance_architecture_unsupported\n' >&2
+  exit 2
+fi
+sdk_directory="$(/usr/bin/readlink -f "${sdk_manifest%/*}")"
+native_directory="$(/usr/bin/readlink -f "${native_manifest%/*}")"
+if [ -z "$sdk_directory" ] || [ -z "$native_directory" ] ||
+  [ ! -f "$sdk_directory/sdk.mjs" ] || [ ! -x "$native_directory/claude" ]; then
+  printf 'scope_runtime_acceptance_sdk_unavailable\n' >&2
+  exit 2
+fi
+sdk_facts="$($node_bin --input-type=module -e '
+  import { readFile } from "node:fs/promises";
+  const [sdkPath, nativePath] = process.argv.slice(1);
+  const sdk = JSON.parse(await readFile(sdkPath, "utf8"));
+  const native = JSON.parse(await readFile(nativePath, "utf8"));
+  if (!/^0\.[0-9]+\.[0-9]+$/.test(sdk.version) || sdk.version !== native.version ||
+    !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(sdk.claudeCodeVersion)) process.exit(1);
+  process.stdout.write(`${sdk.version}\t${sdk.claudeCodeVersion}`);
+' "$sdk_manifest" "$native_manifest")" || {
+  printf 'scope_runtime_acceptance_sdk_unsupported\n' >&2
+  exit 2
+}
+IFS=$'\t' read -r sdk_version native_harness_version <<<"$sdk_facts"
+if [ -z "$sdk_version" ] || [ -z "$native_harness_version" ]; then
+  printf 'scope_runtime_acceptance_sdk_unsupported\n' >&2
+  exit 2
+fi
+readonly sdk_directory native_directory sdk_version native_harness_version
 if [ -e "$broker_socket" ] || [ -L "$broker_socket" ] ||
   [ -e "$supervisor_socket" ] || [ -L "$supervisor_socket" ]; then
   printf 'scope_runtime_acceptance_socket_collision\n' >&2
@@ -37,12 +76,15 @@ fi
 probe_root="$(mktemp -d /var/tmp/matrix-scope-accept.XXXXXX)"
 readonly probe_root
 readonly candidate_unit="matrix-scope-probe-${probe_root##*.}.service"
+readonly sdk_candidate_unit="matrix-scope-sdk-probe-${probe_root##*.}.service"
 broker_pid=
 supervisor_pid=
 
 cleanup() {
   /usr/bin/systemctl stop "$candidate_unit" >/dev/null 2>&1 || true
   /usr/bin/systemctl reset-failed "$candidate_unit" >/dev/null 2>&1 || true
+  /usr/bin/systemctl stop "$sdk_candidate_unit" >/dev/null 2>&1 || true
+  /usr/bin/systemctl reset-failed "$sdk_candidate_unit" >/dev/null 2>&1 || true
   if [ -n "$broker_pid" ]; then
     kill "$broker_pid" >/dev/null 2>&1 || true
     wait "$broker_pid" 2>/dev/null || true
@@ -80,8 +122,9 @@ start_sentinel() {
   SENTINEL_PID=$!
 }
 
-start_sentinel "$broker_socket" "$probe_root/broker.log"
-broker_pid="$SENTINEL_PID"
+MATRIX_SCOPE_PROBE_DISPOSABLE=1 "$node_bin" "$broker_fixture_source" \
+  >"$probe_root/broker.log" 2>&1 &
+broker_pid=$!
 start_sentinel "$supervisor_socket" "$probe_root/supervisor.log"
 supervisor_pid="$SENTINEL_PID"
 
@@ -136,6 +179,8 @@ mkdir -p \
   "$probe_root/root/lib" \
   "$probe_root/root/lib64" \
   "$probe_root/root/opt/matrix/runtime" \
+  "$probe_root/root/opt/matrix/scope-sdk/native" \
+  "$probe_root/root/opt/matrix/scope-sdk/sdk" \
   "$probe_root/root/proc" \
   "$probe_root/root/run/matrix-scope" \
   "$probe_root/root/run/matrix-scope-runtime" \
@@ -146,6 +191,59 @@ mkdir -p \
   "$probe_root/root/workspace"
 : >"$probe_root/root/run/matrix-scope/broker.sock"
 : >"$probe_root/root/run/matrix-scope-probe/scope-runtime-probe.ts"
+: >"$probe_root/root/run/matrix-scope-probe/scope-runtime-sdk-probe.mjs"
+
+readonly -a fixed_profile=(
+  --property=Type=exec
+  --property=User=62000
+  --property=Group=62000
+  --property=PrivateUsers=yes
+  "--property=RootDirectory=$probe_root/root"
+  --property=MountAPIVFS=yes
+  --property=PrivateNetwork=yes
+  --property=PrivateIPC=yes
+  --property=PrivateTmp=yes
+  --property=PrivateDevices=yes
+  --property=ProtectProc=invisible
+  --property=ProcSubset=pid
+  --property=ProtectSystem=strict
+  --property=ProtectHome=yes
+  --property=ProtectKernelTunables=yes
+  --property=ProtectKernelModules=yes
+  --property=ProtectKernelLogs=yes
+  --property=ProtectControlGroups=yes
+  --property=ProtectClock=yes
+  --property=ProtectHostname=yes
+  --property=NoNewPrivileges=yes
+  --property=CapabilityBoundingSet=
+  --property=AmbientCapabilities=
+  "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"
+  --property=RestrictNamespaces=yes
+  --property=RestrictRealtime=yes
+  --property=RestrictSUIDSGID=yes
+  --property=SystemCallArchitectures=native
+  --property=MemoryMax=1073741824
+  --property=CPUQuota=200%
+  --property=TasksMax=256
+  "--property=TemporaryFileSystem=/workspace:rw,size=10G,mode=0700,uid=62000,gid=62000"
+  "--property=TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=64M,mode=1777"
+  "--property=BindReadOnlyPaths=/lib"
+  "--property=BindReadOnlyPaths=/lib64"
+  "--property=BindReadOnlyPaths=/usr/lib"
+  "--property=BindReadOnlyPaths=/opt/matrix/runtime/node"
+  "--property=BindReadOnlyPaths=$sdk_directory:/opt/matrix/scope-sdk/sdk"
+  "--property=BindReadOnlyPaths=$native_directory:/opt/matrix/scope-sdk/native"
+  "--property=BindReadOnlyPaths=$probe_source:/run/matrix-scope-probe/scope-runtime-probe.ts"
+  "--property=BindReadOnlyPaths=$sdk_probe_source:/run/matrix-scope-probe/scope-runtime-sdk-probe.mjs"
+  "--property=BindPaths=$broker_socket:/run/matrix-scope/broker.sock"
+  --property=WorkingDirectory=/workspace
+  --property=UMask=0077
+  --property=RuntimeMaxSec=90
+  --property=TimeoutStopSec=10
+  --setenv=HOME=/workspace
+  --setenv=PATH=/opt/matrix/runtime/node/bin
+  --setenv=MATRIX_SCOPE_PROBE_DISPOSABLE=1
+)
 
 run_fixed_profile_candidate() {
   /usr/bin/systemd-run \
@@ -154,55 +252,23 @@ run_fixed_profile_candidate() {
     --pipe \
     --collect \
     --quiet \
-    --property=Type=exec \
-    --property=User=62000 \
-    --property=Group=62000 \
-    --property=PrivateUsers=yes \
-    --property="RootDirectory=$probe_root/root" \
-    --property=MountAPIVFS=yes \
-    --property=PrivateNetwork=yes \
-    --property=PrivateIPC=yes \
-    --property=PrivateTmp=yes \
-    --property=PrivateDevices=yes \
-    --property=ProtectProc=invisible \
-    --property=ProcSubset=pid \
-    --property=ProtectSystem=strict \
-    --property=ProtectHome=yes \
-    --property=ProtectKernelTunables=yes \
-    --property=ProtectKernelModules=yes \
-    --property=ProtectKernelLogs=yes \
-    --property=ProtectControlGroups=yes \
-    --property=ProtectClock=yes \
-    --property=ProtectHostname=yes \
-    --property=NoNewPrivileges=yes \
-    --property=CapabilityBoundingSet= \
-    --property=AmbientCapabilities= \
-    --property=RestrictAddressFamilies=AF_UNIX \
-    --property=RestrictNamespaces=yes \
-    --property=RestrictRealtime=yes \
-    --property=RestrictSUIDSGID=yes \
-    --property=SystemCallArchitectures=native \
-    --property=MemoryMax=1073741824 \
-    --property=CPUQuota=200% \
-    --property=TasksMax=256 \
-    --property="TemporaryFileSystem=/workspace:rw,size=10G,mode=0700,uid=62000,gid=62000" \
-    --property="TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=64M,mode=1777" \
-    --property="BindReadOnlyPaths=/lib" \
-    --property="BindReadOnlyPaths=/lib64" \
-    --property="BindReadOnlyPaths=/usr/lib" \
-    --property="BindReadOnlyPaths=/opt/matrix/runtime/node" \
-    --property="BindReadOnlyPaths=$probe_source:/run/matrix-scope-probe/scope-runtime-probe.ts" \
-    --property="BindPaths=$broker_socket:/run/matrix-scope/broker.sock" \
-    --property=WorkingDirectory=/workspace \
-    --property=UMask=0077 \
-    --property=RuntimeMaxSec=60 \
-    --property=TimeoutStopSec=10 \
-    --setenv=HOME=/workspace \
-    --setenv=PATH=/opt/matrix/runtime/node/bin \
-    --setenv=MATRIX_SCOPE_PROBE_DISPOSABLE=1 \
+    "${fixed_profile[@]}" \
     -- \
     /opt/matrix/runtime/node/bin/node \
     /run/matrix-scope-probe/scope-runtime-probe.ts
+}
+
+run_agent_sdk_candidate() {
+  /usr/bin/systemd-run \
+    --unit="$sdk_candidate_unit" \
+    --wait \
+    --pipe \
+    --collect \
+    --quiet \
+    "${fixed_profile[@]}" \
+    -- \
+    /opt/matrix/runtime/node/bin/node \
+    /run/matrix-scope-probe/scope-runtime-sdk-probe.mjs
 }
 
 candidate_status=0
@@ -225,6 +291,28 @@ if ! "$node_bin" --input-type=module -e '
   exit 1
 fi
 
+sdk_candidate_status=0
+if run_agent_sdk_candidate >"$probe_root/sdk-candidate.json" 2>"$probe_root/sdk-candidate.err"; then
+  sdk_candidate_status=0
+else
+  sdk_candidate_status=$?
+fi
+if [ "$sdk_candidate_status" != "0" ]; then
+  printf 'scope_runtime_acceptance_sdk_candidate_failed\n' >&2
+  sed -n '1,40p' "$probe_root/sdk-candidate.err" >&2
+  exit 1
+fi
+if ! "$node_bin" --input-type=module -e '
+  import { readFile } from "node:fs/promises";
+  const report = JSON.parse(await readFile(process.argv[1], "utf8"));
+  if (report?.status !== "sdk_query:passed" ||
+    report?.brokerActionBoundary !== "passed" ||
+    report?.brokerTransport !== "unix_socket") process.exit(1);
+' "$probe_root/sdk-candidate.json"; then
+  printf 'scope_runtime_acceptance_sdk_candidate_report_invalid\n' >&2
+  exit 1
+fi
+
 printf 'scope_runtime_acceptance=passed\n'
 printf 'baseline_status=%s\n' "$baseline_status"
 printf 'scope_uid=%s\n' "$scope_uid"
@@ -232,6 +320,9 @@ printf 'memory_max_bytes=1073741824\n'
 printf 'cpu_quota_percent=200\n'
 printf 'tasks_max=256\n'
 printf 'storage_max_bytes=10737418240\n'
+printf 'agent_sdk_version=%s\n' "$sdk_version"
+printf 'native_harness_version=%s\n' "$native_harness_version"
+printf 'sdk_broker_result=passed\n'
 printf '%s\n' 'baseline_report_begin'
 sed -n '1,240p' "$probe_root/baseline.json"
 printf '%s\n' 'baseline_report_end'

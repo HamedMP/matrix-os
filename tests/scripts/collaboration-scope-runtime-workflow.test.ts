@@ -29,6 +29,8 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     const workflow = await readFile(workflowPath, "utf8");
 
     expect(workflow).toContain("scripts/spikes/collaboration/scope-runtime-probe.ts");
+    expect(workflow).toContain("scripts/spikes/collaboration/scope-runtime-sdk-probe.mjs");
+    expect(workflow).toContain("scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs");
     expect(workflow).toContain("scripts/spikes/collaboration/native-isolation-acceptance.sh");
     expect(workflow).toContain("MATRIX_SCOPE_PROBE_DISPOSABLE=1");
     expect(workflow).toContain("scope-runtime-native-evidence-");

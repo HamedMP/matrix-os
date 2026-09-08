@@ -22,12 +22,15 @@ with a minimal root, an isolated network, an exact broker socket mount, and
 bounded CPU, memory, process, and scratch-storage quotas. It always stops the
 transient unit and removes its sockets and temporary root on exit.
 
-The acceptance harness expects the reviewed probe at
-`/var/tmp/matrix-scope-runtime-probe.ts` on the disposable host and the bundled
-Node runtime at `/opt/matrix/runtime/node/bin/node`. Install the probe through
-the repository's authenticated exact-head preview acceptance channel; do not
-copy credentials or owner files into the profile. A successful stdout record
-contains only the bounded baseline/candidate reports and measured quota values.
+The acceptance harness expects the reviewed native probe, Agent SDK probe, and
+bounded broker fixture under `/var/tmp/` on the disposable host and the bundled
+Node runtime at `/opt/matrix/runtime/node/bin/node`. It resolves the installed
+`@anthropic-ai/claude-agent-sdk` and matching Linux x64 native harness, mounts
+only those package directories read-only, and supplies no owner credential.
+Install the probes through the repository's authenticated exact-head preview
+acceptance channel; do not copy credentials or owner files into the profile. A
+successful stdout record contains only bounded baseline/candidate reports,
+measured versions, and quota values.
 
 The experiment must run twice against the same release candidate:
 
@@ -36,6 +39,9 @@ The experiment must run twice against the same release candidate:
    environment, sockets or egress instead of producing a vacuous pass.
 2. The candidate fixed-profile supervisor boundary must pass every check,
    including the child-process inheritance pass.
+3. The actual installed Agent SDK must start its matching native harness inside
+   the same profile, complete a deterministic fake-provider turn through the
+   exact Unix-socket broker action, and reject a non-allowlisted broker action.
 
 Do not implement or advertise an adapter from mock results. Unknown supervisor,
 profile-digest, Node, native harness or adapter-version combinations remain
@@ -76,7 +82,10 @@ The JSON report contains only bounded public-safe status:
 - direct loopback, metadata, private, public and DNS access is denied;
 - the bounded broker socket is reachable;
 - the supervisor control socket is unreachable from the workload; and
-- a spawned child inherits the same boundary.
+- a spawned child inherits the same boundary; and
+- the installed Agent SDK/native harness completes only through the bounded
+  `inference.messages` broker fixture while an attempted `host.fetch` action is
+  denied.
 
 The supervisor acceptance harness must additionally inject malformed and
 oversized IPC, crash the supervisor during a request, restart it, and verify a

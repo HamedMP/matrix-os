@@ -201,6 +201,10 @@ jobs:
             body='{"command":["/usr/bin/rm","-f","--",
               "/var/tmp/matrix-scope-runtime-probe.ts",
               "/var/tmp/matrix-scope-runtime-probe.ts.b64",
+              "/var/tmp/matrix-scope-runtime-sdk-probe.mjs",
+              "/var/tmp/matrix-scope-runtime-sdk-probe.mjs.b64",
+              "/var/tmp/matrix-scope-runtime-broker-fixture.mjs",
+              "/var/tmp/matrix-scope-runtime-broker-fixture.mjs.b64",
               "/var/tmp/matrix-scope-native-acceptance.sh",
               "/var/tmp/matrix-scope-native-acceptance.sh.b64"]}'
             send_command "$body" || true
@@ -209,6 +213,10 @@ jobs:
 
           upload_asset scripts/spikes/collaboration/scope-runtime-probe.ts \
             /var/tmp/matrix-scope-runtime-probe.ts 0644
+          upload_asset scripts/spikes/collaboration/scope-runtime-sdk-probe.mjs \
+            /var/tmp/matrix-scope-runtime-sdk-probe.mjs 0644
+          upload_asset scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs \
+            /var/tmp/matrix-scope-runtime-broker-fixture.mjs 0644
           upload_asset scripts/spikes/collaboration/native-isolation-acceptance.sh \
             /var/tmp/matrix-scope-native-acceptance.sh 0700
 

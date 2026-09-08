@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const acceptancePath = "scripts/spikes/collaboration/native-isolation-acceptance.sh";
+const brokerFixturePath = "scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs";
+const sdkProbePath = "scripts/spikes/collaboration/scope-runtime-sdk-probe.mjs";
 
 describe("collaboration scope-runtime native isolation spike", () => {
   it("refuses to touch a host without the disposable acceptance marker", () => {
@@ -42,7 +44,7 @@ describe("collaboration scope-runtime native isolation spike", () => {
       "ProcSubset=pid",
       "NoNewPrivileges=yes",
       "CapabilityBoundingSet=",
-      "RestrictAddressFamilies=AF_UNIX",
+      "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
       "MemoryMax=1073741824",
       "CPUQuota=200%",
       "TasksMax=256",
@@ -63,5 +65,35 @@ describe("collaboration scope-runtime native isolation spike", () => {
     expect(source).toContain("trap cleanup EXIT INT TERM");
     expect(source).toContain("systemctl stop");
     expect(source).toContain("rm -rf -- \"$probe_root\"");
+  });
+
+  it("runs the installed Agent SDK and native harness inside the same fixed profile", async () => {
+    const [acceptance, sdkProbe] = await Promise.all([
+      readFile(acceptancePath, "utf8"),
+      readFile(sdkProbePath, "utf8"),
+    ]);
+
+    expect(acceptance).toContain("run_agent_sdk_candidate");
+    expect(acceptance).toContain("@anthropic-ai/claude-agent-sdk/package.json");
+    expect(acceptance).toContain("@anthropic-ai/claude-agent-sdk-linux-x64/package.json");
+    expect(sdkProbe).toContain("/opt/matrix/scope-sdk/native/claude");
+    expect(sdkProbe).toContain("pathToClaudeCodeExecutable");
+    expect(sdkProbe).toContain("/run/matrix-scope/broker.sock");
+    expect(sdkProbe).toContain("sdk_query:passed");
+  });
+
+  it("keeps the proof broker action-bound and rejects arbitrary destinations", async () => {
+    const [brokerFixture, sdkProbe] = await Promise.all([
+      readFile(brokerFixturePath, "utf8"),
+      readFile(sdkProbePath, "utf8"),
+    ]);
+
+    expect(brokerFixture).toContain('action !== "inference.messages"');
+    expect(brokerFixture).toContain('path !== "/v1/messages?beta=true"');
+    expect(brokerFixture).toContain("request_too_large");
+    expect(sdkProbe).toContain('action: "inference.messages"');
+    expect(sdkProbe).toContain('action: "host.fetch"');
+    expect(sdkProbe).not.toContain("targetUrl");
+    expect(sdkProbe).not.toContain("command:");
   });
 });
