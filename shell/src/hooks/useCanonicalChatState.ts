@@ -18,8 +18,8 @@ import { getGatewayUrl } from "@/lib/gateway";
 import {
   createCanonicalShellChatClient,
   isDefinitiveCanonicalChatRejection,
-  projectCanonicalMessages,
 } from "@/lib/canonical-chat-client";
+import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -62,6 +62,8 @@ export function useCanonicalChatState(): ChatState {
   } | null>(null);
   const detailRef = useRef(detail);
   const activeChatIdRef = useRef(activeChatId);
+  // An empty selection after New chat is intentional, not an initial restore.
+  const autoRestoreChatRef = useRef(true);
   detailRef.current = detail;
   activeChatIdRef.current = activeChatId;
 
@@ -69,7 +71,9 @@ export function useCanonicalChatState(): ChatState {
     try {
       const page = await client.list();
       setRecords(page.items);
-      setActiveChatId((current) => current ?? page.items[0]?.chat.id);
+      if (autoRestoreChatRef.current) {
+        setActiveChatId((current) => current ?? page.items[0]?.chat.id);
+      }
     } catch (error: unknown) {
       console.warn("[canonical-chat] Shell list unavailable:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("Chats could not be loaded. Try again.");
@@ -309,6 +313,9 @@ export function useCanonicalChatState(): ChatState {
   }, [activeChatId, client, loadDetail, loadList, submitting]);
 
   const newChat = useCallback(async () => {
+    autoRestoreChatRef.current = false;
+    activeChatIdRef.current = undefined;
+    detailRef.current = null;
     detailRequestGeneration.current += 1;
     setActiveChatId(undefined);
     setDetail(null);
@@ -401,7 +408,7 @@ export function useCanonicalChatState(): ChatState {
     }
   }, [client, records]);
 
-  const messages = detail ? projectCanonicalMessages(detail.messages) : [];
+  const messages = detail ? projectCanonicalTranscript(detail) : [];
   if (safeError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: safeError, timestamp: Date.now() });
   }

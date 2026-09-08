@@ -30,6 +30,7 @@ import {
 import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import { CodingAgentSteerRequestSchema, matchesSteeringTurn } from "./thread-steering.js";
 import {
   CodingAgentProjectWorkspaceError,
   type CodingAgentProjectThreadProjection,
@@ -51,6 +52,9 @@ import {
 } from "./provider-adapter.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { createCodingAgentTurnDispatcher } from "./turn-dispatcher.js";
+import { withIdleWorkspaceState, type IdleWorkspaceIdentity } from "./idle-workspace-state.js";
+import { safeProviderRunError, safeProviderRunFailureEvents, defaultAbortEvents, terminalStoppedEvents,
+  defaultApprovalDecisionEvents, defaultInputAnswerEvents } from "./thread-fallback-events.js";
 import {
   deriveThreadProjectionChanges,
   publishThreadProjectionChanges,
@@ -86,12 +90,6 @@ const DEFAULT_INITIAL_RUN_TIMEOUT_MS = 10 * 60_000;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
-const CodingAgentSteerRequestSchema = z.object({
-  expectedTurnId: AgentTurnIdSchema.optional(),
-  message: CreateAgentTurnRequestSchema.shape.message,
-  clientRequestId: RequestIdSchema,
-}).strict();
-
 const StoredThreadSchema = AgentThreadSummarySchema.extend({
   ownerId: OwnerIdSchema,
   clientRequestId: RequestIdSchema,
@@ -99,6 +97,7 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
   approvalDecisionClientRequestIds: z.array(RequestIdSchema).max(MAX_APPROVAL_DECISION_REQUEST_IDS).default([]),
   inputAnswerClientRequestIds: z.array(RequestIdSchema).max(MAX_INPUT_ANSWER_REQUEST_IDS).default([]),
   activeTurnId: AgentTurnIdSchema.optional(),
+  deliveredTurnId: AgentTurnIdSchema.optional(),
   providerResumeState: CodingAgentProviderResumeStateSchema.optional(),
 }).strict();
 
@@ -184,6 +183,7 @@ export interface CodingAgentThreadStoreOptions {
 }
 
 export interface CodingAgentThreadStore {
+  withIdleWorkspace(sessionId: string, cutoff: number, action: (identity: IdleWorkspaceIdentity) => Promise<boolean>): Promise<boolean>;
   createThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   createShellThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   adoptLegacyThread(
@@ -442,6 +442,7 @@ function stripOwner(thread: StoredThread): AgentThreadSummary {
     approvalDecisionClientRequestIds: _approvalDecisionClientRequestIds,
     inputAnswerClientRequestIds: _inputAnswerClientRequestIds,
     activeTurnId: _activeTurnId,
+    deliveredTurnId: _deliveredTurnId,
     providerResumeState: _providerResumeState,
     ...summary
   } = thread;
@@ -597,129 +598,6 @@ function consumePendingTerminalStop(
   };
 }
 
-function safeProviderRunError() {
-  return SafeClientErrorSchema.parse({
-    code: "provider_run_failed",
-    safeMessage: "Agent run could not continue. Try again.",
-    retryable: true,
-    recoveryActions: ["retry"],
-  });
-}
-
-function safeProviderRunFailureEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
-  return [
-    AgentThreadEventSchema.parse({
-      type: "thread.error",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      error: safeProviderRunError(),
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.completed",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      outcome: "failed",
-    }),
-  ];
-}
-
-function defaultAbortEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
-  return [
-    AgentThreadEventSchema.parse({
-      type: "thread.status",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      status: "aborted",
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.completed",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      outcome: "aborted",
-    }),
-  ];
-}
-
-function terminalStoppedEvents(
-  threadId: string,
-  runtimeStatus: TerminalSessionStoppedReconciliation["runtimeStatus"],
-  now: () => Date,
-  eventId: () => string,
-): AgentThreadEvent[] {
-  const failed = runtimeStatus !== "exited";
-  return [
-    AgentThreadEventSchema.parse({
-      type: "thread.status",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      status: failed ? "failed" : "completed",
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.completed",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      outcome: failed ? "failed" : "completed",
-    }),
-  ];
-}
-
-function defaultApprovalDecisionEvents(
-  threadId: string,
-  approvalId: string,
-  request: ApprovalDecisionRequest,
-  now: () => Date,
-  eventId: () => string,
-): AgentThreadEvent[] {
-  return [
-    AgentThreadEventSchema.parse({
-      type: "approval.resolved",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      approvalId,
-      decision: request.decision,
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.status",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      status: "running",
-    }),
-  ];
-}
-
-function defaultInputAnswerEvents(
-  threadId: string,
-  inputRequestId: string,
-  request: UserInputAnswerRequest,
-  now: () => Date,
-  eventId: () => string,
-): AgentThreadEvent[] {
-  return [
-    AgentThreadEventSchema.parse({
-      type: "user_input.answered",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      requestId: inputRequestId,
-      correlationId: request.correlationId,
-    }),
-    AgentThreadEventSchema.parse({
-      type: "thread.status",
-      eventId: eventId(),
-      threadId,
-      occurredAt: now().toISOString(),
-      status: "running",
-    }),
-  ];
-}
 
 function invalidInputAnswer(message: string): never {
   throw new z.ZodError([{ code: "custom", message, path: ["structuredAnswers"] }]);
@@ -965,7 +843,7 @@ export function createCodingAgentThreadStore(
   }
 
   function clearActiveTurn(thread: StoredThread): StoredThread {
-    const { activeTurnId: _activeTurnId, ...cleared } = thread;
+    const { activeTurnId: _activeTurnId, deliveredTurnId: _deliveredTurnId, ...cleared } = thread;
     return cleared;
   }
 
@@ -1057,6 +935,9 @@ export function createCodingAgentThreadStore(
         ...nextThread,
         ...(input.resumeState ? { providerResumeState: input.resumeState } : {}),
       });
+      if (input.outcome === "delivered" && activeThread(nextThread)) {
+        nextThread = { ...nextThread, deliveredTurnId: input.turnId };
+      }
       return {
         state: {
           ...state,
@@ -1393,6 +1274,9 @@ export function createCodingAgentThreadStore(
     createThread(principal, request) {
       return createThreadInternal(principal, request);
     },
+    async withIdleWorkspace(sessionId, cutoff, action) {
+      return inspect((state) => withIdleWorkspaceState(state, sessionId, cutoff, action));
+    },
     createShellThread(principal, request) {
       if (!options.relationValidator) {
         throw new CodingAgentThreadRelationError("validation_unavailable");
@@ -1518,6 +1402,7 @@ export function createCodingAgentThreadStore(
           const nextThread: StoredThread = {
             ...thread,
             activeTurnId: turnId,
+            deliveredTurnId: undefined,
             status: "running",
             attention: "none",
             updatedAt: acceptedAt,
@@ -1585,7 +1470,7 @@ export function createCodingAgentThreadStore(
         candidate.ownerId === principal.userId && candidate.id === threadId
       );
       if (!thread) throw new CodingAgentTurnError("thread_not_found");
-      if (thread.activeTurnId !== request.expectedTurnId || !activeThread(thread) || !thread.providerResumeState) {
+      if (!matchesSteeringTurn(thread, request.expectedTurnId) || !activeThread(thread) || !thread.providerResumeState) {
         throw new CodingAgentTurnError("thread_busy");
       }
       const provider = providerFor(thread.providerId);

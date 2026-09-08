@@ -65,7 +65,8 @@
     "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval",
     "item/tool/requestUserInput",
-    "item/permissions/requestApproval"
+    "item/permissions/requestApproval",
+    "mcpServer/elicitation/request"
   ],
   "requiredServerNotifications": [
     "item/started",
@@ -85,6 +86,7 @@
     "item/fileChange/requestApproval": "ac5be166d6a7668792b810a97be8bdfb02b2107320d93d0c4d783a11d32d8cf9",
     "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
     "item/permissions/requestApproval": "12ce5d7e867474efcdb8354bc1324e3fdd93b2078cacbbe7d5a0ad15a85a331f",
+    "mcpServer/elicitation/request": "7db52750b4b1e97486c99734d8a785fa3b112b29908458e3b166c6d6aa9bfecf",
     "item/started": "a67dae0c2bcd4245eec5a249c7ce71ae193604a2601a5ee2d14efd5e9beb2ed6",
     "item/completed": "c26cb115b8ebff983ca9d13b004a31183552df287d6d048988bc05af13e30cb0",
     "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",

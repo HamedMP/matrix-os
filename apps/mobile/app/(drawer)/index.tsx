@@ -36,6 +36,8 @@ import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import { Icon, IconButton } from "@/components/ui";
 import { AnalyticsMask } from "@/lib/analytics";
+import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
+import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
@@ -55,7 +57,7 @@ export default function ChatScreen() {
     ?? user?.username
     ?? "there";
 
-  const { detail } = useCanonicalChatDetail(activeChatId);
+  const { detail, computer, refresh } = useCanonicalChatDetail(activeChatId);
   const { catalog } = useChatProviderCatalog();
   const { projects } = useProjects();
   const sendMessage = useSendChatMessage();
@@ -175,9 +177,13 @@ export default function ChatScreen() {
 
   const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
     <AnalyticsMask>
-      <MessageBubble message={item} />
+      {item.approval && activeChatId && computer ? <CanonicalApprovalMessage
+        key={`${activeChatId}:${item.approval.runId}:${item.approval.approvalId}`}
+        approval={item.approval} chatId={activeChatId}
+        gatewayUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`} onSettled={refresh}
+      /> : <MessageBubble message={item} />}
     </AnalyticsMask>
-  ), []);
+  ), [activeChatId, computer, refresh]);
 
   const keyExtractor = useCallback((item: TranscriptMessage) => item.id, []);
 

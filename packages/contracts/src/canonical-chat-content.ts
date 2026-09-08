@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { CanonicalChatDetailResponseSchema, CanonicalChatRecordSchema, CanonicalChatStreamEventSchema, CanonicalChatStreamServerFrameSchema } from "#canonical-chat-api";
 import { CanonicalChatMessageSchema } from "#canonical-chat";
+export { canonicalChatApprovals, type CanonicalChatApprovalView } from "#canonical-chat-approvals";
 
 // Opt-in v2 frames. Never send these to an unversioned notification client.
 export const CanonicalChatContentSchema = z.object({
@@ -44,3 +45,21 @@ export type CanonicalChatContent = z.infer<typeof CanonicalChatContentSchema>;
 export type CanonicalChatContentFrame = z.infer<typeof CanonicalChatContentFrameSchema>;
 export const CanonicalChatTransportFrameSchema = z.union([CanonicalChatStreamServerFrameSchema, CanonicalChatContentFrameSchema]);
 export type CanonicalChatTransportFrame = z.infer<typeof CanonicalChatTransportFrameSchema>;
+
+/** Shared terminal outcome derivation; renderers only adapt placement and styling. */
+export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalChatDetailResponseSchema>) {
+  const inputs = detail.turns.map((turn) => ({ turn,
+    message: detail.messages.find((message) => message.id === turn.inputMessageId),
+  })).filter((input) => input.message !== undefined).sort((a, b) => a.message!.seq - b.message!.seq);
+  return inputs.flatMap(({ turn }, index) => {
+    const run = detail.runs.filter((candidate) => candidate.turnId === turn.id)
+      .reduce<(typeof detail.runs)[number] | undefined>((latest, candidate) =>
+        !latest || candidate.attempt > latest.attempt ? candidate : latest, undefined);
+    if (!run || (run.status !== "failed" && run.status !== "aborted")) return [];
+    return [{ id: `${run.id}:terminal`, runId: run.id,
+      beforeMessageId: inputs[index + 1]?.turn.inputMessageId,
+      text: run.status === "failed" ? "Agent work failed. Please try again." : "Agent work stopped.",
+      timestamp: Date.parse(run.completedAt ?? run.updatedAt),
+    }];
+  });
+}

@@ -104,6 +104,13 @@ function normalizeEvent(
   event: AgentThreadEvent,
   toolActivities: Map<string, ToolActivity>,
 ): CanonicalProviderRunEvent[] {
+  // External supervision can terminate a run after its runner died before publishing tool completion.
+  // Settle every observed activity before the terminal event reaches any renderer.
+  const settled = event.type === "thread.error" || event.type === "thread.completed"
+    ? [...toolActivities.keys()].flatMap((toolCallId) => normalizeEvent({
+      type: "tool.completed", eventId: event.eventId, threadId: event.threadId, occurredAt: event.occurredAt,
+      toolCallId, outcome: event.type === "thread.error" || event.outcome === "failed" ? "failed" : "cancelled",
+    }, toolActivities)) : [];
   if (event.type === "assistant.text.delta") {
     return [CanonicalProviderRunEventSchema.parse({
       type: "assistant.delta",
@@ -203,7 +210,7 @@ function normalizeEvent(
     })];
   }
   if (event.type === "thread.error") {
-    return [CanonicalProviderRunEventSchema.parse({
+    return [...settled, CanonicalProviderRunEventSchema.parse({
       type: "run.completed",
       outcome: "failed",
       error: CanonicalChatSafeErrorSchema.parse({
@@ -215,7 +222,7 @@ function normalizeEvent(
     })];
   }
   if (event.type === "thread.completed") {
-    return [CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: event.outcome })];
+    return [...settled, CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: event.outcome })];
   }
   return [];
 }

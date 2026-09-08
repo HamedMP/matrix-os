@@ -50,6 +50,92 @@ async function tick(ms = 0) {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Web Desktop and Web Mobile shared Chat refresh", () => {
+  it.each(["focus", "stream"])("keeps an intentional new Chat empty after a %s list refresh", async (trigger) => {
+    vi.useFakeTimers();
+    const h = harness();
+    const hook = renderHook(() => useCanonicalChatState());
+    try {
+      await tick();
+      expect(hook.result.current.sessionId).toBe(record.chat.id);
+      await act(async () => { await hook.result.current.newChat(); });
+      h.list.mockImplementation(async () => Response.json({ items: [{
+        ...record, chat: { ...record.chat, title: "Refreshed list" },
+      }] }));
+      if (trigger === "focus") {
+        act(() => { window.dispatchEvent(new Event("focus")); });
+      } else {
+        h.emit(2, "run.completed");
+      }
+      await tick(250);
+      expect(hook.result.current.conversations[0]?.title).toBe("Refreshed list");
+      expect(hook.result.current.sessionId).toBeUndefined();
+      expect(hook.result.current.messages).toEqual([]);
+      expect(hook.result.current.busy).toBe(false);
+      act(() => { hook.result.current.switchConversation(record.chat.id); });
+      await tick();
+      expect(hook.result.current.messages[0]?.content).toBe("Before");
+    } finally { hook.unmount(); }
+  });
+
+  it("does not restore history when the initial list arrives after New chat", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    let resolveList!: (response: Response) => void;
+    h.list.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveList = resolve; }));
+    const hook = renderHook(() => useCanonicalChatState());
+    try {
+      await tick();
+      await act(async () => { await hook.result.current.newChat(); });
+      await act(async () => { resolveList(Response.json({ items: [record] })); });
+      await tick();
+      expect(hook.result.current.conversations[0]?.id).toBe(record.chat.id);
+      expect(hook.result.current.sessionId).toBeUndefined();
+      expect(hook.result.current.messages).toEqual([]);
+    } finally { hook.unmount(); }
+  });
+
+  it("shows a failed run before the next user message and hides it after successful retry", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    let recovered = false;
+    const failedRun = {
+      id: "run_failed", chatId: record.chat.id, turnId: "cturn_failed", attempt: 1,
+      driverKind: "codex", instanceId: "codex_default", selection: { instanceId: "codex_default", model: "test" },
+      interactionMode: "default", permissionMode: "supervised", status: "failed", outcome: "failed",
+      historyBoundarySeq: 0, capabilitySnapshot: { revision: "test", rootChat: true, resume: true,
+        cancellation: true, attachments: [], tools: [], approvals: true, userInput: true,
+        worktrees: "optional", resources: [], interactionModes: ["default"], permissionModes: ["supervised"] },
+      createdAt: record.chat.createdAt, updatedAt: record.chat.updatedAt,
+      startedAt: record.chat.createdAt, completedAt: record.chat.updatedAt,
+    };
+    h.getDetail.mockImplementation(async () => Response.json({
+      record,
+      messages: [1, 2].map((seq) => ({
+        id: `msg_${seq}`, chatId: record.chat.id, seq, role: "user", state: "committed",
+        parts: [{ type: "text", text: `Prompt ${seq}` }], createdAt: record.chat.createdAt,
+      })),
+      turns: [{ id: "cturn_failed", chatId: record.chat.id, inputMessageId: "msg_1", clientRequestId: "req_test",
+        baseMessageSeq: 0, status: "failed", createdAt: record.chat.createdAt, updatedAt: record.chat.updatedAt },
+      { id: "cturn_next", chatId: record.chat.id, inputMessageId: "msg_2", clientRequestId: "req_next",
+        baseMessageSeq: 1, status: "accepted", createdAt: record.chat.createdAt, updatedAt: record.chat.updatedAt }],
+      runs: [failedRun,
+        ...(recovered ? [{ ...failedRun, id: "run_retry", attempt: 2, status: "completed", outcome: "completed" }] : [])],
+      activities: [],
+    }));
+    const hook = renderHook(() => useCanonicalChatState());
+    try {
+      await tick();
+      expect(hook.result.current.messages.map((message) => message.content)).toEqual([
+        "Prompt 1", "Agent work failed. Please try again.", "Prompt 2",
+      ]);
+      expect(hook.result.current.busy).toBe(false);
+      recovered = true;
+      act(() => { window.dispatchEvent(new Event("focus")); });
+      await tick();
+      expect(hook.result.current.messages.map((message) => message.content)).toEqual(["Prompt 1", "Prompt 2"]);
+    } finally { hook.unmount(); }
+  });
+
   it("applies slow snapshots during continuous events without concurrent detail requests", async () => {
     vi.useFakeTimers();
     const h = harness();

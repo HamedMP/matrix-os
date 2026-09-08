@@ -48,6 +48,21 @@ async function listen(homePath: string, sessionId: string, reply?: string, reply
 }
 
 describe("Codex control client", () => {
+  it("distinguishes a request that was never sent from an ambiguous lost acknowledgement", async () => {
+    const absentHome = await mkdtemp(join(socketTempRoot, "mx-unsent-"));
+    cleanup.push(() => rm(absentHome, { recursive: true, force: true }));
+    const input = { sessionId: "sess_delivery", turnId: "turn_delivery", prompt: "Read only", modelOptions: [] };
+    await expect(createCodexControlClient({ homePath: absentHome }).submitTurn(input)).rejects.toMatchObject({
+      name: "CodexControlUnavailableError",
+    });
+    const stalledHome = await mkdtemp(join(socketTempRoot, "mx-ack-"));
+    const received = await listen(stalledHome, input.sessionId);
+    await expect(createCodexControlClient({ homePath: stalledHome, timeoutMs: 25 }).submitTurn(input)).rejects.toMatchObject({
+      name: "CodexControlTransportError",
+    });
+    expect(received).toHaveLength(1);
+  });
+
   it("allows a loaded Codex app-server more than ten seconds to acknowledge steer", async () => {
     const homePath = await mkdtemp(join(socketTempRoot, "mx-control-delayed-steer-"));
     const sessionId = "sess_delayed_steer";

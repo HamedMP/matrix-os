@@ -10,6 +10,8 @@ import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
+import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
+import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -291,6 +293,7 @@ const SteerControlSchema = z.object({
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
 const ControlSchema = z.discriminatedUnion("type", [
+  CodexHibernateControlSchema,
   TurnControlSchema,
   SteerControlSchema,
   InterruptControlSchema,
@@ -372,6 +375,13 @@ const pendingApprovals = new Map();
 const sessionApprovalGrants = createCodexSessionApprovalGrants();
 const pendingInputs = new Map();
 const completedControls = new Map();
+const mcpElicitations = createCodexMcpElicitations({ send: sendProvider, persist, safeText: safeExternalText });
+const idleHibernation = createCodexIdleHibernation(() => ({
+  providerThreadId: nativeThreadId, completedTurns: terminalEventCount,
+  active: activeTurn || stopping,
+  pending: pendingTurns.length + pendingApprovals.size + pendingInputs.size + pendingRpc.size + mcpElicitations.size,
+  otherControls: controlSockets.size > 1,
+}));
 const assistantItemsWithDelta = new Set();
 const assistantDeltaBuffers = new Map();
 const startedToolItems = new Set();
@@ -381,7 +391,7 @@ let toolBoundaryVersion = 0;
 let executionExpired = false;
 let rejectExecution;
 const executionWatchdog = createCodexExecutionWatchdog({
-  waitingForHuman: () => pendingApprovals.size > 0 || pendingInputs.size > 0,
+  waitingForHuman: () => pendingApprovals.size > 0 || pendingInputs.size > 0 || mcpElicitations.size > 0,
   expire: (diagnostic) => {
     if (!activeTurn) return;
     executionExpired = true;
@@ -816,7 +826,7 @@ async function handleItemLifecycle(raw) {
 
 async function handleProviderMessage(raw) {
   const response = RpcResponseSchema.safeParse(raw);
-  if (response.success && pendingRpc.has(response.data.id)) {
+  if (raw?.method === undefined && response.success && pendingRpc.has(response.data.id)) {
     const pending = pendingRpc.get(response.data.id);
     pendingRpc.delete(response.data.id);
     clearTimeout(pending.timeout);
@@ -826,12 +836,19 @@ async function handleProviderMessage(raw) {
   }
   // A deadline settles this execution once. Do not accept late tool results,
   // approvals or a final answer while interruption/shutdown is in flight.
-  if (executionExpired) return;
-  if (!activeTurn) return;
+  if (executionExpired || !activeTurn) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
   const notificationTurnId = raw?.params?.turnId ?? raw?.params?.turn?.id;
-  if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) return;
+  if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
   if (await handleApproval(raw)) return;
   if (await handleInput(raw)) return;
+  if (await mcpElicitations.handle(raw, nativeThreadId)) return;
+  if (rejectCodexServerRequest(raw, sendProvider)) return;
   if (await handleItemLifecycle(raw)) return;
   const outputDelta = ToolOutputDeltaSchema.safeParse(raw);
   if (outputDelta.success) {
@@ -926,7 +943,7 @@ async function discardProviderErrors(stream) {
 }
 
 function controlResponse(socket, value) {
-  socket.end(`${JSON.stringify(value)}\n`);
+  socket.end(`${JSON.stringify(value)}\n`, () => { if (idleHibernation.closing) stop(); });
 }
 
 async function steerActiveTurn(control) {
@@ -970,6 +987,8 @@ async function steerActiveTurn(control) {
 }
 
 async function applyControl(control) {
+  if (control.type === "hibernate") return { ok: idleHibernation.prepare(control.providerThreadId) };
+  if (idleHibernation.closing) return { ok: false };
   const replay = completedControls.get(control.clientRequestId);
   if (replay) {
     const same = replay.fingerprint === digest([control]);
@@ -983,17 +1002,19 @@ async function applyControl(control) {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
   } else if (control.type === "approval") {
-    const pending = pendingApprovals.get(control.approvalId);
-    if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
-    const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
-    sendProvider({
-      id: pending.nativeRequestId,
-      result: { decision: nativeDecision },
-    });
-    if (control.decision === "approve_for_session") {
-      sessionApprovalGrants.grant(pending.method);
+    if (!await mcpElicitations.decide(control.approvalId, control.decision)) {
+      const pending = pendingApprovals.get(control.approvalId);
+      if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
+      const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
+      sendProvider({
+        id: pending.nativeRequestId,
+        result: { decision: nativeDecision },
+      });
+      if (control.decision === "approve_for_session") {
+        sessionApprovalGrants.grant(pending.method);
+      }
+      pendingApprovals.delete(control.approvalId);
     }
-    pendingApprovals.delete(control.approvalId);
   } else {
     const pending = pendingInputs.get(control.requestId);
     if (!pending) return { ok: false };
@@ -1060,6 +1081,10 @@ await chmod(controlPath, 0o600);
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
+  void mcpElicitations.sweep().catch(() => {
+    process.stderr.write("Integration expiry could not be settled.\n");
+    stop();
+  });
   for (const [approvalId, pending] of pendingApprovals) {
     if (pending.expiresAt > now) continue;
     pendingApprovals.delete(approvalId);
@@ -1122,7 +1147,7 @@ function enqueueTurn(line) {
 }
 
 function enqueuePendingTurn(turn) {
-  if (pendingTurns.length >= MAX_PENDING_TURNS) return false;
+  if (idleHibernation.closing || stopping || pendingTurns.length >= MAX_PENDING_TURNS) return false;
   pendingTurns.push(turn);
   wakeTurn?.();
   wakeTurn = undefined;
@@ -1175,6 +1200,7 @@ function stop() {
 
 async function finishTurn(outcome) {
   executionWatchdog.stop();
+  await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
     assistantDeltaBuffers.size > 0 ||
     startedToolItems.size > 0 ||
@@ -1200,7 +1226,7 @@ async function finishTurn(outcome) {
     await persist({
       type: "matrix.codex.tool.completed",
       toolCallId,
-      outcome: executionExpired ? "failed" : "cancelled",
+      outcome: outcome === "failed" ? "failed" : "cancelled",
     });
     startedToolItems.delete(toolCallId);
     toolItemsWithOutput.delete(toolCallId);
@@ -1301,6 +1327,10 @@ try {
   });
   nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
+  if (config.providerThreadId && nativeThreadId !== config.providerThreadId) {
+    throw new Error("provider_resume_identity_mismatch");
+  }
+  await persist({ type: "thread.started", thread_id: nativeThreadId });
   let turn = PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,

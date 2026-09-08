@@ -388,7 +388,7 @@ describe("Codex app-server runner reliability", () => {
       expect(events.filter((event) => event.type === "tool.completed")).toEqual([
         expect.objectContaining({
           toolCallId: toolStarted && "toolCallId" in toolStarted ? toolStarted.toolCallId : undefined,
-          outcome: "cancelled",
+          outcome: "failed",
         }),
       ]);
       expect(outcomes).toEqual(["failed"]);
@@ -467,7 +467,7 @@ describe("Codex app-server runner reliability", () => {
       const completed = events.filter((event) => event.type === "tool.completed");
       expect(startedIds).toHaveLength(1);
       expect(completed).toEqual([
-        expect.objectContaining({ toolCallId: startedIds[0], outcome: "cancelled" }),
+        expect.objectContaining({ toolCallId: startedIds[0], outcome: "failed" }),
       ]);
       expect(outcomes).toEqual(["failed"]);
       expect(exitCode).toBe(1);
@@ -512,7 +512,7 @@ describe("Codex app-server runner reliability", () => {
 
     try {
       const transcript = await waitForTranscript(runtime.eventPath, /approval\.requested/);
-      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line))[0];
+      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line)).find((item) => item.type === "matrix.codex.approval.requested");
       expect(approval.allowedDecisions).toEqual(["decline"]);
       await expect(sendControl(runtime.controlPath, {
         type: "approval",
@@ -541,7 +541,7 @@ describe("Codex app-server runner reliability", () => {
 
     try {
       const transcript = await waitForTranscript(runtime.eventPath, /approval\.requested/);
-      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line))[0];
+      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line)).find((item) => item.type === "matrix.codex.approval.requested");
       expect(approval.allowedDecisions).toEqual(["decline", "cancel"]);
       await expect(sendControl(runtime.controlPath, {
         type: "approval",

@@ -463,7 +463,8 @@ describe("canonical Chat presentation adapter", () => {
         kind: "activity-group",
         activities: [expect.objectContaining({ label: "Run tests", state: "failed", detail: "Focused suite\n\nOne test failed." })],
       }),
-      expect.objectContaining({ kind: "request", requestKind: "approval", state: "waiting", label: "Retry the command" }),
+      // A terminal run cannot execute an old approval, even if older history omitted its resolution.
+      expect.objectContaining({ kind: "request", requestKind: "approval", state: "resolved", actions: undefined, label: "Retry the command" }),
       expect.objectContaining({ kind: "notice", tone: "warning", label: "Partial result" }),
     ]));
     expect(presented?.final).toMatchObject({ markdown: "Finished summary", copyText: "Finished summary" });

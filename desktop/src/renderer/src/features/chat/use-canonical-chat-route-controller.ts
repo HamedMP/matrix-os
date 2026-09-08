@@ -77,6 +77,15 @@ export function useCanonicalChatRouteController({
   const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
+  // Keep the stream checkpoint synchronous. React may defer/replay a state
+  // updater after a newer SSE frame has already advanced detailRef.
+  const updateDetail = useCallback((update: (
+    current: CanonicalChatDetailResponse | null,
+  ) => CanonicalChatDetailResponse | null) => {
+    const next = update(detailRef.current);
+    detailRef.current = next;
+    setDetail(next);
+  }, []);
   const acknowledgementAttemptRef = useRef<{
     client: CanonicalChatClient;
     chatId: string;
@@ -354,9 +363,8 @@ export function useCanonicalChatRouteController({
         projectId: targetProjectId,
       });
       if (!isCurrentScope()) return null;
-      setDetail((current) => {
+      updateDetail((current) => {
         const next = current ? detailWithRecord(current, record) : current;
-        detailRef.current = next;
         return next;
       });
       setItems((current) => current.map((item) => (
@@ -371,7 +379,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(detail.record.chat.id);
       return null;
     }
-  }, [client, detail, loadDetail]);
+  }, [client, detail, loadDetail, updateDetail]);
 
   const submitTurn = useCallback(async (
     input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
@@ -470,7 +478,7 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
+      updateDetail((currentDetail) => {
         if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
           || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const messages = currentDetail.messages.some((message) => message.id === response.message.id)
@@ -489,7 +497,6 @@ export function useCanonicalChatRouteController({
           } : currentDetail.record,
           messages,
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -501,7 +508,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return null;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const queueTurn = useCallback(async (
     input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision">,
@@ -518,7 +525,7 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
+      updateDetail((currentDetail) => {
         if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
           || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const existing = currentDetail.queuedTurns ?? [];
@@ -537,7 +544,6 @@ export function useCanonicalChatRouteController({
           },
           queuedTurns,
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -549,7 +555,7 @@ export function useCanonicalChatRouteController({
       setError("The message could not be queued. Refresh and try again.");
       return null;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const updateQueuedTurn = useCallback(async (
     queuedTurnId: string,
@@ -567,7 +573,7 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
+      updateDetail((currentDetail) => {
         if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
           || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
@@ -584,7 +590,6 @@ export function useCanonicalChatRouteController({
             turn.id === queuedTurnId ? response.queuedTurn : turn
           )),
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -596,7 +601,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return null;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const steerQueuedTurn = useCallback(async (queuedTurnId: string) => {
     const current = detailRef.current;
@@ -620,7 +625,7 @@ export function useCanonicalChatRouteController({
       );
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
+      updateDetail((currentDetail) => {
         if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
           || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const messages = currentDetail.messages.some((message) => message.id === response.message.id)
@@ -640,7 +645,6 @@ export function useCanonicalChatRouteController({
           messages,
           queuedTurns: (currentDetail.queuedTurns ?? []).filter((turn) => turn.id !== queuedTurnId),
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -652,7 +656,7 @@ export function useCanonicalChatRouteController({
       setError("The queued message could not steer this Run. It remains in Queue.");
       return null;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const reorderQueuedTurns = useCallback(async (queuedTurnIds: string[]) => {
     const current = detailRef.current;
@@ -667,7 +671,7 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return false;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
+      updateDetail((currentDetail) => {
         if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
           || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
@@ -681,7 +685,6 @@ export function useCanonicalChatRouteController({
           },
           queuedTurns: response.queuedTurns,
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -693,7 +696,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return false;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
     const current = detailRef.current;
@@ -707,7 +710,7 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return false;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
+      updateDetail((currentDetail) => {
         if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
           || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
@@ -721,7 +724,6 @@ export function useCanonicalChatRouteController({
           } : currentDetail.record,
           queuedTurns: (currentDetail.queuedTurns ?? []).filter((turn) => turn.id !== queuedTurnId),
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -733,7 +735,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return false;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const submitApproval = useCallback(async (
     approvalId: string,
