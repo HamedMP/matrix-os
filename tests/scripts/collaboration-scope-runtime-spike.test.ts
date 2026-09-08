@@ -82,6 +82,29 @@ describe("collaboration scope-runtime native isolation spike", () => {
     expect(sdkProbe).toContain("sdk_query:passed");
   });
 
+  it("emits public-safe host, toolchain, profile, quota, and eligibility evidence", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    for (const evidence of [
+      "host_os_id=",
+      "host_os_version=",
+      "kernel_release=",
+      "architecture=",
+      "systemd_version=",
+      "node_version=",
+      "fixed_profile_sha256=",
+      "memory_max_bytes=",
+      "cpu_quota_percent=",
+      "tasks_max=",
+      "storage_max_bytes=",
+      "agent_sdk_version=",
+      "native_harness_version=",
+      "scope_runtime_eligibility=",
+    ]) {
+      expect(source).toContain(evidence);
+    }
+  });
+
   it("keeps the proof broker action-bound and rejects arbitrary destinations", async () => {
     const [brokerFixture, sdkProbe] = await Promise.all([
       readFile(brokerFixturePath, "utf8"),

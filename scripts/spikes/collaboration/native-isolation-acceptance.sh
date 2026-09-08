@@ -22,7 +22,7 @@ readonly scope_gid=62000
 readonly sdk_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk/package.json
 readonly native_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/package.json
 
-for executable in "$node_bin" /usr/bin/readlink /usr/bin/setpriv /usr/bin/systemd-run /usr/bin/systemctl; do
+for executable in "$node_bin" /usr/bin/readlink /usr/bin/setpriv /usr/bin/sha256sum /usr/bin/systemd-run /usr/bin/systemctl /usr/bin/uname; do
   if [ ! -x "$executable" ]; then
     printf 'scope_runtime_acceptance_dependency_unavailable\n' >&2
     exit 2
@@ -244,6 +244,16 @@ readonly -a fixed_profile=(
   --setenv=PATH=/opt/matrix/runtime/node/bin
   --setenv=MATRIX_SCOPE_PROBE_DISPOSABLE=1
 )
+profile_material="$(printf '%s\n' "${fixed_profile[@]}" |
+  sed \
+    -e "s#${probe_root}/root#<scope-root>#g" \
+    -e "s#${sdk_directory}#<sdk-directory>#g" \
+    -e "s#${native_directory}#<native-directory>#g" \
+    -e "s#${probe_source}#<probe-source>#g" \
+    -e "s#${sdk_probe_source}#<sdk-probe-source>#g" \
+    -e "s#${broker_socket}#<broker-socket>#g")"
+fixed_profile_sha256="$(printf '%s\n' "$profile_material" | /usr/bin/sha256sum | cut -d ' ' -f 1)"
+readonly fixed_profile_sha256
 
 run_fixed_profile_candidate() {
   /usr/bin/systemd-run \
@@ -313,8 +323,52 @@ if ! "$node_bin" --input-type=module -e '
   exit 1
 fi
 
+host_os_facts="$("$node_bin" --input-type=module -e '
+  import { readFile } from "node:fs/promises";
+  const text = await readFile("/etc/os-release", "utf8");
+  const values = new Map();
+  for (const line of text.split("\n")) {
+    const match = /^([A-Z_]+)=(.*)$/.exec(line);
+    if (!match) continue;
+    let value = match[2];
+    if (value.startsWith("\"") && value.endsWith("\"")) {
+      value = value.slice(1, -1);
+    }
+    values.set(match[1], value);
+  }
+  const id = values.get("ID") ?? "";
+  const version = values.get("VERSION_ID") ?? "";
+  if (!/^[a-z0-9._-]{1,32}$/.test(id) || !/^[0-9][0-9.]{0,15}$/.test(version)) {
+    process.exit(1);
+  }
+  process.stdout.write(`${id}\t${version}`);
+')" || {
+  printf 'scope_runtime_acceptance_host_facts_unavailable\n' >&2
+  exit 2
+}
+IFS=$'\t' read -r host_os_id host_os_version <<<"$host_os_facts"
+kernel_release="$(/usr/bin/uname -r)"
+architecture="$(/usr/bin/uname -m)"
+systemd_version="$(/usr/bin/systemctl --version | sed -n '1s/^systemd \([0-9][0-9]*\).*$/\1/p')"
+node_version="$($node_bin --version)"
+if ! printf '%s' "$kernel_release" | grep -Eq '^[A-Za-z0-9._+-]{1,128}$' ||
+  [ "$architecture" != x86_64 ] ||
+  ! printf '%s' "$systemd_version" | grep -Eq '^[0-9]{1,6}$' ||
+  ! printf '%s' "$node_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+  printf 'scope_runtime_acceptance_host_facts_unavailable\n' >&2
+  exit 2
+fi
+readonly host_os_id host_os_version kernel_release architecture systemd_version node_version
+
 printf 'scope_runtime_acceptance=passed\n'
 printf 'baseline_status=%s\n' "$baseline_status"
+printf 'host_os_id=%s\n' "$host_os_id"
+printf 'host_os_version=%s\n' "$host_os_version"
+printf 'kernel_release=%s\n' "$kernel_release"
+printf 'architecture=%s\n' "$architecture"
+printf 'systemd_version=%s\n' "$systemd_version"
+printf 'node_version=%s\n' "$node_version"
+printf 'fixed_profile_sha256=%s\n' "$fixed_profile_sha256"
 printf 'scope_uid=%s\n' "$scope_uid"
 printf 'memory_max_bytes=1073741824\n'
 printf 'cpu_quota_percent=200\n'
@@ -323,6 +377,7 @@ printf 'storage_max_bytes=10737418240\n'
 printf 'agent_sdk_version=%s\n' "$sdk_version"
 printf 'native_harness_version=%s\n' "$native_harness_version"
 printf 'sdk_broker_result=passed\n'
+printf 'scope_runtime_eligibility=passed\n'
 printf '%s\n' 'baseline_report_begin'
 sed -n '1,240p' "$probe_root/baseline.json"
 printf '%s\n' 'baseline_report_end'

@@ -64,10 +64,17 @@ jobs:
           ref: ${{ needs.gate.outputs.head }}
 
       - id: preview
-        name: Resolve the exact disposable preview
+        name: Resolve a stable disposable preview
         run: |
           set -euo pipefail
-          deadline=$((SECONDS + 1800))
+          # Prefer the exact application bundle, but do not couple this native
+          # host/SDK experiment to activation of unrelated application code.
+          # The reviewed probe itself is always checked out at HEAD_SHA, and
+          # the proof below requires the host's installed SDK to match it.
+          deadline=$((SECONDS + 180))
+          stable_machine_id=
+          stable_version=
+          stable_address=
           while [ "$SECONDS" -lt "$deadline" ]; do
             fleet="$(curl --fail --silent --show-error --max-time 30 \
               -H "authorization: Bearer $PLATFORM_SECRET" \
@@ -77,21 +84,63 @@ jobs:
                 and .status == "running" and .healthy == true and .deletedAt == null)]
               | if length == 1 then .[0] else {} end
             ' <<<"$fleet")"
+            machine_id="$(jq -r '.machineId // ""' <<<"$machine")"
             version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
             address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-            if [ -n "$version" ] &&
-              [ "${version##*-}" = "${HEAD_SHA:0:7}" ] &&
+            if printf '%s' "$machine_id" |
+                grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' &&
+              printf '%s' "$version" | grep -Eq '^(v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}$' &&
               printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+              if [ "${version##*-}" = "${HEAD_SHA:0:7}" ] ||
+                { [ "$machine_id" = "$stable_machine_id" ] &&
+                  [ "$version" = "$stable_version" ] &&
+                  [ "$address" = "$stable_address" ]; }; then
+                if [ "${version##*-}" != "${HEAD_SHA:0:7}" ]; then
+                  echo "The disposable host bundle differs from the immutable probe head; the SDK version gate remains mandatory."
+                fi
+                echo "::add-mask::$address"
+                {
+                  echo "address=$address"
+                  echo "version=$version"
+                } >>"$GITHUB_OUTPUT"
+                exit 0
+              fi
+              stable_machine_id="$machine_id"
+              stable_version="$version"
+              stable_address="$address"
+            else
+              stable_machine_id=
+              stable_version=
+              stable_address=
+            fi
+            sleep 30
+          done
+          # Take one final stable sample at the boundary so a host that was
+          # healthy for the whole preference window is not rejected on timing.
+          fleet="$(curl --fail --silent --show-error --max-time 30 \
+            -H "authorization: Bearer $PLATFORM_SECRET" \
+            "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+          machine="$(jq -ce --arg handle "$HANDLE" '
+            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+              and .status == "running" and .healthy == true and .deletedAt == null)]
+            | if length == 1 then .[0] else {} end
+          ' <<<"$fleet")"
+          machine_id="$(jq -r '.machineId // ""' <<<"$machine")"
+          version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+          address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+          if [ "$machine_id" = "$stable_machine_id" ] &&
+            [ "$version" = "$stable_version" ] &&
+            [ "$address" = "$stable_address" ] &&
+            [ -n "$version" ]; then
+              echo "The disposable host bundle differs from the immutable probe head; the SDK version gate remains mandatory."
               echo "::add-mask::$address"
               {
                 echo "address=$address"
                 echo "version=$version"
               } >>"$GITHUB_OUTPUT"
               exit 0
-            fi
-            sleep 15
-          done
-          echo "The exact-head disposable preview did not become ready." >&2
+          fi
+          echo "A stable disposable PR preview did not become ready." >&2
           exit 1
 
       - name: Upload reviewed assets and run the native proof
@@ -100,6 +149,10 @@ jobs:
           PREVIEW_VERSION: ${{ steps.preview.outputs.version }}
         run: |
           set -euo pipefail
+          expected_sdk_version="$(jq -er '
+            .dependencies["@anthropic-ai/claude-agent-sdk"]
+            | select(test("^0\\.[0-9]+\\.[0-9]+$"))
+          ' packages/kernel/package.json)"
           token="$(node --input-type=module -e '
             import { createHmac } from "node:crypto";
             process.stdout.write(createHmac("sha256", process.argv[2])
@@ -109,7 +162,9 @@ jobs:
           endpoint='https://app.matrix-os.com/api/internal/terminal-acceptance/run'
           evidence="$RUNNER_TEMP/scope-runtime-native-evidence.json"
           jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" '{
-            head: $head, previewVersion: $version, status: "started"
+            head: $head,
+            previewVersion: $version,
+            status: "started"
           }' >"$evidence"
 
           send_signed_command() {
@@ -238,6 +293,11 @@ jobs:
             stdout,
             stderr
           }' "$response" >"$evidence"
+          if ! jq -er '.stdout' "$response" |
+            grep -Fxq "agent_sdk_version=${expected_sdk_version}"; then
+            echo "The disposable preview SDK does not match the immutable probe head." >&2
+            exit 1
+          fi
           jq -e 'select(.exitCode == 0 and .timedOut == false and
             .truncated == false and .signal == null and
             (.stdout | contains("scope_runtime_acceptance=passed")))' "$response" >/dev/null
