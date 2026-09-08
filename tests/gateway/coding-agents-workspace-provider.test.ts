@@ -65,6 +65,27 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 }
 
 describe("coding agent workspace provider", () => {
+  it("bounds a hung cancellation without claiming the remote tool stopped", async () => {
+    vi.useFakeTimers();
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex", agent: "codex",
+      runtime: { startSession: vi.fn(), stopSession: vi.fn(() => new Promise(() => undefined)) },
+    });
+    let outcome = "pending";
+    const task = Promise.resolve(provider.abortThread!({
+      principal: ownerPrincipal,
+      thread: AgentThreadSummarySchema.parse({ id: "thread_cancel", providerId: "codex", title: "Cancel", status: "running", attention: "none", createdAt: baseNow.toISOString(), updatedAt: baseNow.toISOString() }),
+      clientRequestId: "req_cancel_hung", now: () => baseNow, nextEventId: () => "evt_cancel",
+    })).then(() => { outcome = "reported_aborted"; }, () => { outcome = "unconfirmed"; });
+    try {
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(outcome).toBe("unconfirmed");
+      await task;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses device authentication for the remote Codex connect action", async () => {
     const provider = createWorkspaceCodingAgentProvider({
       providerId: "codex",

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { captureChatContent } from "./content-projection.js";
 import {
   CanonicalChatRunActivitySchema,
   CanonicalChatIdSchema,
@@ -402,7 +403,14 @@ export class ChatRepository {
     eventType: ChatOutboxEventType,
     payload: Record<string, unknown> = {},
   ): Promise<void> {
-    const event = await insertOutbox(executor, owner, chatId, revision, eventType, payload);
+    const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
+      hydrateRecord.bind(null, executor));
+    const streamContent = captured && new TextEncoder().encode(JSON.stringify(captured)).byteLength < 512 * 1024 - 2048
+      ? captured : undefined;
+    const { messageDelta: _delta, activityIds: _activities, removedActivityIds: _removed, ...metadata } = payload;
+    const event = await insertOutbox(executor, owner, chatId, revision, eventType, {
+      ...metadata, ...(streamContent ? { streamContent } : {}),
+    });
     this.outboxDelivery.capture(executor, { owner, event });
   }
 
@@ -1105,6 +1113,14 @@ export class ChatRepository {
       const turnRow = await trx.selectFrom("chat_turns").selectAll()
         .where("id", "=", turnId).where("chat_id", "=", chatId).forUpdate().executeTakeFirst();
       if (!turnRow) throw new ChatNotFoundError(chatId);
+      const latestTurn = await trx.selectFrom("chat_turns").select(["id"])
+        .where("chat_id", "=", chatId)
+        .orderBy("base_message_seq", "desc")
+        .orderBy("created_at", "desc")
+        .executeTakeFirst();
+      if (latestTurn?.id !== turnId) {
+        throw new ChatConflictError(chatId, Number(current.revision));
+      }
       const latest = await trx.selectFrom("chat_runs").selectAll()
         .where("turn_id", "=", turnId).orderBy("attempt", "desc").forUpdate().executeTakeFirst();
       if (!latest || ACTIVE_RUNS.includes(latest.status as typeof ACTIVE_RUNS[number])
@@ -1317,6 +1333,7 @@ export class ChatRepository {
     messageId: string;
     delta: string;
     createdAt: string;
+    snapshot?: boolean;
   }): Promise<CanonicalChatMessage> {
     return this.runLifecycle.appendAssistantDelta(ownerInput, input);
   }
@@ -1364,6 +1381,14 @@ export class ChatRepository {
       limit: Math.max(1, Math.min(100, Math.trunc(input.limit))),
     });
     const nextCursor = events.at(-1)?.cursor;
+    if (events.length >= Math.max(1, Math.min(100, Math.trunc(input.limit)))) {
+      const latest = await this.kysely.selectFrom("chat_outbox").select("cursor")
+        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+        .orderBy("cursor", "desc").limit(1).executeTakeFirst();
+      if (latest && Number(latest.cursor) > (nextCursor ?? 0)) {
+        return { events: [], gap: true, nextCursor: Number(latest.cursor) };
+      }
+    }
     return {
       events,
       gap: false,
@@ -1482,6 +1507,10 @@ export class ChatRepository {
         throw new ChatConflictError(input.chatId, Number(chat.revision));
       }
       await this.appendOutbox(trx, owner, input.chatId, Number(chat.revision) + 1, "chat.deleted");
+      // Retain legacy cursor metadata, but never retain deleted transcript bodies.
+      await trx.updateTable("chat_outbox").set({ payload: sql`payload - 'streamContent'` })
+        .where("chat_id", "=", input.chatId)
+        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).execute();
       await trx.deleteFrom("chats").where("id", "=", input.chatId)
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).execute();
       return { chatId: input.chatId, deletedAt: asIso(deletion.deleted_at) ?? new Date(0).toISOString() };

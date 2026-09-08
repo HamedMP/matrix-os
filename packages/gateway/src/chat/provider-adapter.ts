@@ -110,6 +110,16 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly stateSchemaVersion: number;
   parseState(value: unknown): State;
   serializeState(value: State): unknown;
+  /** Read-only recovery of this exact Run; never starts or resubmits work. */
+  recover?(input: {
+    owner: CanonicalOwnerScope;
+    runId: string;
+    state: State;
+    signal: AbortSignal;
+  }): Promise<{
+    outcome: "completed" | "failed" | "aborted";
+    messages: Array<{ messageId?: string; text: string }>;
+  } | null>;
   start(input: CanonicalProviderRunInput<State>): AsyncIterable<CanonicalProviderRunEvent>;
   resume?(input: CanonicalProviderRunInput<State> & { resumeState: State }): AsyncIterable<CanonicalProviderRunEvent>;
   cancel?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; state?: State }): Promise<void>;

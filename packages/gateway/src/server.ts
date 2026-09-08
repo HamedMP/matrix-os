@@ -156,6 +156,7 @@ import {
   createCanonicalChatRoutes,
 } from "./chat/routes.js";
 import { createCanonicalChatEventStream } from "./chat/event-stream.js";
+import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
@@ -1030,7 +1031,10 @@ export async function createGateway(config: GatewayConfig) {
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
       await bootstrapChatSharing(chatRepository.kysely);
-      canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
+      canonicalChatEventStream = createCanonicalChatEventStream({
+        repository: chatRepository,
+        reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
+      });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       await messagingRepository.bootstrap();
@@ -4411,6 +4415,19 @@ export async function createGateway(config: GatewayConfig) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
   }
+  if (canonicalChatEventStream) {
+    registerCanonicalChatEventWebSocketRoute({
+      app,
+      upgradeWebSocket,
+      getPrincipal: (context) => requireRequestPrincipal(context as Context),
+      stream: canonicalChatEventStream,
+    });
+    registerCanonicalChatEventHttpRoute({
+      app,
+      getPrincipal: (context) => requireRequestPrincipal(context as Context),
+      stream: canonicalChatEventStream,
+    });
+  }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
@@ -4421,14 +4438,6 @@ export async function createGateway(config: GatewayConfig) {
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
-  if (canonicalChatEventStream) {
-    registerCanonicalChatEventWebSocketRoute({
-      app,
-      upgradeWebSocket,
-      getPrincipal: (context) => requireRequestPrincipal(context as Context),
-      stream: canonicalChatEventStream,
-    });
-  }
   app.route("/", createChatProviderRoutes({
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),

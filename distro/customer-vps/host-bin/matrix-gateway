@@ -150,6 +150,8 @@ register_once() {
   fi
 
   for attempt in $(seq 1 30); do
+    # An authenticated operator may reconcile a lost receipt while retries run.
+    [ ! -f "$REGISTER_FLAG" ] || return 0
     if ! runtime_ready; then
       sleep "$((attempt < 10 ? attempt : 10))"
       continue

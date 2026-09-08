@@ -39,6 +39,17 @@ export {
   deriveCanonicalProviderChoices,
 } from "./canonical-provider-choice.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
+export {
+  ChatEventFrameTooLarge,
+  createCanonicalChatEventSource as createSharedCanonicalChatEventSource,
+  createCanonicalChatSseParser,
+} from "./canonical-chat-event-source.js";
+export type {
+  CanonicalChatEventConnectionState,
+  CanonicalChatEventConsumer,
+  CanonicalChatEventSource,
+  CanonicalChatInvalidation,
+} from "./canonical-chat-event-source.js";
 export type {
   ProviderSettingsControllerState,
   ProviderSettingsControllerOptions,
@@ -46,6 +57,8 @@ export type {
   ProviderSettingsTransportErrorCode,
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
+export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
+export { applyCanonicalChatContent } from "./canonical-chat-content.js";
 
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";
