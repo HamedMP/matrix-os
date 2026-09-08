@@ -35,13 +35,18 @@ export function createCodexMcpElicitations({ send, persist, safeText, now = Date
   // Owned by this runner; bounded admission, expiry sweep and turn-end drain.
   const pending = new Map();
   const cancel = entry => send({ id: entry.nativeRequestId, result: { action: "cancel", content: null } });
-  async function expire(approvalId, entry) {
-    pending.delete(approvalId); // Fence concurrent and late decisions before any await.
-    try {
-      await persist({ type: "matrix.codex.approval.resolved", approvalId, decision: "cancel" });
-    } finally {
-      try { cancel(entry); } catch (_error) { process.stderr.write("Integration cancellation could not be delivered.\n"); }
-    }
+  function expire(approvalId, entry) {
+    // Fence decisions immediately, but retain the bounded entry so terminal
+    // draining also waits for a resolution already started by the sweep.
+    entry.resolution ??= Promise.resolve().then(async () => {
+      try {
+        await persist({ type: "matrix.codex.approval.resolved", approvalId, decision: "cancel" });
+        pending.delete(approvalId);
+      } finally {
+        try { cancel(entry); } catch (_error) { process.stderr.write("Integration cancellation could not be delivered.\n"); }
+      }
+    });
+    return entry.resolution;
   }
   return {
     get size() { return pending.size; },
@@ -73,7 +78,7 @@ export function createCodexMcpElicitations({ send, persist, safeText, now = Date
     },
     async decide(approvalId, decision) {
       const entry = pending.get(approvalId);
-      if (!entry || !["approve", "decline", "cancel"].includes(decision)) return false;
+      if (!entry || entry.resolution || !["approve", "decline", "cancel"].includes(decision)) return false;
       if (entry.expiresAt <= now()) { await expire(approvalId, entry); return false; }
       send({ id: entry.nativeRequestId, result: {
         action: decision === "approve" ? "accept" : decision,
@@ -89,11 +94,7 @@ export function createCodexMcpElicitations({ send, persist, safeText, now = Date
       }
     },
     async drain() {
-      const entries = [...pending.entries()];
-      pending.clear();
-      for (const [id, entry] of entries) {
-        await expire(id, entry);
-      }
+      await Promise.all([...pending].map(([id, entry]) => expire(id, entry)));
     },
   };
 }

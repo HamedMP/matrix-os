@@ -57,3 +57,69 @@ it("caps pending confirmations and drains only the outstanding requests", async 
   expect(h.events).toHaveLength(40);
   expect(await h.bridge.decide(h.events[0].approvalId, "approve")).toBe(false);
 });
+
+it("waits for in-flight expiry persistence before terminal drain can complete", async () => {
+  let time = 0;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const events: { type: string; approvalId: string }[] = [];
+  const responses: unknown[] = [];
+  const bridge = createCodexMcpElicitations({
+    send: (value: unknown) => responses.push(value),
+    persist: async (event: { type: string; approvalId: string }) => {
+      if (event.type === "matrix.codex.approval.resolved") await gate;
+      events.push(event);
+    },
+    safeText: (text: string) => text,
+    now: () => time,
+  });
+  await bridge.handle(request(42), "thread");
+  time = 300_001;
+  const expiry = bridge.sweep();
+  let drained = false;
+  const drain = bridge.drain().then(() => { drained = true; });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    expect(drained).toBe(false);
+    expect(await bridge.decide(events[0].approvalId, "approve")).toBe(false);
+    await bridge.handle(request(42), "thread");
+    expect(events).toHaveLength(1);
+    expect(responses).toEqual([]);
+  } finally {
+    release();
+    await Promise.all([expiry, drain]);
+  }
+  expect(drained).toBe(true);
+  expect(events.map(event => event.type)).toEqual([
+    "matrix.codex.approval.requested", "matrix.codex.approval.resolved",
+  ]);
+  expect(responses).toEqual([{ id: 42, result: { action: "cancel", content: null } }]);
+  expect(bridge.size).toBe(0);
+});
+
+it("does not report a successful drain when expiry persistence failed", async () => {
+  let time = 0;
+  let resolutionWrites = 0;
+  const failure = new Error("storage unavailable");
+  const responses: unknown[] = [];
+  const events: { approvalId: string }[] = [];
+  const bridge = createCodexMcpElicitations({
+    send: (value: unknown) => responses.push(value),
+    persist: async (event: { type: string; approvalId: string }) => {
+      if (event.type === "matrix.codex.approval.resolved") {
+        resolutionWrites++;
+        throw failure;
+      }
+      events.push(event);
+    },
+    safeText: (text: string) => text,
+    now: () => time,
+  });
+  await bridge.handle(request(42), "thread");
+  time = 300_001;
+  await expect(bridge.sweep()).rejects.toBe(failure);
+  await expect(bridge.drain()).rejects.toBe(failure);
+  expect(await bridge.decide(events[0].approvalId, "approve")).toBe(false);
+  expect(resolutionWrites).toBe(1);
+  expect(responses).toEqual([{ id: 42, result: { action: "cancel", content: null } }]);
+});
