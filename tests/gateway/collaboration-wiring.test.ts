@@ -37,6 +37,18 @@ describe("gateway collaboration wiring", () => {
     })).toMatchObject({ runtimeId: collaborationIds.runtime });
   });
 
+  it("derives the VPS runtime ID from the existing machine identity", () => {
+    expect(loadGatewayCollaborationConfig({
+      MATRIX_COLLABORATION_ENABLED: "true",
+      MATRIX_MACHINE_ID: "11111111-1111-4111-8111-111111111111",
+      MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
+      MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
+      MATRIX_COLLABORATION_PREFLIGHT_SECRET: "b".repeat(32),
+      PLATFORM_INTERNAL_URL: "https://platform.internal",
+      UPGRADE_TOKEN: "c".repeat(32),
+    })).toMatchObject({ runtimeId: "vps:11111111-1111-4111-8111-111111111111" });
+  });
+
   it("resolves dependencies before route registration and drains before database disposal", async () => {
     const runtime = await createGatewayCollaboration({
       db: fixture.db,

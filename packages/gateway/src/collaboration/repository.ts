@@ -328,7 +328,7 @@ export class CollaborationRepository {
         scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
         actorId: input.actorId,
         action: "invitation.created",
-        recipients: [input.targetActorId],
+        recipients: [{ actorId: input.targetActorId, invitationId }],
         discoveryState: "invited",
         now,
       });
@@ -390,7 +390,7 @@ export class CollaborationRepository {
           scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
           actorId: input.actorId,
           action: "invitation.expired",
-          recipients: [input.actorId],
+          recipients: [{ actorId: input.actorId, invitationId: input.invitationId }],
           discoveryState: "revoked",
           now,
           reasonCode: "expired",
@@ -433,7 +433,7 @@ export class CollaborationRepository {
         scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
         actorId: input.actorId,
         action: "invitation.accepted",
-        recipients: [input.actorId],
+        recipients: [{ actorId: input.actorId, invitationId: input.invitationId }],
         discoveryState: "accepted",
         now,
       });
@@ -494,7 +494,7 @@ export class CollaborationRepository {
         scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
         actorId: input.actorId,
         action: "invitation.revoked",
-        recipients: [member.actor_id],
+        recipients: [{ actorId: member.actor_id, invitationId: input.invitationId }],
         discoveryState: "revoked",
         now,
       });
@@ -627,7 +627,10 @@ export class CollaborationRepository {
         scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
         actorId: input.actorId,
         action,
-        recipients: [input.targetActorId],
+        recipients: [{
+          actorId: input.targetActorId,
+          ...(member.invitation_id ? { invitationId: member.invitation_id } : {}),
+        }],
         discoveryState: status === "revoked" ? "revoked" : "accepted",
         now,
       });
@@ -747,7 +750,7 @@ async function appendMutationRecords(
     scope: ScopeRow;
     actorId: string;
     action: string;
-    recipients: string[];
+    recipients: Array<{ actorId: string; invitationId?: string }>;
     discoveryState: "invited" | "accepted" | "revoked" | "deleted";
     now: string;
     reasonCode?: string;

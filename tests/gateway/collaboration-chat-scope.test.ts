@@ -70,7 +70,7 @@ describe("CollaborationChatScopeService", () => {
       .select(["scope_id", "recipient_actor_ids", "discovery_state"])
       .execute()).toEqual([{
       scope_id: collaborationIds.scope,
-      recipient_actor_ids: [collaborationActors.owner],
+      recipient_actor_ids: [{ actorId: collaborationActors.owner }],
       discovery_state: "accepted",
     }]);
   });

@@ -78,7 +78,11 @@ describe("CollaborationDirectoryOutbox", () => {
       kind: "chat",
       authorityGeneration: 1,
       metadataRevision: 1,
-      recipients: [{ actorId: collaborationActors.editor, status: "invited" }],
+      recipients: [{
+        actorId: collaborationActors.editor,
+        status: "invited",
+        invitationId: collaborationIds.invitation,
+      }],
     });
     expect(JSON.stringify(payload)).not.toMatch(/title|message|content|transcript/i);
     expect(await fixture.db.selectFrom("collaboration_directory_outbox")
@@ -189,7 +193,10 @@ async function seedScopeAndOutbox(fixture: CollaborationTestDatabase): Promise<v
   await fixture.db.insertInto("collaboration_directory_outbox").values({
     event_id: "60000000-0000-4000-8000-000000000001",
     scope_id: collaborationIds.scope,
-    recipient_actor_ids: JSON.stringify([collaborationActors.editor]),
+    recipient_actor_ids: JSON.stringify([{
+      actorId: collaborationActors.editor,
+      invitationId: collaborationIds.invitation,
+    }]),
     authority_runtime_id: collaborationIds.runtime,
     authority_generation: 1,
     resource_kind: "chat",

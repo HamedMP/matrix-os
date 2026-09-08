@@ -6,6 +6,12 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const ACTOR = "[A-Za-z0-9_-]{1,128}";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const PROOF_HEADER = "x-matrix-collaboration-proof";
+const RUNTIME = "[A-Za-z0-9:_-]{1,128}";
+
+const RUNTIME_ROUTES = [
+  ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes/preflight$`)],
+  ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes$`)],
+] as const;
 
 const SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})$`)],
@@ -27,7 +33,7 @@ const INVITATION_ROUTES = [
 ] as const;
 
 export interface ParsedCollaborationProxyRoute {
-  kind: "scope" | "invitation";
+  kind: "runtime" | "scope" | "invitation";
   identifier: string;
 }
 
@@ -35,6 +41,11 @@ export function parseCollaborationProxyRoute(
   method: string,
   path: string,
 ): ParsedCollaborationProxyRoute | null {
+  for (const [allowedMethod, pattern] of RUNTIME_ROUTES) {
+    if (method !== allowedMethod) continue;
+    const match = pattern.exec(path);
+    if (match) return { kind: "runtime", identifier: match[1]! };
+  }
   for (const [allowedMethod, pattern] of SCOPE_ROUTES) {
     if (method !== allowedMethod) continue;
     const match = pattern.exec(path);
@@ -78,15 +89,27 @@ export class CollaborationProxy {
     try {
       const directory = route.kind === "scope"
         ? await this.options.repository.getDirectoryRoute(route.identifier)
-        : await this.options.repository.getInvitationRoute(input.actorId, route.identifier);
-      if (!directory) return safeResponse("Collaboration route not found", 404);
+        : route.kind === "invitation"
+          ? await this.options.repository.getInvitationRoute(input.actorId, route.identifier)
+          : null;
+      let runtime = route.kind === "runtime"
+        ? await this.options.resolveRuntime(route.identifier)
+        : null;
+      if (route.kind === "runtime" && (!runtime || runtime.ownerId !== input.actorId)) {
+        return safeResponse("Collaboration route not found", 404);
+      }
+      if (route.kind !== "runtime" && !directory) return safeResponse("Collaboration route not found", 404);
+      const ownerId = runtime?.ownerId ?? directory!.ownerId;
+      const scopeId = directory?.scopeId;
       const policy = await this.options.repository.getPolicy("m1");
-      const participants = await this.options.repository.listScopeActors(directory.scopeId);
-      if (!policyAllows(policy, input.actorId, directory.ownerId, participants, input.method)) {
+      const participants = scopeId
+        ? await this.options.repository.listScopeActors(scopeId)
+        : [input.actorId];
+      if (!policyAllows(policy, input.actorId, ownerId, participants, input.method)) {
         return safeResponse("Collaboration unavailable", policy.mode === "read_only" ? 403 : 404);
       }
-      const runtime = await this.options.resolveRuntime(directory.runtimeId);
-      if (!runtime || runtime.runtimeId !== directory.runtimeId || runtime.ownerId !== directory.ownerId) {
+      runtime ??= await this.options.resolveRuntime(directory!.runtimeId);
+      if (!runtime || (directory && (runtime.runtimeId !== directory.runtimeId || runtime.ownerId !== directory.ownerId))) {
         return safeResponse("Collaboration unavailable", 503);
       }
       const baseUrl = parseRuntimeBaseUrl(runtime.baseUrl);
@@ -94,9 +117,9 @@ export class CollaborationProxy {
 
       const signedProof = this.options.signer.signHttp({
         actorId: input.actorId,
-        ownerId: directory.ownerId,
-        runtimeId: directory.runtimeId,
-        scopeId: directory.scopeId,
+        ownerId,
+        runtimeId: runtime.runtimeId,
+        ...(scopeId ? { scopeId } : {}),
         method: input.method as "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
         path: input.path,
         query: input.query,

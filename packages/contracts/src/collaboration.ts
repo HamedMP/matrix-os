@@ -116,6 +116,7 @@ export const CollaborationMemberSchema = z.object({
   actor: CollaborationParticipantSchema,
   role: CollaborationRoleSchema,
   status: CollaborationMemberStatusSchema,
+  invitationId: CollaborationIdSchema.optional(),
   revision: CollaborationRevisionSchema,
   joinedAt: z.iso.datetime().optional(),
   updatedAt: z.iso.datetime(),
@@ -263,6 +264,7 @@ export const CollaborationDirectoryEventSchema = z.object({
   recipients: z.array(z.object({
     actorId: CollaborationActorIdSchema,
     status: z.enum(["invited", "accepted", "revoked"]),
+    invitationId: CollaborationIdSchema.optional(),
   }).strict()).max(8),
 }).strict();
 

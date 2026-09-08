@@ -14,6 +14,7 @@ import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
 
 const MAX_PROOF_KEYS = 8;
+const MACHINE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface GatewayCollaborationConfig {
   runtimeId: string;
@@ -26,7 +27,10 @@ export interface GatewayCollaborationConfig {
 
 export function loadGatewayCollaborationConfig(env: NodeJS.ProcessEnv): GatewayCollaborationConfig | null {
   if (env.MATRIX_COLLABORATION_ENABLED !== "true") return null;
-  const runtimeId = env.MATRIX_RUNTIME_ID?.trim();
+  const configuredRuntimeId = env.MATRIX_RUNTIME_ID?.trim();
+  const machineId = env.MATRIX_MACHINE_ID?.trim();
+  const runtimeId = configuredRuntimeId
+    || (machineId && MACHINE_ID_PATTERN.test(machineId) ? `vps:${machineId.toLowerCase()}` : undefined);
   const activeKeyId = env.MATRIX_COLLABORATION_ACTIVE_KEY_ID?.trim();
   const preflightSecret = env.MATRIX_COLLABORATION_PREFLIGHT_SECRET;
   const platformBaseUrl = env.PLATFORM_INTERNAL_URL?.trim();

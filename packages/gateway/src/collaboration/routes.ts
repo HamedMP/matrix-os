@@ -409,6 +409,7 @@ async function memberProjection(
     actor: await options.resolveParticipant(member.actorId),
     role: member.role,
     status: member.status,
+    ...(member.invitationId ? { invitationId: member.invitationId } : {}),
     revision: String(member.revision),
     ...(member.joinedAt ? { joinedAt: member.joinedAt } : {}),
     updatedAt: member.updatedAt,

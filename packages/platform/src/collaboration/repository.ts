@@ -43,6 +43,7 @@ export interface CollaborationDirectoryEntry {
   kind: "chat" | "terminal" | "project";
   authorityGeneration: number;
   status: "invited" | "accepted" | "revoked";
+  invitationId?: string;
 }
 
 export interface CollaborationRolloutPolicyRecord {
@@ -185,6 +186,7 @@ export class PlatformCollaborationRepository {
         "directory.kind",
         "directory.authority_generation",
         "user_index.status",
+        "user_index.invitation_id",
       ])
       .where("user_index.actor_id", "=", actorId)
       .where("user_index.status", "!=", "revoked")
@@ -198,6 +200,7 @@ export class PlatformCollaborationRepository {
       kind: row.kind,
       authorityGeneration: Number(row.authority_generation),
       status: row.status,
+      ...(row.invitation_id === null ? {} : { invitationId: row.invitation_id }),
     }));
   }
 

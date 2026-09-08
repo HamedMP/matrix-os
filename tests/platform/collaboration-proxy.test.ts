@@ -123,6 +123,42 @@ describe("CollaborationProxy", () => {
     });
   });
 
+  it("routes owner-only Chat sharing creation to the selected registered runtime", async () => {
+    const path = "/api/collaboration/runtimes/runtime_owner/scopes/preflight";
+    expect(parseCollaborationProxyRoute("POST", path)).toEqual({ kind: "runtime", identifier: "runtime_owner" });
+    const denied = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "POST",
+      path,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    });
+    expect(denied.status).toBe(404);
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    const response = await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "POST",
+      path,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    expect(response.status).toBe(200);
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const signedProof = JSON.parse(Buffer.from(
+      new Headers(init.headers).get("x-matrix-collaboration-proof")!,
+      "base64url",
+    ).toString("utf8"));
+    expect(signedProof.proof).toMatchObject({
+      actorId: platformCollaborationActors.owner,
+      ownerId: platformCollaborationActors.owner,
+      runtimeId: "runtime_owner",
+    });
+    expect(signedProof.proof.scopeId).toBeUndefined();
+  });
+
   it.each([
     ["GET", `/api/collaboration/scopes/${scopeId}/../../files`],
     ["POST", `/api/collaboration/scopes/${scopeId}/terminal/input`],
