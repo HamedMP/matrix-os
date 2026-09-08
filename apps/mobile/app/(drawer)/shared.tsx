@@ -100,6 +100,7 @@ export default function SharedScreen() {
   const latestSequenceRef = useRef("0");
   const eventSequenceRef = useRef("0");
   const eventScopeRef = useRef<string | null>(null);
+  const chatRef = useRef<Chat | null>(null);
   const messagesRef = useRef<Message[]>([]);
   const token = useCallback(async () => {
     const value = await getTokenRef.current();
@@ -150,6 +151,7 @@ export default function SharedScreen() {
       eventScopeRef.current = scopeId;
       eventSequenceRef.current = "0";
       latestSequenceRef.current = "0";
+      chatRef.current = null;
       messagesRef.current = [];
     }
     dispatch({ type: "patch", patch: {
@@ -172,6 +174,7 @@ export default function SharedScreen() {
       ]);
       const nextDraft = await loadCollaborationDraft(AsyncStorage, { actorId: userId, scopeId, chatId: nextChat.id });
       if (generation !== chatLoadGeneration.current) return;
+      chatRef.current = nextChat;
       messagesRef.current = history.messages;
       latestSequenceRef.current = history.messages.at(-1)?.sequence ?? "0";
       dispatch({ type: "patch", patch: {
@@ -203,13 +206,16 @@ export default function SharedScreen() {
     try {
       const page = await fetchSharedChatMessages(await token(), view.scopeId, after);
       if (generation !== chatLoadGeneration.current) return;
-      const appended = page.messages.filter((message) => !messages.some((existing) => existing.id === message.id));
-      const combined = [...messages, ...appended];
+      const currentChat = chatRef.current;
+      if (!currentChat) return;
+      const currentMessages = messagesRef.current;
+      const appended = page.messages.filter((message) => !currentMessages.some((existing) => existing.id === message.id));
+      const combined = [...currentMessages, ...appended];
       messagesRef.current = combined;
       latestSequenceRef.current = combined.at(-1)?.sequence ?? latestSequenceRef.current;
       dispatch({ type: "patch", patch: {
         messages: combined,
-        hasMoreMessages: appended.length > 0 && BigInt(chat.messageCount) > BigInt(combined.length),
+        hasMoreMessages: appended.length > 0 && BigInt(currentChat.messageCount) > BigInt(combined.length),
       } });
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -237,6 +243,7 @@ export default function SharedScreen() {
       combined = [...combined, ...additions];
     }
     if (eventScopeRef.current !== scopeId) throw new Error("CollaborationRecoverySuperseded");
+    chatRef.current = nextChat;
     messagesRef.current = combined;
     latestSequenceRef.current = combined.at(-1)?.sequence ?? latestSequenceRef.current;
     dispatch({ type: "patch", patch: {
@@ -287,7 +294,9 @@ export default function SharedScreen() {
             await operation();
           }).catch((failure: unknown) => {
             console.warn("[mobile-collaboration] realtime refresh failed", failure instanceof Error ? failure.name : "UnknownError");
-            dispatch({ type: "patch", patch: { error: "This shared Chat could not be refreshed. Try again." } });
+            if (!closed && eventScopeRef.current === activeScopeId) {
+              dispatch({ type: "patch", patch: { error: "This shared Chat could not be refreshed. Try again." } });
+            }
             if (usable && !closed) {
               usable = false;
               next.close(1011, "Refresh failed");
@@ -340,6 +349,7 @@ export default function SharedScreen() {
     void connect();
     return () => {
       closed = true;
+      if (eventScopeRef.current === activeScopeId) eventScopeRef.current = null;
       retryTimer?.cancel();
       socket?.close(1000, "Closed");
     };
@@ -398,6 +408,9 @@ export default function SharedScreen() {
     return <SharedChatScreen state={state} markdownTheme={markdownTheme}
       onBack={() => {
         chatLoadGeneration.current += 1;
+        eventScopeRef.current = null;
+        chatRef.current = null;
+        messagesRef.current = [];
         dispatch({ type: "patch", patch: { view: { kind: "home" }, loadingMoreMessages: false } });
         void loadHome();
       }}

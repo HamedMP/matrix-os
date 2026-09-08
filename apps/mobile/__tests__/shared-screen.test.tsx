@@ -25,7 +25,7 @@ jest.mock("@/lib/requests/collaboration", () => ({
 }));
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import SharedScreen from "../app/(drawer)/shared";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
@@ -36,9 +36,36 @@ const invitation = {
   expiresAt: "2026-09-14T12:00:00.000Z", revision: "1",
 };
 
+type TestSocket = WebSocket & {
+  onmessage: ((event: { data: string }) => void) | null;
+};
+
+const sockets: TestSocket[] = [];
+const OriginalWebSocket = global.WebSocket;
+
+class TestWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  readyState = TestWebSocket.OPEN;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  send = jest.fn();
+  close = jest.fn(() => { this.readyState = TestWebSocket.CLOSED; });
+
+  constructor() {
+    sockets.push(this as unknown as TestSocket);
+  }
+}
+
 describe("native shared Chat screen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    sockets.length = 0;
+    global.WebSocket = TestWebSocket as unknown as typeof WebSocket;
     mockFetchInbox.mockResolvedValue({ items: [{
       scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
       status: "invited", invitationId, resource: invitation,
@@ -59,6 +86,10 @@ describe("native shared Chat screen", () => {
     }] });
     mockPostDiscussion.mockResolvedValue({});
     mockFetchEventTicket.mockResolvedValue({ ticket: "t".repeat(43), expiresAt: "2026-09-07T12:00:30.000Z" });
+  });
+
+  afterAll(() => {
+    global.WebSocket = OriginalWebSocket;
   });
 
   it("accepts an invitation and opens attributed discussion without AI controls", async () => {
@@ -152,5 +183,64 @@ describe("native shared Chat screen", () => {
     expect(await screen.findByText("Grace invited you")).toBeTruthy();
     expect(screen.getByText("Nima invited you")).toBeTruthy();
     expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "opaque-next-page");
+  });
+
+  it("does not let a pending history page overwrite a newer realtime refresh", async () => {
+    const message = (sequence: number) => ({
+      id: `msg_${sequence}`, chatId: "chat_one", sequence: String(sequence), role: "user", state: "committed", purpose: "discussion",
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text: `Message ${sequence}` }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    }] });
+    let resolveOldPage!: (value: unknown) => void;
+    let historyCall = 0;
+    mockFetchMessages.mockImplementation(async (_token: string, _scopeId: string, after?: string) => {
+      historyCall += 1;
+      if (historyCall === 1) return { messages: [message(1)] };
+      if (after === "1" && historyCall === 2) {
+        return new Promise<unknown>((resolve) => { resolveOldPage = resolve; });
+      }
+      return { messages: [message(2), message(3)] };
+    });
+    mockFetchChat.mockResolvedValue({
+      id: "chat_one", scopeId, title: "Launch plan", lifecycle: "active", revision: "2", messageCount: "3",
+    });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    fireEvent.press(await screen.findByLabelText("Load more messages"));
+    await waitFor(() => expect(resolveOldPage).toBeDefined());
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1, type: "refresh_required", scopeId, resourceId: "chat_one", authorityGeneration: "1", sequence: "2",
+    }) }));
+    expect(await screen.findByText("Message 3")).toBeTruthy();
+    await act(async () => resolveOldPage({ messages: [message(2)] }));
+    expect(screen.getByText("Message 3")).toBeTruthy();
+  });
+
+  it("does not show an error from a realtime refresh superseded by leaving the Chat", async () => {
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    }] });
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    let rejectRefresh!: (reason: Error) => void;
+    mockFetchScope.mockImplementationOnce(() => new Promise((_, reject) => { rejectRefresh = reject; }));
+    await act(async () => sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1, type: "refresh_required", scopeId, resourceId: "chat_one", authorityGeneration: "1", sequence: "2",
+    }) }));
+    await waitFor(() => expect(rejectRefresh).toBeDefined());
+    fireEvent.press(screen.getByLabelText("Back to Shared with me"));
+    await act(async () => rejectRefresh(new Error("old Chat failed")));
+    await waitFor(() => expect(screen.queryByText("This shared Chat could not be refreshed. Try again.")).toBeNull());
+    expect(await screen.findByText("Shared with me")).toBeTruthy();
   });
 });
