@@ -35,6 +35,14 @@ export function createCodexMcpElicitations({ send, persist, safeText, now = Date
   // Owned by this runner; bounded admission, expiry sweep and turn-end drain.
   const pending = new Map();
   const cancel = entry => send({ id: entry.nativeRequestId, result: { action: "cancel", content: null } });
+  async function expire(approvalId, entry) {
+    pending.delete(approvalId); // Fence concurrent and late decisions before any await.
+    try {
+      await persist({ type: "matrix.codex.approval.resolved", approvalId, decision: "cancel" });
+    } finally {
+      try { cancel(entry); } catch (_error) { process.stderr.write("Integration cancellation could not be delivered.\n"); }
+    }
+  }
   return {
     get size() { return pending.size; },
     async handle(raw, threadId) {
@@ -63,10 +71,10 @@ export function createCodexMcpElicitations({ send, persist, safeText, now = Date
       });
       return true;
     },
-    decide(approvalId, decision) {
+    async decide(approvalId, decision) {
       const entry = pending.get(approvalId);
       if (!entry || !["approve", "decline", "cancel"].includes(decision)) return false;
-      if (entry.expiresAt <= now()) { pending.delete(approvalId); cancel(entry); return false; }
+      if (entry.expiresAt <= now()) { await expire(approvalId, entry); return false; }
       send({ id: entry.nativeRequestId, result: {
         action: decision === "approve" ? "accept" : decision,
         content: decision === "approve" ? {} : null,
@@ -74,18 +82,17 @@ export function createCodexMcpElicitations({ send, persist, safeText, now = Date
       pending.delete(approvalId);
       return true;
     },
-    sweep() {
+    async sweep() {
       for (const [id, entry] of pending) {
         if (entry.expiresAt > now()) continue;
-        pending.delete(id);
-        cancel(entry);
+        await expire(id, entry);
       }
     },
-    drain() {
-      const entries = [...pending.values()];
+    async drain() {
+      const entries = [...pending.entries()];
       pending.clear();
-      for (const entry of entries) {
-        try { cancel(entry); } catch (_error) { process.stderr.write("Integration cancellation could not be delivered.\n"); }
+      for (const [id, entry] of entries) {
+        await expire(id, entry);
       }
     },
   };

@@ -1,4 +1,4 @@
-import { canonicalChatTerminalNotices } from "@matrix-os/contracts";
+import { canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import type {
   CanonicalChatDetailResponse,
   CanonicalChatMessage,
@@ -25,6 +25,7 @@ export interface TranscriptToolCall {
 }
 
 export interface TranscriptMessage {
+  approval?: CanonicalChatApprovalView;
   id: string;
   role: "user" | "assistant" | "tool" | "system";
   text: string;
@@ -204,6 +205,18 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
     });
   }
 
+  for (const approval of canonicalChatApprovals(detail)) {
+    const existing = transcript.find(message => message.id === approval.id);
+    if (existing) {
+      existing.approval = approval;
+      continue;
+    }
+    const index = approval.beforeMessageId ? transcript.findIndex(message => message.id === approval.beforeMessageId) : -1;
+    transcript.splice(index < 0 ? 0 : index + 1, 0, {
+      id: approval.id, role: "system", text: approval.title, toolCalls: [], activities: [],
+      isRunning: false, createdAt: approval.timestamp, approval,
+    });
+  }
   for (const notice of canonicalChatTerminalNotices(detail)) {
     const index = notice.beforeMessageId ? transcript.findIndex((message) => message.id === notice.beforeMessageId) : -1;
     transcript.splice(index < 0 ? 0 : index + 1, 0, {

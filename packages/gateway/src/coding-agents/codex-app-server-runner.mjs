@@ -1002,7 +1002,7 @@ async function applyControl(control) {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
   } else if (control.type === "approval") {
-    if (!mcpElicitations.decide(control.approvalId, control.decision)) {
+    if (!await mcpElicitations.decide(control.approvalId, control.decision)) {
       const pending = pendingApprovals.get(control.approvalId);
       if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
       const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
@@ -1081,7 +1081,10 @@ await chmod(controlPath, 0o600);
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
-  try { mcpElicitations.sweep(); } catch (_error) { stopping = true; }
+  void mcpElicitations.sweep().catch(() => {
+    process.stderr.write("Integration expiry could not be settled.\n");
+    stop();
+  });
   for (const [approvalId, pending] of pendingApprovals) {
     if (pending.expiresAt > now) continue;
     pendingApprovals.delete(approvalId);
@@ -1197,7 +1200,7 @@ function stop() {
 
 async function finishTurn(outcome) {
   executionWatchdog.stop();
-  mcpElicitations.drain();
+  await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
     assistantDeltaBuffers.size > 0 ||
     startedToolItems.size > 0 ||

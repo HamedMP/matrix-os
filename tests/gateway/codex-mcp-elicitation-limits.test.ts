@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { createCodexMcpElicitations } from "../../packages/gateway/src/coding-agents/codex-mcp-elicitations.mjs";
+import { parseCodexExecJsonLine } from "../../packages/gateway/src/coding-agents/codex-events.js";
 
 const request = (id: number) => ({ id, method: "mcpServer/elicitation/request", params: {
   threadId: "thread", turnId: "turn", serverName: "integration", mode: "form",
@@ -23,7 +24,7 @@ it("expires unanswered confirmation and fences a late approval", async () => {
   const h = harness();
   await h.bridge.handle(request(42), "thread");
   h.advance();
-  expect(h.bridge.decide(h.events[0].approvalId, "approve")).toBe(false);
+  expect(await h.bridge.decide(h.events[0].approvalId, "approve")).toBe(false);
   expect(h.responses).toEqual([{ id: 42, result: { action: "cancel", content: null } }]);
   expect(h.bridge.size).toBe(0);
 });
@@ -33,10 +34,15 @@ it("sweeps unattended confirmations once without extending their deadlines", asy
   await h.bridge.handle(request(42), "thread");
   h.advance();
   await h.bridge.handle(request(42), "thread");
-  h.bridge.sweep();
-  h.bridge.sweep();
+  await h.bridge.sweep();
+  await h.bridge.sweep();
   expect(h.responses).toEqual([{ id: 42, result: { action: "cancel", content: null } }]);
-  expect(h.events).toHaveLength(1);
+  expect(h.events).toHaveLength(2);
+  expect(parseCodexExecJsonLine(JSON.stringify(h.events[1]), {
+    threadId: "thread_test", now: () => new Date("2026-09-08T00:00:00Z"), nextEventId: () => "evt_test",
+  }).events).toEqual([expect.objectContaining({
+    type: "approval.resolved", approvalId: h.events[0].approvalId, decision: "cancel",
+  })]);
 });
 
 it("caps pending confirmations and drains only the outstanding requests", async () => {
@@ -45,8 +51,9 @@ it("caps pending confirmations and drains only the outstanding requests", async 
   expect(h.bridge.size).toBe(20);
   expect(h.events).toHaveLength(20);
   expect(h.responses).toEqual([{ id: 21, result: { action: "cancel", content: null } }]);
-  h.bridge.drain();
-  h.bridge.drain();
+  await h.bridge.drain();
+  await h.bridge.drain();
   expect(h.responses).toHaveLength(21);
-  expect(h.bridge.decide(h.events[0].approvalId, "approve")).toBe(false);
+  expect(h.events).toHaveLength(40);
+  expect(await h.bridge.decide(h.events[0].approvalId, "approve")).toBe(false);
 });

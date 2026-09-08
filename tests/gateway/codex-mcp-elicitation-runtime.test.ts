@@ -131,6 +131,9 @@ it("cancels outstanding MCP confirmation on interruption and rejects a late deci
     await expect.poll(() => lines(runtime.responses)).toEqual([{ id: 42, result: { action: "cancel", content: null } }]);
     const approval = (await lines(runtime.events)).find(e => e.type === "matrix.codex.approval.requested");
     expect(await runtime.control({ type: "approval", approvalId: approval.approvalId, decision: "approve", clientRequestId: "req_late" })).toEqual({ ok: false });
+    const events = await lines(runtime.events);
+    expect(events.find(e => e.type === "matrix.codex.approval.resolved")).toMatchObject({ approvalId: approval.approvalId, decision: "cancel" });
+    expect(events.findIndex(e => e.type === "matrix.codex.approval.resolved")).toBeLessThan(events.findIndex(e => e.type === "turn.aborted"));
   } finally { await runtime.close(); }
 });
 

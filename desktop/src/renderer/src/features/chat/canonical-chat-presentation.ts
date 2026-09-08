@@ -1,3 +1,4 @@
+import { canonicalChatApprovals } from "@matrix-os/contracts";
 import type {
   CanonicalChatMessage,
   CanonicalChatRun,
@@ -509,7 +510,7 @@ function runPresentation(
     ...projectedActivityGroups,
     ...requestOrder.flatMap((key) => {
       const request = requests.get(key);
-      return request ? [request] : [];
+      return request ? [active ? request : { ...request, state: "resolved" as const, actions: undefined }] : [];
     }),
   ];
   const failed = run.status === "failed" || run.outcome === "failed";
@@ -560,6 +561,7 @@ export function canonicalChatPresentation(input: {
   runs: CanonicalChatRun[];
   activities: CanonicalChatRunActivity[];
 }): ConversationTurnPresentation[] {
+  const approvalViews = canonicalChatApprovals(input);
   const latestTurnId = input.turns.reduce<CanonicalChatTurn | undefined>((latest, turn) => (
     latest === undefined
       || turn.baseMessageSeq > latest.baseMessageSeq
@@ -626,7 +628,15 @@ export function canonicalChatPresentation(input: {
         otherIndex += 1;
       }
     }
-    const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run));
+    const seenApprovals = new Set<string>(); // Per-turn, bounded by snapshot activities/parts.
+    const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run)).flatMap((item): ConversationWorkPresentation[] => {
+      if (item.kind !== "request") return [item];
+      if (item.requestKind !== "approval") return [isActiveRun(run) ? item : { ...item, state: "resolved", actions: undefined }];
+      if (seenApprovals.has(item.requestId)) return [];
+      seenApprovals.add(item.requestId);
+      const approval = approvalViews.find(view => view.runId === run?.id && view.approvalId === item.requestId);
+      return [approval?.pending ? item : { ...item, state: "resolved", actions: undefined }];
+    });
     const timeline = [
       ...work.map((item, index) => ({
         kind: "work" as const,
