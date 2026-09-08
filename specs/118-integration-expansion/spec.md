@@ -34,6 +34,9 @@ revision. Missing, stale, disabled, or mismatched state fails closed.
   issuer and persist it only inside the encrypted owner credential.
 - Discover: initialize current Streamable HTTP, cap catalog/schema sizes, and
   persist every discovered tool disabled with `always_ask`.
+- Managed preset catalog: for authenticated owners, intersect stable actions
+  with the connection's persisted discovered tools before advertising them;
+  discovery or projection failures expose no invocable actions.
 - Enable: requires at least one selected tool and optimistic revision match.
 - Remove: disable platform row first → remove projection → revoke OAuth →
   delete. Revocation/projection failure leaves `action_required` visible.

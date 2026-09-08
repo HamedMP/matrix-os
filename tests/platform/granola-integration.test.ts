@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GRANOLA_PRESET,
+  availableGranolaActions,
   planGranolaAction,
 } from "../../packages/platform/src/granola-integration.js";
 
@@ -48,7 +49,28 @@ describe("Granola managed integration", () => {
       "get_meeting_transcript",
       "get_account_info",
     ]);
-    expect(GRANOLA_PRESET.requiredTools).toEqual(["list_meetings", "get_meetings"]);
+    expect(GRANOLA_PRESET.requiredTools).toEqual([
+      "list_meetings",
+      "get_meetings",
+      "get_account_info",
+    ]);
+  });
+
+  it("projects only actions backed by the connection's discovered tools", () => {
+    expect(availableGranolaActions(tools.filter(({ name }) => [
+      "list_meetings",
+      "get_meetings",
+      "get_account_info",
+    ].includes(name)))).toEqual(["list_notes", "get_note", "get_account"]);
+
+    expect(availableGranolaActions(tools)).toEqual([
+      "search_notes",
+      "list_folders",
+      "list_notes",
+      "get_note",
+      "get_transcript",
+      "get_account",
+    ]);
   });
 
   it("maps stable search and list params to discovered upstream schemas", () => {
@@ -57,7 +79,6 @@ describe("Granola managed integration", () => {
         toolName: "query_granola_meetings",
         arguments: { query: "decisions about launch" },
       }],
-      combine: false,
     });
     expect(planGranolaAction("list_notes", {
       folderId: "folder-1",
@@ -73,31 +94,24 @@ describe("Granola managed integration", () => {
           page_size: 25,
         },
       }],
-      combine: false,
     });
   });
 
-  it("maps note IDs against each discovered tool schema and combines transcripts", () => {
-    expect(planGranolaAction("get_note", {
-      noteId: "meeting-1",
-      includeTranscript: true,
-    }, tools)).toEqual({
-      calls: [
-        { toolName: "get_meetings", arguments: { meeting_ids: ["meeting-1"] } },
-        { toolName: "get_meeting_transcript", arguments: { meeting_id: "meeting-1" } },
-      ],
-      combine: true,
+  it("maps note and transcript reads into separately capability-gated calls", () => {
+    expect(planGranolaAction("get_note", { noteId: "meeting-1" }, tools)).toEqual({
+      calls: [{ toolName: "get_meetings", arguments: { meeting_ids: ["meeting-1"] } }],
+    });
+    expect(planGranolaAction("get_transcript", { noteId: "meeting-1" }, tools)).toEqual({
+      calls: [{ toolName: "get_meeting_transcript", arguments: { meeting_id: "meeting-1" } }],
     });
   });
 
   it("supports folder and account reads without forwarding caller input", () => {
     expect(planGranolaAction("list_folders", { ignored: true }, tools)).toEqual({
       calls: [{ toolName: "list_meeting_folders", arguments: {} }],
-      combine: false,
     });
     expect(planGranolaAction("get_account", { ignored: true }, tools)).toEqual({
       calls: [{ toolName: "get_account_info", arguments: {} }],
-      combine: false,
     });
   });
 

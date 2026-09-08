@@ -39,10 +39,12 @@ owner-scoped credential and bound to the discovered authorization-server issuer.
 The currently documented upstream tools are `query_granola_meetings`,
 `list_meeting_folders`, `list_meetings`, `get_meetings`,
 `get_meeting_transcript`, and `get_account_info`. Matrix exposes stable
-`search_notes`, `list_folders`, `list_notes`, `get_note`, and `get_account`
-actions after runtime schema discovery. Folder listing and transcripts remain
-plan-dependent; activation requires only the baseline `list_meetings` and
-`get_meetings` tools. All Granola actions are read-only.
+`search_notes`, `list_folders`, `list_notes`, `get_note`, `get_transcript`, and
+`get_account` actions after runtime schema discovery. The authenticated catalog
+filters that action set against the connection's discovered tools. Folder
+listing, search, and transcripts remain plan-dependent; activation requires the
+baseline `list_meetings`, `get_meetings`, and `get_account_info` tools. All
+Granola actions are read-only.
 
 Automated tests cover DCR request/response validation, encrypted client-ID
 storage, public-client-only enforcement, the curated tool allowlist, and stable

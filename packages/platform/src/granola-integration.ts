@@ -10,10 +10,10 @@ export const GRANOLA_PRESET = {
     "get_meeting_transcript",
     "get_account_info",
   ] as const,
-  // These two tools are available on every Granola plan. The remaining tools
-  // stay allowlisted when discovered, but activation does not fail when a
-  // user's plan or workspace policy omits an optional capability.
-  requiredTools: ["list_meetings", "get_meetings"] as const,
+  // These baseline tools are available on every Granola plan. The remaining
+  // tools stay allowlisted when discovered, but activation does not fail when
+  // a user's plan or workspace policy omits an optional capability.
+  requiredTools: ["list_meetings", "get_meetings", "get_account_info"] as const,
 } as const;
 
 interface DiscoveredGranolaTool {
@@ -28,7 +28,21 @@ interface GranolaToolCall {
 
 export interface GranolaActionPlan {
   calls: GranolaToolCall[];
-  combine: boolean;
+}
+
+const GRANOLA_ACTION_TO_TOOL = {
+  search_notes: "query_granola_meetings",
+  list_folders: "list_meeting_folders",
+  list_notes: "list_meetings",
+  get_note: "get_meetings",
+  get_transcript: "get_meeting_transcript",
+  get_account: "get_account_info",
+} as const satisfies Record<string, typeof GRANOLA_PRESET.tools[number]>;
+
+export function availableGranolaActions(tools: DiscoveredGranolaTool[]): string[] {
+  return Object.entries(GRANOLA_ACTION_TO_TOOL)
+    .filter(([, toolName]) => tools.some(({ name }) => name === toolName))
+    .map(([actionId]) => actionId);
 }
 
 function schemaProperties(
@@ -111,6 +125,9 @@ export function planGranolaAction(
   tools: DiscoveredGranolaTool[],
 ): GranolaActionPlan {
   const input = params ?? {};
+  if (!availableGranolaActions(tools).includes(actionId)) {
+    throw new Error("Granola action is unavailable for this connection");
+  }
   if (actionId === "search_notes") {
     const query = boundedString(input.query, "query", 4_000);
     return {
@@ -124,40 +141,32 @@ export function planGranolaAction(
           tools,
         ),
       }],
-      combine: false,
     };
   }
   if (actionId === "list_folders") {
     return {
       calls: [{ toolName: "list_meeting_folders", arguments: {} }],
-      combine: false,
     };
   }
   if (actionId === "list_notes") {
     return {
       calls: [{ toolName: "list_meetings", arguments: listArguments(input, tools) }],
-      combine: false,
     };
   }
   if (actionId === "get_account") {
     return {
       calls: [{ toolName: "get_account_info", arguments: {} }],
-      combine: false,
     };
   }
-  if (actionId !== "get_note") {
-    throw new Error("Unknown Granola action");
-  }
   const noteId = boundedString(input.noteId, "noteId", 512);
-  const calls: GranolaToolCall[] = [{
-    toolName: "get_meetings",
-    arguments: noteIdArguments("get_meetings", noteId, tools),
-  }];
-  if (input.includeTranscript === true) {
-    calls.push({
+  if (actionId === "get_transcript") {
+    return { calls: [{
       toolName: "get_meeting_transcript",
       arguments: noteIdArguments("get_meeting_transcript", noteId, tools),
-    });
+    }] };
   }
-  return { calls, combine: calls.length === 2 };
+  return { calls: [{
+    toolName: "get_meetings",
+    arguments: noteIdArguments("get_meetings", noteId, tools),
+  }] };
 }
