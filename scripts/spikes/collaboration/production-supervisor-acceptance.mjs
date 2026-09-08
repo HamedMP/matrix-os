@@ -22,6 +22,16 @@ const SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000;
 const SYSTEMD_EXEC_STEPS = [
   "ADDRESS_FAMILIES", "CAPABILITIES", "CHDIR", "CHROOT", "EXEC", "GROUP", "NAMESPACE", "SECCOMP", "USER",
 ];
+const SYSTEMD_WORKER_FAILURES = {
+  ScopeRuntimeBrokerError: "broker",
+  ScopeRuntimeEnvironmentCapacityError: "environment_capacity",
+  ScopeRuntimeEnvironmentFixedError: "environment_fixed",
+  ScopeRuntimeEnvironmentKeyError: "environment_key",
+  ScopeRuntimeFilesystemError: "filesystem",
+  ScopeRuntimeIdentityUidError: "identity_uid",
+  ScopeRuntimeIdentityWorkingDirectoryError: "identity_working_directory",
+  ScopeRuntimeInvocationError: "invocation",
+};
 
 class AcceptanceError extends Error {
   constructor(code) {
@@ -195,6 +205,10 @@ async function runtimeCreationFailureCode(since) {
     "--no-pager", "--output=cat", "--lines=80",
   ]);
   if (journal.code !== 0) return "runtime_create_failed";
+  const worker = /scope_runtime_worker_failed:\s+(ScopeRuntime[A-Za-z]+Error)\b/.exec(journal.stdout)?.[1];
+  if (worker && Object.hasOwn(SYSTEMD_WORKER_FAILURES, worker)) {
+    return `runtime_create_failed_worker_${SYSTEMD_WORKER_FAILURES[worker]}`;
+  }
   const step = /Failed at step ([A-Z][A-Z0-9_-]{0,31})\b/.exec(journal.stdout)?.[1];
   if (step && SYSTEMD_EXEC_STEPS.includes(step)) {
     return `runtime_create_failed_step_${step.toLowerCase()}`;

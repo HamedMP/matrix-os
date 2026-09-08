@@ -56,6 +56,8 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("SYSTEMD_EXEC_STEPS");
     expect(source).toContain("runtime_create_failed_step_");
     expect(source).toContain("runtime_create_failed_status_");
+    expect(source).toContain("SYSTEMD_WORKER_FAILURES");
+    expect(source).toContain("runtime_create_failed_worker_");
     expect(source).not.toContain("runtime_create_failed:${journal.stdout}");
   });
 
