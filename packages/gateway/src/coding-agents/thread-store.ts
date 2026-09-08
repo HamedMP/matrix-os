@@ -30,6 +30,7 @@ import {
 import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import { CodingAgentSteerRequestSchema, matchesSteeringTurn } from "./thread-steering.js";
 import {
   CodingAgentProjectWorkspaceError,
   type CodingAgentProjectThreadProjection,
@@ -89,12 +90,6 @@ const DEFAULT_INITIAL_RUN_TIMEOUT_MS = 10 * 60_000;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
-const CodingAgentSteerRequestSchema = z.object({
-  expectedTurnId: AgentTurnIdSchema.optional(),
-  message: CreateAgentTurnRequestSchema.shape.message,
-  clientRequestId: RequestIdSchema,
-}).strict();
-
 const StoredThreadSchema = AgentThreadSummarySchema.extend({
   ownerId: OwnerIdSchema,
   clientRequestId: RequestIdSchema,
@@ -102,6 +97,7 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
   approvalDecisionClientRequestIds: z.array(RequestIdSchema).max(MAX_APPROVAL_DECISION_REQUEST_IDS).default([]),
   inputAnswerClientRequestIds: z.array(RequestIdSchema).max(MAX_INPUT_ANSWER_REQUEST_IDS).default([]),
   activeTurnId: AgentTurnIdSchema.optional(),
+  deliveredTurnId: AgentTurnIdSchema.optional(),
   providerResumeState: CodingAgentProviderResumeStateSchema.optional(),
 }).strict();
 
@@ -446,6 +442,7 @@ function stripOwner(thread: StoredThread): AgentThreadSummary {
     approvalDecisionClientRequestIds: _approvalDecisionClientRequestIds,
     inputAnswerClientRequestIds: _inputAnswerClientRequestIds,
     activeTurnId: _activeTurnId,
+    deliveredTurnId: _deliveredTurnId,
     providerResumeState: _providerResumeState,
     ...summary
   } = thread;
@@ -846,7 +843,7 @@ export function createCodingAgentThreadStore(
   }
 
   function clearActiveTurn(thread: StoredThread): StoredThread {
-    const { activeTurnId: _activeTurnId, ...cleared } = thread;
+    const { activeTurnId: _activeTurnId, deliveredTurnId: _deliveredTurnId, ...cleared } = thread;
     return cleared;
   }
 
@@ -938,6 +935,9 @@ export function createCodingAgentThreadStore(
         ...nextThread,
         ...(input.resumeState ? { providerResumeState: input.resumeState } : {}),
       });
+      if (input.outcome === "delivered" && activeThread(nextThread)) {
+        nextThread = { ...nextThread, deliveredTurnId: input.turnId };
+      }
       return {
         state: {
           ...state,
@@ -1402,6 +1402,7 @@ export function createCodingAgentThreadStore(
           const nextThread: StoredThread = {
             ...thread,
             activeTurnId: turnId,
+            deliveredTurnId: undefined,
             status: "running",
             attention: "none",
             updatedAt: acceptedAt,
@@ -1469,7 +1470,7 @@ export function createCodingAgentThreadStore(
         candidate.ownerId === principal.userId && candidate.id === threadId
       );
       if (!thread) throw new CodingAgentTurnError("thread_not_found");
-      if (thread.activeTurnId !== request.expectedTurnId || !activeThread(thread) || !thread.providerResumeState) {
+      if (!matchesSteeringTurn(thread, request.expectedTurnId) || !activeThread(thread) || !thread.providerResumeState) {
         throw new CodingAgentTurnError("thread_busy");
       }
       const provider = providerFor(thread.providerId);
