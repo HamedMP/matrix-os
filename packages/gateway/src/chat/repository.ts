@@ -33,7 +33,6 @@ import {
 import {
   asIso,
   jsonb,
-  messageAttribution,
   messageSearchText,
   toActivities,
   toChatRecord,
@@ -898,7 +897,6 @@ export class ChatRepository {
         parts: jsonb(message.parts),
         byte_count: encoded.encode(JSON.stringify(message)).byteLength,
         search_text: messageSearchText(message),
-        ...messageAttribution(message),
         created_at: message.createdAt,
       }).execute();
       for (const part of message.parts) {

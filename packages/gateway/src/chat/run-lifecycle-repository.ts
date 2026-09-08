@@ -20,7 +20,6 @@ import {
 } from "./errors.js";
 import {
   jsonb,
-  messageAttribution,
   messageSearchText,
   toActivity,
   toMessage,
@@ -517,7 +516,6 @@ export class ChatRunLifecycleRepository {
           parts: jsonb(next.parts),
           byte_count: encoded.encode(JSON.stringify(next)).byteLength,
           search_text: messageSearchText(next),
-          ...messageAttribution(next),
           created_at: next.createdAt,
         }).execute();
         inserted = true;
@@ -620,7 +618,6 @@ export class ChatRunLifecycleRepository {
           parts: jsonb(output.parts),
           byte_count: encoded.encode(JSON.stringify(output)).byteLength,
           search_text: messageSearchText(output),
-          ...messageAttribution(output),
           created_at: output.createdAt,
         }).execute();
         finalizedOutput = output;

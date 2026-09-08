@@ -27,7 +27,6 @@ import { ChatBusyError, ChatConflictError, ChatNotFoundError } from "./errors.js
 import {
   asIso,
   jsonb,
-  messageAttribution,
   messageSearchText,
   parseJson,
   type ChatOutboxEventType,
@@ -518,7 +517,6 @@ export class ChatQueueRepository {
         parts: jsonb(message.parts),
         byte_count: new TextEncoder().encode(JSON.stringify(message)).byteLength,
         search_text: messageSearchText(message),
-        ...messageAttribution(message),
         created_at: claimedAt,
       }).execute();
       for (const part of message.parts) {
