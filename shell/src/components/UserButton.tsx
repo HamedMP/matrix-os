@@ -34,25 +34,30 @@ import {
 
 type UserButtonVariant = "dock" | "menubar" | "settings";
 type AccountSettingsSection = "appearance" | "billing";
+const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
 function Placeholder({ variant = "dock" }: { variant?: UserButtonVariant }) {
   const isSettings = variant === "settings";
+  const placeholder = (
+    <div
+      className={cn(
+        "flex items-center justify-center rounded-xl border border-border/60 bg-card shadow-sm",
+        variant === "menubar" ? "size-7 rounded-full border shadow-sm" : "size-10",
+        isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
+      )}
+    >
+      <UserIcon className={cn("size-4", variant === "menubar" && "size-[14px]")} />
+      {isSettings ? (
+        <span className="min-w-0 truncate text-sm font-semibold text-foreground">Account</span>
+      ) : null}
+    </div>
+  );
+
+  if (isSettings) return placeholder;
+
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          className={cn(
-            "flex items-center justify-center rounded-xl border border-border/60 bg-card shadow-sm",
-            variant === "menubar" ? "size-7 rounded-full border shadow-sm" : "size-10",
-            isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
-          )}
-        >
-          <UserIcon className={cn("size-4", variant === "menubar" && "size-[14px]")} />
-          {isSettings ? (
-            <span className="min-w-0 truncate text-sm font-semibold text-foreground">Account</span>
-          ) : null}
-        </div>
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{placeholder}</TooltipTrigger>
       <TooltipContent side="right" sideOffset={8}>
         Sign in
       </TooltipContent>
@@ -73,7 +78,7 @@ export function UserButton({
   // mismatch or a setState-in-effect cascade.
   const mounted = useIsClient();
 
-  if (!mounted) {
+  if (!mounted || e2eBypass) {
     return <Placeholder variant={variant} />;
   }
   if (isSelfHostedDocument()) {

@@ -216,6 +216,14 @@ export interface ChatMigrationsTable {
 }
 
 export interface ChatDatabase {
+  chat_shares: {
+    id: string;
+    chat_id: string;
+    token_hash: string;
+    snapshot: JsonValue;
+    created_at: Timestamp;
+    expires_at: Timestamp;
+  };
   chats: ChatsTable;
   chat_members: ChatMembersTable;
   chat_user_state: ChatUserStateTable;

@@ -511,6 +511,7 @@ describe("canonical Chat presentation adapter", () => {
         id: "attachment_screenshot",
         label: "Screenshot.png",
         src: "/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png",
+        path: "temporary/desktop-chat/Screenshot.png",
       },
     ]);
   });

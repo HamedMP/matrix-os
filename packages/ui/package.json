@@ -10,13 +10,20 @@
     "./agents-providers.css": "./src/agents-providers/agents-providers.css"
   },
   "dependencies": {
-    "@matrix-os/contracts": "workspace:*"
+    "@matrix-os/contracts": "workspace:*",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.3.6"
   },
   "peerDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   }
 }

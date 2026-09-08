@@ -1,4 +1,4 @@
-import { ArrowExpand01, Minus, PanelLeftCloseIcon, PanelLeftOpenIcon, X } from "@renderer/lib/hugeicons";
+import { ArrowExpand01, Minus, PanelLeftOpenIcon, PanelLeftCloseIcon, X } from "@renderer/lib/hugeicons";
 import {
   createContext,
   type ComponentProps,
@@ -42,7 +42,7 @@ export function OSWindowSidebarTrigger({
 }: Omit<ComponentProps<"button">, "children" | "aria-label"> & { label?: string }) {
   const sidebar = useContext(OSWindowSidebarContext);
   if (!sidebar?.available) return null;
-  const Icon = sidebar.sidebarShown ? PanelLeftCloseIcon : PanelLeftOpenIcon;
+  const Icon = sidebar.sidebarShown ? PanelLeftOpenIcon : PanelLeftCloseIcon;
 
   return (
     <button
@@ -229,7 +229,7 @@ export function TopBar({
                   {leftActions}
                 </div>
               ) : null}
-              {title ? (
+              {title || showSidebarTrigger ? (
                 <div className={`flex min-w-0 items-center justify-start text-[15px] font-medium ${showSidebarTrigger ? "gap-1" : "gap-1.5"}`}>
                   {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
                   {icon}
@@ -250,7 +250,7 @@ export function TopBar({
             className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center px-3"
             style={{ width: controlsWidth }}
           >
-            {title ? (
+            {title || showSidebarTrigger ? (
               <>
                 <div className="w-28 shrink-0" aria-hidden="true" />
                 <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>

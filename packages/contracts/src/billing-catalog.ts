@@ -42,6 +42,14 @@ export interface MatrixMachineProfile {
   diskGb: number;
 }
 
+/**
+ * Returns the coding-agent preinstall limit for constrained hosted shapes.
+ * `null` means the machine keeps the standard multi-select policy.
+ */
+export function getMatrixDeveloperToolPreinstallLimit(serverType: string): number | null {
+  return serverType.trim().toLowerCase() === "cpx22" ? 1 : null;
+}
+
 export const MATRIX_HOSTED_BILLING_PLANS: readonly MatrixHostedBillingPlan[] = [
   { slug: "matrix_starter", featureSlug: "server_starter", label: "Starter", monthlyUsd: 20, rank: 10 },
   { slug: "matrix_builder", featureSlug: "server_builder", label: "Builder", monthlyUsd: 100, rank: 20 },

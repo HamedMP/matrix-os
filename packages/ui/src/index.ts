@@ -60,6 +60,11 @@ export type {
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
 
+export { ChatShareDialog } from "./chat/ChatShareDialog.js";
+export { ChatSharingButton } from "./chat/ChatSharingButton.js";
+export { ChatAttachments, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
 export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
+
+export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from "./terminal/terminal-pane-request.js";

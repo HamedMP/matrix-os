@@ -107,6 +107,17 @@ describe("canonical shell Chat client", () => {
     ]);
   });
 
+  it("keeps attachment-only messages without synthesizing a duplicate text bubble", () => {
+    const projected = projectCanonicalMessages([{
+      id: "msg_image", chatId: "chat_shell_test", seq: 1, role: "user", state: "committed",
+      parts: [{ type: "attachment_reference", attachmentId: "image", kind: "image", label: "image.png", ownerReference: "temporary/image.png" }],
+      createdAt: "2026-08-31T00:00:00.000Z",
+    }]);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.content).toBe("");
+    expect(projected[0]?.attachments).toEqual([expect.objectContaining({ label: "image.png", kind: "image" })]);
+  });
+
   it("projects pending approvals and submits a bounded canonical decision", async () => {
     const fetchFn = vi.fn(async (_url: string, init?: RequestInit) => Response.json({
       approvalId: "approval_1", decision: "approve", submission: "accepted",

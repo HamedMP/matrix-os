@@ -1,6 +1,10 @@
 import type { Context, Handler } from 'hono';
 import { z } from 'zod/v4';
-import { MATRIX_HOSTED_BILLING_REGIONS, type MatrixBillingPublicEntitlement } from '@matrix-os/contracts';
+import {
+  MATRIX_HOSTED_BILLING_REGIONS,
+  MatrixBillingStatusSchema,
+  type MatrixBillingPublicEntitlement,
+} from '@matrix-os/contracts';
 import {
   getBillingCustomerByClerkUserId, getBillingEntitlementState, getBillingSubscription,
   getActiveCheckoutAttempt, isCardTrialOfferEligible, getActiveUserMachineByClerkId,
@@ -100,7 +104,7 @@ export function createBillingStatusHandler(options: {
         runtimeSlot,
       );
       const placement = options.resolveRuntimePlacement(machine?.location);
-      return c.json({
+      const response = MatrixBillingStatusSchema.safeParse({
         entitlement: entitlement
           ? projectPublicBillingEntitlement(entitlement, loadRuntimeCatalog(env), {
             portalAvailable: customer !== undefined,
@@ -115,7 +119,12 @@ export function createBillingStatusHandler(options: {
           : null,
         access,
         trialOffer,
-      }, 200);
+      });
+      if (!response.success) {
+        console.error('[billing] status response validation failed');
+        return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      }
+      return c.json(response.data, 200);
     } catch (err: unknown) {
       console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);

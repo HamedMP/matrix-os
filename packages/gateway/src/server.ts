@@ -1,3 +1,5 @@
+import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
+import { createChatSharingRoutes } from "./chat/sharing-routes.js";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
@@ -1028,6 +1030,7 @@ export async function createGateway(config: GatewayConfig) {
       await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
+      await bootstrapChatSharing(chatRepository.kysely);
       canonicalChatEventStream = createCanonicalChatEventStream({
         repository: chatRepository,
         reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
@@ -4425,6 +4428,7 @@ export async function createGateway(config: GatewayConfig) {
       stream: canonicalChatEventStream,
     });
   }
+  app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {

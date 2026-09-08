@@ -102,6 +102,32 @@ for _ in $(seq 1 90); do
   sleep 2
 done
 
+selected_developer_tools_settled() {
+  local installed_file="/var/lib/matrix-developer-tools/installed-tools"
+  local failed_file="/var/lib/matrix-developer-tools/failed-tools"
+  local tool bin_name
+  for tool in ${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}; do
+    case "$tool" in
+      claude-code) bin_name="claude" ;;
+      codex|opencode|pi) bin_name="$tool" ;;
+      *) return 1 ;;
+    esac
+    if [ -r "$installed_file" ] && grep -qxF "$tool" "$installed_file" && \
+      [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]; then
+      continue
+    fi
+    [ -r "$failed_file" ] && grep -qxF "$tool" "$failed_file" && continue
+    return 1
+  done
+}
+
+runtime_ready() {
+  selected_developer_tools_settled || return 1
+  curl --fail --silent --show-error --max-time 2 \
+    -H "authorization: Bearer ${MATRIX_AUTH_TOKEN}" \
+    "http://127.0.0.1:${GATEWAY_PORT}/api/terminal/health" >/dev/null
+}
+
 register_once() {
   [ ! -f "$REGISTER_FLAG" ] || return 0
   [ -n "${MATRIX_PLATFORM_REGISTER_URL:-}" ] || return 0
@@ -126,6 +152,10 @@ register_once() {
   for attempt in $(seq 1 30); do
     # An authenticated operator may reconcile a lost receipt while retries run.
     [ ! -f "$REGISTER_FLAG" ] || return 0
+    if ! runtime_ready; then
+      sleep "$((attempt < 10 ? attempt : 10))"
+      continue
+    fi
     if curl --fail --silent --show-error --max-time 10 \
       -X POST \
       -H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}" \

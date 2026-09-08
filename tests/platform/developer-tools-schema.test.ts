@@ -5,6 +5,8 @@ import codexContract from '../../packages/gateway/src/coding-agents/codex-exec-c
 import {
   DEFAULT_DEVELOPER_TOOLS,
   DeveloperToolsSchema,
+  defaultDeveloperToolsForServerType,
+  developerToolsAllowedForServerType,
   parseDeveloperToolsJson,
   resolveProvisioningDeveloperTools,
   serializeDeveloperTools,
@@ -35,14 +37,23 @@ describe('developer tool selection schema', () => {
     expect(parseDeveloperToolsJson('[]')).toEqual([]);
   });
 
-  it('resolves explicit, checkout, and default provisioning selections distinctly', () => {
+  it('resolves explicit and checkout selections while preserving omission', () => {
     expect(resolveProvisioningDeveloperTools([], ['codex'])).toEqual([]);
     expect(resolveProvisioningDeveloperTools(undefined, ['pi'])).toEqual(['pi']);
-    expect(resolveProvisioningDeveloperTools(undefined, undefined)).toEqual(DEFAULT_DEVELOPER_TOOLS);
+    expect(resolveProvisioningDeveloperTools(undefined, undefined)).toBeUndefined();
   });
 
   it('deduplicates and serializes selected tools in canonical order', () => {
     expect(serializeDeveloperTools(['pi', 'codex', 'pi'])).toBe('["codex","pi"]');
+  });
+
+  it('enforces the CPX22 preinstall limit while leaving larger machines unrestricted', () => {
+    expect(developerToolsAllowedForServerType('cpx22', [])).toBe(true);
+    expect(developerToolsAllowedForServerType('CPX22', ['codex'])).toBe(true);
+    expect(developerToolsAllowedForServerType('cpx22', ['codex', 'pi'])).toBe(false);
+    expect(developerToolsAllowedForServerType('cpx42', DEFAULT_DEVELOPER_TOOLS)).toBe(true);
+    expect(defaultDeveloperToolsForServerType('cpx22')).toEqual(['codex']);
+    expect(defaultDeveloperToolsForServerType('cpx42')).toEqual(DEFAULT_DEVELOPER_TOOLS);
   });
 
   it('pins automated Codex installs and installed-state checks to the verified version', async () => {

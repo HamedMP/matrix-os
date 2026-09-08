@@ -112,6 +112,7 @@ function messageContent(
           id: part.attachmentId,
           label: part.label,
           src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}`,
+          path: part.ownerReference,
         });
       } else {
         unmatched.push({
@@ -119,6 +120,7 @@ function messageContent(
           id: part.attachmentId,
           referenceKind: "file",
           label: part.label,
+          ...(part.ownerReference ? { path: part.ownerReference } : {}),
         });
       }
     }

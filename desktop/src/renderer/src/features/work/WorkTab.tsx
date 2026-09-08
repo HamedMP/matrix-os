@@ -1,3 +1,5 @@
+import { ChatSharingButton } from "../chat/ChatSharingButton";
+import { ChatFileNavigationProvider } from "./ChatFileNavigation";
 import { ArrowLeft, PanelLeftCloseIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
 import {
   useCallback,
@@ -51,7 +53,9 @@ const WIDE_WORK_MIN_WIDTH = 1_280;
 const MEDIUM_WORK_MIN_WIDTH = 740;
 const NAVIGATION_WIDTH = 240;
 const MIN_INSPECTOR_WIDTH = 240;
-const MAX_INSPECTOR_WIDTH = 380;
+const MAX_INSPECTOR_WIDTH = 820;
+const DEFAULT_INSPECTOR_WIDTH = 380;
+const MIN_CHAT_WIDTH = 360;
 const COLLAPSE_RESIZE_THRESHOLD = 48;
 
 function workLayoutForWidth(width: number): WorkLayout {
@@ -113,6 +117,7 @@ function ResponsiveWorkInspector({
   onClose,
   onOpen,
   width,
+  maxWidth,
   onResizeStart,
   onResizeKeyboard,
   closeButtonRef,
@@ -131,6 +136,7 @@ function ResponsiveWorkInspector({
   onClose: () => void;
   onOpen: () => void;
   width: number;
+  maxWidth: number;
   onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void;
   onResizeKeyboard: (delta: number) => void;
   closeButtonRef: Ref<HTMLButtonElement>;
@@ -170,7 +176,7 @@ function ResponsiveWorkInspector({
         : "relative flex min-h-0 shrink-0"}
       style={layout === "narrow" ? undefined : { width }}
     >
-      {layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={MAX_INSPECTOR_WIDTH} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} /> : null}
+      {layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={maxWidth} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} /> : null}
       <WorkFilesInspector
         detail={detail}
         scope={scope}
@@ -234,7 +240,8 @@ export default function WorkTab({
     narrowPane: "chat",
     narrowPaneRouteKey: null,
   });
-  const [inspectorWidth, setInspectorWidth] = useState(MAX_INSPECTOR_WIDTH);
+  const [requestedInspectorWidth, setInspectorWidth] = useState(DEFAULT_INSPECTOR_WIDTH);
+  const [surfaceWidth, setSurfaceWidth] = useState(0);
   const [draftTerminalLaunch, setDraftTerminalLaunch] = useState<{
     chatId: string;
     session: TerminalSessionSummary;
@@ -244,6 +251,11 @@ export default function WorkTab({
   const [renamingChatTitle, setRenamingChatTitle] = useState(false);
   const [renameChatError, setRenameChatError] = useState<string | null>(null);
   const { layout, navigationOpen, inspectorOpen } = responsive;
+  // Hosted chrome already removes its sidebar from the measured main pane.
+  const navigationSpace = hostedChrome ? 0 : navigationOpen ? NAVIGATION_WIDTH : 36;
+  const maxInspectorWidth = Math.max(MIN_INSPECTOR_WIDTH, Math.min(MAX_INSPECTOR_WIDTH, surfaceWidth - navigationSpace - MIN_CHAT_WIDTH));
+  const inspectorWidth = Math.max(MIN_INSPECTOR_WIDTH, Math.min(maxInspectorWidth,
+    Number.isFinite(requestedInspectorWidth) ? requestedInspectorWidth : DEFAULT_INSPECTOR_WIDTH));
   const localClient = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
   const localEventSource = useMemo<CanonicalChatEventSource | null>(() => {
     if (hostedRuntime || !api || !visible) return null;
@@ -328,6 +340,7 @@ export default function WorkTab({
     const node = workRef.current;
     if (!node) return;
     const applyWidth = (width: number) => {
+      setSurfaceWidth(Number.isFinite(width) ? Math.max(0, width) : 0);
       const firstMeasurement = !measuredWidthRef.current;
       measuredWidthRef.current = true;
       const nextLayout = width > 0 ? workLayoutForWidth(width) : "narrow";
@@ -406,7 +419,7 @@ export default function WorkTab({
         closeInspector();
         return;
       }
-      setInspectorWidth(Math.max(MIN_INSPECTOR_WIDTH, Math.min(MAX_INSPECTOR_WIDTH, requested)));
+      setInspectorWidth(Math.max(MIN_INSPECTOR_WIDTH, Math.min(maxInspectorWidth, requested)));
     };
     const captureTarget = event.currentTarget;
     const pointerId = event.pointerId;
@@ -438,7 +451,7 @@ export default function WorkTab({
       closeInspector();
       return;
     }
-    setInspectorWidth((current) => Math.max(MIN_INSPECTOR_WIDTH, Math.min(MAX_INSPECTOR_WIDTH, current + delta)));
+    setInspectorWidth(Math.max(MIN_INSPECTOR_WIDTH, Math.min(maxInspectorWidth, inspectorWidth + delta)));
   };
   const showChat = useCallback((focusNavigation = false) => {
     if (focusNavigation) pendingFocusRef.current = showNavigationRef;
@@ -592,6 +605,7 @@ export default function WorkTab({
       onClose={closeInspector}
       onOpen={openInspector}
       width={inspectorWidth}
+      maxWidth={maxInspectorWidth}
       onResizeStart={startInspectorResize}
       onResizeKeyboard={resizeInspectorWithKeyboard}
       closeButtonRef={inspectorCloseRef}
@@ -617,6 +631,7 @@ export default function WorkTab({
       onClose={closeInspector}
       onOpen={openInspector}
       width={inspectorWidth}
+      maxWidth={maxInspectorWidth}
       onResizeStart={startInspectorResize}
       onResizeKeyboard={resizeInspectorWithKeyboard}
       closeButtonRef={inspectorCloseRef}
@@ -685,25 +700,31 @@ export default function WorkTab({
       renamingChatTitle,
       route,
     ]);
+  const sharingControl = useMemo(() => api && initialChatId ? (
+    <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} />
+  ) : null, [api, initialChatId, runtimeSlot, authGeneration]);
   const chromeSpec = useMemo(() => ({
     title: chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
     rightPaneWidth: layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
     rightActions: hasInspector ? (
-      <PaneButton
-        buttonRef={showToolsRef}
-        label={inspectorVisible ? "Hide inspector" : "Show inspector"}
-        controls="work-inspector"
-        expanded={inspectorVisible}
-        compact
-        onClick={inspectorVisible ? closeInspector : openInspector}
-      >
-        {inspectorVisible
-          ? <PanelRightCloseIcon size={15} aria-hidden />
-          : <PanelRightOpen size={15} aria-hidden />}
-      </PaneButton>
-    ) : undefined,
-  }), [chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+      <div className="flex items-center gap-1">
+        {sharingControl}
+        <PaneButton
+          buttonRef={showToolsRef}
+          label={inspectorVisible ? "Hide inspector" : "Show inspector"}
+          controls="work-inspector"
+          expanded={inspectorVisible}
+          compact
+          onClick={inspectorVisible ? closeInspector : openInspector}
+        >
+          {inspectorVisible
+            ? <PanelRightCloseIcon size={15} aria-hidden />
+            : <PanelRightOpen size={15} aria-hidden />}
+        </PaneButton>
+      </div>
+    ) : sharingControl,
+  }), [sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;
@@ -712,6 +733,7 @@ export default function WorkTab({
   }, [active, chromeSpec, surfaceChromeHost]);
 
   return (
+    <ChatFileNavigationProvider key={`${runtimeSlot}:${authGeneration}:${initialChatId ?? "draft"}`} reveal={openInspector}>
     <div
       ref={workRef}
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
@@ -805,6 +827,7 @@ export default function WorkTab({
         </div>
       </div>
     </div>
+    </ChatFileNavigationProvider>
   );
 }
 

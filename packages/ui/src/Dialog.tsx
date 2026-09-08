@@ -8,6 +8,7 @@ export interface DialogProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 const overlayStyle: React.CSSProperties = {
+  margin: "auto",
   padding: 0,
   border: "none",
   background: "transparent",
@@ -19,7 +20,7 @@ const overlayStyle: React.CSSProperties = {
 const contentStyle: React.CSSProperties = {
   background: "var(--matrix-card)",
   color: "var(--matrix-card-fg)",
-  borderRadius: "var(--matrix-radius-xl)",
+  borderRadius: "var(--matrix-radius-xl, 16px)",
   padding: "24px",
   maxWidth: "480px",
   width: "90vw",

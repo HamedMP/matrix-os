@@ -133,6 +133,16 @@ export interface PublicBillingEntitlementDetails {
   runtimePlacement?: MatrixBillingPublicEntitlement['runtimePlacement'];
 }
 
+function normalizePublicBillingTimestamp(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new Error('invalid_public_billing_timestamp');
+  return new Date(timestamp).toISOString();
+}
+
+function normalizeNullablePublicBillingTimestamp(value: string | null | undefined): string | null {
+  return value === null || value === undefined ? null : normalizePublicBillingTimestamp(value);
+}
+
 export function projectPublicBillingEntitlement(
   entitlement: BillingEntitlement,
   runtimeCatalog: RuntimeCatalog,
@@ -170,14 +180,14 @@ export function projectPublicBillingEntitlement(
     billingInterval: entitlement.billingInterval ?? null,
     recurringPrice: details.recurringPrice ?? null,
     runtimePlacement: details.runtimePlacement ?? null,
-    gracePeriodEndsAt: entitlement.gracePeriodEndsAt,
-    trialStartedAt: entitlement.trialStartedAt ?? null,
-    trialEndsAt: entitlement.trialEndsAt ?? null,
-    trialConvertedAt: entitlement.trialConvertedAt ?? null,
-    firstTrialPaymentFailedAt: entitlement.firstTrialPaymentFailedAt ?? null,
-    effectiveFrom: entitlement.effectiveFrom,
-    effectiveUntil: entitlement.effectiveUntil,
-    updatedAt: entitlement.updatedAt,
+    gracePeriodEndsAt: normalizeNullablePublicBillingTimestamp(entitlement.gracePeriodEndsAt),
+    trialStartedAt: normalizeNullablePublicBillingTimestamp(entitlement.trialStartedAt),
+    trialEndsAt: normalizeNullablePublicBillingTimestamp(entitlement.trialEndsAt),
+    trialConvertedAt: normalizeNullablePublicBillingTimestamp(entitlement.trialConvertedAt),
+    firstTrialPaymentFailedAt: normalizeNullablePublicBillingTimestamp(entitlement.firstTrialPaymentFailedAt),
+    effectiveFrom: normalizePublicBillingTimestamp(entitlement.effectiveFrom),
+    effectiveUntil: normalizeNullablePublicBillingTimestamp(entitlement.effectiveUntil),
+    updatedAt: normalizePublicBillingTimestamp(entitlement.updatedAt),
   };
 }
 

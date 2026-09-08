@@ -559,6 +559,12 @@ importers:
 
   packages/contracts:
     dependencies:
+      micromark:
+        specifier: ^4.0.2
+        version: 4.0.2
+      micromark-extension-gfm:
+        specifier: ^3.0.0
+        version: 3.0.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -998,13 +1004,28 @@ importers:
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts
-      react:
-        specifier: ^19.0.0
-        version: 19.2.3
-      react-dom:
-        specifier: ^19.0.0
-        version: 19.2.3(react@19.2.3)
+      '@radix-ui/react-dialog':
+        specifier: ^1.1.15
+        version: 1.1.15(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@radix-ui/react-dropdown-menu':
+        specifier: ^2.1.16
+        version: 2.1.16(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.2.14)(react@19.2.6)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
     devDependencies:
+      react:
+        specifier: ^19.2.6
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.2.6
+        version: 19.2.6(react@19.2.6)
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
@@ -29503,6 +29524,24 @@ snapshots:
   react-is@18.3.1: {}
 
   react-is@19.2.4: {}
+
+  react-markdown@10.1.0(@types/react@19.2.14)(react@19.2.3):
+    dependencies:
+      '@types/hast': 3.0.4
+      '@types/mdast': 4.0.4
+      '@types/react': 19.2.14
+      devlop: 1.1.0
+      hast-util-to-jsx-runtime: 2.3.6
+      html-url-attributes: 3.0.1
+      mdast-util-to-hast: 13.2.1
+      react: 19.2.3
+      remark-parse: 11.0.0
+      remark-rehype: 11.1.2
+      unified: 11.0.5
+      unist-util-visit: 5.1.0
+      vfile: 6.0.3
+    transitivePeerDependencies:
+      - supports-color
 
   react-markdown@10.1.0(@types/react@19.2.14)(react@19.2.6):
     dependencies:
