@@ -41,6 +41,8 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("MemoryMax=1073741824");
     expect(source).toContain("TasksMax=256");
     expect(source).toContain("PrivateNetwork=yes");
+    expect(source).toContain("SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000");
+    expect(source).toContain('input.type === "capability.get"');
     expect(source).not.toContain("eval(");
     expect(source).not.toContain("execSync(");
     expect(source).not.toMatch(/import\s+\{\s*exec\s*\}/);

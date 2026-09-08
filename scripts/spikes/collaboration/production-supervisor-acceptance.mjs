@@ -17,6 +17,8 @@ const EXPECTED_PROFILE_DIGEST = "db0bcb5905e1543f87fcd81de4f44e80be89116aaf54fd9
 const EXPECTED_PROFILE_ID = "scope-runtime-proof-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
 const MAX_FRAME_BYTES = 64 * 1024;
+const SUPERVISOR_QUERY_TIMEOUT_MS = 5_000;
+const SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000;
 
 class AcceptanceError extends Error {
   constructor(code) {
@@ -72,7 +74,7 @@ async function waitFor(check, timeoutMs, failure) {
   throw new AcceptanceError(failure);
 }
 
-function socketExchange(frame, { end = true, timeoutMs = 5_000 } = {}) {
+function socketExchange(frame, { end = true, timeoutMs = SUPERVISOR_QUERY_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const socket = createConnection({ path: SUPERVISOR_SOCKET });
     let response = "";
@@ -109,7 +111,10 @@ function socketExchange(frame, { end = true, timeoutMs = 5_000 } = {}) {
 }
 
 async function supervisorRequest(input) {
-  const response = await socketExchange(`${JSON.stringify(input)}\n`);
+  const timeoutMs = input.type === "capability.get"
+    ? SUPERVISOR_QUERY_TIMEOUT_MS
+    : SUPERVISOR_OPERATION_TIMEOUT_MS;
+  const response = await socketExchange(`${JSON.stringify(input)}\n`, { timeoutMs });
   assert(response.length > 0 && Buffer.byteLength(response, "utf8") <= MAX_FRAME_BYTES,
     "supervisor_response_invalid");
   try {
