@@ -9,6 +9,7 @@ describe("X integration registry extraction", () => {
       name: "X",
       connectorKind: "pipedream",
       pipedreamApp: "twitter",
+      logoUrl: "/integration-logos/x.svg",
     });
     expect(Object.keys(X_SERVICE_REGISTRY.twitter!.actions)).toEqual([
       "get_authenticated_user",

@@ -474,7 +474,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   }
 
   // -----------------------------------------------------------------------
-  // GET /available -- public, no auth. Enriches registry with Pipedream logos.
+  // GET /available -- public, no auth. Enriches Pipedream-hosted fallback logos.
   // -----------------------------------------------------------------------
 
   const logoCache = new Map<string, string>();
@@ -489,7 +489,11 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const promise = (async () => {
       const services = listServices();
       const results = await Promise.allSettled(
-        services.filter((service) => service.connectorKind === "pipedream" && service.pipedreamApp).map(async (s) => {
+        services.filter(
+          (service) => service.connectorKind === "pipedream"
+            && service.pipedreamApp
+            && service.logoUrl.startsWith("https://pipedream.com/"),
+        ).map(async (s) => {
           const info = await pipedream.getAppInfo(s.pipedreamApp!);
           if (info?.imgSrc) {
             if (logoCache.size >= LOGO_CACHE_MAX) logoCache.delete(logoCache.keys().next().value!);

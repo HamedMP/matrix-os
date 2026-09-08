@@ -89,6 +89,34 @@ describe("Integration Routes", () => {
       expect(data.some((service: { id: string }) => service.id === "granola")).toBe(false);
     });
 
+    it("keeps the official X logo instead of Pipedream's legacy Twitter artwork", async () => {
+      const logoClient = mockPipedream({
+        getAppInfo: vi.fn().mockImplementation(async (slug: string) => ({
+          name: slug,
+          imgSrc: `https://legacy.example/${slug}.png`,
+        })),
+      });
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream: logoClient,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+      });
+      const logoApp = new Hono();
+      logoApp.route("/api/integrations", routes);
+
+      await vi.waitFor(() => {
+        expect(logoClient.getAppInfo).toHaveBeenCalledWith("gmail");
+      });
+      expect(logoClient.getAppInfo).not.toHaveBeenCalledWith("twitter");
+
+      const res = await logoApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; logoUrl: string }>;
+      expect(data.find((service) => service.id === "twitter")?.logoUrl)
+        .toBe("/integration-logos/x.svg");
+    });
+
     it("advertises MCP presets only when their broker is wired", async () => {
       const routes = createIntegrationRoutes({
         db,

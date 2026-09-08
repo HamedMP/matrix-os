@@ -1,6 +1,5 @@
 import type { ServiceDefinition } from "./types.js";
 
-const LOGO_BASE = "https://pipedream.com/s.v0";
 const X_ID_PATTERN = "^[0-9]{1,19}$";
 const X_USERNAME_PATTERN = "^[A-Za-z0-9_]{1,15}$";
 const X_POST_FIELDS = "author_id,conversation_id,created_at,lang,public_metrics,referenced_tweets";
@@ -24,7 +23,7 @@ export const X_SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     connectorKind: "pipedream",
     pipedreamApp: "twitter",
     icon: "x",
-    logoUrl: `${LOGO_BASE}/twitter/logo/48`,
+    logoUrl: "/integration-logos/x.svg",
     actions: {
       get_authenticated_user: {
         description: "Get the connected X account profile",

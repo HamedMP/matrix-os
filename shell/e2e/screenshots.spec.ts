@@ -204,7 +204,14 @@ test.describe("Visual regression", () => {
           { id: "gmail", name: "Gmail", category: "google", icon: "mail", actions: {} },
           { id: "github", name: "GitHub", category: "developer", icon: "github", actions: {} },
           { id: "slack", name: "Slack", category: "communication", icon: "message-square", actions: {} },
-          { id: "twitter", name: "X", category: "social", icon: "x", actions: {} },
+          {
+            id: "twitter",
+            name: "X",
+            category: "social",
+            icon: "x",
+            logoUrl: "/integration-logos/x.svg",
+            actions: {},
+          },
         ]),
       }),
     );
@@ -226,6 +233,9 @@ test.describe("Visual regression", () => {
     await page.getByRole("button", { name: "Services" }).click();
     await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
     await expect(page.getByText("X", { exact: true }).last()).toBeVisible();
+    const xLogo = page.getByRole("img", { name: "X" });
+    await expect(xLogo).toBeVisible();
+    await expect(xLogo).toHaveAttribute("src", "/integration-logos/x.svg");
     await page.mouse.move(720, 450);
     await expect(page).toHaveScreenshot("settings-integrations-x.png", {
       maxDiffPixelRatio: 0.01,
