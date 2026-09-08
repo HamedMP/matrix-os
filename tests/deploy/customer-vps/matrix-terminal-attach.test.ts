@@ -45,8 +45,8 @@ describe("matrix-terminal-attach", () => {
     await rm(fixtureRoot, { recursive: true, force: true });
   });
 
-  it("executes only the exact generation binary with a validated argv array", async () => {
-    await execFileAsync(process.execPath, [helperPath, RUNTIME_ID, "--index", "0"], {
+  it.each([[], ["--index", "0"]])("executes the pinned binary with compatible input mode (%j)", async (...args) => {
+    await execFileAsync(process.execPath, [helperPath, RUNTIME_ID, ...args], {
       env: {
         ...process.env,
         MATRIX_HOME: homePath,
@@ -57,7 +57,7 @@ describe("matrix-terminal-attach", () => {
     });
 
     await expect(readFile(capturePath, "utf8")).resolves.toBe(
-      `attach\nmatrix-${RUNTIME_ID}\n--index\n0\n`,
+      ["attach", `matrix-${RUNTIME_ID}`, ...args, "options", "--default-mode", "normal", ""].join("\n"),
     );
   });
 

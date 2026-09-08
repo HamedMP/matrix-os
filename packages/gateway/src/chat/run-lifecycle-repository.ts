@@ -40,6 +40,11 @@ type AppendOutbox = (
   payload?: Record<string, unknown>,
 ) => Promise<void>;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
+function recoveredTextParts(text: string) {
+  if (Buffer.byteLength(text) > 96 * 1024) throw new RangeError("Recovered output limit exceeded");
+  return (text.match(/[\s\S]{1,4000}/gu) ?? [""]).map((chunk) =>
+    CanonicalChatMessagePartSchema.parse({ type: "text", text: chunk }));
+}
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
 
@@ -316,6 +321,7 @@ export class ChatRunLifecycleRepository {
       }
       const unseenCount = activityIds.length - existing.length;
       const overflow = Number(count.count) + unseenCount - 500;
+      let removedActivityIds: string[] = [];
       if (overflow > 0) {
         if (!activities.some(isTerminalActivity)) {
           throw new ChatConflictError(chatId, Number(current.revision));
@@ -335,6 +341,7 @@ export class ChatRunLifecycleRepository {
           throw new ChatConflictError(chatId, Number(current.revision));
         }
         await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
+        removedActivityIds = evictedIds;
       }
       const latestSequence = await trx.selectFrom("chat_run_events")
         .select(({ fn }) => fn.max("run_seq").as("sequence"))
@@ -411,7 +418,7 @@ export class ChatRunLifecycleRepository {
           ...(railTransition ? { attention: railTransition.attention } : {}),
           updated_at: sql`now()`,
         }).where("id", "=", chatId).execute();
-        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId });
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId, activityIds, removedActivityIds });
       }
       return changed;
     });
@@ -423,12 +430,15 @@ export class ChatRunLifecycleRepository {
     messageId: string;
     delta: string;
     createdAt: string;
+    /** Full backing text, merged by prefix under the same Run/message locks. */
+    snapshot?: boolean;
   }): Promise<CanonicalChatMessage> {
     const owner = validateOwner(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     [input.runId, input.messageId].forEach(requireSafeRef);
     const createdAt = new Date(input.createdAt).toISOString();
     return this.transact(async (trx) => {
+      let delta = input.delta;
       const chat = await selectOwnedChat(trx, owner, chatId, true);
       if (!chat) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").selectAll()
@@ -457,13 +467,19 @@ export class ChatRunLifecycleRepository {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const last = textParts.at(-1)!;
+        if (input.snapshot) {
+          const persisted = textParts.map((part) => part.text).join("");
+          if (!input.delta.startsWith(persisted)) throw new ChatConflictError(chatId, Number(chat.revision));
+          delta = input.delta.slice(persisted.length);
+          if (delta.length === 0) return current;
+        }
         const combined = CanonicalChatMessagePartSchema.safeParse({
           type: "text",
-          text: `${last.text}${input.delta}`,
+          text: `${last.text}${delta}`,
         });
-        const parts = combined.success
+        const parts = input.snapshot ? recoveredTextParts(input.delta) : combined.success
           ? [...textParts.slice(0, -1), combined.data]
-          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: input.delta })];
+          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: delta })];
         next = CanonicalChatMessageSchema.parse({
           ...current,
           parts,
@@ -487,7 +503,7 @@ export class ChatRunLifecycleRepository {
           state: "pending",
           turnId: run.turn_id,
           runId: input.runId,
-          parts: [{ type: "text", text: input.delta }],
+          parts: input.snapshot ? recoveredTextParts(input.delta) : [{ type: "text", text: input.delta }],
           createdAt,
         });
         await trx.insertInto("chat_messages").values({
@@ -516,6 +532,13 @@ export class ChatRunLifecycleRepository {
       await this.appendOutbox(trx, owner, chatId, revision, "run.message", {
         runId: input.runId,
         messageId: input.messageId,
+        // Recovery can replace part boundaries; use the existing invalidation
+        // fallback rather than pretending it is a single-part live delta.
+        ...(input.snapshot ? {} : { messageDelta: {
+          message: { ...next, parts: [{ type: "text", text: delta }] },
+          partIndex: next.parts.length - 1,
+          offset: (next.parts.at(-1) as { text: string }).text.length - delta.length,
+        } }),
       });
       return next;
     });

@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect } from "react";
 import { useOsSessionStore } from "./os-session-store";
 import { BOOT_BEAT_MS } from "./os-session-utils";
@@ -36,6 +37,7 @@ export function OsSessionHost() {
   // Body scroll lock while any full-screen overlay is up. The shell root is
   // already overflow-hidden; this is the guard for embedded/mobile contexts.
   const overlayOpen = view !== "none" || bootDesign !== null;
+  useGettingStartedBlocker(overlayOpen);
   useEffect(() => {
     if (!overlayOpen) return;
     const previous = document.body.style.overflow;

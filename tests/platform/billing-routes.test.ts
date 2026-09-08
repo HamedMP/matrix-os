@@ -1275,6 +1275,42 @@ describe('platform billing routes', () => {
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
+  it('rejects more than one developer tool for a server-resolved CPX22 checkout', async () => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_starter',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        developerTools: ['codex', 'pi'],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it.each([[[]], [['codex']]] as const)('accepts the CPX22 developer tool selection %j', async (developerTools) => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_starter',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        developerTools,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+  });
+
   it('rejects oversized checkout bodies before parsing developer tool selections', async () => {
     const app = createApp();
 

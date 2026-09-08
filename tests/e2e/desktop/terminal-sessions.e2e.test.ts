@@ -36,7 +36,7 @@ interface TerminalViewportGeometry {
 async function readTerminalViewportGeometry(viewport: Locator): Promise<TerminalViewportGeometry> {
   await viewport.locator(".xterm").waitFor();
   return viewport.evaluate((host) => {
-    const frame = host.closest("section");
+    const frame = host.closest('[data-testid="desktop-terminal-app"]');
     const header = frame?.querySelector("header");
     const root = host.querySelector<HTMLElement>(".xterm");
     const xtermViewport = host.querySelector<HTMLElement>(".xterm-viewport");
@@ -143,9 +143,10 @@ suite("Desktop terminal session handoff", () => {
   it("opens the compact shell-theme picker through Electron hit testing", async () => {
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick({ timeout: 5_000 });
     const terminalWindow = page.getByRole("dialog", { name: "Terminal window" });
-    const fullWidthChrome = terminalWindow.locator('[data-os-window-chrome-placement="full-width"]');
-    await fullWidthChrome.waitFor({ timeout: 5_000 });
-    expect(await fullWidthChrome.textContent()).toContain("Terminal");
+    const header = terminalWindow.locator(".matrix-terminal-app-header");
+    await header.waitFor({ timeout: 5_000 });
+    expect(await header.getByRole("heading", { name: "Terminal", exact: true }).count()).toBe(1);
+    expect(await header.getByRole("button", { name: "Hide terminal tabs" }).count()).toBe(1);
 
     await terminalWindow.getByRole("button", { name: "Choose session type" }).click();
     for (const agent of ["Claude Code", "Codex", "OpenCode", "Pi"]) {
@@ -171,36 +172,44 @@ suite("Desktop terminal session handoff", () => {
 
     await page.getByRole("menu", { name: "Shell theme" }).waitFor({ timeout: 5_000 });
     await page.getByRole("menuitemradio", { name: /P10k Rainbow/ }).waitFor({ timeout: 5_000 });
+    await page.keyboard.press("Escape");
   });
 
-  it("renders the Figma-aligned list and preserves the mounted terminal buffer across list-detail navigation", async () => {
-    await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
-    await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
-    await page.getByText("Active", { exact: true }).waitFor();
-    await page.getByText("Waiting", { exact: true }).waitFor();
-    await page.getByText("Closed", { exact: true }).waitFor();
+  it("keeps controls in the title row and preserves the terminal buffer across sidebar and session changes", async () => {
+    await page.getByRole("heading", { name: "Terminal", exact: true }).waitFor({ timeout: 10_000 });
+    for (const name of ["matrix-task-1", "matrix-review", "matrix-closed"]) {
+      await page.getByRole("button", { name: `Open ${name}` }).waitFor();
+    }
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-list.png") });
 
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await page.getByRole("heading", { name: "matrix-task-1" }).waitFor();
     expect(await page.getByRole("navigation", { name: "Terminal breadcrumb" }).count()).toBe(0);
     await page.getByText(/Started at .*main computer/).waitFor();
-    const viewport = page.locator("section[aria-hidden='false'] [data-terminal-surface]");
+    const viewport = page.getByTestId("desktop-terminal-app").locator('[data-retained-pane][data-active="true"] [data-terminal-surface]');
     await viewport.evaluate((element) => { element.setAttribute("data-mat-300-identity", "preserved"); });
     const initialGeometry = await expectTerminalViewportToFill(viewport);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-detail.png") });
 
-    await page.getByRole("button", { name: "Collapse sidebar" }).click();
+    const header = page.locator(".matrix-terminal-app-header");
+    const split = header.getByRole("button", { name: "Split right", exact: true });
+    const [titleBounds, splitBounds] = await Promise.all([
+      header.getByRole("heading", { name: "Terminal", exact: true }).boundingBox(),
+      split.boundingBox(),
+    ]);
+    expect(titleBounds).not.toBeNull();
+    expect(splitBounds).not.toBeNull();
+    expect(Math.abs(titleBounds!.y + titleBounds!.height / 2 - splitBounds!.y - splitBounds!.height / 2)).toBeLessThanOrEqual(1);
+    const hideSidebar = header.getByRole("button", { name: "Hide terminal tabs" });
+    expect(await hideSidebar.locator("svg").getAttribute("data-direction")).toBe("left");
+    await hideSidebar.click();
+    expect(await header.getByRole("button", { name: "Show terminal tabs" }).locator("svg").getAttribute("data-direction")).toBe("right");
     await expect.poll(async () => (await readTerminalViewportGeometry(viewport)).hostWidth)
       .toBeGreaterThan(initialGeometry.hostWidth + 20);
     const collapsedGeometry = await expectTerminalViewportToFill(viewport);
 
-    await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0];
-      if (!window) throw new Error("desktop window is unavailable");
-      const [width, height] = window.getSize();
-      window.setSize(Math.max(900, width - 140), Math.max(650, height - 100));
-    });
+    await page.getByRole("dialog", { name: "Terminal window" })
+      .getByRole("button", { name: "Maximize", exact: true }).click();
     await expect.poll(async () => {
       const resized = await readTerminalViewportGeometry(viewport);
       return Math.abs(resized.hostWidth - collapsedGeometry.hostWidth)
@@ -208,20 +217,16 @@ suite("Desktop terminal session handoff", () => {
     }).toBeGreaterThan(20);
     await expectTerminalViewportToFill(viewport);
 
-    await page.getByRole("navigation", { name: "Breadcrumb" })
-      .getByRole("button", { name: "Terminal" })
-      .click();
-    await page.getByRole("heading", { name: "Terminal" }).waitFor();
+    await header.getByRole("button", { name: "Show terminal tabs" }).click();
+    await page.getByRole("button", { name: "Open matrix-review" }).click();
+    await page.getByRole("heading", { name: "matrix-review", exact: true }).waitFor();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await expect.poll(() => viewport.getAttribute("data-mat-300-identity")).toBe("preserved");
     await expectTerminalViewportToFill(viewport);
 
-    await page.getByRole("navigation", { name: "Breadcrumb" })
-      .getByRole("button", { name: "Terminal" })
-      .click();
-    await page.getByRole("button", { name: "New shell" }).click();
-    const newSessionViewport = page.locator(
-      'section[aria-hidden="false"] [data-terminal-surface]',
+    await header.getByRole("button", { name: "New shell session", exact: true }).click();
+    const newSessionViewport = page.getByTestId("desktop-terminal-app").locator(
+      '[data-retained-pane][data-active="true"] [data-terminal-surface]',
     );
     await newSessionViewport.waitFor();
     await expectTerminalViewportToFill(newSessionViewport);

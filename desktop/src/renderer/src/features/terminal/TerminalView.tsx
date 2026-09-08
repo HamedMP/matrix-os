@@ -1,4 +1,6 @@
 import { Terminal } from "@xterm/xterm";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { createPortal } from "react-dom";
 import { TerminalControls } from "@matrix-os/ui";
 import {
   classifyTerminalClipboardShortcut,
@@ -102,6 +104,7 @@ interface TerminalViewProps {
   active?: boolean;
   visualScale?: number;
   onRecreate?: () => void;
+  controlsHost?: HTMLElement | null;
 }
 
 type ClipboardFeedback = {
@@ -134,6 +137,7 @@ export default function TerminalView({
   active = true,
   visualScale = 1,
   onRecreate,
+  controlsHost,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
   const terminalThemeId = useTerminalAppearance((state) => state.themeId);
@@ -732,7 +736,10 @@ export default function TerminalView({
       data-terminal-surface
       style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
     >
-      <TerminalControls controls={controls} />
+      {controlsHost === undefined ? <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} theme={terminalTheme} /> : controlsHost ? createPortal(
+        <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} placement="header" theme={{ background: "var(--bg-surface)", foreground: "var(--text-primary)" }} />,
+        controlsHost,
+      ) : null}
       <div
         ref={hostRef}
         className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"

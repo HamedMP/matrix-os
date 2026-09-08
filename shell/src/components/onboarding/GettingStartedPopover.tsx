@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedVisibility, useGettingStartedPopoverFocus } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
 import {
   deriveGettingStartedSnapshot,
@@ -9,7 +10,7 @@ import {
   type GettingStartedStep,
   type GettingStartedStepId,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { CheckIcon, ClipboardCheck, DownloadIcon, Github } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -115,17 +116,21 @@ function StepIndicator({ step }: { step: GettingStartedStep }) {
   );
 }
 
-export function GettingStartedPopover({
+export function GettingStartedPopover(props: GettingStartedPopoverProps) {
+  const { scope } = useGettingStartedVisibility();
+  return <GettingStartedPopoverContent key={scope} {...props} />;
+}
+
+function GettingStartedPopoverContent({
   onOpenSettings,
   onOpenFirstWork,
   triggerClassName = "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 }: GettingStartedPopoverProps) {
-  const [open, setOpen] = useState(false);
+  const { visible: open, requestedOpen, blocked, isBlocked, setRequestedOpen: setOpen } = useGettingStartedVisibility();
+  const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
-  const autoOpenKey = useMemo(() => (
-    webGettingStartedAutoOpenKey(currentComputerScope())
-  ), []);
+  const [autoOpenKey] = useState(() => webGettingStartedAutoOpenKey(currentComputerScope()));
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- checklist state is sourced from independent authenticated APIs and refreshed when the popover opens.
   useEffect(() => {
@@ -143,12 +148,13 @@ export function GettingStartedPopover({
   useEffect(() => {
     if (
       !snapshot.loaded
+      || blocked
+      || isBlocked()
       || snapshot.completedCount === TOTAL_STEPS
       || hasAutoOpened(autoOpenKey)
     ) return;
-    rememberAutoOpened(autoOpenKey);
     setOpen(true);
-  }, [autoOpenKey, snapshot.completedCount, snapshot.loaded]);
+  }, [autoOpenKey, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, setOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -168,13 +174,14 @@ export function GettingStartedPopover({
     };
   }, [open]);
 
-  const handleRadixOpenChange = useCallback((nextOpen: boolean) => {
-    if (!nextOpen) return;
+  const handleRadixOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen || blocked) return;
+    markManualOpen();
     setOpen(true);
     setRefreshRequest((request) => (request + 1) % 1_000_000);
-  }, []);
+  };
 
-  const activateStep = useCallback((id: GettingStartedStepId) => {
+  const activateStep = (id: GettingStartedStepId) => {
     switch (id) {
       case "github":
       case "email-calendar":
@@ -190,7 +197,15 @@ export function GettingStartedPopover({
         onOpenSettings("billing");
         break;
     }
-  }, [onOpenFirstWork, onOpenSettings]);
+  };
+
+  useEffect(() => {
+    // A manual opening counts too, even while status is loading: a later
+    // response must not undo the user's explicit dismissal.
+    if (open && !isBlocked() && autoOpenKey) {
+      rememberAutoOpened(autoOpenKey);
+    }
+  }, [open, isBlocked, autoOpenKey]);
 
   const label = `Getting started — ${snapshot.completedCount} of ${TOTAL_STEPS}`;
   const progress = `${(snapshot.completedCount / TOTAL_STEPS) * 100}%`;
@@ -202,9 +217,10 @@ export function GettingStartedPopover({
           type="button"
           aria-label={label}
           title={label}
+          disabled={blocked}
           className={`relative ${triggerClassName}`}
           onClick={() => {
-            if (open) setOpen(false);
+            if (requestedOpen) setOpen(false);
           }}
         >
           <ClipboardCheck className="size-4" aria-hidden="true" />
@@ -221,6 +237,8 @@ export function GettingStartedPopover({
           side="bottom"
           sideOffset={7}
           collisionPadding={12}
+          onOpenAutoFocus={onOpenAutoFocus}
+          onCloseAutoFocus={onCloseAutoFocus}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           className="w-[252px] overflow-hidden rounded-[12px] border outline-none"

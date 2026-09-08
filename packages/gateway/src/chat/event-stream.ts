@@ -1,15 +1,14 @@
 import {
   CanonicalChatEventCursorSchema,
-  CanonicalChatStreamClientFrameSchema,
   CanonicalChatStreamEventSchema,
-  CanonicalChatStreamServerFrameSchema,
-  SafeClientErrorSchema,
+  CanonicalChatContentFrameSchema,
+  CanonicalChatTransportFrameSchema,
+  type CanonicalChatTransportFrame,
   type CanonicalChatStreamEvent,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOutboxEvent, ChatOwner } from "./records.js";
 
-const MAX_INBOUND_FRAME_BYTES = 4096;
 const DEFAULT_MAX_SUBSCRIBERS = 64;
 const DEFAULT_MAX_SUBSCRIBERS_PER_OWNER = 8;
 const DEFAULT_SUBSCRIBER_TTL_MS = 5 * 60 * 1000;
@@ -17,13 +16,13 @@ const DEFAULT_MAX_ATTACH_BUFFER = 200;
 const MAX_SEEN_CURSORS = 500;
 const REPLAY_LIMIT = 100;
 
-export interface CanonicalChatEventStreamSocket {
-  send(data: string): void;
+export interface CanonicalChatEventStreamSink {
+  send(frame: CanonicalChatTransportFrame): boolean;
   close(): void;
 }
 
 export interface CanonicalChatEventStreamSession {
-  onMessage(raw: string): void;
+  touch(): void;
   onClose(): void;
 }
 
@@ -42,9 +41,10 @@ export interface CanonicalChatEventRepository {
 }
 
 interface Subscriber {
+  content: boolean;
   id: number;
   owner: ChatOwner;
-  ws: CanonicalChatEventStreamSocket;
+  sink: CanonicalChatEventStreamSink;
   lastTouched: number;
   replaying: boolean;
   buffered: ChatOutboxEvent[];
@@ -61,28 +61,18 @@ function safeEvent(event: ChatOutboxEvent): CanonicalChatStreamEvent {
   });
 }
 
-function invalidFrameError() {
-  return SafeClientErrorSchema.parse({
-    code: "invalid_frame",
-    safeMessage: "Stream message was invalid. Refresh and try again.",
-    retryable: true,
-    recoveryActions: ["retry"],
-  });
-}
-
-function sendJson(ws: CanonicalChatEventStreamSocket, frame: unknown): boolean {
+function sendFrame(sink: CanonicalChatEventStreamSink, frame: unknown): boolean {
   try {
-    ws.send(JSON.stringify(CanonicalChatStreamServerFrameSchema.parse(frame)));
-    return true;
+    return sink.send(CanonicalChatTransportFrameSchema.parse(frame));
   } catch (error: unknown) {
     console.warn("[chat/event-stream] Send failed:", error instanceof Error ? error.name : "UnknownError");
     return false;
   }
 }
 
-function closeSocket(ws: CanonicalChatEventStreamSocket): void {
+function closeSink(sink: CanonicalChatEventStreamSink): void {
   try {
-    ws.close();
+    sink.close();
   } catch (error: unknown) {
     console.warn("[chat/event-stream] Close failed:", error instanceof Error ? error.name : "UnknownError");
   }
@@ -94,6 +84,7 @@ function sameOwner(left: ChatOwner, right: ChatOwner): boolean {
 
 export function createCanonicalChatEventStream(options: {
   repository: CanonicalChatEventRepository;
+  reconcileOwner?: (owner: ChatOwner) => Promise<unknown>;
   maxSubscribers?: number;
   maxSubscribersPerOwner?: number;
   subscriberTtlMs?: number;
@@ -117,13 +108,13 @@ export function createCanonicalChatEventStream(options: {
     if (!subscriber) return;
     subscribers.delete(id);
     if (reason === "server_shutdown") {
-      sendJson(subscriber.ws, { type: "chat.stream.closing", reason: "server_shutdown" });
+      sendFrame(subscriber.sink, { type: "chat.stream.closing", reason: "server_shutdown" });
     }
-    closeSocket(subscriber.ws);
+    closeSink(subscriber.sink);
   }
 
   function sendOrEvict(subscriber: Subscriber, frame: unknown): boolean {
-    if (sendJson(subscriber.ws, frame)) return true;
+    if (sendFrame(subscriber.sink, frame)) return true;
     evict(subscriber.id);
     return false;
   }
@@ -174,7 +165,17 @@ export function createCanonicalChatEventStream(options: {
   function deliver(subscriber: Subscriber, event: ChatOutboxEvent): boolean {
     if (!rememberCursor(subscriber, event.cursor)) return true;
     try {
-      return sendJson(subscriber.ws, { type: "chat.event", event: safeEvent(event) });
+      if (subscriber.content && event.payload.streamContent) {
+        const parsed = CanonicalChatContentFrameSchema.safeParse({
+          type: "chat.content", event: safeEvent(event), content: event.payload.streamContent,
+        });
+        if (parsed.success && sameOwner(parsed.data.content.record.chat.ownerScope, subscriber.owner)
+          && new TextEncoder().encode(JSON.stringify(parsed.data)).byteLength < 512 * 1024 - 1024) {
+          return sendFrame(subscriber.sink, parsed.data);
+        }
+        // Old/oversized persisted events retain the safe notification recovery path.
+      }
+      return sendFrame(subscriber.sink, { type: "chat.event", event: safeEvent(event) });
     } catch (error: unknown) {
       console.warn("[chat/event-stream] Invalid outbox metadata:", error instanceof Error ? error.name : "UnknownError");
       return false;
@@ -202,14 +203,15 @@ export function createCanonicalChatEventStream(options: {
   const sink = options.repository.registerOutboxSink(({ owner, event }) => publish(owner, event));
 
   async function open(input: {
-    ws: CanonicalChatEventStreamSocket;
+    sink: CanonicalChatEventStreamSink;
     principal: RequestPrincipal;
     cursor?: number;
+    content?: boolean;
   }): Promise<CanonicalChatEventStreamSession> {
     if (shuttingDown) {
-      sendJson(input.ws, { type: "chat.stream.closing", reason: "server_shutdown" });
-      closeSocket(input.ws);
-      return { onMessage: () => undefined, onClose: () => undefined };
+      sendFrame(input.sink, { type: "chat.stream.closing", reason: "server_shutdown" });
+      closeSink(input.sink);
+      return { touch: () => undefined, onClose: () => undefined };
     }
     const cursor = input.cursor === undefined
       ? undefined
@@ -217,9 +219,10 @@ export function createCanonicalChatEventStream(options: {
     const owner: ChatOwner = { type: "personal", ownerId: input.principal.userId };
     enforceCaps(owner);
     const subscriber: Subscriber = {
+      content: input.content === true,
       id: ++nextSubscriberId,
       owner,
-      ws: input.ws,
+      sink: input.sink,
       lastTouched: now(),
       replaying: true,
       buffered: [],
@@ -228,37 +231,44 @@ export function createCanonicalChatEventStream(options: {
     subscribers.set(subscriber.id, subscriber);
 
     try {
+      await options.reconcileOwner?.(owner);
       const replay = await options.repository.replayOutboxWindow(owner, {
         ...(cursor === undefined ? {} : { afterCursor: cursor }),
         limit: REPLAY_LIMIT,
       });
       if (!subscribers.has(subscriber.id)) {
-        return { onMessage: () => undefined, onClose: () => undefined };
+        return { touch: () => undefined, onClose: () => undefined };
       }
-      if (!sendJson(input.ws, { type: "chat.stream.attached" })) {
+      if (!sendFrame(input.sink, { type: "chat.stream.attached" })) {
         evict(subscriber.id);
-        return { onMessage: () => undefined, onClose: () => undefined };
+        return { touch: () => undefined, onClose: () => undefined };
       }
       if (replay.gap) {
         if (!sendOrEvict(subscriber, { type: "chat.replay.gap", reason: "cursor_unavailable" })) {
-          return { onMessage: () => undefined, onClose: () => undefined };
+          return { touch: () => undefined, onClose: () => undefined };
         }
         subscriber.buffered = [];
       } else {
         for (const event of replay.events) {
           if (!deliver(subscriber, event)) {
             evict(subscriber.id);
-            return { onMessage: () => undefined, onClose: () => undefined };
+            return { touch: () => undefined, onClose: () => undefined };
           }
         }
       }
-      const nextCursor = replay.gap ? replay.nextCursor : replay.nextCursor ?? cursor;
-      if (!sendJson(input.ws, {
+      const replayCursor = replay.events.reduce<number | undefined>(
+        (highest, event) => highest === undefined ? event.cursor : Math.max(highest, event.cursor),
+        undefined,
+      );
+      const nextCursor = replay.gap
+        ? replay.nextCursor
+        : replay.nextCursor ?? replayCursor ?? cursor;
+      if (!sendFrame(input.sink, {
         type: "chat.replay.end",
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })) {
         evict(subscriber.id);
-        return { onMessage: () => undefined, onClose: () => undefined };
+        return { touch: () => undefined, onClose: () => undefined };
       }
       subscriber.replaying = false;
       const buffered = subscriber.buffered;
@@ -271,7 +281,7 @@ export function createCanonicalChatEventStream(options: {
       }
     } catch (error: unknown) {
       console.warn("[chat/event-stream] Attach failed:", error instanceof Error ? error.name : "UnknownError");
-      sendJson(input.ws, {
+      sendFrame(input.sink, {
         type: "chat.stream.error",
         error: {
           code: "stream_unavailable",
@@ -284,38 +294,10 @@ export function createCanonicalChatEventStream(options: {
     }
 
     return {
-      onMessage(raw) {
+      touch() {
         const current = subscribers.get(subscriber.id);
         if (!current) return;
         current.lastTouched = now();
-        if (!canonicalChatEventFrameWithinLimit(raw)) {
-          sendOrEvict(current, { type: "chat.stream.error", error: invalidFrameError() });
-          evict(current.id);
-          return;
-        }
-        let value: unknown;
-        try {
-          value = JSON.parse(raw);
-        } catch (error: unknown) {
-          if (!(error instanceof SyntaxError)) {
-            console.warn(
-              "[chat/event-stream] JSON parse failed:",
-              error instanceof Error ? error.name : "UnknownError",
-            );
-          }
-          sendOrEvict(current, { type: "chat.stream.error", error: invalidFrameError() });
-          return;
-        }
-        const frame = CanonicalChatStreamClientFrameSchema.safeParse(value);
-        if (!frame.success) {
-          sendOrEvict(current, { type: "chat.stream.error", error: invalidFrameError() });
-          return;
-        }
-        if (frame.data.type === "ping") {
-          sendOrEvict(current, { type: "pong" });
-        } else {
-          evict(current.id);
-        }
       },
       onClose() {
         subscribers.delete(subscriber.id);
@@ -334,24 +316,4 @@ export function createCanonicalChatEventStream(options: {
       sink.dispose();
     },
   };
-}
-
-export function chatEventFrameDataToString(data: unknown): string | null {
-  if (typeof data === "string") return data;
-  if (Buffer.isBuffer(data)) return data.toString("utf8");
-  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
-  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
-  return null;
-}
-
-export function canonicalChatEventFrameWithinLimit(raw: string): boolean {
-  return Buffer.byteLength(raw, "utf8") <= MAX_INBOUND_FRAME_BYTES;
-}
-
-export function canonicalChatEventFrameDataWithinLimit(data: unknown): boolean {
-  if (typeof data === "string") return canonicalChatEventFrameWithinLimit(data);
-  if (Buffer.isBuffer(data)) return data.byteLength <= MAX_INBOUND_FRAME_BYTES;
-  if (data instanceof ArrayBuffer) return data.byteLength <= MAX_INBOUND_FRAME_BYTES;
-  if (ArrayBuffer.isView(data)) return data.byteLength <= MAX_INBOUND_FRAME_BYTES;
-  return false;
 }

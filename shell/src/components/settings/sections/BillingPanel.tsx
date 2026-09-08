@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  getMatrixDeveloperToolPreinstallLimit,
+} from "@matrix-os/contracts";
+import {
   useEffect,
   useEffectEvent,
   useMemo,
@@ -12,8 +15,10 @@ import type { ReactNode } from "react";
 import {
   CheckIcon,
   ChevronDownIcon,
+  AlertCircleIcon,
   Loader2Icon,
   MapPinIcon,
+  RefreshCwIcon,
 } from "@/lib/hugeicons";
 import { useUser } from "@clerk/nextjs";
 import {
@@ -30,6 +35,7 @@ import type {
 import { ActiveBillingPanel, BillingPortalButton, TrialPaymentRecoveryPanel } from "./BillingManagementPanel";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
 import {
+  constrainDeveloperToolsSelection,
   defaultDeveloperTools,
   nextDeveloperToolsSelection,
   type DeveloperToolId,
@@ -81,6 +87,37 @@ function BillingSessionRefreshingPanel() {
         <span className="leading-6 text-sky-900/70">
           Matrix is refreshing your desktop session before checking billing.
         </span>
+      </div>
+    </div>
+  );
+}
+
+function reloadBillingPage(): void {
+  window.location.reload();
+}
+
+function BillingStatusUnavailablePanel({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      className="flex min-h-48 items-center justify-center rounded-xl border border-ember/25 bg-ember/10 p-4"
+      role="alert"
+    >
+      <div className="flex max-w-md flex-col items-center gap-3 text-center text-sm text-deep">
+        <span className="flex size-10 items-center justify-center rounded-lg border border-ember/25 bg-card">
+          <AlertCircleIcon className="size-4 text-ember" aria-hidden="true" />
+        </span>
+        <span className="font-semibold">Billing status is unavailable</span>
+        <span className="leading-6 text-forest/70">
+          We could not refresh your billing details. Your billing settings were not changed.
+        </span>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="inline-flex items-center gap-2 rounded-lg border border-forest/20 bg-card px-3 py-2 font-semibold text-deep transition-colors hover:bg-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest/40"
+        >
+          <RefreshCwIcon className="size-4" aria-hidden="true" />
+          Try again
+        </button>
       </div>
     </div>
   );
@@ -310,6 +347,7 @@ function SelectionTriggerCards({
   onSelectProfile,
   onSelectRegion,
   onToggleDeveloperTool,
+  onClearDeveloperTools,
 }: {
   profiles: typeof MATRIX_BILLING_SERVER_PROFILES;
   regions: typeof MATRIX_BILLING_REGIONS;
@@ -324,6 +362,7 @@ function SelectionTriggerCards({
   onSelectProfile: (featureSlug: string) => void;
   onSelectRegion: (featureSlug: string) => void;
   onToggleDeveloperTool: (tool: DeveloperToolId) => void;
+  onClearDeveloperTools: () => void;
 }) {
   const regionOpen = openPicker === "region";
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -377,7 +416,9 @@ function SelectionTriggerCards({
         <DeveloperToolsSelector
           selectedTools={developerTools}
           onToggle={onToggleDeveloperTool}
+          onClear={onClearDeveloperTools}
           variant="billing"
+          singleChoice={getMatrixDeveloperToolPreinstallLimit(selectedProfile.hetznerType) === 1}
         />
       </div>
 
@@ -443,6 +484,7 @@ export function BillingPanel({
   trialOffer,
   accessReason,
   accessIssue,
+  onRetry,
   mode = "settings",
   onCheckoutIntent,
   onCheckoutNavigate,
@@ -454,6 +496,7 @@ export function BillingPanel({
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
+  onRetry?: () => void;
   mode?: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -471,6 +514,7 @@ export function BillingPanel({
     trialOffer,
     accessReason,
     accessIssue,
+    onRetry,
     mode,
     onCheckoutIntent,
     onCheckoutNavigate,
@@ -489,6 +533,7 @@ function ManagedBillingPanel(props: {
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
+  onRetry?: () => void;
   mode: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -505,6 +550,7 @@ function BillingPanelInner({
   trialOffer,
   accessReason,
   accessIssue,
+  onRetry,
   mode = "settings",
   onCheckoutIntent,
   onCheckoutNavigate,
@@ -517,6 +563,7 @@ function BillingPanelInner({
   trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
+  onRetry?: () => void;
   mode?: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -574,6 +621,8 @@ function BillingPanelInner({
     () => resolveMatrixServerProfile(selectedPlanProfile, selectedRegion),
     [selectedPlanProfile, selectedRegion],
   );
+  const developerToolLimit = getMatrixDeveloperToolPreinstallLimit(selectedProfile.hetznerType);
+  const effectiveDeveloperTools = constrainDeveloperToolsSelection(developerTools, developerToolLimit);
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by a useEffect dependency array below (the ref-sync effect keyed on telemetryProperties); removing useMemo would re-run that effect on every render.
   const telemetryProperties = useMemo<BillingTelemetryProperties>(
     () => {
@@ -680,6 +729,10 @@ function BillingPanelInner({
     return <BillingSessionRefreshingPanel />;
   }
 
+  if (accessIssue === "status") {
+    return <BillingStatusUnavailablePanel onRetry={onRetry ?? reloadBillingPage} />;
+  }
+
   if (active === null) {
     return (
       <div className="flex min-h-48 items-center justify-center rounded-xl border border-border/60 bg-card p-4">
@@ -744,7 +797,7 @@ function BillingPanelInner({
             regions={allowedRegions}
             selectedProfile={selectedProfile}
             selectedRegion={selectedRegion}
-            developerTools={developerTools}
+            developerTools={effectiveDeveloperTools}
             billingInterval={billingInterval}
             openPicker={openPicker}
             onToggleRegion={() =>
@@ -754,8 +807,9 @@ function BillingPanelInner({
             onSelectProfile={handleProfileSelect}
             onSelectRegion={handleRegionSelect}
             onToggleDeveloperTool={(tool) => setDeveloperTools(
-              (current) => nextDeveloperToolsSelection(current, tool),
+              (current) => nextDeveloperToolsSelection(current, tool, developerToolLimit === 1),
             )}
+            onClearDeveloperTools={() => setDeveloperTools([])}
           />
         </div>
       </div>
@@ -770,7 +824,7 @@ function BillingPanelInner({
         selectedProfile={selectedProfile}
         selectedRegion={selectedRegion}
         billingInterval={billingInterval}
-        developerTools={developerTools}
+        developerTools={effectiveDeveloperTools}
         trialDurationDays={trialDurationDays}
       />
     </div>

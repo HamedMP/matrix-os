@@ -17,7 +17,6 @@ import {
   createCanonicalChatClient,
   createCanonicalChatEventSource,
   type CanonicalChatEventSource,
-  type DesktopCanonicalChatWebSocket,
 } from "../../lib/canonical-chat-client";
 import { useBoard, type Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -261,14 +260,14 @@ export default function WorkTab({
   const localEventSource = useMemo<CanonicalChatEventSource | null>(() => {
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
-      gatewayOrigin: api.baseUrl,
-      runtimeSlot,
-      async fetchWebSocketToken() {
-        const response = await api.get<{ token?: unknown }>("/api/auth/ws-token");
-        if (typeof response.token !== "string") throw new Error("ChatEventCredentialUnavailable");
-        return response.token;
+      openStream({ cursor, signal }) {
+        return api.openStream("/api/chats/events", {
+          accept: "text/event-stream",
+          signal,
+          timeoutMs: 5 * 60 * 1000,
+          headers: { "x-matrix-chat-protocol": "2", ...(cursor === undefined ? {} : { "last-event-id": String(cursor) }) },
+        });
       },
-      createWebSocket: (url) => new WebSocket(url) as unknown as DesktopCanonicalChatWebSocket,
     });
   }, [api, authGeneration, hostedRuntime, runtimeSlot, visible]);
   const client = hostedRuntime?.client ?? localClient;

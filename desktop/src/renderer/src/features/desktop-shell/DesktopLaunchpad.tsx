@@ -1,3 +1,4 @@
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import AppLauncher from "../embeds/AppLauncher";
@@ -23,6 +24,7 @@ export default function DesktopLaunchpad({
   osViewMode: OsViewMode;
   onSwitchOsView: (mode: OsViewMode) => void;
 }) {
+  useGettingStartedBlocker(open);
   const closeLauncher = useEffectEvent(onClose);
 
   useEffect(() => {

@@ -424,7 +424,12 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   }
 
   function attachProcess(name: string, options: AttachOptions = {}): ShellAttachProcess {
-    const pty = spawnPty(binaryPath, ["attach", name], {
+    // Zellij 0.44 attaches in the server's saved mode, but interprets unbound
+    // keys against the new client's default. Old Normal servers + a Locked
+    // client silently discard typing. Normal is the compatible fallback for
+    // both generations: Locked always writes keys, regardless of the default.
+    // Keep new sessions starting Locked; override only the attach fallback.
+    const pty = spawnPty(binaryPath, ["attach", name, "options", "--default-mode", "normal"], {
       name: "xterm-256color",
       cols: options.size?.cols ?? 120,
       rows: options.size?.rows ?? 40,

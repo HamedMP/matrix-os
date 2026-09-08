@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { boundedOperation } from "../bounded-operation.js";
 import {
   AgentThreadEventSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
@@ -394,9 +395,9 @@ export function createWorkspaceCodingAgentProvider(
     async abortThread({ thread, clientRequestId, now, nextEventId }) {
       const sessionId = sessionIdForThread(thread.id);
       if (agent === "codex" && options.codexControl) {
-        await options.codexControl.interruptTurn({ sessionId, clientRequestId });
+        await boundedOperation(() => options.codexControl!.interruptTurn({ sessionId, clientRequestId }), 5_000);
       } else {
-        const result = await options.runtime.stopSession(sessionId);
+        const result = await boundedOperation(() => options.runtime.stopSession(sessionId), 5_000);
         if (!result.ok) {
           throw new Error("Workspace provider abort failed");
         }

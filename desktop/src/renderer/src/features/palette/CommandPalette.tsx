@@ -1,3 +1,4 @@
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { Command } from "cmdk";
 import { Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
@@ -135,6 +136,7 @@ export default function CommandPalette() {
   const [category, setCategory] = useState<PaletteCategory>("all");
   const [query, setQuery] = useState("");
   const open = useUi((s) => s.paletteOpen);
+  useGettingStartedBlocker(open);
   const setOpen = useUi((s) => s.setPaletteOpen);
   const openTab = useTabs((s) => s.openTab);
   const focusTab = useTabs((s) => s.focusTab);

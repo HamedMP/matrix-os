@@ -3,6 +3,86 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 
 describe("canonical Chat presentation adapter", () => {
+  it("does not offer an in-place retry after a newer user Turn has started", () => {
+    const { snapshot } = createCanonicalChatFixture("failed");
+    const firstTurn = snapshot.turns[0]!;
+    const firstRun = snapshot.runs[0]!;
+    const secondTurn = {
+      ...firstTurn,
+      id: "cturn_after_failure",
+      clientRequestId: "req_after_failure",
+      baseMessageSeq: 1,
+      inputMessageId: "msg_after_failure",
+      status: "completed" as const,
+      createdAt: "2026-08-25T00:01:00.000Z",
+      updatedAt: "2026-08-25T00:01:05.000Z",
+    };
+    const secondRun = {
+      ...firstRun,
+      id: "run_after_failure",
+      turnId: secondTurn.id,
+      status: "completed" as const,
+      outcome: "completed" as const,
+      createdAt: secondTurn.createdAt,
+      updatedAt: secondTurn.updatedAt,
+      startedAt: secondTurn.createdAt,
+      completedAt: secondTurn.updatedAt,
+    };
+    const messages = [
+      ...snapshot.messages,
+      {
+        id: secondTurn.inputMessageId,
+        chatId: snapshot.chat.id,
+        seq: 2,
+        role: "user" as const,
+        state: "committed" as const,
+        turnId: secondTurn.id,
+        parts: [{ type: "text" as const, text: "continue instead" }],
+        createdAt: secondTurn.createdAt,
+      },
+      {
+        id: "msg_after_failure_answer",
+        chatId: snapshot.chat.id,
+        seq: 3,
+        role: "assistant" as const,
+        state: "committed" as const,
+        turnId: secondTurn.id,
+        runId: secondRun.id,
+        parts: [{ type: "text" as const, text: "continued" }],
+        createdAt: secondTurn.updatedAt,
+      },
+    ];
+
+    const presented = canonicalChatPresentation({
+      messages,
+      turns: [firstTurn, secondTurn],
+      runs: [firstRun, secondRun],
+      activities: [
+        ...snapshot.activities,
+        {
+          id: "activity_retryable_failure",
+          chatId: snapshot.chat.id,
+          runId: firstRun.id,
+          type: "run.error" as const,
+          error: {
+            code: "run_failed",
+            safeMessage: "The Run failed.",
+            retryable: true,
+            recoveryActions: ["retry" as const],
+          },
+          occurredAt: firstRun.updatedAt,
+        },
+      ],
+    });
+
+    expect(presented[0]?.final).toMatchObject({
+      tone: "failed",
+      markdown: "The Run failed.",
+    });
+    expect(presented[0]?.final).not.toHaveProperty("actions");
+    expect(presented[1]?.final).toMatchObject({ markdown: "continued" });
+  });
+
   it("shows the canonical selected model first while a Run is active", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;

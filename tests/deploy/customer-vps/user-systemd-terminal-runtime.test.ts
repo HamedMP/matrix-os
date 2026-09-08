@@ -133,7 +133,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     );
 
     expect(attach).toContain("descriptor.generation");
-    expect(attach).toContain('["attach", descriptor.sessionName, ...remainingArgs]');
+    expect(attach).toContain('["attach", descriptor.sessionName, ...remainingArgs, "options", "--default-mode", "normal"]');
     expect(attach).not.toContain("shell: true");
     expect(updater).toContain("/usr/local/bin/matrix-terminal-attach");
   });

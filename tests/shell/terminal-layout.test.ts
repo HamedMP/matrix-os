@@ -11,6 +11,7 @@ import {
   getPaneSessionId,
   getSessionIds,
   layoutUsesOnlyCanonicalShellSessions,
+  mergeTerminalLayouts,
   removeSessionFromPaneTree,
   renameSessionInTree,
   setPaneSessionId,
@@ -112,6 +113,86 @@ describe("terminal layout helpers", () => {
         { type: "pane", id: "left", cwd: "projects/app", sessionId: "shell-main", compatMode: undefined },
         { type: "pane", id: "right", cwd: DEFAULT_CWD, sessionId: "codex-build", compatMode: "codex-tui" },
       ],
+    });
+  });
+
+  it("rebases independent local and remote layout edits without resurrecting deletions", () => {
+    const base: TerminalLayout = {
+      activeTabId: "main-tab",
+      sidebarOpen: true,
+      tabs: [{
+        id: "main-tab",
+        label: "Main",
+        paneTree: { type: "pane", id: "main-pane", cwd: "projects", sessionId: "main" },
+      }, {
+        id: "deleted-tab",
+        label: "Deleted",
+        paneTree: { type: "pane", id: "deleted-pane", cwd: "projects", sessionId: "deleted" },
+      }],
+    };
+    const local: TerminalLayout = {
+      ...base,
+      tabs: [{
+        id: "main-tab",
+        label: "Main",
+        paneTree: { type: "pane", id: "main-pane", cwd: "projects", sessionId: "main-local" },
+      }, base.tabs![1]!],
+    };
+    const remote: TerminalLayout = {
+      activeTabId: "main-tab",
+      sidebarOpen: false,
+      tabs: [{
+        id: "main-tab",
+        label: "Main",
+        paneTree: { type: "pane", id: "main-pane", cwd: "projects", sessionId: "main" },
+      }, {
+        id: "remote-tab",
+        label: "Remote",
+        paneTree: { type: "pane", id: "remote-pane", cwd: "projects", sessionId: "remote" },
+      }],
+    };
+
+    expect(mergeTerminalLayouts(base, local, remote)).toEqual({
+      activeTabId: "main-tab",
+      sidebarOpen: false,
+      tabs: [{
+        id: "main-tab",
+        label: "Main",
+        paneTree: { type: "pane", id: "main-pane", cwd: "projects", sessionId: "main-local" },
+      }, {
+        id: "remote-tab",
+        label: "Remote",
+        paneTree: { type: "pane", id: "remote-pane", cwd: "projects", sessionId: "remote" },
+      }],
+    });
+  });
+
+  it("preserves an edit to a surviving pane when another window closes its sibling", () => {
+    const base: TerminalLayout = {
+      activeTabId: "main-tab",
+      tabs: [{ id: "main-tab", label: "Main", paneTree: splitTree }],
+    };
+    const local: TerminalLayout = {
+      ...base,
+      tabs: [{
+        id: "main-tab",
+        label: "Main",
+        paneTree: setPaneSessionId(splitTree, "left", "shell-local"),
+      }],
+    };
+    const remote: TerminalLayout = {
+      ...base,
+      tabs: [{
+        id: "main-tab",
+        label: "Main",
+        paneTree: splitTree.children[0],
+      }],
+    };
+
+    expect(mergeTerminalLayouts(base, local, remote).tabs?.[0]?.paneTree).toMatchObject({
+      type: "pane",
+      id: "left",
+      sessionId: "shell-local",
     });
   });
 });

@@ -9,6 +9,7 @@ import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
+import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -377,6 +378,24 @@ const startedToolItems = new Set();
 const toolItemsWithOutput = new Set();
 const toolBoundaryWaiters = new Set();
 let toolBoundaryVersion = 0;
+let executionExpired = false;
+let rejectExecution;
+const executionWatchdog = createCodexExecutionWatchdog({
+  waitingForHuman: () => pendingApprovals.size > 0 || pendingInputs.size > 0,
+  expire: (diagnostic) => {
+    if (!activeTurn) return;
+    executionExpired = true;
+    process.stderr.write(`${JSON.stringify({
+      event: "coding_execution_expired",
+      phase: diagnostic.phase,
+      durationMs: diagnostic.durationMs,
+      dispatchId: digest([nativeThreadId, activeNativeTurnId]),
+      ...(diagnostic.toolCallId ? { toolCallId: diagnostic.toolCallId } : {}),
+      remoteOutcome: "unknown",
+    })}\n`);
+    rejectExecution?.(new Error("Coding execution deadline exceeded"));
+  },
+});
 
 function settleToolBoundaryWaiters(reachedBoundary) {
   for (const waiter of toolBoundaryWaiters) {
@@ -761,6 +780,7 @@ async function handleItemLifecycle(raw) {
       ...details,
     });
     startedToolItems.add(matrixItemId);
+    executionWatchdog.toolStarted(matrixItemId, item.type);
     return true;
   }
 
@@ -788,6 +808,7 @@ async function handleItemLifecycle(raw) {
     outcome: toolOutcome(item.status),
   });
   startedToolItems.delete(matrixItemId);
+  executionWatchdog.toolCompleted(matrixItemId);
   toolItemsWithOutput.delete(matrixItemId);
   publishToolBoundary(parsed.data.params.turnId);
   return true;
@@ -803,6 +824,12 @@ async function handleProviderMessage(raw) {
     else pending.resolve(response.data.result);
     return;
   }
+  // A deadline settles this execution once. Do not accept late tool results,
+  // approvals or a final answer while interruption/shutdown is in flight.
+  if (executionExpired) return;
+  if (!activeTurn) return;
+  const notificationTurnId = raw?.params?.turnId ?? raw?.params?.turn?.id;
+  if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) return;
   if (await handleApproval(raw)) return;
   if (await handleInput(raw)) return;
   if (await handleItemLifecycle(raw)) return;
@@ -814,6 +841,11 @@ async function handleProviderMessage(raw) {
     );
     assertTrackedItemCapacity(toolItemsWithOutput, toolCallId);
     toolItemsWithOutput.add(toolCallId);
+    // MCP progress notifications can be liveness heartbeats, not useful work.
+    if (outputDelta.data.method !== "item/mcpToolCall/progress"
+      && typeof outputDelta.data.params.delta === "string" && outputDelta.data.params.delta.length > 0) {
+      executionWatchdog.progress(toolCallId);
+    }
     return;
   }
   const delta = AgentDeltaSchema.safeParse(raw);
@@ -822,6 +854,7 @@ async function handleProviderMessage(raw) {
     assertTrackedItemCapacity(assistantItemsWithDelta, messageId);
     await bufferAssistantDelta(messageId, delta.data.params.delta);
     assistantItemsWithDelta.add(messageId);
+    if (delta.data.params.delta.length > 0) executionWatchdog.progress();
     return;
   }
   const usage = TokenUsageUpdatedSchema.safeParse(raw);
@@ -1141,6 +1174,7 @@ function stop() {
 }
 
 async function finishTurn(outcome) {
+  executionWatchdog.stop();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
     assistantDeltaBuffers.size > 0 ||
     startedToolItems.size > 0 ||
@@ -1166,7 +1200,7 @@ async function finishTurn(outcome) {
     await persist({
       type: "matrix.codex.tool.completed",
       toolCallId,
-      outcome: "cancelled",
+      outcome: executionExpired ? "failed" : "cancelled",
     });
     startedToolItems.delete(toolCallId);
     toolItemsWithOutput.delete(toolCallId);
@@ -1188,6 +1222,7 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
+  executionExpired = false;
   activeTurnTokenUsage = undefined;
   try {
     const started = await request("turn/start", turnStartParams(threadId, turn));
@@ -1201,15 +1236,32 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = undefined;
     throw error;
   }
-  return Promise.race([
-    outcome,
-    childExit.then(async () => {
-      const output = await providerOutput;
-      if (!output.ok) throw output.error;
-      if (!activeTurn) return outcome;
-      throw new Error("provider_stopped_during_turn");
-    }),
-  ]);
+  const expired = new Promise((_resolve, reject) => { rejectExecution = reject; });
+  executionWatchdog.start();
+  try {
+    return await Promise.race([
+      outcome,
+      expired,
+      childExit.then(async () => {
+        const output = await providerOutput;
+        if (!output.ok) throw output.error;
+        if (!activeTurn) return outcome;
+        throw new Error("provider_stopped_during_turn");
+      }),
+    ]);
+  } catch (error) {
+    if (executionExpired && activeNativeTurnId) {
+      try {
+        await request("turn/interrupt", { threadId, turnId: activeNativeTurnId }, 5_000);
+      } catch (_cancelError) {
+        process.stderr.write("Coding cancellation unconfirmed; remote outcome unknown.\n");
+      }
+    }
+    throw error;
+  } finally {
+    executionWatchdog.stop();
+    rejectExecution = undefined;
+  }
 }
 
 const providerOutput = consumeProviderOutput(child.stdout).then(
@@ -1293,6 +1345,7 @@ try {
   stop();
   await Promise.allSettled([childExit, providerOutput, providerErrors]);
 } finally {
+  executionWatchdog.stop();
   input.close();
   clearInterval(cleanupTimer);
   if (stopTimer) clearTimeout(stopTimer);
