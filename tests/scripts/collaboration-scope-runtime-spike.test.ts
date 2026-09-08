@@ -106,6 +106,8 @@ describe("collaboration scope-runtime native isolation spike", () => {
     ]) {
       expect(source).toContain(evidence);
     }
+    expect(source).toContain("failed_candidate_report_begin");
+    expect(source).toContain("failed_sdk_candidate_report_begin");
   });
 
   it("keeps the proof broker action-bound and rejects arbitrary destinations", async () => {

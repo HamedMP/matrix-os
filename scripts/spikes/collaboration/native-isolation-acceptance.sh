@@ -290,7 +290,9 @@ else
 fi
 if [ "$candidate_status" != "0" ]; then
   printf 'scope_runtime_acceptance_candidate_failed\n' >&2
-  sed -n '1,40p' "$probe_root/candidate.err" >&2
+  printf 'failed_candidate_report_begin\n' >&2
+  sed -n '1,240p' "$probe_root/candidate.json" >&2
+  printf 'failed_candidate_report_end\n' >&2
   exit 1
 fi
 if ! "$node_bin" --input-type=module -e '
@@ -310,7 +312,10 @@ else
 fi
 if [ "$sdk_candidate_status" != "0" ]; then
   printf 'scope_runtime_acceptance_sdk_candidate_failed\n' >&2
-  sed -n '1,40p' "$probe_root/sdk-candidate.err" >&2
+  printf 'failed_sdk_candidate_report_begin\n' >&2
+  sed -n '1,120p' "$probe_root/sdk-candidate.json" >&2
+  sed -n '/^scope_runtime_sdk_/p' "$probe_root/sdk-candidate.err" >&2
+  printf 'failed_sdk_candidate_report_end\n' >&2
   exit 1
 fi
 if ! "$node_bin" --input-type=module -e '
