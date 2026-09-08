@@ -72,4 +72,52 @@ describe("native shared Chat screen", () => {
       "clerk-token", scopeId, "1", "Ready", expect.any(String),
     ));
   });
+
+  it("discards an old Chat history page after opening another shared Chat", async () => {
+    const secondScopeId = "10000000-0000-4000-8000-000000000002";
+    const scopeFor = (id: string, chatId: string) => ({
+      id, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+      revision: "1", authEpoch: "1", authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+    });
+    const chatFor = (id: string, scope: string, title: string, messageCount = "1") => ({
+      id, scopeId: scope, title, lifecycle: "active", revision: "1", messageCount,
+    });
+    const messageFor = (id: string, chatId: string, sequence: string, text: string) => ({
+      id, chatId, sequence, role: "user", state: "committed", purpose: "discussion",
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [
+      { scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+        status: "accepted", resource: { scope: scopeFor(scopeId, "chat_a"), chat: chatFor("chat_a", scopeId, "Chat A", "2") } },
+      { scopeId: secondScopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+        status: "accepted", resource: { scope: scopeFor(secondScopeId, "chat_b"), chat: chatFor("chat_b", secondScopeId, "Chat B") } },
+    ] });
+    mockFetchScope.mockImplementation(async (_token: string, selectedScopeId: string) => selectedScopeId === scopeId
+      ? scopeFor(scopeId, "chat_a") : scopeFor(secondScopeId, "chat_b"));
+    mockFetchChat.mockImplementation(async (_token: string, selectedScopeId: string) => selectedScopeId === scopeId
+      ? chatFor("chat_a", scopeId, "Chat A", "2") : chatFor("chat_b", secondScopeId, "Chat B"));
+    let resolveOldPage!: (value: unknown) => void;
+    mockFetchMessages.mockImplementation(async (_token: string, selectedScopeId: string, after?: string) => {
+      if (selectedScopeId === scopeId && after === "1") {
+        return new Promise<unknown>((resolve) => { resolveOldPage = resolve; });
+      }
+      return { messages: selectedScopeId === scopeId
+        ? [messageFor("msg_a1", "chat_a", "1", "A first")]
+        : [messageFor("msg_b1", "chat_b", "1", "B current")] };
+    });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Chat A"));
+    fireEvent.press(await screen.findByLabelText("Load more messages"));
+    await waitFor(() => expect(resolveOldPage).toBeDefined());
+    fireEvent.press(screen.getByLabelText("Back to Shared with me"));
+    fireEvent.press(await screen.findByLabelText("Open Chat B"));
+    expect(await screen.findByText("B current")).toBeTruthy();
+    resolveOldPage({ messages: [messageFor("msg_a2", "chat_a", "2", "A stale")] });
+    await waitFor(() => expect(screen.queryByText("A stale")).toBeNull());
+    expect(screen.getByText("B current")).toBeTruthy();
+  });
 });

@@ -57,10 +57,11 @@ export function fetchSharedChat(token: string, scopeId: string) {
   return fetchAuthenticatedJson({ url: url(`/api/collaboration/scopes/${id}/chat`), token, schema: CollaborationChatSchema, errorMessage: ERROR });
 }
 
-export function fetchSharedChatMessages(token: string, scopeId: string) {
+export function fetchSharedChatMessages(token: string, scopeId: string, after = "0") {
   const id = CollaborationIdSchema.parse(scopeId);
+  const cursor = CollaborationRevisionSchema.parse(after);
   return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/chat/messages?after=0&limit=100`), token,
+    url: url(`/api/collaboration/scopes/${id}/chat/messages?after=${cursor}&limit=100`), token,
     schema: CollaborationChatMessagesResponseSchema, errorMessage: ERROR,
   });
 }

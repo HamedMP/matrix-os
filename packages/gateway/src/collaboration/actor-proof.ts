@@ -3,6 +3,7 @@ import {
   CollaborationSignedActorProofSchema,
   CollaborationSignedPolicySchema,
   type CollaborationActorProof,
+  type CollaborationDeleteCondition,
   type CollaborationPolicy,
 } from "@matrix-os/contracts";
 import type {
@@ -46,6 +47,7 @@ export class CollaborationActorProofVerifier {
     path: string;
     query: string;
     body: Uint8Array;
+    conditionalHeaders?: CollaborationDeleteCondition;
   }): Promise<CollaborationActorProof> {
     const parsed = CollaborationSignedActorProofSchema.safeParse(input.signedProof);
     if (!parsed.success) throw invalidProof();
@@ -65,7 +67,8 @@ export class CollaborationActorProofVerifier {
       || input.method !== proof.method
       || input.path !== proof.path
       || input.query !== proof.query
-      || digestBody(input.body) !== proof.bodyDigest) {
+      || digestBody(input.body) !== proof.bodyDigest
+      || digestConditionalHeaders(input.conditionalHeaders) !== proof.conditionalHeadersDigest) {
       throw invalidProof();
     }
     this.rejectReplay(proof, expiresAt, now);
@@ -78,6 +81,7 @@ export class CollaborationActorProofVerifier {
     path: string;
     query: string;
     body: Uint8Array;
+    conditionalHeaders?: CollaborationDeleteCondition;
     action: CollaborationAction;
   }): Promise<AuthorizedCollaborationContext> {
     const proof = await this.verifyHttp(input);
@@ -118,6 +122,7 @@ export class CollaborationActorProofVerifier {
       || proof.path !== input.path
       || proof.query !== (input.query ?? "")
       || proof.bodyDigest !== digestBody(new Uint8Array())
+      || proof.conditionalHeadersDigest !== digestConditionalHeaders(undefined)
       || !proof.scopeId
       || issuedAt > now + MAX_CLOCK_SKEW_MS
       || expiresAt <= now
@@ -182,6 +187,14 @@ function constantTimeSignatureMatches(
 
 function digestBody(body: Uint8Array): string {
   return createHash("sha256").update(body).digest("hex");
+}
+
+function digestConditionalHeaders(value: CollaborationDeleteCondition | undefined): string {
+  return createHash("sha256").update(value === undefined ? "" : JSON.stringify({
+    clientRequestId: value.clientRequestId,
+    expectedRevision: value.expectedRevision,
+    expectedMemberRevision: value.expectedMemberRevision,
+  })).digest("hex");
 }
 
 function invalidProof(): CollaborationActorProofError {

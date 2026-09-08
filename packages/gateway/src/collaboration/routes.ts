@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import {
   COLLABORATION_HTTP_BODY_LIMIT,
+  COLLABORATION_CLIENT_REQUEST_ID_HEADER,
+  COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
+  COLLABORATION_EXPECTED_REVISION_HEADER,
   CollaborationAcceptInvitationRequestSchema,
   CollaborationActorIdSchema,
   CollaborationCreateDiscussionRequestSchema,
@@ -8,6 +11,8 @@ import {
   CollaborationCreateScopeRequestSchema,
   CollaborationIdSchema,
   CollaborationInvitationSchema,
+  CollaborationLifecycleRequestSchema,
+  CollaborationOperationSchema,
   CollaborationMemberPatchRequestSchema,
   CollaborationMemberSchema,
   CollaborationRevisionSchema,
@@ -16,6 +21,7 @@ import {
   CollaborationScopePreflightRequestSchema,
   CollaborationScopePreflightResponseSchema,
   CollaborationScopeSchema,
+  CollaborationScopeExportSchema,
   CollaborationUserStatePatchSchema,
   CollaborationUserStateSchema,
 } from "@matrix-os/contracts";
@@ -185,9 +191,9 @@ export function createCollaborationRoutes(options: {
   routes.delete("/api/collaboration/scopes/:scopeId/invitations/:invitationId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const invitationId = CollaborationIdSchema.parse(c.req.param("invitationId"));
-    const { value, bytes } = await readJson(c);
+    const bytes = new Uint8Array();
+    const input = deleteConditions(c);
     const context = await authorize(options, c, bytes, "manage_members", scopeId);
-    const input = CollaborationRevokeRequestSchema.parse(value);
     const result = await options.repository.revokeInvitation({
       scopeId,
       invitationId,
@@ -195,7 +201,7 @@ export function createCollaborationRoutes(options: {
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
       expectedMemberRevision: Number(input.expectedMemberRevision),
-      payloadHash: digest(bytes),
+      payloadHash: digestDeleteConditions(input),
     });
     options.onRevoked?.(scopeId, result.actorId);
     await notifyScope(options, scopeId);
@@ -225,8 +231,8 @@ export function createCollaborationRoutes(options: {
   routes.delete("/api/collaboration/scopes/:scopeId/members/:actorId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const targetActorId = CollaborationActorIdSchema.parse(c.req.param("actorId"));
-    const { value, bytes } = await readJson(c);
-    const input = CollaborationRevokeRequestSchema.parse(value);
+    const bytes = new Uint8Array();
+    const input = deleteConditions(c);
     const proof = await verifyHttp(options.verifier, c, bytes);
     if (proof.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Member access is required");
     const context = proof.actorId === targetActorId
@@ -239,7 +245,7 @@ export function createCollaborationRoutes(options: {
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
       expectedMemberRevision: Number(input.expectedMemberRevision),
-      payloadHash: digest(bytes),
+      payloadHash: digestDeleteConditions(input),
     });
     options.onRevoked?.(scopeId, result.actorId);
     await notifyScope(options, scopeId);
@@ -250,13 +256,7 @@ export function createCollaborationRoutes(options: {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     requireChatContext(context);
-    const state = await options.repository.getChatUserState(context.resourceId, context.actorId);
-    return c.json(CollaborationUserStateSchema.parse({
-      readThroughSeq: String(state.readThroughSeq),
-      pinned: state.pinned,
-      muted: state.muted,
-      ...(state.lastOpenedAt ? { lastOpenedAt: state.lastOpenedAt } : {}),
-    }));
+    return c.json(await options.chatAdapter.getUserState(context));
   }));
 
   routes.patch("/api/collaboration/scopes/:scopeId/user-state", async (c) => handle(c, async () => {
@@ -265,29 +265,7 @@ export function createCollaborationRoutes(options: {
     const context = await authorize(options, c, bytes, "read", scopeId);
     requireChatContext(context);
     const input = CollaborationUserStatePatchSchema.parse(value);
-    const readThroughSeq = input.readThroughSeq === undefined ? undefined : Number(input.readThroughSeq);
-    if (readThroughSeq !== undefined) {
-      const latest = await options.repository.db.selectFrom("chat_messages")
-        .select(({ fn }) => fn.max("seq").as("sequence"))
-        .where("chat_id", "=", context.resourceId)
-        .executeTakeFirst();
-      z.number().int().safe().min(0).max(Number(latest?.sequence ?? 0)).parse(readThroughSeq);
-    }
-    await options.repository.updateChatUserState({
-      chatId: context.resourceId,
-      actorId: context.actorId,
-      ...(readThroughSeq === undefined ? {} : { readThroughSeq }),
-      ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
-      ...(input.muted === undefined ? {} : { muted: input.muted }),
-      openedAt: now().toISOString(),
-    });
-    const state = await options.repository.getChatUserState(context.resourceId, context.actorId);
-    return c.json(CollaborationUserStateSchema.parse({
-      readThroughSeq: String(state.readThroughSeq),
-      pinned: state.pinned,
-      muted: state.muted,
-      ...(state.lastOpenedAt ? { lastOpenedAt: state.lastOpenedAt } : {}),
-    }));
+    return c.json(await options.chatAdapter.updateUserState(context, input));
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId/chat", async (c) => handle(c, async () => {
@@ -316,6 +294,47 @@ export function createCollaborationRoutes(options: {
     return c.json(await options.chatAdapter.appendDiscussion(context, input), 201);
   }));
 
+  routes.post("/api/collaboration/scopes/:scopeId/lifecycle", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const proof = await verifyHttp(options.verifier, c, bytes);
+    requireOwnerLifecycleProof(proof, scopeId);
+    const input = CollaborationLifecycleRequestSchema.parse(value);
+    if (["transfer", "recover"].includes(input.type)) {
+      throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
+    }
+    const result = await options.repository.applyChatLifecycle({
+      scopeId,
+      actorId: proof.actorId,
+      type: input.type,
+      clientRequestId: input.clientRequestId,
+      expectedRevision: Number(input.expectedRevision),
+      payloadHash: digest(bytes),
+    });
+    await notifyScope(options, scopeId);
+    return c.json(CollaborationOperationSchema.parse(result));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/operations/:operationId", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const operationId = CollaborationIdSchema.parse(c.req.param("operationId"));
+    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
+    requireOwnerLifecycleProof(proof, scopeId);
+    const operation = await options.repository.getLifecycleOperation(scopeId, proof.actorId, operationId);
+    if (!operation) throw new CollaborationRepositoryError("not_found", "Lifecycle operation not found");
+    return c.json(CollaborationOperationSchema.parse(operation));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/exports/:exportId", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const exportId = CollaborationIdSchema.parse(c.req.param("exportId"));
+    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
+    requireOwnerLifecycleProof(proof, scopeId);
+    const exported = await options.repository.getScopeExport(scopeId, proof.actorId, exportId);
+    if (!exported) throw new CollaborationRepositoryError("not_found", "Scope export not found");
+    return c.json(CollaborationScopeExportSchema.parse(exported));
+  }));
+
   return routes;
 }
 
@@ -332,10 +351,24 @@ async function authorize(
     path: c.req.path,
     query: rawQuery(c),
     body,
+    conditionalHeaders: optionalDeleteConditions(c),
     action,
   });
   if (context.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Scope access is required");
   return context;
+}
+
+function optionalDeleteConditions(c: Context) {
+  if (c.req.method !== "DELETE") return undefined;
+  return deleteConditions(c);
+}
+
+function deleteConditions(c: Context) {
+  return CollaborationRevokeRequestSchema.parse({
+    clientRequestId: c.req.header(COLLABORATION_CLIENT_REQUEST_ID_HEADER),
+    expectedRevision: c.req.header(COLLABORATION_EXPECTED_REVISION_HEADER),
+    expectedMemberRevision: c.req.header(COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER),
+  });
 }
 
 async function verifyHttp(verifier: CollaborationActorProofVerifier, c: Context, body: Uint8Array) {
@@ -345,7 +378,12 @@ async function verifyHttp(verifier: CollaborationActorProofVerifier, c: Context,
     path: c.req.path,
     query: rawQuery(c),
     body,
+    conditionalHeaders: optionalDeleteConditions(c),
   });
+}
+
+function digestDeleteConditions(input: z.infer<typeof CollaborationRevokeRequestSchema>): string {
+  return digest(new TextEncoder().encode(JSON.stringify(input)));
 }
 
 function decodeProof(c: Context): unknown {
@@ -379,7 +417,17 @@ function requireOwnerCreationProof(
   }
 }
 
+function requireOwnerLifecycleProof(
+  proof: { actorId: string; ownerId: string; scopeId?: string },
+  scopeId: string,
+): void {
+  if (proof.scopeId !== scopeId || proof.actorId !== proof.ownerId) {
+    throw new CollaborationAuthorizationError("forbidden", "Owner lifecycle access is required");
+  }
+}
+
 function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCollaborationContext) {
+  const mutable = scope.lifecycle === "shared";
   return CollaborationScopeSchema.parse({
     id: scope.id,
     ownerId: scope.ownerId,
@@ -394,8 +442,8 @@ function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCol
     role: context.role,
     capabilities: {
       read: true,
-      discuss: context.role !== "viewer" && scope.lifecycle === "shared",
-      manageMembers: context.role === "owner" && scope.membershipMode === "direct",
+      discuss: context.role !== "viewer" && mutable,
+      manageMembers: context.role === "owner" && scope.membershipMode === "direct" && mutable,
       requestAi: false,
     },
   });

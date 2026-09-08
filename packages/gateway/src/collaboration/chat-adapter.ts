@@ -4,11 +4,14 @@ import {
   CollaborationChatSchema,
   CollaborationCreateDiscussionRequestSchema,
   CollaborationHumanMessageSchema,
+  CollaborationUserStatePatchSchema,
+  CollaborationUserStateSchema,
   type CanonicalChatMessage,
   type CanonicalChatMessagePart,
   type CollaborationHumanMessage,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
+import { z } from "zod/v4";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "./authority.js";
 import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./database.js";
 import { CollaborationRepositoryError } from "./repository.js";
@@ -179,13 +182,18 @@ export class CollaborationChatAdapter {
       || current.ownerId !== context.ownerId || input.limit < 1 || input.limit > 100) {
       throw new CollaborationAuthorizationError("unavailable", "Shared Chat history is unavailable");
     }
-    const rows = await this.options.db.selectFrom("chat_messages")
-      .selectAll()
-      .where("chat_id", "=", current.resourceId)
-      .where("seq", ">", Number(input.afterSequence))
-      .orderBy("seq", "asc")
-      .limit(input.limit)
-      .execute();
+    const rows = await this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, current);
+      await reauthorizeRead(trx, current, this.now());
+      requireCurrentEpoch(scope, current, await membershipEpoch(trx, current));
+      return trx.selectFrom("chat_messages")
+        .selectAll()
+        .where("chat_id", "=", current.resourceId)
+        .where("seq", ">", Number(input.afterSequence))
+        .orderBy("seq", "asc")
+        .limit(input.limit)
+        .execute();
+    });
     const authors = new Map<string, { actorId: string; displayName: string }>();
     for (const row of rows) {
       if (!row.actor_id || authors.has(row.actor_id)) continue;
@@ -219,12 +227,17 @@ export class CollaborationChatAdapter {
       || current.ownerId !== context.ownerId) {
       throw new CollaborationAuthorizationError("unavailable", "Shared Chat is unavailable");
     }
-    const chat = await this.options.db.selectFrom("chats")
-      .select(["id", "title", "lifecycle", "revision", "message_count", "last_message_preview", "collaboration"])
-      .where("id", "=", current.resourceId)
-      .where("owner_type", "=", "personal")
-      .where("owner_id", "=", current.ownerId)
-      .executeTakeFirst();
+    const chat = await this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, current);
+      await reauthorizeRead(trx, current, this.now());
+      requireCurrentEpoch(scope, current, await membershipEpoch(trx, current));
+      return trx.selectFrom("chats")
+        .select(["id", "title", "lifecycle", "revision", "message_count", "last_message_preview", "collaboration"])
+        .where("id", "=", current.resourceId)
+        .where("owner_type", "=", "personal")
+        .where("owner_id", "=", current.ownerId)
+        .executeTakeFirst();
+    });
     if (!chat || !bindingMatches(chat.collaboration, current.scopeId)) {
       throw new CollaborationAuthorizationError("unavailable", "Shared Chat is unavailable");
     }
@@ -236,6 +249,78 @@ export class CollaborationChatAdapter {
       revision: String(chat.revision),
       messageCount: String(chat.message_count),
       ...(chat.last_message_preview ? { lastMessagePreview: chat.last_message_preview } : {}),
+    });
+  }
+
+  async getUserState(context: AuthorizedCollaborationContext) {
+    return this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, context);
+      await reauthorizeRead(trx, context, this.now());
+      requireCurrentEpoch(scope, context, await membershipEpoch(trx, context));
+      const row = await trx.selectFrom("chat_user_state")
+        .select(["read_through_seq", "pinned", "muted", "last_opened_at"])
+        .where("chat_id", "=", context.resourceId)
+        .where("principal_id", "=", context.actorId)
+        .executeTakeFirst();
+      return CollaborationUserStateSchema.parse(row ? {
+        readThroughSeq: String(row.read_through_seq),
+        pinned: row.pinned,
+        muted: row.muted,
+        ...(row.last_opened_at === null ? {} : { lastOpenedAt: toIso(row.last_opened_at) }),
+      } : { readThroughSeq: "0", pinned: false, muted: false });
+    });
+  }
+
+  async updateUserState(context: AuthorizedCollaborationContext, input: unknown) {
+    const patch = CollaborationUserStatePatchSchema.parse(input);
+    const readThroughSeq = patch.readThroughSeq === undefined ? undefined : z.coerce.number()
+      .int().min(0).max(Number.MAX_SAFE_INTEGER).parse(patch.readThroughSeq);
+    const now = this.now().toISOString();
+    return this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, context);
+      await reauthorizeRead(trx, context, this.now());
+      requireCurrentEpoch(scope, context, await membershipEpoch(trx, context));
+      const chat = await trx.selectFrom("chats")
+        .select(["message_count", "collaboration"])
+        .where("id", "=", context.resourceId)
+        .where("owner_type", "=", "personal")
+        .where("owner_id", "=", context.ownerId)
+        .executeTakeFirst();
+      if (!chat || !bindingMatches(chat.collaboration, context.scopeId)) {
+        throw new CollaborationAuthorizationError("unavailable", "Shared Chat binding is unavailable");
+      }
+      if (readThroughSeq !== undefined) {
+        z.number().max(Number(chat.message_count)).parse(readThroughSeq);
+      }
+      await trx.insertInto("chat_user_state").values({
+        chat_id: context.resourceId,
+        principal_id: context.actorId,
+        read_through_seq: readThroughSeq ?? 0,
+        pinned: patch.pinned ?? false,
+        muted: patch.muted ?? false,
+        attention_acknowledged_at: null,
+        last_opened_at: now,
+        updated_at: now,
+      }).onConflict((conflict) => conflict.columns(["chat_id", "principal_id"]).doUpdateSet({
+        ...(readThroughSeq === undefined ? {} : {
+          read_through_seq: sql<number>`GREATEST(chat_user_state.read_through_seq, ${readThroughSeq})`,
+        }),
+        ...(patch.pinned === undefined ? {} : { pinned: patch.pinned }),
+        ...(patch.muted === undefined ? {} : { muted: patch.muted }),
+        last_opened_at: now,
+        updated_at: now,
+      })).execute();
+      const row = await trx.selectFrom("chat_user_state")
+        .select(["read_through_seq", "pinned", "muted", "last_opened_at"])
+        .where("chat_id", "=", context.resourceId)
+        .where("principal_id", "=", context.actorId)
+        .executeTakeFirstOrThrow();
+      return CollaborationUserStateSchema.parse({
+        readThroughSeq: String(row.read_through_seq),
+        pinned: row.pinned,
+        muted: row.muted,
+        ...(row.last_opened_at === null ? {} : { lastOpenedAt: toIso(row.last_opened_at) }),
+      });
     });
   }
 
@@ -301,6 +386,32 @@ async function reauthorizeDiscussion(
   if (!member || member.status !== "accepted" || !["owner", "editor"].includes(member.role)
     || (member.expires_at !== null && new Date(member.expires_at).getTime() <= now.getTime())) {
     throw new CollaborationAuthorizationError("forbidden", "Discussion access is required");
+  }
+}
+
+async function reauthorizeRead(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  context: AuthorizedCollaborationContext,
+  now: Date,
+): Promise<void> {
+  const member = await trx.selectFrom("collaboration_members")
+    .select(["status", "expires_at"])
+    .where("scope_id", "=", context.membershipScopeId)
+    .where("actor_id", "=", context.actorId)
+    .executeTakeFirst();
+  if (!member || member.status !== "accepted"
+    || (member.expires_at !== null && new Date(member.expires_at).getTime() <= now.getTime())) {
+    throw new CollaborationAuthorizationError("forbidden", "Current membership is required");
+  }
+}
+
+function requireCurrentEpoch(
+  scope: Selectable<CollaborationScopesTable>,
+  context: AuthorizedCollaborationContext,
+  inheritedEpoch: number,
+): void {
+  if (Math.max(Number(scope.auth_epoch), inheritedEpoch) !== context.authEpoch) {
+    throw new CollaborationRepositoryError("conflict", "Scope authority changed");
   }
 }
 

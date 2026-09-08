@@ -127,6 +127,76 @@ describe("CollaborationChatAdapter discussion", () => {
     })).rejects.toMatchObject({ code: "forbidden" });
   });
 
+  it("rejects member-local state writes from a context revoked before commit", async () => {
+    const editor = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+    await fixture.db.updateTable("collaboration_members").set({ status: "revoked" })
+      .where("scope_id", "=", collaborationIds.scope)
+      .where("actor_id", "=", collaborationActors.editor).execute();
+    await expect(adapter.updateUserState(editor, { pinned: true }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    expect(await repository.getChatUserState(collaborationIds.chat, collaborationActors.editor))
+      .toMatchObject({ pinned: false });
+  });
+
+  it("validates read cursors against safe integers and canonical history inside the write transaction", async () => {
+    const editor = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+    await expect(adapter.updateUserState(editor, { readThroughSeq: "9007199254740992" }))
+      .rejects.toBeDefined();
+    await expect(adapter.updateUserState(editor, { readThroughSeq: "1" }))
+      .rejects.toBeDefined();
+    expect(await fixture.db.selectFrom("chat_user_state").selectAll().execute()).toEqual([]);
+
+    const writer = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    });
+    await adapter.appendDiscussion(writer, {
+      clientRequestId: requestId,
+      expectedRevision: "1",
+      text: "Read me",
+    });
+    await expect(adapter.updateUserState(editor, { readThroughSeq: "1" }))
+      .resolves.toMatchObject({ readThroughSeq: "1" });
+    await expect(adapter.updateUserState(editor, { readThroughSeq: "0" }))
+      .resolves.toMatchObject({ readThroughSeq: "1" });
+  });
+
+  it("rechecks membership in the same transaction as canonical history reads", async () => {
+    const staleContext = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+    const racingAdapter = new CollaborationChatAdapter({
+      db: fixture.db,
+      authority: {
+        authorize: async () => {
+          await fixture.db.updateTable("collaboration_members").set({ status: "revoked" })
+            .where("scope_id", "=", collaborationIds.scope)
+            .where("actor_id", "=", collaborationActors.editor)
+            .execute();
+          return staleContext;
+        },
+      },
+      now: () => new Date(now),
+      resolveParticipant: async (actorId) => ({ actorId, displayName: "Participant" }),
+    });
+
+    await expect(racingAdapter.listMessages(staleContext, { afterSequence: "0", limit: 50 }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    await expect(racingAdapter.getChat(staleContext))
+      .rejects.toMatchObject({ code: "forbidden" });
+  });
+
   it("returns canonical history while making owner-home attachment destinations inert", async () => {
     await fixture.db.insertInto("chat_messages").values({
       id: "msg_historical",

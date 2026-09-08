@@ -77,6 +77,15 @@ export interface CollaborationAuditTable {
   created_at: Timestamp;
 }
 
+export interface CollaborationExportsTable {
+  id: string;
+  scope_id: string;
+  owner_id: string;
+  payload: JsonValue;
+  created_at: Timestamp;
+  expires_at: Timestamp;
+}
+
 export interface CollaborationDirectoryOutboxTable {
   event_id: string;
   scope_id: string;
@@ -101,6 +110,7 @@ export interface CollaborationDatabase {
   collaboration_members: CollaborationMembersTable;
   collaboration_operations: CollaborationOperationsTable;
   collaboration_events: CollaborationEventsTable;
+  collaboration_exports: CollaborationExportsTable;
   collaboration_audit: CollaborationAuditTable;
   collaboration_directory_outbox: CollaborationDirectoryOutboxTable;
   collaboration_schema_migrations: CollaborationSchemaMigrationsTable;
@@ -209,6 +219,17 @@ export async function bootstrapCollaborationDatabase(
     )
   `.execute(db);
   await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_exports (
+      id UUID PRIMARY KEY,
+      scope_id UUID NOT NULL REFERENCES collaboration_scopes(id),
+      owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 128),
+      payload JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      CHECK (jsonb_typeof(payload) = 'object')
+    )
+  `.execute(db);
+  await sql`
     CREATE TABLE IF NOT EXISTS collaboration_directory_outbox (
       event_id UUID PRIMARY KEY,
       scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
@@ -266,6 +287,10 @@ export async function bootstrapCollaborationDatabase(
   await sql`
     CREATE INDEX IF NOT EXISTS idx_collaboration_operations_expiry
     ON collaboration_operations(expires_at)
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_exports_expiry
+    ON collaboration_exports(expires_at)
   `.execute(db);
   await sql`
     INSERT INTO collaboration_schema_migrations (version)

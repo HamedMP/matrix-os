@@ -159,6 +159,50 @@ describe("CollaborationProxy", () => {
     expect(signedProof.proof.scopeId).toBeUndefined();
   });
 
+  it("routes only the exact owner lifecycle, operation, and export paths", () => {
+    const operationId = "50000000-0000-4000-8000-000000000001";
+    expect(parseCollaborationProxyRoute("POST", `/api/collaboration/scopes/${scopeId}/lifecycle`))
+      .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `/api/collaboration/scopes/${scopeId}/operations/${operationId}`))
+      .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `/api/collaboration/scopes/${scopeId}/exports/${operationId}`))
+      .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `/api/collaboration/scopes/${scopeId}/exports/${operationId}/raw`))
+      .toBeNull();
+  });
+
+  it("keeps owner lifecycle recovery available while the M1 rollout policy is off", async () => {
+    await repository.setPolicy({
+      milestone: "m1",
+      expectedRevision: 1,
+      mode: "off",
+      cohort: [],
+      changedBy: "operator_rollback",
+    });
+    const path = `/api/collaboration/scopes/${scopeId}/lifecycle`;
+    const body = new TextEncoder().encode(JSON.stringify({
+      type: "export",
+      clientRequestId: "50000000-0000-4000-8000-000000000009",
+      expectedRevision: "1",
+    }));
+    expect((await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "POST",
+      path,
+      query: "",
+      body,
+      headers: new Headers({ "content-type": "application/json" }),
+    })).status).toBe(200);
+    expect((await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "POST",
+      path,
+      query: "",
+      body,
+      headers: new Headers({ "content-type": "application/json" }),
+    })).status).toBe(404);
+  });
+
   it.each([
     ["GET", `/api/collaboration/scopes/${scopeId}/../../files`],
     ["POST", `/api/collaboration/scopes/${scopeId}/terminal/input`],
@@ -190,6 +234,41 @@ describe("CollaborationProxy", () => {
     });
     expect(response.status).toBe(403);
     expect(await response.text()).toBe("Collaboration request denied");
+  });
+
+  it("forwards only signed conditional headers on body-free DELETE", async () => {
+    const path = `/api/collaboration/scopes/${scopeId}/members/${platformCollaborationActors.recipientWithoutComputer}`;
+    const conditions = {
+      "x-matrix-client-request-id": "40000000-0000-4000-8000-000000000009",
+      "x-matrix-expected-revision": "3",
+      "x-matrix-expected-member-revision": "2",
+    };
+    const response = await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "DELETE",
+      path,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers({ ...conditions, "x-matrix-owner-token": "never-forward" }),
+    });
+    expect(response.status).toBe(200);
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const forwarded = new Headers(init.headers);
+    expect(forwarded.get("x-matrix-client-request-id")).toBe(conditions["x-matrix-client-request-id"]);
+    expect(forwarded.has("x-matrix-owner-token")).toBe(false);
+    expect(init.body).toBeUndefined();
+    const signedProof = JSON.parse(Buffer.from(forwarded.get("x-matrix-collaboration-proof")!, "base64url").toString("utf8"));
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
+    });
+    await expect(verifier.verifyHttp({
+      signedProof, method: "DELETE", path, query: "", body: new Uint8Array(),
+      conditionalHeaders: {
+        clientRequestId: conditions["x-matrix-client-request-id"],
+        expectedRevision: conditions["x-matrix-expected-revision"],
+        expectedMemberRevision: conditions["x-matrix-expected-member-revision"],
+      },
+    })).resolves.toMatchObject({ actorId: platformCollaborationActors.owner });
   });
 
   it("returns a safe unavailable response on timeout or upstream failure", async () => {

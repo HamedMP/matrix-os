@@ -42,6 +42,8 @@ export default function SharedScreen() {
   const [scope, setScope] = useState<Scope | null>(null);
   const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -69,7 +71,7 @@ export default function SharedScreen() {
   const loadChat = useCallback(async (scopeId: string) => {
     const generation = ++chatLoadGeneration.current;
     setLoading(true); setError(""); setView({ kind: "chat", scopeId });
-    setScope(null); setChat(null); setMessages([]); setDraft("");
+    setScope(null); setChat(null); setMessages([]); setDraft(""); setLoadingMoreMessages(false);
     try {
       const actorToken = await token();
       const [nextScope, nextChat, history] = await Promise.all([
@@ -80,6 +82,7 @@ export default function SharedScreen() {
       const nextDraft = await loadCollaborationDraft(AsyncStorage, { actorId: userId, scopeId, chatId: nextChat.id });
       if (generation !== chatLoadGeneration.current) return;
       setScope(nextScope); setChat(nextChat); setMessages(history.messages); setDraft(nextDraft);
+      setHasMoreMessages(BigInt(nextChat.messageCount) > BigInt(history.messages.length));
       const sequence = history.messages.at(-1)?.sequence;
       if (sequence) void updateSharedChatReadState(actorToken, scopeId, sequence).catch((failure: unknown) => {
         console.warn("[mobile-collaboration] read state failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -93,6 +96,26 @@ export default function SharedScreen() {
       if (generation === chatLoadGeneration.current) setLoading(false);
     }
   }, [token, userId]);
+  const loadMoreMessages = async () => {
+    if (view.kind !== "chat" || !chat || loadingMoreMessages) return;
+    const after = messages.at(-1)?.sequence;
+    if (!after) return;
+    const generation = chatLoadGeneration.current;
+    setLoadingMoreMessages(true); setError("");
+    try {
+      const page = await fetchSharedChatMessages(await token(), view.scopeId, after);
+      if (generation !== chatLoadGeneration.current) return;
+      const appended = page.messages.filter((message) => !messages.some((known) => known.id === message.id));
+      const combined = [...messages, ...appended];
+      setMessages(combined);
+      setHasMoreMessages(appended.length > 0 && BigInt(chat.messageCount) > BigInt(combined.length));
+    } catch (failure: unknown) {
+      console.warn("[mobile-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
+      if (generation === chatLoadGeneration.current) setError("More messages could not be loaded. Try again.");
+    } finally {
+      if (generation === chatLoadGeneration.current) setLoadingMoreMessages(false);
+    }
+  };
   const review = async (invitationId: string) => {
     setLoading(true); setError("");
     try { setView({ kind: "invitation", invitation: await fetchCollaborationInvitation(await token(), invitationId) }); }
@@ -155,7 +178,12 @@ export default function SharedScreen() {
   if (view.kind === "chat") {
     const viewer = scope?.role === "viewer";
     return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <View style={styles.header}><Back onPress={() => { setView({ kind: "home" }); void loadHome(); }} />
+      <View style={styles.header}><Back onPress={() => {
+        chatLoadGeneration.current += 1;
+        setLoadingMoreMessages(false);
+        setView({ kind: "home" });
+        void loadHome();
+      }} />
         <Text style={styles.title}>{chat?.title ?? "Shared Chat"}</Text><Text style={styles.muted}>{scope ? `${roleLabel(scope.role)} · Discussion only` : "Loading…"}</Text></View>
       {loading ? <ActivityIndicator accessibilityLabel="Loading shared Chat" /> : null}
       <ScrollView contentContainerStyle={styles.history}>
@@ -166,6 +194,8 @@ export default function SharedScreen() {
             ? renderChatMarkdown(part.text, markdownTheme).map((node, nodeIndex) => <View key={`${index}:${nodeIndex}`}>{node}</View>)
             : part.type === "attachment_reference" ? [<Text key={index} style={styles.muted}>Attachment: {part.label}</Text>] : [])}
         </View>)}
+        {hasMoreMessages ? <Action label={loadingMoreMessages ? "Loading…" : "Load more messages"}
+          disabled={loadingMoreMessages} onPress={() => void loadMoreMessages()} /> : null}
       </ScrollView>
       <View style={styles.composer}><Text style={styles.muted}>{viewer ? "Viewers can read this Chat but cannot post messages." : "Messages are shared with everyone in this Chat."}</Text>
         <Text style={styles.muted}>AI requests are unavailable in shared Chats during this milestone.</Text>

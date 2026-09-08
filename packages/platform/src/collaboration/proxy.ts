@@ -1,4 +1,10 @@
-import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
+import {
+  COLLABORATION_CLIENT_REQUEST_ID_HEADER,
+  COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
+  COLLABORATION_EXPECTED_REVISION_HEADER,
+  COLLABORATION_HTTP_BODY_LIMIT,
+  CollaborationDeleteConditionSchema,
+} from "@matrix-os/contracts";
 import type { CollaborationProofSigner } from "./proof.js";
 import type { PlatformCollaborationRepository } from "./repository.js";
 
@@ -25,6 +31,9 @@ const SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/messages$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/messages$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/lifecycle$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/operations/${UUID}$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/exports/${UUID}$`)],
 ] as const;
 
 const INVITATION_ROUTES = [
@@ -86,6 +95,14 @@ export class CollaborationProxy {
     if (input.body.byteLength > COLLABORATION_HTTP_BODY_LIMIT) {
       return safeResponse("Collaboration request too large", 413);
     }
+    const conditionalHeaders = input.method === "DELETE" ? CollaborationDeleteConditionSchema.safeParse({
+      clientRequestId: input.headers.get(COLLABORATION_CLIENT_REQUEST_ID_HEADER),
+      expectedRevision: input.headers.get(COLLABORATION_EXPECTED_REVISION_HEADER),
+      expectedMemberRevision: input.headers.get(COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER),
+    }) : undefined;
+    if (input.method === "DELETE" && (input.body.byteLength !== 0 || !conditionalHeaders?.success)) {
+      return safeResponse("Invalid collaboration request", 422);
+    }
     try {
       const directory = route.kind === "scope"
         ? await this.options.repository.getDirectoryRoute(route.identifier)
@@ -105,7 +122,7 @@ export class CollaborationProxy {
       const participants = scopeId
         ? await this.options.repository.listScopeActors(scopeId)
         : [input.actorId];
-      if (!policyAllows(policy, input.actorId, ownerId, participants, input.method)) {
+      if (!policyAllows(policy, input.actorId, ownerId, participants, input.method, input.path)) {
         return safeResponse("Collaboration unavailable", policy.mode === "read_only" ? 403 : 404);
       }
       runtime ??= await this.options.resolveRuntime(directory!.runtimeId);
@@ -124,10 +141,16 @@ export class CollaborationProxy {
         path: input.path,
         query: input.query,
         body: input.body,
+        ...(conditionalHeaders?.success ? { conditionalHeaders: conditionalHeaders.data } : {}),
       });
       const headers = new Headers();
       const contentType = input.headers.get("content-type");
       if (contentType && contentType.length <= 128) headers.set("content-type", contentType);
+      if (conditionalHeaders?.success) {
+        headers.set(COLLABORATION_CLIENT_REQUEST_ID_HEADER, conditionalHeaders.data.clientRequestId);
+        headers.set(COLLABORATION_EXPECTED_REVISION_HEADER, conditionalHeaders.data.expectedRevision);
+        headers.set(COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER, conditionalHeaders.data.expectedMemberRevision);
+      }
       headers.set("accept", "application/json");
       headers.set(PROOF_HEADER, Buffer.from(JSON.stringify(signedProof)).toString("base64url"));
       const response = await (this.options.fetchImpl ?? fetch)(
@@ -175,12 +198,33 @@ function policyAllows(
   ownerId: string,
   participants: string[],
   method: string,
+  path: string,
 ): boolean {
+  if (ownerRecoveryRoute(actorId, ownerId, method, path)) return true;
   if (policy.mode === "off") return false;
   if (policy.mode === "read_only") return method === "GET";
   if (policy.mode === "enabled") return true;
   const cohort = new Set(policy.cohort);
   return cohort.has(actorId) && cohort.has(ownerId) && participants.every((actor) => cohort.has(actor));
+}
+
+function ownerRecoveryRoute(
+  actorId: string,
+  ownerId: string,
+  method: string,
+  path: string,
+): boolean {
+  if (actorId !== ownerId) return false;
+  if (method === "DELETE") {
+    return new RegExp(`^/api/collaboration/scopes/${UUID}/(?:invitations/${UUID}|members/${ACTOR})$`).test(path);
+  }
+  if (method === "POST") {
+    return new RegExp(`^/api/collaboration/scopes/${UUID}/lifecycle$`).test(path);
+  }
+  if (method === "GET") {
+    return new RegExp(`^/api/collaboration/scopes/${UUID}(?:|/members|/operations/${UUID}|/exports/${UUID})$`).test(path);
+  }
+  return false;
 }
 
 function parseRuntimeBaseUrl(value: string): URL | null {
@@ -227,13 +271,13 @@ function safeContentType(value: string | null): string {
   return value?.startsWith("application/json") ? "application/json" : "application/octet-stream";
 }
 
-function safeStatus(status: number): 401 | 403 | 404 | 409 | 413 | 429 | 503 {
-  return [401, 403, 404, 409, 413, 429].includes(status)
-    ? status as 401 | 403 | 404 | 409 | 413 | 429
+function safeStatus(status: number): 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503 {
+  return [401, 403, 404, 409, 413, 422, 429].includes(status)
+    ? status as 401 | 403 | 404 | 409 | 413 | 422 | 429
     : 503;
 }
 
-function safeResponse(message: string, status: 401 | 403 | 404 | 409 | 413 | 429 | 503): Response {
+function safeResponse(message: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503): Response {
   return new Response(message, {
     status,
     headers: { "cache-control": "private, no-store", "content-type": "text/plain; charset=utf-8" },

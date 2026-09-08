@@ -2,6 +2,8 @@ import {
   COLLABORATION_HTTP_BODY_LIMIT,
   CollaborationActorIdSchema,
   CollaborationConnectionTicketRequestSchema,
+  CollaborationDiscoveryItemSchema,
+  CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -178,7 +180,17 @@ async function listDiscovery(
     const entries = (await options.repository.listForActor(actorId)).filter((entry) => entry.status === status);
     const resources = await mapLimited(entries, MAX_HYDRATION_CONCURRENCY, async (entry) => {
       try {
-        return { entry, resource: await options.hydrate({ actorId, entry }) };
+        const resource = await options.hydrate({ actorId, entry });
+        return CollaborationDiscoveryItemSchema.parse({
+          scopeId: entry.scopeId,
+          runtimeId: entry.runtimeId,
+          ownerId: entry.ownerId,
+          kind: entry.kind,
+          authorityGeneration: entry.authorityGeneration,
+          status: entry.status,
+          ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
+          resource,
+        });
       } catch (error: unknown) {
         console.warn(
           "[platform-collaboration] discovery entry unavailable",
@@ -188,11 +200,10 @@ async function listDiscovery(
       }
     });
     c.header("Cache-Control", "private, no-store");
-    return c.json({
+    return c.json(CollaborationDiscoveryResponseSchema.parse({
       items: resources
-        .filter((result): result is NonNullable<typeof result> => result !== null)
-        .map(({ entry, resource }) => ({ ...entry, resource })),
-    });
+        .filter((result): result is NonNullable<typeof result> => result !== null),
+    }));
   } catch (error: unknown) {
     console.warn("[platform-collaboration] discovery hydration failed", error instanceof Error ? error.name : "UnknownError");
     return safeJson(c, "Collaboration unavailable", 503);

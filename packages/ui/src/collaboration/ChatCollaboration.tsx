@@ -178,6 +178,8 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
   const [scope, setScope] = useState<z.infer<typeof CollaborationScopeSchema> | null>(null);
   const [chat, setChat] = useState<z.infer<typeof CollaborationChatSchema> | null>(null);
   const [messages, setMessages] = useState<SharedMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [draft, setDraft] = useState<CollaborationDraft>({ text: "", mode: "discussion" });
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -199,7 +201,9 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
       const nextMessages = CollaborationChatMessagesResponseSchema.parse(messagesValue).messages;
       if (generation !== loadGeneration.current) return;
       setScope(nextScope); setChat(nextChat); setMessages(nextMessages);
+      setLoadingMoreMessages(false);
       setError((current) => clearForegroundError || current === "load" || current === "unavailable" ? null : current);
+      setHasMoreMessages(BigInt(nextChat.messageCount) > BigInt(nextMessages.length));
       if (api.patch && nextMessages.length > 0) {
         const sequence = nextMessages.at(-1)!.sequence;
         void api.patch(`${base}/user-state`, { readThroughSeq: sequence }).catch((failure: unknown) => {
@@ -215,10 +219,39 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
   }, [api, scopeId]);
   useEffect(() => {
     setScope(null); setChat(null); setMessages([]); setDraft({ text: "", mode: "discussion" });
-    setLoading(true); setError(null);
+    setLoading(true); setLoadingMoreMessages(false); setError(null);
     void load(true);
     return () => { loadGeneration.current += 1; };
   }, [load]);
+  const loadMoreMessages = async () => {
+    const after = messages.at(-1)?.sequence;
+    if (!after || !chat || loadingMoreMessages) return;
+    const generation = loadGeneration.current;
+    setLoadingMoreMessages(true);
+    try {
+      const next = CollaborationChatMessagesResponseSchema.parse(await api.get(
+        `/api/collaboration/scopes/${encodeURIComponent(scopeId)}/chat/messages?after=${encodeURIComponent(after)}&limit=100`,
+      )).messages;
+      if (generation !== loadGeneration.current) return;
+      const appended = next.filter((message) => !messages.some((known) => known.id === message.id));
+      const combined = [...messages, ...appended];
+      setMessages(combined);
+      setHasMoreMessages(appended.length > 0 && BigInt(chat.messageCount) > BigInt(combined.length));
+      const sequence = combined.at(-1)?.sequence;
+      if (sequence && api.patch) {
+        void api.patch(`/api/collaboration/scopes/${encodeURIComponent(scopeId)}/user-state`, {
+          readThroughSeq: sequence,
+        }).catch((failure: unknown) => {
+          console.warn("[chat-collaboration] read state update failed", failure instanceof Error ? failure.name : "UnknownError");
+        });
+      }
+    } catch (failure: unknown) {
+      console.warn("[chat-collaboration] history page failed", failure instanceof Error ? failure.name : "UnknownError");
+      if (generation === loadGeneration.current) setError("load");
+    } finally {
+      if (generation === loadGeneration.current) setLoadingMoreMessages(false);
+    }
+  };
   useEffect(() => {
     if (!scope) return;
     const key = collaborationDraftKey({ actorId, runtimeId, scopeId, chatId: scope.resourceId });
@@ -261,6 +294,10 @@ function SharedChatView({ api, actorId, runtimeId, scopeId, storage }: {
         <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start the discussion</h2>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Messages here are visible to everyone in this shared Chat.</p>
       </div> : messages.map((message) => <SharedMessageView key={message.id} message={message} />)}
+      {hasMoreMessages ? <div className="text-center"><button type="button" className={buttonClass}
+        disabled={loadingMoreMessages} onClick={() => void loadMoreMessages()}>
+        {loadingMoreMessages ? "Loading…" : "Load more messages"}
+      </button></div> : null}
     </section>
     <footer className="border-t p-4 sm:px-6">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>

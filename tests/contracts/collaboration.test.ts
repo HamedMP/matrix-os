@@ -8,6 +8,9 @@ import {
   CollaborationCreateScopeRequestSchema,
   CollaborationEventFrameSchema,
   CollaborationInvitationSchema,
+  CollaborationLifecycleRequestSchema,
+  CollaborationOperationSchema,
+  CollaborationScopeExportSchema,
   CollaborationSharedChatMessageSchema,
   CollaborationMemberPatchRequestSchema,
   CollaborationPolicySchema,
@@ -190,6 +193,7 @@ describe("collaboration contracts", () => {
       path: `/api/collaboration/scopes/${scopeId}/chat/messages`,
       query: "",
       bodyDigest: "a".repeat(64),
+      conditionalHeadersDigest: "c".repeat(64),
       nonce: "b".repeat(32),
       issuedAt: now,
       expiresAt: "2026-09-07T12:00:30.000Z",
@@ -206,6 +210,7 @@ describe("collaboration contracts", () => {
       path: "https://owner.internal/api/collaboration",
       query: "",
       bodyDigest: "a".repeat(64),
+      conditionalHeadersDigest: "c".repeat(64),
       nonce: "b".repeat(32),
       issuedAt: now,
       expiresAt: "2026-09-07T12:00:30.000Z",
@@ -267,6 +272,55 @@ describe("collaboration contracts", () => {
       clientRequestId: requestId,
       purpose: "owner-terminal",
     }).success).toBe(false);
+  });
+
+  it("keeps lifecycle operations conditional, owner-directed, and content bounded by scope", () => {
+    expect(CollaborationLifecycleRequestSchema.parse({
+      type: "export",
+      clientRequestId: requestId,
+      expectedRevision: "4",
+    })).toMatchObject({ type: "export" });
+    expect(CollaborationLifecycleRequestSchema.safeParse({
+      type: "delete",
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      actorId: "user_other",
+    }).success).toBe(false);
+    expect(CollaborationLifecycleRequestSchema.safeParse({
+      type: "transfer",
+      clientRequestId: requestId,
+      expectedRevision: "4",
+    }).success).toBe(false);
+
+    expect(CollaborationOperationSchema.parse({
+      id: requestId,
+      scopeId,
+      type: "export",
+      status: "completed",
+      revision: "4",
+      exportId: requestId,
+      createdAt: now,
+    })).toMatchObject({ status: "completed", exportId: requestId });
+
+    const exported = CollaborationScopeExportSchema.parse({
+      version: 1,
+      id: requestId,
+      scopeId,
+      exportedAt: now,
+      expiresAt: "2026-09-14T12:00:00.000Z",
+      scope: { kind: "chat", resourceId: "chat_release", lifecycle: "shared", revision: "4" },
+      members: [{ actorId: "user_owner", role: "owner", status: "accepted", revision: "1" }],
+      audit: [{ actorId: "user_owner", action: "scope.exported", outcome: "completed", revision: "4", createdAt: now }],
+      chat: {
+        id: "chat_release",
+        title: "Release planning",
+        lifecycle: "active",
+        revision: "4",
+        messages: [],
+        attachments: [],
+      },
+    });
+    expect(JSON.stringify(exported)).not.toContain("draft");
   });
 
   it("validates hydrated discovery and safe attributed history projections", () => {

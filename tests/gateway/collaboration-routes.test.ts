@@ -22,6 +22,10 @@ const invitationRequestId = "50000000-0000-4000-8000-000000000001";
 const acceptanceRequestId = "50000000-0000-4000-8000-000000000002";
 const discussionRequestId = "50000000-0000-4000-8000-000000000003";
 
+function request(index: number): string {
+  return `50000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
+}
+
 describe("collaboration gateway routes", () => {
   let fixture: CollaborationTestDatabase;
   let app: Hono;
@@ -256,6 +260,86 @@ describe("collaboration gateway routes", () => {
     expect(await fixture.db.selectFrom("chat_user_state").selectAll().execute()).toEqual([]);
   });
 
+  it("exposes owner-only Chat archive, restore, export, operation, and delete routes", async () => {
+    await shareChat();
+    const lifecyclePath = `/api/collaboration/scopes/${collaborationIds.scope}/lifecycle`;
+    const archived = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "archive", clientRequestId: request(30), expectedRevision: "1" },
+    });
+    expect(archived.status).toBe(200);
+    expect(await archived.json()).toMatchObject({ type: "archive", revision: "2" });
+    const archivedScope = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}`,
+    });
+    expect(await archivedScope.json()).toMatchObject({
+      lifecycle: "archived",
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+    });
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/chat/messages`,
+      body: { clientRequestId: request(31), expectedRevision: "2", text: "Archived write" },
+    })).status).toBe(503);
+
+    const restored = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "restore", clientRequestId: request(32), expectedRevision: "2" },
+    });
+    expect(restored.status).toBe(200);
+    const exported = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "export", clientRequestId: request(33), expectedRevision: "3" },
+    });
+    expect(exported.status).toBe(200);
+    expect(await exported.json()).toMatchObject({ exportId: request(33), status: "completed" });
+    const operation = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/operations/${request(33)}`,
+    });
+    expect(operation.status).toBe(200);
+    expect(await operation.json()).toMatchObject({ type: "export", exportId: request(33) });
+    const artifact = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/exports/${request(33)}`,
+    });
+    expect(artifact.status).toBe(200);
+    expect(await artifact.json()).toMatchObject({ scopeId: collaborationIds.scope, chat: { id: collaborationIds.chat } });
+
+    const deleted = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "delete", clientRequestId: request(34), expectedRevision: "3" },
+    });
+    expect(deleted.status).toBe(200);
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}`,
+    })).status).toBe(404);
+  });
+
   it("applies downgrade immediately and revocation removes all live scope access", async () => {
     await shareChat();
     await signedJson({
@@ -303,7 +387,7 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "DELETE",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/members/${collaborationActors.editor}`,
-      body: {
+      deleteConditions: {
         clientRequestId: "50000000-0000-4000-8000-000000000021",
         expectedRevision: "4",
         expectedMemberRevision: "3",
@@ -315,7 +399,7 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "GET",
       path: `/api/collaboration/scopes/${collaborationIds.scope}`,
-    })).status).toBe(403);
+    })).status).toBe(404);
   });
 
   it("rejects snapshot-token substitution and oversized mutation bodies", async () => {
@@ -353,6 +437,18 @@ describe("collaboration gateway routes", () => {
     })).status).toBe(413);
   });
 
+  it("returns generic not-found to outsiders without weakening viewer denials", async () => {
+    await shareChat();
+    const outsider = await signedJson({
+      actorId: collaborationActors.outsider,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/chat`,
+    });
+    expect(outsider.status).toBe(404);
+    expect(await outsider.json()).toEqual({ error: "Collaboration unavailable", code: "not_found" });
+  });
+
   async function shareChat(): Promise<void> {
     const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
     const preflight = await signedJson({
@@ -383,6 +479,7 @@ describe("collaboration gateway routes", () => {
     path: string;
     query?: string;
     body?: unknown;
+    deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string };
   }): Promise<Response> {
     const body = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
@@ -394,12 +491,18 @@ describe("collaboration gateway routes", () => {
       path: input.path,
       query: input.query ?? "",
       body,
+      ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
     });
     return app.request(`${input.path}${input.query ? `?${input.query}` : ""}`, {
       method: input.method,
       headers: {
         "content-type": "application/json",
         "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(proof)).toString("base64url"),
+        ...(input.deleteConditions ? {
+          "x-matrix-client-request-id": input.deleteConditions.clientRequestId,
+          "x-matrix-expected-revision": input.deleteConditions.expectedRevision,
+          "x-matrix-expected-member-revision": input.deleteConditions.expectedMemberRevision,
+        } : {}),
       },
       ...(input.body === undefined ? {} : { body: new TextDecoder().decode(body) }),
     });
