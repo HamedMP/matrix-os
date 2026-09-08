@@ -43,6 +43,7 @@ export type {
 export * from "#canonical-chat-compatibility-public";
 export * from "#canonical-chat-provider";
 export * from "#canonical-chat-surface";
+export * from "#collaboration";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#kernel-result";
