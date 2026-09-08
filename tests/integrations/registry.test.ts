@@ -11,9 +11,9 @@ import {
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("Service Registry", () => {
-  it("has the 14-service managed catalog", () => {
-    expect(listServices()).toHaveLength(14);
-    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(14);
+  it("has the 15-service managed catalog", () => {
+    expect(listServices()).toHaveLength(15);
+    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(15);
   });
 
   it("returns service by id", () => {
@@ -157,6 +157,73 @@ describe("Service Registry", () => {
       const actions = Object.values(getService(serviceId)!.actions);
       expect(actions.every((action) => action.risk === "read"), serviceId).toBe(true);
     }
+  });
+
+  it("exposes bounded X read and write actions through the Twitter connector", () => {
+    const x = getService("twitter");
+    expect(x).toMatchObject({
+      id: "twitter",
+      name: "X",
+      category: "social",
+      connectorKind: "pipedream",
+      pipedreamApp: "twitter",
+      icon: "x",
+    });
+
+    expect(Object.keys(x!.actions)).toEqual([
+      "get_authenticated_user",
+      "get_user_by_username",
+      "list_user_posts",
+      "search_recent_posts",
+      "create_post",
+    ]);
+    expect(x!.actions.get_authenticated_user.risk).toBe("read");
+    expect(x!.actions.get_user_by_username.risk).toBe("read");
+    expect(x!.actions.list_user_posts.risk).toBe("read");
+    expect(x!.actions.search_recent_posts.risk).toBe("read");
+    expect(x!.actions.create_post.risk).toBe("write");
+
+    expect(x!.actions.get_authenticated_user.directApi).toMatchObject({
+      method: "GET",
+      url: "https://api.x.com/2/users/me",
+    });
+    expect(x!.actions.get_authenticated_user.directApi!.mapParams!({})).toEqual({
+      "user.fields": "created_at,description,location,profile_image_url,protected,public_metrics,url,verified",
+    });
+
+    expect(x!.actions.get_user_by_username.directApi!.url({ username: "Matrix_OS" })).toBe(
+      "https://api.x.com/2/users/by/username/Matrix_OS",
+    );
+    expect(x!.actions.list_user_posts.directApi!.url({ userId: "2244994945" })).toBe(
+      "https://api.x.com/2/users/2244994945/tweets",
+    );
+    expect(x!.actions.list_user_posts.directApi!.mapParams!({ maxResults: 500 })).toEqual({
+      max_results: "100",
+      "tweet.fields": "author_id,conversation_id,created_at,lang,public_metrics,referenced_tweets",
+    });
+    expect(x!.actions.search_recent_posts.directApi!.mapParams!({
+      query: "matrix os -is:retweet",
+      maxResults: 25,
+      nextToken: "abc123",
+    })).toEqual({
+      query: "matrix os -is:retweet",
+      max_results: "25",
+      next_token: "abc123",
+      "tweet.fields": "author_id,conversation_id,created_at,lang,public_metrics,referenced_tweets",
+      expansions: "author_id",
+      "user.fields": "name,profile_image_url,username,verified",
+    });
+    expect(x!.actions.create_post.directApi).toMatchObject({
+      method: "POST",
+      url: "https://api.x.com/2/tweets",
+    });
+    expect(x!.actions.create_post.directApi!.mapBody!({
+      text: "Hello from Matrix OS",
+      replyToPostId: "1234567890",
+    })).toEqual({
+      text: "Hello from Matrix OS",
+      reply: { in_reply_to_tweet_id: "1234567890" },
+    });
   });
 
   it("uses only compile-time static header names", () => {

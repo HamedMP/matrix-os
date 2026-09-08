@@ -174,7 +174,7 @@ prerequisites, URLs, and health checks.
 <tr><td><b>Run a browser desktop</b></td><td>Canvas-first web shell with windows, dock, app launcher, wallpapers, terminal, file browser, and generated apps.</td></tr>
 <tr><td><b>Keep agent work persistent</b></td><td>Projects, terminals, task context, logs, app state, and workspace state survive across sessions and devices.</td></tr>
 <tr><td><b>Talk through channels</b></td><td>Reach the same kernel through web, CLI, Telegram, WhatsApp, Discord, Slack, Matrix protocol, and voice surfaces as they are enabled.</td></tr>
-<tr><td><b>Connect services</b></td><td>Pipedream Connect integration for Gmail, Slack, GitHub, and 2,400+ services with OAuth-managed settings.</td></tr>
+<tr><td><b>Connect services</b></td><td>Managed integrations for Gmail, Slack, GitHub, X, and more through OAuth or provider-approved credentials.</td></tr>
 <tr><td><b>Automate on schedule</b></td><td>Cron jobs, heartbeat workflows, proactive tasks, and scheduled agent runs.</td></tr>
 <tr><td><b>Heal and expand</b></td><td>Specialized agents can diagnose failures, repair files, add skills, and grow new capabilities.</td></tr>
 <tr><td><b>Own your data</b></td><td>Identity and configuration are files. App and workspace data live in owner-controlled Postgres, not an opaque platform database.</td></tr>

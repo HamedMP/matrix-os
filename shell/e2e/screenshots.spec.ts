@@ -195,6 +195,53 @@ test.describe("Visual regression", () => {
     });
   });
 
+  test("settings integrations includes X", async ({ page }) => {
+    await page.route("**/api/integrations/available", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "gmail", name: "Gmail", category: "google", icon: "mail", actions: {} },
+          { id: "github", name: "GitHub", category: "developer", icon: "github", actions: {} },
+          { id: "slack", name: "Slack", category: "communication", icon: "message-square", actions: {} },
+          {
+            id: "twitter",
+            name: "X",
+            category: "social",
+            icon: "x",
+            logoUrl: "/integration-logos/x.svg",
+            actions: {},
+          },
+        ]),
+      }),
+    );
+    await page.route("**/api/integrations", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
+    );
+    await page.route("**/api/integrations/sync", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ services: [] }),
+      }),
+    );
+    await page.route("**/api/mcp-servers", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
+    );
+
+    await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    await page.getByRole("button", { name: "Services" }).click();
+    await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+    await expect(page.getByText("X", { exact: true }).last()).toBeVisible();
+    const xLogo = page.getByRole("img", { name: "X" });
+    await expect(xLogo).toBeVisible();
+    await expect(xLogo).toHaveAttribute("src", "/integration-logos/x.svg");
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("settings-integrations-x.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
   test("billing pricing", async ({ page }) => {
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
     await page.getByRole("button", { name: "Billing" }).click();

@@ -1,5 +1,6 @@
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import { EXPANSION_SERVICE_REGISTRY } from "./registry-expansion.js";
+import { X_SERVICE_REGISTRY } from "./registry-x.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
@@ -983,6 +984,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     },
   },
 
+  ...X_SERVICE_REGISTRY,
   ...EXPANSION_SERVICE_REGISTRY,
 });
 

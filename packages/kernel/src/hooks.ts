@@ -235,6 +235,7 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "jira/create_issue",
   "jira/update_issue",
   "jira/add_comment",
+  "twitter/create_post",
 ]);
 
 interface CustomMcpProjectionFile {

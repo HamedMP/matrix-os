@@ -3,6 +3,10 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { listServices, getService, getAction } from "./registry.js";
+import {
+  formatActionParamValidationError,
+  validateActionParams,
+} from "./parameter-validation.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
@@ -62,46 +66,6 @@ function verifyHmac(payload: string, signature: string, secret: string): boolean
   expectedBuf.copy(paddedExpected);
   signatureBuf.copy(paddedSignature);
   return signatureBuf.length === expectedBuf.length && timingSafeEqual(paddedSignature, paddedExpected);
-}
-
-// ---------------------------------------------------------------------------
-// Per-action param validation
-// ---------------------------------------------------------------------------
-
-export function validateActionParams(
-  actionDef: ServiceAction,
-  params: Record<string, unknown> | undefined,
-): { valid: true } | { valid: false; missing: string[]; typeErrors: string[] } {
-  const missing: string[] = [];
-  const typeErrors: string[] = [];
-
-  for (const [name, def] of Object.entries(actionDef.params)) {
-    const value = params?.[name];
-    if (def.required && (value === undefined || value === null)) {
-      missing.push(name);
-      continue;
-    }
-    if (value !== undefined && value !== null) {
-      const expectedType = def.type;
-      const actualType = typeof value;
-      if (expectedType === "string" && actualType !== "string") {
-        typeErrors.push(`${name}: expected string, got ${actualType}`);
-      } else if (expectedType === "number" && actualType !== "number") {
-        typeErrors.push(`${name}: expected number, got ${actualType}`);
-      } else if (expectedType === "boolean" && actualType !== "boolean") {
-        typeErrors.push(`${name}: expected boolean, got ${actualType}`);
-      } else if (expectedType === "object" && (actualType !== "object" || Array.isArray(value))) {
-        typeErrors.push(`${name}: expected object, got ${actualType}`);
-      } else if (expectedType === "array" && !Array.isArray(value)) {
-        typeErrors.push(`${name}: expected array, got ${actualType}`);
-      }
-    }
-  }
-
-  if (missing.length > 0 || typeErrors.length > 0) {
-    return { valid: false, missing, typeErrors };
-  }
-  return { valid: true };
 }
 
 export class IntegrationActionNotImplementedError extends Error {
@@ -510,7 +474,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   }
 
   // -----------------------------------------------------------------------
-  // GET /available -- public, no auth. Enriches registry with Pipedream logos.
+  // GET /available -- public, no auth. Enriches Pipedream-hosted fallback logos.
   // -----------------------------------------------------------------------
 
   const logoCache = new Map<string, string>();
@@ -525,7 +489,11 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const promise = (async () => {
       const services = listServices();
       const results = await Promise.allSettled(
-        services.filter((service) => service.connectorKind === "pipedream" && service.pipedreamApp).map(async (s) => {
+        services.filter(
+          (service) => service.connectorKind === "pipedream"
+            && service.pipedreamApp
+            && service.logoUrl.startsWith("https://pipedream.com/"),
+        ).map(async (s) => {
           const info = await pipedream.getAppInfo(s.pipedreamApp!);
           if (info?.imgSrc) {
             if (logoCache.size >= LOGO_CACHE_MAX) logoCache.delete(logoCache.keys().next().value!);
@@ -883,17 +851,11 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     // Validate action params against the registry definition
     const paramValidation = validateActionParams(actionDef, params);
     if (!paramValidation.valid) {
-      const parts: string[] = [];
-      if (paramValidation.missing.length > 0) {
-        parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
-      }
-      if (paramValidation.typeErrors.length > 0) {
-        parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
-      }
       return c.json({
-        error: parts.join(". "),
+        error: formatActionParamValidationError(paramValidation),
         missing: paramValidation.missing.length > 0 ? paramValidation.missing : undefined,
         type_errors: paramValidation.typeErrors.length > 0 ? paramValidation.typeErrors : undefined,
+        value_errors: paramValidation.valueErrors?.length ? paramValidation.valueErrors : undefined,
       }, 400);
     }
 

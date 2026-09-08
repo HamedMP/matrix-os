@@ -1138,6 +1138,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         { id: "gmail", name: "Gmail", category: "Google Workspace" },
         { id: "github", name: "GitHub", category: "Developer tools" },
         { id: "slack", name: "Slack", category: "Communication" },
+        { id: "twitter", name: "X", category: "Social" },
       ]);
       return;
     }
