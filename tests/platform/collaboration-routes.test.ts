@@ -140,7 +140,7 @@ describe("platform collaboration routes", () => {
     const healthyHydrate = hydrate;
     hydrate = async (input) => {
       const { entry } = input;
-      if (entry.scopeId === unavailableScopeId) throw new Error("owner runtime stopped");
+      if (entry.scopeId === unavailableScopeId) return { malformed: "owner response" };
       return healthyHydrate(input);
     };
 

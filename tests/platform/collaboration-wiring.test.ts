@@ -38,7 +38,19 @@ describe("platform collaboration wiring", () => {
     const upstream = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
       String(input).endsWith("/chat")
         ? { id: "chat_one", scopeId, title: "Shared planning", lifecycle: "active", revision: "2", messageCount: "3" }
-        : { id: scopeId, role: "editor" },
+        : {
+            id: scopeId,
+            ownerId: platformCollaborationActors.owner,
+            kind: "chat",
+            resourceId: "chat_one",
+            membershipMode: "direct",
+            lifecycle: "shared",
+            revision: "2",
+            authEpoch: "2",
+            authorityGeneration: "1",
+            role: "editor",
+            capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+          },
     ), {
       headers: { "content-type": "application/json" },
     }));
@@ -84,7 +96,7 @@ describe("platform collaboration wiring", () => {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ id: scopeId, role: "editor" });
+    expect(await response.json()).toMatchObject({ id: scopeId, role: "editor" });
     expect(upstream).toHaveBeenCalledOnce();
     const [, init] = upstream.mock.calls[0]!;
     expect(new Headers(init?.headers).has("x-matrix-collaboration-proof")).toBe(true);
