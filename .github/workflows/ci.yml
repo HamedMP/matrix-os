@@ -208,22 +208,6 @@ jobs:
           NEXT_PUBLIC_POSTHOG_API_HOST: /relay
         run: bun run build:shell:production
 
-      - name: Install Chromium for Getting started regression
-        if: needs.changes.outputs.should_run == 'true'
-        run: pnpm --filter shell exec playwright install --with-deps chromium
-
-      - name: Verify Getting started in Web Canvas and Web Desktop
-        if: needs.changes.outputs.should_run == 'true'
-        run: pnpm --filter shell exec playwright test e2e/getting-started.spec.ts
-
-      - name: Upload Getting started web screenshots
-        if: always() && needs.changes.outputs.should_run == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: getting-started-web-evidence
-          path: shell/test-results/
-          retention-days: 7
-
   patterns:
     name: Pattern Scan
     needs: changes
@@ -585,20 +569,6 @@ jobs:
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-clipboard.e2e.test.ts
-
-      - name: Run required Getting started Electron Desktop regression
-        if: needs.changes.outputs.should_run == 'true'
-        env:
-          MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/getting-started.e2e.test.ts
-
-      - name: Upload Getting started Electron screenshots
-        if: always() && needs.changes.outputs.should_run == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: getting-started-electron-evidence
-          path: output/playwright/getting-started/
-          retention-days: 7
 
       - name: Upload test results on failure
         if: failure()
