@@ -20,4 +20,11 @@ describe("Custom MCP platform startup wiring", () => {
     expect(source).toMatch(/registerCustomMcpStartupCleanup\(closeCustomMcpDb\);\s*await customDb\.migrate\(\)/);
     expect(source).toMatch(/catch \(startupError: unknown\)[\s\S]*await customMcpStartupCleanup\?\.\(\)[\s\S]*throw startupError/);
   });
+
+  it("allows dynamic OAuth client registration without a static client ID", async () => {
+    const source = await readFile("packages/platform/src/platform-startup.ts", "utf8");
+    expect(source).not.toContain("!oauthClientId || !oauthRedirectUri");
+    expect(source).not.toContain("Custom MCP requires MCP_OAUTH_CLIENT_ID");
+    expect(source).toContain("clientId: oauthClientId");
+  });
 });

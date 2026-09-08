@@ -28,6 +28,10 @@ revision. Missing, stale, disabled, or mismatched state fails closed.
 
 - Create: validate URL → create `pending` database row → atomically project →
   activate. Pending rows expire after 24 hours.
+- OAuth connect: discover protected-resource and authorization-server metadata;
+  use an explicitly configured client ID when present, otherwise register a
+  public DCR client; bind a dynamically issued ID to its authorization-server
+  issuer and persist it only inside the encrypted owner credential.
 - Discover: initialize current Streamable HTTP, cap catalog/schema sizes, and
   persist every discovered tool disabled with `always_ask`.
 - Enable: requires at least one selected tool and optimistic revision match.
@@ -44,7 +48,7 @@ revision. Missing, stale, disabled, or mismatched state fails closed.
 | Mode | Stored platform-side | Notes |
 | --- | --- | --- |
 | none | nothing | HTTPS only |
-| OAuth | access/rotating refresh token and discovered metadata | discovery, PKCE S256, expiring one-time state, resource audience binding |
+| OAuth | access/rotating refresh token, issuer-bound dynamic client ID, and discovered metadata | discovery, public-client DCR or configured fallback, PKCE S256, expiring one-time state, resource audience binding |
 | bearer | encrypted token | emits only `Authorization: Bearer` |
 | api_key | encrypted token | emits only compile-time `X-API-Key` name |
 

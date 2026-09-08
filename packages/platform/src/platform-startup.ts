@@ -38,6 +38,7 @@ import {
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { buildPlatformVerificationToken } from './platform-token.js';
 import { buildCustomMcpProjectionUrl } from './custom-mcp-projection.js';
+import { GRANOLA_PRESET, planGranolaAction } from './granola-integration.js';
 import { backfillFirstRunRecords } from './journey.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
@@ -502,9 +503,9 @@ async function startPlatformServerWithCleanup(
     const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
     const oauthRedirectUri = process.env.MCP_OAUTH_CALLBACK_URL;
     const encryptionKeyRaw = process.env.MCP_CREDENTIAL_ENCRYPTION_KEY;
-    if (!oauthClientId || !oauthRedirectUri || !platformSecret) {
+    if (!oauthRedirectUri || !platformSecret) {
       throw new Error(
-        'Custom MCP requires MCP_OAUTH_CLIENT_ID, MCP_OAUTH_CALLBACK_URL, and PLATFORM_SECRET',
+        'Custom MCP requires MCP_OAUTH_CALLBACK_URL and PLATFORM_SECRET',
       );
     }
     if (!encryptionKeyRaw || [
@@ -612,12 +613,6 @@ async function startPlatformServerWithCleanup(
       clientId: oauthClientId,
       redirectUri: oauthRedirectUri,
     });
-    const GRANOLA_PRESET = {
-      id: 'granola',
-      name: 'Granola',
-      url: 'https://mcp.granola.ai/mcp',
-      tools: ['list_meetings', 'get_meetings', 'get_meeting_transcript'] as const,
-    };
     managedMcpPresetBroker = {
       listConnections: async (userId) => {
         let row = await broker.getPreset(userId, GRANOLA_PRESET.id);
@@ -628,7 +623,7 @@ async function startPlatformServerWithCleanup(
               userId,
               presetId: GRANOLA_PRESET.id,
               allowedTools: GRANOLA_PRESET.tools,
-              requiredTools: ['list_meetings', 'get_meetings'],
+              requiredTools: GRANOLA_PRESET.requiredTools,
             });
           } catch (error: unknown) {
             console.warn('[granola] preset activation pending:', error instanceof Error ? error.message : String(error));
@@ -659,45 +654,22 @@ async function startPlatformServerWithCleanup(
           userId,
           presetId: GRANOLA_PRESET.id,
           allowedTools: GRANOLA_PRESET.tools,
-          requiredTools: ['list_meetings', 'get_meetings'],
+          requiredTools: GRANOLA_PRESET.requiredTools,
         });
-        if (actionId === 'list_notes') {
-          return broker.callSelectedTool({
+        const plan = planGranolaAction(actionId, params, row.tools);
+        const results: unknown[] = [];
+        for (const call of plan.calls) {
+          results.push(await broker.callSelectedTool({
             userId,
             serverId: row.id,
-            toolName: 'list_meetings',
-            arguments: params,
+            toolName: call.toolName,
+            arguments: call.arguments,
             approvalGranted: true,
-          });
+          }));
         }
-        if (actionId !== 'get_note' || typeof params?.noteId !== 'string') {
-          throw new Error('Unknown Granola action');
-        }
-        const argumentsFor = (toolName: string) => {
-          const tool = row.tools.find((candidate: any) => candidate.name === toolName);
-          const properties = tool?.inputSchema?.properties as Record<string, unknown> | undefined;
-          const single = ['meeting_id', 'meetingId', 'id'].find((key) => properties?.[key]);
-          if (single) return { [single]: params.noteId };
-          const plural = ['meeting_ids', 'meetingIds', 'ids'].find((key) => properties?.[key]);
-          if (plural) return { [plural]: [params.noteId] };
-          throw new Error(`Granola ${toolName} schema has no supported meeting identifier`);
-        };
-        const note = await broker.callSelectedTool({
-          userId,
-          serverId: row.id,
-          toolName: 'get_meetings',
-          arguments: argumentsFor('get_meetings'),
-          approvalGranted: true,
-        });
-        if (params.includeTranscript !== true) return note;
-        const transcript = await broker.callSelectedTool({
-          userId,
-          serverId: row.id,
-          toolName: 'get_meeting_transcript',
-          arguments: argumentsFor('get_meeting_transcript'),
-          approvalGranted: true,
-        });
-        return { note, transcript };
+        return plan.combine
+          ? { note: results[0], transcript: results[1] }
+          : results[0];
       },
       disconnect: async (userId, connectionId) => {
         const row = await broker.getPreset(userId, GRANOLA_PRESET.id);

@@ -126,7 +126,7 @@ describe("Service Registry", () => {
         write: [],
       },
       granola: {
-        read: ["list_notes", "get_note"],
+        read: ["search_notes", "list_folders", "list_notes", "get_note", "get_account"],
         write: [],
       },
     };
