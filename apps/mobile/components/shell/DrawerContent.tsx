@@ -9,6 +9,7 @@ import PencilEdit02Icon from "@hugeicons/core-free-icons/PencilEdit02Icon";
 import PlusSignIcon from "@hugeicons/core-free-icons/PlusSignIcon";
 import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
+import UserMultiple02Icon from "@hugeicons/core-free-icons/UserMultiple02Icon";
 import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated, {
@@ -30,6 +31,7 @@ const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
   { route: "terminal", label: "Terminal", icon: ComputerTerminal01Icon },
   { route: "integrations", label: "Integrations", icon: PuzzleIcon },
   { route: "apps", label: "Apps", icon: GridViewIcon },
+  { route: "shared", label: "Shared with me", icon: UserMultiple02Icon },
 ];
 
 interface DrawerContentProps extends DrawerContentComponentProps {

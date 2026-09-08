@@ -14,6 +14,16 @@ export interface ChatMarkdownTheme {
 
 const INLINE_RE = /(\*\*(.+?)\*\*|~~(.+?)~~|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
 
+export function isSafeChatLink(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" || url.protocol === "mailto:";
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return false;
+    throw error;
+  }
+}
+
 /**
  * Inline spans only (bold/strikethrough/italic/code/link). Pure function of
  * `text` -- called fresh on every render with whatever text currently
@@ -72,11 +82,12 @@ function inlineNodes(text: string, keyPrefix: string, theme: ChatMarkdownTheme):
       );
     } else if (match[6] !== undefined && match[7] !== undefined) {
       const url = match[7];
+      const safe = isSafeChatLink(url);
       elements.push(
         <Text
           key={`${keyPrefix}-tok${match.index}`}
-          style={[theme.textStyle, { color: theme.linkColor, textDecorationLine: "underline" }]}
-          onPress={() => void Linking.openURL(url)}
+          style={safe ? [theme.textStyle, { color: theme.linkColor, textDecorationLine: "underline" }] : theme.textStyle}
+          {...(safe ? { onPress: () => void Linking.openURL(url) } : {})}
         >
           {match[6]}
         </Text>,

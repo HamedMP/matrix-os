@@ -81,6 +81,7 @@ export default function DrawerLayout() {
       <Drawer.Screen name="terminal" options={{ title: null, drawerLabel: "Terminal" }} />
       <Drawer.Screen name="integrations" options={{ title: null, drawerLabel: "Integrations" }} />
       <Drawer.Screen name="apps" options={{ title: null, drawerLabel: "Apps" }} />
+      <Drawer.Screen name="shared" options={{ title: null, drawerLabel: "Shared with me" }} />
       <Drawer.Screen name="settings" options={{ title: null, drawerLabel: "Settings" }} />
     </Drawer>
   );

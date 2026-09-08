@@ -2,11 +2,13 @@ import {
   CollaborationActorProofSchema,
   CollaborationCapabilityModeSchema,
   CollaborationConnectionTicketRequestSchema,
+  CollaborationDiscoveryResponseSchema,
   CollaborationCreateDiscussionRequestSchema,
   CollaborationCreateInvitationRequestSchema,
   CollaborationCreateScopeRequestSchema,
   CollaborationEventFrameSchema,
   CollaborationInvitationSchema,
+  CollaborationSharedChatMessageSchema,
   CollaborationMemberPatchRequestSchema,
   CollaborationPolicySchema,
   CollaborationRoleSchema,
@@ -265,5 +267,29 @@ describe("collaboration contracts", () => {
       clientRequestId: requestId,
       purpose: "owner-terminal",
     }).success).toBe(false);
+  });
+
+  it("validates hydrated discovery and safe attributed history projections", () => {
+    const scope = CollaborationScopeSchema.parse({
+      id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: "chat_release",
+      membershipMode: "direct", lifecycle: "shared", revision: "4", authEpoch: "3",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+    });
+    const chat = {
+      id: "chat_release", scopeId, title: "Release planning", lifecycle: "active" as const,
+      revision: "4", messageCount: "1",
+    };
+    expect(CollaborationDiscoveryResponseSchema.parse({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat",
+      authorityGeneration: 1, status: "accepted", resource: { scope, chat },
+    }] }).items[0]?.resource).toEqual({ scope, chat });
+
+    expect(CollaborationSharedChatMessageSchema.parse({
+      id: "msg_one", chatId: "chat_release", sequence: "1", role: "user",
+      state: "committed", purpose: "discussion",
+      actor: { actorId: "user_editor", displayName: "Ada" },
+      parts: [{ type: "text", text: "Ship it" }], createdAt: now,
+    })).toMatchObject({ actor: { displayName: "Ada" }, purpose: "discussion" });
   });
 });
