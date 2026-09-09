@@ -113,7 +113,7 @@
 
 ### Tests first — M2 / PR3
 
-- [ ] T051 [P] [US3] (PR3) Write red real-Postgres tests for idle/busy admission, immutable order, 32 pending, actor-scoped IDs, and one active run in `tests/gateway/collaboration-chat-queue.test.ts`
+- [x] T051 [P] [US3] (PR3) Write red real-Postgres tests for idle/busy admission, immutable order, 32 pending, actor-scoped IDs, and one active run in `tests/gateway/collaboration-chat-queue.test.ts`
 - [ ] T052 [P] [US3] (PR3) Write red reauthorization, competing approval, owner/editor cancel/retry, attempt lineage, and restart/unknown-outcome tests in `tests/gateway/collaboration-chat-controls.test.ts`
 
 ### Implementation — M2 / PR3

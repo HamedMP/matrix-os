@@ -64,6 +64,9 @@ import {
   type UpdateQueuedTurnInput,
   type ClaimNextQueuedTurnInput,
   type ClaimedQueuedTurn,
+  type EnqueueSharedQueuedTurnInput,
+  type EnqueuedSharedQueuedTurn,
+  type SharedQueuedTurn,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -95,7 +98,11 @@ export type {
   ReorderQueuedTurnsInput,
   ClaimNextQueuedTurnInput,
   ClaimedQueuedTurn,
+  EnqueueSharedQueuedTurnInput,
+  EnqueuedSharedQueuedTurn,
+  SharedQueuedTurn,
 } from "./queue-repository.js";
+export { SharedChatQueueError } from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
@@ -1033,6 +1040,17 @@ export class ChatRepository {
     input: EnqueueQueuedTurnInput,
   ): Promise<EnqueuedQueuedTurn> {
     return this.queue.enqueue(owner, input);
+  }
+
+  async enqueueSharedQueuedTurn(
+    owner: ChatOwner,
+    input: EnqueueSharedQueuedTurnInput,
+  ): Promise<EnqueuedSharedQueuedTurn> {
+    return this.queue.enqueueShared(owner, input);
+  }
+
+  async listSharedQueuedTurns(owner: ChatOwner, chatId: string): Promise<SharedQueuedTurn[]> {
+    return this.queue.listShared(owner, chatId);
   }
 
   async listQueuedTurns(owner: ChatOwner, chatId: string): Promise<CanonicalChatQueuedTurn[]> {
