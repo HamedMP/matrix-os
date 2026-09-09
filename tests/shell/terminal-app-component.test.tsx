@@ -1497,6 +1497,54 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("button", { name: "Minimize Terminal window" })).toBeNull();
   });
 
+  it("deduplicates rapid desktop empty-state creates and shows pending feedback", async () => {
+    const defaultFetch = vi.mocked(fetch).getMockImplementation();
+    let resolveCreate!: (response: Response) => void;
+    const createResponse = new Promise<Response>((resolve) => {
+      resolveCreate = resolve;
+    });
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/terminal/sessions") && init?.method === "POST") {
+        return createResponse;
+      }
+      if (String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve(mockJsonResponse({ sessions: [] }));
+      }
+      return defaultFetch!(input, init);
+    });
+    render(<TerminalApp desktopParity />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const createButtons = screen.getAllByRole("button", { name: "New shell session" });
+    fireEvent.click(createButtons[0]);
+    fireEvent.click(createButtons[1]);
+    fireEvent.click(createButtons[0]);
+    fireEvent.click(createButtons[1]);
+    fireEvent.click(createButtons[0]);
+
+    expect(terminalSessionPostBodies()).toHaveLength(1);
+    const pendingButtons = screen.getAllByRole("button", { name: "Creating shell session" });
+    expect(pendingButtons).toHaveLength(2);
+    expect(pendingButtons.every((button) => button.hasAttribute("disabled"))).toBe(true);
+    expect(screen.getAllByText("Creating…")).toHaveLength(2);
+
+    await act(async () => {
+      resolveCreate(mockJsonResponse({ name: "clever-cedar" }, 201));
+      await createResponse;
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-terminal-desktop-overview]")).toBeNull();
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: expect.objectContaining({ sessionId: "clever-cedar" }),
+    });
+  });
+
   it("collapses and expands the Background session group accessibly", async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
