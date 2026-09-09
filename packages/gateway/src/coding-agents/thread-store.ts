@@ -31,6 +31,7 @@ import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import { CodingAgentSteerRequestSchema, matchesSteeringTurn } from "./thread-steering.js";
+import { applyThreadAbort, type CodingAbortScope } from "./thread-abort.js";
 import {
   CodingAgentProjectWorkspaceError,
   type CodingAgentProjectThreadProjection,
@@ -144,9 +145,9 @@ const StoredThreadStateSchema = z.object({
   pendingTerminalStops: z.array(PendingTerminalStopSchema).max(MAX_PENDING_TERMINAL_STOPS).default([]),
 }).strict();
 
-type StoredThread = z.infer<typeof StoredThreadSchema>;
-type StoredThreadState = z.infer<typeof StoredThreadStateSchema>;
-type StoredTurn = z.infer<typeof StoredTurnSchema>;
+export type StoredThread = z.infer<typeof StoredThreadSchema>;
+export type StoredThreadState = z.infer<typeof StoredThreadStateSchema>;
+export type StoredTurn = z.infer<typeof StoredTurnSchema>;
 type TurnAcceptMutationResult = {
   response: CreateAgentTurnResponse;
   eventsToPublish: AgentThreadEvent[];
@@ -218,7 +219,7 @@ export interface CodingAgentThreadStore {
     threadId: string,
     batch: CodingAgentProviderEventBatch,
   ): Promise<AgentThreadSnapshot>;
-  abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string): Promise<AgentThreadSnapshot>;
+  abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string, scope?: CodingAbortScope): Promise<AgentThreadSnapshot>;
   steerTurn(
     principal: RequestPrincipal,
     threadId: string,
@@ -660,14 +661,6 @@ function parseInputProviderEvents(events: AgentThreadEvent[], threadId: string):
 
 function parseProviderEvents(events: AgentThreadEvent[], threadId: string): AgentThreadEvent[] {
   return parseCodingAgentProviderEvents(events, threadId);
-}
-
-function includesAbortedCompletion(events: AgentThreadEvent[]): boolean {
-  return events.some((event) => event.type === "thread.completed" && event.outcome === "aborted");
-}
-
-function includesNonAbortedCompletion(events: AgentThreadEvent[]): boolean {
-  return events.some((event) => event.type === "thread.completed" && event.outcome !== "aborted");
 }
 
 export function safeThreadError(code: CodingAgentThreadError["code"]) {
@@ -1663,73 +1656,17 @@ export function createCodingAgentThreadStore(
       );
       return result.snapshot;
     },
-    async abortThread(principal, threadId, clientRequestId) {
+    async abortThread(principal, threadId, clientRequestId, scope) {
       const result = await mutate(async (state) => {
         const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
         if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
-        activeInitialRuns.get(threadId)?.controller.abort();
-        if (thread.abortClientRequestIds.includes(clientRequestId) || (terminalThread(thread) && !thread.activeTurnId)) {
-          return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] } };
-        }
-        const activeTurnId = thread.activeTurnId;
-        if (activeTurnId) turnDispatcher.abort(activeTurnId);
-        const provider = providers.find((candidate) => candidate.providerId === thread.providerId);
-        let abortEvents: AgentThreadEvent[];
-        if (provider?.abortThread) {
-          try {
-            abortEvents = parseProviderEvents(await provider.abortThread({
-              principal,
-              thread: stripOwner(thread),
-              clientRequestId,
-              now,
-              nextEventId,
-            }), threadId);
-            if (abortEvents.length === 0 || includesNonAbortedCompletion(abortEvents)) {
-              abortEvents = defaultAbortEvents(threadId, now, nextEventId);
-            }
-          } catch (err: unknown) {
-            logCodingAgentWarning("provider abort failed", err);
-            abortEvents = defaultAbortEvents(threadId, now, nextEventId);
-          }
-        } else {
-          abortEvents = defaultAbortEvents(threadId, now, nextEventId);
-        }
-        let nextThread = thread;
-        for (const event of abortEvents) {
-          nextThread = applyEvent(nextThread, event);
-        }
-        if (nextThread.status !== "aborted" || !includesAbortedCompletion(abortEvents)) {
-          const fallbackEvents = defaultAbortEvents(threadId, now, nextEventId);
-          abortEvents = [...abortEvents, ...fallbackEvents];
-          for (const event of fallbackEvents) {
-            nextThread = applyEvent(nextThread, event);
-          }
-        }
-        if (activeTurnId) {
-          abortEvents = [turnStatusEvent(threadId, activeTurnId, "aborted"), ...abortEvents];
-          nextThread = clearActiveTurn(nextThread);
-        }
-        nextThread = {
-          ...nextThread,
-          abortClientRequestIds: [...nextThread.abortClientRequestIds, clientRequestId].slice(-MAX_ABORT_REQUEST_IDS),
-        };
-        const nextState = {
-          version: 1 as const,
-          threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
-          events: [...state.events, ...abortEvents],
-          turns: activeTurnId
-            ? state.turns.map((turn) =>
-              turn.ownerId === principal.userId && turn.threadId === threadId && turn.turnId === activeTurnId
-                ? settledTurn(turn, "aborted", abortEvents.at(-1)!.occurredAt)
-                : turn
-            )
-            : state.turns,
-          pendingTerminalStops: state.pendingTerminalStops,
-        };
-        return {
-          state: nextState,
-          result: { snapshot: snapshotFor(nextThread, nextState.events), eventsToPublish: abortEvents },
-        };
+        return applyThreadAbort({ state, thread, principal, clientRequestId, scope }, {
+          provider: providers.find((candidate) => candidate.providerId === thread.providerId),
+          abortInitial: () => { activeInitialRuns.get(threadId)?.controller.abort(); },
+          abortTurn: () => { if (thread.activeTurnId) turnDispatcher.abort(thread.activeTurnId); },
+          terminalThread, snapshotFor, applyEvent, clearActiveTurn, settledTurn, turnStatusEvent,
+          stripOwner, now, nextEventId, maxAbortRequestIds: MAX_ABORT_REQUEST_IDS,
+        });
       });
       publish(principal.userId, threadId, result.eventsToPublish);
       return result.snapshot;

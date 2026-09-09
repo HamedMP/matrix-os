@@ -64,6 +64,8 @@ import {
   enqueueCanonicalQueuedTurn,
 } from "./queue-admission.js";
 import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
+import { retryAvailability } from "./retry-preflight.js";
+import { boundedOperation } from "../bounded-operation.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
@@ -279,6 +281,7 @@ export class CanonicalChatOrchestrator {
       | "getAdapterState"
       | "getPendingApproval"
       | "getLatestAdapterStateForChat"
+      | "hasRetryRequest"
       | "getTurnRunContext"
       | "admitRetry"
       | "listActiveRunContexts"
@@ -616,6 +619,15 @@ export class CanonicalChatOrchestrator {
       && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
       ? adapter.parseState(previousState.state)
       : undefined;
+    const availability = await retryAvailability(adapter, owner, resumeState, () => this.options.repository.getAdapterState(owner, {
+      runId: context.latestRun.id, driverKind: context.latestRun.driverKind, instanceId: context.latestRun.instanceId,
+    }), () => this.options.repository.hasRetryRequest(owner, { chatId, turnId, clientRequestId: input.clientRequestId }));
+    if (availability !== "ready") {
+      throw new CanonicalChatOrchestrationError(availability === "busy"
+        ? safeError("chat_busy", "The previous Run is still active. Wait for it to finish.", true, ["retry"])
+        : safeError("run_unavailable", "The previous Run could not be checked. Try again shortly.", true, ["retry"]),
+      availability === "busy" ? 409 : 503);
+    }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),
@@ -829,6 +841,8 @@ export class CanonicalChatOrchestrator {
     promptOverride?: string,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
+    let cleanupUnconfirmed = false;
+    let lastKnownState: unknown;
     try {
       await this.assertPersonalExecutionAllowed(owner, run.chatId);
       if (resolvedRoot && this.options.executionRoots) {
@@ -860,6 +874,7 @@ export class CanonicalChatOrchestrator {
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
         signal: controller.signal,
+        onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
       };
       let text = "";
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
@@ -874,6 +889,7 @@ export class CanonicalChatOrchestrator {
         if (terminal) throw new Error("Provider emitted an event after completion");
         if (event.type === "state.updated") {
           const state = adapter.serializeState(adapter.parseState(event.state));
+          lastKnownState = state;
           await this.options.repository.updateAdapterState(owner, {
             chatId: run.chatId,
             runId: run.id,
@@ -946,6 +962,26 @@ export class CanonicalChatOrchestrator {
       }
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
+      if (cleanupUnconfirmed) {
+        controller.abort();
+        console.warn("[chat/orchestrator] Execution cleanup unconfirmed", { runId: run.id });
+        if (lastKnownState !== undefined) {
+          try {
+            await boundedOperation(() => this.options.repository.updateAdapterState(owner, {
+              chatId: run.chatId, runId: run.id, driverKind: run.driverKind, instanceId: run.instanceId,
+              schemaVersion: adapter.stateSchemaVersion, state: lastKnownState,
+            }), 10_000);
+          } catch (stateError) {
+            console.warn("[chat/orchestrator] Backing identity persistence unconfirmed", {
+              runId: run.id, errorType: stateError instanceof Error ? stateError.name : "UnknownError",
+            });
+          }
+        }
+        await this.persistActivities(owner, run, [{ type: "run.error", error: safeError(
+          "run_unavailable", "The Run could not be stopped. Its status is being checked.", false,
+        ) }], (this.options.now ?? (() => new Date()))().toISOString());
+        return;
+      }
       const wasAborted = controller.signal.aborted;
       if (!wasAborted) controller.abort();
       if (!wasAborted) {
@@ -1330,9 +1366,9 @@ export class CanonicalChatOrchestrator {
       const oldest = this.reconciliation.keys().next().value;
       if (oldest) this.reconciliation.delete(oldest);
     }
-    const reconciliation = this.reconcileOwnerActiveRuns(owner).catch((error: unknown) => {
-      this.reconciliation.delete(key);
-      throw error;
+    const reconciliation = this.reconcileOwnerActiveRuns(owner).finally(() => {
+      // Coalesce in-flight work, not a permanently cached pending outcome.
+      if (this.reconciliation.get(key) === reconciliation) this.reconciliation.delete(key);
     });
     this.reconciliation.set(key, reconciliation);
     return reconciliation;
@@ -1364,14 +1400,16 @@ export class CanonicalChatOrchestrator {
         ["retry"],
       );
       try {
-        if (await recoverOrphanedRun({
+        const recovery = await recoverOrphanedRun({
           owner,
           run: context.latestRun,
           repository: this.options.repository,
           adapter: this.options.adapters.get(context.latestRun.driverKind),
           messageId: assistantMessageId,
           completedAt,
-        })) {
+        });
+        if (recovery === "pending") continue;
+        if (recovery) {
           reconciled += 1;
           continue;
         }

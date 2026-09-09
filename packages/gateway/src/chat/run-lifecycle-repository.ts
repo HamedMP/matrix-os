@@ -117,6 +117,19 @@ export class ChatRunLifecycleRepository {
     private readonly appendOutbox: AppendOutbox,
   ) {}
 
+  async hasRetryRequest(ownerInput: ChatOwner, input: { chatId: string; turnId: string; clientRequestId: string }): Promise<boolean> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.turnId, input.clientRequestId].forEach(requireSafeRef);
+    const row = await this.kysely.selectFrom("chat_runs")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select("chat_runs.id")
+      .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId).where("chat_runs.turn_id", "=", input.turnId)
+      .where("chat_runs.client_request_id", "=", input.clientRequestId).executeTakeFirst();
+    return row !== undefined;
+  }
+
   async getAdapterState(ownerInput: ChatOwner, input: {
     runId: string;
     driverKind: string;

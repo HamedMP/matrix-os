@@ -18,14 +18,23 @@ export async function recoverOrphanedRun(input: {
   adapter: CanonicalChatProviderAdapter | undefined;
   messageId: (runId: string, providerId?: string) => string;
   completedAt: string;
-}): Promise<boolean> {
+}): Promise<boolean | "pending"> {
   const { owner, run, repository, adapter, completedAt } = input;
   if (!adapter) return false;
   const stored = await repository.getAdapterState(owner, {
     runId: run.id, driverKind: run.driverKind, instanceId: run.instanceId,
   });
-  if (!stored || stored.schemaVersion !== adapter.stateSchemaVersion) return false;
-  const state = adapter.parseState(stored.state);
+  // Missing/unreadable identity cannot establish that a Codex execution ended.
+  // Keep it busy for later recovery or explicit operator reconciliation.
+  if (!stored || stored.schemaVersion !== adapter.stateSchemaVersion) return adapter.isBackingRunActive ? "pending" : false;
+  let state: unknown;
+  try {
+    state = adapter.parseState(stored.state);
+  } catch (error) {
+    if (!adapter.isBackingRunActive) throw error;
+    console.warn("[chat/recovery] Backing identity unavailable", { runId: run.id, errorType: error instanceof Error ? error.name : "UnknownError" });
+    return "pending";
+  }
   let recovered: z.infer<typeof Snapshot> | null = null;
   try {
     if (adapter.recover) {
@@ -36,6 +45,15 @@ export async function recoverOrphanedRun(input: {
     console.warn("[chat/recovery] Backing snapshot unavailable", { runId: run.id, errorType: error instanceof Error ? error.name : "UnknownError" });
   }
   if (!recovered) {
+    if (adapter.isBackingRunActive) {
+      try {
+        const active = await boundedOperation((signal) => adapter.isBackingRunActive!({ owner, state, signal }), 10_000);
+        return active ? "pending" : false;
+      } catch (error) {
+        console.warn("[chat/recovery] Execution state unconfirmed", { runId: run.id, errorType: error instanceof Error ? error.name : "UnknownError" });
+        return "pending";
+      }
+    }
     try {
       await boundedOperation(async () => {
         await adapter.cancel?.({ owner, chatId: run.chatId, runId: run.id, state });

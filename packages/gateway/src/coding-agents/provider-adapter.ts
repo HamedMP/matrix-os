@@ -110,6 +110,8 @@ export interface CodingAgentProviderAdapter {
     principal: RequestPrincipal;
     thread: AgentThreadSummary;
     clientRequestId: string;
+    /** Automatic cleanup requires a stopped runtime, not merely an interrupt RPC acknowledgement. */
+    requireRuntimeStop?: boolean;
     now: () => Date;
     nextEventId: () => string;
   }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];

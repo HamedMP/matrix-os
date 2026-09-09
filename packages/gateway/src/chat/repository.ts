@@ -1340,6 +1340,10 @@ export class ChatRepository {
     return this.runLifecycle.getLatestAdapterStateForChat(ownerInput, input);
   }
 
+  async hasRetryRequest(owner: ChatOwner, input: { chatId: string; turnId: string; clientRequestId: string }): Promise<boolean> {
+    return this.runLifecycle.hasRetryRequest(owner, input);
+  }
+
   async markRunRunning(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;
