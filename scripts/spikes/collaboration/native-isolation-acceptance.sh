@@ -13,7 +13,7 @@ fi
 
 readonly node_bin=/opt/matrix/runtime/node/bin/node
 readonly asset_root="${MATRIX_SCOPE_ASSET_ROOT:-}"
-if [ "$asset_root" != "/run/matrix-scope-runtime-acceptance" ]; then
+if [ "$asset_root" != "/var/lib/matrix-scope-runtime/acceptance" ]; then
   printf 'scope_runtime_acceptance_asset_root_invalid\n' >&2
   exit 2
 fi

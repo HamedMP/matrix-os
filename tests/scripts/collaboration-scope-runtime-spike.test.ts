@@ -8,6 +8,17 @@ const probePath = "scripts/spikes/collaboration/scope-runtime-probe.ts";
 const sdkProbePath = "scripts/spikes/collaboration/scope-runtime-sdk-probe.mjs";
 
 describe("collaboration scope-runtime native isolation spike", () => {
+  it("accepts only the executable root-owned staging path used by the workflow", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    expect(source).toContain(
+      'if [ "$asset_root" != "/var/lib/matrix-scope-runtime/acceptance" ]; then',
+    );
+    expect(source).not.toContain(
+      'if [ "$asset_root" != "/run/matrix-scope-runtime-acceptance" ]; then',
+    );
+  });
+
   it("refuses to touch a host without the disposable acceptance marker", () => {
     const result = spawnSync("bash", [acceptancePath], {
       cwd: process.cwd(),
