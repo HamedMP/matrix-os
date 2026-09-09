@@ -51,7 +51,7 @@ jobs:
   prove:
     needs: gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}

@@ -5,6 +5,16 @@ import { SCOPE_RUNTIME_PROFILE_DIGEST } from "../../packages/scope-runtime/src/p
 const acceptancePath = "scripts/spikes/collaboration/production-supervisor-acceptance.mjs";
 
 describe("collaboration production scope-runtime acceptance", () => {
+  it("reserves cleanup margin beyond the bounded preview and remote-command budgets", async () => {
+    const workflow = await readFile(
+      ".github/workflows/collaboration-scope-runtime-acceptance.yml",
+      "utf8",
+    );
+
+    expect(workflow).toContain("timeout-minutes: 60");
+    expect(workflow).toContain("deadline=$((SECONDS + 2100))");
+  });
+
   it("refuses to change a host without the disposable acceptance marker", async () => {
     const source = await readFile(acceptancePath, "utf8");
 
