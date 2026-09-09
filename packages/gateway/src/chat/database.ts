@@ -113,6 +113,12 @@ export interface ChatQueuedTurnsTable {
   id: string;
   chat_id: string;
   client_request_id: string;
+  actor_request_id: ColumnType<string | null, string | null | undefined, string | null>;
+  requesting_actor_id: ColumnType<string | null, string | null | undefined, string | null>;
+  collaboration_scope_id: ColumnType<string | null, string | null | undefined, string | null>;
+  accepted_seq: ColumnType<number | null, number | null | undefined, number | null>;
+  payload_hash: ColumnType<string | null, string | null | undefined, string | null>;
+  accepted_auth_epoch: ColumnType<number | null, number | null | undefined, number | null>;
   position: number;
   status: "queued" | "claimed" | "cancelled";
   parts: JsonValue;
@@ -417,7 +423,13 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       id TEXT PRIMARY KEY,
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
       client_request_id TEXT NOT NULL,
-      position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 20),
+      actor_request_id TEXT,
+      requesting_actor_id TEXT,
+      collaboration_scope_id UUID,
+      accepted_seq BIGINT,
+      payload_hash TEXT,
+      accepted_auth_epoch BIGINT,
+      position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 32),
       status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'cancelled')),
       parts JSONB NOT NULL,
       driver_kind TEXT NOT NULL,
@@ -435,6 +447,36 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       updated_at TIMESTAMPTZ NOT NULL,
       UNIQUE (chat_id, client_request_id)
     )
+  `.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS actor_request_id TEXT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS requesting_actor_id TEXT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS collaboration_scope_id UUID`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_seq BIGINT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS payload_hash TEXT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_auth_epoch BIGINT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns DROP CONSTRAINT IF EXISTS chat_queued_turns_position_check`.execute(db);
+  await sql`
+    ALTER TABLE chat_queued_turns ADD CONSTRAINT chat_queued_turns_position_check
+    CHECK (position BETWEEN 1 AND 32)
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_queued_turns
+    DROP CONSTRAINT IF EXISTS chat_queued_turns_chat_id_client_request_id_key
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_personal_request
+    ON chat_queued_turns(chat_id, client_request_id)
+    WHERE requesting_actor_id IS NULL
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_shared_request
+    ON chat_queued_turns(chat_id, requesting_actor_id, actor_request_id)
+    WHERE requesting_actor_id IS NOT NULL
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_shared_sequence
+    ON chat_queued_turns(chat_id, accepted_seq)
+    WHERE collaboration_scope_id IS NOT NULL
   `.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_position
