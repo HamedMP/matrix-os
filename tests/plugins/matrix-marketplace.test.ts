@@ -135,6 +135,7 @@ describe("Matrix OS Codex marketplace plugin", () => {
     }
     for (const workflow of hostedWorkflows) {
       expect(workflow).toMatch(/create_terminal_tab/);
+      expect(workflow).toMatch(/select_terminal_tab/);
       expect(workflow).toMatch(/CLI workflow does not address tabs directly/i);
     }
     expect(standaloneWorkflow).toMatch(/never (?:create or use|use)[^\n]*tabs/i);

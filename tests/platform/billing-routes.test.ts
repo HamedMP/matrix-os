@@ -1685,6 +1685,10 @@ describe('platform billing routes', () => {
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED, {
       distinctId: 'user_123',
       properties: {
+        delivery_key: expect.stringMatching(/^[a-f0-9]{64}$/),
+        stripe_event_type: 'customer.subscription.updated',
+        subscription_status_changed: true,
+        previous_subscription_status: undefined,
         plan_slug: 'matrix_builder',
         subscription_status: 'active',
         billing_interval: 'monthly',
@@ -1800,6 +1804,8 @@ describe('platform billing routes', () => {
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_INVOICE_PAID, {
       distinctId: 'user_123',
       properties: {
+        delivery_key: expect.stringMatching(/^[a-f0-9]{64}$/),
+        stripe_event_type: 'invoice.paid',
         amount_due_minor: 2380,
         amount_paid_minor: 2380,
         currency: 'usd',
@@ -1831,11 +1837,11 @@ describe('platform billing routes', () => {
     expect(expired.status).toBe(200);
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_COMPLETED, {
       distinctId: 'user_123',
-      properties: { stripe_event_type: 'checkout.session.completed' },
+      properties: { stripe_event_type: 'checkout.session.completed', delivery_key: expect.stringMatching(/^[a-f0-9]{64}$/) },
     });
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_EXPIRED, {
       distinctId: 'user_123',
-      properties: { stripe_event_type: 'checkout.session.expired' },
+      properties: { stripe_event_type: 'checkout.session.expired', delivery_key: expect.stringMatching(/^[a-f0-9]{64}$/) },
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_growth_test');
   });
