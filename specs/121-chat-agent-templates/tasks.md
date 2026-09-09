@@ -4,6 +4,8 @@ All items below are future product work, not completed by the OM-214 research/sp
 
 The broader [interaction design](ux-design.md) proposes Phases B/C for reusable Agents, Tasks and routines. Their contracts and implementation plans require separate scope review; they are not implicitly added to the sequence below.
 
+Required in the reusable-Agent phase: create a Bot and invoke it with `@` from any Chat, without requiring a Task. Plan shared typed mention contracts, owner/readiness checks, immutable invocation version/context, idempotent canonical admission and attributed results. Write failing integration tests for same-Chat routing, non-sticky invocation, draft preservation, active-run queueing and access revocation before implementation. A future `@Chat` context reference is a different object kind and does not invoke another Agent.
+
 ## Delivery sequence
 
 | Step | Scope and dependencies | Required evidence |

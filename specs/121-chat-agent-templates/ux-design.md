@@ -6,6 +6,8 @@ Status: Proposed for Yuhan review, 2026-09-09. Research/design only. [OM-214](ht
 
 Make **Agents a reusable way to work inside Chat**. Keep everyday conversation lightweight. When work needs an outcome, owner or follow-up, track it as a **Task**. Give Projects a **Tasks** view with List as the default and Board as an alternative. Open every task into its working Chat and inspectable results.
 
+Updated direction, September 9: introduce a simple Agents section alongside ordinary Chats, lead onboarding with connecting selected tools and discovering useful work, and reveal reusable configuration progressively. **Once created, a Bot must be callable with `@` from a new or existing Chat.** This mention entry is a required part of the reusable-Agent experience. Task organization and Board remain optional secondary capabilities.
+
 A Bot homepage full of Kanban columns would make the user organize work before getting value. A single endless Chat per Bot would make separate deliverables hard to find and review. The proposed design offers a quick conversation entry and a durable work entry that share the same Chat runtime.
 
 Use **Agent** in product copy and **Agents** for the library; “Bot” describes the researched category. Settings → **Agents & providers** continues to mean runtime/account setup. Inside Chat, **Agents** means reusable roles such as Meeting Brief or Sponsorship Assistant. If user testing confuses these destinations, rename the library **Your agents**, not the underlying harnesses. Do not introduce another top-level OS application.
@@ -116,7 +118,38 @@ Back navigation preserves the draft. Closing with edits offers Keep draft or Dis
 
 **Track an existing Chat.** Track as task proposes a title and outcome, human owner and optional Project. Confirm links the existing Chat and creates a Task; it neither repeats the prompt nor copies history. Choosing an existing Task checks ownership/Project compatibility. When a Chat already belongs to another Task, offer an explicit reassociation or a new Chat with reviewed context; do not silently show one conversation as two independently editable workstreams.
 
-**Change Agent.** For a new Chat, replace the selection freely. For existing work, default to New Chat for this task with the new Agent and a reviewed handoff summary. Keep earlier Chat/version readable and let the user choose the primary Chat. Do not retroactively change an active run's instructions or reuse incompatible harness resume state.
+**Call another Bot.** Type `@` in the current Chat, select an available Bot, add a request and send. Its contribution appears in this Chat with explicit Bot attribution. This is a scoped invocation, not a permanent change to the Chat's default Agent or the Task's owner. The user can still start separate work from an Agent profile when they want an independent conversation.
+
+**Change the default Agent.** Keep this separate from a mention. A deliberate default change may require a new execution context and reviewed handoff. Do not retroactively change an active run's instructions or reuse incompatible harness resume state. A new visible Chat is not required merely because a user mentions another Bot.
+
+### Mention a Bot from any Chat
+
+The core flow is **Create Bot → return to any Chat → type `@` → select Bot → write a request → Send → see that Bot's contribution in the same Chat**. No Project, Task, template editor or Board setup is a prerequisite.
+
+| Interaction | Required behavior |
+| --- | --- |
+| Type `@` or choose the composer mention button | Show a searchable picker of Bots the current user can invoke; typing a query narrows results. Open from a new Chat or an existing Chat. |
+| Choose a Bot | Insert a removable typed mention chip with stable Bot ID and display name. Show its job and availability in the picker. Selection alone does not run it or grant access. |
+| Enter the request | Keep the selected Bot visible above/in the composer. Show the context boundary before sending: this request and relevant context from the current Chat; extra files or other Chats require explicit references. |
+| Send | Admit one canonical invocation against the selected Bot version and current Chat. Pin the identity/version to this turn. Recheck access/readiness and deduplicate retries using the submission ID. |
+| Receive a contribution | Attribute progress, questions, tool requests and output to the invoked Bot. Keep Chat ID, Task association, human owner and default Agent unchanged. |
+| Continue without a mention | Use the Chat's existing default Agent. Mentions do not silently become a sticky routing switch. The contributing Bot remains named in the transcript. |
+| Create a Bot and return | The newly saved Bot is discoverable in the picker without reloading; preserve any pre-existing composer draft. |
+| Remove/change the chip before Send | Only update the pending recipient; no execution, cancellation or permission mutation. |
+
+The first mention release supports **one invoked Bot per message**. Additional Bot selections require replacing the recipient or sending a separate message; never silently fan out work. Team/group orchestration can extend the contract later. When a run is already active, use the canonical queued-next-turn flow with visible recipient attribution, or explain that the chosen harness cannot queue it. Do not interrupt or steer the active Agent merely because another Bot was mentioned.
+
+Keep Bot identity, standing instructions and approved reusable preferences distinct from transcript access. Mentioning a Bot does not automatically import its private historical Chats, credentials, computer session or all project files into the current conversation. Effective access is the intersection of the current principal, destination Chat, Bot capability policy and explicitly granted resource scope. An external action still requires its normal authorization; `@` is not a grant.
+
+Renamed Bots resolve by stable ID. Archived, deleted, unauthorized or unavailable Bots cannot be invoked; preserve the request and offer removal/replacement, never silently substitute the default Agent. Invalid raw text such as an email address, pasted transcript, code block or an unresolved `@name` is not an executable mention. Distinguish completed, failed, stopped and awaiting-input invocations without moving Task workflow implicitly.
+
+### Other Chat references use a separate mention type
+
+The same picker may later offer grouped **Bots** and **Chats** results. **A Bot mention invokes a participant; a Chat reference supplies context.** Chat results show title and Project, and selecting one previews the source and bounded excerpt/summary that will be included. It does not start the referenced Chat's Agent or expose its whole history automatically. Revalidate source access at Send and preserve provenance in the result. The reference contract must distinguish object kinds by stable ID, not infer kind from a label.
+
+Cross-Chat references are a proposed extension, not an already approved implementation requirement. Ship the Bot group first without a nonfunctional Chats placeholder. A user can always navigate to an existing Chat normally. User mentions, channel notifications and automatic messages to other people are outside this feature.
+
+Keyboard behavior: arrow keys move through suggestions, Enter selects a highlighted result rather than submitting the message, Escape dismisses, and a visible remove control clears the chip. After selection, focus returns to the composer. Announce the selected recipient and unavailable state. Use the same typed mention semantics on Web Canvas, Web Desktop, Electron Desktop, and applicable mobile surfaces; touch uses a compact sheet/picker.
 
 **Inspect outputs.** Result panel has Summary, Deliverable, Evidence and unresolved Questions. Each result links to the producing Chat/run and source freshness. Multiple attempts expose a version selector. Incomplete generation is labeled Partial. Chat text alone is not a verified result or proof of an external action.
 
@@ -194,7 +227,7 @@ Keyboard users can reach navigation, Agent choices, forms, task status and resul
 
 **A — Template work in Chat.** Deliver the existing restricted MVP first if accepted: two templates, setup/source preview, canonical Chat, correct execution/source disclosure and result readback. Use Templates navigation until saved Agents exist. No placeholder Create agent button.
 
-**B — Reusable Agents and durable Tasks.** Add owned Agent creation/versioning, Track as task, canonical Task/Chat associations, primary Chat, result acceptance, Project List/Board and derived attention. Requires migration of legacy board links/statuses and shared capability/state contracts. This is the complete manual-work loop illustrated by the design, with no implicit external writes.
+**B — Reusable Agents and optional durable Tasks.** Prioritize owned Agent creation/versioning and `@Bot` invocation in any Chat, with attributed canonical turns and scoped context. Neither requires Task setup. Then add Track as task, canonical Task/Chat associations, primary Chat, result acceptance, Project List/Board and derived attention. Task integration requires migration of legacy board links/statuses and shared capability/state contracts. Cross-Chat references need a separate typed context contract. No mention implicitly authorizes external writes.
 
 **C — Routines and controlled actions.** Add reviewed triggers, occurrence deduplication, enforced scoped tool capabilities, real action approval, budget/limits and reliable recovery. Do not market Phase A as this phase. Shared Agent distribution/org policy can follow separate authorization work.
 
@@ -209,6 +242,8 @@ Usability validation proposal: test with five representative users, observe rath
 5. Respond to missing input, inspect a result, request changes, accept the new version and mark Done; all entry points agree.
 6. Retry an interrupted start and reconnect a missing source without creating duplicate Tasks or losing setup.
 7. Complete core flows using only keyboard and at 390px width; confirm 320px fit and readable dark appearance.
+8. Create a Bot, return to an existing Chat, invoke it with `@`, and identify its response. Verify unchanged Chat/Task/default-Agent identity, no execution on selection, no Task required, and ordinary routing on the next unmentioned message.
+9. Test mention search, keyboard selection/removal, renamed/archived/unavailable Bots, access revocation at Send, duplicate submission and active-run queueing. Prove that raw text mentions and referenced source content cannot trigger another invocation or broaden access.
 
 Observe time to first useful result, setup abandonment, task reopen/rework, duplicate-start rate and successful attention resolution. Define analytics using IDs/stages only; do not collect prompts, files, source bodies or credentials. Establish baselines before setting numeric production targets.
 
