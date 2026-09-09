@@ -17,6 +17,13 @@ describe("collaboration scope-runtime native isolation spike", () => {
     expect(source).not.toContain(
       'if [ "$asset_root" != "/run/matrix-scope-runtime-acceptance" ]; then',
     );
+    expect(source).toContain(
+      'readonly baseline_root="/var/tmp/matrix-scope-baseline-${probe_root##*.}"',
+    );
+    expect(source).toContain(
+      '/usr/bin/install --owner=root --group=root --mode=0644 -- "$probe_source" "$baseline_probe_source"',
+    );
+    expect(source).toContain('"$node_bin" "$baseline_probe_source"');
   });
 
   it("refuses to touch a host without the disposable acceptance marker", () => {

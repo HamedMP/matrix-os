@@ -25,7 +25,7 @@ readonly supervisor_socket=/run/matrix-scope-runtime/supervisor.sock
 readonly sdk_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk/package.json
 readonly native_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/package.json
 
-for executable in "$node_bin" /usr/bin/readlink /usr/bin/setpriv /usr/bin/sha256sum /usr/bin/systemd-run /usr/bin/systemctl /usr/bin/uname; do
+for executable in "$node_bin" /usr/bin/chmod /usr/bin/install /usr/bin/readlink /usr/bin/setpriv /usr/bin/sha256sum /usr/bin/systemd-run /usr/bin/systemctl /usr/bin/uname; do
   if [ ! -x "$executable" ]; then
     printf 'scope_runtime_acceptance_dependency_unavailable\n' >&2
     exit 2
@@ -78,6 +78,8 @@ fi
 
 probe_root="$(mktemp -d /var/tmp/matrix-scope-accept.XXXXXX)"
 readonly probe_root
+readonly baseline_root="/var/tmp/matrix-scope-baseline-${probe_root##*.}"
+readonly baseline_probe_source="$baseline_root/scope-runtime-probe.ts"
 readonly candidate_unit="matrix-scope-probe-${probe_root##*.}.service"
 readonly sdk_candidate_unit="matrix-scope-sdk-probe-${probe_root##*.}.service"
 broker_pid=
@@ -98,9 +100,12 @@ cleanup() {
   fi
   rm -f -- "$broker_socket" "$supervisor_socket"
   rmdir /run/matrix-scope /run/matrix-scope-runtime >/dev/null 2>&1 || true
-  rm -rf -- "$probe_root"
+  rm -rf -- "$probe_root" "$baseline_root"
 }
 trap cleanup EXIT INT TERM
+
+/usr/bin/install --directory --owner=root --group=root --mode=0755 -- "$baseline_root"
+/usr/bin/install --owner=root --group=root --mode=0644 -- "$probe_source" "$baseline_probe_source"
 
 mkdir -p /run/matrix-scope /run/matrix-scope-runtime
 chmod 0755 /run/matrix-scope /run/matrix-scope-runtime
@@ -156,7 +161,7 @@ run_unrestricted_baseline() (
       PATH=/opt/matrix/runtime/node/bin:/usr/bin:/bin \
       MATRIX_SCOPE_PROBE_DISPOSABLE=1 \
       MATRIX_SCOPE_PROBE_OWNER_SECRET=baseline-leak \
-      "$node_bin" "$probe_source"
+      "$node_bin" "$baseline_probe_source"
 )
 
 baseline_status=0
