@@ -10,6 +10,7 @@ import {
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
+import { ChatRunFailureDiagnosticSchema, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import type { ChatDatabase, ChatsTable } from "./database.js";
 import {
   ChatBusyError,
@@ -116,6 +117,19 @@ export class ChatRunLifecycleRepository {
     private readonly transact: Transact,
     private readonly appendOutbox: AppendOutbox,
   ) {}
+
+  async hasRetryRequest(ownerInput: ChatOwner, input: { chatId: string; turnId: string; clientRequestId: string }): Promise<boolean> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.turnId, input.clientRequestId].forEach(requireSafeRef);
+    const row = await this.kysely.selectFrom("chat_runs")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select("chat_runs.id")
+      .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId).where("chat_runs.turn_id", "=", input.turnId)
+      .where("chat_runs.client_request_id", "=", input.clientRequestId).executeTakeFirst();
+    return row !== undefined;
+  }
 
   async getAdapterState(ownerInput: ChatOwner, input: {
     runId: string;
@@ -549,6 +563,7 @@ export class ChatRunLifecycleRepository {
     runId: string;
     outcome: "completed" | "failed" | "aborted";
     completedAt: string;
+    diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;
   }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
     const owner = validateOwner(ownerInput);
@@ -647,7 +662,11 @@ export class ChatRunLifecycleRepository {
         attention: input.outcome === "failed" ? "failed" : "none",
         updated_at: completedAt,
       }).where("id", "=", input.chatId).execute();
-      await this.appendOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, { runId: input.runId });
+      await this.appendOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, {
+        runId: input.runId,
+        ...(input.outcome === "failed" && input.diagnostic
+          ? { failureDiagnostic: ChatRunFailureDiagnosticSchema.parse(input.diagnostic) } : {}),
+      });
       return { run: toRun(updated), transitioned: true };
     });
   }

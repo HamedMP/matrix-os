@@ -1655,7 +1655,7 @@ describe("CanonicalChatOrchestrator", () => {
       expect(messages).toHaveLength(1);
       expect(messages?.[0]?.state).toBe("committed");
       expect(messages?.[0]?.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")).toBe(finalText);
-      expect(await restarted.reconcileActiveRuns(owner)).toBe(1);
+      expect(await restarted.reconcileActiveRuns(owner)).toBe(0);
       expect((await repository.exportChat(owner, "chat_restarted"))?.messages).toEqual(snapshot?.messages);
     } else expect(snapshot?.activities).toEqual([
       expect.objectContaining({

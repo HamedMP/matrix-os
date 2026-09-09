@@ -52,6 +52,8 @@ jest.mock("expo-router/drawer", () => {
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import * as Haptics from "expo-haptics";
+import * as Clipboard from "expo-clipboard";
+import { Alert } from "react-native";
 import DrawerLayout from "../app/(drawer)/_layout";
 import { DrawerContent } from "../components/shell/DrawerContent";
 
@@ -74,6 +76,22 @@ function chatRecord(overrides: Partial<CanonicalChatRecord["chat"]> & { id: stri
 }
 
 describe("authenticated drawer layout", () => {
+  it("copies a recent chat ID from its native long-press menu", () => {
+    const alert = jest.spyOn(Alert, "alert");
+    render(<DrawerContent {...({
+      state: { index: 0, routeNames: ["index"] }, navigation: { navigate: jest.fn(), closeDrawer: jest.fn() }, descriptors: {},
+      computerName: "Computer", recentChatsLoading: false, projects: [], activeSessionId: null,
+      recentChats: [chatRecord({ id: "chat_native_list", title: "Investigate run" })],
+      onSelectConversation: jest.fn(), onNewConversation: jest.fn(),
+    } as unknown as React.ComponentProps<typeof DrawerContent>)} />);
+    fireEvent(screen.getByLabelText("Open recent chat Investigate run"), "longPress");
+    const action = alert.mock.calls[0]?.[2]?.find((button) => button.text === "Copy chat ID");
+    expect(action).toBeDefined();
+    action!.onPress?.();
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat_native_list");
+    alert.mockRestore();
+  });
+
   beforeEach(() => {
     registeredScreens.length = 0;
     drawerScreenOptions = undefined;
