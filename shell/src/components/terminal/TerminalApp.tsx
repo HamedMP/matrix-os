@@ -243,6 +243,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [initialized, setInitialized] = useState(false);
   const [mobileInputActive, setMobileInputActive] = useState(false);
   const [desktopSessionState, setDesktopSessionState] = useState<{ count: number; ready: boolean }>({ count: 0, ready: false });
+  const [creatingDesktopShell, setCreatingDesktopShell] = useState(false);
   const [unavailableSessionIds, setUnavailableSessionIds] = useState<string[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -266,6 +267,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const terminalLayoutHydratedRef = useRef(false);
   const terminalLayoutDirtyRef = useRef(false);
+  const creatingDesktopShellRef = useRef(false);
   const terminalLayoutChangeVersionRef = useRef(0);
   const terminalLayoutRevisionRef = useRef(0);
   const terminalLayoutBaseRef = useRef<TerminalLayout | null>(null);
@@ -1059,8 +1061,16 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     ));
   }, []);
   const createDesktopShell = async () => {
-    const name = await createShellSessionTab("Shell", DEFAULT_CWD);
-    if (name) setDesktopSessionState({ count: 1, ready: true });
+    if (creatingDesktopShellRef.current) return;
+    creatingDesktopShellRef.current = true;
+    setCreatingDesktopShell(true);
+    try {
+      const name = await createShellSessionTab("Shell", DEFAULT_CWD);
+      if (name) setDesktopSessionState({ count: 1, ready: true });
+    } finally {
+      creatingDesktopShellRef.current = false;
+      if (mountedRef.current) setCreatingDesktopShell(false);
+    }
   };
 
   // Construct store-compatible interface for child components
@@ -1157,6 +1167,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           {desktopParity && desktopSessionState.count === 0 ? (
             <DesktopTerminalEmptyState
               ready={desktopSessionState.ready}
+              creating={creatingDesktopShell}
               onCreate={() => void createDesktopShell()}
             />
           ) : activeTab ? (
