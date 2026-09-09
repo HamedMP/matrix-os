@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,12 @@ import {
   nextExecutionGeneration,
   type ScopeRuntimeCommandRunner,
 } from "../../packages/scope-runtime/src/systemd-launcher.js";
+import {
+  SCOPE_RUNTIME_HARNESS_VERSION,
+  SCOPE_RUNTIME_PROFILE_DIGEST,
+  SCOPE_RUNTIME_PROFILE_ID,
+  SCOPE_RUNTIME_PROFILE_VERSION,
+} from "../../packages/scope-runtime/src/profile.js";
 
 const RUNTIME_HANDLE = "runtime_22222222222222222222222222222222";
 const SCOPE_HANDLE = "scope_11111111111111111111111111111111";
@@ -47,7 +53,27 @@ const launch = {
   workload: "chat_ai" as const,
   adapterId: "claude-code",
   harnessVersion: "2.1.240",
+  executionGeneration: "7",
 };
+
+async function writeProvenance(
+  stateRoot: string,
+  suffix: string,
+  overrides: Record<string, unknown> = {},
+) {
+  await writeFile(join(stateRoot, "runtimes", suffix, "provenance.json"), JSON.stringify({
+    version: 1,
+    runtimeHandle: `runtime_${suffix}`,
+    profileId: SCOPE_RUNTIME_PROFILE_ID,
+    profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
+    profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+    workload: "chat_ai",
+    adapterId: "claude-code",
+    harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+    executionGeneration: "7",
+    ...overrides,
+  }));
+}
 
 describe("scope runtime systemd launcher", () => {
   it("builds only the source-controlled profile and fixed worker command", () => {
@@ -96,6 +122,7 @@ describe("scope runtime systemd launcher", () => {
       paths.stateRoot,
       "runtimes/33333333333333333333333333333333/ready",
     ), "runtime_33333333333333333333333333333333\n");
+    await writeProvenance(paths.stateRoot, "33333333333333333333333333333333");
     const calls: Array<{ command: string; args: readonly string[] }> = [];
     const runCommand: ScopeRuntimeCommandRunner = vi.fn(async (command, args) => {
       calls.push({ command, args });
@@ -112,7 +139,10 @@ describe("scope runtime systemd launcher", () => {
     });
     const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
 
-    await expect(launcher.list()).resolves.toEqual(["runtime_33333333333333333333333333333333"]);
+    await expect(launcher.list()).resolves.toEqual([{
+      runtimeHandle: "runtime_33333333333333333333333333333333",
+      executionGeneration: "7",
+    }]);
     const previousUmask = process.umask(0o007);
     try {
       await expect(launcher.start(launch)).resolves.toBeUndefined();
@@ -131,6 +161,13 @@ describe("scope runtime systemd launcher", () => {
     expect((await stat(join(sandboxRoot, "run/matrix-scope-readiness"))).mode & 0o777).toBe(0o755);
     expect((await stat(join(sandboxRoot, "run/matrix-scope-readiness/ready"))).mode & 0o777).toBe(0o644);
     expect((await stat(join(runtimeRoot, "ready"))).mode & 0o777).toBe(0o622);
+    expect(JSON.parse(await readFile(join(runtimeRoot, "provenance.json"), "utf8")))
+      .toMatchObject({
+        runtimeHandle: RUNTIME_HANDLE,
+        profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+        harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+        executionGeneration: "7",
+      });
     expect((await lstat(
       join(sandboxRoot, "opt/matrix/scope-runtime/worker.mjs"),
     )).isFile()).toBe(true);
@@ -224,13 +261,24 @@ describe("scope runtime systemd launcher", () => {
     const activating = "55555555555555555555555555555555";
     const orphan = "66666666666666666666666666666666";
     const activeWithoutReadiness = "77777777777777777777777777777777";
-    for (const suffix of [active, failed, activating, orphan, activeWithoutReadiness]) {
+    const activeWithStaleProvenance = "88888888888888888888888888888888";
+    for (const suffix of [
+      active, failed, activating, orphan, activeWithoutReadiness, activeWithStaleProvenance,
+    ]) {
       await mkdir(join(paths.stateRoot, "runtimes", suffix), { recursive: true });
     }
     await writeFile(
       join(paths.stateRoot, "runtimes", active, "ready"),
       `runtime_${active}\n`,
     );
+    await writeProvenance(paths.stateRoot, active);
+    await writeFile(
+      join(paths.stateRoot, "runtimes", activeWithStaleProvenance, "ready"),
+      `runtime_${activeWithStaleProvenance}\n`,
+    );
+    await writeProvenance(paths.stateRoot, activeWithStaleProvenance, {
+      profileDigest: "0".repeat(64),
+    });
     const calls: Array<readonly string[]> = [];
     const runCommand: ScopeRuntimeCommandRunner = vi.fn(async (_command, args) => {
       calls.push(args);
@@ -239,14 +287,18 @@ describe("scope runtime systemd launcher", () => {
         `matrix-scope-runtime-${failed}.service loaded failed failed`,
         `matrix-scope-runtime-${activating}.service loaded activating start`,
         `matrix-scope-runtime-${activeWithoutReadiness}.service loaded active running`,
+        `matrix-scope-runtime-${activeWithStaleProvenance}.service loaded active running`,
       ].join("\n") };
       return { stdout: "" };
     });
     const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
 
-    await expect(launcher.list()).resolves.toEqual([`runtime_${active}`]);
+    await expect(launcher.list()).resolves.toEqual([{
+      runtimeHandle: `runtime_${active}`,
+      executionGeneration: "7",
+    }]);
     expect(calls.some((args) => args[0] === "list-units" && args.includes("--all"))).toBe(true);
-    for (const suffix of [failed, activating, activeWithoutReadiness]) {
+    for (const suffix of [failed, activating, activeWithoutReadiness, activeWithStaleProvenance]) {
       const unit = `matrix-scope-runtime-${suffix}.service`;
       expect(calls.some((args) => args[0] === "stop" && args[1] === unit)).toBe(true);
       expect(calls.some((args) => args[0] === "reset-failed" && args[1] === unit)).toBe(true);
@@ -255,6 +307,8 @@ describe("scope runtime systemd launcher", () => {
     await expect(stat(join(paths.stateRoot, "runtimes", activating))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(paths.stateRoot, "runtimes", orphan))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(paths.stateRoot, "runtimes", activeWithoutReadiness)))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(paths.stateRoot, "runtimes", activeWithStaleProvenance)))
       .rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(paths.stateRoot, "runtimes", active))).resolves.toBeDefined();
   });

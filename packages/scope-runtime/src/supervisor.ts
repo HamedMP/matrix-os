@@ -15,6 +15,7 @@ import {
 } from "./profile.js";
 
 export const SCOPE_RUNTIME_SUPERVISOR_VERSION = "1.0.0";
+const EXECUTION_GENERATION = /^(0|[1-9][0-9]{0,19})$/;
 
 export const SCOPE_RUNTIME_PROFILE: Omit<ScopeRuntimeCapabilityProfile, "executionGeneration"> = {
   profileId: SCOPE_RUNTIME_PROFILE_ID,
@@ -40,10 +41,16 @@ export interface ScopeRuntimeLaunchRequest {
   workload: "chat_ai" | "terminal";
   adapterId: string;
   harnessVersion: string;
+  executionGeneration: string;
+}
+
+export interface ScopeRuntimeReconciledRuntime {
+  runtimeHandle: string;
+  executionGeneration: string;
 }
 
 export interface ScopeRuntimeLauncher {
-  list(): Promise<string[]>;
+  list(): Promise<ScopeRuntimeReconciledRuntime[]>;
   start(input: ScopeRuntimeLaunchRequest): Promise<void>;
   stop(runtimeHandle: string): Promise<void>;
 }
@@ -73,14 +80,20 @@ export async function createScopeRuntimeController(options: {
   createRuntimeHandle?: () => string;
 }) {
   const maxRuntimes = Math.max(1, Math.min(Math.trunc(options.maxRuntimes ?? 32), 32));
+  if (!EXECUTION_GENERATION.test(options.executionGeneration)) {
+    throw new Error("Invalid scope runtime execution generation");
+  }
   const createRuntimeHandle = options.createRuntimeHandle ?? newRuntimeHandle;
   const existing = await options.launcher.list();
   if (existing.length > maxRuntimes) throw new Error("Scope runtime reconciliation exceeds capacity");
-  const runtimes = new Set<string>();
+  const runtimes = new Map<string, string>();
   for (const value of existing) {
-    const runtimeHandle = RuntimeHandleSchema.parse(value);
+    const runtimeHandle = RuntimeHandleSchema.parse(value.runtimeHandle);
+    if (!EXECUTION_GENERATION.test(value.executionGeneration)) {
+      throw new Error("Invalid reconciled scope runtime generation");
+    }
     if (runtimes.has(runtimeHandle)) throw new Error("Duplicate reconciled scope runtime");
-    runtimes.add(runtimeHandle);
+    runtimes.set(runtimeHandle, value.executionGeneration);
   }
   const operations = new Set<Promise<void>>();
   let reservedCreates = 0;
@@ -118,6 +131,7 @@ export async function createScopeRuntimeController(options: {
       workload: request.workload,
       adapterId: request.adapterId,
       harnessVersion: request.harnessVersion,
+      executionGeneration: options.executionGeneration,
     });
     operations.add(operation);
     try {
@@ -131,7 +145,7 @@ export async function createScopeRuntimeController(options: {
         }
         return runtimeFailure(request.requestId, "runtime_unavailable");
       }
-      runtimes.add(runtimeHandle);
+      runtimes.set(runtimeHandle, options.executionGeneration);
       return ScopeRuntimeResponseSchema.parse({
         version: 1,
         type: "runtime.result",
@@ -154,7 +168,8 @@ export async function createScopeRuntimeController(options: {
   async function stopRuntime(
     request: Extract<ScopeRuntimeRequest, { type: "runtime.stop" }>,
   ): Promise<ScopeRuntimeResponse> {
-    if (!runtimes.has(request.runtimeHandle)) {
+    const executionGeneration = runtimes.get(request.runtimeHandle);
+    if (executionGeneration === undefined) {
       return runtimeFailure(request.requestId, "runtime_not_found");
     }
     try {
@@ -166,7 +181,7 @@ export async function createScopeRuntimeController(options: {
         requestId: request.requestId,
         ok: true,
         runtimeHandle: request.runtimeHandle,
-        executionGeneration: options.executionGeneration,
+        executionGeneration,
         state: "stopped",
       });
     } catch (error: unknown) {
@@ -211,7 +226,7 @@ export async function createScopeRuntimeController(options: {
       if (closed) return;
       closed = true;
       await Promise.allSettled([...operations]);
-      const stops = [...runtimes].map(async (runtimeHandle) => {
+      const stops = [...runtimes.keys()].map(async (runtimeHandle) => {
         try {
           await options.launcher.stop(runtimeHandle);
         } catch (error: unknown) {

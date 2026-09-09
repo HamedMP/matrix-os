@@ -76,6 +76,7 @@ describe("scope runtime supervisor", () => {
       workload: "chat_ai",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
+      executionGeneration: "10",
     });
 
     await expect(controller.handle({
@@ -85,6 +86,27 @@ describe("scope runtime supervisor", () => {
       runtimeHandle: RUNTIME_HANDLE,
     })).resolves.toMatchObject({ ok: true, state: "stopped" });
     expect(native.stop).toHaveBeenCalledWith(RUNTIME_HANDLE);
+  });
+
+  it("preserves the attested launch generation for a reconciled runtime", async () => {
+    const native = launcher({
+      list: vi.fn(async () => [{ runtimeHandle: RUNTIME_HANDLE, executionGeneration: "7" }]),
+    });
+    const controller = await createScopeRuntimeController({
+      launcher: native,
+      executionGeneration: "13",
+    });
+
+    await expect(controller.handle({
+      version: 1,
+      type: "runtime.stop",
+      requestId: REQUEST_ID,
+      runtimeHandle: RUNTIME_HANDLE,
+    })).resolves.toMatchObject({
+      ok: true,
+      state: "stopped",
+      executionGeneration: "7",
+    });
   });
 
   it("fails closed for unproven profiles, harnesses, workloads, and launcher failures", async () => {

@@ -20,10 +20,17 @@ import { RuntimeHandleSchema, ScopeHandleSchema } from "./protocol.js";
 import {
   FIXED_SYSTEMD_ENVIRONMENT,
   SCOPE_RUNTIME_HARNESS_VERSION,
+  SCOPE_RUNTIME_PROFILE_DIGEST,
+  SCOPE_RUNTIME_PROFILE_ID,
+  SCOPE_RUNTIME_PROFILE_VERSION,
   materializeFixedSystemdProperties,
   type ScopeRuntimeProfilePaths,
 } from "./profile.js";
-import type { ScopeRuntimeLaunchRequest, ScopeRuntimeLauncher } from "./supervisor.js";
+import type {
+  ScopeRuntimeLaunchRequest,
+  ScopeRuntimeLauncher,
+  ScopeRuntimeReconciledRuntime,
+} from "./supervisor.js";
 import { scopeRuntimeWorkerFailureForExitCode } from "./worker.js";
 
 const execFileAsync = promisify(execFile);
@@ -31,7 +38,10 @@ const COMMAND_TIMEOUT_MS = 10_000;
 const COMMAND_MAX_BUFFER_BYTES = 64 * 1024;
 const UNIT_PREFIX = "matrix-scope-runtime-";
 const READINESS_RELATIVE_PATH = "run/matrix-scope-readiness/ready";
+const PROVENANCE_FILE = "provenance.json";
 const MAX_RECONCILED_ENTRIES = 128;
+const MAX_PROVENANCE_BYTES = 2_048;
+const EXECUTION_GENERATION = /^(0|[1-9][0-9]{0,19})$/;
 
 export interface ScopeRuntimeCommandRunner {
   (command: string, args: readonly string[]): Promise<{ stdout: string }>;
@@ -112,8 +122,9 @@ async function assertPrivateDirectory(path: string): Promise<void> {
 
 async function prepareRuntimeRoot(
   stateRoot: string,
-  runtimeHandle: string,
+  request: ScopeRuntimeLaunchRequest,
 ): Promise<{ root: string; readinessFile: string }> {
+  const runtimeHandle = RuntimeHandleSchema.parse(request.runtimeHandle);
   const suffix = RuntimeHandleSchema.parse(runtimeHandle).slice("runtime_".length);
   await mkdir(stateRoot, { recursive: true, mode: 0o700 });
   await chmod(stateRoot, 0o700);
@@ -158,6 +169,22 @@ async function prepareRuntimeRoot(
   const readinessHandle = await open(readinessFile, "wx", 0o622);
   await readinessHandle.close();
   await chmod(readinessFile, 0o622);
+  const provenance = `${JSON.stringify({
+    version: 1,
+    runtimeHandle,
+    profileId: SCOPE_RUNTIME_PROFILE_ID,
+    profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
+    profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+    workload: request.workload,
+    adapterId: request.adapterId,
+    harnessVersion: request.harnessVersion,
+    executionGeneration: request.executionGeneration,
+  })}\n`;
+  if (Buffer.byteLength(provenance) > MAX_PROVENANCE_BYTES
+    || !EXECUTION_GENERATION.test(request.executionGeneration)) {
+    throw new Error("Invalid scope runtime provenance");
+  }
+  await writeFile(join(runtimeRoot, PROVENANCE_FILE), provenance, { flag: "wx", mode: 0o600 });
   const readinessTarget = join(root, READINESS_RELATIVE_PATH);
   const readinessTargetHandle = await open(readinessTarget, "wx", 0o644);
   await readinessTargetHandle.close();
@@ -173,6 +200,45 @@ async function prepareRuntimeRoot(
   const handle = await open(brokerTarget, "wx", 0o600);
   await handle.close();
   return { root, readinessFile };
+}
+
+async function readRuntimeProvenance(
+  runtimeRoot: string,
+  runtimeHandle: string,
+): Promise<ScopeRuntimeReconciledRuntime | undefined> {
+  let handle;
+  try {
+    handle = await open(join(runtimeRoot, PROVENANCE_FILE), constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error: unknown) {
+    if (error instanceof Error && ["ENOENT", "ELOOP"].includes(
+      String((error as NodeJS.ErrnoException).code),
+    )) return undefined;
+    throw error;
+  }
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size < 1 || metadata.size > MAX_PROVENANCE_BYTES) return undefined;
+    const parsed: unknown = JSON.parse(await handle.readFile("utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const value = parsed as Record<string, unknown>;
+    if (Object.keys(value).length !== 9
+      || value.version !== 1
+      || value.runtimeHandle !== runtimeHandle
+      || value.profileId !== SCOPE_RUNTIME_PROFILE_ID
+      || value.profileVersion !== SCOPE_RUNTIME_PROFILE_VERSION
+      || value.profileDigest !== SCOPE_RUNTIME_PROFILE_DIGEST
+      || value.workload !== "chat_ai"
+      || value.adapterId !== "claude-code"
+      || value.harnessVersion !== SCOPE_RUNTIME_HARNESS_VERSION
+      || typeof value.executionGeneration !== "string"
+      || !EXECUTION_GENERATION.test(value.executionGeneration)) return undefined;
+    return { runtimeHandle, executionGeneration: value.executionGeneration };
+  } catch (error: unknown) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  } finally {
+    await handle.close();
+  }
 }
 
 async function validateRuntimeSources(paths: Required<LauncherPaths>): Promise<{
@@ -316,7 +382,7 @@ export function createSystemdScopeRuntimeLauncher(
   const runCommand = input.runCommand ?? defaultRunCommand;
 
   return {
-    async list(): Promise<string[]> {
+    async list(): Promise<ScopeRuntimeReconciledRuntime[]> {
       const { stdout } = await runCommand("/usr/bin/systemctl", [
         "list-units",
         "--type=service",
@@ -325,7 +391,7 @@ export function createSystemdScopeRuntimeLauncher(
         "--no-legend",
         `${UNIT_PREFIX}*.service`,
       ]);
-      const handles: string[] = [];
+      const handles: ScopeRuntimeReconciledRuntime[] = [];
       const retainedSuffixes = new Set<string>();
       let entries = 0;
       for (const line of stdout.split("\n")) {
@@ -341,7 +407,10 @@ export function createSystemdScopeRuntimeLauncher(
           join(paths.stateRoot, "runtimes", suffix, "ready"),
           runtimeHandle,
         );
-        if (!ready) {
+        const provenance = ready
+          ? await readRuntimeProvenance(join(paths.stateRoot, "runtimes", suffix), runtimeHandle)
+          : undefined;
+        if (!provenance) {
           if (!await cleanupSubmittedUnit(runCommand, name)) {
             throw new Error("Scope runtime reconciliation cleanup unavailable");
           }
@@ -349,14 +418,14 @@ export function createSystemdScopeRuntimeLauncher(
           continue;
         }
         retainedSuffixes.add(suffix);
-        handles.push(runtimeHandle);
+        handles.push(provenance);
         if (handles.length > 32) throw new Error("Scope runtime reconciliation exceeds capacity");
       }
       await cleanupOrphanedRuntimeRoots(paths.stateRoot, retainedSuffixes);
       return handles;
     },
     async start(request: ScopeRuntimeLaunchRequest): Promise<void> {
-      const { root, readinessFile } = await prepareRuntimeRoot(paths.stateRoot, request.runtimeHandle);
+      const { root, readinessFile } = await prepareRuntimeRoot(paths.stateRoot, request);
       let submitted = false;
       try {
         const sources = await validateRuntimeSources(paths);
