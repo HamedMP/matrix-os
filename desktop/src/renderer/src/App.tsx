@@ -1,4 +1,5 @@
 import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
+import { MatrixBootScreen } from "@matrix-os/brand";
 import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { useEffect } from "react";
@@ -29,11 +30,7 @@ export default function App() {
     <Tooltip.Provider delayDuration={400} skipDelayDuration={200}>
       <div className="flex h-full flex-col" style={{ background: "var(--bg-app)" }}>
         {status === "loading" ? (
-          <div className="flex flex-1 items-center justify-center">
-            <span className="status-pulse text-sm" style={{ color: "var(--text-tertiary)" }}>
-              Connecting…
-            </span>
-          </div>
+          <MatrixBootScreen label="Connecting to your Matrix computer" />
         ) : status === "signed-out" ? (
           <SignIn />
         ) : (

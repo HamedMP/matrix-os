@@ -37,6 +37,7 @@ export default defineConfig({
   resolve: {
     conditions: ["node"],
     alias: {
+      "@matrix-os/brand/boot-screen": path.resolve(__dirname, "packages/brand/src/boot-screen.ts"),
       "@": path.resolve(__dirname, "shell/src"),
       "@desktop": path.resolve(__dirname, "desktop/src"),
       "@renderer": path.resolve(__dirname, "desktop/src/renderer/src"),
