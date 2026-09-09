@@ -175,6 +175,7 @@ let DesktopComponent: DesktopComponentType;
 let desktopModeStore: DesktopModeStore;
 let desktopConfigStore: DesktopConfigStore;
 let windowManagerStore: WindowManagerStore;
+let resetLayoutPersistence: () => void;
 let queryClient: QueryClient;
 
 function renderDesktop(props: React.ComponentProps<DesktopComponentType> = {}) {
@@ -238,12 +239,17 @@ describe("Desktop launcher dock button by mode", () => {
     desktopModeStore = (await import("../../shell/src/stores/desktop-mode.js")).useDesktopMode;
     desktopConfigStore = (await import("../../shell/src/stores/desktop-config.js")).useDesktopConfigStore;
     (await import("../../shell/src/stores/desktop-config.js")).resetWebDesktopIconsRuntime();
-    windowManagerStore = (await import("../../shell/src/hooks/useWindowManager.js")).useWindowManager;
+    const windowManagerModule = await import("../../shell/src/hooks/useWindowManager.js");
+    windowManagerStore = windowManagerModule.useWindowManager;
+    resetLayoutPersistence = windowManagerModule.resetWindowManagerLayoutPersistenceForTests;
     queryClient = createShellQueryClient();
     queryClient.setDefaultOptions({ queries: { retry: false } });
   });
 
   afterEach(() => {
+    // A module reset does not cancel the previous store's debounced save.
+    resetLayoutPersistence();
+    queryClient.clear();
     vi.unstubAllGlobals();
   });
 
