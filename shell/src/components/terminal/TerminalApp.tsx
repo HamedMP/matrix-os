@@ -52,6 +52,7 @@ import { formatShellDisplayName } from "./TerminalSidebarItems";
 import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./DesktopTerminalWorkspace";
+import { useTerminalSessionCreate } from "./useTerminalSessionCreate";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
@@ -243,7 +244,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [initialized, setInitialized] = useState(false);
   const [mobileInputActive, setMobileInputActive] = useState(false);
   const [desktopSessionState, setDesktopSessionState] = useState<{ count: number; ready: boolean }>({ count: 0, ready: false });
-  const [creatingDesktopShell, setCreatingDesktopShell] = useState(false);
   const [unavailableSessionIds, setUnavailableSessionIds] = useState<string[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -267,7 +267,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const terminalLayoutHydratedRef = useRef(false);
   const terminalLayoutDirtyRef = useRef(false);
-  const creatingDesktopShellRef = useRef(false);
   const terminalLayoutChangeVersionRef = useRef(0);
   const terminalLayoutRevisionRef = useRef(0);
   const terminalLayoutBaseRef = useRef<TerminalLayout | null>(null);
@@ -1060,18 +1059,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       current.count === next.count && current.ready === next.ready ? current : next
     ));
   }, []);
-  const createDesktopShell = async () => {
-    if (creatingDesktopShellRef.current) return;
-    creatingDesktopShellRef.current = true;
-    setCreatingDesktopShell(true);
-    try {
-      const name = await createShellSessionTab("Shell", DEFAULT_CWD);
-      if (name) setDesktopSessionState({ count: 1, ready: true });
-    } finally {
-      creatingDesktopShellRef.current = false;
-      if (mountedRef.current) setCreatingDesktopShell(false);
-    }
-  };
+  const { create: createDesktopShell, creating: creatingDesktopShell } = useTerminalSessionCreate({
+    createSession: () => createShellSessionTab("Shell", DEFAULT_CWD),
+    onCreated: () => setDesktopSessionState({ count: 1, ready: true }),
+  });
 
   // Construct store-compatible interface for child components
   const storeApi = {
