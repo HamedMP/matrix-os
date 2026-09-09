@@ -104,21 +104,22 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(generationId).not.toContain("sha256sum \"$@\"");
   });
 
-  it("activates the production adapter from the rollback-scoped bundle marker", () => {
+  it("connects the gateway only to the shared runtime socket", () => {
     const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf8");
     const build = readFileSync(join(root, "scripts/build-host-bundle.sh"), "utf8");
 
-    expect(server).toContain("resolveUserSystemdTerminalActivation");
-    expect(server).toContain("process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED");
+    expect(server).not.toContain("resolveUserSystemdTerminalActivation");
+    expect(server).not.toContain("process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED");
     expect(build).toContain('TERMINAL_USER_SYSTEMD_ENABLED');
     expect(build).toContain('printf \'1\\n\' > "$STAGE_DIR/app/TERMINAL_USER_SYSTEMD_ENABLED"');
     expect(server).toContain('const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)');
     expect(server).toContain('process.env.MATRIX_RUNTIME_SLOT === runtimeHandle');
     expect(server).toContain('secret: () => process.env.UPGRADE_TOKEN ?? ""');
-    expect(server).toContain("loadInstalledTerminalRuntimeGeneration");
-    expect(server).toContain("createUserSystemdZellijRuntime");
-    expect(server).toContain("createUserSystemdZellijAdapter");
-    expect(server).toContain("await userSystemdTerminalController.assertInstallationReady()");
+    expect(server).toContain("new TerminalRuntimeSocketClient");
+    expect(server).toContain("process.env.MATRIX_TERMINAL_RUNTIME_SOCKET");
+    expect(server).not.toContain("createUserSystemdZellijRuntime");
+    expect(server).not.toContain("createUserSystemdZellijAdapter");
+    expect(server).not.toContain("createUserSystemdTerminalRuntime");
     expect(server).not.toContain('MATRIX_TERMINAL_USER_SYSTEMD_ENABLED !== "0"');
   });
 

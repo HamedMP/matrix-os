@@ -11,6 +11,7 @@ import {
   TerminalWorkspaceIdSchema,
   ThreadIdSchema,
   type TerminalTab,
+  type TerminalRef,
   type TerminalPaneAction,
   type TerminalWorkspace,
 } from "@matrix-os/contracts";
@@ -81,13 +82,35 @@ export interface TerminalWorkspaceRouteRuntime {
 }
 
 export type TerminalRuntimeOwnerAccess = "allowed" | "not_found" | "unavailable";
+export type TerminalRuntimeRefAccess = TerminalRuntimeOwnerAccess | "chat_required" | "repository_required";
 
 export function terminalRuntimeOwnerAccess(
   principal: RequestPrincipal,
   terminalOwnerIds: readonly string[],
 ): TerminalRuntimeOwnerAccess {
-  if (terminalOwnerIds.length === 0) return "unavailable";
-  return terminalOwnerIds.includes(principal.userId) ? "allowed" : "not_found";
+  const configuredOwners = terminalOwnerIds
+    .map((ownerId) => ownerId.trim())
+    .filter((ownerId, index, ownerIds) => Boolean(ownerId) && ownerIds.indexOf(ownerId) === index);
+  if (configuredOwners.length !== 1) return "unavailable";
+  return configuredOwners[0] === principal.userId ? "allowed" : "not_found";
+}
+
+export async function terminalRuntimeRefAccess(
+  principal: RequestPrincipal,
+  terminalOwnerIds: readonly string[],
+  runtime: Pick<TerminalWorkspaceRouteRuntime, "listWorkspaces">,
+  refInput: TerminalRef,
+): Promise<TerminalRuntimeRefAccess> {
+  const ownerAccess = terminalRuntimeOwnerAccess(principal, terminalOwnerIds);
+  if (ownerAccess !== "allowed") return ownerAccess;
+  const ref = TerminalRefSchema.parse(refInput);
+  const workspace = (await runtime.listWorkspaces())
+    .find((candidate) => candidate.id === ref.workspaceId);
+  const tab = workspace?.tabs.find((candidate) => candidate.id === ref.tabId);
+  if (!tab) return "not_found";
+  if (tab.accessScope === "owner") return "allowed";
+  if (tab.accessScope === "chat") return "chat_required";
+  return "repository_required";
 }
 
 export function createTerminalWorkspaceRoutes(options: {

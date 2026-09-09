@@ -7,7 +7,8 @@ import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.j
 import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
 import { createWorkspaceSessionOrchestrator } from "../../packages/gateway/src/workspace-session-orchestrator.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
-import type { AgentLaunchSpec } from "../../packages/gateway/src/agent-launcher.js";
+
+const WORKSPACE_ID = "tws_00000000000000000000000000000001";
 
 describe("cold resume with retained workspace sandbox", () => {
   const homes: string[] = [];
@@ -18,19 +19,26 @@ describe("cold resume with retained workspace sandbox", () => {
     const homePath = await realpath(await mkdtemp(join(tmpdir(), "matrix-cold-sandbox-")));
     homes.push(homePath);
     const launches: string[][] = [];
+    const tabs = new Map<string, { id: string; workspaceId: string; status: "running" }>();
+    const terminalRuntime = {
+      ensureWorkspace: async () => ({ id: WORKSPACE_ID }),
+      createTab: async (_workspaceId: string, input: { command?: string[] }) => {
+        if (launches.length && scenario === "launch-failure") throw new Error("runtime unavailable");
+        launches.push(input.command ?? []);
+        const id = `tt_${launches.length.toString(16).padStart(32, "0")}`;
+        const tab = { id, workspaceId: WORKSPACE_ID, status: "running" as const };
+        tabs.set(id, tab);
+        return tab;
+      },
+      terminateTab: async ({ tabId }: { tabId: string }) => { tabs.delete(tabId); },
+      writeInput: async () => undefined,
+      listWorkspaces: async () => [{ id: WORKSPACE_ID, tabs: [...tabs.values()] }],
+    };
     const agentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: createWorktreeManager({ homePath }),
       agentLauncher: createAgentLauncher({ runtimeHome: homePath }),
-      zellijRuntime: {
-        start: async ({ sessionId, launch }: { sessionId: string; launch: AgentLaunchSpec }) => {
-          if (launches.length && scenario === "launch-failure") throw new Error("runtime unavailable");
-          launches.push(launch.args);
-          return { ok: true, status: "running", sessionName: sessionId, layoutPath: join(homePath, "layout.kdl") };
-        },
-        attachCommand: () => [], observeCommand: () => [],
-        isAlive: async () => false, kill: async () => ({ ok: true }),
-      } as never,
+      terminalRuntime,
     });
     const orchestrator = createWorkspaceSessionOrchestrator({
       homePath, agentSessionManager,

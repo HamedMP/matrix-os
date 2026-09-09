@@ -560,6 +560,10 @@ describe("Codex structured event runtime", () => {
         status: 201,
         session: {
           id: "sess_runtime_integration_1",
+          terminalRef: {
+            workspaceId: "tws_00000000000000000000000000000001",
+            tabId: "tt_00000000000000000000000000000001",
+          },
           runtime: { status: "running", zellijSession: "matrix-agent-runtime-integration" },
         },
       })),
@@ -676,6 +680,10 @@ describe("Codex structured event runtime", () => {
           status: 201,
           session: {
             id: request.sessionId,
+            terminalRef: {
+              workspaceId: "tws_00000000000000000000000000000002",
+              tabId: "tt_00000000000000000000000000000002",
+            },
             runtime: { status: "running", zellijSession: request.sessionId },
           },
         };

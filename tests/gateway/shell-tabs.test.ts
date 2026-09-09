@@ -12,52 +12,46 @@ describe("gateway shell tab routes", () => {
     return app;
   }
 
-  it("lists, creates, switches, and closes tabs with validated inputs", async () => {
+  it("keeps legacy tab creation during rollout and rejects the remaining session-indexed actions", async () => {
     const workspace = {
       listTabs: vi.fn(async () => [{ idx: 0, name: "main", focused: true }]),
-      createTab: vi.fn(async () => ({ id: 41, idx: 1, name: "api" })),
+      createTab: vi.fn(async () => ({ idx: 1, name: "api" })),
       switchTab: vi.fn(async () => ({ ok: true })),
-      switchTabById: vi.fn(async () => ({ ok: true })),
       closeTab: vi.fn(async () => ({ ok: true })),
     };
     const app = appWithWorkspace(workspace);
 
-    await expect((await app.request("/api/sessions/main/tabs")).json()).resolves.toEqual({
-      tabs: [{ idx: 0, name: "main", focused: true }],
-    });
-    await expect((await app.request("/api/sessions/main/tabs", {
+    const list = await app.request("/api/sessions/main/tabs");
+    const create = await app.request("/api/sessions/main/tabs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "api", cwd: "~/repo", cmd: "pnpm dev" }),
-    })).json()).resolves.toEqual({ tab: { id: 41, idx: 1, name: "api" } });
-    await expect((await app.request("/api/sessions/main/tabs/1/go", {
+    });
+    const switchTab = await app.request("/api/sessions/main/tabs/1/go", {
       method: "POST",
-    })).json()).resolves.toEqual({ ok: true });
-    await expect((await app.request("/api/sessions/main/tabs/by-id/41/go", {
-      method: "POST",
-    })).json()).resolves.toEqual({ ok: true });
-    await expect((await app.request("/api/sessions/main/tabs/1", {
+    });
+    const close = await app.request("/api/sessions/main/tabs/1", {
       method: "DELETE",
-    })).json()).resolves.toEqual({ ok: true });
+    });
 
+    expect([list.status, create.status, switchTab.status, close.status]).toEqual([426, 200, 426, 426]);
     expect(workspace.createTab).toHaveBeenCalledWith("main", {
       name: "api",
       cwd: "~/repo",
       cmd: "pnpm dev",
     });
-    expect(workspace.switchTab).toHaveBeenCalledWith("main", 1);
-    expect(workspace.switchTabById).toHaveBeenCalledWith("main", 41);
-    expect(workspace.closeTab).toHaveBeenCalledWith("main", 1);
+    expect(workspace.switchTab).not.toHaveBeenCalled();
+    expect(workspace.closeTab).not.toHaveBeenCalled();
   });
 
-  it("rejects malformed tab requests with generic errors", async () => {
-    const app = appWithWorkspace({
+  it("validates legacy tab creation before invoking the compatibility adapter", async () => {
+    const workspace = {
       listTabs: vi.fn(),
       createTab: vi.fn(),
       switchTab: vi.fn(),
-      switchTabById: vi.fn(),
       closeTab: vi.fn(),
-    });
+    };
+    const app = appWithWorkspace(workspace);
 
     const res = await app.request("/api/sessions/main/tabs", {
       method: "POST",
@@ -66,8 +60,6 @@ describe("gateway shell tab routes", () => {
     });
 
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toEqual({
-      error: { code: "invalid_request", message: "Invalid request" },
-    });
+    expect(workspace.createTab).not.toHaveBeenCalled();
   });
 });
