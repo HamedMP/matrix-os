@@ -1336,6 +1336,7 @@ export class ChatRepository {
     chatId: string;
     driverKind: string;
     instanceId: string;
+    includeInterrupted?: boolean;
   }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     return this.runLifecycle.getLatestAdapterStateForChat(ownerInput, input);
   }

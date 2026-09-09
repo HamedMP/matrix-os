@@ -145,6 +145,7 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     driverKind: string;
     instanceId: string;
+    includeInterrupted?: boolean;
   }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     const owner = validateOwner(ownerInput);
     [input.driverKind, input.instanceId].forEach(requireSafeRef);
@@ -159,7 +160,11 @@ export class ChatRunLifecycleRepository {
       .where("chat_runs.chat_id", "=", input.chatId)
       .where("chat_runs.driver_kind", "=", input.driverKind)
       .where("chat_runs.instance_id", "=", input.instanceId)
-      .where("chat_runs.status", "=", "completed")
+      // A new user turn continues the native conversation even when its last
+      // run failed. Explicit retry callers retain the completed-only boundary.
+      .where("chat_runs.status", "in", input.includeInterrupted
+        ? ["completed", "failed", "aborted"]
+        : ["completed"])
       .where("chat_run_adapter_state.driver_kind", "=", input.driverKind)
       .where("chat_run_adapter_state.instance_id", "=", input.instanceId)
       .orderBy("chat_runs.completed_at", "desc")

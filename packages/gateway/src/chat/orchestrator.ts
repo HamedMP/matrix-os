@@ -377,6 +377,7 @@ export class CanonicalChatOrchestrator {
       chatId,
       driverKind: validated.instance.driverKind,
       instanceId: validated.instance.id,
+      includeInterrupted: true,
     });
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
@@ -785,6 +786,7 @@ export class CanonicalChatOrchestrator {
             chatId,
             driverKind: claimed.run.driverKind,
             instanceId: claimed.run.instanceId,
+            includeInterrupted: true,
           });
           resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
             && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)

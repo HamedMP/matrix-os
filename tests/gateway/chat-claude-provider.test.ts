@@ -42,7 +42,7 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
-  it("resumes the active Claude session with a steering prompt", async () => {
+  it.each([null, 0])("resumes the active Claude session after steer exits with code %s", async (exitCode) => {
     const firstStdout = new FakeStream();
     const firstStderr = new FakeStream();
     const firstProcess = new EventEmitter() as EventEmitter & {
@@ -52,7 +52,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     };
     firstProcess.stdout = firstStdout;
     firstProcess.stderr = firstStderr;
-    firstProcess.kill = vi.fn(() => queueMicrotask(() => firstProcess.emit("exit", null, "SIGTERM")));
+    firstProcess.kill = vi.fn(() => queueMicrotask(() => firstProcess.emit("exit", exitCode, exitCode === null ? "SIGTERM" : null)));
     const spawnFn = vi.fn()
       .mockImplementationOnce(() => {
         queueMicrotask(() => firstStdout.emit("data", Buffer.from(`${JSON.stringify({
