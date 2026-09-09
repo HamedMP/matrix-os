@@ -1,5 +1,6 @@
 import type { CollaborationRole } from "@matrix-os/contracts";
 import type { Selectable } from "kysely";
+import type { CollaborationPolicy } from "@matrix-os/contracts";
 import type { CollaborationScopesTable } from "./database.js";
 import type { CollaborationRepository } from "./repository.js";
 
@@ -44,7 +45,6 @@ export interface CollaborationAuthorityOptions {
 
 export class CollaborationAuthority {
   private readonly now: () => Date;
-
   constructor(
     private readonly repository: CollaborationRepository,
     options: CollaborationAuthorityOptions = {},
@@ -56,6 +56,7 @@ export class CollaborationAuthority {
     scopeId: string;
     actorId: string;
     action: CollaborationAction;
+    executionPolicy?: CollaborationPolicy;
   }): Promise<AuthorizedCollaborationContext> {
     const scope = await this.loadScope(input.scopeId);
     const membershipScope = await this.resolveMembershipScope(scope);
@@ -66,7 +67,7 @@ export class CollaborationAuthority {
     if (member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime()) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
     }
-    this.requireLifecycle(scope, member.role, input.action);
+    this.requireLifecycle(scope, member.role, input.actorId, input.action, input.executionPolicy);
     requireRoleCapability(member.role, input.action);
 
     return {
@@ -119,10 +120,14 @@ export class CollaborationAuthority {
   private requireLifecycle(
     scope: Selectable<CollaborationScopesTable>,
     role: CollaborationRole,
+    actorId: string,
     action: CollaborationAction,
+    executionPolicy?: CollaborationPolicy,
   ): void {
     if (action === "request_ai" || action === "control_execution") {
-      throw new CollaborationAuthorizationError("unavailable", "Shared execution is disabled for M1");
+      if (!this.aiAllowed(scope, actorId, executionPolicy)) {
+        throw new CollaborationAuthorizationError("unavailable", "Shared execution is unavailable");
+      }
     }
     if (scope.lifecycle === "shared") return;
     if (scope.lifecycle === "archived" && action === "read") return;
@@ -130,11 +135,34 @@ export class CollaborationAuthority {
       && ["archived", "deleting", "recovering"].includes(scope.lifecycle)) return;
     throw new CollaborationAuthorizationError("unavailable", "Scope is not available for this action");
   }
+
+  canRequestAi(
+    scope: Selectable<CollaborationScopesTable>,
+    actorId: string,
+    role: CollaborationRole,
+    executionPolicy?: CollaborationPolicy,
+  ): boolean {
+    return role !== "viewer" && scope.lifecycle === "shared"
+      && this.aiAllowed(scope, actorId, executionPolicy);
+  }
+
+  private aiAllowed(
+    scope: Selectable<CollaborationScopesTable>,
+    actorId: string,
+    policy?: CollaborationPolicy,
+  ): boolean {
+    if (!policy || policy.milestone !== "m2" || policy.mode === "off" || policy.mode === "read_only"
+      || scope.execution_generation === null || scope.execution_eligibility === null) return false;
+    if (policy.mode === "enabled") return true;
+    if (policy.cohort.length > 1_000) return false;
+    return policy.cohort.includes(actorId) && policy.cohort.includes(scope.owner_id);
+  }
 }
 
 function requireRoleCapability(role: CollaborationRole, action: CollaborationAction): void {
   if (action === "request_ai" || action === "control_execution") {
-    throw new CollaborationAuthorizationError("unavailable", "Shared execution is disabled for M1");
+    if (role === "viewer") throw new CollaborationAuthorizationError("forbidden", "Role does not allow this action");
+    return;
   }
   const allowed = role === "owner"
     ? ["read", "discuss", "manage_members", "publish_snapshot", "recover"]
