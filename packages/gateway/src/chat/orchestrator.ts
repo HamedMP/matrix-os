@@ -65,6 +65,7 @@ import {
 } from "./queue-admission.js";
 import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
 import { retryAvailability } from "./retry-preflight.js";
+import { loadChatResumeState } from "./resume-checkpoint.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, diagnoseChatRunFailure, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 
@@ -377,11 +378,6 @@ export class CanonicalChatOrchestrator {
         503,
       );
     }
-    const previousState = await this.options.repository.getLatestAdapterStateForChat(owner, {
-      chatId,
-      driverKind: validated.instance.driverKind,
-      instanceId: validated.instance.id,
-    });
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
     if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
@@ -414,10 +410,12 @@ export class CanonicalChatOrchestrator {
         );
       }
     }
-    const resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
-      && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
-      ? adapter.parseState(previousState.state)
-      : undefined;
+    const resumeState = await loadChatResumeState({
+      repository: this.options.repository, owner, chatId, adapter,
+      instanceId: validated.instance.id,
+      executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
+      mode: "follow_up",
+    });
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),
@@ -611,15 +609,12 @@ export class CanonicalChatOrchestrator {
         );
       }
     }
-    const previousState = await this.options.repository.getLatestAdapterStateForChat(owner, {
-      chatId,
-      driverKind: context.latestRun.driverKind,
+    const resumeState = await loadChatResumeState({
+      repository: this.options.repository, owner, chatId, adapter,
       instanceId: context.latestRun.instanceId,
+      executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
+      mode: "retry",
     });
-    const resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
-      && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
-      ? adapter.parseState(previousState.state)
-      : undefined;
     const availability = await retryAvailability(adapter, owner, resumeState, () => this.options.repository.getAdapterState(owner, {
       runId: context.latestRun.id, driverKind: context.latestRun.driverKind, instanceId: context.latestRun.instanceId,
     }), () => this.options.repository.hasRetryRequest(owner, { chatId, turnId, clientRequestId: input.clientRequestId }));
@@ -794,15 +789,12 @@ export class CanonicalChatOrchestrator {
               throw new Error("Queued execution root provenance changed");
             }
           }
-          const previousState = await this.options.repository.getLatestAdapterStateForChat(owner, {
-            chatId,
-            driverKind: claimed.run.driverKind,
+          resumeState = await loadChatResumeState({
+            repository: this.options.repository, owner, chatId, adapter,
             instanceId: claimed.run.instanceId,
+            executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
+            mode: "follow_up",
           });
-          resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
-            && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
-            ? adapter.parseState(previousState.state)
-            : undefined;
         } catch (error: unknown) {
           console.warn(
             "[chat/orchestrator] Queued Run preparation failed:",

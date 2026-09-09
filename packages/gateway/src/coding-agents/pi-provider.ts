@@ -258,6 +258,7 @@ function truncateText(text: string, maxChars: number): { text: string; truncated
 interface PiRunCollectorOptions {
   threadId: string;
   scope: string;
+  messageIdentity: { next: number };
   homePath: string;
   executionRoot: string;
   now: () => Date;
@@ -279,7 +280,6 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
   const events: AgentThreadEvent[] = [];
   let sessionId: string | null = null;
   let dropped = 0;
-  let assistantMessageCounter = 0;
   let assistantText = "";
   let assistantMessageId: string | null = null;
   let assistantEmittedChars = 0;
@@ -397,16 +397,14 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
         const kind = (update as Record<string, unknown>).type;
         if (kind === "text_start") {
           flushAssistantText();
-          assistantMessageCounter += 1;
-          assistantMessageId = `msg_${options.scope}_${assistantMessageCounter}`;
+          assistantMessageId = `msg_${options.scope}_${++options.messageIdentity.next}`;
           assistantText = "";
           assistantEmittedChars = 0;
           return;
         }
         if (kind === "text_delta") {
           if (!assistantMessageId) {
-            assistantMessageCounter += 1;
-            assistantMessageId = `msg_${options.scope}_${assistantMessageCounter}`;
+            assistantMessageId = `msg_${options.scope}_${++options.messageIdentity.next}`;
           }
           const delta = (update as Record<string, unknown>).delta;
           if (typeof delta === "string" && assistantText.length < MAX_TEXT_CHARS) {
@@ -568,6 +566,7 @@ function isEnforceablePiSandboxMode(mode: string | undefined): boolean {
 interface PiRunInput {
   threadId: string;
   scope: string;
+  messageIdentity?: { next: number };
   prompt: string;
   cwd: string;
   sessionId: string;
@@ -681,9 +680,13 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
   async function runPi(input: PiRunInput): Promise<PiRunResult> {
     const runDeadline = Date.now() + runTimeoutMs;
+    // A steered process continues the same canonical Run. Its responses must
+    // not reuse identities already committed by an earlier process.
+    const messageIdentity = input.messageIdentity ?? { next: 0 };
     const collector = createPiRunCollector({
       threadId: input.threadId,
       scope: input.scope,
+      messageIdentity,
       homePath: options.homePath,
       executionRoot: input.cwd,
       now: input.now,
@@ -824,6 +827,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           if (terminationReason === "steer" && steerPrompt) {
             const continued = await runPi({
               ...input,
+              messageIdentity,
               prompt: steerPrompt,
               sessionId: result.sessionId,
             });
