@@ -29,7 +29,7 @@ describe("one-button update planning", () => {
   it("does not update the wrong component when a required local update is unavailable", async () => {
     const plan = await loadRepairPlan(fixture({ local: false, compatibility: "future" }));
     expect(plan.targets).toEqual([]);
-    expect(plan.reason).toContain("local app");
+    expect(plan.reason).toContain("desktop app");
   });
   it("keeps an installed cloud update pending until its services restart", async () => {
     const f = fixture({ local: false, cloud: false });
@@ -50,7 +50,7 @@ describe("one-button update planning", () => {
 });
 
 describe("one-button execution", () => {
-  it("updates cloud first, waits for running services, then installs the latest local app", async () => {
+  it("updates cloud first, waits for running services, then installs the latest desktop app", async () => {
     const f = fixture();
     const plan = await loadRepairPlan(f);
     const order: string[] = [];

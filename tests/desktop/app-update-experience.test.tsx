@@ -43,8 +43,8 @@ describe("App desktop update experience", () => {
     render(<App />);
     expect(screen.getByText("Mission Control")).toBeTruthy();
     expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
-    expect(screen.getByText("Local app")).toBeTruthy();
-    expect(screen.getByText("Cloud system")).toBeTruthy();
+    expect(screen.getByText("Desktop app")).toBeTruthy();
+    expect(screen.getByText("Cloud computer")).toBeTruthy();
   });
 
   it("keeps manual update feedback available while signed out", async () => {

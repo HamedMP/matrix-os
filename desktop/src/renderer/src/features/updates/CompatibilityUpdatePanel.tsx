@@ -3,6 +3,13 @@ import { Button } from "../../design/primitives";
 import type { ComponentVersion } from "../../lib/compatibility-repair";
 import type { useCompatibilityRepair } from "../../lib/use-compatibility-repair";
 
+function deviceDescription(platform: string): string {
+  if (/^Mac/i.test(platform)) return "Runs on this Mac";
+  if (/^Win/i.test(platform)) return "Runs on this Windows PC";
+  if (/^Linux/i.test(platform)) return "Runs on this Linux computer";
+  return "Runs on this computer";
+}
+
 function VersionRow({ name, description, version, loading }: {
   name: string; description: string; version?: ComponentVersion; loading: boolean;
 }) {
@@ -41,7 +48,7 @@ export default function CompatibilityUpdatePanel({ repair, close }: {
         <div className="min-w-0 flex-1">
           <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>Update Matrix OS</h2>
           <p className="mt-1 text-sm leading-5" style={{ color: "var(--text-secondary)" }}>
-            Your local app connects to your cloud system. We check both and update only what needs updating.
+            Your desktop app connects to your cloud computer. We check both and update only what needs updating.
           </p>
         </div>
       </div>
@@ -50,14 +57,14 @@ export default function CompatibilityUpdatePanel({ repair, close }: {
           <table className="w-full table-fixed text-left">
             <thead className="text-xs" style={{ color: "var(--text-secondary)" }}><tr><th className="px-4 py-2 font-normal">Component</th><th className="px-3 py-2 font-normal">Installed</th><th className="px-3 py-2 font-normal">Available</th></tr></thead>
             <tbody>
-              <VersionRow name="Local app" description="Runs on this Mac" version={plan?.local} loading={loading} />
-              <VersionRow name="Cloud system" description="Hosts your apps, files and AI" version={plan?.cloud} loading={loading} />
+              <VersionRow name="Desktop app" description={deviceDescription(navigator.platform)} version={plan?.local} loading={loading} />
+              <VersionRow name="Cloud computer" description="Hosts your apps, files and AI" version={plan?.cloud} loading={loading} />
             </tbody>
           </table>
         </div>
         <p className="mt-4 leading-5" role={busy ? "status" : undefined}>{progress || (loading ? "Checking installed versions and update channels…" : plan?.reason)}</p>
         {hasUpdate && !busy && !complete ? <p className="mt-2 text-xs leading-5" style={{ color: "var(--text-secondary)" }}>
-          {restart ? "The local app will restart after downloading. Save your work before updating." : "The cloud connection may briefly restart during the update."}
+          {restart ? "The desktop app will restart after downloading. Save your work before updating." : "The cloud connection may briefly restart during the update."}
           {plan?.channel ? ` Cloud update channel: ${plan.channel}.` : ""}
         </p> : null}
         {error ? <p role="alert" className="mt-3 text-sm" style={{ color: "var(--danger)" }}>We couldn't confirm the update completed. Check versions again before retrying.</p> : null}

@@ -73,18 +73,18 @@ export async function loadRepairPlan(scope: Scope & {
   let reason: string;
   if (status === "desktop-update-required") {
     targets = local.state === "update" ? ["local"] : [];
-    reason = targets.length ? "The cloud system requires a newer local app. We'll update the app on this Mac."
-      : "The cloud system requires a newer local app, but an automatic app update is not available. Check again or install the latest app.";
+    reason = targets.length ? "The cloud computer requires a newer desktop app. We'll update the desktop app."
+      : "The cloud computer requires a newer desktop app, but an automatic app update is not available. Check again or install the latest app.";
   } else if (status === "runtime-update-required") {
     targets = cloud.state === "update" ? ["cloud"] : [];
-    reason = targets.length ? "Your local app requires a newer cloud system. We'll update the cloud system."
-      : "Your local app requires a newer cloud system, but its update could not be confirmed. Check again.";
+    reason = targets.length ? "Your desktop app requires a newer cloud computer. We'll update the cloud computer."
+      : "Your desktop app requires a newer cloud computer, but its update could not be confirmed. Check again.";
   } else {
     if (cloud.state === "update") targets.push("cloud");
     if (local.state === "update") targets.push("local");
-    reason = targets.length === 2 ? "Both have newer releases. We'll update the cloud system first, then the app on this Mac."
-      : targets[0] === "cloud" ? "A newer cloud release is available. We'll update the cloud system."
-      : targets[0] === "local" ? "A newer app release is available. We'll update the app on this Mac."
+    reason = targets.length === 2 ? "Both have newer releases. We'll update the cloud computer first, then the desktop app."
+      : targets[0] === "cloud" ? "A newer cloud release is available. We'll update the cloud computer."
+      : targets[0] === "local" ? "A newer app release is available. We'll update the desktop app."
       : local.state === "current" && cloud.state === "current" ? "Both are up to date on their current update channels."
       : "Some version checks are unavailable. Check again to confirm what needs updating.";
   }
@@ -103,7 +103,7 @@ export async function repairVersions(plan: RepairPlan, scope: Scope & {
 }) {
   guard(scope);
   if (plan.targets.includes("cloud") && plan.cloud.available) {
-    scope.progress("Updating cloud system… The connection may briefly restart.");
+    scope.progress("Updating cloud computer… The connection may briefly restart.");
     guard(scope);
     await scope.api.post("/api/system/update", { version: plan.cloud.available }, options(scope.signal));
     // An accepted request or a replaced release.json is not running-service proof.
@@ -124,7 +124,7 @@ export async function repairVersions(plan: RepairPlan, scope: Scope & {
     }
   }
   if (plan.targets.includes("local")) {
-    scope.progress("Updating local app… It will restart when the download is ready.");
+    scope.progress("Updating desktop app… It will restart when the download is ready.");
     guard(scope);
     let snapshot = DesktopUpdateSnapshotSchema.parse(await scope.checkLocal());
     const deadline = Date.now() + 30 * 60_000;

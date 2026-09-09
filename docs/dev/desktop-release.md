@@ -167,14 +167,14 @@ the window when the corresponding adapters and cross-version tests justify it.
 
 Electron Desktop checks at startup, on realtime reconnect,
 online/focus events, and once per minute. An unsupported window opens a unified update reminder with installed and available
-versions for the local app (this Mac) and cloud system (apps, files, and AI).
+versions for the desktop app (the current device) and cloud computer (apps, files, and AI).
 An old gateway without metadata is explicitly unverified but remains usable.
 Compatibility warnings use a centered, dismissible modal without moving the
 titlebar or unmounting the workspace. The titlebar remains draggable while the
 modal is open. Later, Escape, or clicking outside dismisses each warning kind
 once per computer session, so polling does not repeatedly interrupt work.
 One primary action checks both current channels again and updates the component
-that needs it. If both have updates, the cloud system goes first; the local app
+that needs it. If both have updates, the cloud computer goes first; the desktop app
 restarts only after the installed and running cloud versions match the target.
 Protocol incompatibility selects the required component; missing metadata alone
 never proves which version is older. Versions are compared within each component's

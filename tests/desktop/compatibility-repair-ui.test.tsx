@@ -6,8 +6,14 @@ import RuntimeCompatibilityGate from "@renderer/features/updates/RuntimeCompatib
 import { useConnection } from "@renderer/stores/connection";
 import type { ApiClient } from "@renderer/lib/api";
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
-it.each(["local", "cloud", "both"])("shows real versions and one update action for %s", async (target) => {
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+it.each([
+  ["local", "MacIntel", "Runs on this Mac"],
+  ["cloud", "Win32", "Runs on this Windows PC"],
+  ["both", "Linux x86_64", "Runs on this Linux computer"],
+  ["local", "", "Runs on this computer"],
+])("shows real versions and one update action for %s on %s", async (target, platform, deviceDescription) => {
+  vi.spyOn(window.navigator, "platform", "get").mockReturnValue(platform);
   let cloudVersion = "v2026.09.09-1";
   const cloudNext = target === "local" ? cloudVersion : "v2026.09.09-2";
   const snapshot = target === "cloud" ? { status: "up-to-date" } : { status: "ready", version: "0.2.0", release: { version: "0.2.0", notes: "Fix" } };
@@ -30,9 +36,9 @@ it.each(["local", "cloud", "both"])("shows real versions and one update action f
   render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
   await screen.findByRole("dialog", { name: "Update Matrix OS" });
   await screen.findAllByText("0.1.0", { selector: "span" });
-  expect(screen.getByText("Local app")).toBeTruthy();
-  expect(screen.getByText("Cloud system")).toBeTruthy();
-  expect(screen.getByText("Runs on this Mac")).toBeTruthy();
+  expect(screen.getByText("Desktop app")).toBeTruthy();
+  expect(screen.getByText("Cloud computer")).toBeTruthy();
+  expect(screen.getByText(deviceDescription)).toBeTruthy();
   expect(screen.getByText("Hosts your apps, files and AI")).toBeTruthy();
   expect(post).not.toHaveBeenCalled();
   expect(invoke.mock.calls.some(([channel]) => channel === "update:install")).toBe(false);
