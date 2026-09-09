@@ -32,6 +32,7 @@ const SYSTEMD_WORKER_FAILURES = {
   ScopeRuntimeIdentityUidError: "identity_uid",
   ScopeRuntimeIdentityWorkingDirectoryError: "identity_working_directory",
   ScopeRuntimeInvocationError: "invocation",
+  ScopeRuntimeReadinessError: "readiness",
   ScopeRuntimeUnknownError: "unknown",
 };
 
