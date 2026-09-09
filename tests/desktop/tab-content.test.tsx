@@ -44,6 +44,7 @@ describe("current desktop tab panes", () => {
     const view = render(<DesktopSurfaceFrame {...props} />);
     const controls = view.container.querySelector('[data-window-resize-controls]')!;
     expect(controls.parentElement).toBe(view.container.querySelector('[data-os-window]'));
+    expect(controls.parentElement?.hasAttribute('data-window-click-buffer')).toBe(true);
     expect(controls.closest('[inert]')).toBeNull();
     expect(controls.children).toHaveLength(8);
     fireEvent.pointerDown(controls.querySelector('[data-window-resize="w"]')!, { button: 0, clientX: 100, clientY: 100 });
@@ -54,6 +55,7 @@ describe("current desktop tab panes", () => {
     fireEvent.pointerUp(window);
     view.rerender(<DesktopSurfaceFrame {...props} surface={{ ...props.surface, mode: "minimized" }} />);
     expect(view.container.querySelector('[data-window-resize-controls]')).toBeNull();
+    expect(view.container.querySelector('[data-window-click-buffer]')).toBeNull();
     vi.unstubAllGlobals();
   });
   it.each([

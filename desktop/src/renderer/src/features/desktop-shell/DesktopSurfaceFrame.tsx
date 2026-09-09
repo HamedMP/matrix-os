@@ -279,6 +279,7 @@ export default function DesktopSurfaceFrame({
           minimum={{ width: Math.min(440, surface.bounds.width), height: Math.min(300, surface.bounds.height) }}
           onFocus={onFocus} onBoundsChange={onBoundsChange} />
       ) : undefined}
+      data-window-click-buffer={isWindow && visible && !isDesktopHidden && !isDesktopTransition || undefined}
       data-surface-mode={surface.mode}
       data-active={active || undefined}
       className="pointer-events-auto absolute min-h-0 min-w-0 flex-col overflow-hidden transition-[box-shadow,border-color] duration-150"

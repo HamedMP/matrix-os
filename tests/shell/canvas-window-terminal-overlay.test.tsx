@@ -3,6 +3,7 @@ import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow.js";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
@@ -96,6 +97,7 @@ describe("CanvasWindow terminal interactivity", () => {
     vi.unstubAllGlobals();
   });
   beforeEach(() => {
+    useDesktopMode.setState({ mode: "canvas" });
     appViewerRender.mockClear();
     terminalRender.mockClear();
     terminalChildPointerFocusRecorder.mockReset();

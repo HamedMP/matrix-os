@@ -2,7 +2,7 @@
 
 Status: resize implementation; keyboard management proposal for a follow-up PR.
 
-Validation: 133 passing tests in 11 focused Vitest regression suites plus browser drag/hit-target checks using a local shared-controls fixture with embedded iframe content. Web TypeScript check passes. Electron TypeScript is blocked by the existing `DesktopSupportWidget.tsx` PostHog `shutdown` type error; a packaged Electron session and live Terminal PTY were not exercised in this task. Targeted lint passes for the web resize adapter, DesktopWindow, window store and built-in helpers; CanvasWindow retains its pre-existing synchronous-effect lint failure.
+Validation: 168 passing tests in 14 focused Vitest regression suites plus browser drag/hit-target checks using a local shared-controls fixture with embedded iframe content. Web TypeScript check passes. Electron TypeScript is blocked by the existing `DesktopSupportWidget.tsx` PostHog `shutdown` type error; a packaged Electron session and live Terminal PTY were not exercised in this task. Targeted lint passes for the web resize adapter, DesktopWindow, window store and built-in helpers; CanvasWindow retains its pre-existing synchronous-effect lint failure.
 
 ## Findings
 
@@ -16,6 +16,12 @@ Validation: 133 passing tests in 11 focused Vitest regression suites plus browse
 Shared `@matrix-os/ui` controls own eight hit targets, directional cursors, pointer capture, zoom conversion, opposite-edge anchoring, minimum size, and cancellation on pointer cancel, lost capture, blur and unmount. Web adapters update position and dimensions in one store notification. Electron renders controls in an OSWindow frame slot above content/inert panes and reserves space around native embeds. Web Terminal retains a roomy initial size with a 440 × 300 resize minimum, matching Electron's general minimum; reopening preserves smaller saved sizes.
 
 Web Mobile and Native Mobile retain full-screen app navigation: floating-window edge resizing does not apply. Web Canvas keeps its existing fullscreen and zoom-preview guards; Electron tab-maximized windows have no resize handles.
+
+## Desktop click buffer and border placement
+
+Electron Desktop ignores background clicks within 12 CSS pixels of visible floating windows. Explicit Show Desktop controls remain immediate; hidden/minimized windows and Canvas background gestures do not participate in the buffer. The guard measures current DOM rectangles so it accounts for header offsets and actual frame placement.
+
+Web Desktop and Electron Desktop share placement constraints: windows may touch the work-area border, cross left/right/bottom borders by up to 32px, and cross the top by 16px while leaving 32px of a 48px title bar reachable. Resize clamping preserves the opposite edge. Saved Web Desktop placement no longer gains a mandatory 20px inset or automatic centering; Electron no longer clamps every move/resize to a 12px inset. Initial placement may still be centered. Both Canvas presentations retain unconstrained spatial coordinates.
 
 ## Recommended keyboard and Cmd K design
 

@@ -1,3 +1,4 @@
+import { constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import {
@@ -73,10 +74,10 @@ export function getEffectiveMinimumWindowSize(path: string): { width: number; he
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
-  const availableWidth = Math.max(1, vw - (DESKTOP_WINDOW_MARGIN * 2));
+  const availableWidth = Math.max(1, vw);
   const availableHeight = Math.max(
     1,
-    vh - topInset - (DESKTOP_WINDOW_MARGIN * 2),
+    vh - topInset,
   );
   return {
     width: Math.min(preferred.width, availableWidth),
@@ -104,36 +105,16 @@ function terminalLayoutIdForPath(
   return existing && TERMINAL_LAYOUT_ID_PATTERN.test(existing) ? existing : createTerminalLayoutId();
 }
 
-function normalizeRestoredLayout(path: string, layout: ClosedLayout): ClosedLayout {
+function normalizeRestoredLayout(path: string, layout: ClosedLayout, previous?: ClosedLayout): ClosedLayout {
   const mode = useDesktopMode.getState().mode;
   if (mode === "canvas") return layout;
 
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
-  const minSize = getEffectiveMinimumWindowSize(path);
-  const width = Math.min(
-    Math.max(layout.width, minSize.width),
-    Math.max(minSize.width, vw - (DESKTOP_WINDOW_MARGIN * 2)),
-  );
-  const height = Math.min(
-    Math.max(layout.height, minSize.height),
-    Math.max(minSize.height, vh - topInset - (DESKTOP_WINDOW_MARGIN * 2)),
-  );
-  const wasWide = layout.width >= vw * 0.8;
-  const targetX = wasWide ? Math.round((vw - width) / 2) : layout.x;
-  const maxX = Math.max(DESKTOP_WINDOW_MARGIN, vw - width - DESKTOP_WINDOW_MARGIN);
-  const maxY = Math.max(
-    DESKTOP_WINDOW_MARGIN,
-    vh - topInset - height - DESKTOP_WINDOW_MARGIN,
-  );
-
   return {
     ...layout,
-    width,
-    height,
-    x: Math.min(Math.max(targetX, DESKTOP_WINDOW_MARGIN), maxX),
-    y: Math.min(Math.max(layout.y, DESKTOP_WINDOW_MARGIN), maxY),
+    ...constrainFloatingWindow(layout, { width: vw, height: vh - topInset }, getMinimumWindowSize(path), previous),
   };
 }
 
@@ -531,7 +512,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
       markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) =>
-          w.id === id ? { ...w, x, y } : w,
+          w.id === id ? { ...w, ...normalizeRestoredLayout(w.path, { ...w, x, y }) } : w,
         ),
       }));
     },
@@ -544,9 +525,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           const minSize = getEffectiveMinimumWindowSize(w.path);
           return {
             ...w,
-            ...(position ? { x: position.x, y: position.y } : {}),
-            width: Math.max(minSize.width, width),
-            height: Math.max(minSize.height, height),
+            ...normalizeRestoredLayout(w.path, {
+              ...w,
+              ...(position ? { x: position.x, y: position.y } : {}),
+              width: Math.max(minSize.width, width),
+              height: Math.max(minSize.height, height),
+            }, w),
           };
         }),
       }));
