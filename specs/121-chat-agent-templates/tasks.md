@@ -2,6 +2,8 @@
 
 All items below are future product work, not completed by the OM-214 research/spec PR. Yuhan reviews the [spec](spec.md) before implementation. No date or one-day delivery claim is implied.
 
+The broader [interaction design](ux-design.md) proposes Phases B/C for reusable Agents, Tasks and routines. Their contracts and implementation plans require separate scope review; they are not implicitly added to the sequence below.
+
 ## Delivery sequence
 
 | Step | Scope and dependencies | Required evidence |

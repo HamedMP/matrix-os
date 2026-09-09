@@ -2,6 +2,8 @@
 
 Status: Proposed for Yuhan review. Research/spec only. Tracking: [OM-214](https://linear.app/matrix-os/issue/OM-214/research-grok-bot-workflows-and-specify-matrix-native-agent-templates).
 
+For the complete proposed Agent creation/use, workspace and Task experience, see [ux-design.md](ux-design.md). That target includes later phases; this document remains the restricted Phase A implementation boundary.
+
 ## Outcome and scope
 
 Inside Chat, a user opens **Templates**, chooses a job, supplies context and explicitly selected existing connections, chooses a compatible harness/account/model, reviews the scope, and starts a canonical Chat. Follow-ups continue that Chat and its pinned template contract. “Agents/Templates” is the discovery concept; MVP navigation uses **Templates** to avoid confusion with Settings → Agents & providers or the future Custom agents editor.
