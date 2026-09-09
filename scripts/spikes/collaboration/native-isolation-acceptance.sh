@@ -78,7 +78,12 @@ fi
 
 probe_root="$(mktemp -d /var/tmp/matrix-scope-accept.XXXXXX)"
 readonly probe_root
-readonly baseline_root="/var/tmp/matrix-scope-baseline-${probe_root##*.}"
+baseline_root="$(mktemp -d /var/tmp/matrix-scope-baseline.XXXXXX)"
+if [ ! -d "$baseline_root" ] || [ -L "$baseline_root" ]; then
+  printf 'scope_runtime_acceptance_baseline_staging_invalid\n' >&2
+  exit 2
+fi
+readonly baseline_root
 readonly baseline_probe_source="$baseline_root/scope-runtime-probe.ts"
 readonly candidate_unit="matrix-scope-probe-${probe_root##*.}.service"
 readonly sdk_candidate_unit="matrix-scope-sdk-probe-${probe_root##*.}.service"
@@ -104,7 +109,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-/usr/bin/install --directory --owner=root --group=root --mode=0755 -- "$baseline_root"
+/usr/bin/chmod 0755 -- "$baseline_root"
 /usr/bin/install --owner=root --group=root --mode=0644 -- "$probe_source" "$baseline_probe_source"
 
 mkdir -p /run/matrix-scope /run/matrix-scope-runtime

@@ -18,8 +18,11 @@ describe("collaboration scope-runtime native isolation spike", () => {
       'if [ "$asset_root" != "/run/matrix-scope-runtime-acceptance" ]; then',
     );
     expect(source).toContain(
-      'readonly baseline_root="/var/tmp/matrix-scope-baseline-${probe_root##*.}"',
+      'baseline_root="$(mktemp -d /var/tmp/matrix-scope-baseline.XXXXXX)"',
     );
+    expect(source).not.toContain('matrix-scope-baseline-${probe_root##*.}');
+    expect(source).toContain('[ ! -d "$baseline_root" ] || [ -L "$baseline_root" ]');
+    expect(source).toContain('/usr/bin/chmod 0755 -- "$baseline_root"');
     expect(source).toContain(
       '/usr/bin/install --owner=root --group=root --mode=0644 -- "$probe_source" "$baseline_probe_source"',
     );
