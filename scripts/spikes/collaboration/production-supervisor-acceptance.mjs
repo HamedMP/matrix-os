@@ -217,18 +217,18 @@ function unitForRuntime(runtimeHandle) {
   return `matrix-scope-runtime-${match[1]}.service`;
 }
 
-async function runtimeCreationFailureCode(since) {
-  const workerJournal = await command("/usr/bin/journalctl", [
-    "--since", since, "--grep", "^scope_runtime_worker_failed:",
-    "--no-pager", "--output=cat", "--lines=20",
+async function captureSupervisorJournalCursor() {
+  const journal = await command("/usr/bin/journalctl", [
+    "--unit", SERVICE, "--show-cursor", "--lines=0", "--no-pager",
   ]);
-  const worker = /scope_runtime_worker_failed:\s+(ScopeRuntime[A-Za-z]+Error)\b/
-    .exec(workerJournal.stdout)?.[1];
-  if (workerJournal.code === 0 && worker && Object.hasOwn(SYSTEMD_WORKER_FAILURES, worker)) {
-    return `runtime_create_failed_worker_${SYSTEMD_WORKER_FAILURES[worker]}`;
-  }
+  const cursor = /^-- cursor: ([A-Za-z0-9_=;.:+-]{1,1024})$/m.exec(journal.stdout)?.[1];
+  assert(journal.code === 0 && cursor, "journal_cursor_unavailable");
+  return cursor;
+}
+
+async function runtimeCreationFailureCode(cursor) {
   const supervisorJournal = await command("/usr/bin/journalctl", [
-    "--unit", SERVICE, "--since", since, "--grep", "fixed-profile launch failed:",
+    "--unit", SERVICE, "--after-cursor", cursor, "--grep", "fixed-profile launch failed:",
     "--no-pager", "--output=cat", "--lines=20",
   ]);
   const supervisorWorker = /fixed-profile launch failed:\s+(ScopeRuntime[A-Za-z]+Error)\b/
@@ -242,8 +242,17 @@ async function runtimeCreationFailureCode(since) {
   if (supervisorJournal.code === 0 && activationStatus) {
     return `runtime_create_failed_activation_status_${activationStatus}`;
   }
+  const workerJournal = await command("/usr/bin/journalctl", [
+    "--after-cursor", cursor, "--grep", "^scope_runtime_worker_failed:",
+    "--no-pager", "--output=cat", "--lines=20",
+  ]);
+  const worker = /scope_runtime_worker_failed:\s+(ScopeRuntime[A-Za-z]+Error)\b/
+    .exec(workerJournal.stdout)?.[1];
+  if (workerJournal.code === 0 && worker && Object.hasOwn(SYSTEMD_WORKER_FAILURES, worker)) {
+    return `runtime_create_failed_worker_${SYSTEMD_WORKER_FAILURES[worker]}`;
+  }
   const journal = await command("/usr/bin/journalctl", [
-    "--unit", "matrix-scope-runtime-*.service", "--since", since,
+    "--unit", "matrix-scope-runtime-*.service", "--after-cursor", cursor,
     "--no-pager", "--output=cat", "--lines=80",
   ]);
   if (journal.code !== 0) return "runtime_create_failed";
@@ -293,7 +302,7 @@ async function assertWorkloadBoundary(unit) {
 }
 
 async function createRuntime(profile) {
-  const startedAt = new Date(Date.now() - 1_000).toISOString();
+  const cursor = await captureSupervisorJournalCursor();
   const response = await supervisorRequest({
     version: 1,
     type: "runtime.create",
@@ -305,7 +314,7 @@ async function createRuntime(profile) {
     harnessVersion: EXPECTED_HARNESS_VERSION,
   });
   if (!(response?.type === "runtime.result" && response.ok === true && response.state === "running")) {
-    throw new AcceptanceError(await runtimeCreationFailureCode(startedAt));
+    throw new AcceptanceError(await runtimeCreationFailureCode(cursor));
   }
   assert(response.executionGeneration === profile.executionGeneration, "runtime_generation_mismatch");
   return response.runtimeHandle;

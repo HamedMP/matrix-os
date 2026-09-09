@@ -77,7 +77,9 @@ describe("collaboration production scope-runtime acceptance", () => {
     const source = await readFile(acceptancePath, "utf8");
 
     expect(source).toContain('"matrix-scope-runtime-*.service"');
-    expect(source).toContain('"--since"');
+    expect(source).toContain('"--show-cursor"');
+    expect(source).toContain('"--after-cursor", cursor');
+    expect(source).toContain("journal_cursor_unavailable");
     expect(source).toContain('"--grep", "^scope_runtime_worker_failed:"');
     expect(source).toContain("SYSTEMD_EXEC_STEPS");
     expect(source).toContain("runtime_create_failed_step_");
@@ -86,11 +88,15 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("SYSTEMD_WORKER_FAILURES");
     expect(source).toContain('ScopeRuntimeReadinessError: "readiness"');
     expect(source).toContain("runtime_create_failed_worker_");
-    expect(source).toContain('"--unit", SERVICE, "--since", since');
+    expect(source).toContain('"--unit", SERVICE, "--after-cursor", cursor');
     expect(source).toContain("supervisorWorker");
+    expect(source.indexOf("supervisorWorker")).toBeLessThan(
+      source.indexOf("workerJournal"),
+    );
     expect(source.indexOf("supervisorWorker")).toBeLessThan(
       source.indexOf("activationStatus"),
     );
+    expect(source).not.toContain('"--since", since');
     expect(source).not.toContain("runtime_create_failed:${journal.stdout}");
   });
 
