@@ -5,6 +5,7 @@ import * as RadixContextMenu from "@radix-ui/react-context-menu";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type { CSSProperties, ReactNode, ButtonHTMLAttributes } from "react";
+import { DESKTOP_Z_INDEX } from "./layering";
 
 type ButtonVariant = "primary" | "ghost" | "danger" | "subtle";
 
@@ -99,21 +100,23 @@ export function Dialog({
           <div
             aria-hidden="true"
             data-dialog-titlebar
-            className="titlebar-drag fixed inset-x-0 top-0 z-50"
-            style={{ height: "var(--titlebar-height)", pointerEvents: "auto" }}
+            className="titlebar-drag fixed inset-x-0 top-0"
+            style={{ height: "var(--titlebar-height)", pointerEvents: "auto", zIndex: DESKTOP_Z_INDEX.dialog }}
           />
         ) : null}
-        <RadixDialog.Overlay className="fixed inset-0 z-50" style={{
+        <RadixDialog.Overlay className="fixed inset-0" style={{
+          zIndex: DESKTOP_Z_INDEX.dialog,
           background: "var(--overlay-dim)",
           ...(preserveTitlebar ? { top: "var(--titlebar-height)" } : {}),
         }} />
         <RadixDialog.Content
           role={role}
           aria-describedby={undefined}
-          className={`dialog-fade-in fixed left-1/2 z-50 rounded-xl border focus:outline-none ${
+          className={`dialog-fade-in fixed left-1/2 rounded-xl border focus:outline-none ${
             placement === "center" ? "" : "-translate-x-1/2"
           }`}
           style={{
+            zIndex: DESKTOP_Z_INDEX.dialog,
             width,
             maxWidth: "calc(100vw - 32px)",
             background: "var(--bg-overlay)",
