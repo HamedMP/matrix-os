@@ -22,7 +22,7 @@ describe("App desktop update experience", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not load the workspace when a newer gateway requires a newer Desktop protocol", async () => {
+  it("keeps the workspace mounted beneath a dismissible compatibility reminder", async () => {
     vi.stubGlobal("operator", {
       invoke: vi.fn(async (channel: string) => {
         if (channel === "update:get-state") return { status: "disabled" };
@@ -41,8 +41,8 @@ describe("App desktop update experience", () => {
       })) } as never,
     });
     render(<App />);
-    expect(screen.queryByText("Mission Control")).toBeNull();
-    expect(await screen.findByText("Update Matrix OS Desktop to continue")).toBeTruthy();
+    expect(screen.getByText("Mission Control")).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Update Desktop" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Check Desktop updates" })).toBeTruthy();
   });
 

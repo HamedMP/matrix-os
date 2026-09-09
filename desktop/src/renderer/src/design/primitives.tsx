@@ -80,6 +80,7 @@ export function Dialog({
   role = "dialog",
   placement = "top",
   top = "18vh",
+  preserveTitlebar = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -89,11 +90,23 @@ export function Dialog({
   role?: "dialog" | "alertdialog";
   placement?: "top" | "center";
   top?: string;
+  preserveTitlebar?: boolean;
 }) {
   return (
     <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-50" style={{ background: "var(--overlay-dim)" }} />
+        {preserveTitlebar && open ? (
+          <div
+            aria-hidden="true"
+            data-dialog-titlebar
+            className="titlebar-drag fixed inset-x-0 top-0 z-50"
+            style={{ height: "var(--titlebar-height)", pointerEvents: "auto" }}
+          />
+        ) : null}
+        <RadixDialog.Overlay className="fixed inset-0 z-50" style={{
+          background: "var(--overlay-dim)",
+          ...(preserveTitlebar ? { top: "var(--titlebar-height)" } : {}),
+        }} />
         <RadixDialog.Content
           role={role}
           aria-describedby={undefined}

@@ -165,12 +165,18 @@ it does not infer compatibility from installed release files or equal version st
 window. Keep the previous generation supported while clients migrate. Only change
 the window when the corresponding adapters and cross-version tests justify it.
 
-Electron Desktop checks before first workspace load, on realtime reconnect,
+Electron Desktop checks at startup, on realtime reconnect,
 online/focus events, and once per minute. An unsupported window directs the user
 to Desktop updates or Computer updates; those recovery controls remain available.
 An old gateway without metadata is explicitly unverified but remains usable.
-Transient probe failures preserve an already-open workspace. Incompatibility after
-a live update hides the workspace and native embeds without discarding its drafts.
+Compatibility warnings use a centered, dismissible modal without moving the
+titlebar or unmounting the workspace. The titlebar remains draggable while the
+modal is open. Later, Escape, or clicking outside dismisses each warning kind
+once per computer session, so polling does not repeatedly interrupt work.
+Desktop updates open the existing Software Update dialog; Computer updates open
+the existing System settings. Native embeds suspend only while the modal is open
+and resume on dismissal. Transient probe failures and confirmed incompatibility
+remain advisory: users can dismiss the reminder and keep their current work.
 
 For canonical Chat, `messageVersion=2` explicitly opts into `actorId` and `purpose`.
 Absent or `messageVersion=1` retains the message shape accepted by Desktop
