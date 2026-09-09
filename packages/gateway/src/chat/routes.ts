@@ -1,4 +1,6 @@
 import {
+  ChatMessageWireVersionSchema,
+  projectChatMessageResponse,
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
   CanonicalCancelQueuedChatTurnRequestSchema,
@@ -278,6 +280,12 @@ export function createCanonicalChatRoutes(options: {
   getPrincipal: (context: Context) => RequestPrincipal;
 }): Hono {
   const routes = new Hono();
+  routes.use("/api/chats/*", async (context, next) => {
+    if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success) {
+      return validationError(context);
+    }
+    await next();
+  });
   const createBodyLimit = bodyLimit({ maxSize: CHAT_CREATE_BODY_LIMIT, onError: bodyTooLarge });
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
   const cancelBodyLimit = bodyLimit({ maxSize: CHAT_CANCEL_BODY_LIMIT, onError: bodyTooLarge });
@@ -452,7 +460,10 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       if (!result) return notFound(context);
-      return context.json(CanonicalChatDetailResponseSchema.parse(result));
+      return context.json(projectChatMessageResponse(
+        CanonicalChatDetailResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -470,7 +481,10 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
       );
-      return context.json(CanonicalChatTurnAdmissionResponseSchema.parse(result), 202);
+      return context.json(projectChatMessageResponse(
+        CanonicalChatTurnAdmissionResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ), 202);
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -558,7 +572,10 @@ export function createCanonicalChatRoutes(options: {
         runId,
         parsed.data,
       );
-      return context.json(CanonicalChatRunSteeringResponseSchema.parse(result));
+      return context.json(projectChatMessageResponse(
+        CanonicalChatRunSteeringResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -581,7 +598,10 @@ export function createCanonicalChatRoutes(options: {
           queuedTurnId,
           parsed.data,
         );
-        return context.json(CanonicalChatRunSteeringResponseSchema.parse(result));
+        return context.json(projectChatMessageResponse(
+        CanonicalChatRunSteeringResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
       } catch (error: unknown) {
         return handleError(context, error);
       }

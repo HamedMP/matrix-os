@@ -1,3 +1,4 @@
+import { RUNNING_RUNTIME_COMPATIBILITY, type RuntimeCompatibility } from "@matrix-os/contracts";
 import {
   closeSync,
   existsSync,
@@ -160,6 +161,7 @@ export function getVersion(release?: HostBundleRelease): string {
 }
 
 export interface SystemInfo {
+  runtimeCompatibility: RuntimeCompatibility;
   version: string;
   runningVersion: string;
   channel?: string;
@@ -412,6 +414,7 @@ export function getSystemInfo(
   return {
     version,
     runningVersion,
+    runtimeCompatibility: RUNNING_RUNTIME_COMPATIBILITY,
     ...(channel ? { channel } : {}),
     updateChannel,
     model: kernelOverrides.model ?? kernel.model,

@@ -1,3 +1,4 @@
+import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
@@ -270,10 +271,10 @@ export function createCanonicalChatClient(
     async getDetail(chatId, input = {}) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const parsed = CanonicalChatDetailInputSchema.parse(input);
-      const response = await api.get(withQuery(`/api/chats/${encodeURIComponent(parsedChatId)}`, {
+      const response = await api.get(chatMessageVersionUrl(withQuery(`/api/chats/${encodeURIComponent(parsedChatId)}`, {
         limit: parsed.limit,
         cursor: parsed.cursor,
-      }));
+      })));
       return CanonicalChatDetailResponseSchema.parse(response);
     },
 
@@ -292,7 +293,7 @@ export function createCanonicalChatClient(
       }
       try {
         const response = CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
-          `/api/chats/${encodeURIComponent(parsedChatId)}/turns`,
+          chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`),
           request,
         ));
         if (analytics) {
@@ -340,7 +341,7 @@ export function createCanonicalChatClient(
       const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
       const request = CanonicalSteerChatRunRequestSchema.parse(input);
       return CanonicalChatRunSteeringResponseSchema.parse(await api.post(
-        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/steer`,
+        chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/steer`),
         request,
       ));
     },
@@ -351,7 +352,7 @@ export function createCanonicalChatClient(
       const parsedQueuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(queuedTurnId);
       const request = CanonicalSteerQueuedChatTurnRequestSchema.parse(input);
       return CanonicalChatRunSteeringResponseSchema.parse(await api.post(
-        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}/steer`,
+        chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}/steer`),
         request,
       ));
     },
