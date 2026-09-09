@@ -53,6 +53,7 @@ describe("collaboration production scope-runtime acceptance", () => {
 
     expect(source).toContain('"matrix-scope-runtime-*.service"');
     expect(source).toContain('"--since"');
+    expect(source).toContain('"--grep", "^scope_runtime_worker_failed:"');
     expect(source).toContain("SYSTEMD_EXEC_STEPS");
     expect(source).toContain("runtime_create_failed_step_");
     expect(source).toContain("runtime_create_failed_status_");

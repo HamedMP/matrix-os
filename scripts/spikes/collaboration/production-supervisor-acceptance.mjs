@@ -200,15 +200,20 @@ function unitForRuntime(runtimeHandle) {
 }
 
 async function runtimeCreationFailureCode(since) {
+  const workerJournal = await command("/usr/bin/journalctl", [
+    "--since", since, "--grep", "^scope_runtime_worker_failed:",
+    "--no-pager", "--output=cat", "--lines=20",
+  ]);
+  const worker = /scope_runtime_worker_failed:\s+(ScopeRuntime[A-Za-z]+Error)\b/
+    .exec(workerJournal.stdout)?.[1];
+  if (workerJournal.code === 0 && worker && Object.hasOwn(SYSTEMD_WORKER_FAILURES, worker)) {
+    return `runtime_create_failed_worker_${SYSTEMD_WORKER_FAILURES[worker]}`;
+  }
   const journal = await command("/usr/bin/journalctl", [
     "--unit", "matrix-scope-runtime-*.service", "--since", since,
     "--no-pager", "--output=cat", "--lines=80",
   ]);
   if (journal.code !== 0) return "runtime_create_failed";
-  const worker = /scope_runtime_worker_failed:\s+(ScopeRuntime[A-Za-z]+Error)\b/.exec(journal.stdout)?.[1];
-  if (worker && Object.hasOwn(SYSTEMD_WORKER_FAILURES, worker)) {
-    return `runtime_create_failed_worker_${SYSTEMD_WORKER_FAILURES[worker]}`;
-  }
   const step = /Failed at step ([A-Z][A-Z0-9_-]{0,31})\b/.exec(journal.stdout)?.[1];
   if (step && SYSTEMD_EXEC_STEPS.includes(step)) {
     return `runtime_create_failed_step_${step.toLowerCase()}`;
