@@ -159,6 +159,8 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     driverKind: string;
     instanceId: string;
+    schemaVersion: number;
+    executionRootFingerprint: string | null;
     includeInterrupted?: boolean;
   }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     const owner = validateOwner(ownerInput);
@@ -181,7 +183,10 @@ export class ChatRunLifecycleRepository {
         : ["completed"])
       .where("chat_run_adapter_state.driver_kind", "=", input.driverKind)
       .where("chat_run_adapter_state.instance_id", "=", input.instanceId)
+      .where("chat_run_adapter_state.schema_version", "=", input.schemaVersion)
+      .where("chat_runs.execution_root_fingerprint", input.executionRootFingerprint === null ? "is" : "=", input.executionRootFingerprint)
       .orderBy("chat_runs.completed_at", "desc")
+      .limit(1)
       .executeTakeFirst();
     if (!row) return null;
     return {
