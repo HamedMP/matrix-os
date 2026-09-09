@@ -40,7 +40,7 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("finally");
   });
 
-  it("verifies cleanup before restoring the disabled marker", async () => {
+  it("restores the disabled marker even when service cleanup fails", async () => {
     const source = await readFile(acceptancePath, "utf8");
 
     expect(source).toContain("restoreDormantService");
@@ -49,6 +49,9 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("await restoreDormantService(runtimeUnits)");
     expect(source.indexOf("await restoreDormantService(runtimeUnits)")).toBeLessThan(
       source.indexOf("await rename(MARKER_BACKUP, DISABLED_MARKER)"),
+    );
+    expect(source).toMatch(
+      /try \{\s+await restoreDormantService\(runtimeUnits\);\s+\} finally \{\s+if \(markerMoved\)/,
     );
   });
 

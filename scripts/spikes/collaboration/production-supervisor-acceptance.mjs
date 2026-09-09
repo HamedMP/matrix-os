@@ -472,11 +472,14 @@ async function runAcceptance() {
           error instanceof Error ? error.name : "UnknownError"}\n`);
       }
     }
-    await restoreDormantService(runtimeUnits);
-    if (markerMoved) {
-      const currentMarker = await pathType(DISABLED_MARKER);
-      assert(!currentMarker, "disabled_marker_collision");
-      await rename(MARKER_BACKUP, DISABLED_MARKER);
+    try {
+      await restoreDormantService(runtimeUnits);
+    } finally {
+      if (markerMoved) {
+        const currentMarker = await pathType(DISABLED_MARKER);
+        assert(!currentMarker, "disabled_marker_collision");
+        await rename(MARKER_BACKUP, DISABLED_MARKER);
+      }
     }
   }
 
