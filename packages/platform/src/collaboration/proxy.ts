@@ -3,6 +3,7 @@ import {
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
   COLLABORATION_HTTP_BODY_LIMIT,
+  COLLABORATION_POLICY_HEADER,
   CollaborationDeleteConditionSchema,
 } from "@matrix-os/contracts";
 import type { CollaborationProofSigner } from "./proof.js";
@@ -35,6 +36,19 @@ const SCOPE_ROUTES = [
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/lifecycle$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/operations/${UUID}$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/exports/${UUID}$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests/${UUID}/cancel$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests/${UUID}/retry$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/approvals/${UUID}/decision$`)],
+] as const;
+
+const M2_SCOPE_ROUTES = [
+  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${UUID}/cancel$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${UUID}/retry$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/approvals/${UUID}/decision$`)],
 ] as const;
 
 const INVITATION_ROUTES = [
@@ -69,6 +83,16 @@ export function parseCollaborationProxyRoute(
   return null;
 }
 
+export function collaborationMilestoneForRoute(
+  method: string,
+  path: string,
+): "m1" | "m2" | null {
+  const route = parseCollaborationProxyRoute(method, path);
+  if (!route) return null;
+  return M2_SCOPE_ROUTES.some(([allowedMethod, pattern]) =>
+    method === allowedMethod && pattern.test(path)) ? "m2" : "m1";
+}
+
 export interface CollaborationRuntimeRoute {
   runtimeId: string;
   ownerId: string;
@@ -81,6 +105,7 @@ export class CollaborationProxy {
     signer: CollaborationProofSigner;
     resolveRuntime(runtimeId: string): Promise<CollaborationRuntimeRoute | null>;
     fetchImpl?: typeof fetch;
+    now?: () => Date;
   }) {}
 
   async forward(input: {
@@ -119,7 +144,9 @@ export class CollaborationProxy {
       if (route.kind !== "runtime" && !directory) return safeResponse("Collaboration route not found", 404);
       const ownerId = runtime?.ownerId ?? directory!.ownerId;
       const scopeId = directory?.scopeId;
-      const policy = await this.options.repository.getPolicy("m1");
+      const milestone = collaborationMilestoneForRoute(input.method, input.path);
+      if (!milestone) return safeResponse("Collaboration route not found", 404);
+      const policy = await this.options.repository.getPolicy(milestone);
       const participants = scopeId
         ? await this.options.repository.listScopeActors(scopeId)
         : [input.actorId];
@@ -155,6 +182,18 @@ export class CollaborationProxy {
       }
       headers.set("accept", "application/json");
       headers.set(PROOF_HEADER, Buffer.from(JSON.stringify(signedProof)).toString("base64url"));
+      if (milestone === "m2") {
+        const issuedAt = (this.options.now ?? (() => new Date()))();
+        const signedPolicy = this.options.signer.signPolicy({
+          milestone: policy.milestone,
+          revision: String(policy.revision),
+          mode: policy.mode,
+          cohort: policy.cohort,
+          issuedAt: issuedAt.toISOString(),
+          expiresAt: new Date(issuedAt.getTime() + 30_000).toISOString(),
+        });
+        headers.set(COLLABORATION_POLICY_HEADER, Buffer.from(JSON.stringify(signedPolicy)).toString("base64url"));
+      }
       const response = await (this.options.fetchImpl ?? fetch)(
         `${baseUrl.origin}${input.path}${input.query ? `?${input.query}` : ""}`,
         {

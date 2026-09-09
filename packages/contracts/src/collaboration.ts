@@ -1,6 +1,10 @@
 import { z } from "zod/v4";
 
-import { CanonicalChatMessagePartSchema } from "#canonical-chat";
+import {
+  CanonicalChatApprovalDecisionSchema,
+  CanonicalChatMessagePartSchema,
+  CanonicalChatModelSelectionSchema,
+} from "#canonical-chat";
 import { boundedDisplayText, boundedText, referenceId } from "#legacy-contract-primitives";
 
 export const COLLABORATION_HTTP_BODY_LIMIT = 96 * 1024;
@@ -9,6 +13,7 @@ export const COLLABORATION_PAGE_LIMIT = 100;
 export const COLLABORATION_CLIENT_REQUEST_ID_HEADER = "x-matrix-client-request-id";
 export const COLLABORATION_EXPECTED_REVISION_HEADER = "x-matrix-expected-revision";
 export const COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER = "x-matrix-expected-member-revision";
+export const COLLABORATION_POLICY_HEADER = "x-matrix-collaboration-policy";
 
 export const CollaborationIdSchema = z.uuid();
 export const CollaborationActorIdSchema = z.string()
@@ -321,6 +326,64 @@ export const CollaborationChatMessagesResponseSchema = z.object({
   messages: z.array(CollaborationSharedChatMessageSchema).max(COLLABORATION_PAGE_LIMIT),
 }).strict();
 
+export const CollaborationAiRequestStateSchema = z.enum([
+  "queued",
+  "claimed",
+  "running",
+  "waiting_for_approval",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "unauthorized",
+  "unavailable",
+]);
+
+export const CollaborationCreateAiRequestSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  expectedRevision: CollaborationRevisionSchema,
+  text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
+  selection: CanonicalChatModelSelectionSchema,
+}).strict();
+
+export const CollaborationAiRequestControlSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  expectedRevision: CollaborationRevisionSchema,
+}).strict();
+
+export const CollaborationApprovalDecisionRequestSchema = CollaborationAiRequestControlSchema.extend({
+  runId: CollaborationResourceIdSchema,
+  decision: CanonicalChatApprovalDecisionSchema,
+}).strict();
+
+export const CollaborationAiRequestSchema = z.object({
+  id: CollaborationResourceIdSchema,
+  chatId: CollaborationResourceIdSchema,
+  acceptedSequence: CollaborationRevisionSchema,
+  actor: CollaborationParticipantSchema,
+  state: CollaborationAiRequestStateSchema,
+  text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
+  selection: CanonicalChatModelSelectionSchema,
+  retryOfRequestId: CollaborationResourceIdSchema.optional(),
+  runId: CollaborationResourceIdSchema.optional(),
+  acceptedAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+}).strict();
+
+export const CollaborationAiRequestsResponseSchema = z.object({
+  requests: z.array(CollaborationAiRequestSchema).max(COLLABORATION_PAGE_LIMIT),
+}).strict();
+
+export const CollaborationApprovalSchema = z.object({
+  approvalId: CollaborationResourceIdSchema,
+  runId: CollaborationResourceIdSchema,
+  requestId: CollaborationResourceIdSchema,
+  title: boundedDisplayText(160, 640),
+  risk: z.enum(["low", "medium", "high"]),
+  allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
+  state: z.enum(["pending", "accepted", "completed", "reconciling"]),
+}).strict();
+
 const CollaborationDirectoryBaseSchema = z.object({
   scopeId: CollaborationIdSchema,
   runtimeId: CollaborationRuntimeIdSchema,
@@ -467,6 +530,8 @@ export const CollaborationClientFrameSchema = z.discriminatedUnion("type", [
 ]);
 
 export type CollaborationActorProof = z.infer<typeof CollaborationActorProofSchema>;
+export type CollaborationAiRequest = z.infer<typeof CollaborationAiRequestSchema>;
+export type CollaborationAiRequestState = z.infer<typeof CollaborationAiRequestStateSchema>;
 export type CollaborationDeleteCondition = z.infer<typeof CollaborationDeleteConditionSchema>;
 export type CollaborationCapabilities = z.infer<typeof CollaborationCapabilitiesSchema>;
 export type CollaborationEventFrame = z.infer<typeof CollaborationEventFrameSchema>;

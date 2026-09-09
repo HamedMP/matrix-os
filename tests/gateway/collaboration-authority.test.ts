@@ -104,6 +104,43 @@ describe("CollaborationAuthority", () => {
     }
   });
 
+  it("enables M2 requests only for an eligible scope, enabled cohort, and writable role", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_generation: 1,
+      execution_eligibility: JSON.stringify({ profileId: "scope-runtime-proof-v1" }),
+    }).where("id", "=", collaborationIds.scope).execute();
+    const repository = new CollaborationRepository(fixture.db, { now: () => new Date(now) });
+    const m2 = new CollaborationAuthority(repository, { now: () => new Date(now) });
+    const executionPolicy = {
+      milestone: "m2" as const,
+      revision: "1",
+      mode: "internal" as const,
+      cohort: [collaborationActors.owner, collaborationActors.editor],
+      issuedAt: "2026-09-07T11:59:50.000Z",
+      expiresAt: "2026-09-07T12:00:20.000Z",
+    };
+
+    await expect(m2.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "request_ai",
+      executionPolicy,
+    })).resolves.toMatchObject({ capability: "request_ai", role: "editor" });
+    await expect(m2.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.viewer,
+      action: "request_ai",
+      executionPolicy,
+    })).rejects.toMatchObject({ code: "unavailable" });
+
+    await expect(m2.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      action: "control_execution",
+      executionPolicy: { ...executionPolicy, mode: "read_only" },
+    })).rejects.toMatchObject({ code: "unavailable" });
+  });
+
   it("resolves inherited membership only through an active project parent", async () => {
     const projectId = "10000000-0000-4000-8000-000000000010";
     const childId = "10000000-0000-4000-8000-000000000011";

@@ -83,6 +83,7 @@ export class CollaborationActorProofVerifier {
     body: Uint8Array;
     conditionalHeaders?: CollaborationDeleteCondition;
     action: CollaborationAction;
+    signedExecutionPolicy?: unknown;
   }): Promise<AuthorizedCollaborationContext> {
     const proof = await this.verifyHttp(input);
     if (!proof.scopeId || !this.options.authority) {
@@ -92,6 +93,9 @@ export class CollaborationActorProofVerifier {
       scopeId: proof.scopeId,
       actorId: proof.actorId,
       action: input.action,
+      ...(input.signedExecutionPolicy === undefined
+        ? {}
+        : { executionPolicy: this.verifyPolicy(input.signedExecutionPolicy) }),
     });
     if (context.ownerId !== proof.ownerId || context.authorityRuntimeId !== proof.runtimeId) {
       throw invalidProof();
