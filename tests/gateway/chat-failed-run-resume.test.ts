@@ -95,7 +95,7 @@ describe("Chat native session continuity", () => {
     expect(history?.runs.map((run) => run.status)).toEqual([outcome, "completed"]);
   });
 
-  it("keeps Claude output before and after steering as distinct messages in the same run", async () => {
+  it.each([false, true])("completes Claude Steer with distinct messages and persisted activities (thinking=%s)", async (thinking) => {
     const claudeSelection = { instanceId: "claude_default", model: "test_model" };
     const claudeCatalog = CanonicalProviderCatalogSchema.parse({
       ...catalog,
@@ -115,6 +115,10 @@ describe("Chat native session continuity", () => {
         const emitOutput = () => {
           const lines = [
             { type: "system", subtype: "init", session_id: "claude_native_session" },
+            ...(thinking ? [
+              { type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "thinking" } } },
+              { type: "stream_event", event: { type: "content_block_stop", index: 1 } },
+            ] : []),
             { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
             { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: resumed ? "after steer" : "before steer" } } },
             { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
@@ -150,7 +154,8 @@ describe("Chat native session continuity", () => {
       });
       // This fixture's single-connection PGlite driver does not isolate
       // concurrent BEGIN/COMMIT calls. Emit the resumed CLI output after ack;
-      // the regression under test is message identity, not database locking.
+      // These regressions cover message identity and persisted Thinking
+      // lifecycle transitions, not production transaction concurrency.
       await vi.waitFor(() => expect(resumeOutput).toBeDefined());
       resumeOutput!();
       await orchestrator.drain();
@@ -160,6 +165,18 @@ describe("Chat native session continuity", () => {
         [{ type: "text", text: "Review" }], [{ type: "text", text: "before steer" }],
         [{ type: "text", text: "Correct scope" }], [{ type: "text", text: "after steer" }],
       ]);
+      expect(history?.activities.some((activity) => activity.type === "run.error")).toBe(false);
+      if (thinking) {
+        const activities = history!.activities.filter((activity) => (
+          activity.type === "agent.activity" && activity.kind === "reasoning"
+        ));
+        expect(activities).toHaveLength(2);
+        expect(activities).toEqual([
+          expect.objectContaining({ runId: accepted.run.id, kind: "reasoning", status: "completed" }),
+          expect.objectContaining({ runId: accepted.run.id, kind: "reasoning", status: "completed" }),
+        ]);
+        expect(new Set(activities.map((activity) => activity.id)).size).toBe(2);
+      }
     } finally { await orchestrator.close(); }
   });
 });
