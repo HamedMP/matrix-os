@@ -14,21 +14,21 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow).toContain("ref: ${{ needs.gate.outputs.head }}");
   });
 
-  it("targets only a stable disposable PR preview and authenticates every remote command", async () => {
+  it("targets only the exact healthy disposable PR preview and authenticates every remote command", async () => {
     const workflow = await readFile(workflowPath, "utf8");
 
     expect(workflow).toContain("handle=pr-$PR");
     expect(workflow).toContain(".runtimeSlot == $handle");
     expect(workflow).toContain(".status == \"running\"");
     expect(workflow).toContain(".healthy == true");
-    expect(workflow).toContain("stable_version");
-    expect(workflow).toContain("stable_machine_id");
+    expect(workflow).toContain('"${version##*-}" = "${HEAD_SHA:0:7}"');
+    expect(workflow).toContain("deadline=$((SECONDS + 2100))");
     expect(workflow).toContain("x-matrix-acceptance-signature");
     expect(workflow).toContain("x-matrix-acceptance-response-signature");
     expect(workflow).toContain("--resolve \"app.matrix-os.com:443:${ADDRESS}\"");
   });
 
-  it("permits an older stable host bundle only when its installed SDK matches the immutable head", async () => {
+  it("requires the exact immutable production bundle head", async () => {
     const workflow = await readFile(workflowPath, "utf8");
 
     expect(workflow).toContain("packages/kernel/package.json");
@@ -37,7 +37,9 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow.indexOf(".exitCode == 0")).toBeLessThan(
       workflow.indexOf("agent_sdk_version=${expected_sdk_version}"),
     );
-    expect(workflow).toContain("The disposable host bundle differs from the immutable probe head");
+    expect(workflow).toContain('"${version##*-}" = "${HEAD_SHA:0:7}"');
+    expect(workflow).toContain("The exact production preview did not become ready");
+    expect(workflow).not.toContain("The disposable host bundle differs from the immutable probe head");
     expect(workflow).toContain("previewVersion: $version");
     expect(workflow).not.toContain("previewMachineId:");
   });
@@ -49,12 +51,17 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow).toContain("scripts/spikes/collaboration/scope-runtime-sdk-probe.mjs");
     expect(workflow).toContain("scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs");
     expect(workflow).toContain("scripts/spikes/collaboration/native-isolation-acceptance.sh");
+    expect(workflow).toContain("scripts/spikes/collaboration/production-supervisor-acceptance.mjs");
     expect(workflow).toContain("MATRIX_SCOPE_PROBE_DISPOSABLE=1");
     expect(workflow).toContain("ROOT_STAGING_DIR=/var/lib/matrix-scope-runtime/acceptance");
     expect(workflow).toContain("stage_root_asset");
     expect(workflow).toContain('"/usr/bin/install","--owner=root","--group=root"');
     expect(workflow).toContain('"/usr/bin/sha256sum","--"');
     expect(workflow).not.toContain('"/var/tmp/matrix-scope-native-acceptance.sh"],"timeoutMs"');
+    expect(workflow).not.toContain('"/var/tmp/matrix-scope-production-acceptance.mjs"],');
+    expect(workflow).toContain("MATRIX_SCOPE_PRODUCTION_DISPOSABLE=1");
+    expect(workflow).toContain('production_expected_head="MATRIX_SCOPE_EXPECTED_HEAD=$HEAD_SHA"');
+    expect(workflow).toContain("scope_runtime_production_acceptance=passed");
     expect(workflow).toContain("scope-runtime-native-evidence-");
     expect(workflow).toContain("retention-days: 7");
   });

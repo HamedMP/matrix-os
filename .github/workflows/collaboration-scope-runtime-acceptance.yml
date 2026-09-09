@@ -51,7 +51,7 @@ jobs:
   prove:
     needs: gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
@@ -64,17 +64,10 @@ jobs:
           ref: ${{ needs.gate.outputs.head }}
 
       - id: preview
-        name: Resolve a stable disposable preview
+        name: Resolve the exact disposable production preview
         run: |
           set -euo pipefail
-          # Prefer the exact application bundle, but do not couple this native
-          # host/SDK experiment to activation of unrelated application code.
-          # The reviewed probe itself is always checked out at HEAD_SHA, and
-          # the proof below requires the host's installed SDK to match it.
-          deadline=$((SECONDS + 180))
-          stable_machine_id=
-          stable_version=
-          stable_address=
+          deadline=$((SECONDS + 2100))
           while [ "$SECONDS" -lt "$deadline" ]; do
             fleet="$(curl --fail --silent --show-error --max-time 30 \
               -H "authorization: Bearer $PLATFORM_SECRET" \
@@ -90,60 +83,21 @@ jobs:
             if printf '%s' "$machine_id" |
                 grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' &&
               printf '%s' "$version" | grep -Eq '^(v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}$' &&
-              printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-              if [ "${version##*-}" = "${HEAD_SHA:0:7}" ] ||
-                { [ "$machine_id" = "$stable_machine_id" ] &&
-                  [ "$version" = "$stable_version" ] &&
-                  [ "$address" = "$stable_address" ]; }; then
-                if [ "${version##*-}" != "${HEAD_SHA:0:7}" ]; then
-                  echo "The disposable host bundle differs from the immutable probe head; the SDK version gate remains mandatory."
-                fi
-                echo "::add-mask::$address"
-                {
-                  echo "address=$address"
-                  echo "version=$version"
-                } >>"$GITHUB_OUTPUT"
-                exit 0
-              fi
-              stable_machine_id="$machine_id"
-              stable_version="$version"
-              stable_address="$address"
-            else
-              stable_machine_id=
-              stable_version=
-              stable_address=
-            fi
-            sleep 30
-          done
-          # Take one final stable sample at the boundary so a host that was
-          # healthy for the whole preference window is not rejected on timing.
-          fleet="$(curl --fail --silent --show-error --max-time 30 \
-            -H "authorization: Bearer $PLATFORM_SECRET" \
-            "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
-          machine="$(jq -ce --arg handle "$HANDLE" '
-            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
-              and .status == "running" and .healthy == true and .deletedAt == null)]
-            | if length == 1 then .[0] else {} end
-          ' <<<"$fleet")"
-          machine_id="$(jq -r '.machineId // ""' <<<"$machine")"
-          version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
-          address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-          if [ "$machine_id" = "$stable_machine_id" ] &&
-            [ "$version" = "$stable_version" ] &&
-            [ "$address" = "$stable_address" ] &&
-            [ -n "$version" ]; then
-              echo "The disposable host bundle differs from the immutable probe head; the SDK version gate remains mandatory."
+              printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' &&
+              [ "${version##*-}" = "${HEAD_SHA:0:7}" ]; then
               echo "::add-mask::$address"
               {
                 echo "address=$address"
                 echo "version=$version"
               } >>"$GITHUB_OUTPUT"
               exit 0
-          fi
-          echo "A stable disposable PR preview did not become ready." >&2
+            fi
+            sleep 15
+          done
+          echo "The exact production preview did not become ready." >&2
           exit 1
 
-      - name: Upload reviewed assets and run the native proof
+      - name: Run native proof and exact production supervisor acceptance
         env:
           ADDRESS: ${{ steps.preview.outputs.address }}
           PREVIEW_VERSION: ${{ steps.preview.outputs.version }}
@@ -286,7 +240,9 @@ jobs:
               "/var/tmp/matrix-scope-runtime-broker-fixture.mjs",
               "/var/tmp/matrix-scope-runtime-broker-fixture.mjs.b64",
               "/var/tmp/matrix-scope-native-acceptance.sh",
-              "/var/tmp/matrix-scope-native-acceptance.sh.b64"]}'
+              "/var/tmp/matrix-scope-native-acceptance.sh.b64",
+              "/var/tmp/matrix-scope-production-acceptance.mjs",
+              "/var/tmp/matrix-scope-production-acceptance.mjs.b64"]}'
             send_command "$body" || true
             body="$(jq -cn --arg root "$ROOT_STAGING_DIR" '{
               command:["/usr/bin/sudo","/usr/bin/rm","-rf","--",$root]
@@ -321,6 +277,11 @@ jobs:
           stage_root_asset scripts/spikes/collaboration/native-isolation-acceptance.sh \
             /var/tmp/matrix-scope-native-acceptance.sh \
             "$ROOT_STAGING_DIR/matrix-scope-native-acceptance.sh" 0700
+          upload_asset scripts/spikes/collaboration/production-supervisor-acceptance.mjs \
+            /var/tmp/matrix-scope-production-acceptance.mjs 0700
+          stage_root_asset scripts/spikes/collaboration/production-supervisor-acceptance.mjs \
+            /var/tmp/matrix-scope-production-acceptance.mjs \
+            "$ROOT_STAGING_DIR/matrix-scope-production-acceptance.mjs" 0700
 
           run_body="$(jq -cn --arg root "$ROOT_STAGING_DIR" '{
             command:["/usr/bin/sudo","/usr/bin/env",
@@ -328,33 +289,54 @@ jobs:
               ("MATRIX_SCOPE_ASSET_ROOT=" + $root),
               ($root + "/matrix-scope-native-acceptance.sh")],timeoutMs:180000
           }')"
-          response="$RUNNER_TEMP/scope-runtime-native-run.json"
-          if ! send_signed_command "$run_body" "$response"; then
-            cp "$response" "$evidence" 2>/dev/null || true
+          native_response="$RUNNER_TEMP/scope-runtime-native-run.json"
+          if ! send_signed_command "$run_body" "$native_response"; then
+            cp "$native_response" "$evidence" 2>/dev/null || true
             exit 1
           fi
-          jq -c --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" '{
-            head: $head,
-            previewVersion: $version,
-            exitCode,
-            timedOut,
-            truncated,
-            signal,
-            stdout,
-            stderr
-          }' "$response" >"$evidence"
           if ! jq -e 'select(.exitCode == 0 and .timedOut == false and
-            .truncated == false and .signal == null)' "$response" >/dev/null; then
+            .truncated == false and .signal == null)' "$native_response" >/dev/null; then
             echo "The native proof command failed; inspect the bounded evidence artifact." >&2
             exit 1
           fi
-          if ! jq -er '.stdout' "$response" |
+          if ! jq -er '.stdout' "$native_response" |
             grep -Fxq "agent_sdk_version=${expected_sdk_version}"; then
             echo "The disposable preview SDK does not match the immutable probe head." >&2
             exit 1
           fi
           jq -e 'select(
-            (.stdout | contains("scope_runtime_acceptance=passed")))' "$response" >/dev/null
+            (.stdout | contains("scope_runtime_acceptance=passed")))' "$native_response" >/dev/null
+
+          production_expected_head="MATRIX_SCOPE_EXPECTED_HEAD=$HEAD_SHA"
+          production_body="$(jq -cn --arg expected "$production_expected_head" \
+            --arg root "$ROOT_STAGING_DIR" '{
+            command:["/usr/bin/sudo","/usr/bin/env",
+              "MATRIX_SCOPE_PRODUCTION_DISPOSABLE=1",$expected,
+              ($root + "/matrix-scope-production-acceptance.mjs")],
+            timeoutMs:180000
+          }')"
+          production_response="$RUNNER_TEMP/scope-runtime-production-run.json"
+          jq -cn '{status:"production-command-not-returned"}' >"$production_response"
+          if ! send_signed_command "$production_body" "$production_response"; then
+            if ! jq -e . "$production_response" >/dev/null 2>&1; then
+              jq -cn '{status:"production-command-transport-failed"}' >"$production_response"
+            fi
+            jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" \
+              --slurpfile native "$native_response" --slurpfile production "$production_response" '{
+                head:$head, previewVersion:$version,
+                nativeProof:$native[0], productionSupervisor:$production[0]
+              }' >"$evidence"
+            exit 1
+          fi
+          jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" \
+            --slurpfile native "$native_response" --slurpfile production "$production_response" '{
+              head:$head, previewVersion:$version,
+              nativeProof:$native[0], productionSupervisor:$production[0]
+            }' >"$evidence"
+          jq -e 'select(.exitCode == 0 and .timedOut == false and
+            .truncated == false and .signal == null and
+            (.stdout | contains("scope_runtime_production_acceptance=passed")))' \
+            "$production_response" >/dev/null
 
       - name: Upload public-safe native evidence
         if: always()
