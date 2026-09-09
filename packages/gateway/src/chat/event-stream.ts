@@ -8,6 +8,7 @@ import {
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOutboxEvent, ChatOwner } from "./records.js";
+import type { ChatOutboxSink } from "./outbox-delivery.js";
 
 const DEFAULT_MAX_SUBSCRIBERS = 64;
 const DEFAULT_MAX_SUBSCRIBERS_PER_OWNER = 8;
@@ -84,6 +85,7 @@ function sameOwner(left: ChatOwner, right: ChatOwner): boolean {
 
 export function createCanonicalChatEventStream(options: {
   repository: CanonicalChatEventRepository;
+  onCommittedEvent?: ChatOutboxSink;
   reconcileOwner?: (owner: ChatOwner) => Promise<unknown>;
   maxSubscribers?: number;
   maxSubscribersPerOwner?: number;
@@ -200,7 +202,10 @@ export function createCanonicalChatEventStream(options: {
     for (const id of dead) evict(id);
   }
 
-  const sink = options.repository.registerOutboxSink(({ owner, event }) => publish(owner, event));
+  const sink = options.repository.registerOutboxSink((input) => {
+    publish(input.owner, input.event);
+    options.onCommittedEvent?.(input);
+  });
 
   async function open(input: {
     sink: CanonicalChatEventStreamSink;

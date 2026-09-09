@@ -8,6 +8,8 @@ import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { createCanonicalChatEventStream } from "../../packages/gateway/src/chat/event-stream.js";
+import { createChatFailureRecorder } from "../../packages/gateway/src/chat/failure-telemetry.js";
 import { catalog, owner, principal } from "./helpers/canonical-codex-catalog.js";
 
 describe("Chat projection preserves the backing execution lifecycle", () => {
@@ -86,6 +88,8 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
     const pglite = await KyselyPGlite.create();
     const repository = new ChatRepository(pglite.dialect);
     await repository.bootstrap();
+    const capture = vi.fn();
+    const telemetry = createCanonicalChatEventStream({ repository, onCommittedEvent: createChatFailureRecorder({ capture }) });
     const persistState = repository.updateAdapterState.bind(repository);
     let stateWrites = 0;
     const stateWrite = vi.spyOn(repository, "updateAdapterState").mockImplementation(async (...args) => {
@@ -132,12 +136,20 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       expect(snapshot?.runs).toHaveLength(1);
       expect(snapshot?.runs[0]?.status).toBe("running");
       expect(JSON.stringify(snapshot)).not.toContain("private-stop");
+      expect(capture.mock.calls.filter(([event]) => event === "matrix_agent_run_failed")).toHaveLength(0);
+      expect(capture).toHaveBeenCalledWith("matrix_agent_run_sync_failed", expect.objectContaining({ properties: expect.objectContaining({
+        chat_id: "chat_projection", failure_kind: "synchronization", failure_stage: "cleanup", run_status: "running",
+      }) }));
       finish.resolve();
       await vi.waitFor(async () => expect((await threads.getThread(principal, nativeThreadId)).thread.status).toBe("completed"));
       await orchestrator.reconcileActiveRuns(owner);
       expect((await repository.exportChat(owner, "chat_projection"))?.runs[0]?.status).toBe(stateFailure === "always" ? "running" : "failed");
+      if (stateFailure !== "always") expect(capture).toHaveBeenLastCalledWith("matrix_agent_run_failed", expect.objectContaining({
+        properties: expect.objectContaining({ failure_kind: "synchronization", failure_stage: "recovery" }),
+      }));
     } finally {
       stateWrite.mockRestore();
+      telemetry.shutdown();
       finish.resolve();
       if (nativeThreadId) await vi.waitFor(async () => expect((await threads.getThread(principal, nativeThreadId)).thread.status).toBe("completed"));
       await orchestrator.close();
@@ -151,6 +163,8 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
     const pglite = await KyselyPGlite.create();
     const repository = new ChatRepository(pglite.dialect);
     await repository.bootstrap();
+    const capture = vi.fn();
+    const telemetry = createCanonicalChatEventStream({ repository, onCommittedEvent: createChatFailureRecorder({ capture }) });
     const finish = Promise.withResolvers<void>();
     let nativeSignal: AbortSignal | undefined;
     let statusAtStop: string | undefined;
@@ -189,9 +203,13 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       expect(nativeSignal?.aborted).toBe(true);
       expect(statusAtStop).toBe("running");
       expect((await threads.getThread(principal, nativeThreadId)).thread.status).toBe("aborted");
+      expect(capture).toHaveBeenCalledWith("matrix_agent_run_failed", expect.objectContaining({ properties: expect.objectContaining({
+        chat_id: "chat_projection", failure_kind: "projection", failure_stage: "projection", error_category: "resource_limit",
+      }) }));
     } finally {
       finish.resolve();
       await orchestrator.close();
+      telemetry.shutdown();
       await threads.shutdownTurns();
       await repository.kysely.destroy();
       await rm(homePath, { recursive: true, force: true });

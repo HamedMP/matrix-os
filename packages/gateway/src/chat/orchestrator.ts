@@ -66,6 +66,7 @@ import {
 import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
 import { retryAvailability } from "./retry-preflight.js";
 import { boundedOperation } from "../bounded-operation.js";
+import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, diagnoseChatRunFailure, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
@@ -812,6 +813,7 @@ export class CanonicalChatOrchestrator {
             runId: claimed.run.id,
             outcome: "failed",
             completedAt: timestamp,
+            diagnostic: diagnoseChatRunFailure(error, "preparation"),
           });
           continue;
         }
@@ -843,6 +845,7 @@ export class CanonicalChatOrchestrator {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
     let lastKnownState: unknown;
+    let failureStage: ChatRunFailureDiagnostic["stage"] = "preparation";
     try {
       await this.assertPersonalExecutionAllowed(owner, run.chatId);
       if (resolvedRoot && this.options.executionRoots) {
@@ -878,10 +881,12 @@ export class CanonicalChatOrchestrator {
       };
       let text = "";
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
+      failureStage = "provider";
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
         : adapter.start(input);
       for await (const rawEvent of events) {
+        failureStage = "projection";
         if (controller.signal.aborted) {
           throw new Error("Provider emitted an event after cancellation");
         }
@@ -890,6 +895,7 @@ export class CanonicalChatOrchestrator {
         if (event.type === "state.updated") {
           const state = adapter.serializeState(adapter.parseState(event.state));
           lastKnownState = state;
+          failureStage = "persistence";
           await this.options.repository.updateAdapterState(owner, {
             chatId: run.chatId,
             runId: run.id,
@@ -904,6 +910,7 @@ export class CanonicalChatOrchestrator {
           }
           text += event.delta;
           const messageId = assistantMessageId(run.id, event.messageId);
+          failureStage = "persistence";
           await this.options.repository.appendAssistantDelta(owner, {
             chatId: run.chatId,
             runId: run.id,
@@ -914,8 +921,10 @@ export class CanonicalChatOrchestrator {
         } else if (event.type === "run.completed") {
           terminal = event;
         } else {
+          failureStage = "persistence";
           await this.persistActivities(owner, run, [event]);
         }
+        failureStage = "provider";
       }
       if (!terminal) throw new Error("Provider completed without a terminal event");
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
@@ -923,6 +932,7 @@ export class CanonicalChatOrchestrator {
         ...(terminal.error ? [{ type: "run.error", error: terminal.error }] : []),
         { type: "run.status", status: terminal.outcome },
       ];
+      failureStage = "persistence";
       try {
         await this.persistActivities(owner, run, terminalActivities, completedAt);
       } catch (activityError: unknown) {
@@ -978,7 +988,7 @@ export class CanonicalChatOrchestrator {
           }
         }
         await this.persistActivities(owner, run, [{ type: "run.error", error: safeError(
-          "run_unavailable", "The Run could not be stopped. Its status is being checked.", false,
+          "run_unavailable", CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, false,
         ) }], (this.options.now ?? (() => new Date()))().toISOString());
         return;
       }
@@ -1012,6 +1022,7 @@ export class CanonicalChatOrchestrator {
           runId: run.id,
           outcome,
           completedAt,
+          ...(outcome === "failed" ? { diagnostic: diagnoseChatRunFailure(error, failureStage) } : {}),
         });
       } catch (finishError: unknown) {
         if (!(finishError instanceof ChatRunNotActiveError)) throw finishError;
@@ -1389,6 +1400,7 @@ export class CanonicalChatOrchestrator {
           runId: context.latestRun.id,
           outcome: "failed",
           completedAt,
+          diagnostic: diagnoseChatRunFailure(error, "preparation"),
         });
         if (finished.transitioned) reconciled += 1;
         continue;
@@ -1426,6 +1438,7 @@ export class CanonicalChatOrchestrator {
           runId: context.latestRun.id,
           outcome: "failed",
           completedAt,
+          diagnostic: { stage: "recovery", category: "unknown" },
         });
         if (finished.transitioned) reconciled += 1;
       } catch (reconcileError: unknown) {

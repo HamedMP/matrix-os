@@ -155,7 +155,7 @@ import {
   closeCanonicalChatEventLifecycle,
   createCanonicalChatRoutes,
 } from "./chat/routes.js";
-import { createCanonicalChatEventStream } from "./chat/event-stream.js";
+import { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
@@ -999,7 +999,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let chatRepository: ChatRepository | null = null;
   let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
-  let canonicalChatEventStream: ReturnType<typeof createCanonicalChatEventStream> | null = null;
+  let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
@@ -1039,9 +1039,12 @@ export async function createGateway(config: GatewayConfig) {
           config: collaborationConfig,
         });
       }
-      canonicalChatEventStream = createCanonicalChatEventStream({
+      canonicalChatEventStream = createGatewayChatEventStream({
         repository: chatRepository,
         reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
+        capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
+        runtimeVersion: runningVersion,
+        buildSha: process.env.MATRIX_BUILD_SHA,
       });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);

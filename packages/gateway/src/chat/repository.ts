@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
+import { captureChatFailureMetadata } from "./failure-telemetry.js";
+import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
   CanonicalChatRunActivitySchema,
   CanonicalChatIdSchema,
@@ -441,9 +443,11 @@ export class ChatRepository {
       ));
     const streamContent = captured && new TextEncoder().encode(JSON.stringify(captured)).byteLength < 512 * 1024 - 2048
       ? captured : undefined;
+    const failureTelemetry = captureChatFailureMetadata(eventType, captured, payload.runId, payload.failureDiagnostic);
     const { messageDelta: _delta, activityIds: _activities, removedActivityIds: _removed, ...metadata } = payload;
     const event = await insertOutbox(executor, owner, chatId, revision, eventType, {
       ...metadata, ...(streamContent ? { streamContent } : {}),
+      ...(failureTelemetry ? { failureTelemetry } : {}),
     });
     this.outboxDelivery.capture(executor, { owner, event });
   }
@@ -1388,6 +1392,7 @@ export class ChatRepository {
     runId: string;
     outcome: "completed" | "failed" | "aborted";
     completedAt: string;
+    diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;
   }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
     return this.runLifecycle.finishRun(ownerInput, input);

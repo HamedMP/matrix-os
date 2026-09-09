@@ -83,6 +83,19 @@ beforeEach(() => {
 });
 
 describe("Chat canonical provider state", () => {
+  it("copies the canonical chat ID from Web Desktop and Web Canvas conversation content", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<ChatApp messages={[{ id: "msg_copy", role: "user", content: "Inspect this run", timestamp: 1000 }]}
+      sessionId="chat_web_content" busy={false} connected onSubmit={vi.fn()} conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} />);
+    fireEvent.contextMenu(screen.getByText("Inspect this run"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy chat ID" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("chat_web_content"));
+    vi.unstubAllGlobals();
+  });
+
   it("renders attachment-only user messages without an empty text bubble", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     const { container } = render(<ChatApp

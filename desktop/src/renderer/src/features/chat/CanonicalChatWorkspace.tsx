@@ -1,5 +1,6 @@
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
+import { ChatContextMenu } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
 import type {
   CanonicalChatClient,
@@ -703,8 +704,8 @@ export function CanonicalChatWorkspace({
         </form>
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
           {controller.items.map((record) => (
+            <ChatContextMenu key={record.chat.id} chatId={record.chat.id}>
             <button
-              key={record.chat.id}
               type="button"
               aria-label={record.chat.title}
               aria-pressed={record.chat.id === controller.activeChatId}
@@ -718,6 +719,7 @@ export function CanonicalChatWorkspace({
                 {record.chat.lastMessagePreview ?? "No messages yet"}
               </span>
             </button>
+            </ChatContextMenu>
           ))}
           {controller.status === "ready" && controller.items.length === 0 ? (
             <p className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
@@ -744,6 +746,8 @@ export function CanonicalChatWorkspace({
         {controller.detail && globalView === "conversation" ? (
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
+            <ChatContextMenu chatId={controller.detail.record.chat.id}>
+            <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
               copyText,
               openAttachment: (rawPath) => {
@@ -765,6 +769,8 @@ export function CanonicalChatWorkspace({
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
             }} />
+            </div>
+            </ChatContextMenu>
             <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
