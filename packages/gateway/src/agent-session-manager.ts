@@ -22,6 +22,7 @@ import type { createAgentLauncher } from "./agent-launcher.js";
 import type { createWorktreeManager, WorktreeRecord } from "./worktree-manager.js";
 import type { createZellijRuntime } from "./zellij-runtime.js";
 import { codexProviderEventPath } from "./coding-agents/codex-event-bridge.js";
+import { logSessionStartupFailure } from "./session-startup-diagnostics.js";
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
@@ -380,9 +381,7 @@ export function createAgentSessionManager(options: {
           })
           : { command: "bash", args: [], cwd, env: {} };
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.warn("[agent-session-manager] Launch preflight failed:", err.message);
-        }
+        await logSessionStartupFailure("launch_preflight", sessionId, err);
         if (leaseAcquired) {
           await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
         }
@@ -393,9 +392,7 @@ export function createAgentSessionManager(options: {
       try {
         runtimeStart = await options.zellijRuntime.start({ sessionId, launch });
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.warn("[agent-session-manager] Runtime start failed:", err.message);
-        }
+        await logSessionStartupFailure("runtime_start", sessionId, err);
         if (leaseAcquired) {
           await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
         }
@@ -428,7 +425,7 @@ export function createAgentSessionManager(options: {
       try {
         await writeSession(homePath, session);
       } catch (err: unknown) {
-        console.warn("[agent-session-manager] Session write failed after runtime start:", err instanceof Error ? err.message : String(err));
+        await logSessionStartupFailure("session_persist", sessionId, err);
         await options.zellijRuntime.kill(sessionId).catch((killErr: unknown) => {
           console.warn("[agent-session-manager] Runtime cleanup after session write failure failed:", killErr instanceof Error ? killErr.message : String(killErr));
         });

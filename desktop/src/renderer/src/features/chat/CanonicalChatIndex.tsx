@@ -1,4 +1,5 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import { ChatContextMenu } from "@matrix-os/ui";
 import { MessageSquare, Plus, Search, Trash2, X } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 
@@ -123,7 +124,8 @@ export function CanonicalChatIndex({
         {items.length > 0 ? (
           <ul aria-label="Chat history" className="min-h-0 flex-1 overflow-y-auto pb-4">
             {items.map((record) => (
-              <li key={record.chat.id} className="group/chat relative shrink-0 border-b" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
+              <ChatContextMenu key={record.chat.id} chatId={record.chat.id}>
+              <li className="group/chat relative shrink-0 border-b" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
                 <button
                   type="button"
                   aria-label={record.chat.title}
@@ -146,6 +148,7 @@ export function CanonicalChatIndex({
                   <Trash2 size={14} aria-hidden="true" />
                 </button>
               </li>
+              </ChatContextMenu>
             ))}
           </ul>
         ) : null}

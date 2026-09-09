@@ -25,6 +25,7 @@ import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
 import { Icon, IconButton, Spacer, Text, type IconData } from "@/components/ui";
 import type { ProjectSummary } from "@/lib/requests";
+import { ChatContextMenu } from "@/components/ChatContextMenu";
 
 const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
   { route: "files", label: "Files", icon: Folder01Icon },
@@ -172,8 +173,8 @@ export function DrawerContent({
                           || "New chat";
                         const active = isOnChatScreen && record.chat.id === activeSessionId;
                         return (
+                          <ChatContextMenu key={record.chat.id} chatId={record.chat.id}>
                           <Pressable
-                            key={record.chat.id}
                             accessibilityRole="button"
                             accessibilityState={{ selected: active }}
                             accessibilityLabel={`Open recent chat ${label}`}
@@ -190,6 +191,7 @@ export function DrawerContent({
                               <Text size="body" numberOfLines={1}>{label}</Text>
                             </View>
                           </Pressable>
+                          </ChatContextMenu>
                         );
                       })}
                       <Pressable
@@ -229,6 +231,7 @@ export function DrawerContent({
           const active = isOnChatScreen && record.chat.id === activeSessionId;
           return (
             <Fragment key={record.chat.id}>
+              <ChatContextMenu chatId={record.chat.id}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ selected: active }}
@@ -251,6 +254,7 @@ export function DrawerContent({
                   <Text size="body" numberOfLines={1}>{label}</Text>
                 </View>
               </Pressable>
+              </ChatContextMenu>
               {index < unassignedChats.length - 1 ? <Spacer size="sm" /> : null}
             </Fragment>
           );

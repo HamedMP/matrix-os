@@ -389,9 +389,9 @@ export function createWorkspaceCodingAgentProvider(
       }
       await options.codexControl.steerTurn({ sessionId, prompt: message, clientRequestId });
     },
-    async abortThread({ thread, clientRequestId, now, nextEventId }) {
+    async abortThread({ thread, clientRequestId, now, nextEventId, requireRuntimeStop }) {
       const sessionId = sessionIdForThread(thread.id);
-      if (agent === "codex" && options.codexControl) {
+      if (agent === "codex" && options.codexControl && !requireRuntimeStop) {
         await boundedOperation(() => options.codexControl!.interruptTurn({ sessionId, clientRequestId }), 5_000);
       } else {
         const result = await boundedOperation(() => options.runtime.stopSession(sessionId), 5_000);

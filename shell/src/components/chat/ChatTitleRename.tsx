@@ -1,12 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { ChatContextMenu } from "@matrix-os/ui";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
   id: string;
@@ -120,21 +116,16 @@ export function RenameableConversationRow({
       <span className="flex-1 truncate">{title.slice(0, 40) + (title.length > 40 ? "..." : "")}</span>
     </button>
   );
-  if (!onRenameStart || editing) return row;
+  if (editing) return row;
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onSelect={() => {
+    <ChatContextMenu chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} items={onRenameStart ? [{
+        label: "Rename", onSelect: () => {
           if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
           renameTimerRef.current = window.setTimeout(() => {
             renameTimerRef.current = null;
             onRenameStart();
           }, 0);
-        }}>
-          Rename
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+        },
+    }] : []}>{row}</ChatContextMenu>
   );
 }

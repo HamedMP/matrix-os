@@ -103,6 +103,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   worktreeId?: string;
   resumeState?: State;
   signal: AbortSignal;
+  /** Generator return() errors can be masked by a consumer throw; report unresolved cleanup explicitly. */
+  onCleanupUnconfirmed?: () => void;
 }
 
 export interface CanonicalChatProviderAdapter<State = unknown> {
@@ -110,6 +112,8 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly stateSchemaVersion: number;
   parseState(value: unknown): State;
   serializeState(value: State): unknown;
+  /** Read-only admission guard for adapters whose execution can outlive projection. */
+  isBackingRunActive?(input: { owner: CanonicalOwnerScope; state: State; signal: AbortSignal }): Promise<boolean>;
   /** Read-only recovery of this exact Run; never starts or resubmits work. */
   recover?(input: {
     owner: CanonicalOwnerScope;

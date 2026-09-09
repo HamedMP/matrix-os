@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 
 const mockSendMessage = jest.fn();
+let mockActiveChatId: string | null = null;
+let mockDetail: unknown;
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ isSignedIn: true }),
@@ -16,7 +18,7 @@ jest.mock("react-native-safe-area-context", () => ({
 
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({
-    activeChatId: null,
+    activeChatId: mockActiveChatId,
     selectionOverride: null,
     setSelectionOverride: jest.fn(),
     selectedProjectId: null,
@@ -26,7 +28,7 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
 }));
 
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
-  useCanonicalChatDetail: () => ({ detail: undefined }),
+  useCanonicalChatDetail: () => ({ detail: mockDetail }),
 }));
 
 jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
@@ -51,12 +53,28 @@ jest.mock("@expo/ui", () => {
 });
 
 import React from "react";
-import { render, screen } from "@testing-library/react-native";
-import { StyleSheet as NativeStyleSheet } from "react-native";
+import { fireEvent, render, screen } from "@testing-library/react-native";
+import { Alert, StyleSheet as NativeStyleSheet } from "react-native";
+import * as Clipboard from "expo-clipboard";
 
 import ChatScreen from "../app/(drawer)/index";
 
 describe("drawer home screen", () => {
+  afterEach(() => { mockActiveChatId = null; mockDetail = undefined; jest.restoreAllMocks(); });
+  it("copies the displayed Native Mobile conversation ID by long-pressing its content", () => {
+    mockActiveChatId = "chat_native_content";
+    mockDetail = { record: { chat: { id: mockActiveChatId } }, runs: [], turns: [], activities: [],
+      messages: [{ id: "msg_native_copy", chatId: mockActiveChatId, role: "user", state: "committed", seq: 1,
+        parts: [{ type: "text", text: "Inspect native failure" }], createdAt: "2026-09-09T00:00:00.000Z" }] };
+    const alert = jest.spyOn(Alert, "alert");
+    render(<ChatScreen />);
+    fireEvent(screen.getByText("Inspect native failure"), "longPress");
+    const action = alert.mock.calls[0]?.[2]?.find((button) => button.text === "Copy chat ID");
+    expect(action).toBeDefined();
+    action!.onPress?.();
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat_native_content");
+  });
+
   it("uses the Matrix rabbit artwork for its empty-state mark", () => {
     render(<ChatScreen />);
 

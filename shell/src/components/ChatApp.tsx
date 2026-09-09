@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { ChatSharing } from "./chat/ChatSharing";
-import { ChatAttachments } from "@matrix-os/ui";
+import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
 import { ChatFilePanel, loadChatFile } from "./chat/ChatFilePanel";
 import type {
@@ -501,6 +502,8 @@ export function ChatApp({
           />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
+            <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
+            <div className="contents">
             <Conversation>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
                 {grouped.map((group) => {
@@ -551,6 +554,8 @@ export function ChatApp({
               </ConversationContent>
               <ConversationScrollButton />
             </Conversation>
+            </div>
+            </ChatContextMenu>
 
             {/* Suggestions + Input */}
             <div className="mx-auto w-full max-w-[720px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">

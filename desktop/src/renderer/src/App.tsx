@@ -1,3 +1,4 @@
+import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
 import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { useEffect } from "react";
@@ -36,7 +37,7 @@ export default function App() {
         ) : status === "signed-out" ? (
           <SignIn />
         ) : (
-          <MissionControl />
+          <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
         )}
       </div>
       <DesktopSupportWidget />
