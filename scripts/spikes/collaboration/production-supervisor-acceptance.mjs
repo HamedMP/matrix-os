@@ -209,6 +209,15 @@ async function runtimeCreationFailureCode(since) {
   if (workerJournal.code === 0 && worker && Object.hasOwn(SYSTEMD_WORKER_FAILURES, worker)) {
     return `runtime_create_failed_worker_${SYSTEMD_WORKER_FAILURES[worker]}`;
   }
+  const supervisorJournal = await command("/usr/bin/journalctl", [
+    "--unit", SERVICE, "--since", since, "--grep", "fixed-profile launch failed:",
+    "--no-pager", "--output=cat", "--lines=20",
+  ]);
+  const activationStatus = /ScopeRuntimeActivationStatus([1-9][0-9]{0,2})Error\b/
+    .exec(supervisorJournal.stdout)?.[1];
+  if (supervisorJournal.code === 0 && activationStatus) {
+    return `runtime_create_failed_activation_status_${activationStatus}`;
+  }
   const journal = await command("/usr/bin/journalctl", [
     "--unit", "matrix-scope-runtime-*.service", "--since", since,
     "--no-pager", "--output=cat", "--lines=80",
