@@ -1,3 +1,4 @@
+import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import {
   createCanonicalChatClient,
   createCanonicalChatEventSource,
@@ -40,7 +41,7 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
     if (!api || !active) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream("/api/chats/events", {
+        return api.openStream(chatMessageVersionUrl("/api/chats/events"), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,

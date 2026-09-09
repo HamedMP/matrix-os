@@ -1,3 +1,5 @@
+export * from "#runtime-compatibility";
+export * from "#chat-message-wire";
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 import {

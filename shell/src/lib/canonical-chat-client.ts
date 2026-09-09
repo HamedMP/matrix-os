@@ -1,3 +1,4 @@
+import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatDetailResponseSchema,
   CanonicalChatApprovalDecisionSchema,
@@ -124,7 +125,7 @@ export function createCanonicalShellChatClient(options: {
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   return {
     async openEventStream({ cursor, signal }) {
-      const response = await fetchFn(`${options.gatewayUrl}/api/chats/events`, {
+      const response = await fetchFn(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`), {
         method: "GET",
         headers: {
           Accept: "text/event-stream",
@@ -149,7 +150,7 @@ export function createCanonicalShellChatClient(options: {
     },
     async detail(chatId) {
       const id = CanonicalChatIdSchema.parse(chatId);
-      return CanonicalChatDetailResponseSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}?limit=200`));
+      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
     },
     async updateTitle(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
@@ -163,7 +164,7 @@ export function createCanonicalShellChatClient(options: {
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalCreateChatTurnRequestSchema.parse(input);
-      return CanonicalChatTurnAdmissionResponseSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/turns`, {
+      return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

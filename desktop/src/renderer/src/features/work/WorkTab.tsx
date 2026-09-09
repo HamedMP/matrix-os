@@ -1,3 +1,4 @@
+import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
 import { ArrowLeft, PanelLeftCloseIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
@@ -261,7 +262,7 @@ export default function WorkTab({
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream("/api/chats/events", {
+        return api.openStream(chatMessageVersionUrl("/api/chats/events"), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,

@@ -155,3 +155,57 @@ scheduled check, wait for the blue **Update** button, select it, verify the app
 relaunches on B, and confirm **What's New** displays B's generated changelog
 exactly once. Repeat the check after relaunch and verify that B is reported up
 to date.
+
+## Desktop / VPS compatibility and update freshness
+
+Desktop and host bundles have independent product versions. The running gateway
+advertises `runtimeCompatibility` from its compiled contracts in `/api/system/info`;
+it does not infer compatibility from installed release files or equal version strings.
+`minDesktopProtocol` and `maxDesktopProtocol` define the supported API-generation
+window. Keep the previous generation supported while clients migrate. Only change
+the window when the corresponding adapters and cross-version tests justify it.
+
+Electron Desktop checks at startup, on computer switches, and on realtime/network
+reconnect. Focus checks run only when the previous check is at least 15 minutes
+old. There is no background polling timer. Network failures and invalid probe
+responses stay silent and never open an update modal. An unsupported window opens a unified update reminder with installed and available
+versions for the desktop app (the current device) and cloud computer (apps, files, and AI).
+An old gateway without metadata is explicitly unverified but remains usable.
+Compatibility warnings use a centered, dismissible modal without moving the
+titlebar or unmounting the workspace. The titlebar remains draggable while the
+modal is open. Later, Escape, or clicking outside dismisses each warning kind
+once per computer session, so rechecks do not repeatedly interrupt work.
+One primary action checks both current channels again and updates the component
+that needs it. If both have updates, the cloud computer goes first; the desktop app
+restarts only after the installed and running cloud versions match the target.
+Protocol incompatibility selects the required component; missing metadata alone
+never proves which version is older. Versions are compared within each component's
+own channel, never between desktop semver and bundle dates. Failed checks stay
+explicitly unavailable. Update progress may be hidden without cancelling an
+accepted update. Changing the active computer cancels subsequent steps, and all
+cloud requests stay bound to the original runtime. The button discloses a local
+restart before confirmation; opening the reminder never installs either update. Native embeds suspend only while the modal is open
+and resume on dismissal. Confirmed incompatibility remains advisory: users can dismiss the reminder
+and keep their current work.
+
+For canonical Chat, `messageVersion=2` explicitly opts into `actorId` and `purpose`.
+Absent or `messageVersion=1` retains the message shape accepted by Desktop
+`0.1.0-canary.20260908044406`. This applies to detail, turn admission, steering, and
+SSE snapshot/delta payloads. SSE framing (`X-Matrix-Chat-Protocol: 2`) is a separate
+contract: older Desktop releases already use it and still need message-v1 output.
+Project only validated responses, never stored rows or outbox records. Keep strict
+request validation. New additive response fields can still break old strict
+parsers; negotiate a new wire version or preserve the older projection.
+
+The updater rechecks the channel manifest even with an already-staged package and
+checks again before installing. A newer target replaces the staged package; only
+a freshly confirmed ready target may restart/install. A failed freshness check is
+retryable and never silently installs an intermediate cached release. Downloads
+remain automatic; restart remains an explicit user action. Stable, beta, canary,
+and dev retain separate feeds, and an unavailable feed must not switch channels.
+
+Rollout order: publish the backward-compatible VPS fix, ship the recovery-capable
+Desktop baseline, then retain the compatibility window until older clients have
+migrated. Existing clients cannot retroactively learn a newly introduced handshake.
+Validate the unversioned and opted-in Chat formats, a staged N+1 with N+3 now
+published, same-version reuse, failed freshness checks, and runtime-switch fencing.

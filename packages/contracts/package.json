@@ -8,6 +8,8 @@
     "./collaboration": "./src/collaboration.ts"
   },
   "imports": {
+    "#runtime-compatibility": "./src/runtime-compatibility.ts",
+    "#chat-message-wire": "./src/chat-message-wire.ts",
     "#chat-links": "./src/chat-links.ts",
     "#chat-sharing": "./src/chat-sharing.ts",
     "#ai-provider": "./src/ai-provider.ts",

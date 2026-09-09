@@ -1,3 +1,4 @@
+import { RUNTIME_RECONNECTED_EVENT } from "./runtime-compatibility";
 // Wires the singleton kernel socket into the stores: thread routing, board
 // task events, native notifications, dock badge.
 import { invoke, onEvent } from "./operator";
@@ -162,6 +163,7 @@ export function wireKernel(): () => void {
 
   const unsubscribeState = activeSocket.onStateChange((state) => {
     if (state !== "connected") return;
+    window.dispatchEvent(new Event(RUNTIME_RECONNECTED_EVENT));
     const selectedSessionId = useHermesChat.getState().sessionId;
     if (selectedSessionId) {
       activeSocket.send({

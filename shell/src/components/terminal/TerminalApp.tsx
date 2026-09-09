@@ -52,6 +52,7 @@ import { formatShellDisplayName } from "./TerminalSidebarItems";
 import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./DesktopTerminalWorkspace";
+import { useTerminalSessionCreate } from "./useTerminalSessionCreate";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
@@ -1058,10 +1059,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       current.count === next.count && current.ready === next.ready ? current : next
     ));
   }, []);
-  const createDesktopShell = async () => {
-    const name = await createShellSessionTab("Shell", DEFAULT_CWD);
-    if (name) setDesktopSessionState({ count: 1, ready: true });
-  };
+  const { create: createDesktopShell, creating: creatingDesktopShell } = useTerminalSessionCreate({
+    createSession: () => createShellSessionTab("Shell", DEFAULT_CWD),
+    onCreated: () => setDesktopSessionState({ count: 1, ready: true }),
+  });
 
   // Construct store-compatible interface for child components
   const storeApi = {
@@ -1157,6 +1158,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           {desktopParity && desktopSessionState.count === 0 ? (
             <DesktopTerminalEmptyState
               ready={desktopSessionState.ready}
+              creating={creatingDesktopShell}
               onCreate={() => void createDesktopShell()}
             />
           ) : activeTab ? (
