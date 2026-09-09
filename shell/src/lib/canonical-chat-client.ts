@@ -1,3 +1,4 @@
+import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatDetailResponseSchema,
   CanonicalChatApprovalDecisionSchema,
@@ -32,6 +33,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
   list(): Promise<CanonicalChatListResponse>;
+  openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
@@ -122,6 +124,19 @@ export function createCanonicalShellChatClient(options: {
   }).then(jsonResponse);
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   return {
+    async openEventStream({ cursor, signal }) {
+      const response = await fetchFn(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`), {
+        method: "GET",
+        headers: {
+          Accept: "text/event-stream",
+          "X-Matrix-Chat-Protocol": "2",
+          ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }),
+        },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60 * 1000)]),
+      });
+      if (!response.ok) throw new CanonicalShellChatRequestError(response.status);
+      return response;
+    },
     async list() {
       return CanonicalChatListResponseSchema.parse(await request("/api/chats?limit=100&scope=global"));
     },
@@ -135,7 +150,7 @@ export function createCanonicalShellChatClient(options: {
     },
     async detail(chatId) {
       const id = CanonicalChatIdSchema.parse(chatId);
-      return CanonicalChatDetailResponseSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}?limit=200`));
+      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
     },
     async updateTitle(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
@@ -149,7 +164,7 @@ export function createCanonicalShellChatClient(options: {
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalCreateChatTurnRequestSchema.parse(input);
-      return CanonicalChatTurnAdmissionResponseSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/turns`, {
+      return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -236,7 +251,7 @@ function partText(part: CanonicalChatMessage["parts"][number]): string | null {
   if (part.type === "tool_result") return part.text ?? `Tool ${part.outcome}`;
   if (part.type === "approval_request") return `${part.title}: ${part.description}`;
   if (part.type === "approval_result") return `Approval ${part.decision.replaceAll("_", " ")}`;
-  if (part.type === "attachment_reference") return `Attached ${part.label}`;
+  if (part.type === "attachment_reference") return null;
   if (part.type === "resource_reference") return `Referenced ${part.resource.label}`;
   if (part.type === "invocation_reference") return part.invocation.invocation;
   return null;
@@ -248,8 +263,9 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
       ? [`${message.runId}\0${part.approvalId}`]
       : [])));
   return messages.flatMap((message) => {
+    const attachments = message.parts.flatMap((part) => part.type === "attachment_reference" ? [{ id: part.attachmentId, label: part.label, kind: part.kind === "image" ? "image" as const : "file" as const, path: part.ownerReference, ...(part.kind === "image" && part.ownerReference ? { src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}` } : {}) }] : []);
     const content = message.parts.map(partText).filter((part): part is string => part !== null).join("\n");
-    if (!content) return [];
+    if (!content && !attachments.length) return [];
     const toolRequest = message.parts.find((part) => part.type === "tool_request");
     const approvalRequest = message.parts.find((part) => part.type === "approval_request");
     return [{
@@ -257,6 +273,7 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
       role: message.role === "user" || message.role === "assistant" ? message.role : "system",
       content,
       timestamp: Date.parse(message.createdAt),
+      ...(attachments.length ? { attachments } : {}),
       ...(toolRequest?.type === "tool_request" ? { tool: toolRequest.name } : {}),
       ...(message.runId ? { requestId: message.runId } : {}),
       ...(approvalRequest?.type === "approval_request" ? { metadata: { canonicalApproval: {

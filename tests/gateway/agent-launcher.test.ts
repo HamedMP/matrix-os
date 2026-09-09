@@ -2,11 +2,27 @@ import { describe, it, expect, vi } from "vitest";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   buildAgentLaunch,
+  buildAgentRuntimeEnvironment,
   createAgentLauncher,
   SupportedAgentSchema,
 } from "../../packages/gateway/src/agent-launcher.js";
 
 describe("agent-launcher", () => {
+  it("forwards validated execution budgets through the isolated runtime environment", () => {
+    vi.stubEnv("MATRIX_CODEX_TOOL_DEADLINE_MS", "120000");
+    vi.stubEnv("MATRIX_CODEX_COMMAND_DEADLINE_MS", "3600000");
+    vi.stubEnv("MATRIX_CODEX_NO_PROGRESS_MS", "not-a-number");
+    vi.stubEnv("MATRIX_CODEX_TURN_DEADLINE_MS", "86400001");
+    try {
+      const env = buildAgentRuntimeEnvironment("/tmp/runtime-owner");
+      expect(env.MATRIX_CODEX_TOOL_DEADLINE_MS).toBe("120000");
+      expect(env.MATRIX_CODEX_COMMAND_DEADLINE_MS).toBe("3600000");
+      expect(env.MATRIX_CODEX_NO_PROGRESS_MS).toBeUndefined();
+      expect(env.MATRIX_CODEX_TURN_DEADLINE_MS).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   function commandError(code: string, message = code): Error & { code: string } {
     return Object.assign(new Error(message), { code });
   }

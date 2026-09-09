@@ -10,6 +10,7 @@ import {
   Notebook,
   Settings,
   SquareTerminal,
+  UsersIcon,
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
 import { useState } from "react";
@@ -32,6 +33,7 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   apps: LayoutGrid,
   app: LayoutGrid,
   settings: Settings,
+  shared: UsersIcon,
 };
 
 export default function SurfaceIcon({

@@ -35,6 +35,28 @@ describe("integration native approval hook", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it("asks for native approval before publishing or replying on X", async () => {
+    const request = vi.fn(async () => true);
+    const hook = createIntegrationApprovalHook("/tmp/missing", request);
+
+    await hook({
+      hook_event_name: "PreToolUse",
+      tool_name: "mcp__matrix-os-ipc__call_service",
+      tool_input: {
+        service: "twitter",
+        action: "create_post",
+        params: { text: "Approved post" },
+      },
+      session_id: "s",
+    });
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledWith(
+      "mcp__matrix-os-ipc__call_service",
+      expect.objectContaining({ service: "twitter", action: "create_post" }),
+    );
+  });
+
   it("keeps the approval map aligned with registry risk metadata", () => {
     const writes = listServices().flatMap((service) => Object.entries(service.actions)
       .filter(([, action]) => action.risk === "write")

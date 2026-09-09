@@ -15,6 +15,7 @@ import {
   syncShellSessions,
 } from "../../lib/shell-session-sync";
 import TerminalView from "./TerminalView";
+import { TerminalSessionHeader, TerminalSessionDetails } from "./TerminalSessionHeader";
 import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
 import { TerminalSidebarLayout } from "./TerminalSidebarLayout";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
@@ -41,9 +42,7 @@ function shellStatusLabel(shell: ShellSessionSummary): string {
   return "Active";
 }
 
-function shellTitle(shell: ShellSessionSummary): string {
-  return shell.subtitle?.trim() || shell.lastAction?.trim() || shell.name;
-}
+
 
 function mostRecentShell(sessions: ShellSessionSummary[]): ShellSessionSummary | null {
   return sessions.reduce<ShellSessionSummary | null>((latest, session) => {
@@ -97,6 +96,7 @@ export default function TerminalsTab({
   const terminalsTabId = useTabs((s) => s.tabs.find((tab) => tab.kind === "terminals")?.id);
   const renameTab = useTabs((s) => s.renameTab);
   const loadTerminalAppearance = useTerminalAppearance((s) => s.load);
+  const [controlsHost, setControlsHost] = useState<HTMLDivElement | null>(null);
   const [selectedName, setSelectedName] = useState<string | null>(() => mostRecentShell(shells)?.name ?? null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
   const [openedSessionNames, setOpenedSessionNames] = useState<string[]>([]);
@@ -340,10 +340,20 @@ export default function TerminalsTab({
   };
 
   const overviewSelected = selected === null;
+  const headerSession = shells.find((shell) => shell.name === selected);
 
   return (
-    <TerminalSidebarLayout sidebar={(controls) => (
+    <TerminalSidebarLayout header={(controls) => (<>
+      <TerminalSessionHeader shown={controls.shown} sidebarId={controls.sidebarId} buttonRef={controls.collapseButtonRef} onToggle={controls.onToggle}
+        disabled={!api} creating={creating} agentStatuses={agentStatuses} checkingAgentStatuses={checkingAgentStatuses}
+        onRefreshAgentStatuses={() => void refreshAgentStatuses()} onCreateShell={() => void createShell()}
+        onCreateAgent={(option, action) => void createAgentSession(option, action)} />
+      <TerminalSessionDetails name={headerSession?.name}
+        subtitle={headerSession ? `Started at ${sessionStart(headerSession.createdAt)} · ${runtimeSlot === "primary" ? "main computer" : runtimeSlot}` : undefined}
+        status={headerSession ? shellStatusLabel(headerSession) : undefined} controlsRef={setControlsHost} />
+    </>)} sidebar={(controls) => (
       <TerminalSessionSidebar
+        showHeader={false}
         {...controls}
         sessions={shells}
         selectedName={selectedName}
@@ -419,10 +429,7 @@ export default function TerminalsTab({
         </RetainedPane>
 
         {visibleSessionNames.map((sessionName) => {
-          const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
           const selected = selectedName === sessionName;
-          const statusLabel = shellStatusLabel(shell);
-          const activeStatus = statusLabel === "Active";
           return (
             <RetainedPane
               as="section"
@@ -433,29 +440,6 @@ export default function TerminalsTab({
               background="var(--bg-surface)"
               style={{ borderRadius: 8 }}
             >
-            <header
-              className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-4"
-              style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-            >
-              <div className="min-w-0 flex-1">
-                <h1 className="truncate text-xs font-medium leading-[19.5px]" style={{ color: "var(--text-primary)" }}>{shell.name}</h1>
-                <p className="mt-1 truncate text-xs leading-4 tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
-                  Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
-                </p>
-              </div>
-              <div data-terminal-header-actions className="no-drag relative flex shrink-0 items-center gap-2">
-                <span
-                  className="inline-flex h-5 items-center justify-center rounded-[26px] border px-2 py-0.5 text-xs font-medium leading-4"
-                  style={{
-                    borderColor: "var(--border-subtle)",
-                    background: "var(--bg-selected)",
-                    color: activeStatus ? "var(--success)" : "var(--text-tertiary)",
-                  }}
-                >
-                  {statusLabel}
-                </span>
-              </div>
-            </header>
             <div data-terminal-detail className="flex min-h-0 flex-1">
               <div
                 data-terminal-viewport
@@ -464,6 +448,7 @@ export default function TerminalsTab({
               >
                 <TerminalView
                   sessionName={sessionName}
+                  controlsHost={selected ? controlsHost : null}
                   active={active && liveSessionName === sessionName}
                   visualScale={visualScale}
                 />

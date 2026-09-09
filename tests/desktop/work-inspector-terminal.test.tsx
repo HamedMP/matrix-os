@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CanonicalChatDetailResponse, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
+import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/renderer/src/features/work/ChatFileNavigation";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -84,6 +85,24 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("opens a message file in the matching Chat inspector and reveals the panel", async () => {
+    const reveal = vi.fn();
+    const { chatDetail, project } = projectDetail("chat_message");
+    function MessageFile() {
+      const navigation = useChatFileNavigation();
+      return <button onClick={() => navigation?.open({ chatId: "chat_message", target: {
+        kind: "project", projectId: "matrix-os", path: "README.md", label: "README.md",
+      } })}>Message file</button>;
+    }
+    render(<ChatFileNavigationProvider reveal={reveal}>
+      <MessageFile />
+      <WorkFilesInspector detail={chatDetail} projects={[project]} active />
+    </ChatFileNavigationProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Message file" }));
+    expect(reveal).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("tabpanel", { name: "File preview" })).toBeTruthy();
+  });
+
   beforeAll(() => { globalThis.ResizeObserver = NoopResizeObserver; });
   beforeEach(() => {
     resizeObserverCallbacks.length = 0;

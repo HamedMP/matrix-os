@@ -1,5 +1,5 @@
 import { executeIntegrationAction, IntegrationActionNotImplementedError } from "./action-execution.js";
-import { validateActionParams } from "./action-validation.js";
+import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
 import { Hono, type Context } from "hono";
 import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
@@ -21,10 +21,12 @@ import type { PlatformDb } from "../platform-db.js";
 // label the patch endpoint would later reject. trim() strips whitespace
 // padding so a value of "    " (100 spaces) still counts as empty.
 const LabelField = z.string().trim().min(1).max(100);
+const MOBILE_INTEGRATIONS_REDIRECT_URI = "matrixos://integrations";
 
 const ConnectBodySchema = z.object({
   service: z.string().min(1),
   label: LabelField.optional(),
+  redirectUri: z.literal(MOBILE_INTEGRATIONS_REDIRECT_URI).optional(),
 });
 
 const LabelPatchSchema = z.object({
@@ -68,7 +70,7 @@ function verifyHmac(payload: string, signature: string, secret: string): boolean
 // Per-action param validation
 // ---------------------------------------------------------------------------
 
-export { validateActionParams } from "./action-validation.js";
+export { validateActionParams } from "./parameter-validation.js";
 export { executeIntegrationAction, IntegrationActionNotImplementedError } from "./action-execution.js";
 
 // ---------------------------------------------------------------------------
@@ -229,6 +231,7 @@ export interface IntegrationRoutesOpts {
       connected_at: Date | string;
       last_used_at: Date | string | null;
     }>>;
+    listAvailableActions?(userId: string, serviceId: string): Promise<readonly string[] | null>;
     connect(userId: string, service: ServiceDefinition): Promise<{ url: string }>;
     call(input: {
       userId: string;
@@ -362,7 +365,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   }
 
   // -----------------------------------------------------------------------
-  // GET /available -- public, no auth. Enriches registry with Pipedream logos.
+  // GET /available -- public, no auth. Enriches Pipedream-hosted fallback logos.
   // -----------------------------------------------------------------------
 
   const logoCache = new Map<string, string>();
@@ -377,7 +380,11 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const promise = (async () => {
       const services = listServices();
       const results = await Promise.allSettled(
-        services.filter((service) => service.connectorKind === "pipedream" && service.pipedreamApp).map(async (s) => {
+        services.filter(
+          (service) => service.connectorKind === "pipedream"
+            && service.pipedreamApp
+            && service.logoUrl.startsWith("https://pipedream.com/"),
+        ).map(async (s) => {
           const info = await pipedream.getAppInfo(s.pipedreamApp!);
           if (info?.imgSrc) {
             if (logoCache.size >= LOGO_CACHE_MAX) logoCache.delete(logoCache.keys().next().value!);
@@ -410,12 +417,47 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     console.warn("[integrations] Startup logo warm failed:", err instanceof Error ? err.message : String(err));
   });
 
-  app.get("/available", (c) => {
-    const services = listServices()
+  app.get("/available", async (c) => {
+    let uid: string | null = null;
+    let capabilityIdentityFailed = false;
+    if (mcpPresetBroker?.listAvailableActions) {
+      try {
+        uid = await resolveUserId(c);
+      } catch (err: unknown) {
+        capabilityIdentityFailed = true;
+        console.warn(
+          "[integrations] Optional capability identity resolution failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    const services = await Promise.all(listServices()
       .filter((service) => service.connectorKind !== "mcp_preset" || mcpPresetBroker)
-      .map((s) => ({
-        ...s,
-        logoUrl: logoCache.get(s.id) || s.logoUrl,
+      .map(async (s) => {
+        let actions = s.actions;
+        if (capabilityIdentityFailed && s.connectorKind === "mcp_preset") {
+          actions = {};
+        } else if (uid && s.connectorKind === "mcp_preset" && mcpPresetBroker?.listAvailableActions) {
+          try {
+            const availableActions = await mcpPresetBroker.listAvailableActions(uid, s.id);
+            if (availableActions) {
+              actions = Object.fromEntries(
+                Object.entries(s.actions).filter(([actionId]) => availableActions.includes(actionId)),
+              );
+            }
+          } catch (err: unknown) {
+            console.warn(
+              `[integrations] ${s.id} capability projection failed:`,
+              err instanceof Error ? err.message : String(err),
+            );
+            actions = {};
+          }
+        }
+        return {
+          ...s,
+          actions,
+          logoUrl: logoCache.get(s.id) || s.logoUrl,
+        };
       }));
     return c.json(services);
   });
@@ -540,7 +582,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, label } = parsed.data;
+    const { service, label, redirectUri } = parsed.data;
     const def = getService(service);
     if (!def) {
       return c.json({ error: `Unknown service: ${service}` }, 400);
@@ -562,7 +604,12 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     let connectLinkUrl: string;
     try {
-      ({ connectLinkUrl } = await pipedream.createConnectToken(externalId));
+      ({ connectLinkUrl } = await pipedream.createConnectToken(
+        externalId,
+        redirectUri
+          ? { successRedirectUri: redirectUri, errorRedirectUri: redirectUri }
+          : undefined,
+      ));
     } catch (err) {
       console.error("[integrations] createConnectToken error:", err instanceof Error ? err.message : err);
       return c.json({ error: "Failed to initiate connection. Please try again." }, 502);
@@ -695,17 +742,11 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     // Validate action params against the registry definition
     const paramValidation = validateActionParams(actionDef, params);
     if (!paramValidation.valid) {
-      const parts: string[] = [];
-      if (paramValidation.missing.length > 0) {
-        parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
-      }
-      if (paramValidation.typeErrors.length > 0) {
-        parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
-      }
       return c.json({
-        error: parts.join(". "),
+        error: formatActionParamValidationError(paramValidation),
         missing: paramValidation.missing.length > 0 ? paramValidation.missing : undefined,
         type_errors: paramValidation.typeErrors.length > 0 ? paramValidation.typeErrors : undefined,
+        value_errors: paramValidation.valueErrors?.length ? paramValidation.valueErrors : undefined,
       }, 400);
     }
 

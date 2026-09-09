@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useGettingStartedBlocker } from "../getting-started-visibility.js";
 import type { ProviderAccessSource, ProviderGatewayPolicy, ProviderModelProvider } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayCreditLines, shortDate, titleCase } from "./utils.js";
@@ -33,6 +34,7 @@ export function GatewayPanel({
   const budget = policy?.monthlyBudgetMicrousd ?? null;
   const [budgetUsd, setBudgetUsd] = useState(budget === null ? "" : String(budget / 1_000_000));
   const [creditDialogOpen, setCreditDialogOpen] = useState(false);
+  useGettingStartedBlocker(creditDialogOpen);
   const [creditPackage, setCreditPackage] = useState<"usd_5" | "usd_10" | "usd_25">("usd_5");
   const [creditBusy, setCreditBusy] = useState(false);
   const [creditError, setCreditError] = useState(false);

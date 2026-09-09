@@ -1,6 +1,11 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
+import { ChatSharing } from "./chat/ChatSharing";
+import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { resolveChatMessageLink } from "@matrix-os/contracts";
+import { ChatFilePanel, loadChatFile } from "./chat/ChatFilePanel";
 import type {
   CanonicalChatApprovalDecision,
   CanonicalChatModelSelection,
@@ -69,6 +74,12 @@ import {
 } from "@/lib/hugeicons";
 
 type ConversationMeta = RenameableConversation;
+
+function loadShellChatImage(src: string) {
+  const path = new URL(src, "https://matrix.invalid").searchParams.get("path");
+  if (!path) return Promise.reject(new Error("InvalidChatImage"));
+  return loadChatFile(path);
+}
 
 const HERMES_SETUP_STORAGE_KEY = "matrix:hermes-setup";
 
@@ -184,6 +195,15 @@ export function ChatApp({
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
+  const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);
+  const previewTrigger = useRef<HTMLElement | null>(null);
+  const openMessageFile = (path: string) => {
+    const target = resolveChatMessageLink(path);
+    if (!sessionId || target?.kind !== "file") return false;
+    previewTrigger.current = document.activeElement as HTMLElement | null;
+    setPreviewFile({ chatId: sessionId, path: target.path });
+    return true;
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
@@ -257,7 +277,18 @@ export function ChatApp({
   };
 
   return (
-    <div className="relative flex h-full bg-background">
+    <div className="relative flex h-full bg-background" onClickCapture={(event) => {
+      const element = event.target instanceof Element ? event.target : null;
+      const anchor = element?.closest("a");
+      const code = element?.closest("code");
+      const raw = anchor?.getAttribute("href") ?? (code && !code.closest("pre") ? code.textContent : null);
+      if (!raw) return;
+      const target = resolveChatMessageLink(raw);
+      if (target?.kind === "file" && (anchor || /[/.]/.test(raw))) {
+        event.preventDefault();
+        openMessageFile(target.path);
+      }
+    }}>
       {providerSetupError && (
         <ShellNotificationPortal>
           <ShellNotificationCard
@@ -356,6 +387,7 @@ export function ChatApp({
 
       {/* Main content */}
       <main className="flex flex-1 flex-col min-w-0">
+        {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
         {/* Top bar */}
         <header className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
           {!sidebarOpen && (
@@ -470,6 +502,8 @@ export function ChatApp({
           />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
+            <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
+            <div className="contents">
             <Conversation>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
                 {grouped.map((group) => {
@@ -481,9 +515,10 @@ export function ChatApp({
                     <div key={msg.id}>
                       {msg.role === "user" ? (
                         <Message from="user">
-                          <MessageContent>
+                          {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
+                          {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
                             <span className="whitespace-pre-wrap">{msg.content}</span>
-                          </MessageContent>
+                          </MessageContent> : null}
                         </Message>
                       ) : msg.role === "system" ? (
                         <CanonicalApprovalMessage
@@ -519,6 +554,8 @@ export function ChatApp({
               </ConversationContent>
               <ConversationScrollButton />
             </Conversation>
+            </div>
+            </ChatContextMenu>
 
             {/* Suggestions + Input */}
             <div className="mx-auto w-full max-w-[720px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
@@ -545,6 +582,10 @@ export function ChatApp({
           </div>
         )}
       </main>
+      {previewFile && previewFile.chatId === sessionId ? <ChatFilePanel key={`${sessionId}:${previewFile.path}`} path={previewFile.path} onClose={() => {
+        setPreviewFile(null);
+        if (previewTrigger.current?.isConnected) previewTrigger.current.focus();
+      }} /> : null}
     </div>
   );
 }

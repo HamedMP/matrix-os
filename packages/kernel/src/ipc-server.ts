@@ -39,6 +39,7 @@ import {
   describeCustomMcpServerHandler,
   callCustomMcpToolHandler,
 } from "./tools/integrations.js";
+import type { OsViewDesktopAddResult } from "@matrix-os/contracts";
 const execAsync = promisify(execFile);
 
 const SAFE_GIT_REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -67,7 +68,12 @@ export function isSafeGitRemoteUrl(remoteUrl: string): boolean {
   }
 }
 
-export async function createIpcServer(db: MatrixDB, homePath?: string) {
+export interface OsViewAgentTools {
+  listPlaceableApps(): Promise<Array<{ appId: string; name: string; path: string }>>;
+  addAppToDesktop(appId: string): Promise<{ status: OsViewDesktopAddResult }>;
+}
+
+export async function createIpcServer(db: MatrixDB, homePath?: string, osViewTools?: OsViewAgentTools) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   return createSdkMcpServer({
     name: "matrix-os-ipc",
@@ -1112,6 +1118,25 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
         },
       ),
 
+      ...(osViewTools ? [
+        tool(
+          "list_placeable_apps",
+          "List exact installed app IDs that can be added to Desktop. Use only when the user asks to place an app on Desktop.",
+          {},
+          async () => ({
+            content: [{ type: "text" as const, text: JSON.stringify(await osViewTools.listPlaceableApps()) }],
+          }),
+        ),
+        tool(
+          "add_app_to_desktop",
+          "Add one installed app to Desktop after the user explicitly requests it. Pass an exact appId returned by list_placeable_apps; paths and owner IDs are not accepted.",
+          { appId: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9_-]*$/) },
+          async ({ appId }) => ({
+            content: [{ type: "text" as const, text: JSON.stringify(await osViewTools.addAppToDesktop(appId)) }],
+          }),
+        ),
+      ] : []),
+
       ...(await createWebTools(homePath, tool)),
 
       tool(
@@ -1130,9 +1155,9 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
 
       tool(
         "connect_service",
-        "Connect an external service (Gmail, Google Calendar, Google Drive, GitHub, Slack, Discord) via OAuth. Returns a URL for the user to authorize.",
+        "Connect an external service such as Gmail, Google Calendar, GitHub, Slack, Discord, or X. Returns a URL for the user to authorize or provide provider-approved credentials.",
         {
-          service: z.string().describe("Service to connect: gmail, google_calendar, google_drive, github, slack, discord"),
+          service: z.string().describe("Registry service ID to connect, for example gmail, github, slack, or twitter"),
           label: z.string().optional().describe("Label for the connection (e.g. 'Work Gmail', 'Personal GitHub')"),
         },
         async ({ service, label }) => {
@@ -1144,8 +1169,8 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
         "call_service",
         "Call a connected external service API. The service must be connected first via connect_service. Use this to read emails, send messages, list calendar events, etc.",
         {
-          service: z.string().describe("Service to call: gmail, google_calendar, google_drive, github, slack, discord"),
-          action: z.string().describe("Action to perform (e.g. list_messages, send_email, list_events, list_repos, send_message)"),
+          service: z.string().describe("Registry service ID to call, for example gmail, github, slack, or twitter"),
+          action: z.string().describe("Approved action to perform; call describe_service first when unfamiliar"),
           params: z.record(z.string(), z.unknown()).optional().describe("Action parameters as key-value pairs"),
           label: z.string().optional().describe("Which account to use if multiple are connected (e.g. 'Work Gmail')"),
         },

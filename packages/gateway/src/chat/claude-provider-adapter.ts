@@ -227,6 +227,7 @@ export function createClaudeChatProviderAdapter(options: {
   async function* execute(
     inputValue: CanonicalProviderRunInput<ClaudeChatState>,
     resumeState?: ClaudeChatState,
+    blockIds = { text: 0, reasoning: 0 },
   ): AsyncGenerator<CanonicalProviderRunEvent> {
     const input = parseCanonicalProviderRunInput(inputValue);
     const cwd = input.executionRoot ?? options.homePath;
@@ -302,8 +303,6 @@ export function createClaudeChatProviderAdapter(options: {
     let pendingDelta = "";
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
-    let nextTextBlockId = 0;
-    let nextReasoningBlockId = 0;
     const textMessageByIndex = new Map<number, string>();
     const toolInputByIndex = new Map<number, string>();
     const toolNameByIndex = new Map<number, string>();
@@ -377,15 +376,13 @@ export function createClaudeChatProviderAdapter(options: {
         flushPendingDelta();
         const block = line.event.content_block;
         if (block.type === "text") {
-          textMessageByIndex.set(line.event.index, `claude_text_${nextTextBlockId}`);
-          nextTextBlockId += 1;
+          textMessageByIndex.set(line.event.index, `claude_text_${blockIds.text++}`);
         } else if (block.type === "thinking") {
           const activity = {
-            activityId: `reasoning_${nextReasoningBlockId}`,
+            activityId: `reasoning_${blockIds.reasoning++}`,
             kind: "reasoning" as const,
             label: "Thinking",
           };
-          nextReasoningBlockId += 1;
           activityByIndex.set(line.event.index, activity);
           queue.push(canonicalClaudeActivityEvent(activity, "running"));
         } else if (block.type === "tool_use" && block.id && block.name) {
@@ -521,7 +518,7 @@ export function createClaudeChatProviderAdapter(options: {
           prompt: steerPrompt,
           parts: [{ type: "text", text: steerPrompt }],
           resumeState: emittedState,
-        }, emittedState)) {
+        }, emittedState, blockIds)) {
           queue.push(event);
         }
         queue.finish();

@@ -26,7 +26,7 @@ A personal Matrix app for fast, keyboard-friendly email review and a source-link
 ### U1 — Gmail connector foundation
 
 Goal: support complete reads, incremental history, and deliberate label operations.
-Files: integrations/gmail.ts, integrations/action-validation.ts, existing integrations registry/types/routes; focused gateway and integration tests.
+Files: integrations/gmail.ts, integrations/parameter-validation.ts (shared with the integration bridge), existing integrations registry/types/routes; focused gateway and integration tests.
 Approach: extract Gmail from the large registry and extract generic action validation from routes before adding behavior. Add bounded Zod schemas, pageToken, history.list, create_label, and modify_message. Keep existing Gmail actions compatible. No permanent delete or batch mutation endpoint.
 Tests: existing action compatibility, invalid identifiers, pagination bounds, string history IDs (no numeric precision loss), empty/conflicting label changes, unknown fields, and direct API mapping. Verify errors are rejected before external calls.
 Execution: test-first.

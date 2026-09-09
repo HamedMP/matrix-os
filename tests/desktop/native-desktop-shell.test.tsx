@@ -12,7 +12,10 @@ import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { useDesktopAppDrawer } from "@desktop/renderer/src/stores/desktop-app-drawer";
-import { useDesktopIcons } from "@desktop/renderer/src/stores/desktop-icons";
+import {
+  resetDesktopIconsRuntime,
+  useDesktopIcons,
+} from "@desktop/renderer/src/stores/desktop-icons";
 import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
 import { seedDesktopApps } from "./apps-query-test-utils";
 import { createDefaultOsViewDocument } from "@matrix-os/contracts";
@@ -83,6 +86,7 @@ beforeEach(() => {
   useUi.setState(useUi.getInitialState(), true);
   useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
   useDesktopAppDrawer.setState(useDesktopAppDrawer.getInitialState(), true);
+  resetDesktopIconsRuntime();
   useDesktopIcons.setState(useDesktopIcons.getInitialState(), true);
   desktopQueryClient.clear();
   useNativeDesktopMode.setState({ hydrated: true });
@@ -575,6 +579,47 @@ describe("native desktop shell", () => {
     });
   });
 
+  it("adds an existing generated app from the launcher and renders its persisted Desktop icon", async () => {
+    const sushi = {
+      slug: "sushi-counter",
+      name: "Sushi Counter",
+      path: "apps/sushi-counter/index.html",
+      appIdentity: "sushi-counter",
+    };
+    const api = {
+      get: vi.fn((path: string) => path === "/api/apps"
+        ? Promise.resolve({ apps: [sushi] })
+        : Promise.resolve({ background: { type: "solid", color: "#111111" } })),
+      patch: vi.fn(async () => ({ ok: true })),
+    };
+    useConnection.setState({
+      api: api as never,
+      platformHost: "https://runtime.example.com",
+      authGeneration: 1,
+      runtimeSlot: "primary",
+    });
+    useDesktopIcons.setState({ icons: createDefaultOsViewDocument().desktop.icons, loaded: true });
+    seedDesktopApps([sushi]);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+    const launcher = within(screen.getByRole("dialog", { name: "App launcher" }));
+    fireEvent.contextMenu(launcher.getByRole("button", { name: "Sushi Counter" }));
+    fireEvent.click(launcher.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Sushi Counter" })).toBeTruthy();
+    expect(api.patch).toHaveBeenCalledWith("/api/os-view-state", expect.objectContaining({
+      patch: {
+        desktop: {
+          icons: expect.arrayContaining([
+            expect.objectContaining({ path: "apps/sushi-counter/index.html" }),
+          ]),
+        },
+      },
+    }));
+  });
+
   it("switches Electron Desktop to Canvas and back without replacing shared apps or geometry", () => {
     seedDesktopApps([]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
@@ -942,7 +987,8 @@ describe("native desktop shell", () => {
     const terminalWindow = screen.getByRole("dialog", { name: "Terminal window" });
     const workChrome = workWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
     const terminalChrome = terminalWindow.querySelector<HTMLElement>('[data-os-window-chrome-placement="sidebar"]');
-    expect(workChrome?.style.width).toBe("280px");
+    expect(workChrome?.style.gridTemplateColumns).toBe("240px minmax(0, 1fr) 0px");
+    expect(within(workWindow).getByRole("button", { name: "Toggle Chat sidebar" }).getAttribute("aria-expanded")).toBe("true");
     expect(workChrome?.textContent).not.toContain("Chat");
     expect(terminalChrome?.style.width).toBe("280px");
     expect(terminalChrome?.textContent).not.toContain("Terminal");

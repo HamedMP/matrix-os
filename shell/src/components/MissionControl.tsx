@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { appsQueryOptions } from "@/api/apps";
@@ -16,6 +17,7 @@ import {
   Loader2Icon,
   CheckCircle2Icon,
 } from "@/lib/hugeicons";
+import type { OsViewDesktopAddResult, OsViewDesktopBounds } from "@matrix-os/contracts";
 
 interface AppEntry {
   name: string;
@@ -36,7 +38,7 @@ interface MissionControlProps {
   onRemoveFromCanvas?: (path: string) => void;
   nativePresentation?: boolean;
   onCreateApp: () => void;
-  onAddToDesktop?: (path: string) => void;
+  onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
 }
 
 const CREATE_APP: AppEntry = { name: "Create app", path: "__create-app__" };
@@ -105,6 +107,8 @@ export function MissionControl({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mounted]);
+
+  useGettingStartedBlocker(open || mounted);
 
   if (!mounted) return null;
 
@@ -232,11 +236,37 @@ function LauncherGrid({
   onRegenerateIcon: (slug: string) => void;
   onRenameApp?: (slug: string, newName: string) => void;
   onRemoveFromCanvas?: (path: string) => void;
-  onAddToDesktop?: (path: string) => void;
+  onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
   visible: boolean;
   closingRef: React.RefObject<boolean>;
 }) {
   const { mainApps, generatedApps, gameApps } = groupLauncherApps(apps);
+  const [placementError, setPlacementError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible) setPlacementError(null);
+  }, [visible]);
+
+  const addToDesktop = async (app: AppEntry) => {
+    if (!onAddToDesktop) return;
+    let result: OsViewDesktopAddResult = "failed";
+    try {
+      result = await onAddToDesktop(app.path, {
+        width: Math.max(1, window.innerWidth),
+        height: Math.max(1, window.innerHeight - 126),
+      });
+    } catch (error: unknown) {
+      console.warn("[mission-control] Desktop placement failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+    if (result === "added" || result === "already-present") {
+      setPlacementError(null);
+      onClose();
+      return;
+    }
+    setPlacementError(result === "desktop-full"
+      ? "Desktop is full. Remove an icon and try again."
+      : "Could not add the app. Please try again.");
+  };
 
   // Launcher is an overview — dock (Desktop.tsx) is the reorder surface, which
   // uses a single-row flex layout where framer-motion Reorder's axis math works.
@@ -258,7 +288,9 @@ function LauncherGrid({
         <AppTile
           name={app.name}
           createApp={app.path === CREATE_APP.path}
-          onAddToDesktop={!isOsViewDestination && app.path !== CREATE_APP.path && onAddToDesktop ? () => onAddToDesktop(app.path) : undefined}
+          onAddToDesktop={!isOsViewDestination && app.path !== CREATE_APP.path && onAddToDesktop
+            ? () => void addToDesktop(app)
+            : undefined}
           isOpen={openWindows.has(app.path)}
           onClick={() => {
             onOpenApp(app.name, app.path);
@@ -283,6 +315,11 @@ function LauncherGrid({
         if (e.target === e.currentTarget) onClose();
       }}
     >
+      {placementError ? (
+        <p role="alert" className="mb-3 max-w-md rounded-lg bg-black/40 px-3 py-2 text-sm text-white">
+          {placementError}
+        </p>
+      ) : null}
       {mainApps.length > 0 && (
         <>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">

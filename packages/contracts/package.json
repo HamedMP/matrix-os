@@ -4,9 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./collaboration": "./src/collaboration.ts"
   },
   "imports": {
+    "#runtime-compatibility": "./src/runtime-compatibility.ts",
+    "#chat-message-wire": "./src/chat-message-wire.ts",
+    "#chat-links": "./src/chat-links.ts",
+    "#chat-sharing": "./src/chat-sharing.ts",
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",
     "#ai-provider": "./src/ai-provider.ts",
@@ -15,11 +20,14 @@
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
     "#canonical-chat-api": "./src/canonical-chat-api.ts",
+    "#canonical-chat-content": "./src/canonical-chat-content.ts",
+    "#canonical-chat-approvals": "./src/canonical-chat-approvals.ts",
     "#canonical-chat-primitives": "./src/canonical-chat-primitives.ts",
     "#canonical-chat-compatibility": "./src/canonical-chat-compatibility.ts",
     "#canonical-chat-compatibility-public": "./src/canonical-chat-compatibility-public.ts",
     "#canonical-chat-provider": "./src/canonical-chat-provider.ts",
     "#canonical-chat-surface": "./src/canonical-chat-surface.ts",
+    "#collaboration": "./src/collaboration.ts",
     "#contract-primitives": "./src/primitives.ts",
     "#custom-mcp-policy": "./src/custom-mcp-policy.ts",
     "#hermes-configuration": "./src/hermes-configuration.ts",
@@ -35,6 +43,7 @@
     "#safe-client-error": "./src/safe-client-error.ts",
     "#support-chat-properties": "./src/support-chat-properties.ts",
     "#terminal-clipboard": "./src/terminal-clipboard.ts",
+    "#terminal-keyboard": "./src/terminal-keyboard.ts",
     "#terminal-links": "./src/terminal-links.ts"
   },
   "main": "src/index.ts",
@@ -43,6 +52,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

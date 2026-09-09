@@ -1,5 +1,6 @@
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import { EXPANSION_SERVICE_REGISTRY } from "./registry-expansion.js";
+import { X_SERVICE_REGISTRY } from "./registry-x.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { GMAIL_SERVICE } from "./gmail.js";
 import { GOOGLE_SERVICES } from "./google.js";
@@ -724,6 +725,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
       },
     },
   },
+  ...X_SERVICE_REGISTRY,
   ...EXPANSION_SERVICE_REGISTRY,
 });
 

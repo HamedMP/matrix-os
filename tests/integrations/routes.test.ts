@@ -89,6 +89,34 @@ describe("Integration Routes", () => {
       expect(data.some((service: { id: string }) => service.id === "granola")).toBe(false);
     });
 
+    it("keeps the official X logo instead of Pipedream's legacy Twitter artwork", async () => {
+      const logoClient = mockPipedream({
+        getAppInfo: vi.fn().mockImplementation(async (slug: string) => ({
+          name: slug,
+          imgSrc: `https://legacy.example/${slug}.png`,
+        })),
+      });
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream: logoClient,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+      });
+      const logoApp = new Hono();
+      logoApp.route("/api/integrations", routes);
+
+      await vi.waitFor(() => {
+        expect(logoClient.getAppInfo).toHaveBeenCalledWith("gmail");
+      });
+      expect(logoClient.getAppInfo).not.toHaveBeenCalledWith("twitter");
+
+      const res = await logoApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; logoUrl: string }>;
+      expect(data.find((service) => service.id === "twitter")?.logoUrl)
+        .toBe("/integration-logos/x.svg");
+    });
+
     it("advertises MCP presets only when their broker is wired", async () => {
       const routes = createIntegrationRoutes({
         db,
@@ -109,6 +137,62 @@ describe("Integration Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json() as Array<{ id: string }>;
       expect(data.some((service) => service.id === "granola")).toBe(true);
+    });
+
+    it("filters an authenticated MCP preset to the connection's invocable actions", async () => {
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["list_notes", "get_note", "get_account"]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      const granola = data.find((service) => service.id === "granola");
+      expect(Object.keys(granola?.actions ?? {})).toEqual(["list_notes", "get_note", "get_account"]);
+    });
+
+    it("fails closed when MCP capability identity resolution fails", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => {
+          throw new Error("identity unavailable");
+        },
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["list_notes"]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      const granola = data.find((service) => service.id === "granola");
+      expect(granola?.actions).toEqual({});
+      expect(warn).toHaveBeenCalledWith(
+        "[integrations] Optional capability identity resolution failed:",
+        "identity unavailable",
+      );
+      warn.mockRestore();
     });
   });
 
@@ -165,6 +249,37 @@ describe("Integration Routes", () => {
       expect(data.url).toContain("pipedream.com/connect");
       expect(data.service).toBe("gmail");
       expect(pipedream.createConnectToken).toHaveBeenCalled();
+    });
+
+    it("passes the allowlisted mobile return route to Pipedream", async () => {
+      const res = await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          redirectUri: "matrixos://integrations",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(pipedream.createConnectToken).toHaveBeenCalledWith("pd_ext_route", {
+        successRedirectUri: "matrixos://integrations",
+        errorRedirectUri: "matrixos://integrations",
+      });
+    });
+
+    it("rejects untrusted integration redirect URIs", async () => {
+      const res = await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          redirectUri: "https://attacker.example/callback",
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(pipedream.createConnectToken).not.toHaveBeenCalled();
     });
 
     it("rejects unknown service", async () => {
@@ -995,6 +1110,27 @@ describe("Integration Routes", () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toMatch(/type/i);
+    });
+
+    it("rejects malformed X identifiers before looking up a connection", async () => {
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "twitter",
+          action: "list_user_posts",
+          params: { userId: "../../admin", maxResults: 101 },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("Invalid param value");
+      expect(data.value_errors).toEqual([
+        "userId: must be a 1-19 digit X user ID",
+        "maxResults: must be at most 100",
+      ]);
+      expect(pipedream.proxyGet).not.toHaveBeenCalled();
     });
   });
 

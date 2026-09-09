@@ -1,3 +1,5 @@
+export * from "#runtime-compatibility";
+export * from "#chat-message-wire";
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 import {
@@ -33,6 +35,7 @@ export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
 export * from "#canonical-chat-api";
+export * from "#canonical-chat-content";
 export {
   CanonicalChatCompatibilityProjectionSchema,
 } from "#canonical-chat-compatibility";
@@ -42,6 +45,7 @@ export type {
 export * from "#canonical-chat-compatibility-public";
 export * from "#canonical-chat-provider";
 export * from "#canonical-chat-surface";
+export * from "#collaboration";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#kernel-result";
@@ -1148,13 +1152,19 @@ export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
 
 export {
   DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  OS_VIEW_DESKTOP_GRID,
   LegacyDesktopImportSchema,
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_CREATE_APP_APPEARANCE,
   OS_VIEW_FIXED_APP_APPEARANCES,
   OS_VIEW_LABELS,
   OS_VIEW_MODES,
+  OS_VIEW_PLACEABLE_BUILTIN_APPS,
   isOsViewDestinationPath,
+  canonicalOsViewCatalogPath,
+  clampOsViewContextMenuPoint,
+  findOpenOsViewDesktopSlot,
+  fitOsViewDesktopIconsToViewport,
   legacyDesktopImportFromConfig,
   normalizeOsViewMode,
   osViewFixedAppAppearanceForPath,
@@ -1184,8 +1194,15 @@ export type {
   OsViewFixedAppIcon,
   OsViewFixedAppId,
   OsViewMode,
+  OsViewCatalogPathRecord,
+  OsViewDesktopBounds,
+  OsViewDesktopAddResult,
   OsViewStatePatch,
   OsViewStateResponse,
   OsViewWindowGeometry,
   PatchOsViewStateRequest,
 } from "#os-view";
+
+export { resolveChatMessageLink } from "#chat-links";
+export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, type ShareSnapshot } from "#chat-sharing";
+export * from "#terminal-keyboard";

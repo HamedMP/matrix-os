@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
+import { GettingStartedVisibilityProvider } from "../../packages/ui/src/getting-started-visibility";
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DESKTOP_APP_DOWNLOAD_URL,
@@ -10,6 +11,10 @@ import {
   loadWebGettingStartedSnapshot,
   webGettingStartedAutoOpenKey,
 } from "../../shell/src/components/onboarding/GettingStartedPopover.js";
+
+function render(ui: React.ReactNode) {
+  return rtlRender(ui, { wrapper: ({ children }) => <GettingStartedVisibilityProvider scope="test">{children}</GettingStartedVisibilityProvider> });
+}
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 

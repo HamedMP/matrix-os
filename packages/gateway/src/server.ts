@@ -1,3 +1,5 @@
+import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
+import { createChatSharingRoutes } from "./chat/sharing-routes.js";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
@@ -68,9 +70,10 @@ import {
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
-import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
+import { createUserSystemdZellijRuntime, workspaceRuntimeId } from "./user-systemd-zellij-runtime.js";
 import { resolveUserSystemdTerminalActivation } from "./terminal-user-systemd-activation.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
+import { reconcilePendingShellSessionDeletions } from "./shell/session-deletion-reconciler.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -152,7 +155,8 @@ import {
   closeCanonicalChatEventLifecycle,
   createCanonicalChatRoutes,
 } from "./chat/routes.js";
-import { createCanonicalChatEventStream } from "./chat/event-stream.js";
+import { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
+import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
@@ -170,6 +174,12 @@ import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
+import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
+import {
+  createGatewayCollaboration,
+  loadGatewayCollaborationConfig,
+  type GatewayCollaborationRuntime,
+} from "./collaboration/wiring.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -177,6 +187,9 @@ import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/no
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
+import { createChatIdleReaper } from "./coding-agents/chat-idle-reaper.js";
+import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
+import { terminalTasksUnderPressure } from "./shell/terminal-runtime-capacity.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -224,15 +237,9 @@ import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
 import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
-import {
-  createIntegrationRoutes,
-  validateActionParams,
-  getErrorStatusCode,
-  getRetryAfterSeconds,
-  executeIntegrationAction,
-  IntegrationActionNotImplementedError,
-} from "./integrations/routes.js";
-import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
+import { createIntegrationRoutes } from "./integrations/routes.js";
+import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
+import { discoverComponentKeys } from "./integrations/registry.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
 import {
@@ -294,6 +301,7 @@ import {
 } from "./chat/attachment-cleanup.js";
 import { OsViewStateRepository } from "./os-view-state/repository.js";
 import { createOsViewStateRoutes } from "./os-view-state/routes.js";
+import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import { ChatRepository } from "./chat/repository.js";
 import {
   createGatewayChatTerminalWiring,
@@ -336,6 +344,7 @@ import {
   ShellPreferencesStore,
   createShellCommandRunner,
   createTerminalAcceptanceRoutes,
+  createTerminalWindowLayoutRoutes,
   createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
@@ -343,6 +352,7 @@ import {
   createUserSystemdZellijAdapter,
   loadInstalledTerminalRuntimeGeneration,
   ShellRegistry as ZellijShellRegistry,
+  TerminalWindowLayoutStore,
   shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
@@ -373,16 +383,6 @@ const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 function isSafeIconStem(value: unknown): value is string {
   return typeof value === "string" && SAFE_ICON_STEM.test(value);
 }
-
-// Mirrors CallBodySchema in integrations/routes.ts so the dev-only
-// /api/bridge/service POST validates its body the same way the public
-// /api/integrations/call endpoint does.
-const BridgeCallBodySchema = z.object({
-  service: z.string().min(1),
-  action: z.string().min(1),
-  label: z.string().trim().min(1).max(100).optional(),
-  params: z.record(z.string(), z.unknown()).optional(),
-});
 
 const ApiMessageBodySchema = z.object({
   text: z.string().refine((value) => value.trim().length > 0),
@@ -468,8 +468,30 @@ export async function createGateway(config: GatewayConfig) {
         generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
       })
     : null;
+  let terminalOrphanSweepTimer: ReturnType<typeof setInterval> | null = null;
+  let terminalOrphanSweepPromise: Promise<void> | null = null;
+  const runTerminalOrphanSweep = () => {
+    if (!userSystemdTerminalController || terminalOrphanSweepPromise) return;
+    const promise = userSystemdTerminalController.sweepOrphanedSessions()
+      .then((result) => {
+        console.info("[terminal-runtime]", {
+          event: "terminal.runtime.orphan.sweep.completed",
+          ...result,
+        });
+      })
+      .catch((err: unknown) => {
+        console.warn("[terminal-runtime] orphan sweep failed:", err instanceof Error ? err.name : "UnknownError");
+      });
+    terminalOrphanSweepPromise = promise;
+    void promise.finally(() => {
+      if (terminalOrphanSweepPromise === promise) terminalOrphanSweepPromise = null;
+    });
+  };
   if (userSystemdTerminalController) {
     await userSystemdTerminalController.assertInstallationReady();
+    runTerminalOrphanSweep();
+    terminalOrphanSweepTimer = setInterval(runTerminalOrphanSweep, 15 * 60 * 1_000);
+    terminalOrphanSweepTimer.unref?.();
   }
   const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
     ? createUserSystemdZellijRuntime({
@@ -501,12 +523,23 @@ export async function createGateway(config: GatewayConfig) {
       })
     : zellijAdapter;
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
+  const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
     preferencesStore: shellPreferencesStore,
   });
+  const pendingShellDeletionReconciliation = await reconcilePendingShellSessionDeletions({
+    registry: zellijShellRegistry,
+    lifecycle: terminalWindowLayoutStore,
+  });
+  if (pendingShellDeletionReconciliation.completed > 0 || pendingShellDeletionReconciliation.failed > 0) {
+    console.info("[terminal-lifecycle]", {
+      event: "terminal.session.pending_deletions.reconciled",
+      ...pendingShellDeletionReconciliation,
+    });
+  }
   const chatZellijShellRegistry = chatZellijAdapter === zellijAdapter
     ? zellijShellRegistry
     : new ZellijShellRegistry({
@@ -523,6 +556,7 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellWs = createShellWsHandler({
     registry: zellijShellRegistry,
     adapter: zellijAdapter,
+    isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
     scrollbackStore: shellScrollbackStore,
     persistCanonicalSize: (name, size) => {
       void zellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
@@ -535,6 +569,7 @@ export async function createGateway(config: GatewayConfig) {
     : createShellWsHandler({
         registry: chatZellijShellRegistry,
         adapter: chatZellijAdapter,
+        isSessionTombstoned: (name) => terminalWindowLayoutStore.isSessionTombstoned(name),
         scrollbackStore: shellScrollbackStore,
         persistCanonicalSize: (name, size) => {
           void chatZellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
@@ -580,15 +615,6 @@ export async function createGateway(config: GatewayConfig) {
   const recordAiGeneration = createAiGenerationRecorder({
     capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
   });
-  const dispatcher: Dispatcher = createDispatcher({
-    homePath,
-    model: config.model,
-    maxTurns: config.maxTurns,
-    spawnFn: config.spawnFn,
-    onAiGeneration: recordAiGeneration,
-    fundedCredentialProvider,
-  });
-
   const watcher: Watcher = createWatcher(homePath);
   const conversationMutationLock = createConversationMutationLock({ maxKeys: 64 });
   const conversations: ConversationStore = createConversationStore(homePath, {
@@ -602,6 +628,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
   const clients = new Set<WSContext>();
+  const clientOwnerIds = new WeakMap<WSContext, string>();
   const readinessRepository = new InMemoryReadinessRepository();
   const toolPackRepository = new InMemoryToolPackRepository();
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
@@ -735,7 +762,11 @@ export async function createGateway(config: GatewayConfig) {
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
-      ? createCodexEventBridge({ homePath, codexExecutable })
+      ? createCodexEventBridge({ homePath, codexExecutable,
+        ...(userSystemdTerminalController ? {
+          isRuntimeAlive: (sessionId: string) => userSystemdTerminalController.isRunning(workspaceRuntimeId(sessionId)),
+        } : {}),
+      })
       : undefined;
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,
@@ -967,10 +998,20 @@ export async function createGateway(config: GatewayConfig) {
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let chatRepository: ChatRepository | null = null;
-  let canonicalChatEventStream: ReturnType<typeof createCanonicalChatEventStream> | null = null;
+  let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
+  let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
+  let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
+  let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
+  const collaborationConfig = loadGatewayCollaborationConfig(process.env);
+  if (process.env.MATRIX_COLLABORATION_ENABLED === "true" && !collaborationConfig) {
+    throw new Error("[collaboration] enabled with incomplete configuration");
+  }
+  if (collaborationConfig && !databaseUrl) {
+    throw new Error("[collaboration] enabled without owner Postgres");
+  }
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
@@ -989,7 +1030,22 @@ export async function createGateway(config: GatewayConfig) {
       await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
-      canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
+      canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
+      await bootstrapChatSharing(chatRepository.kysely);
+      if (collaborationConfig) {
+        gatewayCollaboration = await createGatewayCollaboration({
+          db: chatRepository.kysely as Kysely<any>,
+          chatRepository,
+          config: collaborationConfig,
+        });
+      }
+      canonicalChatEventStream = createGatewayChatEventStream({
+        repository: chatRepository,
+        reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
+        capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
+        runtimeVersion: runningVersion,
+        buildSha: process.env.MATRIX_BUILD_SHA,
+      });
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       await messagingRepository.bootstrap();
@@ -1095,7 +1151,10 @@ export async function createGateway(config: GatewayConfig) {
         console.error("[app-db] App registration error:", (regErr as Error).message);
       }
     } catch (err) {
+      await gatewayCollaboration?.shutdown();
+      gatewayCollaboration = null;
       console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
+      if (collaborationConfig) throw err;
       console.log("[app-db] Falling back to file-based storage");
       appDb = null;
       queryEngine = null;
@@ -1108,6 +1167,31 @@ export async function createGateway(config: GatewayConfig) {
       messagingRepository = null;
     }
   }
+
+  const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
+  const osViewTools = osViewStateRepository
+    && trustedOsViewOwnerId
+    && trustedOsViewOwnerId.length <= 160
+    ? createOsViewAgentTools({
+        repository: osViewStateRepository,
+        ownerId: trustedOsViewOwnerId,
+        homePath,
+        onChanged: (state) => broadcastToOwner(trustedOsViewOwnerId, {
+          type: "os-view:changed",
+          revision: state.revision,
+          updatedAt: state.updatedAt,
+        }),
+      })
+    : undefined;
+  const dispatcher: Dispatcher = createDispatcher({
+    homePath,
+    model: config.model,
+    maxTurns: config.maxTurns,
+    spawnFn: config.spawnFn,
+    onAiGeneration: recordAiGeneration,
+    fundedCredentialProvider,
+    osViewTools,
+  });
 
   // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
   let syncR2: R2Client | null = null;
@@ -1490,8 +1574,34 @@ export async function createGateway(config: GatewayConfig) {
 
   function broadcast(msg: ServerMessage) {
     const json = JSON.stringify(msg);
+    const dead: WSContext[] = [];
     for (const ws of clients) {
-      ws.send(json);
+      try {
+        ws.send(json);
+      } catch (error: unknown) {
+        console.warn("[gateway] WebSocket broadcast failed:", error instanceof Error ? error.name : "UnknownError");
+        dead.push(ws);
+      }
+    }
+    for (const ws of dead) {
+      if (clients.delete(ws)) wsConnectionsActive.dec();
+    }
+  }
+
+  function broadcastToOwner(ownerId: string, msg: ServerMessage) {
+    const json = JSON.stringify(msg);
+    const dead: WSContext[] = [];
+    for (const ws of clients) {
+      if (clientOwnerIds.get(ws) !== ownerId) continue;
+      try {
+        ws.send(json);
+      } catch (error: unknown) {
+        console.warn("[gateway] Owner WebSocket broadcast failed:", error instanceof Error ? error.name : "UnknownError");
+        dead.push(ws);
+      }
+    }
+    for (const ws of dead) {
+      if (clients.delete(ws)) wsConnectionsActive.dec();
     }
   }
 
@@ -1917,6 +2027,7 @@ export async function createGateway(config: GatewayConfig) {
     repository: chatRepository,
     getPrincipal: (c) => requireRequestPrincipal(c),
     registry: chatZellijShellRegistry,
+    paneActions: chatZellijAdapter,
     shellWs: chatZellijShellWs,
     onUnexpectedSendFailure: logUnexpectedWsSendFailure,
   });
@@ -1931,6 +2042,7 @@ export async function createGateway(config: GatewayConfig) {
     commandRunner: shellCommandRunner,
     terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
+    sessionLifecycle: terminalWindowLayoutStore,
     chatTerminals: {
       prepare: async (principal: RequestPrincipal, chatId: string) => {
         if (!chatRepository || !canonicalChatExecutionRoots) {
@@ -1983,6 +2095,10 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  app.route(
+    "/api/terminal/window-layouts",
+    createTerminalWindowLayoutRoutes({ store: terminalWindowLayoutStore }),
+  );
   const runtimeHandle = process.env.MATRIX_HANDLE ?? "";
   const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)
     && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
@@ -2097,9 +2213,11 @@ export async function createGateway(config: GatewayConfig) {
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
       let conversationOwnerScope: ReturnType<typeof ownerScopeFromPrincipal> | undefined;
+      let connectionOwnerId: string | undefined;
       try {
         const wsPrincipal = requireRequestPrincipal(c);
         const wsSyncUserId = wsPrincipal.userId;
+        connectionOwnerId = wsSyncUserId;
         conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
           ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
@@ -2187,6 +2305,7 @@ export async function createGateway(config: GatewayConfig) {
           syncPeerSocket = ws;
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
+          if (connectionOwnerId) clientOwnerIds.set(ws, connectionOwnerId);
           wsConnectionsActive.inc();
           captureGatewayProductEvent("shell_ws_open", {
             active_clients: clients.size,
@@ -3491,127 +3610,11 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  // ---------------------------------------------------------------------------
-  // Bridge: Integration service calls (for apps in iframes)
-  // ---------------------------------------------------------------------------
-
-  app.get("/api/bridge/service", async (c) => {
-    if (!platformDb || !resolveIntegrationUserId) {
-      return c.json({ error: "Integrations not configured" }, 503);
-    }
-    const uid = await resolveIntegrationUserId(c);
-    if (!uid) return c.json({ error: "Unauthorized" }, 401);
-    const services = await platformDb.listConnectedServices(uid);
-    return c.json({
-      services: services.map((s) => ({
-        service: s.service,
-        account_label: s.account_label,
-        account_email: s.account_email,
-        status: s.status,
-      })),
-    });
-  });
-
-  app.post("/api/bridge/service", bodyLimit({ maxSize: 65536 }), async (c) => {
-    if (process.env.NODE_ENV === "production") {
-      return c.json({ error: "Bridge not available in production" }, 403);
-    }
-    if (!platformDb || !pipedreamClient || !resolveIntegrationUserId) {
-      return c.json({ error: "Integrations not configured" }, 503);
-    }
-
-    // Mirror CallBodySchema from integrations/routes.ts. The route is dev-only
-    // (production returns 403 above) so the security risk of an unvalidated
-    // body is minimal, but the cast was inconsistent with every other mutating
-    // endpoint in this PR and provided zero runtime protection.
-    let parsedJson: unknown;
-    try {
-      parsedJson = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON" }, 400);
-      }
-      console.error("[bridge/service] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-    const parsed = BridgeCallBodySchema.safeParse(parsedJson);
-    if (!parsed.success) {
-      return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
-    }
-
-    const { service, action, label, params } = parsed.data;
-
-    const def = getService(service);
-    if (!def) return c.json({ error: `Unknown service: ${service}` }, 400);
-    const actionDef = getAction(service, action);
-    if (!actionDef) return c.json({ error: `Unknown action: ${action}` }, 400);
-
-    const paramValidation = validateActionParams(actionDef, params);
-    if (!paramValidation.valid) {
-      const parts: string[] = [];
-      if (paramValidation.missing.length > 0) parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
-      if (paramValidation.typeErrors.length > 0) parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
-      return c.json({ error: parts.join(". ") }, 400);
-    }
-
-    const uid = await resolveIntegrationUserId(c);
-    if (!uid) return c.json({ error: "Unauthorized" }, 401);
-
-    const connections = await platformDb.listConnectedServices(uid);
-    let connection;
-    if (label) {
-      connection = connections.find((s) => s.service === service && s.account_label === label);
-    } else {
-      connection = connections.find((s) => s.service === service);
-    }
-    if (!connection) {
-      return c.json({ error: `Service ${service} is not connected` }, 404);
-    }
-
-    const fullUser = await platformDb.getUserById(uid);
-    const externalId = fullUser?.pipedream_external_id || uid;
-    if (!fullUser?.pipedream_external_id) {
-      await platformDb.updatePipedreamExternalId(uid, externalId);
-    }
-
-    try {
-      const { data, summary } = await executeIntegrationAction({
-        pipedream: pipedreamClient,
-        externalUserId: externalId,
-        connection,
-        def,
-        actionDef,
-        serviceId: service,
-        actionId: action,
-        params,
-      });
-      await platformDb.touchServiceUsage(connection.id);
-      return c.json({ data, service, action, ...(summary ? { summary } : {}) });
-    } catch (err) {
-      if (err instanceof IntegrationActionNotImplementedError) {
-        return c.json({ error: err.message }, 501);
-      }
-      if (getErrorStatusCode(err) === 429) {
-        const retryAfter = getRetryAfterSeconds(err);
-        return c.json(
-          { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
-          { status: 429, headers: { "Retry-After": String(retryAfter) } },
-        );
-      }
-      const isAbort = err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
-      if (isAbort) {
-        console.error(`[bridge/service] ${service}/${action} timeout`);
-        return c.json({ error: "Integration call timed out" }, 504);
-      }
-      const msg = err instanceof Error ? err.message.toLowerCase() : "";
-      if (msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("enetunreach")) {
-        console.error(`[bridge/service] ${service}/${action} connection error:`, err);
-        return c.json({ error: "Integration service unavailable" }, 503);
-      }
-      console.error(`[bridge/service] ${service}/${action} error:`, err instanceof Error ? err.message : err);
-      return c.json({ error: "Integration call failed" }, 502);
-    }
-  });
+  app.route("/api/bridge/service", createIntegrationBridgeRoutes({
+    platformDb,
+    pipedream: pipedreamClient,
+    resolveUserId: resolveIntegrationUserId,
+  }));
 
   registerConversationHistoryRoutes(app, {
     conversations,
@@ -4358,21 +4361,29 @@ export async function createGateway(config: GatewayConfig) {
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
       executionRoots: canonicalChatExecutionRoots,
+      ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
       onAiGeneration: recordAiGeneration,
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
+    if (userSystemdTerminalController && codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
+      const repository = chatRepository;
+      const bridge = codexEventBridge;
+      const uid = process.getuid?.();
+      chatIdleReaper = createChatIdleReaper({
+        controller: userSystemdTerminalController,
+        sessions: codingAgentWorkspaceRuntime,
+        threads: codingAgentThreadStore,
+        control: createCodexControlClient({ homePath }),
+        admitCanonical: (identity, reclaim) => withCanonicalIdleChat(repository.kysely, identity, reclaim),
+        unwatch: (sessionId) => bridge.unwatch(sessionId),
+        underPressure: () => terminalTasksUnderPressure(
+          `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/matrix.slice/matrix-terminal.slice`,
+        ),
+      });
+    }
   }
-  app.route("/", createCanonicalChatRoutes({
-    service: chatRepository
-        ? createCanonicalChatService(chatRepository, {
-          ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
-          ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
-        })
-      : createUnavailableCanonicalChatService(),
-    getPrincipal: (c) => requireRequestPrincipal(c),
-  }));
   if (canonicalChatEventStream) {
     registerCanonicalChatEventWebSocketRoute({
       app,
@@ -4380,7 +4391,24 @@ export async function createGateway(config: GatewayConfig) {
       getPrincipal: (context) => requireRequestPrincipal(context as Context),
       stream: canonicalChatEventStream,
     });
+    registerCanonicalChatEventHttpRoute({
+      app,
+      getPrincipal: (context) => requireRequestPrincipal(context as Context),
+      stream: canonicalChatEventStream,
+    });
   }
+  app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
+  gatewayCollaboration?.register({ app, upgradeWebSocket });
+  app.route("/", createCanonicalChatRoutes({
+    service: chatRepository
+        ? createCanonicalChatService(chatRepository, {
+          ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
+          ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
+          ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
+        })
+      : createUnavailableCanonicalChatService(),
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
   app.route("/", createChatProviderRoutes({
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
@@ -4407,6 +4435,11 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/os-view-state", createOsViewStateRoutes({
       repository: osViewStateRepository,
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      onChanged: (ownerId, state) => broadcastToOwner(ownerId, {
+        type: "os-view:changed",
+        revision: state.revision,
+        updatedAt: state.updatedAt,
+      }),
     }));
   } else {
     app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));
@@ -4682,11 +4715,20 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await chatIdleReaper?.close().catch((error: unknown) => {
+        logBestEffortFailure("Chat idle runtime reconciliation shutdown failed", error);
+      });
+      chatIdleReaper = null;
       chatAttachmentCleanup.close();
       await chatAttachmentCleanup.waitForIdle().catch((error: unknown) => {
         logBestEffortFailure("Temporary Chat attachment cleanup shutdown failed", error);
       });
 
+      if (terminalOrphanSweepTimer) {
+        clearInterval(terminalOrphanSweepTimer);
+        terminalOrphanSweepTimer = null;
+      }
+      await terminalOrphanSweepPromise;
       // T939: Fire gateway_stop hook
       await hookRunner.fireVoidHook("gateway_stop", {}).catch((err: unknown) => {
         logBestEffortFailure("gateway_stop hook failed", err);
@@ -4709,6 +4751,8 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await gatewayCollaboration?.shutdown();
+      gatewayCollaboration = null;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
       await codingAgentWorkspaceRuntime?.close();

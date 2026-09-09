@@ -25,6 +25,34 @@ function mockPipedream(): PipedreamConnectClient {
 }
 
 describe("executeIntegrationAction", () => {
+  it("publishes an X reply through the authenticated Pipedream proxy", async () => {
+    const pipedream = mockPipedream();
+    vi.mocked(pipedream.proxyPost).mockResolvedValue({
+      data: { id: "1880000000000000000", text: "A reply" },
+    });
+
+    await executeIntegrationAction({
+      pipedream,
+      externalUserId: "user-1",
+      connection: { pipedream_account_id: "acc-x" },
+      def: getService("twitter")!,
+      actionDef: getAction("twitter", "create_post")!,
+      serviceId: "twitter",
+      actionId: "create_post",
+      params: { text: "A reply", replyToPostId: "1870000000000000000" },
+    });
+
+    expect(pipedream.proxyPost).toHaveBeenCalledWith({
+      externalUserId: "user-1",
+      accountId: "acc-x",
+      url: "https://api.x.com/2/tweets",
+      body: {
+        text: "A reply",
+        reply: { in_reply_to_tweet_id: "1870000000000000000" },
+      },
+    });
+  });
+
   it("dispatches PATCH directApi actions with proxyPatch", async () => {
     const pipedream = mockPipedream();
     vi.mocked(pipedream.proxyPatch).mockResolvedValue({ ok: true });

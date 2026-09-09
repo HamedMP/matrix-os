@@ -9,7 +9,10 @@ import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
-import { classifyTerminalClipboardShortcut } from "@matrix-os/contracts";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { TerminalControls } from "@matrix-os/ui";
+import { createTerminalKeyHandler } from "./terminal-key-handler";
+import { useWebTerminalControls } from "./useWebTerminalControls";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -135,7 +138,8 @@ export function TerminalPane({
   const terminalCursorStyle = useTerminalSettings((s) => s.cursorStyle);
   const terminalSmoothScroll = useTerminalSettings((s) => s.smoothScroll);
   const cursorBlink = useTerminalSettings((s) => s.cursorBlink);
-  const terminalSurfaceBackground = buildXtermTheme(theme, terminalThemeId).background;
+  const terminalSurfaceTheme = buildXtermTheme(theme, terminalThemeId);
+  const terminalSurfaceBackground = terminalSurfaceTheme.background;
   // Visual-viewport state drives keyboard-aware re-fitting on mobile: when the
   // iOS soft keyboard opens the layout viewport doesn't shrink, so the terminal
   // host must re-fit to the visible band or the prompt hides behind the keyboard.
@@ -172,6 +176,12 @@ export function TerminalPane({
   const [linkContextMenu, setLinkContextMenu] = useState<TerminalLinkMenuState | null>(null);
   const [clipboardFeedback, setClipboardFeedback] = useState<TerminalClipboardFeedback | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | "elsewhere" | null>(null);
+  const [controlsConnection, setControlsConnection] = useState<{ sessionName: string | null; connected: boolean }>({ sessionName: null, connected: false });
+  const { controls, handleKeyEvent: handleControlKeyEvent } = useWebTerminalControls({
+    paneId, sessionName: controlsConnection.sessionName,
+    enabled: controlsConnection.connected && isFocused && !isClosing,
+    wsRef, termRef,
+  });
   const resumeLeaseRef = useRef<() => void>(() => undefined);
   const wasFocusedRef = useRef(isFocused);
   const outputBufferRef = useRef("");
@@ -416,6 +426,8 @@ export function TerminalPane({
       sessionIdRef.current = initialSessionId;
       lastSeqRef.current = 0;
       hasReplayCursorRef.current = false;
+      setControlsConnection({ sessionName: null, connected: false });
+      resumeLeaseRef.current();
     }
   }, [initialSessionId]);
 
@@ -1046,6 +1058,10 @@ export function TerminalPane({
         wsGenerationRef.current = generation;
         wsRef.current = ws;
         const alreadyAttached = options.alreadyAttached === true;
+        setControlsConnection({
+          sessionName: alreadyAttached && sessionIdRef.current && isCanonicalShellSessionId(sessionIdRef.current) ? sessionIdRef.current : null,
+          connected: alreadyAttached && ws.readyState === WebSocket.OPEN,
+        });
         const isColdReplay = options.replayRequest?.mode === "cold-replay";
         const isCurrentWs = () => (
           wsRef.current === ws
@@ -1170,6 +1186,7 @@ export function TerminalPane({
             return;
           }
           wsRef.current = null;
+          setControlsConnection({ sessionName: null, connected: false });
           heartbeatRef.current?.stop();
           log("ws-close", {
             disposed,
@@ -1255,6 +1272,10 @@ export function TerminalPane({
                 acceptedSeq: msg.fromSeq ?? undefined,
               });
               sessionIdRef.current = msg.sessionId;
+              setControlsConnection({
+                sessionName: isCanonicalShellSessionId(msg.sessionId) ? msg.sessionId : null,
+                connected: msg.state === "running",
+              });
               if (msg.canonicalSize) {
                 applyCanonicalGridSize(msg.canonicalSize);
               }
@@ -1275,6 +1296,7 @@ export function TerminalPane({
 
             case "lease-revoked":
               leaseWasRevoked = true;
+              setControlsConnection({ sessionName: null, connected: false });
               setConnectionNotice("elsewhere");
               ws.close();
               break;
@@ -1345,6 +1367,7 @@ export function TerminalPane({
               break;
 
             case "exit": {
+              setControlsConnection({ sessionName: null, connected: false });
               const code = msg.code ?? "unknown";
               term.write(`\r\n[Process exited with code ${code}]\r\n`);
               break;
@@ -1517,6 +1540,7 @@ export function TerminalPane({
           existing.onmessage = null;
           existing.close();
           wsRef.current = null;
+          setControlsConnection({ sessionName: null, connected: false });
           heartbeatRef.current?.stop();
         }
         leaseWasRevoked = false;
@@ -1599,85 +1623,16 @@ export function TerminalPane({
         sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current);
       });
 
-      // Keyboard shortcuts
-      const sendRaw = (data: string) => {
-        const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data }));
-        }
-      };
-
-      term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
-        if (ev.type !== "keydown") return true;
-
-        if (ev.ctrlKey && ev.shiftKey && ev.key === "F") {
-          setSearchOpen((prev) => !prev);
-          return false;
-        }
-
-        if (ev.altKey && ev.shiftKey && ev.key.toUpperCase() === "C") {
-          const block = commandBlockBufferRef.current.trim();
-          if (block) {
-            copyTerminalSelection(block);
-            return false;
-          }
-          return true;
-        }
-
-        const clipboardAction = classifyTerminalClipboardShortcut({
-          type: ev.type as "keydown" | "keyup" | "keypress",
-          key: ev.key,
-          isMac: isAppleCommandPlatform(navigator.platform),
-          metaKey: ev.metaKey,
-          ctrlKey: ev.ctrlKey,
-          shiftKey: ev.shiftKey,
-          altKey: ev.altKey,
-          repeat: ev.repeat,
-          isComposing: ev.isComposing,
-          hasSelection: term.getSelection().length > 0,
-        });
-        if (clipboardAction === "copy") {
-          ev.preventDefault();
-          copyTerminalSelection(term.getSelection());
-          return false;
-        }
-        if (clipboardAction === "paste") {
-          ev.preventDefault();
-          pasteTerminalClipboard();
-          return false;
-        }
-        if (clipboardAction === "select-all") {
-          ev.preventDefault();
-          term.selectAll();
-          return false;
-        }
-
-        // macOS-style line-editing shortcuts. The browser only delivers
-        // Cmd-arrow events to us when the focus is inside xterm; otherwise
-        // the OS swallows them. We map them to the readline-equivalent
-        // control sequences so bash/zsh, claude, pi, etc. all behave
-        // predictably regardless of OS keymap.
-        if (ev.metaKey && !ev.ctrlKey && !ev.altKey) {
-          if (ev.key === "ArrowLeft") {
-            sendRaw("\x01"); // Ctrl-A — beginning of line
-            return false;
-          }
-          if (ev.key === "ArrowRight") {
-            sendRaw("\x05"); // Ctrl-E — end of line
-            return false;
-          }
-          if (ev.key === "Backspace") {
-            sendRaw("\x15"); // Ctrl-U — kill to start of line
-            return false;
-          }
-          if (ev.key === "ArrowUp") {
-            sendRaw("\x1b[1;5H"); // scroll-to-top emulation: Home with Ctrl mod
-            return false;
-          }
-        }
-
-        return true;
-      });
+      term.attachCustomKeyEventHandler(createTerminalKeyHandler({
+        isMac: isAppleCommandPlatform(navigator.platform),
+        getSelection: () => term.getSelection(),
+        getCommandBlock: () => commandBlockBufferRef.current,
+        copy: copyTerminalSelection,
+        paste: pasteTerminalClipboard,
+        selectAll: () => term.selectAll(),
+        toggleSearch: () => setSearchOpen((open) => !open),
+        handleControls: handleControlKeyEvent,
+      }));
 
       // react-doctor-disable-next-line react-doctor/effect-observer-needs-disconnect -- the async init lifecycle returns a cleanup below that disconnects this observer before terminal teardown.
       const resizeObserver = new ResizeObserver(() => {
@@ -1912,12 +1867,15 @@ export function TerminalPane({
   }, [clipboardFeedback]);
 
   return (
-    // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
+    <div className="ph-no-capture flex h-full w-full min-h-0 min-w-0 flex-col" style={{ backgroundColor: terminalSurfaceBackground }}>
+      <TerminalControls layers={{ popover: SHELL_Z_INDEX.popover, dialog: SHELL_Z_INDEX.appDialog }} controls={controls} theme={terminalSurfaceTheme} />
+    {/* react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly. */}
     <div
       ref={containerRef}
+      data-terminal-viewport
       // ph-no-capture: terminal output can contain secrets (env vars, tokens,
       // file contents); PostHog session replay blocks this element natively.
-      className="ph-no-capture h-full w-full min-h-0 min-w-0 relative overflow-hidden"
+      className="ph-no-capture flex-1 w-full min-h-0 min-w-0 relative overflow-hidden"
       style={{
         outline: isFocused ? "1px solid var(--primary)" : "none",
         outlineOffset: "-1px",
@@ -2009,6 +1967,7 @@ export function TerminalPane({
           theme={theme}
         />
       )}
+    </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
-import { validateActionParams } from "./action-validation.js";
+import { validateActionParams } from "./parameter-validation.js";
 
 export class IntegrationActionNotImplementedError extends Error {
   readonly serviceId: string;

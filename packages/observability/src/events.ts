@@ -1,4 +1,6 @@
 export const MATRIX_TELEMETRY_EVENTS = {
+  AGENT_RUN_FAILED: "matrix_agent_run_failed",
+  AGENT_RUN_SYNC_FAILED: "matrix_agent_run_sync_failed",
   MARKETING_LANDING_VIEWED: "matrix_marketing_landing_viewed",
   MARKETING_SIGNUP_CLICKED: "matrix_marketing_signup_clicked",
   MARKETING_BILLING_VIEWED: "matrix_marketing_billing_viewed",

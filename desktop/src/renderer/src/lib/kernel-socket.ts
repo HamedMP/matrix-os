@@ -75,6 +75,11 @@ export const KnownKernelMessageSchema = z.discriminatedUnion("type", [
   }),
   z.looseObject({ type: z.literal("task:updated"), taskId: z.string(), status: z.string() }),
   z.looseObject({
+    type: z.literal("os-view:changed"),
+    revision: z.number().int().min(1),
+    updatedAt: z.string().datetime(),
+  }),
+  z.looseObject({
     type: z.literal("approval:request"),
     id: z.string(),
     toolName: z.string(),

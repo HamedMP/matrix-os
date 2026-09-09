@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
+import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 import { SurfaceChromeContext, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 import { useBoard, type Project } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -17,6 +18,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const inspectorProps = vi.hoisted(() => ({
   active: [] as boolean[],
 }));
+const stableDraftClient = {};
+function DraftHarness({ chatId }: { chatId?: string }) {
+  const draft = useChatComposerDrafts({ clientIdentity: stableDraftClient, chatId, projectId: null, conversation: Boolean(chatId) });
+  return <>
+    <input aria-label="Chat draft" value={draft.text} onChange={(event) => draft.setText(event.target.value)} />
+    <button onClick={() => draft.setReferenceTokens([{ type: "resource", resource: {
+      kind: "file", id: "readme", label: "README.md",
+    } }])}>Attach draft reference</button>
+    <output aria-label="Draft references">{draft.referenceTokens.length}</output>
+  </>;
+}
 const chatTabProps = vi.hoisted(() => ({
   tabIds: [] as Array<string | undefined>,
 }));
@@ -63,11 +75,13 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", async (importOriginal) =
 vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
   default: ({
     tabId,
+    initialChatId,
     eventSource,
     renderInspector,
     inspectorExclusive,
   }: {
     tabId?: string;
+    initialChatId?: string;
     eventSource?: unknown;
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
@@ -76,7 +90,9 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
     eventSourceProps.chat.push(eventSource);
     return (
       <>
-        <main aria-hidden={inspectorExclusive || undefined}>Chat center</main>
+        <main aria-hidden={inspectorExclusive || undefined}>Chat center
+          <DraftHarness chatId={initialChatId} />
+        </main>
         {renderInspector?.({ record: { chat: { id: "chat_global" } }, activities: [] })}
       </>
     );
@@ -84,10 +100,12 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
 }));
 vi.mock("@desktop/renderer/src/features/project/ProjectChatsView", () => ({
   default: ({
+    initialChatId,
     eventSource,
     renderInspector,
     inspectorExclusive,
   }: {
+    initialChatId?: string;
     eventSource?: unknown;
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
@@ -95,7 +113,7 @@ vi.mock("@desktop/renderer/src/features/project/ProjectChatsView", () => ({
     eventSourceProps.project.push(eventSource);
     return (
       <>
-        <main aria-hidden={inspectorExclusive || undefined}>Project center</main>
+        <main aria-hidden={inspectorExclusive || undefined}>Project center<DraftHarness chatId={initialChatId} /></main>
         {renderInspector?.({ record: { chat: { id: "chat_alpha" } }, activities: [] })}
       </>
     );
@@ -236,7 +254,7 @@ describe("WorkTab rail integration", () => {
     });
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
-      if (path === "/api/chats/chat_global?limit=200") return {
+      if (path === "/api/chats/chat_global?limit=200&messageVersion=2") return {
         record: globalChat,
         messages: [],
         turns: [],
@@ -288,6 +306,36 @@ describe("WorkTab rail integration", () => {
     render(<WorkTab tabId="chat-tab-2" route="chat" active />);
 
     expect(chatTabProps.tabIds).toContain("chat-tab-2");
+  });
+
+  it.each(["chat", "project"] as const)("preserves drafts across Chat A, Chat B, and New Chat in the %s route", async (route) => {
+    const surface = (chatId?: string) => <WorkTab route={route} projectSlug={route === "project" ? "alpha" : undefined}
+      active initialChatId={chatId} initialChatView={chatId ? "conversation" : "draft"} />;
+    const view = render(surface("chat_global"));
+    const input = () => screen.getByRole("textbox", { name: "Chat draft" }) as HTMLInputElement;
+    fireEvent.change(input(), { target: { value: "unsent draft a" } });
+    fireEvent.click(screen.getByRole("button", { name: "Attach draft reference" }));
+    view.rerender(surface("chat_other"));
+    expect(input().value).toBe("");
+    expect(screen.getByLabelText("Draft references").textContent).toBe("0");
+    fireEvent.change(input(), { target: { value: "unsent draft b" } });
+    view.rerender(surface());
+    expect(input().value).toBe("");
+    fireEvent.change(input(), { target: { value: "new chat draft" } });
+    view.rerender(surface("chat_global"));
+    expect(input().value).toBe("unsent draft a");
+    expect(screen.getByLabelText("Draft references").textContent).toBe("1");
+    view.rerender(surface("chat_other"));
+    expect(input().value).toBe("unsent draft b");
+    view.rerender(surface());
+    expect(input().value).toBe("new chat draft");
+    act(() => useConnection.setState({ authGeneration: 2 }));
+    expect(input().value).toBe("");
+    expect(screen.getByLabelText("Draft references").textContent).toBe("0");
+    fireEvent.change(input(), { target: { value: "different account draft" } });
+    act(() => useConnection.setState({ runtimeSlot: "secondary" }));
+    expect(input().value).toBe("");
+    await act(async () => undefined);
   });
 
   it("owns one shared Chat event source across rail and content and replaces it on runtime identity changes", async () => {
@@ -515,7 +563,7 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("main").getAttribute("aria-hidden")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     expect(sideBySideInspector.className).toContain("shrink-0");
-    expect(sideBySideInspector.style.width).toBe("380px");
+    expect(sideBySideInspector.style.width).toBe("344px");
   });
 
   it.each([
@@ -558,7 +606,7 @@ describe("WorkTab rail integration", () => {
     expect(screen.queryByRole("separator", { name: "Resize Chat navigation" })).toBeNull();
     expect(screen.getByRole("navigation", { name: "Chat navigation" }).className).not.toContain("border-r-0");
     expect(inspectorSeparator.getAttribute("aria-valuemin")).toBe("240");
-    expect(inspectorSeparator.getAttribute("aria-valuemax")).toBe("380");
+    expect(inspectorSeparator.getAttribute("aria-valuemax")).toBe("800");
     expect(inspectorSeparator.getAttribute("aria-valuenow")).toBe("380");
     expect(inspectorSeparator.querySelector("span")?.style.background).toBe("transparent");
 
@@ -574,12 +622,12 @@ describe("WorkTab rail integration", () => {
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
     fireEvent.pointerDown(inspectorSeparator, { button: 0, clientX: 760, pointerId: 17 });
     fireEvent.pointerMove(window, { clientX: 700, pointerId: 17 });
-    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("380");
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
 
     fireEvent.pointerCancel(window, { pointerId: 17 });
     fireEvent.pointerMove(window, { clientX: -1_000, pointerId: 17 });
 
-    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("380");
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("700");
   });
 
   it("keeps navigation visible while the inspector divider collapses past its minimum", async () => {
@@ -594,6 +642,20 @@ describe("WorkTab rail integration", () => {
     expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
+  });
+
+  it("widens beyond the default and clamps when the container shrinks without losing Chat", async () => {
+    render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
+    await screen.findByRole("button", { name: "Global chat" });
+    const divider = () => screen.getByRole("separator", { name: "Resize Chat inspector" });
+    fireEvent.keyDown(divider(), { key: "ArrowLeft" });
+    expect(divider().getAttribute("aria-valuenow")).toBe("396");
+    for (let i = 0; i < 80; i += 1) fireEvent.keyDown(divider(), { key: "ArrowLeft" });
+    expect(divider().getAttribute("aria-valuenow")).toBe("800");
+    divider().focus();
+    resizeWork(900);
+    expect(Number(divider().getAttribute("aria-valuenow"))).toBeLessThanOrEqual(540);
+    expect(screen.getByText("Chat center")).toBeTruthy();
   });
 
   it("makes the Files inspector available on a new Global Chat draft", async () => {
@@ -699,6 +761,8 @@ describe("WorkTab rail integration", () => {
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     const hideInspector = screen.getByRole("button", { name: "Hide inspector" });
     expect(within(chromeTitle.closest("header")!).queryByRole("button", { name: /Chat navigation/ })).toBeNull();
+    expect(within(chromeTitle.closest("header")!).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+    expect(hostedMain.queryByRole("button", { name: "Share", exact: true })).toBeNull();
     expect(hideInspector.className).toContain("size-7");
     expect(hideInspector.className).toContain("rounded-md");
     expect(hideInspector.className).toContain("pointer-events-auto");

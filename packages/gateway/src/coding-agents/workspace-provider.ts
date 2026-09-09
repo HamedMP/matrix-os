@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { boundedOperation } from "../bounded-operation.js";
 import {
   AgentThreadEventSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
@@ -20,9 +21,10 @@ import {
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
+import { recoverCodexWorkspace } from "./codex-workspace-recovery.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &
-  Partial<Pick<WorkspaceSessionOrchestrator, "sendInput">>;
+  Partial<Pick<WorkspaceSessionOrchestrator, "sendInput" | "getSession">>;
 type SetupAgent = Extract<SupportedAgent, "claude" | "codex">;
 
 const SETUP_AGENTS: Record<SetupAgent, { installPackage: string; connectCommand: string }> = {
@@ -313,7 +315,8 @@ export function createWorkspaceCodingAgentProvider(
         resumeState: { conversationId: sessionId },
       };
     },
-    async resumeTurn({ principal, thread, turn, resumeState, signal }) {
+    async resumeTurn(context) {
+      const { principal, thread, turn, resumeState, signal, now, nextEventId } = context;
       if (!runnable) {
         throw new Error("Workspace provider turn resume unavailable");
       }
@@ -342,31 +345,26 @@ export function createWorkspaceCodingAgentProvider(
             modelOptions: turn.modelOptions ?? [],
           });
         } catch (error: unknown) {
+          if (!(error instanceof Error) || error.name !== "CodexControlUnavailableError") {
+            // An accepted frame with a lost acknowledgement must not be replayed into a new process.
+            options.codexEvents.unwatch(sessionId);
+            throw error;
+          }
           console.warn(
             "[coding-agents] Codex turn control failed; restarting session",
             { errorName: safeRecoveryErrorName(error) },
           );
-          const restarted = await options.runtime.startSession({
-            ownerScope: { type: "user", id: principal.userId },
-            request: {
-              sessionId,
-              ...(resumeState.providerThreadId
-                ? { providerThreadId: resumeState.providerThreadId }
-                : {}),
-              kind: "agent",
-              agent,
-              prompt,
-              attachments: turn.attachments,
-              model: turn.model,
-              modelOptions: turn.modelOptions,
-              projectSlug: thread.projectId,
-              taskId: thread.taskId,
-              approvalPolicy: turn.approvalPolicy ?? "on_request",
-              sandboxMode: turn.sandboxMode ?? "workspace_write",
-              runtimePreference: "zellij",
-            },
-          });
-          if (!restarted.ok) throw new Error("Workspace provider turn recovery failed");
+          try {
+            const session = await recoverCodexWorkspace(options.runtime, context, sessionId, prompt);
+            return { events: [AgentThreadEventSchema.parse({
+              type: "terminal.bound", eventId: nextEventId(), threadId: thread.id,
+              occurredAt: now().toISOString(), terminalSessionId: terminalSessionIdFor(session),
+              terminalSessionCreatedAt: session.runtime.createdAt,
+            })], outcome: "delivered", resumeState };
+          } catch (recoveryError: unknown) {
+            options.codexEvents.unwatch(sessionId);
+            throw recoveryError;
+          }
         }
         return { events: [], outcome: "delivered", resumeState };
       }
@@ -391,12 +389,12 @@ export function createWorkspaceCodingAgentProvider(
       }
       await options.codexControl.steerTurn({ sessionId, prompt: message, clientRequestId });
     },
-    async abortThread({ thread, clientRequestId, now, nextEventId }) {
+    async abortThread({ thread, clientRequestId, now, nextEventId, requireRuntimeStop }) {
       const sessionId = sessionIdForThread(thread.id);
-      if (agent === "codex" && options.codexControl) {
-        await options.codexControl.interruptTurn({ sessionId, clientRequestId });
+      if (agent === "codex" && options.codexControl && !requireRuntimeStop) {
+        await boundedOperation(() => options.codexControl!.interruptTurn({ sessionId, clientRequestId }), 5_000);
       } else {
-        const result = await options.runtime.stopSession(sessionId);
+        const result = await boundedOperation(() => options.runtime.stopSession(sessionId), 5_000);
         if (!result.ok) {
           throw new Error("Workspace provider abort failed");
         }

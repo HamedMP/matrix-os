@@ -31,6 +31,7 @@ services:
       - ./distro:/app/distro
       - ./scripts:/app/scripts
       - ./package.json:/app/package.json
+      - ./patches:/app/patches:ro
       - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
       - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
       - ./tsconfig.json:/app/tsconfig.json

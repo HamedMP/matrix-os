@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Trash2Icon } from "@/lib/hugeicons";
@@ -131,6 +132,7 @@ export function ShellCloseConfirmation({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  useGettingStartedBlocker(true);
   const sheetRef = useRef<HTMLDivElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();

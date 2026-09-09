@@ -1,9 +1,10 @@
 import {
+  ChatMessageWireVersionSchema,
+  projectChatMessageResponse,
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
   CanonicalCancelQueuedChatTurnRequestSchema,
   CanonicalChatApiCursorSchema,
-  CanonicalChatEventCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
@@ -72,8 +73,6 @@ import type { ChatOwner } from "./records.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestrator.js";
 import {
   createCanonicalChatEventStream,
-  type CanonicalChatEventStreamSession,
-  type CanonicalChatEventStreamSocket,
 } from "./event-stream.js";
 
 export { createCanonicalChatEventStream } from "./event-stream.js";
@@ -214,31 +213,6 @@ function ownerFromPrincipal(principal: RequestPrincipal): ChatOwner {
   return { type: "personal", ownerId: principal.userId };
 }
 
-export function registerCanonicalChatEventRoute(options: {
-  mount(
-    path: string,
-    open: (input: {
-      context: unknown;
-      ws: CanonicalChatEventStreamSocket;
-      cursor?: string;
-    }) => Promise<CanonicalChatEventStreamSession>,
-  ): void;
-  getPrincipal(context: unknown): RequestPrincipal;
-  stream: Pick<ReturnType<typeof createCanonicalChatEventStream>, "open">;
-}): void {
-  options.mount("/ws/chats/events", async ({ context, ws, cursor }) => {
-    const principal = options.getPrincipal(context);
-    const parsedCursor = cursor === undefined
-      ? undefined
-      : CanonicalChatEventCursorSchema.parse(Number(cursor));
-    return options.stream.open({
-      ws,
-      principal,
-      ...(parsedCursor === undefined ? {} : { cursor: parsedCursor }),
-    });
-  });
-}
-
 export async function closeCanonicalChatEventLifecycle(options: {
   stream: Pick<ReturnType<typeof createCanonicalChatEventStream>, "shutdown">;
   releaseRepository(): Promise<void>;
@@ -306,6 +280,12 @@ export function createCanonicalChatRoutes(options: {
   getPrincipal: (context: Context) => RequestPrincipal;
 }): Hono {
   const routes = new Hono();
+  routes.use("/api/chats/*", async (context, next) => {
+    if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success) {
+      return validationError(context);
+    }
+    await next();
+  });
   const createBodyLimit = bodyLimit({ maxSize: CHAT_CREATE_BODY_LIMIT, onError: bodyTooLarge });
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
   const cancelBodyLimit = bodyLimit({ maxSize: CHAT_CANCEL_BODY_LIMIT, onError: bodyTooLarge });
@@ -480,7 +460,10 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       if (!result) return notFound(context);
-      return context.json(CanonicalChatDetailResponseSchema.parse(result));
+      return context.json(projectChatMessageResponse(
+        CanonicalChatDetailResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -498,7 +481,10 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
       );
-      return context.json(CanonicalChatTurnAdmissionResponseSchema.parse(result), 202);
+      return context.json(projectChatMessageResponse(
+        CanonicalChatTurnAdmissionResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ), 202);
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -586,7 +572,10 @@ export function createCanonicalChatRoutes(options: {
         runId,
         parsed.data,
       );
-      return context.json(CanonicalChatRunSteeringResponseSchema.parse(result));
+      return context.json(projectChatMessageResponse(
+        CanonicalChatRunSteeringResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -609,7 +598,10 @@ export function createCanonicalChatRoutes(options: {
           queuedTurnId,
           parsed.data,
         );
-        return context.json(CanonicalChatRunSteeringResponseSchema.parse(result));
+        return context.json(projectChatMessageResponse(
+        CanonicalChatRunSteeringResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
       } catch (error: unknown) {
         return handleError(context, error);
       }

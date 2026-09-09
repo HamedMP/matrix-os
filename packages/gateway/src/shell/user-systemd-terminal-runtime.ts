@@ -5,6 +5,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { resolveWithinHome } from "../path-security.js";
+import { createTerminalCapacityAdmission } from "./terminal-runtime-capacity.js";
+import { probeKeeperReadiness } from "./terminal-runtime-readiness.js";
 
 const execFileAsync = promisify(execFile);
 const RuntimeIdSchema = z.string().regex(/^rt_[0-9a-f]{32}$/);
@@ -23,6 +25,8 @@ const DescriptorSchema = z.object({
   environmentPath: z.string().min(1).max(4096).optional(),
   generation: GenerationSchema,
   createdAt: z.iso.datetime(),
+  // A durable stop intent. Cold recovery must replace this descriptor before the keeper may start it.
+  hibernatedAt: z.iso.datetime().optional(),
 }).strict();
 
 export type UserSystemdTerminalDescriptor = z.infer<typeof DescriptorSchema>;
@@ -59,6 +63,8 @@ const READINESS_INTERVAL_MS = 100;
 const READINESS_STABILITY_MS = 250;
 const INACTIVE_RECOVERY_RETRY_DELAY_MS = 250;
 const MAX_RUNTIME_DESCRIPTORS = 256;
+const MAX_ORPHAN_SWEEP_CANDIDATES = 32;
+const MAX_ORPHAN_SWEEP_CONCURRENCY = 8;
 const MAX_TERMINAL_RUNTIME_ASSET_BYTES = 256 * 1024 * 1024;
 const MAX_USER_UNIT_BYTES = 64 * 1024;
 
@@ -315,11 +321,15 @@ export function createUserSystemdTerminalRuntime(options: {
   now?: () => string;
   readinessTimeoutMs?: number;
   readinessStabilityMs?: number;
+  capacityAdmission?: (runtimeId: string) => Promise<void>;
   generationLockHelperPath?: string;
   removePath?: (path: string) => Promise<void>;
 }) {
   const homePath = resolve(options.homePath);
   const uid = options.uid ?? process.getuid?.();
+  const admitCapacity = options.capacityAdmission ?? createTerminalCapacityAdmission({
+    root: `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/matrix.slice/matrix-terminal.slice`,
+  });
   const generation = GenerationSchema.parse(options.generation);
   const terminalRuntimeRoot = resolve(options.terminalRuntimeRoot ?? "/opt/matrix/terminal-runtime");
   const runCommand = options.runCommand ?? defaultRunCommand;
@@ -430,6 +440,9 @@ export function createUserSystemdTerminalRuntime(options: {
   }
 
   async function defaultReadinessProbe(descriptor: UserSystemdTerminalDescriptor): Promise<boolean> {
+    const ready = await probeKeeperReadiness({ descriptor, terminalRuntimeRoot, homePath,
+      env: systemdEnv, runCommand });
+    if (ready !== null) return ready;
     const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
     try {
       const { stdout } = await runCommand(zellijPath, ["list-sessions", "--no-formatting"], {
@@ -545,6 +558,8 @@ export function createUserSystemdTerminalRuntime(options: {
   }
 
   async function startInterruptedRuntime(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
+    try { await admitCapacity(descriptor.runtimeId); }
+    catch (error: unknown) { throw new TerminalRuntimeUnavailableError(error); }
     await runSystemctl(["start", unitName(descriptor.runtimeId)]);
     try {
       await waitUntilReady(descriptor);
@@ -554,6 +569,31 @@ export function createUserSystemdTerminalRuntime(options: {
         throw err;
       }
     }
+    await deleteExactZellijSession(descriptor);
+    await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
+    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
+    await waitUntilReady(descriptor);
+  }
+
+  async function isSettledInactive(runtimeId: string): Promise<boolean> {
+    try {
+      const { stdout } = await runSystemctl(["is-active", unitName(runtimeId)]);
+      return ["inactive", "failed", "unknown"].includes(stdout.trim());
+    } catch (error: unknown) {
+      // execFile rejects the normal systemctl inactive result (exit 3).
+      // runSystemctl wraps it for safe outward errors; inspect the retained
+      // cause here rather than losing the state output at that boundary.
+      const commandError = error instanceof TerminalRuntimeUnavailableError ? error.cause : error;
+      if (!(commandError instanceof Error && "code" in commandError)) throw error;
+      if (commandError.code === 4 || commandError.code === "4") return true;
+      if ((commandError.code === 3 || commandError.code === "3") && "stdout" in commandError && typeof commandError.stdout === "string") {
+        return ["inactive", "failed"].includes(commandError.stdout.trim());
+      }
+      throw error;
+    }
+  }
+
+  async function deleteExactZellijSession(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
     const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
     try {
       await runCommand(zellijPath, ["delete-session", descriptor.sessionName, "--force"], {
@@ -567,9 +607,6 @@ export function createUserSystemdTerminalRuntime(options: {
         : undefined;
       if (code !== 2 && code !== "2") throw new TerminalRuntimeUnavailableError(err);
     }
-    await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
-    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
-    await waitUntilReady(descriptor);
   }
 
   return {
@@ -592,7 +629,7 @@ export function createUserSystemdTerminalRuntime(options: {
       }
     },
 
-    async create(input: CreateUserSystemdRuntimeInput): Promise<UserSystemdRuntimeResult> {
+    async create(input: CreateUserSystemdRuntimeInput, recovery: { replaceInactiveWorkspace?: boolean } = {}): Promise<UserSystemdRuntimeResult> {
       const parsed = z.object({
         runtimeId: RuntimeIdSchema,
         scope: RuntimeScopeSchema,
@@ -638,20 +675,49 @@ export function createUserSystemdTerminalRuntime(options: {
         ) {
           throw new TerminalRuntimeUnavailableError();
         }
-        const persisted = await writeDescriptorExclusive(
-          join(descriptorRoot, `${descriptor.runtimeId}.json`),
-          descriptor,
-        );
+        const path = join(descriptorRoot, `${descriptor.runtimeId}.json`);
+        const existing = descriptors.find((entry) => entry.runtimeId === descriptor.runtimeId);
+        let persisted: UserSystemdTerminalDescriptor;
+        if (recovery.replaceInactiveWorkspace && existing) {
+          if (existing.scope !== "workspace" || descriptor.scope !== "workspace"
+            || existing.displayName !== descriptor.displayName || existing.cwd !== descriptor.cwd
+            || existing.kind !== descriptor.kind || !await isSettledInactive(descriptor.runtimeId)) {
+            throw new TerminalRuntimeUnavailableError();
+          }
+          await deleteExactZellijSession(existing);
+          await writeDescriptorAtomic(path, descriptor);
+          // Superseded OS-generated launch files are no longer referenced by the durable descriptor.
+          // Never remove user layouts, shared environment files, or any conversation/workspace data.
+          for (const [oldPath, nextPath, root, extension] of [
+            [existing.layoutPath, descriptor.layoutPath, join(homePath, "system", "zellij", "runtime-layouts"), ".kdl"],
+            [existing.environmentPath, descriptor.environmentPath, join(descriptorRoot, "env"), ".json"],
+          ]) {
+            if (!oldPath || oldPath === nextPath || dirname(oldPath) !== root
+              || !basename(oldPath).startsWith(`${descriptor.runtimeId}-`) || !oldPath.endsWith(extension!)) continue;
+            try { await removePath(oldPath); }
+            catch (cleanupError: unknown) {
+              console.warn("[terminal-runtime] superseded launch cleanup deferred", {
+                errorType: cleanupError instanceof Error ? cleanupError.name : "UnknownError",
+              });
+            }
+          }
+          persisted = descriptor;
+        } else {
+          persisted = await writeDescriptorExclusive(path, descriptor);
+        }
         await startInterruptedRuntime(persisted);
         return { ...persisted, lifecycle: "running" };
       });
     },
 
     async start(runtimeId: string): Promise<UserSystemdRuntimeResult> {
-      const descriptor = await readDescriptor(runtimeId);
-      if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
-      await startInterruptedRuntime(descriptor);
-      return { ...descriptor, lifecycle: "running" };
+      return withMutationLock(async () => {
+        const descriptor = await readDescriptor(runtimeId);
+        if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
+        if (descriptor.hibernatedAt) throw new TerminalRuntimeUnavailableError();
+        await startInterruptedRuntime(descriptor);
+        return { ...descriptor, lifecycle: "running" };
+      });
     },
 
     get(runtimeId: string): Promise<UserSystemdTerminalDescriptor | null> {
@@ -695,6 +761,27 @@ export function createUserSystemdTerminalRuntime(options: {
 
     isRunning,
 
+    // Hibernation is not session deletion: keep the descriptor, owner files and worktree leases.
+    async hibernateWorkspace(runtimeId: string, expected?: Pick<UserSystemdTerminalDescriptor, "createdAt" | "layoutPath">): Promise<{ ok: true }> {
+      return withMutationLock(async () => {
+        const descriptor = await readDescriptor(runtimeId);
+        if (!descriptor || descriptor.scope !== "workspace" || !/^sess_[A-Za-z0-9_-]+$/.test(descriptor.displayName)) {
+          throw new InvalidTerminalRuntimeRequestError();
+        }
+        if (expected && (descriptor.createdAt !== expected.createdAt || descriptor.layoutPath !== expected.layoutPath)) {
+          throw new TerminalRuntimeUnavailableError();
+        }
+        if (!descriptor.hibernatedAt) {
+          await writeDescriptorAtomic(join(descriptorRoot, `${descriptor.runtimeId}.json`), { ...descriptor, hibernatedAt: now() });
+        }
+        await runSystemctl(["stop", unitName(descriptor.runtimeId)]);
+        if (!await isSettledInactive(descriptor.runtimeId)) throw new TerminalRuntimeUnavailableError();
+        // Remove only Zellij's exited runtime snapshot, preventing resurrection of the old prompt.
+        await deleteExactZellijSession(descriptor);
+        return { ok: true };
+      });
+    },
+
     async renameDisplayName(runtimeId: string, displayName: string): Promise<UserSystemdTerminalDescriptor> {
       const parsedName = DisplayNameSchema.safeParse(displayName);
       if (!parsedName.success) throw new InvalidTerminalRuntimeRequestError();
@@ -720,6 +807,7 @@ export function createUserSystemdTerminalRuntime(options: {
         const descriptor = await readDescriptor(parsed.data);
         await runSystemctl(["stop", unitName(parsed.data)]);
         try {
+          if (descriptor) await deleteExactZellijSession(descriptor);
           const generatedLayoutRoot = join(homePath, "system", "zellij", "runtime-layouts");
           const generatedEnvironmentRoot = join(descriptorRoot, "env");
           if (
@@ -739,11 +827,78 @@ export function createUserSystemdTerminalRuntime(options: {
             await removePath(descriptor.layoutPath);
           }
           await removePath(join(descriptorRoot, `${parsed.data}.json`));
+          await removePath(join(descriptorRoot, `${parsed.data}.ready.json`));
         } catch (err: unknown) {
           if (err instanceof TerminalRuntimeUnavailableError) throw err;
           throw new TerminalRuntimeUnavailableError(err);
         }
         return { ok: true };
+      });
+    },
+
+    async sweepOrphanedSessions(): Promise<{ scanned: number; deleted: number; failed: number }> {
+      return withMutationLock(async () => {
+        const descriptors = await listDescriptors();
+        const retained = new Set(descriptors.map((descriptor) => descriptor.sessionName));
+        const zellijPath = join(terminalRuntimeRoot, "generations", generation, "zellij");
+        let stdout: string;
+        try {
+          const result = await runCommand(zellijPath, ["list-sessions", "--no-formatting"], {
+            cwd: homePath,
+            env: systemdEnv,
+            timeoutMs: SYSTEMCTL_TIMEOUT_MS,
+          });
+          stdout = result.stdout;
+        } catch (err: unknown) {
+          console.warn("[terminal-runtime] orphan sweep list failed:", err instanceof Error ? err.name : "UnknownError");
+          return { scanned: 0, deleted: 0, failed: 1 };
+        }
+        const candidates = stdout
+          .split(/\r?\n/)
+          .filter((line) => /\bEXITED\b/i.test(line))
+          .map((line) => line.trim().split(/\s+/)[0])
+          .filter((name) => /^matrix-rt_[0-9a-f]{32}$/.test(name) && !retained.has(name))
+          .slice(0, MAX_ORPHAN_SWEEP_CANDIDATES);
+        if (candidates.length > 0) {
+          console.info("[terminal-runtime]", {
+            event: "terminal.runtime.orphan.detected",
+            count: candidates.length,
+          });
+        }
+        let deleted = 0;
+        let failed = 0;
+        for (let start = 0; start < candidates.length; start += MAX_ORPHAN_SWEEP_CONCURRENCY) {
+          const outcomes = await Promise.all(
+            candidates.slice(start, start + MAX_ORPHAN_SWEEP_CONCURRENCY).map(async (sessionName) => {
+              try {
+                await runCommand(zellijPath, ["delete-session", sessionName, "--force"], {
+                  cwd: homePath,
+                  env: systemdEnv,
+                  timeoutMs: SYSTEMCTL_TIMEOUT_MS,
+                });
+                console.info("[terminal-runtime]", {
+                  event: "terminal.runtime.orphan.deleted",
+                  sessionName,
+                });
+                return "deleted" as const;
+              } catch (err: unknown) {
+                const code: unknown = err instanceof Error && "code" in err
+                  ? (err as { code?: unknown }).code
+                  : undefined;
+                if (code === 2 || code === "2") return "deleted" as const;
+                console.warn("[terminal-runtime]", {
+                  event: "terminal.runtime.orphan.failed",
+                  sessionName,
+                  error: err instanceof Error ? err.name : "UnknownError",
+                });
+                return "failed" as const;
+              }
+            }),
+          );
+          deleted += outcomes.filter((outcome) => outcome === "deleted").length;
+          failed += outcomes.filter((outcome) => outcome === "failed").length;
+        }
+        return { scanned: candidates.length, deleted, failed };
       });
     },
   };

@@ -94,6 +94,7 @@ ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
 }
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-watcher-sizing.mjs" "$STAGE_DIR/bin/zellij"
+node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"
 TERMINAL_RUNTIME_GENERATION="$(
   "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
     "$STAGE_DIR/bin/zellij" \
@@ -143,6 +144,7 @@ cp -a "$ROOT_DIR/scripts/configure-hermes-matrix-defaults.mjs" "$STAGE_DIR/app/s
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
+cp -a "$ROOT_DIR/patches" "$STAGE_DIR/app/patches"
 printf '%s\n' "$TERMINAL_RUNTIME_GENERATION" > "$STAGE_DIR/app/TERMINAL_RUNTIME_GENERATION"
 # Activation follows the installed app payload so the supported updater's
 # app rollback atomically returns pre-activation bundles to dormant behavior.

@@ -36,9 +36,8 @@ suite("packaged Electron terminal clipboard", () => {
   const pasteShortcut = process.platform === "darwin" ? "Meta+V" : "Control+Shift+V";
 
   const terminalSurface = () => page
-    .getByRole("heading", { name: activeSessionName, exact: true })
-    .locator("xpath=ancestor::section[1]")
-    .locator("[data-terminal-surface]");
+    .getByTestId("desktop-terminal-app")
+    .locator('[data-retained-pane][data-active="true"] [data-terminal-surface]');
 
   async function clipboardText(): Promise<string> {
     return app.evaluate(({ clipboard }) => clipboard.readText());
@@ -273,9 +272,8 @@ suite("packaged Electron production-mode terminal selection", () => {
   let userDataDir: string;
 
   const terminalSurface = () => page
-    .getByRole("heading", { name: "matrix-task-1", exact: true })
-    .locator("xpath=ancestor::section[1]")
-    .locator("[data-terminal-surface]");
+    .getByTestId("desktop-terminal-app")
+    .locator('[data-retained-pane][data-active="true"] [data-terminal-surface]');
 
   async function terminalGrid() {
     await expect.poll(

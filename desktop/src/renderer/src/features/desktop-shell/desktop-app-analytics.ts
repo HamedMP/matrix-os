@@ -29,6 +29,7 @@ const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
   chat: "chat",
   projects: "chat",
   project: "chat",
+  shared: "chat",
 };
 
 export function analyticsKindForTab(

@@ -8,6 +8,7 @@ import {
   AgentThreadSnapshotSchema,
   ProjectAgentWorkspaceSchema,
   RuntimeSummarySchema,
+  RUNNING_RUNTIME_COMPATIBILITY,
   type AgentThreadSnapshot,
   type ProjectAgentWorkspace,
   type RuntimeSummary,
@@ -1138,6 +1139,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         { id: "gmail", name: "Gmail", category: "Google Workspace" },
         { id: "github", name: "GitHub", category: "Developer tools" },
         { id: "slack", name: "Slack", category: "Communication" },
+        { id: "twitter", name: "X", category: "Social" },
       ]);
       return;
     }
@@ -1174,6 +1176,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     if (path === "/api/system/info") {
       json(res, 200, {
         version: "stub",
+        runtimeCompatibility: RUNNING_RUNTIME_COMPATIBILITY,
         uptime: 1,
         runtime: { handle: "neo", runtimeSlot: "primary" },
         resources: { cpuCount: 8, memoryTotal: 8e9, memoryFree: 4e9, diskTotal: 1e11, diskFree: 5e10 },

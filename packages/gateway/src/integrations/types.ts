@@ -4,6 +4,14 @@ export interface ActionParam {
   type: "string" | "number" | "boolean" | "object" | "array";
   description?: string;
   required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  /** Compile-time regular-expression source used to validate string values. */
+  pattern?: string;
+  /** Safe, user-facing description returned when `pattern` does not match. */
+  patternMessage?: string;
 }
 
 export interface DirectApi {

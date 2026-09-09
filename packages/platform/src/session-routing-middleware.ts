@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { proxyChatShare } from './chat-share-proxy.js';
+import { fetchRuntimeProxy, shouldReleaseRuntimeProxyTimeout } from "./runtime-proxy-fetch.js";
+export { fetchRuntimeProxy } from "./runtime-proxy-fetch.js";
 import type { Context, MiddlewareHandler } from 'hono';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
@@ -148,39 +151,6 @@ interface CreateSessionRoutingMiddlewareOpts {
   logRouteError: (context: string, err: unknown) => void;
 }
 
-/**
- * Fetch a runtime response with a bounded header wait. Streaming responses can
- * release that timer once the upstream headers arrive so the signal does not
- * terminate a healthy, long-lived response body.
- */
-export async function fetchRuntimeProxy(
-  targetUrl: string,
-  init: RequestInit,
-  timeoutMs: number,
-  releaseTimeoutAfterHeaders: boolean,
-): Promise<Response> {
-  if (!releaseTimeoutAfterHeaders) {
-    return fetch(targetUrl, {
-      ...init,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(targetUrl, {
-      ...init,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function shouldReleaseRuntimeProxyTimeout(method: string, path: string): boolean {
-  return method === 'GET' && path === '/api/files/media';
-}
 
 function logCodeDomainUpstreamFailure(opts: {
   handle: string;
@@ -391,6 +361,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
+    if (isAppDomain && reqPath.startsWith('/shared/chat/')) return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET);
     if (isAppDomain && reqPath === '/service-worker.js') {
       return appDomainServiceWorkerResponse();
     }

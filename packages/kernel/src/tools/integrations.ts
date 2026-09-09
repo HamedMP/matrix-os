@@ -80,6 +80,39 @@ export interface DescribeServiceInput {
   service: string;
 }
 
+interface DiscoveredActionParam {
+  type?: string;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  pattern?: string;
+  patternMessage?: string;
+}
+
+function formatDiscoveredParam(name: string, definition: DiscoveredActionParam): string {
+  const constraints: string[] = [];
+  if (definition.minLength !== undefined && definition.maxLength !== undefined) {
+    constraints.push(`length: ${definition.minLength}-${definition.maxLength}`);
+  } else if (definition.minLength !== undefined) {
+    constraints.push(`minimum length: ${definition.minLength}`);
+  } else if (definition.maxLength !== undefined) {
+    constraints.push(`maximum length: ${definition.maxLength}`);
+  }
+  if (definition.minimum !== undefined && definition.maximum !== undefined) {
+    constraints.push(`range: ${definition.minimum}-${definition.maximum}`);
+  } else if (definition.minimum !== undefined) {
+    constraints.push(`minimum: ${definition.minimum}`);
+  } else if (definition.maximum !== undefined) {
+    constraints.push(`maximum: ${definition.maximum}`);
+  }
+  if (definition.pattern !== undefined) {
+    constraints.push(`format: ${definition.patternMessage ?? "restricted format"}`);
+  }
+  return `${name}${definition.required ? " (required)" : ""}${definition.type ? `: ${definition.type}` : ""}${constraints.length > 0 ? ` [${constraints.join(", ")}]` : ""}`;
+}
+
 /** Lists Matrix-approved actions and parameter names for one service. */
 export async function describeServiceHandler(
   input: DescribeServiceInput,
@@ -95,13 +128,17 @@ export async function describeServiceHandler(
     const available = (await res.json()) as Array<{
       id: string;
       name: string;
-      actions?: Record<string, { description?: string; risk?: "read" | "write" | "destructive"; params?: Record<string, { type?: string; required?: boolean }> }>;
+      actions?: Record<string, {
+        description?: string;
+        risk?: "read" | "write" | "destructive";
+        params?: Record<string, DiscoveredActionParam>;
+      }>;
     }>;
     const service = available.find((item) => item.id === input.service);
     if (!service) return textResult(`No Matrix integration is available for ${input.service}.`);
     const actions = Object.entries(service.actions ?? {}).map(([name, action]) => {
       const params = Object.entries(action.params ?? {}).map(([param, definition]) =>
-        `${param}${definition.required ? " (required)" : ""}${definition.type ? `: ${definition.type}` : ""}`,
+        formatDiscoveredParam(param, definition),
       );
       return `- ${name} [${action.risk ?? "read"}]${action.description ? ` — ${action.description}` : ""}${params.length > 0 ? ` (${params.join(", ")})` : ""}`;
     });

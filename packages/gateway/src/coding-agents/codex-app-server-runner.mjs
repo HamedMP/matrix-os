@@ -9,6 +9,9 @@ import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
+import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
+import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
+import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -290,6 +293,7 @@ const SteerControlSchema = z.object({
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
 const ControlSchema = z.discriminatedUnion("type", [
+  CodexHibernateControlSchema,
   TurnControlSchema,
   SteerControlSchema,
   InterruptControlSchema,
@@ -371,12 +375,37 @@ const pendingApprovals = new Map();
 const sessionApprovalGrants = createCodexSessionApprovalGrants();
 const pendingInputs = new Map();
 const completedControls = new Map();
+const mcpElicitations = createCodexMcpElicitations({ send: sendProvider, persist, safeText: safeExternalText });
+const idleHibernation = createCodexIdleHibernation(() => ({
+  providerThreadId: nativeThreadId, completedTurns: terminalEventCount,
+  active: activeTurn || stopping,
+  pending: pendingTurns.length + pendingApprovals.size + pendingInputs.size + pendingRpc.size + mcpElicitations.size,
+  otherControls: controlSockets.size > 1,
+}));
 const assistantItemsWithDelta = new Set();
 const assistantDeltaBuffers = new Map();
 const startedToolItems = new Set();
 const toolItemsWithOutput = new Set();
 const toolBoundaryWaiters = new Set();
 let toolBoundaryVersion = 0;
+let executionExpired = false;
+let rejectExecution;
+const executionWatchdog = createCodexExecutionWatchdog({
+  waitingForHuman: () => pendingApprovals.size > 0 || pendingInputs.size > 0 || mcpElicitations.size > 0,
+  expire: (diagnostic) => {
+    if (!activeTurn) return;
+    executionExpired = true;
+    process.stderr.write(`${JSON.stringify({
+      event: "coding_execution_expired",
+      phase: diagnostic.phase,
+      durationMs: diagnostic.durationMs,
+      dispatchId: digest([nativeThreadId, activeNativeTurnId]),
+      ...(diagnostic.toolCallId ? { toolCallId: diagnostic.toolCallId } : {}),
+      remoteOutcome: "unknown",
+    })}\n`);
+    rejectExecution?.(new Error("Coding execution deadline exceeded"));
+  },
+});
 
 function settleToolBoundaryWaiters(reachedBoundary) {
   for (const waiter of toolBoundaryWaiters) {
@@ -761,6 +790,7 @@ async function handleItemLifecycle(raw) {
       ...details,
     });
     startedToolItems.add(matrixItemId);
+    executionWatchdog.toolStarted(matrixItemId, item.type);
     return true;
   }
 
@@ -788,6 +818,7 @@ async function handleItemLifecycle(raw) {
     outcome: toolOutcome(item.status),
   });
   startedToolItems.delete(matrixItemId);
+  executionWatchdog.toolCompleted(matrixItemId);
   toolItemsWithOutput.delete(matrixItemId);
   publishToolBoundary(parsed.data.params.turnId);
   return true;
@@ -795,7 +826,7 @@ async function handleItemLifecycle(raw) {
 
 async function handleProviderMessage(raw) {
   const response = RpcResponseSchema.safeParse(raw);
-  if (response.success && pendingRpc.has(response.data.id)) {
+  if (raw?.method === undefined && response.success && pendingRpc.has(response.data.id)) {
     const pending = pendingRpc.get(response.data.id);
     pendingRpc.delete(response.data.id);
     clearTimeout(pending.timeout);
@@ -803,8 +834,21 @@ async function handleProviderMessage(raw) {
     else pending.resolve(response.data.result);
     return;
   }
+  // A deadline settles this execution once. Do not accept late tool results,
+  // approvals or a final answer while interruption/shutdown is in flight.
+  if (executionExpired || !activeTurn) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
+  const notificationTurnId = raw?.params?.turnId ?? raw?.params?.turn?.id;
+  if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
   if (await handleApproval(raw)) return;
   if (await handleInput(raw)) return;
+  if (await mcpElicitations.handle(raw, nativeThreadId)) return;
+  if (rejectCodexServerRequest(raw, sendProvider)) return;
   if (await handleItemLifecycle(raw)) return;
   const outputDelta = ToolOutputDeltaSchema.safeParse(raw);
   if (outputDelta.success) {
@@ -814,6 +858,11 @@ async function handleProviderMessage(raw) {
     );
     assertTrackedItemCapacity(toolItemsWithOutput, toolCallId);
     toolItemsWithOutput.add(toolCallId);
+    // MCP progress notifications can be liveness heartbeats, not useful work.
+    if (outputDelta.data.method !== "item/mcpToolCall/progress"
+      && typeof outputDelta.data.params.delta === "string" && outputDelta.data.params.delta.length > 0) {
+      executionWatchdog.progress(toolCallId);
+    }
     return;
   }
   const delta = AgentDeltaSchema.safeParse(raw);
@@ -822,6 +871,7 @@ async function handleProviderMessage(raw) {
     assertTrackedItemCapacity(assistantItemsWithDelta, messageId);
     await bufferAssistantDelta(messageId, delta.data.params.delta);
     assistantItemsWithDelta.add(messageId);
+    if (delta.data.params.delta.length > 0) executionWatchdog.progress();
     return;
   }
   const usage = TokenUsageUpdatedSchema.safeParse(raw);
@@ -893,7 +943,7 @@ async function discardProviderErrors(stream) {
 }
 
 function controlResponse(socket, value) {
-  socket.end(`${JSON.stringify(value)}\n`);
+  socket.end(`${JSON.stringify(value)}\n`, () => { if (idleHibernation.closing) stop(); });
 }
 
 async function steerActiveTurn(control) {
@@ -937,6 +987,8 @@ async function steerActiveTurn(control) {
 }
 
 async function applyControl(control) {
+  if (control.type === "hibernate") return { ok: idleHibernation.prepare(control.providerThreadId) };
+  if (idleHibernation.closing) return { ok: false };
   const replay = completedControls.get(control.clientRequestId);
   if (replay) {
     const same = replay.fingerprint === digest([control]);
@@ -950,17 +1002,19 @@ async function applyControl(control) {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
   } else if (control.type === "approval") {
-    const pending = pendingApprovals.get(control.approvalId);
-    if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
-    const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
-    sendProvider({
-      id: pending.nativeRequestId,
-      result: { decision: nativeDecision },
-    });
-    if (control.decision === "approve_for_session") {
-      sessionApprovalGrants.grant(pending.method);
+    if (!await mcpElicitations.decide(control.approvalId, control.decision)) {
+      const pending = pendingApprovals.get(control.approvalId);
+      if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
+      const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
+      sendProvider({
+        id: pending.nativeRequestId,
+        result: { decision: nativeDecision },
+      });
+      if (control.decision === "approve_for_session") {
+        sessionApprovalGrants.grant(pending.method);
+      }
+      pendingApprovals.delete(control.approvalId);
     }
-    pendingApprovals.delete(control.approvalId);
   } else {
     const pending = pendingInputs.get(control.requestId);
     if (!pending) return { ok: false };
@@ -1027,6 +1081,10 @@ await chmod(controlPath, 0o600);
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
+  void mcpElicitations.sweep().catch(() => {
+    process.stderr.write("Integration expiry could not be settled.\n");
+    stop();
+  });
   for (const [approvalId, pending] of pendingApprovals) {
     if (pending.expiresAt > now) continue;
     pendingApprovals.delete(approvalId);
@@ -1089,7 +1147,7 @@ function enqueueTurn(line) {
 }
 
 function enqueuePendingTurn(turn) {
-  if (pendingTurns.length >= MAX_PENDING_TURNS) return false;
+  if (idleHibernation.closing || stopping || pendingTurns.length >= MAX_PENDING_TURNS) return false;
   pendingTurns.push(turn);
   wakeTurn?.();
   wakeTurn = undefined;
@@ -1141,6 +1199,8 @@ function stop() {
 }
 
 async function finishTurn(outcome) {
+  executionWatchdog.stop();
+  await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
     assistantDeltaBuffers.size > 0 ||
     startedToolItems.size > 0 ||
@@ -1166,7 +1226,7 @@ async function finishTurn(outcome) {
     await persist({
       type: "matrix.codex.tool.completed",
       toolCallId,
-      outcome: "cancelled",
+      outcome: outcome === "failed" ? "failed" : "cancelled",
     });
     startedToolItems.delete(toolCallId);
     toolItemsWithOutput.delete(toolCallId);
@@ -1188,6 +1248,7 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
+  executionExpired = false;
   activeTurnTokenUsage = undefined;
   try {
     const started = await request("turn/start", turnStartParams(threadId, turn));
@@ -1201,15 +1262,32 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = undefined;
     throw error;
   }
-  return Promise.race([
-    outcome,
-    childExit.then(async () => {
-      const output = await providerOutput;
-      if (!output.ok) throw output.error;
-      if (!activeTurn) return outcome;
-      throw new Error("provider_stopped_during_turn");
-    }),
-  ]);
+  const expired = new Promise((_resolve, reject) => { rejectExecution = reject; });
+  executionWatchdog.start();
+  try {
+    return await Promise.race([
+      outcome,
+      expired,
+      childExit.then(async () => {
+        const output = await providerOutput;
+        if (!output.ok) throw output.error;
+        if (!activeTurn) return outcome;
+        throw new Error("provider_stopped_during_turn");
+      }),
+    ]);
+  } catch (error) {
+    if (executionExpired && activeNativeTurnId) {
+      try {
+        await request("turn/interrupt", { threadId, turnId: activeNativeTurnId }, 5_000);
+      } catch (_cancelError) {
+        process.stderr.write("Coding cancellation unconfirmed; remote outcome unknown.\n");
+      }
+    }
+    throw error;
+  } finally {
+    executionWatchdog.stop();
+    rejectExecution = undefined;
+  }
 }
 
 const providerOutput = consumeProviderOutput(child.stdout).then(
@@ -1249,6 +1327,10 @@ try {
   });
   nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
+  if (config.providerThreadId && nativeThreadId !== config.providerThreadId) {
+    throw new Error("provider_resume_identity_mismatch");
+  }
+  await persist({ type: "thread.started", thread_id: nativeThreadId });
   let turn = PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,
@@ -1293,6 +1375,7 @@ try {
   stop();
   await Promise.allSettled([childExit, providerOutput, providerErrors]);
 } finally {
+  executionWatchdog.stop();
   input.close();
   clearInterval(cleanupTimer);
   if (stopTimer) clearTimeout(stopTimer);

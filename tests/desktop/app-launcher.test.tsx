@@ -20,9 +20,10 @@ describe("AppLauncher", () => {
     });
     clearDesktopApps();
     seedDesktopApps([
-      { slug: "alpha", name: "Alpha", appIdentity: "utilities/alpha" },
+      { slug: "alpha", name: "Alpha", path: "apps/utilities/alpha/index.html", appIdentity: "utilities/alpha" },
       { slug: "beta", name: "Beta" },
       { slug: "bravo", name: "Bravo" },
+      { slug: "sushi-counter", name: "Sushi Counter", path: "apps/sushi-counter/index.html", appIdentity: "sushi-counter" },
     ]);
     useTabs.setState({ tabs: [], activeTabId: null });
   });
@@ -153,14 +154,59 @@ describe("AppLauncher", () => {
     expect(onAddToDesktop).not.toHaveBeenCalled();
   });
 
-  it("adds a launcher app back to the Desktop from its context menu", () => {
-    const onAddToDesktop = vi.fn();
+  it("adds an existing generated app and closes the launcher after persistence", async () => {
+    const onAddToDesktop = vi.fn(async () => "added" as const);
+    const onCloseLauncher = vi.fn();
+    render(<AppLauncher presentation="launchpad" onAddToDesktop={onAddToDesktop} onCloseLauncher={onCloseLauncher} />);
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Sushi Counter" }), { clientX: 1000, clientY: 760 });
+    const menu = screen.getByRole("menu");
+    expect(menu.style.left).toBe("760px");
+    expect(menu.style.top).toBe("648px");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" }));
+
+    await waitFor(() => expect(onCloseLauncher).toHaveBeenCalledOnce());
+    expect(onAddToDesktop).toHaveBeenCalledWith("apps/sushi-counter/index.html", expect.any(Object));
+  });
+
+  it("dismisses the context menu before closing the launcher", () => {
+    const onCloseLauncher = vi.fn();
+    render(<AppLauncher presentation="launchpad" onAddToDesktop={vi.fn()} onCloseLauncher={onCloseLauncher} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Alpha" }), { clientX: 40, clientY: 50 });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onCloseLauncher).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCloseLauncher).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the launcher usable and shows a bounded error when placement fails", async () => {
+    render(<AppLauncher
+      presentation="launchpad"
+      onAddToDesktop={vi.fn(async () => "desktop-full" as const)}
+      onCloseLauncher={vi.fn()}
+    />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Sushi Counter" }), { clientX: 1000, clientY: 760 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Desktop is full");
+    expect(screen.getByRole("menu").style.top).toBe("648px");
+  });
+
+  it("disables repeated placement while the first request is pending", async () => {
+    let resolvePlacement!: (result: "failed") => void;
+    const placement = new Promise<"failed">((resolve) => { resolvePlacement = resolve; });
+    const onAddToDesktop = vi.fn(() => placement);
     render(<AppLauncher presentation="launchpad" onAddToDesktop={onAddToDesktop} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Sushi Counter" }));
+    const action = screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" });
 
-    fireEvent.contextMenu(screen.getByRole("button", { name: "Notes" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Add Notes to Desktop" }));
+    fireEvent.click(action);
+    fireEvent.click(action);
 
-    expect(onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html");
+    expect((action as HTMLButtonElement).disabled).toBe(true);
+    expect(onAddToDesktop).toHaveBeenCalledOnce();
+    resolvePlacement("failed");
+    expect((await screen.findByRole("alert")).textContent).toContain("Could not add");
   });
 
   it("keeps the focused launcher search field free of a nested focus ring", () => {

@@ -79,6 +79,8 @@ import {
 import {
   DEFAULT_DEVELOPER_TOOLS,
   canonicalizeDeveloperTools,
+  defaultDeveloperToolsForServerType,
+  developerToolsAllowedForServerType,
   developerToolsShellList,
 } from './developer-tools.js';
 import {
@@ -1803,6 +1805,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     dispatch: NonNullable<ProvisionOptions['dispatch']>,
     prebillingIntentId?: string,
   ): Promise<ProvisionResponse> {
+    const hasExplicitDeveloperTools = input.developerTools !== undefined;
     const testSnapshotId = provisioningClass === 'preview' && 'testSnapshotId' in input
       ? input.testSnapshotId
       : undefined;
@@ -1860,6 +1863,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     const billingContext = provisioningClass === 'preview' || prebillingIntent
       ? null
       : await resolveBillingProvisionContext(deps, deps.db, request, currentTime);
+
+    const resolvedServerType = prebillingIntent?.serverType
+      ?? billingContext?.serverType
+      ?? deps.config.serverType;
+    if (
+      provisioningClass === 'customer'
+      && hasExplicitDeveloperTools
+      && !developerToolsAllowedForServerType(resolvedServerType, request.developerTools)
+    ) {
+      throw new CustomerVpsError(400, 'invalid_state', 'Invalid request');
+    }
 
     // A non-failed active machine (provisioning/running converge; recovering
     // is rejected by activeProvisionResponse). A `failed` row is retryable, so
@@ -2000,6 +2014,15 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const serverType = transactionPrebillingIntent?.serverType
         ?? transactionBillingContext?.serverType
         ?? deps.config.serverType;
+      const developerTools = provisioningClass === 'customer' && !hasExplicitDeveloperTools
+        ? defaultDeveloperToolsForServerType(serverType)
+        : request.developerTools;
+      if (
+        provisioningClass === 'customer'
+        && !developerToolsAllowedForServerType(serverType, developerTools)
+      ) {
+        throw new CustomerVpsError(400, 'invalid_state', 'Invalid request');
+      }
       await insertUserMachine(trx, {
         machineId,
         clerkUserId: request.clerkUserId,
@@ -2011,7 +2034,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         imageVersion: bundleRef.imageVersion,
         serverType,
         location: ('location' in request ? request.location : undefined) ?? deps.config.location,
-        developerTools: request.developerTools,
+        developerTools,
         registrationTokenHash: registration.hash,
         registrationTokenExpiresAt: registration.expiresAt,
         provisionedAt: currentTime.toISOString(),
