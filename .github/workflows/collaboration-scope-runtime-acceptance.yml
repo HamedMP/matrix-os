@@ -161,7 +161,7 @@ jobs:
           echo "::add-mask::$token"
           endpoint='https://app.matrix-os.com/api/internal/terminal-acceptance/run'
           evidence="$RUNNER_TEMP/scope-runtime-native-evidence.json"
-          ROOT_STAGING_DIR=/run/matrix-scope-runtime-acceptance
+          ROOT_STAGING_DIR=/var/lib/matrix-scope-runtime/acceptance
           jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" '{
             head: $head,
             previewVersion: $version,

@@ -50,7 +50,7 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow).toContain("scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs");
     expect(workflow).toContain("scripts/spikes/collaboration/native-isolation-acceptance.sh");
     expect(workflow).toContain("MATRIX_SCOPE_PROBE_DISPOSABLE=1");
-    expect(workflow).toContain("ROOT_STAGING_DIR=/run/matrix-scope-runtime-acceptance");
+    expect(workflow).toContain("ROOT_STAGING_DIR=/var/lib/matrix-scope-runtime/acceptance");
     expect(workflow).toContain("stage_root_asset");
     expect(workflow).toContain('"/usr/bin/install","--owner=root","--group=root"');
     expect(workflow).toContain('"/usr/bin/sha256sum","--"');
