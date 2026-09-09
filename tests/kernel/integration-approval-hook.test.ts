@@ -9,6 +9,24 @@ import {
 } from "../../packages/kernel/src/hooks.js";
 
 describe("integration native approval hook", () => {
+  it("requires approval for Gmail label writes but not mailbox history reads", async () => {
+    const request = vi.fn(async () => false);
+    const hook = createIntegrationApprovalHook("/tmp/missing", request);
+    for (const action of ["create_label", "modify_message"]) {
+      const result = await hook({
+        hook_event_name: "PreToolUse", tool_name: "mcp__matrix-os-ipc__call_service",
+        tool_input: { service: "gmail", action }, session_id: "s",
+      });
+      expect(result.hookSpecificOutput?.permissionDecision).toBe("deny");
+    }
+    const read = await hook({
+      hook_event_name: "PreToolUse", tool_name: "mcp__matrix-os-ipc__call_service",
+      tool_input: { service: "gmail", action: "list_history" }, session_id: "s",
+    });
+    expect(read.hookSpecificOutput?.permissionDecision).toBeUndefined();
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it("asks for managed writes but not reads", async () => {
     const request = vi.fn(async () => true);
     const hook = createIntegrationApprovalHook("/tmp/missing", request);

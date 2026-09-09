@@ -67,6 +67,10 @@ export function validateActionParams(
       ...(valueErrors.length > 0 ? { valueErrors } : {}),
     };
   }
+  if (actionDef.paramsSchema && !actionDef.paramsSchema.safeParse(params ?? {}).success) {
+    // Keep arbitrary caller keys and values out of client-facing schema errors.
+    return { valid: false, missing: [], typeErrors: ["params: invalid value"] };
+  }
   return { valid: true };
 }
 

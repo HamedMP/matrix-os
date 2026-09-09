@@ -1,3 +1,5 @@
+import type { z } from "zod/v4";
+
 export interface ActionParam {
   type: "string" | "number" | "boolean" | "object" | "array";
   description?: string;
@@ -28,6 +30,8 @@ export interface ServiceAction {
   description: string;
   params: Record<string, ActionParam>;
   risk: IntegrationActionRisk;
+  /** Constraints only: schemas must not coerce or transform input. */
+  paramsSchema?: z.ZodType;
   componentKey?: string;
   directApi?: DirectApi;
 }
