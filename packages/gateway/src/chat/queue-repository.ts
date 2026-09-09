@@ -113,6 +113,7 @@ export interface EnqueueSharedQueuedTurnInput extends Omit<EnqueueQueuedTurnInpu
   payloadHash: string;
   expectedRevision: number;
   acceptedAt: string;
+  retryOfQueuedTurnId?: string;
 }
 
 export interface SharedQueuedTurn {
@@ -123,7 +124,8 @@ export interface SharedQueuedTurn {
   requestingActorId: string;
   acceptedSequence: number;
   acceptedAuthEpoch: number;
-  state: "queued" | "claimed" | "cancelled";
+  retryOfRequestId?: string;
+  state: "queued" | "claimed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
   parts: CanonicalQueueChatTurnRequest["parts"];
   selection: CanonicalQueueChatTurnRequest["selection"];
   createdAt: string;
@@ -193,6 +195,9 @@ export class ChatQueueRepository {
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     const scopeId = CollaborationIdSchema.parse(input.scopeId);
     const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(input.queuedTurnId);
+    const retryOfQueuedTurnId = input.retryOfQueuedTurnId === undefined
+      ? undefined
+      : CanonicalChatQueuedTurnIdSchema.parse(input.retryOfQueuedTurnId);
     const clientRequestId = CollaborationIdSchema.parse(input.clientRequestId);
     const requestingActorId = CollaborationActorIdSchema.parse(input.requestingActorId);
     const selection = CanonicalChatModelSelectionSchema.parse(input.selection);
@@ -266,6 +271,7 @@ export class ChatQueueRepository {
         accepted_seq: acceptedSequence,
         payload_hash: input.payloadHash,
         accepted_auth_epoch: input.acceptedAuthEpoch,
+        retry_of_queued_turn_id: retryOfQueuedTurnId ?? null,
         position,
         status: "queued",
         parts: jsonb(parts),
@@ -622,20 +628,48 @@ export class ChatQueueRepository {
     const claimedAt = new Date(input.claimedAt).toISOString();
     return this.transact(async (trx) => {
       const candidateScope = await trx.selectFrom("chat_queued_turns")
-        .select("collaboration_scope_id")
+        .select(["collaboration_scope_id", "requesting_actor_id"])
         .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
         .orderBy("position")
         .executeTakeFirst();
-      let sharedScope: { id: string; authority_generation: number } | undefined;
+      let sharedScope: {
+        id: string;
+        authority_generation: number;
+        lifecycle: string;
+        auth_epoch: number;
+        execution_generation: number | null;
+        execution_eligibility: unknown;
+      } | undefined;
+      let sharedAdmission: "allowed" | "unauthorized" | "unavailable" = "allowed";
       if (candidateScope?.collaboration_scope_id) {
         const sharedTrx = trx as unknown as Transaction<OwnerCollaborationDatabase>;
         sharedScope = await sharedTrx.selectFrom("collaboration_scopes")
-          .select(["id", "authority_generation"])
+          .select([
+            "id", "authority_generation", "lifecycle", "auth_epoch",
+            "execution_generation", "execution_eligibility",
+          ])
           .where("id", "=", candidateScope.collaboration_scope_id)
           .forUpdate()
           .executeTakeFirst();
         if (!sharedScope) return null;
+        if (sharedScope.lifecycle !== "shared" || sharedScope.execution_generation === null
+          || sharedScope.execution_eligibility === null) {
+          sharedAdmission = "unavailable";
+        } else if (!candidateScope.requesting_actor_id) {
+          sharedAdmission = "unauthorized";
+        } else {
+          const member = await sharedTrx.selectFrom("collaboration_members")
+            .select(["role", "status", "expires_at"])
+            .where("scope_id", "=", sharedScope.id)
+            .where("actor_id", "=", candidateScope.requesting_actor_id)
+            .forUpdate()
+            .executeTakeFirst();
+          if (!member || member.status !== "accepted" || member.role === "viewer"
+            || (member.expires_at !== null && new Date(member.expires_at).getTime() <= new Date(claimedAt).getTime())) {
+            sharedAdmission = "unauthorized";
+          }
+        }
       }
       const chat = await ownedChat(trx, owner, chatId);
       if (!chat) throw new ChatNotFoundError(chatId);
@@ -649,6 +683,37 @@ export class ChatQueueRepository {
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
+      if (candidate.collaboration_scope_id && sharedAdmission !== "allowed") {
+        const terminalized = await trx.updateTable("chat_queued_turns").set({
+          status: sharedAdmission,
+          updated_at: claimedAt,
+        }).where("id", "=", candidate.id)
+          .where("status", "=", "queued")
+          .returning("id")
+          .executeTakeFirst();
+        if (!terminalized) return null;
+        await trx.updateTable("chat_queued_turns")
+          .set({ position: sql<number>`position - 1`, updated_at: claimedAt })
+          .where("chat_id", "=", chatId)
+          .where("status", "=", "queued")
+          .where("position", ">", Number(candidate.position))
+          .execute();
+        const revision = Number(chat.revision) + 1;
+        await trx.updateTable("chats").set({ revision, updated_at: claimedAt })
+          .where("id", "=", chatId)
+          .where("revision", "=", Number(chat.revision))
+          .executeTakeFirstOrThrow();
+        await appendSharedEvent(trx as unknown as Transaction<OwnerCollaborationDatabase>, {
+          scopeId: candidate.collaboration_scope_id,
+          resourceId: chatId,
+          revision,
+          authorityGeneration: Number(sharedScope?.authority_generation ?? 0),
+          eventType: `chat.ai_request.${sharedAdmission}`,
+          payload: { queuedTurnId: candidate.id, actorId: candidate.requesting_actor_id, state: sharedAdmission },
+          createdAt: claimedAt,
+        });
+        return null;
+      }
       const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
         .where("queued_turn_id", "=", candidate.id)
         .where("status", "=", "pending")
@@ -871,6 +936,7 @@ function toSharedQueuedTurn(row: Selectable<ChatQueuedTurnsTable>): SharedQueued
     requestingActorId: row.requesting_actor_id,
     acceptedSequence: Number(row.accepted_seq),
     acceptedAuthEpoch: Number(row.accepted_auth_epoch),
+    ...(row.retry_of_queued_turn_id ? { retryOfRequestId: row.retry_of_queued_turn_id } : {}),
     state: row.status,
     parts: CanonicalChatQueuedTurnSchema.shape.parts.parse(parseJson(row.parts)),
     selection: CanonicalChatModelSelectionSchema.parse(parseJson(row.selection)),

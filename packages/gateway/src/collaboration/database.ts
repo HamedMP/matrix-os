@@ -105,6 +105,25 @@ export interface CollaborationSchemaMigrationsTable {
   applied_at: Timestamp;
 }
 
+export interface ChatCollaborationCommandsTable {
+  id: string;
+  scope_id: string;
+  chat_id: string;
+  target_request_id: string | null;
+  run_id: string | null;
+  approval_id: string | null;
+  actor_id: string;
+  client_request_id: string;
+  kind: "approval" | "cancel" | "retry";
+  payload_hash: string;
+  decision: string | null;
+  authorized_epoch: number;
+  state: "accepted" | "completed" | "failed" | "reconciling";
+  result_ref: JsonValue | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface CollaborationDatabase {
   collaboration_scopes: CollaborationScopesTable;
   collaboration_members: CollaborationMembersTable;
@@ -114,6 +133,7 @@ export interface CollaborationDatabase {
   collaboration_audit: CollaborationAuditTable;
   collaboration_directory_outbox: CollaborationDirectoryOutboxTable;
   collaboration_schema_migrations: CollaborationSchemaMigrationsTable;
+  chat_collaboration_commands: ChatCollaborationCommandsTable;
 }
 
 export type OwnerCollaborationDatabase = ChatDatabase & CollaborationDatabase;
@@ -126,6 +146,32 @@ export async function bootstrapCollaborationDatabase(
       version INTEGER PRIMARY KEY CHECK (version > 0),
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_collaboration_commands (
+      id UUID PRIMARY KEY,
+      scope_id UUID NOT NULL,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      target_request_id TEXT,
+      run_id TEXT REFERENCES chat_runs(id) ON DELETE SET NULL,
+      approval_id TEXT,
+      actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+      client_request_id UUID NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('approval', 'cancel', 'retry')),
+      payload_hash TEXT NOT NULL CHECK (payload_hash ~ '^[a-f0-9]{64}$'),
+      decision TEXT,
+      authorized_epoch BIGINT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('accepted', 'completed', 'failed', 'reconciling')),
+      result_ref JSONB,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      UNIQUE (scope_id, actor_id, client_request_id, kind)
+    )
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_collaboration_one_approval_decision
+    ON chat_collaboration_commands(scope_id, approval_id)
+    WHERE kind = 'approval'
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_scopes (
