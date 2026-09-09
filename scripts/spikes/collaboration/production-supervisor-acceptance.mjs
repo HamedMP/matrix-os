@@ -32,6 +32,7 @@ const SYSTEMD_WORKER_FAILURES = {
   ScopeRuntimeIdentityUidError: "identity_uid",
   ScopeRuntimeIdentityWorkingDirectoryError: "identity_working_directory",
   ScopeRuntimeInvocationError: "invocation",
+  ScopeRuntimeUnknownError: "unknown",
 };
 
 class AcceptanceError extends Error {
@@ -229,6 +230,12 @@ async function runtimeCreationFailureCode(since) {
     "--unit", SERVICE, "--since", since, "--grep", "fixed-profile launch failed:",
     "--no-pager", "--output=cat", "--lines=20",
   ]);
+  const supervisorWorker = /fixed-profile launch failed:\s+(ScopeRuntime[A-Za-z]+Error)\b/
+    .exec(supervisorJournal.stdout)?.[1];
+  if (supervisorJournal.code === 0 && supervisorWorker
+    && Object.hasOwn(SYSTEMD_WORKER_FAILURES, supervisorWorker)) {
+    return `runtime_create_failed_worker_${SYSTEMD_WORKER_FAILURES[supervisorWorker]}`;
+  }
   const activationStatus = /ScopeRuntimeActivationStatus([1-9][0-9]{0,2})Error\b/
     .exec(supervisorJournal.stdout)?.[1];
   if (supervisorJournal.code === 0 && activationStatus) {
