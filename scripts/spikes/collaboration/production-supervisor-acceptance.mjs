@@ -13,7 +13,8 @@ const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const DISABLED_MARKER = "/opt/matrix/app/SCOPE_RUNTIME_DISABLED";
 const MARKER_BACKUP = "/var/tmp/matrix-scope-runtime-disabled.acceptance";
 const BUNDLE_VERSION = "/opt/matrix/app/BUNDLE_VERSION";
-const EXPECTED_PROFILE_DIGEST = "db0bcb5905e1543f87fcd81de4f44e80be89116aaf54fd98a502874f06e91738";
+const RELEASE_METADATA = "/opt/matrix/release.json";
+const EXPECTED_PROFILE_DIGEST = "66abf651c55696420fb28471b78b6a4e8d656aa8a7232a51dd593e51681569e8";
 const EXPECTED_PROFILE_ID = "scope-runtime-proof-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -75,6 +76,21 @@ async function mustCommand(commandPath, args, failure, timeout) {
   const result = await command(commandPath, args, timeout);
   assert(result.code === 0, failure);
   return result.stdout;
+}
+
+async function readInstalledRelease() {
+  const entry = await pathType(RELEASE_METADATA);
+  assert(entry?.isFile() && !entry.isSymbolicLink() && entry.size > 0 && entry.size <= 16 * 1024,
+    "exact_bundle_required");
+  try {
+    const release = JSON.parse(await readFile(RELEASE_METADATA, "utf8"));
+    assert(release && typeof release === "object" && !Array.isArray(release), "exact_bundle_required");
+    return release;
+  } catch (error) {
+    if (error instanceof AcceptanceError) throw error;
+    if (error instanceof SyntaxError) throw new AcceptanceError("exact_bundle_required");
+    throw error;
+  }
 }
 
 async function waitFor(check, timeoutMs, failure) {
@@ -317,13 +333,39 @@ async function openCrashRequest() {
   return { socket, closed };
 }
 
+async function restoreDormantService(runtimeUnits) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await command("/usr/bin/systemctl", ["stop", SERVICE]);
+    for (const unit of runtimeUnits) {
+      await command("/usr/bin/systemctl", ["stop", unit]);
+      await command("/usr/bin/systemctl", ["reset-failed", unit]);
+    }
+    await command("/usr/bin/systemctl", ["disable", SERVICE]);
+
+    const enabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
+    const active = await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE]);
+    let runtimeActive = false;
+    for (const unit of runtimeUnits) {
+      if ((await command("/usr/bin/systemctl", ["is-active", "--quiet", unit])).code === 0) {
+        runtimeActive = true;
+      }
+    }
+    if (enabled.stdout === "disabled" && active.code !== 0 && !runtimeActive) return;
+
+    await command("/usr/bin/systemctl", ["kill", "--kill-whom=all", "--signal=SIGKILL", SERVICE]);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new AcceptanceError("service_cleanup_failed");
+}
+
 async function runAcceptance() {
   assert(process.getuid?.() === 0, "root_required");
   const expectedHead = process.env.MATRIX_SCOPE_EXPECTED_HEAD ?? "";
   assert(/^[a-f0-9]{40}$/.test(expectedHead), "expected_head_invalid");
   const bundleVersion = (await readFile(BUNDLE_VERSION, "utf8")).trim();
-  assert(/^[A-Za-z0-9._-]{1,128}$/.test(bundleVersion)
-    && bundleVersion.endsWith(expectedHead.slice(0, 7)), "exact_bundle_required");
+  assert(/^[A-Za-z0-9._-]{1,128}$/.test(bundleVersion), "exact_bundle_required");
+  const release = await readInstalledRelease();
+  assert(release.gitCommit === expectedHead, "exact_bundle_required");
   const marker = await pathType(DISABLED_MARKER);
   assert(marker?.isFile() && !marker.isSymbolicLink(), "disabled_marker_required");
   assert(!(await pathType(MARKER_BACKUP)), "marker_backup_collision");
@@ -413,16 +455,11 @@ async function runAcceptance() {
           error instanceof Error ? error.name : "UnknownError"}\n`);
       }
     }
-    await command("/usr/bin/systemctl", ["stop", SERVICE]);
-    for (const unit of runtimeUnits) {
-      await command("/usr/bin/systemctl", ["stop", unit]);
-      await command("/usr/bin/systemctl", ["reset-failed", unit]);
-    }
-    await command("/usr/bin/systemctl", ["disable", SERVICE]);
+    await restoreDormantService(runtimeUnits);
     if (markerMoved) {
       const currentMarker = await pathType(DISABLED_MARKER);
-      if (!currentMarker) await rename(MARKER_BACKUP, DISABLED_MARKER);
-      else await rm(MARKER_BACKUP, { force: true });
+      assert(!currentMarker, "disabled_marker_collision");
+      await rename(MARKER_BACKUP, DISABLED_MARKER);
     }
   }
 

@@ -20,11 +20,26 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("MATRIX_SCOPE_PRODUCTION_DISPOSABLE");
     expect(source).toContain("MATRIX_SCOPE_EXPECTED_HEAD");
     expect(source).toContain("/opt/matrix/app/BUNDLE_VERSION");
+    expect(source).toContain("/opt/matrix/release.json");
+    expect(source).toContain("release.gitCommit === expectedHead");
+    expect(source).not.toContain("expectedHead.slice(0, 7)");
     expect(source).toContain("/opt/matrix/app/SCOPE_RUNTIME_DISABLED");
     expect(source).toContain("matrix-scope-runtime.service");
     expect(source).toContain("scope_runtime_service_default=disabled");
     expect(source).toContain("scope_runtime_disabled_marker=restored");
     expect(source).toContain("finally");
+  });
+
+  it("verifies cleanup before restoring the disabled marker", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    expect(source).toContain("restoreDormantService");
+    expect(source).toContain("service_cleanup_failed");
+    expect(source).toContain('"kill", "--kill-whom=all", "--signal=SIGKILL", SERVICE');
+    expect(source).toContain("await restoreDormantService(runtimeUnits)");
+    expect(source.indexOf("await restoreDormantService(runtimeUnits)")).toBeLessThan(
+      source.indexOf("await rename(MARKER_BACKUP, DISABLED_MARKER)"),
+    );
   });
 
   it("exercises strict frames, a bounded timeout, and fixed-profile workload creation", async () => {
