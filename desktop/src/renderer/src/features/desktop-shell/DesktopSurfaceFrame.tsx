@@ -1,3 +1,4 @@
+import { WindowResizeControls } from "@matrix-os/ui";
 import {
   useCallback,
   useEffect,
@@ -148,7 +149,6 @@ export default function DesktopSurfaceFrame({
 
   const startPointerInteraction = useCallback((
     event: ReactPointerEvent,
-    kind: "move" | "resize",
   ) => {
     if (!isWindow || event.button !== 0) return;
     const target = event.target;
@@ -163,9 +163,7 @@ export default function DesktopSurfaceFrame({
       const scale = Math.max(0.01, interactionScale);
       const deltaX = (pointerEvent.clientX - startX) / scale;
       const deltaY = (pointerEvent.clientY - startY) / scale;
-      onBoundsChange(kind === "move"
-        ? { ...initial, x: initial.x + deltaX, y: initial.y + deltaY }
-        : { ...initial, width: initial.width + deltaX, height: initial.height + deltaY });
+      onBoundsChange({ ...initial, x: initial.x + deltaX, y: initial.y + deltaY });
     };
     const captureTarget = event.currentTarget as HTMLElement;
     const pointerId = event.pointerId;
@@ -269,13 +267,18 @@ export default function DesktopSurfaceFrame({
           onClose={onClose}
           onMinimize={onMinimize}
           onMaximize={onMaximize}
-          onDragStart={isWindow ? (event) => startPointerInteraction(event, "move") : undefined}
+          onDragStart={isWindow ? (event) => startPointerInteraction(event) : undefined}
         />
       ) : null}
       role={isWindow && visible ? "dialog" : undefined}
       aria-label={isWindow && visible ? `${tab.title} window` : undefined}
       aria-hidden={!visible}
       onContextMenu={(event) => event.stopPropagation()}
+      frameControls={isWindow && visible ? (
+        <WindowResizeControls bounds={surface.bounds} scale={interactionScale}
+          minimum={{ width: Math.min(440, surface.bounds.width), height: Math.min(300, surface.bounds.height) }}
+          onFocus={onFocus} onBoundsChange={onBoundsChange} />
+      ) : undefined}
       data-surface-mode={surface.mode}
       data-active={active || undefined}
       className="pointer-events-auto absolute min-h-0 min-w-0 flex-col overflow-hidden transition-[box-shadow,border-color] duration-150"
@@ -288,8 +291,9 @@ export default function DesktopSurfaceFrame({
         className="relative flex min-h-0 flex-1 flex-col"
         inert={!interactive ? true : undefined}
         style={isNativeEmbed && isWindow ? {
-          paddingRight: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
-          paddingBottom: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
+          paddingLeft: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
+          paddingRight: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
+          paddingBottom: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
         } : undefined}
       >
         <TabErrorBoundary tabTitle={tab.title} onClose={onClose}>
@@ -304,20 +308,6 @@ export default function DesktopSurfaceFrame({
           />
         </TabErrorBoundary>
       </div>
-      {isWindow ? (
-        <div
-          role="separator"
-          aria-label={`Resize ${tab.title}`}
-          className="no-drag absolute bottom-0 right-0 cursor-nwse-resize"
-          style={{
-            width: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
-            height: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
-          }}
-          onPointerDown={(event) => startPointerInteraction(event, "resize")}
-        >
-          <span className="absolute bottom-1 right-1 block size-2 border-b border-r" style={{ borderColor: "var(--border-strong)" }} />
-        </div>
-      ) : null}
     </OSWindow>
     </SurfaceChromeContext.Provider>
   );

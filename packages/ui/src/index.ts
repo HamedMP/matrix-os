@@ -75,3 +75,5 @@ export type { TerminalControlsState, TerminalControlsTransport, TerminalControls
 
 export { GettingStartedVisibilityProvider, GettingStartedBlocker, useGettingStartedVisibility, useGettingStartedBlocker, useGettingStartedPopoverFocus } from "./getting-started-visibility.js";
 export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from "./terminal/terminal-pane-request.js";
+
+export { WindowResizeControls, resizeWindowBounds, type WindowBounds, type ResizeDirection } from "./window/WindowResizeControls.js";

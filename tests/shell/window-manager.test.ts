@@ -155,6 +155,25 @@ describe("Window Manager Store", () => {
   });
 
   describe("resizeWindow", () => {
+    it("allows a terminal to shrink below its launch size and restores that size", () => {
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      const winId = useWindowManager.getState().windows[0].id;
+      useWindowManager.getState().resizeWindow(winId, 640, 400, { x: 100, y: 80 });
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 100, y: 80, width: 640, height: 400 });
+      useWindowManager.getState().closeWindow(winId);
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ width: 640, height: 400 });
+    });
+    it("updates position and dimensions in one store notification", () => {
+      useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
+      const changed = vi.fn();
+      const unsubscribe = useWindowManager.subscribe(changed);
+      const id = useWindowManager.getState().windows[0].id;
+      useWindowManager.getState().resizeWindow(id, 500, 300, { x: 60, y: 40 });
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 60, y: 40, width: 500, height: 300 });
+      unsubscribe();
+    });
     it("updates window dimensions respecting minimums", () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;

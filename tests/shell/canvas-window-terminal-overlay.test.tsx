@@ -80,6 +80,21 @@ const iframeWindow: AppWindow = {
 };
 
 describe("CanvasWindow terminal interactivity", () => {
+  it("resizes Terminal from the northwest corner at Canvas zoom without restarting it", () => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const win = { ...terminalWindow, x: 100, y: 100, width: 1100, height: 800 };
+    useWindowManager.setState({ windows: [win] });
+    useCanvasTransform.setState({ zoom: 0.5 });
+    const view = render(<CanvasWindow win={win} />);
+    expect(view.container.querySelectorAll('[data-window-resize]')).toHaveLength(8);
+    fireEvent.pointerDown(view.container.querySelector('[data-window-resize="nw"]')!, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 150 });
+    expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 300, y: 200, width: 900, height: 700 });
+    fireEvent.pointerUp(window);
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+    view.unmount();
+    vi.unstubAllGlobals();
+  });
   beforeEach(() => {
     appViewerRender.mockClear();
     terminalRender.mockClear();

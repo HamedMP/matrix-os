@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import { TERMINAL_MIN_WINDOW_HEIGHT, TERMINAL_MIN_WINDOW_WIDTH } from "@/lib/builtin-apps";
+import {
+  TERMINAL_DEFAULT_WINDOW_HEIGHT,
+  TERMINAL_DEFAULT_WINDOW_WIDTH,
+  TERMINAL_MIN_WINDOW_HEIGHT,
+  TERMINAL_MIN_WINDOW_WIDTH,
+} from "@/lib/builtin-apps";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";
@@ -60,7 +65,7 @@ function getMinimumWindowSize(path: string): { width: number; height: number } {
     : { width: MIN_WIDTH, height: MIN_HEIGHT };
 }
 
-function getEffectiveMinimumWindowSize(path: string): { width: number; height: number } {
+export function getEffectiveMinimumWindowSize(path: string): { width: number; height: number } {
   const preferred = getMinimumWindowSize(path);
   const mode = useDesktopMode.getState().mode;
   if (mode === "canvas") return preferred;
@@ -158,7 +163,7 @@ interface WindowManagerActions {
   restoreWindow: (id: string) => void;
   restoreAndFocusWindow: (id: string) => void;
   moveWindow: (id: string, x: number, y: number) => void;
-  resizeWindow: (id: string, width: number, height: number) => void;
+  resizeWindow: (id: string, width: number, height: number, position?: { x: number; y: number }) => void;
   reconcileWindowsToViewport: () => void;
   focusWindow: (id: string) => void;
   clearFocus: () => void;
@@ -252,10 +257,16 @@ function debouncedSave(
 function computeDefaultWindowSize(path: string): { width: number; height: number } {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const minSize = getEffectiveMinimumWindowSize(path);
+  const mode = useDesktopMode.getState().mode;
+  const preferred = isTerminalWindowPath(path)
+    ? { width: TERMINAL_DEFAULT_WINDOW_WIDTH, height: TERMINAL_DEFAULT_WINDOW_HEIGHT }
+    : getEffectiveMinimumWindowSize(path);
+  const width = Math.round(Math.min(1200, Math.max(preferred.width, vw * 0.6)));
+  const height = Math.round(Math.min(900, Math.max(preferred.height, vh * 0.7)));
+  if (mode === "canvas") return { width, height };
   return {
-    width: Math.round(Math.min(1200, Math.max(minSize.width, vw * 0.6))),
-    height: Math.round(Math.min(900, Math.max(minSize.height, vh * 0.7))),
+    width: Math.min(width, Math.max(1, vw - DESKTOP_WINDOW_MARGIN * 2)),
+    height: Math.min(height, Math.max(1, vh - (mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0) - DESKTOP_WINDOW_MARGIN * 2)),
   };
 }
 
@@ -525,7 +536,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
       }));
     },
 
-    resizeWindow: (id, width, height) => {
+    resizeWindow: (id, width, height, position) => {
       markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) => {
@@ -533,6 +544,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           const minSize = getEffectiveMinimumWindowSize(w.path);
           return {
             ...w,
+            ...(position ? { x: position.x, y: position.y } : {}),
             width: Math.max(minSize.width, width),
             height: Math.max(minSize.height, height),
           };
