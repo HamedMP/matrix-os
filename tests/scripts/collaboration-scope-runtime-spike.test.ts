@@ -152,6 +152,10 @@ describe("collaboration scope-runtime native isolation spike", () => {
     expect(source).toContain("failed_sdk_candidate_report_begin");
     expect(source).toContain("emit_unit_failure");
     expect(source).toContain("ExecMainStatus");
+    expect(source).toContain("text.length > 4096");
+    expect(source).toContain('text.split("\\n").slice(0, 128)');
+    expect(source).not.toContain("new Map(");
+    expect(source).not.toContain("new Set(");
     expect(source).not.toContain("--collect");
   });
 

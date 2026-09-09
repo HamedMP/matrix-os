@@ -177,33 +177,34 @@ fi
 if ! "$node_bin" --input-type=module -e '
   import { readFile } from "node:fs/promises";
   const report = JSON.parse(await readFile(process.argv[1], "utf8"));
-  const expected_baseline_results = new Map([
-    ["filesystem:/home/matrix/home", false],
-    ["filesystem:/root", true],
-    ["filesystem:/run/postgresql", true],
-    ["filesystem:/run/containerd/containerd.sock", true],
-    ["filesystem:/var/run/docker.sock", true],
-    ["filesystem:/run/systemd/private", true],
-    ["filesystem:scope-root", false],
-    ["environment:allowlist", false],
-    ["process:namespace", false],
-    ["descriptor:inheritance", true],
-    ["network:loopback", false],
-    ["network:metadata", false],
-    ["network:private", true],
-    ["network:public", false],
-    ["network:dns", false],
-    ["broker:socket", true],
-    ["supervisor:injection", false],
-    ["child:boundary-inheritance", false],
-  ]);
+  const expected_baseline_results = Object.freeze({
+    "filesystem:/home/matrix/home": false,
+    "filesystem:/root": true,
+    "filesystem:/run/postgresql": true,
+    "filesystem:/run/containerd/containerd.sock": true,
+    "filesystem:/var/run/docker.sock": true,
+    "filesystem:/run/systemd/private": true,
+    "filesystem:scope-root": false,
+    "environment:allowlist": false,
+    "process:namespace": false,
+    "descriptor:inheritance": true,
+    "network:loopback": false,
+    "network:metadata": false,
+    "network:private": true,
+    "network:public": false,
+    "network:dns": false,
+    "broker:socket": true,
+    "supervisor:injection": false,
+    "child:boundary-inheritance": false,
+  });
+  const expected_names = Object.keys(expected_baseline_results);
   const checks = Array.isArray(report?.checks) ? report.checks : [];
-  const seen = new Set();
-  const validChecks = checks.length === expected_baseline_results.size && checks.every((check) => {
-    if (typeof check?.name !== "string" || seen.has(check.name)) return false;
-    seen.add(check.name);
-    return expected_baseline_results.has(check.name) &&
-      check.passed === expected_baseline_results.get(check.name);
+  const seen = [];
+  const validChecks = checks.length === expected_names.length && checks.every((check) => {
+    if (typeof check?.name !== "string" || seen.includes(check.name)) return false;
+    seen.push(check.name);
+    return Object.prototype.hasOwnProperty.call(expected_baseline_results, check.name) &&
+      check.passed === expected_baseline_results[check.name];
   });
   if (report?.probe !== "matrix-scope-runtime" || report?.isolated !== false || !validChecks) {
     process.stderr.write("baseline_check_mismatch\n");
@@ -394,18 +395,19 @@ fi
 host_os_facts="$("$node_bin" --input-type=module -e '
   import { readFile } from "node:fs/promises";
   const text = await readFile("/etc/os-release", "utf8");
-  const values = new Map();
-  for (const line of text.split("\n")) {
+  if (text.length > 4096) process.exit(1);
+  let id = "";
+  let version = "";
+  for (const line of text.split("\n").slice(0, 128)) {
     const match = /^([A-Z_]+)=(.*)$/.exec(line);
     if (!match) continue;
     let value = match[2];
     if (value.startsWith("\"") && value.endsWith("\"")) {
       value = value.slice(1, -1);
     }
-    values.set(match[1], value);
+    if (match[1] === "ID") id = value;
+    if (match[1] === "VERSION_ID") version = value;
   }
-  const id = values.get("ID") ?? "";
-  const version = values.get("VERSION_ID") ?? "";
   if (!/^[a-z0-9._-]{1,32}$/.test(id) || !/^[0-9][0-9.]{0,15}$/.test(version)) {
     process.exit(1);
   }
