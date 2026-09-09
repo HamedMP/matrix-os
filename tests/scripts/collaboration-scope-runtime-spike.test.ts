@@ -28,6 +28,28 @@ describe("collaboration scope-runtime native isolation spike", () => {
     expect(source).toContain("cd /tmp");
     expect(source).toContain("--reuid=matrix");
     expect(source).toContain("MATRIX_SCOPE_PROBE_OWNER_SECRET=baseline-leak");
+    expect(source).toContain("expected_baseline_results");
+    expect(source).toContain("baseline_check_mismatch");
+    for (const check of [
+      "filesystem:/home/matrix/home",
+      "filesystem:/root",
+      "filesystem:/run/postgresql",
+      "filesystem:/run/containerd/containerd.sock",
+      "filesystem:/var/run/docker.sock",
+      "filesystem:/run/systemd/private",
+      "filesystem:scope-root",
+      "environment:allowlist",
+      "process:namespace",
+      "descriptor:inheritance",
+      "network:loopback",
+      "network:metadata",
+      "network:private",
+      "network:public",
+      "network:dns",
+      "broker:socket",
+      "supervisor:injection",
+      "child:boundary-inheritance",
+    ]) expect(source).toContain(`"${check}"`);
     expect(source).toContain("baseline unexpectedly passed");
     expect(source).toContain("run_fixed_profile_candidate");
     expect(source.indexOf("run_unrestricted_baseline")).toBeLessThan(

@@ -12,9 +12,14 @@ if [ "$(id -u)" != "0" ]; then
 fi
 
 readonly node_bin=/opt/matrix/runtime/node/bin/node
-readonly probe_source=/var/tmp/matrix-scope-runtime-probe.ts
-readonly sdk_probe_source=/var/tmp/matrix-scope-runtime-sdk-probe.mjs
-readonly broker_fixture_source=/var/tmp/matrix-scope-runtime-broker-fixture.mjs
+readonly asset_root="${MATRIX_SCOPE_ASSET_ROOT:-}"
+if [ "$asset_root" != "/run/matrix-scope-runtime-acceptance" ]; then
+  printf 'scope_runtime_acceptance_asset_root_invalid\n' >&2
+  exit 2
+fi
+readonly probe_source="$asset_root/matrix-scope-runtime-probe.ts"
+readonly sdk_probe_source="$asset_root/matrix-scope-runtime-sdk-probe.mjs"
+readonly broker_fixture_source="$asset_root/matrix-scope-runtime-broker-fixture.mjs"
 readonly broker_socket=/run/matrix-scope/broker.sock
 readonly supervisor_socket=/run/matrix-scope-runtime/supervisor.sock
 readonly sdk_manifest=/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk/package.json
@@ -167,7 +172,38 @@ fi
 if ! "$node_bin" --input-type=module -e '
   import { readFile } from "node:fs/promises";
   const report = JSON.parse(await readFile(process.argv[1], "utf8"));
-  if (report?.probe !== "matrix-scope-runtime" || report?.isolated !== false) process.exit(1);
+  const expected_baseline_results = new Map([
+    ["filesystem:/home/matrix/home", false],
+    ["filesystem:/root", true],
+    ["filesystem:/run/postgresql", true],
+    ["filesystem:/run/containerd/containerd.sock", true],
+    ["filesystem:/var/run/docker.sock", true],
+    ["filesystem:/run/systemd/private", true],
+    ["filesystem:scope-root", false],
+    ["environment:allowlist", false],
+    ["process:namespace", false],
+    ["descriptor:inheritance", true],
+    ["network:loopback", false],
+    ["network:metadata", false],
+    ["network:private", true],
+    ["network:public", false],
+    ["network:dns", false],
+    ["broker:socket", true],
+    ["supervisor:injection", false],
+    ["child:boundary-inheritance", false],
+  ]);
+  const checks = Array.isArray(report?.checks) ? report.checks : [];
+  const seen = new Set();
+  const validChecks = checks.length === expected_baseline_results.size && checks.every((check) => {
+    if (typeof check?.name !== "string" || seen.has(check.name)) return false;
+    seen.add(check.name);
+    return expected_baseline_results.has(check.name) &&
+      check.passed === expected_baseline_results.get(check.name);
+  });
+  if (report?.probe !== "matrix-scope-runtime" || report?.isolated !== false || !validChecks) {
+    process.stderr.write("baseline_check_mismatch\n");
+    process.exit(1);
+  }
 ' "$probe_root/baseline.json"; then
   printf 'scope_runtime_acceptance_baseline_report_invalid\n' >&2
   exit 1

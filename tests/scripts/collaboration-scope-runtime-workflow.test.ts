@@ -50,7 +50,24 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow).toContain("scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs");
     expect(workflow).toContain("scripts/spikes/collaboration/native-isolation-acceptance.sh");
     expect(workflow).toContain("MATRIX_SCOPE_PROBE_DISPOSABLE=1");
+    expect(workflow).toContain("ROOT_STAGING_DIR=/run/matrix-scope-runtime-acceptance");
+    expect(workflow).toContain("stage_root_asset");
+    expect(workflow).toContain('"/usr/bin/install","--owner=root","--group=root"');
+    expect(workflow).toContain('"/usr/bin/sha256sum","--"');
+    expect(workflow).not.toContain('"/var/tmp/matrix-scope-native-acceptance.sh"],"timeoutMs"');
     expect(workflow).toContain("scope-runtime-native-evidence-");
     expect(workflow).toContain("retention-days: 7");
+  });
+
+  it("pins actions used by the privileged acceptance job to immutable commits", async () => {
+    const workflow = await readFile(workflowPath, "utf8");
+
+    expect(workflow).toContain(
+      "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
+    );
+    expect(workflow).toContain(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7",
+    );
+    expect(workflow).not.toMatch(/uses: actions\/(?:checkout|upload-artifact)@v\d+/);
   });
 });

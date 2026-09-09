@@ -59,7 +59,7 @@ jobs:
       HEAD_SHA: ${{ needs.gate.outputs.head }}
       HANDLE: ${{ needs.gate.outputs.handle }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.gate.outputs.head }}
 
@@ -161,6 +161,7 @@ jobs:
           echo "::add-mask::$token"
           endpoint='https://app.matrix-os.com/api/internal/terminal-acceptance/run'
           evidence="$RUNNER_TEMP/scope-runtime-native-evidence.json"
+          ROOT_STAGING_DIR=/run/matrix-scope-runtime-acceptance
           jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" '{
             head: $head,
             previewVersion: $version,
@@ -251,6 +252,30 @@ jobs:
             send_command "$body"
           }
 
+          stage_root_asset() {
+            local source="$1"
+            local remote="$2"
+            local destination="$3"
+            local mode="$4"
+            local expected body response actual
+            expected="$(sha256sum "$source" | cut -d ' ' -f 1)"
+            body="$(jq -cn --arg mode "$mode" --arg source "$remote" \
+              --arg destination "$destination" '{
+                command:["/usr/bin/sudo","/usr/bin/install","--owner=root","--group=root",
+                  ("--mode=" + $mode),$source,$destination]
+              }')"
+            send_command "$body"
+            body="$(jq -cn --arg destination "$destination" '{
+              command:["/usr/bin/sudo","/usr/bin/sha256sum","--",$destination]
+            }')"
+            response="$RUNNER_TEMP/scope-runtime-root-asset-hash.json"
+            send_signed_command "$body" "$response"
+            jq -e 'select(.exitCode == 0 and .timedOut == false and
+              .truncated == false and .signal == null)' "$response" >/dev/null
+            actual="$(jq -er '.stdout | capture("^(?<hash>[0-9a-f]{64})  ").hash' "$response")"
+            [ "$actual" = "$expected" ]
+          }
+
           cleanup_remote() {
             local body
             body='{"command":["/usr/bin/rm","-f","--",
@@ -263,21 +288,46 @@ jobs:
               "/var/tmp/matrix-scope-native-acceptance.sh",
               "/var/tmp/matrix-scope-native-acceptance.sh.b64"]}'
             send_command "$body" || true
+            body="$(jq -cn --arg root "$ROOT_STAGING_DIR" '{
+              command:["/usr/bin/sudo","/usr/bin/rm","-rf","--",$root]
+            }')"
+            send_command "$body" || true
           }
           trap cleanup_remote EXIT
 
+          stage_body="$(jq -cn --arg root "$ROOT_STAGING_DIR" '{
+            command:["/usr/bin/sudo","/usr/bin/install","--directory",
+              "--owner=root","--group=root","--mode=0700",$root]
+          }')"
+          send_command "$stage_body"
+
           upload_asset scripts/spikes/collaboration/scope-runtime-probe.ts \
             /var/tmp/matrix-scope-runtime-probe.ts 0644
+          stage_root_asset scripts/spikes/collaboration/scope-runtime-probe.ts \
+            /var/tmp/matrix-scope-runtime-probe.ts \
+            "$ROOT_STAGING_DIR/matrix-scope-runtime-probe.ts" 0644
           upload_asset scripts/spikes/collaboration/scope-runtime-sdk-probe.mjs \
             /var/tmp/matrix-scope-runtime-sdk-probe.mjs 0644
+          stage_root_asset scripts/spikes/collaboration/scope-runtime-sdk-probe.mjs \
+            /var/tmp/matrix-scope-runtime-sdk-probe.mjs \
+            "$ROOT_STAGING_DIR/matrix-scope-runtime-sdk-probe.mjs" 0644
           upload_asset scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs \
             /var/tmp/matrix-scope-runtime-broker-fixture.mjs 0644
+          stage_root_asset scripts/spikes/collaboration/scope-runtime-broker-fixture.mjs \
+            /var/tmp/matrix-scope-runtime-broker-fixture.mjs \
+            "$ROOT_STAGING_DIR/matrix-scope-runtime-broker-fixture.mjs" 0644
           upload_asset scripts/spikes/collaboration/native-isolation-acceptance.sh \
             /var/tmp/matrix-scope-native-acceptance.sh 0700
+          stage_root_asset scripts/spikes/collaboration/native-isolation-acceptance.sh \
+            /var/tmp/matrix-scope-native-acceptance.sh \
+            "$ROOT_STAGING_DIR/matrix-scope-native-acceptance.sh" 0700
 
-          run_body='{"command":["/usr/bin/sudo","/usr/bin/env",
-            "MATRIX_SCOPE_PROBE_DISPOSABLE=1",
-            "/var/tmp/matrix-scope-native-acceptance.sh"],"timeoutMs":180000}'
+          run_body="$(jq -cn --arg root "$ROOT_STAGING_DIR" '{
+            command:["/usr/bin/sudo","/usr/bin/env",
+              "MATRIX_SCOPE_PROBE_DISPOSABLE=1",
+              ("MATRIX_SCOPE_ASSET_ROOT=" + $root),
+              ($root + "/matrix-scope-native-acceptance.sh")],timeoutMs:180000
+          }')"
           response="$RUNNER_TEMP/scope-runtime-native-run.json"
           if ! send_signed_command "$run_body" "$response"; then
             cp "$response" "$evidence" 2>/dev/null || true
@@ -308,7 +358,7 @@ jobs:
 
       - name: Upload public-safe native evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: scope-runtime-native-evidence-${{ needs.gate.outputs.head }}
           path: ${{ runner.temp }}/scope-runtime-native-evidence.json
