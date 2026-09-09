@@ -14,10 +14,10 @@ export default function RuntimeCompatibilityGate({ children }: { children: React
   const { status } = useRuntimeCompatibility(api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const [operationHidden, setOperationHidden] = useState(false);
-  // At most four statuses per computer session; polling must not nag after dismissal.
+  // At most three statuses per computer session; rechecks must not nag after dismissal.
   const [dismissed, setDismissed] = useState<RuntimeCompatibilityStatus[]>([]);
   const [nativeEmbedsSuspended, setNativeEmbedsSuspended] = useState(false);
-  const notice = status === "checking" || status === "compatible" ? null : status;
+  const notice = status === "checking" || status === "compatible" || status === "unavailable" ? null : status;
   const requestedOpen = notice !== null && !dismissed.includes(notice);
   const repair = useCompatibilityRepair(api, runtimeSlot, requestedOpen);
   const open = requestedOpen || (repair.busy && !operationHidden);

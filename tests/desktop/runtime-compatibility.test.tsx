@@ -15,7 +15,7 @@ beforeEach(() => {
   vi.stubGlobal("operator", { invoke: vi.fn(async () => ({ ok: true })) });
   useUi.setState({ rendererOverlayCount: 0 });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("runtime compatibility lifecycle", () => {
   it("checks again on an established realtime connection", async () => {
@@ -84,6 +84,33 @@ describe("runtime compatibility lifecycle", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("Workspace")).toBe(workspace);
   });
+  it("does not poll and throttles focus checks to once every 15 minutes", async () => {
+    vi.useFakeTimers();
+    const get = vi.fn().mockResolvedValue(info);
+    const api = client(get);
+    renderHook(() => useRuntimeCompatibility(api));
+    await act(async () => {});
+    expect(get).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(14 * 60_000); });
+    expect(get).toHaveBeenCalledTimes(1);
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(get).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); window.dispatchEvent(new Event("focus")); });
+    expect(get).toHaveBeenCalledTimes(2);
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+  it("does not show an update modal when the initial network check fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const get = vi.fn().mockRejectedValue(new Error("offline"));
+    useConnection.setState({ api: client(get) });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    await act(async () => {});
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Workspace")).toBeTruthy();
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
+  });
   it("keeps a working workspace during transient probe failures", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const get = vi.fn().mockResolvedValue(info);
@@ -93,8 +120,9 @@ describe("runtime compatibility lifecycle", () => {
     await waitFor(() => expect(get).toHaveBeenCalledOnce());
     get.mockRejectedValue(new Error("offline"));
     act(() => window.dispatchEvent(new Event("online")));
-    await screen.findByRole("dialog", { name: "Update Matrix OS" });
-    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    await act(async () => {});
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByText("Workspace")).toBe(workspace);
   });
 });

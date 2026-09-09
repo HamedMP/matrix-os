@@ -3,7 +3,7 @@ import { evaluateRuntimeCompatibility, type RuntimeCompatibilityStatus } from "@
 import type { ApiClient } from "./api";
 
 export const RUNTIME_RECONNECTED_EVENT = "matrix:runtime-reconnected";
-const REFRESH_INTERVAL_MS = 60_000;
+const FOCUS_CHECK_COOLDOWN_MS = 15 * 60_000;
 
 /** One bounded probe at a time; changing computers aborts and fences old results. */
 export function useRuntimeCompatibility(api: ApiClient | null) {
@@ -14,9 +14,12 @@ export function useRuntimeCompatibility(api: ApiClient | null) {
     if (!api) return;
     let active = true;
     let checking = false;
+    let lastCheckedAt = Number.NEGATIVE_INFINITY;
     const controller = new AbortController();
-    const check = async () => {
+    const check = async (force = true) => {
       if (checking || !active) return;
+      if (!force && Date.now() - lastCheckedAt < FOCUS_CHECK_COOLDOWN_MS) return;
+      lastCheckedAt = Date.now();
       checking = true;
       try {
         const info = await api.get<unknown>("/api/system/info", {
@@ -31,17 +34,16 @@ export function useRuntimeCompatibility(api: ApiClient | null) {
       } finally { checking = false; }
     };
     void check();
-    const timer = setInterval(() => void check(), REFRESH_INTERVAL_MS);
     const recheck = () => { void check(); };
+    const recheckOnFocus = () => { void check(false); };
     window.addEventListener("online", recheck);
-    window.addEventListener("focus", recheck);
+    window.addEventListener("focus", recheckOnFocus);
     window.addEventListener(RUNTIME_RECONNECTED_EVENT, recheck);
     return () => {
       active = false;
       controller.abort();
-      clearInterval(timer);
       window.removeEventListener("online", recheck);
-      window.removeEventListener("focus", recheck);
+      window.removeEventListener("focus", recheckOnFocus);
       window.removeEventListener(RUNTIME_RECONNECTED_EVENT, recheck);
     };
   }, [api, retry]);
