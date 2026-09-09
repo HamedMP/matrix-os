@@ -111,6 +111,8 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("execution_generation_after=");
     expect(source).toContain("restart_reconciliation=passed");
     expect(source).toContain("shutdown_drain=passed");
+    expect(source).toContain("await stopRuntime(firstHandle, generationBefore)");
+    expect(source).not.toContain("await stopRuntime(firstHandle, generationAfter)");
     expect(source).toContain("systemctl");
   });
 

@@ -449,7 +449,7 @@ async function runAcceptance() {
     generationAfter = profileAfter.executionGeneration;
     assert((await command("/usr/bin/systemctl", ["is-active", "--quiet", firstUnit])).code === 0,
       "runtime_not_reconciled");
-    await stopRuntime(firstHandle, generationAfter);
+    await stopRuntime(firstHandle, generationBefore);
     runtimeUnits.splice(runtimeUnits.indexOf(firstUnit), 1);
 
     closeBroker = await startBroker();
