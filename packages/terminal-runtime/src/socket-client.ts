@@ -10,6 +10,7 @@ import {
   type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { terminalRuntimeErrorFromDetails } from "./errors.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
 import { MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES } from "./limits.js";
 import {
@@ -47,6 +48,7 @@ export class TerminalRuntimeSocketClient {
   async createTab(workspaceId: string, input: {
     name: string;
     cwd: string;
+    accessScope?: TerminalTab["accessScope"];
     command?: string[];
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab> {
@@ -99,7 +101,7 @@ export class TerminalRuntimeSocketClient {
     );
   }
 
-  async deleteWorkspace(workspaceId: string, input: { confirmTerminate: true }): Promise<void> {
+  async deleteWorkspace(workspaceId: string, input: { confirmTerminate: boolean }): Promise<void> {
     await this.call("DeleteWorkspace", { workspaceId, ...input });
   }
 
@@ -170,7 +172,7 @@ export class TerminalRuntimeSocketClient {
           const [raw] = decoder.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
           if (raw === undefined) return;
           const response = TerminalRuntimeResponseSchema.parse(raw);
-          if (!response.ok) throw new Error(response.error.message);
+          if (!response.ok) throw terminalRuntimeErrorFromDetails(response.error);
           if (response.requestId !== requestId) throw new Error("Terminal runtime response mismatch");
           finish();
           socket.end();

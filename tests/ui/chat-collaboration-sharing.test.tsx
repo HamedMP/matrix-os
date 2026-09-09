@@ -374,6 +374,60 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByText("Stale message")).toBeNull();
   });
 
+  it("keeps a newer recovery visible when it supersedes the refresh after send", async () => {
+    const scope = {
+      id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+    };
+    const message = (text: string) => ({
+      id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    let refresh!: () => Promise<void>;
+    let resolveSendRecovery!: (value: unknown) => void;
+    let messageReads = 0;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.includes("/messages?")) {
+          messageReads += 1;
+          if (messageReads === 2) {
+            return new Promise((resolve) => { resolveSendRecovery = resolve; });
+          }
+          return { messages: [message(messageReads === 1 ? "Initial message" : "Newest message")] };
+        }
+        if (path.endsWith("/chat")) {
+          return { id: chatId, scopeId, title: "Send recovery race", lifecycle: "active", revision: "1", messageCount: "1" };
+        }
+        return scope;
+      }),
+      post: vi.fn(async () => ({ ok: true })),
+      delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" />);
+    expect(await screen.findByText("Initial message")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(resolveSendRecovery).toBeTypeOf("function"));
+
+    await act(async () => { await refresh(); });
+    expect(screen.getByText("Newest message")).toBeVisible();
+    await act(async () => {
+      resolveSendRecovery({ messages: [message("Stale message")] });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Newest message")).toBeVisible();
+    expect(screen.queryByText("Shared Chat unavailable")).toBeNull();
+  });
+
   it("keeps viewer discussion controls read-only", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",

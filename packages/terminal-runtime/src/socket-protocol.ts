@@ -6,6 +6,7 @@ import {
   TerminalWorkspaceIdSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { TERMINAL_RUNTIME_PROTOCOL_ERROR_CODES } from "./errors.js";
 
 const RequestIdSchema = z.string().regex(/^req_[0-9a-f]{32}$/);
 const RequestBase = { version: z.literal(1), requestId: RequestIdSchema };
@@ -24,6 +25,7 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
       workspaceId: TerminalWorkspaceIdSchema,
       name: SafeDisplayStringSchema,
       cwd: z.string().max(4096),
+      accessScope: z.enum(["owner", "chat"]).optional(),
       command: z.array(z.string().min(1).max(4096)).min(1).max(128).optional(),
       agent: z.object({
         providerId: z.string().min(1).max(80).regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
@@ -90,7 +92,7 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
   z.object({
     ...RequestBase,
     operation: z.literal("DeleteWorkspace"),
-    input: z.object({ workspaceId: TerminalWorkspaceIdSchema, confirmTerminate: z.literal(true) }).strict(),
+    input: z.object({ workspaceId: TerminalWorkspaceIdSchema, confirmTerminate: z.boolean() }).strict(),
   }).strict(),
   z.object({
     ...RequestBase,
@@ -116,7 +118,7 @@ export const TerminalRuntimeResponseSchema = z.discriminatedUnion("ok", [
     requestId: RequestIdSchema.optional(),
     ok: z.literal(false),
     error: z.object({
-      code: z.enum(["invalid_request", "not_found", "conflict", "unavailable", "failed"]),
+      code: z.enum(TERMINAL_RUNTIME_PROTOCOL_ERROR_CODES),
       message: z.string().min(1).max(128),
     }).strict(),
   }).strict(),
