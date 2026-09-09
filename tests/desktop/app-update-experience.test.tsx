@@ -35,15 +35,16 @@ describe("App desktop update experience", () => {
     useConnection.setState({
       status: "signed-in",
       refresh: vi.fn(async () => undefined),
-      api: { get: vi.fn(async () => ({
+      api: { forRuntime() { return this; }, get: vi.fn(async () => ({
         version: "v2026.09.09-1",
         runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 3 },
       })) } as never,
     });
     render(<App />);
     expect(screen.getByText("Mission Control")).toBeTruthy();
-    expect(await screen.findByRole("dialog", { name: "Update Desktop" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Check Desktop updates" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
+    expect(screen.getByText("Local app")).toBeTruthy();
+    expect(screen.getByText("Cloud system")).toBeTruthy();
   });
 
   it("keeps manual update feedback available while signed out", async () => {

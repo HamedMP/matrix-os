@@ -166,15 +166,23 @@ window. Keep the previous generation supported while clients migrate. Only chang
 the window when the corresponding adapters and cross-version tests justify it.
 
 Electron Desktop checks at startup, on realtime reconnect,
-online/focus events, and once per minute. An unsupported window directs the user
-to Desktop updates or Computer updates; those recovery controls remain available.
+online/focus events, and once per minute. An unsupported window opens a unified update reminder with installed and available
+versions for the local app (this Mac) and cloud system (apps, files, and AI).
 An old gateway without metadata is explicitly unverified but remains usable.
 Compatibility warnings use a centered, dismissible modal without moving the
 titlebar or unmounting the workspace. The titlebar remains draggable while the
 modal is open. Later, Escape, or clicking outside dismisses each warning kind
 once per computer session, so polling does not repeatedly interrupt work.
-Desktop updates open the existing Software Update dialog; Computer updates open
-the existing System settings. Native embeds suspend only while the modal is open
+One primary action checks both current channels again and updates the component
+that needs it. If both have updates, the cloud system goes first; the local app
+restarts only after the installed and running cloud versions match the target.
+Protocol incompatibility selects the required component; missing metadata alone
+never proves which version is older. Versions are compared within each component's
+own channel, never between desktop semver and bundle dates. Failed checks stay
+explicitly unavailable. Update progress may be hidden without cancelling an
+accepted update. Changing the active computer cancels subsequent steps, and all
+cloud requests stay bound to the original runtime. The button discloses a local
+restart before confirmation; opening the reminder never installs either update. Native embeds suspend only while the modal is open
 and resume on dismissal. Transient probe failures and confirmed incompatibility
 remain advisory: users can dismiss the reminder and keep their current work.
 
