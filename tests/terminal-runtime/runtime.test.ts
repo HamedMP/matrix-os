@@ -29,7 +29,12 @@ class FakeZellij implements ZellijRuntimeAdapter {
   readonly deletedSessions: string[] = [];
   readonly renamedTabs: Array<{ tabId: number; name: string }> = [];
   readonly resizedSessions: Array<{ cols: number; rows: number }> = [];
-  readonly paneActions: Array<{ sessionName: string; tabId: number; action: TerminalPaneAction }> = [];
+  readonly paneActions: Array<{
+    sessionName: string;
+    tabId: number;
+    paneId: string;
+    action: TerminalPaneAction;
+  }> = [];
   failNextSubscription = false;
   subscriptionFailuresRemaining = 0;
   failNextObserverClose = false;
@@ -41,6 +46,7 @@ class FakeZellij implements ZellijRuntimeAdapter {
   nextSessionDeletionPause?: { started: () => void; wait: Promise<void> };
   nextSessionDeletedPause?: { started: () => void; wait: Promise<void> };
   nextAttachmentOpenPause?: { started: () => void; wait: Promise<void> };
+  exitDuringNextAttachmentOpen?: { exitCode: number | null };
   nextTabCreated?: () => void;
   private nextTabId = 1;
 
@@ -67,7 +73,11 @@ class FakeZellij implements ZellijRuntimeAdapter {
 
   async openAttachment(
     sessionName: string,
-    input: { paneId: string; onData: (data: Uint8Array) => void },
+    input: {
+      paneId: string;
+      onData: (data: Uint8Array) => void;
+      onExit: (exitCode: number | null) => void;
+    },
   ): Promise<ZellijAttachment> {
     const key = `${sessionName}:${input.paneId}`;
     const pause = this.nextAttachmentOpenPause;
@@ -90,6 +100,11 @@ class FakeZellij implements ZellijRuntimeAdapter {
       close: async () => { this.attachments.delete(key); },
     };
     this.attachments.set(key, { handle, emit: input.onData });
+    if (this.exitDuringNextAttachmentOpen) {
+      const { exitCode } = this.exitDuringNextAttachmentOpen;
+      this.exitDuringNextAttachmentOpen = undefined;
+      input.onExit(exitCode);
+    }
     return handle;
   }
 
@@ -167,12 +182,77 @@ class FakeZellij implements ZellijRuntimeAdapter {
   async writeToPane(_sessionName: string, _paneId: string, data: Uint8Array): Promise<void> {
     this.targetedWrites.push(new TextDecoder().decode(data));
   }
-  async paneAction(sessionName: string, tabId: number, action: TerminalPaneAction): Promise<void> {
-    this.paneActions.push({ sessionName, tabId, action });
+  async paneAction(sessionName: string, tabId: number, paneId: string, action: TerminalPaneAction): Promise<void> {
+    this.paneActions.push({ sessionName, tabId, paneId, action });
   }
 }
 
 describe("project-scoped terminal runtime", () => {
+  it("rejects an attachment when its pane exits while the adapter is opening it", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "one", cwd: "projects/matrix-os" });
+    zellij.exitDuringNextAttachmentOpen = { exitCode: 17 };
+
+    await expect(runtime.attach({ workspaceId: workspace.id, tabId: tab.id }, {
+      viewerId: "desktop",
+      send: () => undefined,
+    })).rejects.toThrow("Terminal tab unavailable");
+    await runtime.flushCheckpoints();
+    expect((await runtime.listWorkspaces())[0]?.tabs[0]).toMatchObject({ status: "exited", exitCode: 17 });
+    expect(zellij.attachments.size).toBe(0);
+    await runtime.shutdown();
+  });
+
+  it("enforces configurable workspace and VPS tab admission without stopping existing tabs", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const store = new TerminalWorkspaceStore({ homePath });
+    const limited = new TerminalRuntime({
+      store,
+      zellij,
+      maxTabsPerWorkspace: 2,
+      maxTabsTotal: 3,
+    });
+    const firstWorkspace = await limited.ensureWorkspace({ projectId: "first" });
+    const secondWorkspace = await limited.ensureWorkspace({ projectId: "second" });
+
+    const firstTab = await limited.createTab(firstWorkspace.id, { name: "one", cwd: "projects/first" });
+    await limited.createTab(firstWorkspace.id, { name: "two", cwd: "projects/first" });
+    await expect(limited.createTab(firstWorkspace.id, { name: "three", cwd: "projects/first" }))
+      .rejects.toThrow("Terminal workspace tab capacity reached");
+    await limited.createTab(secondWorkspace.id, { name: "three", cwd: "projects/second" });
+    await expect(limited.createTab(secondWorkspace.id, { name: "four", cwd: "projects/second" }))
+      .rejects.toThrow("Terminal runtime tab capacity reached");
+
+    expect((await limited.listWorkspaces()).flatMap((workspace) => workspace.tabs)).toHaveLength(3);
+    await limited.terminateTab({ workspaceId: firstWorkspace.id, tabId: firstTab.id });
+    await limited.createTab(firstWorkspace.id, { name: "replacement", cwd: "projects/first" });
+    await expect(limited.createTab(secondWorkspace.id, { name: "still-full", cwd: "projects/second" }))
+      .rejects.toThrow("Terminal runtime tab capacity reached");
+    expect((await limited.listWorkspaces()).flatMap((workspace) => workspace.tabs)).toHaveLength(4);
+    expect(zellij.closedTabs).toHaveLength(1);
+    expect(zellij.deletedSessions).toEqual([]);
+    await limited.shutdown();
+
+    const raised = new TerminalRuntime({
+      store: new TerminalWorkspaceStore({ homePath }),
+      zellij,
+      maxTabsPerWorkspace: 4,
+      maxTabsTotal: 8,
+    });
+    await raised.createTab(firstWorkspace.id, { name: "four", cwd: "projects/first" });
+    expect((await raised.listWorkspaces()).flatMap((workspace) => workspace.tabs)).toHaveLength(5);
+    expect(zellij.closedTabs).toHaveLength(1);
+    expect(zellij.deletedSessions).toEqual([]);
+    await raised.shutdown();
+  });
+
   it("runs twenty-three tabs in exactly one Zellij server for their project", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
@@ -292,6 +372,7 @@ describe("project-scoped terminal runtime", () => {
       return markTabExited(ref, exitCode);
     };
 
+    zellij.sessions.get(runtimeWorkspace!.zellijSessionName)?.delete(runtimeTab!.zellijTabId!);
     zellij.observers.get(runtimeWorkspace!.zellijSessionName)?.emit({
       type: "pane-closed",
       paneId: runtimeTab!.zellijPaneId!,
@@ -368,6 +449,7 @@ describe("project-scoped terminal runtime", () => {
       return markTabExited(ref, exitCode);
     };
 
+    zellij.sessions.get(runtimeWorkspace!.zellijSessionName)?.delete(runtimeTab!.zellijTabId!);
     zellij.observers.get(runtimeWorkspace!.zellijSessionName)?.emit({
       type: "pane-closed",
       paneId: runtimeTab!.zellijPaneId!,
@@ -385,7 +467,8 @@ describe("project-scoped terminal runtime", () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
     const zellij = new FakeZellij();
-    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const store = new TerminalWorkspaceStore({ homePath });
+    const runtime = new TerminalRuntime({ store, zellij });
     const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
     const tab = await runtime.createTab(workspace.id, { name: "agent", cwd: "projects/matrix-os" });
 
@@ -397,6 +480,7 @@ describe("project-scoped terminal runtime", () => {
     expect(zellij.paneActions).toEqual([{
       sessionName: [...zellij.sessions.keys()][0],
       tabId: 1,
+      paneId: "terminal_1",
       action: { type: "fullscreen" },
     }]);
 
@@ -405,7 +489,20 @@ describe("project-scoped terminal runtime", () => {
       { type: "close" },
     );
 
-    expect(zellij.closedTabs).toEqual([1]);
+    expect(zellij.paneActions.at(-1)).toMatchObject({ tabId: 1, action: { type: "close" } });
+    expect(zellij.closedTabs).toEqual([]);
+    expect((await runtime.listWorkspaces())[0]?.tabs[0]?.status).toBe("running");
+
+    const sessionName = [...zellij.sessions.keys()][0]!;
+    zellij.sessions.get(sessionName)!.get(1)!.paneId = "terminal_2";
+    zellij.observers.get(sessionName)!.emit({ type: "pane-closed", paneId: "terminal_1" });
+    await runtime.flushCheckpoints();
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneId).toBe("terminal_2");
+    expect((await runtime.listWorkspaces())[0]?.tabs[0]?.status).toBe("running");
+
+    zellij.sessions.get(sessionName)!.delete(1);
+    zellij.observers.get(sessionName)!.emit({ type: "pane-closed", paneId: "terminal_2" });
+    await runtime.flushCheckpoints();
     expect((await runtime.listWorkspaces())[0]?.tabs[0]?.status).toBe("exited");
     await runtime.shutdown();
   });
@@ -768,6 +865,25 @@ describe("project-scoped terminal runtime", () => {
     expect(zellij.attachments.size).toBe(0);
   });
 
+  it("retains a timed-out observer so a later shutdown can retry closing it", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({
+      store: new TerminalWorkspaceStore({ homePath }),
+      zellij,
+      observerCloseTimeoutMs: 5,
+    });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    await runtime.createTab(workspace.id, { name: "one", cwd: "projects/matrix-os" });
+    zellij.nextObserverClosePause = { started: () => undefined, wait: new Promise<void>(() => undefined) };
+
+    await expect(runtime.shutdown()).rejects.toThrow("Terminal observer close timed out");
+    expect(zellij.activeObserverCount).toBe(1);
+    await runtime.shutdown();
+    expect(zellij.activeObserverCount).toBe(0);
+  });
+
   it("drains queued terminal writes before shutdown closes attachments", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
@@ -976,6 +1092,28 @@ describe("project-scoped terminal runtime", () => {
       ansi: "late output",
       viewport: ["late output"],
     });
+  });
+
+  it("continues final shutdown cleanup when an observer close never settles", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store, zellij, observerCloseTimeoutMs: 5 });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "one", cwd: "projects/matrix-os" });
+    await runtime.attach({ workspaceId: workspace.id, tabId: tab.id }, {
+      viewerId: "desktop",
+      send: () => undefined,
+    });
+    let signalObserverClosing = () => undefined;
+    const observerClosing = new Promise<void>((resolve) => { signalObserverClosing = resolve; });
+    zellij.nextObserverClosePause = { started: signalObserverClosing, wait: new Promise(() => {}) };
+
+    const shutdown = runtime.shutdown();
+    await observerClosing;
+    await expect(shutdown).rejects.toThrow("Terminal observer close timed out");
+    expect(zellij.attachments.size).toBe(0);
   });
 
   it("reconciles stable Matrix tab IDs after the Zellij server restarts", async () => {

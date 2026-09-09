@@ -3,7 +3,7 @@ import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import type { AgentLaunchSpec } from "./agent-launcher.js";
-import type { createUserSystemdTerminalRuntime, UserSystemdTerminalDescriptor } from "./shell/user-systemd-terminal-runtime.js";
+import type { createUserSystemdTerminalRuntime, UserSystemdTerminalDescriptor } from "@matrix-os/terminal-runtime/user-systemd-controller";
 import { createZellijAdapter, type ZellijAdapter } from "./shell/zellij.js";
 import { createZellijRuntime, type ZellijHealth, type ZellijLayoutResult, type ZellijStartResult } from "./zellij-runtime.js";
 

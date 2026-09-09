@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { createUserSystemdTerminalRuntime } from "../shell/user-systemd-terminal-runtime.js";
+import type { createUserSystemdTerminalRuntime } from "@matrix-os/terminal-runtime/user-systemd-controller";
 import { workspaceRuntimeId } from "../user-systemd-zellij-runtime.js";
 import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
 import type { CodingAgentThreadStore } from "./thread-store.js";

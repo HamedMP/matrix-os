@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createTerminalCapacityAdmission, terminalTasksUnderPressure } from "../../packages/gateway/src/shell/terminal-runtime-capacity.js";
+import { createTerminalCapacityAdmission, terminalTasksUnderPressure } from "../../packages/terminal-runtime/src/user-systemd-capacity.js";
 
 describe("terminal runtime capacity admission", () => {
   it("uses aggregate task pressure rather than process age to shorten the idle grace", async () => {

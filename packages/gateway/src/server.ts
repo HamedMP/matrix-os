@@ -185,7 +185,7 @@ import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/c
 import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
 import { createChatIdleReaper } from "./coding-agents/chat-idle-reaper.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
-import { terminalTasksUnderPressure } from "./shell/terminal-runtime-capacity.js";
+import { terminalTasksUnderPressure } from "@matrix-os/terminal-runtime/user-systemd-capacity";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";

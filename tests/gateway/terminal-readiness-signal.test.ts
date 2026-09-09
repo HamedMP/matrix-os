@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { createUserSystemdTerminalRuntime } from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
+import { createUserSystemdTerminalRuntime } from "../../packages/terminal-runtime/src/user-systemd-controller.js";
 
 const runtimeId = `rt_${"a".repeat(32)}`;
 const generation = `gen_${"b".repeat(64)}`;

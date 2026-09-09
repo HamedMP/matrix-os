@@ -10,7 +10,7 @@ import { createWorktreeManager } from "../../packages/gateway/src/worktree-manag
 import { SessionRegistry } from "../../packages/gateway/src/session-registry.js";
 import { createSessionRuntimeBridge } from "../../packages/gateway/src/session-runtime-bridge.js";
 import { createWorkspaceSessionOrchestrator } from "../../packages/gateway/src/workspace-session-orchestrator.js";
-import { createUserSystemdTerminalRuntime } from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
+import { createUserSystemdTerminalRuntime } from "../../packages/terminal-runtime/src/user-systemd-controller.js";
 import { createUserSystemdZellijRuntime } from "../../packages/gateway/src/user-systemd-zellij-runtime.js";
 import { createWorkspaceEventPublisher } from "../../packages/gateway/src/workspace-event-publisher.js";
 import { createWorkspaceEventStore } from "../../packages/gateway/src/workspace-events.js";

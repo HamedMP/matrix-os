@@ -37,7 +37,12 @@ export interface ZellijRuntimeAdapter {
   deleteSession?(sessionName: string): Promise<void>;
   resizeSession?(sessionName: string, size: { cols: number; rows: number }): Promise<void>;
   writeToPane?(sessionName: string, paneId: string, data: Uint8Array): Promise<void>;
-  paneAction?(sessionName: string, tabId: number, action: TerminalPaneAction): Promise<void>;
+  paneAction?(
+    sessionName: string,
+    tabId: number,
+    paneId: string,
+    action: TerminalPaneAction,
+  ): Promise<void>;
 }
 
 export interface ZellijAttachment {
@@ -54,6 +59,8 @@ export interface ZellijObserver {
 export interface TerminalRuntimeOptions {
   store: TerminalWorkspaceStore;
   zellij: ZellijRuntimeAdapter;
+  maxTabsPerWorkspace?: number;
+  maxTabsTotal?: number;
   maxAttachments?: number;
   maxObservers?: number;
   maxViewersPerTab?: number;
@@ -93,9 +100,15 @@ interface ObserverState extends ZellijObserver {
   restore(): Promise<ObserverState>;
 }
 
+function tabOccupiesAdmission(tab: TerminalTab): boolean {
+  return tab.status !== "exited" && tab.status !== "failed";
+}
+
 export class TerminalRuntime {
   private readonly store: TerminalWorkspaceStore;
   private readonly zellij: ZellijRuntimeAdapter;
+  private readonly maxTabsPerWorkspace: number;
+  private readonly maxTabsTotal: number;
   private readonly attachments = new Map<string, AttachmentState>();
   private readonly observers = new Map<string, ObserverState>();
   private readonly observerReservations = new Map<string, number>();
@@ -123,6 +136,9 @@ export class TerminalRuntime {
   constructor(options: TerminalRuntimeOptions) {
     this.store = options.store;
     this.zellij = options.zellij;
+    this.maxTabsPerWorkspace = z.number().int().min(1).max(10_000).parse(options.maxTabsPerWorkspace ?? 64);
+    this.maxTabsTotal = z.number().int().min(this.maxTabsPerWorkspace).max(10_000)
+      .parse(options.maxTabsTotal ?? 256);
     this.maxAttachments = options.maxAttachments ?? 128;
     this.maxObservers = z.number().int().min(1).max(1_024).parse(options.maxObservers ?? 128);
     this.maxViewersPerTab = options.maxViewersPerTab ?? 8;
@@ -159,6 +175,18 @@ export class TerminalRuntime {
   }): Promise<TerminalTab> {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     return this.runWorkspaceMutation(async () => {
+      const workspaces = await this.listWorkspaces();
+      const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
+      if (!workspace) throw new Error("Terminal workspace not found");
+      if (workspace.tabs.filter(tabOccupiesAdmission).length >= this.maxTabsPerWorkspace) {
+        throw new Error("Terminal workspace tab capacity reached");
+      }
+      if (workspaces.reduce(
+        (count, candidate) => count + candidate.tabs.filter(tabOccupiesAdmission).length,
+        0,
+      ) >= this.maxTabsTotal) {
+        throw new Error("Terminal runtime tab capacity reached");
+      }
       const releaseObserverReservation = this.reserveObserverSlot(workspaceId);
       let stagedTab: TerminalTab | undefined;
       let runtimeIds: { tabId: number; paneId: string } | undefined;
@@ -314,17 +342,23 @@ export class TerminalRuntime {
   async paneAction(refInput: TerminalRef, actionInput: TerminalPaneAction): Promise<void> {
     const ref = TerminalRefSchema.parse(refInput);
     const action = TerminalPaneActionSchema.parse(actionInput);
-    if (action.type === "close") {
-      await this.terminateTab(ref);
-      return;
-    }
     await this.runWorkspaceMutation(async () => {
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
-      if (!tab || tab.zellijTabId === null || !this.zellij.paneAction) {
+      if (
+        !tab
+        || tab.zellijTabId === null
+        || tab.zellijPaneId === null
+        || !this.zellij.paneAction
+      ) {
         throw new Error("Terminal tab unavailable");
       }
-      await this.zellij.paneAction(workspace.zellijSessionName, tab.zellijTabId, action);
+      await this.zellij.paneAction(
+        workspace.zellijSessionName,
+        tab.zellijTabId,
+        tab.zellijPaneId,
+        action,
+      );
     });
   }
 
@@ -557,11 +591,8 @@ export class TerminalRuntime {
           const releasePaneClosure = this.reservePaneClosure(key);
           this.checkpointChain = this.checkpointChain.then(async () => {
             try {
-              if (this.attachments.has(key)) await this.handleAttachmentExit(key, null);
-              else {
-                await this.drainTabInput(key);
-                await this.retryPaneClosureCheckpoint(() => this.store.markTabExited(ref));
-              }
+              await this.drainTabInput(key);
+              await this.retryPaneClosureCheckpoint(() => this.reconcileObservedPaneClose(ref));
             } finally {
               releasePaneClosure();
             }
@@ -638,6 +669,26 @@ export class TerminalRuntime {
         console.error("[terminal-runtime] observer retry failed", error instanceof Error ? error.name : "unknown_error");
       },
     );
+  }
+
+  private async reconcileObservedPaneClose(ref: TerminalRef): Promise<void> {
+    await this.runWorkspaceMutation(async () => {
+      const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
+      const tab = workspace.tabs[ref.tabId];
+      if (!tab || tab.status === "exited" || tab.status === "failed") return;
+      const replacement = await this.zellij.findTabByInternalName?.(
+        workspace.zellijSessionName,
+        tab.zellijTabName,
+      );
+      if (replacement) {
+        await this.store.activateTab(ref, replacement);
+      } else {
+        const key = refKey(ref);
+        if (this.attachments.has(key)) await this.handleAttachmentExit(key, null);
+        else await this.store.markTabExited(ref);
+      }
+      await this.restartObserver(ref.workspaceId);
+    });
   }
 
   private reserveObserverSlot(workspaceId: string): () => void {

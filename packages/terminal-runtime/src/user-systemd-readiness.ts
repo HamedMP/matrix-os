@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import type { UserSystemdCommandRunner, UserSystemdTerminalDescriptor } from "./user-systemd-terminal-runtime.js";
+import type { UserSystemdCommandRunner, UserSystemdTerminalDescriptor } from "./user-systemd-controller.js";
 
 const CAPABILITY = "// matrix-terminal-readiness: invocation-v1";
 const ReadySchema = z.object({

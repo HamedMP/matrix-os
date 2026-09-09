@@ -7,7 +7,7 @@ import {
   createUserSystemdTerminalRuntime,
   loadInstalledTerminalRuntimeGeneration,
   type UserSystemdCommandRunner,
-} from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
+} from "../../packages/terminal-runtime/src/user-systemd-controller.js";
 
 const RUNTIME_ID = "rt_0123456789abcdef0123456789abcdef";
 const OTHER_RUNTIME_ID = "rt_fedcba9876543210fedcba9876543210";

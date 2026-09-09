@@ -232,6 +232,7 @@ type SharedChatAction =
   | { type: "page_started" }
   | { type: "page_loaded"; messages: SharedMessage[]; hasMore: boolean }
   | { type: "page_failed" }
+  | { type: "recovery_failed" }
   | { type: "draft_changed"; draft: CollaborationDraft }
   | { type: "send_started" }
   | { type: "send_finished" }
@@ -264,6 +265,7 @@ function reduceSharedChat(state: SharedChatState, action: SharedChatAction): Sha
     case "page_loaded": return { ...state, messages: action.messages, hasMoreMessages: action.hasMore,
       loadingMoreMessages: false, historyPageError: false };
     case "page_failed": return { ...state, loadingMoreMessages: false, historyPageError: true };
+    case "recovery_failed": return { ...state, loadingMoreMessages: false };
     case "draft_changed": return { ...state, draft: action.draft };
     case "send_started": return { ...state, sending: true, error: null };
     case "send_finished": return { ...state, sending: false };
@@ -308,24 +310,29 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
   const recoverCanonical = useCallback(async () => {
     // Fence pending history pages and older refreshes before reading canonical state.
     const generation = ++loadGeneration.current;
-    const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
-    const [scopeValue, chatValue] = await Promise.all([api.get(base), api.get(`${base}/chat`)]);
-    const nextScope = CollaborationScopeSchema.parse(scopeValue);
-    const nextChat = CollaborationChatSchema.parse(chatValue);
-    let combined: SharedMessage[] = [];
-    const targetCount = BigInt(nextChat.messageCount);
-    while (BigInt(combined.length) < targetCount) {
-      const after = combined.at(-1)?.sequence ?? "0";
-      const page = CollaborationChatMessagesResponseSchema.parse(await api.get(
-        `${base}/chat/messages?after=${encodeURIComponent(after)}&limit=100`,
-      )).messages;
-      const additions = page.filter((message) => !combined.some((existing) => existing.id === message.id));
-      if (additions.length === 0) throw new Error("CollaborationRecoveryIncomplete");
-      combined = [...combined, ...additions];
+    try {
+      const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
+      const [scopeValue, chatValue] = await Promise.all([api.get(base), api.get(`${base}/chat`)]);
+      const nextScope = CollaborationScopeSchema.parse(scopeValue);
+      const nextChat = CollaborationChatSchema.parse(chatValue);
+      let combined: SharedMessage[] = [];
+      const targetCount = BigInt(nextChat.messageCount);
+      while (BigInt(combined.length) < targetCount) {
+        const after = combined.at(-1)?.sequence ?? "0";
+        const page = CollaborationChatMessagesResponseSchema.parse(await api.get(
+          `${base}/chat/messages?after=${encodeURIComponent(after)}&limit=100`,
+        )).messages;
+        const additions = page.filter((message) => !combined.some((existing) => existing.id === message.id));
+        if (additions.length === 0) throw new Error("CollaborationRecoveryIncomplete");
+        combined = [...combined, ...additions];
+      }
+      if (generation !== loadGeneration.current) throw new Error("CollaborationRecoverySuperseded");
+      dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: combined, clearForegroundError: false });
+      markRead(api, base, combined);
+    } catch (failure: unknown) {
+      if (generation === loadGeneration.current) dispatch({ type: "recovery_failed" });
+      throw failure;
     }
-    if (generation !== loadGeneration.current) throw new Error("CollaborationRecoverySuperseded");
-    dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: combined, clearForegroundError: false });
-    markRead(api, base, combined);
   }, [api, scopeId]);
   useEffect(() => {
     dispatch({ type: "reset" });

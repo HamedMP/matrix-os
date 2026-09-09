@@ -277,6 +277,54 @@ describe("Chat collaboration sharing", () => {
     expect(screen.getByText("Message 3")).toBeVisible();
   });
 
+  it("reenables history pagination when a canonical refresh fails", async () => {
+    const scope = {
+      id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "viewer",
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+    };
+    const message = (sequence: number) => ({
+      id: `msg_${sequence}`, chatId, sequence: String(sequence), role: "user", state: "committed", purpose: "discussion",
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text: `Message ${sequence}` }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    let refresh!: () => Promise<void>;
+    let resolvePage!: (value: unknown) => void;
+    let failRefresh = false;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("after=1&limit=100")) {
+          return new Promise((resolve) => { resolvePage = resolve; });
+        }
+        if (failRefresh && path.endsWith("/chat")) throw new Error("refresh unavailable");
+        if (path.endsWith("after=0&limit=100")) return { messages: [message(1)] };
+        if (path.endsWith("/chat")) {
+          return { id: chatId, scopeId, title: "Recoverable pagination", lifecycle: "active", revision: "1", messageCount: "2" };
+        }
+        return scope;
+      }),
+      post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" />);
+    const loadMore = await screen.findByRole("button", { name: "Load more messages" });
+    fireEvent.click(loadMore);
+    await waitFor(() => expect(resolvePage).toBeTypeOf("function"));
+    expect(loadMore).toBeDisabled();
+
+    failRefresh = true;
+    await act(async () => { await expect(refresh()).rejects.toThrow("refresh unavailable"); });
+    await act(async () => { resolvePage({ messages: [message(2)] }); });
+
+    expect(screen.getByRole("button", { name: "Load more messages" })).toBeEnabled();
+    expect(screen.queryByText("Message 2")).toBeNull();
+  });
+
   it("ignores an older realtime refresh that finishes after a newer refresh", async () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,

@@ -18,7 +18,7 @@ export * from "./ws.js";
 export * from "./reaper.js";
 export * from "./output-pipeline.js";
 export * from "./zellij.js";
-export * from "./user-systemd-terminal-runtime.js";
+export * from "@matrix-os/terminal-runtime/user-systemd-controller";
 export * from "./user-systemd-zellij-adapter.js";
 export * from "./terminal-acceptance-routes.js";
 export * from "./terminal-window-layout-routes.js";

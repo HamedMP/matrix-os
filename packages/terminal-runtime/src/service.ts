@@ -7,6 +7,13 @@ import { TerminalRuntimeSocketClient } from "./socket-client.js";
 import { TerminalRuntimeSocketServer } from "./socket-server.js";
 import { TerminalWorkspaceStore } from "./workspace-store.js";
 import { ZellijCliRuntimeAdapter } from "./zellij-adapter.js";
+import { resolveTerminalRuntimeLimits } from "./runtime-config.js";
+import { startTerminalOrphanSweepLifecycle } from "./orphan-sweep-lifecycle.js";
+import {
+  createUserSystemdTerminalRuntime,
+  loadInstalledTerminalRuntimeGeneration,
+} from "./user-systemd-controller.js";
+import { createUserSystemdWorkspaceLifecycle } from "./user-systemd-workspace.js";
 
 const ProjectConfigSchema = z.object({
   id: z.string().min(1).max(160),
@@ -47,9 +54,24 @@ async function main(): Promise<void> {
     await client.listWorkspaces();
     return;
   }
+  const appDir = resolve(process.env.MATRIX_APP_DIR ?? "/opt/matrix/app");
+  const terminalRuntimeRoot = resolve(process.env.MATRIX_TERMINAL_RUNTIME_ROOT ?? "/opt/matrix/terminal-runtime");
+  const generation = await loadInstalledTerminalRuntimeGeneration(appDir, { terminalRuntimeRoot });
+  const controller = createUserSystemdTerminalRuntime({
+    homePath,
+    generation,
+    terminalRuntimeRoot,
+    generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
+  });
+  await controller.assertInstallationReady();
   const zellij = new ZellijCliRuntimeAdapter({
     homePath,
-    binaryPath: process.env.MATRIX_ZELLIJ_BIN ?? "/opt/matrix/bin/zellij",
+    binaryPath: join(terminalRuntimeRoot, "generations", generation, "zellij"),
+    workspaceLifecycle: createUserSystemdWorkspaceLifecycle({
+      homePath,
+      controller,
+      terminalRuntimeRoot,
+    }),
   });
   if (mode === "--rollback") {
     await rollbackTerminalWorkspaceMigration({ homePath, cutover: zellij });
@@ -58,15 +80,36 @@ async function main(): Promise<void> {
   await migrateTerminalWorkspaces({ homePath, projects: await listProjects(homePath), cutover: zellij });
   if (mode === "--migrate-only") return;
 
-  const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+  const runtime = new TerminalRuntime({
+    store: new TerminalWorkspaceStore({ homePath }),
+    zellij,
+    ...resolveTerminalRuntimeLimits(process.env),
+  });
   await runtime.restoreAll();
   const server = new TerminalRuntimeSocketServer({ socketPath, runtime });
   await server.start();
+  const orphanSweep = startTerminalOrphanSweepLifecycle({
+    intervalMs: 15 * 60 * 1_000,
+    sweep: () => controller.sweepOrphanedSessions(),
+    logCompleted: (result) => {
+      console.info("[terminal-runtime]", {
+        event: "terminal.runtime.orphan.sweep.completed",
+        ...result,
+      });
+    },
+    logFailed: (error) => {
+      console.warn(
+        "[terminal-runtime] orphan sweep failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    },
+  });
   let closing = false;
   const close = async () => {
     if (closing) return;
     closing = true;
     await server.close();
+    await orphanSweep.close();
     await runtime.shutdown();
   };
   process.once("SIGTERM", () => { void close().then(() => process.exit(0)); });
