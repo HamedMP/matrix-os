@@ -155,3 +155,41 @@ scheduled check, wait for the blue **Update** button, select it, verify the app
 relaunches on B, and confirm **What's New** displays B's generated changelog
 exactly once. Repeat the check after relaunch and verify that B is reported up
 to date.
+
+## Desktop / VPS compatibility and update freshness
+
+Desktop and host bundles have independent product versions. The running gateway
+advertises `runtimeCompatibility` from its compiled contracts in `/api/system/info`;
+it does not infer compatibility from installed release files or equal version strings.
+`minDesktopProtocol` and `maxDesktopProtocol` define the supported API-generation
+window. Keep the previous generation supported while clients migrate. Only change
+the window when the corresponding adapters and cross-version tests justify it.
+
+Electron Desktop checks before first workspace load, on realtime reconnect,
+online/focus events, and once per minute. An unsupported window directs the user
+to Desktop updates or Computer updates; those recovery controls remain available.
+An old gateway without metadata is explicitly unverified but remains usable.
+Transient probe failures preserve an already-open workspace. Incompatibility after
+a live update hides the workspace and native embeds without discarding its drafts.
+
+For canonical Chat, `messageVersion=2` explicitly opts into `actorId` and `purpose`.
+Absent or `messageVersion=1` retains the message shape accepted by Desktop
+`0.1.0-canary.20260908044406`. This applies to detail, turn admission, steering, and
+SSE snapshot/delta payloads. SSE framing (`X-Matrix-Chat-Protocol: 2`) is a separate
+contract: older Desktop releases already use it and still need message-v1 output.
+Project only validated responses, never stored rows or outbox records. Keep strict
+request validation. New additive response fields can still break old strict
+parsers; negotiate a new wire version or preserve the older projection.
+
+The updater rechecks the channel manifest even with an already-staged package and
+checks again before installing. A newer target replaces the staged package; only
+a freshly confirmed ready target may restart/install. A failed freshness check is
+retryable and never silently installs an intermediate cached release. Downloads
+remain automatic; restart remains an explicit user action. Stable, beta, canary,
+and dev retain separate feeds, and an unavailable feed must not switch channels.
+
+Rollout order: publish the backward-compatible VPS fix, ship the recovery-capable
+Desktop baseline, then retain the compatibility window until older clients have
+migrated. Existing clients cannot retroactively learn a newly introduced handshake.
+Validate the unversioned and opted-in Chat formats, a staged N+1 with N+3 now
+published, same-version reuse, failed freshness checks, and runtime-switch fencing.

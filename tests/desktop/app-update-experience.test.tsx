@@ -22,6 +22,30 @@ describe("App desktop update experience", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not load the workspace when a newer gateway requires a newer Desktop protocol", async () => {
+    vi.stubGlobal("operator", {
+      invoke: vi.fn(async (channel: string) => {
+        if (channel === "update:get-state") return { status: "disabled" };
+        if (channel === "update:get-whats-new") return { release: null, shouldOpen: false };
+        return { ok: true };
+      }),
+      on: vi.fn(() => () => undefined),
+    });
+    useAppearance.setState({ load: vi.fn(async () => undefined) });
+    useConnection.setState({
+      status: "signed-in",
+      refresh: vi.fn(async () => undefined),
+      api: { get: vi.fn(async () => ({
+        version: "v2026.09.09-1",
+        runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 3 },
+      })) } as never,
+    });
+    render(<App />);
+    expect(screen.queryByText("Mission Control")).toBeNull();
+    expect(await screen.findByText("Update Matrix OS Desktop to continue")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check Desktop updates" })).toBeTruthy();
+  });
+
   it("keeps manual update feedback available while signed out", async () => {
     const listeners = new Map<string, (payload: unknown) => void>();
     vi.stubGlobal("operator", {

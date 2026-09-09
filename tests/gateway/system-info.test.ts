@@ -13,6 +13,17 @@ function tmpHome(): string {
 }
 
 describe("T135: System info", () => {
+  it("advertises compatibility from the running code independently of release files", () => {
+    const homePath = tmpHome();
+    try {
+      expect(getSystemInfo(homePath).runtimeCompatibility).toEqual({
+        schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1,
+      });
+    } finally {
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("includes image provenance from build environment", () => {
     const homePath = tmpHome();
     const previousSha = process.env.MATRIX_BUILD_SHA;

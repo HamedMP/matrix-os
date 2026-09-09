@@ -254,7 +254,7 @@ describe("WorkTab rail integration", () => {
     });
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
-      if (path === "/api/chats/chat_global?limit=200") return {
+      if (path === "/api/chats/chat_global?limit=200&messageVersion=2") return {
         record: globalChat,
         messages: [],
         turns: [],
