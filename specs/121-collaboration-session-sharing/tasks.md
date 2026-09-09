@@ -191,11 +191,11 @@
 
 ### Implementation — PR2
 
-- [ ] T078 [US4] (PR2) Implement the fixed-profile non-root native supervisor service and least-privilege unit definitions in `distro/customer-vps/systemd/matrix-scope-runtime.service`
-- [ ] T079 [US4] (PR2) Implement strict opaque-handle supervisor IPC with no arbitrary host path/unit/env/command fields in `packages/scope-runtime/src/protocol.ts`
-- [ ] T080 [US4] (PR2) Implement gateway supervisor client, capability advertisement, timeouts, and lifecycle ownership in `packages/gateway/src/collaboration/scope-runtime-client.ts`
-- [ ] T081 [US4] (PR2) Implement bounded inference/egress broker actions that reuse existing access-source policy without exposing credentials in `packages/gateway/src/collaboration/scope-runtime-broker.ts`
-- [ ] T082 [US4] (PR2) Add release installation, compatibility, and rollback-safe disabled wiring for the supervisor in `scripts/build-host-bundle.sh`
+- [x] T078 [US4] (PR2) Implement the fixed-profile non-root native supervisor service and least-privilege unit definitions in `distro/customer-vps/systemd/matrix-scope-runtime.service`
+- [x] T079 [US4] (PR2) Implement strict opaque-handle supervisor IPC with no arbitrary host path/unit/env/command fields in `packages/scope-runtime/src/protocol.ts`
+- [x] T080 [US4] (PR2) Implement gateway supervisor client, capability advertisement, timeouts, and lifecycle ownership in `packages/gateway/src/collaboration/scope-runtime-client.ts`
+- [x] T081 [US4] (PR2) Implement bounded inference/egress broker actions that reuse existing access-source policy without exposing credentials in `packages/gateway/src/collaboration/scope-runtime-broker.ts`
+- [x] T082 [US4] (PR2) Add release installation, compatibility, and rollback-safe disabled wiring for the supervisor in `scripts/build-host-bundle.sh`
 
 ### Tests first — PR4
 
