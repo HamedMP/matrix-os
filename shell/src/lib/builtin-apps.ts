@@ -10,8 +10,11 @@ const BUILT_IN_APP_VALUES = [
 const RETIRED_BUILT_IN_APP_PATHS = new Set(["__workspace__"]);
 
 export const DEFAULT_PINNED_APPS = Object.freeze([] as string[]);
-export const TERMINAL_MIN_WINDOW_WIDTH = 1040;
-export const TERMINAL_MIN_WINDOW_HEIGHT = 680;
+export const TERMINAL_DEFAULT_WINDOW_WIDTH = 1040;
+export const TERMINAL_DEFAULT_WINDOW_HEIGHT = 680;
+// Terminal collapses its sidebar below 500px; launch size is not a resize limit.
+export const TERMINAL_MIN_WINDOW_WIDTH = 440;
+export const TERMINAL_MIN_WINDOW_HEIGHT = 300;
 
 const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["workspace", "__workspace__"],

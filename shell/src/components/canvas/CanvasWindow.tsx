@@ -1,5 +1,6 @@
 "use client";
 
+import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
@@ -24,8 +25,6 @@ import {
   WinXpTitleBarChrome,
 } from "../window/DesignTitleBarChrome";
 
-const MIN_WIDTH = 320;
-const MIN_HEIGHT = 200;
 const CANVAS_WINDOW_MOTION_MS = 280;
 const CANVAS_WINDOW_MOTION_CSS = `
 @keyframes canvas-window-restore-from-dock {
@@ -73,7 +72,6 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
   const minimizeWindow = useWindowManager((s) => s.minimizeWindow);
   const focusWindow = useWindowManager((s) => s.focusWindow);
   const moveWindow = useWindowManager((s) => s.moveWindow);
-  const resizeWindow = useWindowManager((s) => s.resizeWindow);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
   // react-doctor-disable-next-line react-doctor/no-event-handler -- false positive: `isFocused` is a derived store value, not a DOM event handler. It is read by the reset effect below (already justified for set-state-in-effect / no-adjust-state-on-prop-change), which must remain an effect because it fires on programmatic canvas scroll / focus loss where no event exists to move the logic into.
@@ -189,13 +187,6 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
   } | null>(null);
   const mouseDragCleanupRef = useRef<(() => void) | null>(null);
 
-  const resizeRef = useRef<{
-    startX: number;
-    startY: number;
-    origW: number;
-    origH: number;
-  } | null>(null);
-
   const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearMouseDragListeners = () => {
@@ -297,45 +288,6 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
       cRect?.width ?? window.innerWidth,
       cRect?.height ?? window.innerHeight,
     );
-  };
-
-  const onResizeStart = (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    resizeRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      origW: win.width,
-      origH: win.height,
-    };
-    setInteracting(true);
-    focusWindow(win.id);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-
-    // Safety: auto-clear if pointer up never fires
-    if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
-    safetyTimerRef.current = setTimeout(() => {
-      resizeRef.current = null;
-      setInteracting(false);
-    }, 5000);
-  };
-
-  const onResizeMove = (e: React.PointerEvent) => {
-    if (!resizeRef.current) return;
-    const { startX, startY, origW, origH } = resizeRef.current;
-    const dw = (e.clientX - startX) / zoom;
-    const dh = (e.clientY - startY) / zoom;
-    resizeWindow(
-      win.id,
-      Math.max(MIN_WIDTH, origW + dw),
-      Math.max(MIN_HEIGHT, origH + dh),
-    );
-  };
-
-  const onResizeEnd = () => {
-    resizeRef.current = null;
-    setInteracting(false);
-    if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
   };
 
   const titleBarHeight = 36;
@@ -650,20 +602,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           </>
         )}
       </div>
-      {/* Resize handle — hidden in fullscreen and preview */}
       {!isFullscreen && !isPreview && (
-        <div
-          className="absolute bottom-0 right-0 size-3 cursor-se-resize touch-none z-20"
-          onPointerDown={onResizeStart}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeEnd}
-          onPointerCancel={onResizeEnd}
-        >
-          <svg viewBox="0 0 12 12" className="size-3 text-muted-foreground/30">
-            <path d="M11 1v10H1" fill="none" stroke="currentColor" strokeWidth="1" />
-            <path d="M11 5v6H5" fill="none" stroke="currentColor" strokeWidth="1" />
-          </svg>
-        </div>
+        <AppWindowResizeControls win={win} scale={zoom} onInteractionChange={setInteracting} />
       )}
     </div>
   );

@@ -4,6 +4,8 @@
 // session with sequence-numbered output; scripted kernel stream.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
+import { resolve } from "node:path";
+import { readBuildSource } from "../../../../scripts/release/build-source.mjs";
 import {
   AgentThreadSnapshotSchema,
   ProjectAgentWorkspaceSchema,
@@ -21,6 +23,7 @@ export interface StubGateway {
   setConversationBusy(id: string, busy: boolean): void;
   setProjectLifecycle(lifecycle: "active" | "archived" | "deleted"): void;
   setKernelResponseDelay(delayMs: number): void;
+  setBuildCommit(commit: string): void;
   disconnectKernel(): void;
   close(): Promise<void>;
   state: {
@@ -556,6 +559,7 @@ export function codingAgentSummary(): RuntimeSummary {
 }
 
 export async function startStubGateway(options: StubGatewayOptions = {}): Promise<StubGateway> {
+  let buildCommit = readBuildSource(resolve(__dirname, "../../../.."))?.commit ?? "unknown";
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   let projectLifecycle: "active" | "archived" | "deleted" = "active";
   const state: StubGateway["state"] = {
@@ -1176,6 +1180,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     if (path === "/api/system/info") {
       json(res, 200, {
         version: "stub",
+        build: { sha: buildCommit },
         runtimeCompatibility: RUNNING_RUNTIME_COMPATIBILITY,
         uptime: 1,
         runtime: { handle: "neo", runtimeSlot: "primary" },
@@ -1309,6 +1314,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     url: `http://127.0.0.1:${port}`,
     port,
     state,
+    setBuildCommit: (commit) => { buildCommit = commit; },
     sendTerminalOutput: (data, session = "matrix-task-1") => activeTerminalOutputs[session]?.(data),
     setConversationBusy: (id, busy) => {
       if (busy) busyHermesConversations.add(id);

@@ -84,3 +84,5 @@ export { isChatMention, hasChatMentionParts, canAddChatMention, orderChatResourc
 export { ChatContextReceipt } from "./chat-agents/ChatContextReceipt.js";
 export { createChatMentionRequestTracker } from "./chat-agents/request-tracker.js";
 export { compactChatTitle } from "./chat-title.js";
+export { WindowResizeControls, resizeWindowBounds, type WindowBounds, type ResizeDirection } from "./window/WindowResizeControls.js";
+export { constrainFloatingWindow, isPointNearWindow, WINDOW_BACKGROUND_CLICK_BUFFER } from "./window/window-placement.js";

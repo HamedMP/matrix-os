@@ -32,6 +32,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
   const readLocal = useCallback(async () => {
     const [version, snapshot] = await Promise.allSettled([invoke("app:get-version", {}), invoke("update:check", {})]);
     return { version: version.status === "fulfilled" ? version.value.version : undefined,
+      source: version.status === "fulfilled" ? version.value.source : undefined,
       snapshot: snapshot.status === "fulfilled" ? snapshot.value : undefined };
   }, []);
   const perform = useCallback(async (install: boolean) => {
@@ -60,11 +61,14 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
           progress: (message) => { if (current()) setProgress(message); },
           pause: () => pause(scope.signal),
         });
-        if (current() && !latest.targets.includes("local")) {
+        if (current()) {
           const refreshed = await loadRepairPlan({ ...scope, readLocal });
-          if (current()) setPlan(refreshed);
+          if (current()) {
+            setPlan(refreshed);
+            setComplete(!refreshed.compatibilityUpdateRequired && !refreshed.targets.length);
+            setProgress(refreshed.reason);
+          }
         }
-        if (current()) setComplete(true);
       }
     } catch (err: unknown) {
       if (current()) {

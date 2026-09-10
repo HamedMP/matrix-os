@@ -15,19 +15,21 @@ it.each([
 ])("shows real versions and one update action for %s on %s", async (target, platform, deviceDescription) => {
   vi.spyOn(window.navigator, "platform", "get").mockReturnValue(platform);
   let cloudVersion = "v2026.09.09-1";
+  const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
+  let cloudCommit = target === "local" ? "c".repeat(40) : "a".repeat(40);
   const cloudNext = target === "local" ? cloudVersion : "v2026.09.09-2";
   const snapshot = target === "cloud" ? { status: "up-to-date" } : { status: "ready", version: "0.2.0", release: { version: "0.2.0", notes: "Fix" } };
   const mutations: string[] = [];
-  const post = vi.fn(async () => { mutations.push("cloud"); cloudVersion = cloudNext; return { ok: true }; });
+  const post = vi.fn(async () => { mutations.push("cloud"); cloudVersion = cloudNext; cloudCommit = source.commit; return { ok: true }; });
   const api = {
     forRuntime() { return this; }, post,
     get: vi.fn(async (path: string) => path === "/api/system/info"
-      ? { version: cloudVersion, runningVersion: cloudVersion }
+      ? { version: cloudVersion, runningVersion: cloudVersion, build: { sha: cloudCommit } }
       : { channel: "canary", latest: { version: cloudNext }, updateAvailable: cloudVersion !== cloudNext }),
   } as unknown as ApiClient;
   useConnection.setState({ api, runtimeSlot: "primary" });
   const invoke = vi.fn(async (channel: string) => {
-    if (channel === "app:get-version") return { version: "0.1.0" };
+    if (channel === "app:get-version") return { version: "0.1.0", source };
     if (channel === "update:check" || channel === "update:get-state") return snapshot;
     if (channel === "update:install") mutations.push("local");
     return { ok: true };

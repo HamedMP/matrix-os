@@ -46,6 +46,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
     acknowledgeWhatsNew: vi.fn(async () => undefined),
     getAppVersion: vi.fn(() => "1.4.0-canary.2"),
+    buildSource: null,
     completeAnalyticsFlush: vi.fn(),
     fetchSupportIdentity: vi.fn(async () => ({ status: "unavailable" })),
     fetchRuntimeSummary: vi.fn(),
@@ -118,8 +119,19 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("app:get-version")).resolves.toEqual({
       version: "1.4.0-canary.2",
+      source: null,
     });
     expect(getAppVersion).toHaveBeenCalledOnce();
+  });
+
+  it("captures and validates build provenance when handlers register", async () => {
+    const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
+    const harness = makeHarness({ buildSource: source });
+    source.commit = "c".repeat(40);
+    await expect(harness.invoke("app:get-version")).resolves.toEqual({
+      version: "1.4.0-canary.2", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] },
+    });
+    expect(() => makeHarness({ buildSource: { commit: "unknown", ancestors: [] } })).toThrow();
   });
 
   it("resolves Support identity through the trusted main-process client", async () => {

@@ -1,3 +1,4 @@
+import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import type { CSSProperties, PointerEvent } from "react";
 import type { ChatState } from "@/hooks/useChatState";
 import type { AppWindow } from "@/hooks/useWindowManager";
@@ -61,9 +62,7 @@ interface DesktopWindowProps {
   onDragStart: (id: string, event: PointerEvent) => void;
   onFocusWindow: (id: string) => void;
   onOpenWindow: (name: string, path: string) => void;
-  onResizeEnd: () => void;
-  onResizeMove: (event: PointerEvent) => void;
-  onResizeStart: (id: string, event: PointerEvent) => void;
+  onResizeInteractionChange: (active: boolean) => void;
   onToggleFullscreen: (id: string) => void;
   topInset?: number;
 }
@@ -82,9 +81,7 @@ export function DesktopWindow({
   onDragStart,
   onFocusWindow,
   onOpenWindow,
-  onResizeEnd,
-  onResizeMove,
-  onResizeStart,
+  onResizeInteractionChange,
   onToggleFullscreen,
   topInset = 0,
 }: DesktopWindowProps) {
@@ -238,31 +235,8 @@ export function DesktopWindow({
       </CardContent>
 
       {!isFullscreen && (
-        <div
-          className="hidden md:block absolute bottom-0 right-0 size-4 cursor-se-resize touch-none z-20"
-          onPointerDown={(e) => onResizeStart(win.id, e)}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeEnd}
-          onPointerCancel={onResizeEnd}
-        >
-          <svg
-            viewBox="0 0 16 16"
-            className="size-4 text-muted-foreground/40"
-          >
-            <path
-              d="M14 2v12H2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-            <path
-              d="M14 7v7H7"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-          </svg>
-        </div>
+        <AppWindowResizeControls win={win} className="hidden md:block"
+          onInteractionChange={onResizeInteractionChange} />
       )}
     </Card>
   );

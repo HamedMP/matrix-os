@@ -268,10 +268,62 @@ describe("Chat collaboration sharing", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Load more messages" }));
     await waitFor(() => expect(resolvePage).toBeTypeOf("function"));
     refreshing = true;
-    refresh();
-    expect(await screen.findByText("Message 3")).toBeVisible();
-    await act(async () => resolvePage({ messages: [message(2)] }));
+    // Settle both requests before React commits the refreshed state. This
+    // exposes stale-page overwrites without relying on CI scheduling.
+    await act(async () => {
+      await refresh();
+      resolvePage({ messages: [message(2)] });
+    });
     expect(screen.getByText("Message 3")).toBeVisible();
+  });
+
+  it("ignores an older realtime refresh that finishes after a newer refresh", async () => {
+    const scope = {
+      id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "viewer",
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+    };
+    const message = (text: string) => ({
+      id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text }],
+      createdAt: "2026-09-07T12:00:00.000Z",
+    });
+    let refresh!: () => Promise<void>;
+    let resolveOlder!: (value: unknown) => void;
+    let reads = 0;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.includes("/messages?")) {
+          reads += 1;
+          if (reads === 2) return new Promise((resolve) => { resolveOlder = resolve; });
+          return { messages: [message(reads === 1 ? "Initial message" : "Newest message")] };
+        }
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Refresh race", lifecycle: "active", revision: "1", messageCount: "1" };
+        return scope;
+      }),
+      post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" />);
+    expect(await screen.findByText("Initial message")).toBeVisible();
+    const older = refresh();
+    // Attach the rejection handler immediately: superseded recoveries are
+    // intentionally reported to the subscription client for retry handling.
+    const olderOutcome = expect(older).rejects.toThrow("CollaborationRecoverySuperseded");
+    await waitFor(() => expect(resolveOlder).toBeTypeOf("function"));
+    await act(async () => { await refresh(); });
+    expect(screen.getByText("Newest message")).toBeVisible();
+    await act(async () => {
+      resolveOlder({ messages: [message("Stale message")] });
+      await olderOutcome;
+    });
+    expect(screen.getByText("Newest message")).toBeVisible();
+    expect(screen.queryByText("Stale message")).toBeNull();
   });
 
   it("keeps viewer discussion controls read-only", async () => {
