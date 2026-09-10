@@ -50,3 +50,4 @@ export type {
   ProviderSettingsTransportErrorCode,
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
+export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";

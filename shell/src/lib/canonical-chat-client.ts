@@ -27,6 +27,7 @@ import {
   type CanonicalUpdateChatTitleRequest,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
+import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -92,16 +93,50 @@ function safeAttachmentName(name: string): { label: string; pathName: string } {
   return { label, pathName: pathName || "Attachment" };
 }
 
+const MAX_ERROR_BODY_BYTES = 4096;
+
+async function readErrorCode(response: Response): Promise<string | undefined> {
+  const reader = response.body?.getReader();
+  if (!reader) return undefined;
+  try {
+    let bytes = 0;
+    let text = "";
+    const decoder = new TextDecoder();
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > MAX_ERROR_BODY_BYTES) {
+        await reader.cancel();
+        return undefined;
+      }
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    const value: unknown = JSON.parse(text + decoder.decode());
+    if (typeof value !== "object" || value === null || !("error" in value)
+      || typeof value.error !== "object" || value.error === null || !("code" in value.error)) return undefined;
+    return canonicalChatSafeFailureReason(value.error.code) ? value.error.code as string : undefined;
+  } catch (error) {
+    console.warn("[canonical-chat] Error response unavailable:", error instanceof Error ? error.name : "UnknownError");
+    return undefined;
+  } finally { reader.releaseLock(); }
+}
+
 async function jsonResponse(response: Response): Promise<unknown> {
-  if (!response.ok) throw new CanonicalShellChatRequestError(response.status);
+  if (!response.ok) throw new CanonicalShellChatRequestError(response.status, await readErrorCode(response));
   return response.json();
 }
 
 export class CanonicalShellChatRequestError extends Error {
-  constructor(readonly status: number) {
+  constructor(readonly status: number, readonly code?: string) {
     super("Canonical Chat request failed");
     this.name = "CanonicalShellChatRequestError";
   }
+}
+
+export function canonicalShellChatFailureMessage(error: unknown): string {
+  return (error instanceof CanonicalShellChatRequestError ? canonicalChatSafeFailureReason(error.code) : undefined)
+    ?? "Message could not be sent. Try again.";
 }
 
 export function isDefinitiveCanonicalChatRejection(error: unknown): boolean {

@@ -11,6 +11,7 @@ import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
   createCanonicalShellChatClient,
+  canonicalShellChatFailureMessage,
   isDefinitiveCanonicalChatRejection,
   projectCanonicalMessages,
 } from "@/lib/canonical-chat-client";
@@ -218,7 +219,7 @@ export function useCanonicalChatState(): ChatState {
           await Promise.allSettled(uploadedReferences.map((reference) => client.deleteAttachment(reference)));
         }
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("Message could not be sent. Try again.");
+        setSafeError(canonicalShellChatFailureMessage(error));
       } finally {
         setSubmitting(false);
       }

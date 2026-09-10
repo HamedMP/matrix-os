@@ -401,6 +401,12 @@ the required active tax registrations.
   internal catalog regardless of this presentation opt-in.
 
 Verification must distinguish catalog loading, Chat admission, and inference.
+For Pi/OpenCode, failure to discover an owner's native model catalog must not
+erase a saved Matrix route when the installed driver, exact canonical model,
+authoritative current policy, and fresh ready Matrix source all remain valid.
+Own-account catalog failures and revoked, missing, or stale funding remain
+fail-closed. Preserve server rejection codes across Chat clients and map them
+to shared local recovery copy; never display raw upstream error text.
 A failed token-count preflight occurs after admission and does not, by itself,
 explain a failed Chat-create request. A green gateway health indicator is not
 evidence of a successful funded turn. Capture all three desktop surfaces and

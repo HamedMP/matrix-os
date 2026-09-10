@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createCanonicalShellChatClient,
+  canonicalShellChatFailureMessage,
+  isDefinitiveCanonicalChatRejection,
   projectCanonicalMessages,
 } from "../../shell/src/lib/canonical-chat-client.js";
 
@@ -19,6 +21,40 @@ const record = {
 };
 
 describe("canonical shell Chat client", () => {
+  it.each([
+    ["provider_unavailable", "This connection is currently unavailable. Open Agents & providers to check it."],
+    ["model_unavailable", "The selected model is unavailable. Choose another model."],
+    ["chat_conflict", "This Chat changed before the message was sent. Refresh and try again."],
+    ["authorization_failed", "You do not have permission to send this message."],
+    ["capability_mismatch", "The selected provider does not support one of the requested options or attachments."],
+    ["toString", "Message could not be sent. Try again."],
+    ["unknown", "Message could not be sent. Try again."],
+  ])("maps only local safe copy for %s and preserves definitive rejection", async (code, message) => {
+    const client = createCanonicalShellChatClient({ gatewayUrl: "", fetchFn: vi.fn(async () => Response.json({
+      error: { code, safeMessage: "Anthropic /private/token API key database failure", retryable: false },
+    }, { status: 409 })) });
+    const error = await client.list().catch((caught: unknown) => caught);
+    expect(isDefinitiveCanonicalChatRejection(error)).toBe(true);
+    expect(canonicalShellChatFailureMessage(error)).toBe(message);
+    expect(String(error)).not.toContain("/private/token");
+  });
+  it.each(["not json", '{"error":"upstream details"}', '{"error":{"code":42}}'])("keeps malformed error payloads generic", async (body) => {
+    const client = createCanonicalShellChatClient({ gatewayUrl: "", fetchFn: vi.fn(async () => new Response(body, { status: 403 })) });
+    const error = await client.list().catch((caught: unknown) => caught);
+    expect(isDefinitiveCanonicalChatRejection(error)).toBe(true);
+    expect(canonicalShellChatFailureMessage(error)).toBe("Message could not be sent. Try again.");
+  });
+  it("cancels oversized error bodies and retains rejection status", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode("x".repeat(4097))); }, cancel,
+    });
+    const client = createCanonicalShellChatClient({ gatewayUrl: "", fetchFn: vi.fn(async () => new Response(stream, { status: 400 })) });
+    const error = await client.list().catch((caught: unknown) => caught);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(isDefinitiveCanonicalChatRejection(error)).toBe(true);
+    expect(canonicalShellChatFailureMessage(error)).toBe("Message could not be sent. Try again.");
+  });
   it("lists and creates global Chats through the canonical routes with strict responses", async () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?")) return Response.json({ items: [record] });

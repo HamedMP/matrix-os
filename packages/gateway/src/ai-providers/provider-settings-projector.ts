@@ -276,6 +276,8 @@ function projectHarness(input: {
   accounts: ProviderAccount[];
   sources: ProviderAccessSource[];
   allowedGatewayModels: ReadonlySet<string>;
+  freshMatrixPolicy: boolean;
+  now: Date;
   catalogUnavailable: boolean;
   loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): ProviderHarnessInstance | null {
@@ -296,7 +298,15 @@ function projectHarness(input: {
     && source.eligibleModelIds.includes(input.stored.route.modelId)
     && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
-  const routeCatalogUnavailable = input.catalogUnavailable || !routeAvailable;
+  // A managed Pi/OpenCode route uses the gateway's canonical model catalog,
+  // not the CLI catalog for the owner's separate provider credentials. Do not
+  // let an unrelated CLI discovery failure erase a verified funded selection.
+  const managedRouteReady = (input.stored.harness === "pi" || input.stored.harness === "opencode")
+    && input.freshMatrixPolicy && sourceEligible && source?.kind === "matrix_gateway"
+    && source.readiness.state === "ready"
+    && Date.parse(source.readiness.checkedAt ?? "") <= input.now.getTime()
+    && Date.parse(source.readiness.staleAfter ?? "") > input.now.getTime();
+  const routeCatalogUnavailable = (input.catalogUnavailable && !managedRouteReady) || !routeAvailable;
   const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable;
   const selectedAccountId = routeSourceEligible && source?.kind === "provider_account"
     && source.accountId && input.accounts.some((account) => account.id === source.accountId)
@@ -440,6 +450,10 @@ export async function projectProviderSettings(input: {
       accounts,
       sources,
       allowedGatewayModels,
+      freshMatrixPolicy: input.fundedPolicyAuthoritative === true && input.fundedPolicy?.enabled === true
+        && Date.parse(input.fundedPolicy.checkedAt) <= input.now.getTime()
+        && Date.parse(input.fundedPolicy.staleAfter) > input.now.getTime(),
+      now: input.now,
       catalogUnavailable: failedCatalogs.has(stored.harness),
       loginMethods: input.loginMethods,
     });
