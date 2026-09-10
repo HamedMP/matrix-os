@@ -1,3 +1,6 @@
+import { admitCanonicalTurn } from "./turn-admission.js";
+import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, promptFor, retryPromptFor, requirementsFor } from "./orchestration-input.js";
+export { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestration-input.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   CanonicalChatMessageSchema,
@@ -74,13 +77,6 @@ const MAX_ACTIVE_RUNS_PER_OWNER = 8;
 const MAX_ASSISTANT_TEXT = 96 * 1024;
 const STEER_FINALIZE_ATTEMPTS = 2;
 
-export class CanonicalChatOrchestrationError extends Error {
-  constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
-    super(safeError.safeMessage);
-    this.name = "CanonicalChatOrchestrationError";
-  }
-}
-
 interface ActiveRun {
   controller: AbortController;
   adapter: CanonicalChatProviderAdapter;
@@ -153,105 +149,6 @@ function assistantMessageId(runId: string, providerMessageId?: string): string {
   if (!providerMessageId) return `msg_${runId.slice("run_".length)}_assistant`;
   const digest = createHash("sha256").update(`${runId}\0${providerMessageId}`).digest("hex").slice(0, 32);
   return `msg_${digest}`;
-}
-
-function safeError(
-  code: CanonicalChatSafeError["code"],
-  safeMessage: string,
-  retryable = false,
-  recoveryActions?: CanonicalChatSafeError["recoveryActions"],
-): CanonicalChatSafeError {
-  return CanonicalChatSafeErrorSchema.parse({
-    code,
-    safeMessage,
-    retryable,
-    ...(recoveryActions ? { recoveryActions } : {}),
-  });
-}
-
-function promptFor(parts: CanonicalCreateChatTurnRequest["parts"]): string {
-  const lines = parts.flatMap((part) => {
-    if (part.type === "text") return [part.text];
-    if (part.type === "invocation_reference") {
-      return [`${part.invocation.invocation}${part.invocation.arguments ? ` ${part.invocation.arguments}` : ""}`];
-    }
-    if (part.type === "resource_reference") return [`@${part.resource.label}`];
-    if (part.type === "attachment_reference" && !part.ownerReference) return [`@${part.label}`];
-    return [];
-  });
-  const attachmentReferences = parts.flatMap((part) => (
-    part.type === "attachment_reference" && part.ownerReference
-      ? [`- ${JSON.stringify(part.label)}: ${shellQuotedOwnerReference(part.ownerReference)}`]
-      : []
-  ));
-  if (attachmentReferences.length > 0) {
-    lines.push(
-      "",
-      "Attached files (available on this Matrix computer):",
-      ...attachmentReferences,
-    );
-  }
-  const prompt = lines.join("\n").trim();
-  if (!prompt) throw new CanonicalChatOrchestrationError(
-    safeError("capability_mismatch", "The message does not contain supported input."),
-    400,
-  );
-  return prompt;
-}
-
-function retryPromptFor(messages: CanonicalChatMessage[]): string {
-  return messages.map((message) => promptFor(message.parts)).join("\n\n");
-}
-
-function shellQuotedOwnerReference(ownerReference: string): string {
-  return `"$MATRIX_HOME"/'${ownerReference.replaceAll("'", "'\\''")}'`;
-}
-
-function requirementsFor(input: CanonicalCreateChatTurnRequest) {
-  return {
-    attachments: input.parts.flatMap((part) =>
-      part.type === "attachment_reference" ? [part.kind] : []
-    ),
-    resources: input.parts.flatMap((part) =>
-      part.type === "resource_reference" ? [part.resource.kind] : []
-    ),
-    interactionMode: input.interactionMode,
-    permissionMode: input.permissionMode,
-    worktree: input.executionRoot?.kind === "worktree",
-  };
-}
-
-export function mapRepositoryError(error: unknown): never {
-  if (error instanceof ChatNotFoundError) {
-    throw new CanonicalChatOrchestrationError(safeError("chat_not_found", "Chat not found."), 404);
-  }
-  if (error instanceof ChatBusyError) {
-    throw new CanonicalChatOrchestrationError(safeError("chat_busy", "This Chat already has an active Run."), 409);
-  }
-  if (error instanceof ChatProviderInstanceLockedError) {
-    throw new CanonicalChatOrchestrationError(safeError(
-      "provider_instance_locked",
-      "This Chat is already bound to another Provider instance.",
-      false,
-      ["fork_chat", "start_new_chat"],
-    ), 409);
-  }
-  if (error instanceof ChatRunNotAcknowledgeableError) {
-    throw new CanonicalChatOrchestrationError(safeError(
-      "run_unavailable",
-      "Only a successful completed Run can be acknowledged.",
-    ), 409);
-  }
-  if (error instanceof ChatRunNotActiveError) {
-    throw new CanonicalChatOrchestrationError(
-      safeError("run_unavailable", "The Run is no longer active."),
-      409,
-    );
-  }
-  if (error instanceof ChatConflictError) {
-    throw new CanonicalChatOrchestrationError(safeError("chat_conflict", "Chat changed. Refresh and try again.", true, ["retry"]), 409);
-  }
-  throw error;
 }
 
 export class CanonicalChatOrchestrator {
@@ -350,183 +247,19 @@ export class CanonicalChatOrchestrator {
   }
 
   async admitTurn(
-    principal: RequestPrincipal,
-    owner: ChatOwner,
-    chatId: string,
+    principal: RequestPrincipal, owner: ChatOwner, chatId: string,
     inputValue: CanonicalCreateChatTurnRequest,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
-    this.assertOpen();
-    await this.assertPersonalExecutionAllowed(owner, chatId);
-    await this.reconcileActiveRuns(owner);
-    const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
-    const record = await this.options.repository.get(owner, chatId);
-    if (!record) return mapRepositoryError(new ChatNotFoundError(chatId));
-    const catalog = await this.options.catalog.getCatalog(principal);
-    const validated = validateChatProviderSelection({
-      catalog,
-      selection: input.selection,
-      ...(record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-      requirements: requirementsFor(input),
-    });
-    if (!validated.ok) {
-      throw new CanonicalChatOrchestrationError(validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
-    }
-    const adapter = this.options.adapters.get(validated.instance.driverKind);
-    if (!adapter) {
-      throw new CanonicalChatOrchestrationError(
-        safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
-        503,
-      );
-    }
-    const rootRef = input.executionRoot
-      ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
-    if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
-      throw new CanonicalChatOrchestrationError(
-        safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
-        400,
-      );
-    }
-    if (validated.instance.workspaceRequirement === "project_required" && rootRef === undefined) {
-      throw new CanonicalChatOrchestrationError(
-        safeError("project_required", "This Provider requires a Project.", false, ["return_to_project"]),
-        400,
-      );
-    }
-    let resolvedRoot: Awaited<ReturnType<ChatExecutionRootResolver["resolve"]>> | undefined;
-    if (rootRef !== undefined) {
-      if (!this.options.executionRoots) {
-        throw new CanonicalChatOrchestrationError(
-          safeError("project_unavailable", "The Project workspace is unavailable.", true, ["retry"]),
-          503,
-        );
-      }
-      try {
-        resolvedRoot = await this.options.executionRoots.resolve(owner, rootRef);
-      } catch (error: unknown) {
-        console.warn("[chat/orchestrator] Execution root resolution failed:", error instanceof Error ? error.name : "UnknownError");
-        throw new CanonicalChatOrchestrationError(
-          safeError("project_unavailable", "The Project workspace is unavailable.", true, ["retry"]),
-          503,
-        );
-      }
-    }
-    const resumeState = await loadChatResumeState({
-      repository: this.options.repository, owner, chatId, adapter,
-      instanceId: validated.instance.id,
-      executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
-      mode: "follow_up",
-    });
-    const adapterState = resumeState === undefined ? undefined : {
-      schemaVersion: adapter.stateSchemaVersion,
-      state: adapter.serializeState(resumeState),
-    };
-
-    const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
-    const turnId = id("cturn_");
-    const message = CanonicalChatMessageSchema.parse({
-      id: id("msg_"),
-      chatId,
-      seq: record.chat.messageCount + 1,
-      role: "user",
-      state: "committed",
-      turnId,
-      parts: input.parts,
-      createdAt: timestamp,
-    });
-    const turn = CanonicalChatTurnSchema.parse({
-      id: turnId,
-      chatId,
-      clientRequestId: input.clientRequestId,
-      baseMessageSeq: record.chat.messageCount,
-      inputMessageId: message.id,
-      status: "accepted",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    const run = CanonicalChatRunSchema.parse({
-      id: id("run_"),
-      chatId,
-      turnId,
-      attempt: 1,
-      driverKind: validated.instance.driverKind,
-      instanceId: validated.instance.id,
-      selection: validated.selection,
-      interactionMode: input.interactionMode,
-      permissionMode: input.permissionMode,
-      ...(resolvedRoot ? {
-        executionRoot: resolvedRoot.ref,
-        executionRootFingerprint: resolvedRoot.fingerprint,
-      } : {}),
-      status: "accepted",
-      historyBoundarySeq: turn.baseMessageSeq,
-      capabilitySnapshot: {
-        revision: validated.instance.catalogRevision,
-        rootChat: validated.instance.supports.rootChat,
-        attachments: validated.instance.supports.attachments,
-        resources: validated.instance.supports.resources,
-        tools: validated.instance.supports.tools,
-        approvals: validated.instance.supports.approvals,
-        userInput: validated.instance.supports.userInput,
-        resume: validated.instance.supports.resume,
-        cancellation: validated.instance.supports.cancellation,
-        steering: validated.instance.supports.steering ?? "none",
-        worktrees: validated.instance.supports.worktrees,
-        interactionModes: validated.instance.supports.interactionModes,
-        permissionModes: validated.instance.supports.permissionModes,
-      },
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    let admitted;
-    this.reservePendingDispatch(run.id);
-    try {
-      this.assertOpen();
-      admitted = await this.options.repository.admitTurn(owner, {
-        chatId,
-        baseRevision: input.baseRevision,
-        message,
-        turn,
-        run,
-        ...(adapterState ? { adapterState } : {}),
-      });
-    } catch (error: unknown) {
-      this.pendingDispatch.delete(run.id);
-      return mapRepositoryError(error);
-    }
-
-    try {
-      if (!admitted.alreadyAccepted) {
-        if (this.atCapacity(owner)) {
-          await this.options.repository.finishRun(owner, {
-            chatId,
-            runId: admitted.run.id,
-            outcome: "failed",
-            completedAt: timestamp,
-          });
-          throw new CanonicalChatOrchestrationError(
-            safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
-            503,
-          );
-        }
-        this.startDispatch(
-          owner,
-          admitted.message,
-          admitted.run,
-          adapter,
-          resolvedRoot,
-          resumeState,
-        );
-      }
-      return CanonicalChatTurnAdmissionResponseSchema.parse({
-        record: admitted.chat,
-        message: admitted.message,
-        turn: admitted.turn,
-        run: admitted.run,
-        admission: admitted.alreadyAccepted ? "already_accepted" : "accepted",
-      });
-    } finally {
-      this.pendingDispatch.delete(run.id);
-    }
+    return admitCanonicalTurn({
+      ...this.options,
+      assertOpen: () => this.assertOpen(),
+      assertPersonalExecutionAllowed: (scope, id) => this.assertPersonalExecutionAllowed(scope, id),
+      reconcileActiveRuns: (scope) => this.reconcileActiveRuns(scope),
+      reservePendingDispatch: (id) => this.reservePendingDispatch(id),
+      releasePendingDispatch: (id) => { this.pendingDispatch.delete(id); },
+      atCapacity: (scope) => this.atCapacity(scope),
+      startDispatch: (...args) => this.startDispatch(...args),
+    }, principal, owner, chatId, inputValue);
   }
 
   async enqueueQueuedTurn(
