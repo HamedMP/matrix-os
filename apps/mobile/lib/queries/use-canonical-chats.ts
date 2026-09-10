@@ -1,6 +1,10 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import {
+  readCanonicalChatStreamFence,
+  reconcileCanonicalChatListResponse,
+} from "@/lib/canonical-chat-cache";
 import { fetchActiveComputer, fetchChats, mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
@@ -26,7 +30,16 @@ export function useCanonicalChats() {
     queryFn: async () => {
       const token = await getToken();
       if (!token || !computer) throw new Error("Chats unavailable.");
-      return fetchChats(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+      const uid = userId ?? "signed-out";
+      const requestFence = readCanonicalChatStreamFence(queryClient, uid, computerKey);
+      const incoming = await fetchChats(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+      return reconcileCanonicalChatListResponse({
+        queryClient,
+        userId: uid,
+        computerKey,
+        requestFence,
+        incoming,
+      });
     },
     select: (response) => [...response.items].sort(
       (left, right) => Date.parse(right.chat.updatedAt) - Date.parse(left.chat.updatedAt),

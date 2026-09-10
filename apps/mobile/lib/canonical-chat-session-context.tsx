@@ -11,9 +11,16 @@ import {
 } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 import { useQueryClient } from "@tanstack/react-query";
+import { AppState } from "react-native";
 
-import { createCanonicalChatEventSource, type CanonicalChatInvalidation } from "@/lib/canonical-chat-events";
+import {
+  createCanonicalChatEventSource,
+  reconnectCanonicalChatOnForeground,
+  type CanonicalChatInvalidation,
+} from "@/lib/canonical-chat-events";
+import { applyCanonicalChatEventToCache } from "@/lib/canonical-chat-cache";
 import { mobileQueryKeys } from "@/lib/requests";
+import { buildGatewayRequestUrl } from "@/lib/requests/http";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 
@@ -73,55 +80,75 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const { computer } = useCanonicalChats();
   const queryClient = useQueryClient();
   const eventSourceRef = useRef<ReturnType<typeof createCanonicalChatEventSource> | null>(null);
+  const activeChatIdRef = useRef(activeChatId);
   const computerKey = computer ? `${computer.handle}:${computer.runtimeSlot}` : null;
 
   useEffect(() => {
-    if (!computerKey || !computer) return;
-    // Hosted routed computers terminate WebSocket upgrades on the canonical
-    // platform origin (not the `/vm/<handle>` path) and resolve the machine
-    // from the `runtime` query alone — matching GatewayClient's `wsBaseUrl`.
-    // gatewayPath is `/vm/<handle>` or `/vm/<handle>?runtime=<slot>`; only
-    // that trailing query (if any) carries over.
-    const queryIndex = computer.gatewayPath.indexOf("?");
-    const routingQuery = queryIndex === -1 ? "" : computer.gatewayPath.slice(queryIndex);
-    const wsUrl = `${HOSTED_GATEWAY_URL}/ws/chats/events${routingQuery}`.replace(/^http/, "ws");
+    activeChatIdRef.current = activeChatId;
+  }, [activeChatId]);
+
+  useEffect(() => {
+    if (!computerKey || !computer || !userId) return;
+    const uid = userId;
+    const key = computerKey;
+    const eventUrl = buildGatewayRequestUrl(
+      `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
+      "/api/chats/events",
+    );
     const source = createCanonicalChatEventSource({
-      wsUrl,
+      url: eventUrl,
       getToken: async () => getToken(),
     });
     eventSourceRef.current = source;
-    source.connect();
-    return () => {
-      eventSourceRef.current = null;
-      source.disconnect();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [computerKey]);
-
-  useEffect(() => {
-    const source = eventSourceRef.current;
-    if (!source) return;
-    return source.subscribe((event) => {
-      const uid = userId ?? "signed-out";
-      const key = computerKey ?? "none";
-      if (event.type === "chat.full_refresh") {
+    let listRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let detailRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let pendingDetailChatId: string | null = null;
+    const scheduleListRefresh = () => {
+      if (listRefreshTimer !== undefined) return;
+      listRefreshTimer = setTimeout(() => {
+        listRefreshTimer = undefined;
         void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(uid, key) });
-        if (activeChatId) {
-          void queryClient.invalidateQueries({
-            queryKey: mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId),
-          });
-        }
-        return;
-      }
-      void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(uid, key) });
-      if (event.chatId === activeChatId) {
+      }, 200);
+    };
+    const scheduleDetailRefresh = (chatId: string) => {
+      pendingDetailChatId = chatId;
+      if (detailRefreshTimer !== undefined) return;
+      detailRefreshTimer = setTimeout(() => {
+        detailRefreshTimer = undefined;
+        const pendingChatId = pendingDetailChatId;
+        pendingDetailChatId = null;
+        if (!pendingChatId) return;
         void queryClient.invalidateQueries({
-          queryKey: mobileQueryKeys.canonicalChatDetail(uid, key, event.chatId),
+          queryKey: mobileQueryKeys.canonicalChatDetail(uid, key, pendingChatId),
         });
+      }, 200);
+    };
+    // Subscribe before opening the stream so the initial replay cannot race
+    // ahead of the cache consumer.
+    const unsubscribe = source.subscribe((event) => {
+      const recovery = applyCanonicalChatEventToCache({
+        queryClient,
+        userId: uid,
+        computerKey: key,
+        activeChatId: activeChatIdRef.current,
+        event,
+      });
+      if (recovery.refreshList) scheduleListRefresh();
+      if (recovery.refreshDetail && activeChatIdRef.current) {
+        scheduleDetailRefresh(activeChatIdRef.current);
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChatId, computerKey, userId, queryClient]);
+    const appStateSubscription = reconnectCanonicalChatOnForeground(source, AppState);
+    void source.start();
+    return () => {
+      unsubscribe();
+      appStateSubscription.remove();
+      if (listRefreshTimer !== undefined) clearTimeout(listRefreshTimer);
+      if (detailRefreshTimer !== undefined) clearTimeout(detailRefreshTimer);
+      if (eventSourceRef.current === source) eventSourceRef.current = null;
+      source.dispose();
+    };
+  }, [computer, computerKey, getToken, queryClient, userId]);
 
   const selectChat = useCallback((id: string) => {
     setActiveChatId(id);
