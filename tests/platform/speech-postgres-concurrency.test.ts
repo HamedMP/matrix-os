@@ -260,4 +260,78 @@ describePostgres("speech operation PostgreSQL concurrency", () => {
       executionState: "succeeded",
     });
   });
+
+  it("rejects raced language hints that do not match the persisted request", async () => {
+    const requestId = `sp_${now.getTime()}_languagehintbind`;
+    const repoA = createSpeechOperationsRepository({ db: dbA, now: () => now });
+    const repoB = createSpeechOperationsRepository({ db: dbB, now: () => now });
+    const reserveEntered = deferred<void>();
+    const allowReserve = deferred<void>();
+    const adapterA = { id: "adapter-a", transcribe: vi.fn(async () => ({ text: "from a" })) };
+    const adapterB = { id: "adapter-a", transcribe: vi.fn(async () => ({ text: "from b" })) };
+    const languagePolicy: PlatformSpeechPolicy = {
+      enabled: true,
+      revision: "speech-policy-1",
+      modelId: "model-a",
+      microusdPerMinute: 60,
+      dictation: {
+        enabled: true,
+        maxBytes: 10 * 1024 * 1024,
+        maxDurationMs: 120_000,
+        maxTranscriptChars: 32_000,
+        supportedMediaTypes: ["audio/wav"],
+        languageHints: true,
+      },
+      ownerAudio: { enabled: false },
+    };
+    const fundingA = {
+      reserve: vi.fn(async () => {
+        reserveEntered.resolve();
+        await allowReserve.promise;
+        return { reservationId: "funding_hint_a", reservedMicrousd: 120 };
+      }),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const fundingB = {
+      reserve: vi.fn(async () => ({ reservationId: "funding_hint_b", reservedMicrousd: 120 })),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const serviceA = createPlatformSpeechService({
+      operations: repoA,
+      funding: fundingA,
+      adapter: adapterA,
+      fingerprintSecret: "f".repeat(32),
+      policy: languagePolicy,
+    });
+    const serviceB = createPlatformSpeechService({
+      operations: repoB,
+      funding: fundingB,
+      adapter: adapterB,
+      fingerprintSecret: "f".repeat(32),
+      policy: languagePolicy,
+    });
+    const baseInput = {
+      identity,
+      requestId,
+      sourceKind: "dictation" as const,
+      audio: oneSecondWav(),
+      mediaType: "audio/wav" as const,
+      signal: new AbortController().signal,
+    };
+    const first = serviceA.transcribe({ ...baseInput, languageHints: ["en"] });
+    await reserveEntered.promise;
+    const second = serviceB.transcribe({ ...baseInput, languageHints: ["fr"] });
+    const secondExpectation = expect(second).rejects.toMatchObject({ code: "request_conflict" });
+    await waitForLock("speech-review-b");
+    allowReserve.resolve();
+
+    await expect(first).resolves.toMatchObject({ outcome: "transcript", text: "from a" });
+    await secondExpectation;
+    expect(adapterA.transcribe).toHaveBeenCalledWith(expect.objectContaining({ languageHints: ["en"] }));
+    expect(adapterA.transcribe).toHaveBeenCalledTimes(1);
+    expect(adapterB.transcribe).not.toHaveBeenCalled();
+    expect(fundingB.reserve).not.toHaveBeenCalled();
+  });
 });
