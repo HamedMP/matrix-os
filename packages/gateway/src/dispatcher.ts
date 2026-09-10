@@ -11,6 +11,7 @@ import {
   type KernelResult,
   type MatrixDB,
   type OsViewAgentTools,
+  type OwnerAudioTranscriber,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFile } from "node:fs/promises";
@@ -47,6 +48,7 @@ export interface DispatchOptions {
       Never receives message content. Failures are swallowed. */
   onAiGeneration?: (input: AiGenerationInput) => void;
   osViewTools?: OsViewAgentTools;
+  ownerAudioTranscriber?: OwnerAudioTranscriber;
 }
 
 export interface DispatchContext {
@@ -234,6 +236,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         env: credentialLaunch.env,
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
+        ownerAudioTranscriber: opts.ownerAudioTranscriber,
       };
       try {
         for await (const event of spawnFn(message, config, deadline.controller)) {
@@ -383,6 +386,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             maxTurns: opts.maxTurns,
             env: credentialLaunch.env,
             osViewTools: opts.osViewTools,
+            ownerAudioTranscriber: opts.ownerAudioTranscriber,
           };
 
           try {

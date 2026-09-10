@@ -4,7 +4,7 @@ import type {
   ChannelMessage,
   ChannelReply,
 } from "./types.js";
-import { handleVoiceNote } from "../voice/channel-voice.js";
+import { handleVoiceNote, MAX_CHANNEL_VOICE_BYTES } from "../voice/channel-voice.js";
 import type { SttProvider } from "../voice/stt/base.js";
 
 export interface TelegramBot {
@@ -105,38 +105,33 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
           const ctx = voiceCtx;
 
           (async () => {
-            const chunks: Buffer[] = [];
+            let audioBuffer: Buffer | undefined;
+            let audioUrl: string | undefined;
             if (currentBot.getFileStream) {
               const stream = currentBot.getFileStream(voiceFile.file_id);
+              const chunks: Buffer[] = [];
+              let total = 0;
               for await (const chunk of stream) {
-                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                total += bytes.byteLength;
+                if (total > MAX_CHANNEL_VOICE_BYTES) {
+                  stream.destroy();
+                  throw new Error("Telegram voice note exceeded its limit");
+                }
+                chunks.push(bytes);
               }
+              audioBuffer = Buffer.concat(chunks, total);
             } else if (currentBot.getFile && token) {
               const fileInfo = await currentBot.getFile(voiceFile.file_id);
               const filePath = fileInfo.file_path;
               if (!filePath || /\.\./.test(filePath) || /[^a-zA-Z0-9_./-]/.test(filePath)) {
-                console.warn("[telegram] Invalid file_path from Telegram API");
-                return {
-                  transcript: null,
-                  filePath: "",
-                  durationMs: 0,
-                  error: "Invalid Telegram file path",
-                };
+                throw new Error("Telegram returned an invalid voice file path");
               } else {
-                try {
-                  const resp = await fetch(
-                    `https://api.telegram.org/file/bot${token}/${filePath}`,
-                    { signal: AbortSignal.timeout(30_000) },
-                  );
-                  if (resp.ok) chunks.push(Buffer.from(await resp.arrayBuffer()));
-                } catch (fetchErr) {
-                  const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-                  console.warn("[telegram] Voice file download failed:", msg.replaceAll(token, "[REDACTED]"));
-                }
+                audioUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
               }
             }
-            const audioBuffer = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
             return handleVoiceNote({
+              audioUrl,
               audioBuffer,
               channel: "telegram",
               homePath: ctx.homePath,
@@ -173,7 +168,7 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
               senderName: msg.from!.first_name,
               text: "[Voice message - transcription failed]",
               chatId: String(msg.chat.id),
-              metadata: { source: "voice" },
+              metadata: { source: "voice", error: "Transcription unavailable" },
             };
 
             adapter.onMessage(channelMessage);

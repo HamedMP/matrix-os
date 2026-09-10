@@ -28,6 +28,10 @@ import { WebCache } from "./tools/web-cache.js";
 import { createWebFetchTool } from "./tools/web-fetch.js";
 import { createWebSearchTool, type ApiKeys } from "./tools/web-search.js";
 import {
+  createTranscribeAudioToolHandler,
+  type OwnerAudioTranscriber,
+} from "./tools/transcribe-audio.js";
+import {
   connectServiceHandler,
   callServiceHandler,
   describeServiceHandler,
@@ -73,8 +77,17 @@ export interface OsViewAgentTools {
   addAppToDesktop(appId: string): Promise<{ status: OsViewDesktopAddResult }>;
 }
 
-export async function createIpcServer(db: MatrixDB, homePath?: string, osViewTools?: OsViewAgentTools) {
+export async function createIpcServer(
+  db: MatrixDB,
+  homePath?: string,
+  osViewTools?: OsViewAgentTools,
+  ownerAudioTranscriber?: OwnerAudioTranscriber,
+) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
+  const transcribeOwnerAudio = createTranscribeAudioToolHandler({
+    homePath,
+    transcriber: ownerAudioTranscriber,
+  });
   return createSdkMcpServer({
     name: "matrix-os-ipc",
     tools: [
@@ -800,69 +813,11 @@ export async function createIpcServer(db: MatrixDB, homePath?: string, osViewToo
 
       tool(
         "transcribe",
-        "Convert audio file to text using speech-to-text. Returns transcription.",
+        "Convert an owner-controlled audio file to text using the managed speech service.",
         {
           audio_path: z.string().describe("Path to audio file to transcribe"),
         },
-        async ({ audio_path }) => {
-          if (!homePath) {
-            return { content: [{ type: "text" as const, text: "Cannot transcribe (no home path)" }] };
-          }
-
-          let voiceConfig: { elevenlabs_key?: string; stt_provider?: string } = {};
-          try {
-            const configPath = join(homePath, "system", "config.json");
-            if (existsSync(configPath)) {
-              const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
-              voiceConfig = cfg.voice ?? {};
-            }
-          } catch (err: unknown) {
-            console.warn("[ipc] Could not read transcription config:", err instanceof Error ? err.message : String(err));
-          }
-
-          const apiKey = process.env.ELEVENLABS_API_KEY ?? voiceConfig.elevenlabs_key ?? "";
-          if (!apiKey) {
-            return { content: [{ type: "text" as const, text: "Voice not configured. Set ELEVENLABS_API_KEY or add voice.elevenlabs_key to config.json." }] };
-          }
-
-          const absPath = audio_path.startsWith("/") ? audio_path : join(homePath, audio_path.replace(/^~\//, ""));
-          if (!existsSync(absPath)) {
-            return { content: [{ type: "text" as const, text: `Audio file not found: ${absPath}` }] };
-          }
-
-          try {
-            const audioBuffer = readFileSync(absPath);
-            const formData = new FormData();
-            const blob = new Blob([audioBuffer], { type: "audio/webm" });
-            formData.append("audio", blob, "recording.webm");
-            formData.append("model_id", "scribe_v1");
-
-            const response = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
-              method: "POST",
-              headers: { "xi-api-key": apiKey },
-              body: formData,
-              signal: AbortSignal.timeout(30_000),
-            });
-
-            if (!response.ok) {
-              return { content: [{ type: "text" as const, text: `STT failed: ${response.status} ${response.statusText}` }] };
-            }
-
-            const data = await response.json() as { text: string };
-            const estimatedSeconds = audioBuffer.length / 16000;
-            const cost = estimatedSeconds * 0.0017;
-            const tracker = createUsageTracker(homePath);
-            tracker.track("voice_stt", cost, { audio_path: absPath });
-
-            return {
-              content: [{ type: "text" as const, text: `Transcription: ${data.text}\nCost: $${cost.toFixed(4)}` }],
-            };
-          } catch (e) {
-            return {
-              content: [{ type: "text" as const, text: `STT error: ${e instanceof Error ? e.message : String(e)}` }],
-            };
-          }
-        },
+        transcribeOwnerAudio,
       ),
 
       // NOTE: "call" IPC tool removed -- telephony requires CallManager which lives

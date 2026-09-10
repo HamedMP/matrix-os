@@ -2,7 +2,7 @@
 
 The root `dev` command intentionally does not start the platform. Use `bun run dev:speech` from a speech worktree to build the shared prerequisites and run the platform, gateway, and Web shell together. The launcher keeps `PLATFORM_SPEECH_OPENAI_API_KEY` and `PLATFORM_SPEECH_SECRET` in the platform process; it removes both variables from the gateway and shell process environments.
 
-This workflow requires the normal local platform prerequisites: Node 24+, pnpm 10, a local Postgres database in `PLATFORM_DATABASE_URL`, a non-default `PLATFORM_SECRET`, and a disposable/local runtime already registered in that database. The gateway identity variables must name the same running, authorized `user_machines` row:
+This workflow requires the normal local platform prerequisites: Node 24+, pnpm 10, a local Postgres database in `PLATFORM_DATABASE_URL`, a non-default `PLATFORM_SECRET`, and a disposable/local runtime already registered in that database. Install `ffmpeg` on the gateway host for owner audio and channel voice notes; those formats are converted in a bounded subprocess to the platform's admitted mono PCM WAV format. Browser dictation already records PCM WAV and does not use ffmpeg. Set `MATRIX_SPEECH_FFMPEG_PATH` only when `ffmpeg` is not on `PATH`. The gateway identity variables must name the same running, authorized `user_machines` row:
 
 ```bash
 export PLATFORM_RUNTIME_MODE=local
@@ -35,6 +35,8 @@ bun run dev:speech
 
 Open Chat at the printed shell URL. In Web Canvas, Web Desktop, or the responsive Web Mobile layout, type text and add an attachment before recording. Start and stop the microphone: the fixture transcript should be inserted into the existing draft without sending it, changing the attachment, or overwriting intervening typing. Cancel should insert nothing. Deny microphone permission once to verify the safe error and track cleanup, then grant it and retry.
 
+The same fixture also exercises active legacy entry points without introducing a second provider path. A Telegram voice note is saved under `~/data/audio/` before bounded conversion, then its transcript is dispatched as the message text. The kernel `transcribe` tool accepts only an existing owner-home file, preserves that source file, and uses the same machine/runtime-bound platform client. Conversion and platform failures return generic messages; the gateway never receives the OpenAI key.
+
 ## Real OpenAI mode
 
 Real mode has no provider, model, price, or funding-source defaults. Use values verified for the platform account and operator policy:
@@ -56,4 +58,4 @@ The selected local runtime must already have an existing funded-AI runtime polic
 
 Do not put the OpenAI key in the runtime home, host bundle, gateway env file, renderer, or browser storage. Stop all three processes with Ctrl-C; the launcher sends termination to each child and the platform drains admitted speech work before closing its database.
 
-Packaged Electron microphone checks and Native Mobile real-device validation are separate gates; this launcher validates the local platform/gateway/Web shell path.
+Packaged Electron microphone checks and Native Mobile real-device validation are separate gates; this launcher validates the local platform/gateway/Web shell path. A local ffmpeg compatibility test is available in `tests/gateway/managed-speech-transcriber.test.ts` and verifies that the emitted RIFF header and PCM shape pass the platform media inspector.

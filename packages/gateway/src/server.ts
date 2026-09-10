@@ -24,6 +24,11 @@ import {
   createPlatformSpeechClient,
   loadPlatformSpeechRuntimeConfig,
 } from "./speech/platform-client.js";
+import {
+  createFfmpegPcmWavConverter,
+  createManagedChannelSttProvider,
+  createManagedOwnerAudioTranscriber,
+} from "./speech/managed-transcriber.js";
 import { createSpeechGatewayRoutes } from "./speech/routes.js";
 import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
@@ -433,6 +438,19 @@ export async function createGateway(config: GatewayConfig) {
   const platformSpeechClient = platformSpeechRuntimeConfig
     ? createPlatformSpeechClient(platformSpeechRuntimeConfig)
     : undefined;
+  const managedAudioConverter = platformSpeechClient
+    ? createFfmpegPcmWavConverter({
+        ...(process.env.MATRIX_SPEECH_FFMPEG_PATH
+          ? { ffmpegPath: process.env.MATRIX_SPEECH_FFMPEG_PATH }
+          : {}),
+      })
+    : undefined;
+  const managedOwnerAudioTranscriber = platformSpeechClient && managedAudioConverter
+    ? createManagedOwnerAudioTranscriber({ client: platformSpeechClient, converter: managedAudioConverter })
+    : undefined;
+  const managedChannelStt = platformSpeechClient && managedAudioConverter
+    ? createManagedChannelSttProvider({ client: platformSpeechClient, converter: managedAudioConverter })
+    : null;
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,
   );
@@ -1200,6 +1218,7 @@ export async function createGateway(config: GatewayConfig) {
     onAiGeneration: recordAiGeneration,
     fundedCredentialProvider,
     osViewTools,
+    ownerAudioTranscriber: managedOwnerAudioTranscriber,
   });
 
   // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
@@ -1734,6 +1753,7 @@ export async function createGateway(config: GatewayConfig) {
   const channelSessions = createSessionStore(join(homePath, "system", "sessions.json"));
 
   const telegramAdapter: TelegramAdapter = createTelegramAdapter();
+  telegramAdapter.setVoiceContext({ homePath, stt: managedChannelStt });
 
   const channelManager: ChannelManager = createChannelManager({
     config: channelsConfig,
