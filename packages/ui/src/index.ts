@@ -67,6 +67,17 @@ export type {
   PlatformSpeechDraftPhase,
   UsePlatformSpeechDraftResult,
 } from "./speech/use-platform-speech-draft.js";
+export {
+  BrowserSpeechClientError,
+  createBrowserSpeechClient,
+} from "./speech/browser-client.js";
+export type { BrowserSpeechClient } from "./speech/browser-client.js";
+export {
+  createWebPcmSpeechCaptureAdapter,
+  encodePcm16Wav,
+  PlatformSpeechRecorderError,
+  resolveSpeechWorkletUrl,
+} from "./speech/pcm-recorder.js";
 
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatContextMenu } from "./chat/ChatContextMenu.js";

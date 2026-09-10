@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import type { ComposerReferenceToken } from "./composer-reference-tokens";
 
 const EMPTY_REFERENCE_TOKENS: ComposerReferenceToken[] = [];
@@ -67,7 +67,13 @@ export function useChatComposerDrafts({
     text: draft?.text ?? "",
     referenceTokens: draft?.referenceTokens ?? EMPTY_REFERENCE_TOKENS,
     draftProjectId: draft?.projectId ?? projectId,
-    setText: useCallback((text: string) => updateCurrent({ text }), [updateCurrent]),
+    setText: useCallback((nextText: SetStateAction<string>) => {
+      setDrafts((current) => {
+        const currentText = current[scope]?.text ?? "";
+        const text = typeof nextText === "function" ? nextText(currentText) : nextText;
+        return rememberDraft(current, scope, { text }, projectId);
+      });
+    }, [projectId, scope]),
     setReferenceTokens: useCallback((referenceTokens: ComposerReferenceToken[]) => (
       updateCurrent({ referenceTokens })
     ), [updateCurrent]),
