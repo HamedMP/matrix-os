@@ -22,6 +22,7 @@ export type CanonicalChatInvalidation =
 export interface CanonicalChatEventSource {
   subscribe(listener: (event: CanonicalChatInvalidation) => void): () => void;
   start(): Promise<void>;
+  suspend(): void;
   reconnect(): Promise<void>;
   dispose(): void;
 }
@@ -35,13 +36,16 @@ interface AppStateSource {
 }
 
 export function reconnectCanonicalChatOnForeground(
-  source: Pick<CanonicalChatEventSource, "reconnect">,
+  source: Pick<CanonicalChatEventSource, "reconnect" | "suspend">,
   appState: AppStateSource,
 ): { remove(): void } {
   let previous = appState.currentState;
+  if (previous !== "active") source.suspend();
   return appState.addEventListener("change", (next) => {
     const foregrounded = next === "active" && previous !== "active";
+    const backgrounded = next !== "active" && previous === "active";
     previous = next;
+    if (backgrounded) source.suspend();
     if (foregrounded) void source.reconnect();
   });
 }
@@ -146,6 +150,7 @@ export function createCanonicalChatEventSource(options: {
   const clearTimeoutFn = options.clearTimeoutFn ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>));
   let disposed = false;
   let started = false;
+  let suspended = false;
   let generation = 0;
   let reconnectAttempt = 0;
   let reconnectTimer: unknown;
@@ -199,7 +204,7 @@ export function createCanonicalChatEventSource(options: {
     }, INACTIVITY_TIMEOUT_MS);
   };
   const scheduleReconnect = () => {
-    if (disposed || reconnectTimer !== undefined) return;
+    if (disposed || suspended || reconnectTimer !== undefined) return;
     stopConnection();
     const delay = Math.min(250 * 2 ** reconnectAttempt, MAX_RECONNECT_DELAY_MS);
     reconnectAttempt += 1;
@@ -235,6 +240,7 @@ export function createCanonicalChatEventSource(options: {
       return;
     }
     if (frame.type === "chat.event" || frame.type === "chat.content") {
+      if (lastCursor !== undefined && frame.event.cursor <= lastCursor) return;
       lastCursor = lastCursor === undefined ? frame.event.cursor : Math.max(lastCursor, frame.event.cursor);
       if (!rememberCursor(frame.event.cursor)) return;
       if (!replay.complete && frame.type === "chat.event") replay.sawMetadata = true;
@@ -253,7 +259,7 @@ export function createCanonicalChatEventSource(options: {
   };
 
   async function connect(): Promise<void> {
-    if (disposed) return;
+    if (disposed || suspended) return;
     const connectionGeneration = ++generation;
     stopConnection();
     const nextController = new AbortController();
@@ -341,8 +347,17 @@ export function createCanonicalChatEventSource(options: {
       started = true;
       await connect();
     },
+    suspend() {
+      if (disposed || suspended) return;
+      suspended = true;
+      generation += 1;
+      if (reconnectTimer !== undefined) clearTimeoutFn(reconnectTimer);
+      reconnectTimer = undefined;
+      stopConnection();
+    },
     async reconnect() {
       if (disposed || !started) return;
+      suspended = false;
       if (reconnectTimer !== undefined) clearTimeoutFn(reconnectTimer);
       reconnectTimer = undefined;
       stopConnection();
