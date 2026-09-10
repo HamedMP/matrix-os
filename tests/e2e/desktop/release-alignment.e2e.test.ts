@@ -64,7 +64,8 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     gateway.setBuildCommit(source.ancestors[0] ?? "a".repeat(40));
     await recheck();
     await page.getByRole("dialog", { name: "Update Matrix OS" }).waitFor();
-    await page.getByText("Cloud computer", { exact: true }).waitFor();
+    await page.getByRole("rowheader", { name: /^Cloud computer/ }).waitFor();
+    await page.getByRole("button", { name: "Check again", exact: true }).waitFor();
     mkdirSync(evidence, { recursive: true });
     await page.screenshot({ path: join(evidence, "source-mismatch.png") });
     await page.getByRole("button", { name: "Later", exact: true }).click();

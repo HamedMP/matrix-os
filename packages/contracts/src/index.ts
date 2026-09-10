@@ -24,7 +24,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.153.4";
+export const CODEX_VERIFIED_VERSION = "0.154.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";

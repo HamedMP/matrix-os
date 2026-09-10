@@ -160,3 +160,18 @@ it.each([
     expect((await lines(runtime.events)).some(e => e.type === "matrix.codex.approval.requested")).toBe(false);
   } finally { await runtime.close(); }
 });
+
+
+it("rejects Codex 0.154 device-verification challenges without inventing proof or exposing the challenge", async () => {
+  const runtime = await start([{ id: 42, method: "mcpServer/elicitation/request", params: {
+    threadId: "thread-mcp", turnId: "turn-mcp", serverName: "matrix-integrations",
+    mode: "openai/userVerification", challenge: "private-device-challenge",
+    title: "Verify device", description: "Approve this operation on a trusted device",
+  } }]);
+  try {
+    await expect.poll(() => lines(runtime.responses)).toEqual([{ id: 42, error: { code: -32601, message: "This request is unavailable." } }]);
+    const events = await lines(runtime.events);
+    expect(events.some(e => e.type === "matrix.codex.approval.requested")).toBe(false);
+    expect(JSON.stringify(events)).not.toContain("private-device-challenge");
+  } finally { await runtime.close(); }
+});

@@ -100,6 +100,14 @@ version or schema drift. Runtime capabilities must remain disabled for any
 installed version outside the verified range; do not silently fall back to raw
 terminal parsing for approvals or structured input.
 
+Codex 0.154.0 retains the reviewed exec-event schema. Its permissions approval
+request changes `cwd` to the legacy path-string type, and MCP elicitation adds
+`openai/userVerification`. Matrix still rejects unsupported permission requests
+and device-verification challenges with a correlated error; it never synthesizes
+a device proof or projects the challenge into Chat. The existing form-confirmation
+flow remains supported. Provider contract checks verify both Linux x64 and macOS
+arm64 schema digests; changes to these unsupported variants do not authorize them.
+
 App-server requests must pass through the gateway's bounded request normalizer.
 Command, file-change, and permission requests use Matrix-authored generic copy;
 raw commands, paths, hosts, and permission payloads never enter thread events.

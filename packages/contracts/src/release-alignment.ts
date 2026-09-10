@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { DESKTOP_PROTOCOL_VERSION, evaluateRuntimeCompatibility } from "./runtime-compatibility.js";
+import { DESKTOP_PROTOCOL_VERSION, evaluateRuntimeCompatibility } from "#runtime-compatibility";
 
 const Commit = z.string().regex(/^[a-f0-9]{40}$/);
 export const BuildSourceSchema = z.object({
