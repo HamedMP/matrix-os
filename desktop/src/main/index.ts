@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { readDesktopBuildSource } from "./build-source";
@@ -115,6 +116,8 @@ async function openExternalHttpUrl(url: string): Promise<void> {
 }
 
 function createWindow(bounds: FittedWindowBounds): BrowserWindow {
+  const packagedRendererPath = join(__dirname, "../renderer/index.html");
+  const trustedRendererUrl = desktopRendererUrl ?? pathToFileURL(packagedRendererPath).toString();
   const win = new BrowserWindow({
     ...bounds,
     // Let the renderer's active surface continue beneath the macOS controls
@@ -131,7 +134,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
     },
   });
 
-  installMainRendererMediaPermissions(win.webContents.session, win.webContents);
+  installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
 
@@ -151,7 +154,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
       logMainError("failed to load renderer URL", err);
     });
   } else {
-    void win.loadFile(join(__dirname, "../renderer/index.html")).catch((err: unknown) => {
+    void win.loadFile(packagedRendererPath).catch((err: unknown) => {
       logMainError("failed to load renderer file", err);
     });
   }
