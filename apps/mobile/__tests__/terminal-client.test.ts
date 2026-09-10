@@ -8,9 +8,10 @@ import {
 } from "../lib/terminal-client";
 import { jsonResponse } from "./mobile-shell-test-utils";
 
-const SESSION_ID = "c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9";
-const SHELL_NAME = "matrix-7af3c2e";
-const TWO_WORD_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+$/;
+const WORKSPACE_ID = "tws_00000000000000000000000000000001";
+const TAB_ID = "tt_00000000000000000000000000000001";
+const SESSION_ID = `${WORKSPACE_ID}:${TAB_ID}`;
+const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
 
 class MockWebSocket {
   static OPEN = 1;
@@ -39,91 +40,76 @@ describe("mobile terminal client", () => {
     jest.restoreAllMocks();
   });
 
-  it("parses only safe terminal session summaries", () => {
+  it("parses only safe terminal workspace/tab summaries", () => {
     expect(parseTerminalSessions([
-      { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running", attachedClients: 1 },
-      { sessionId: "../../../secret", cwd: "/tmp", state: "running" },
-      { cwd: "/tmp" },
+      { id: WORKSPACE_ID, revision: 2, tabs: [{ id: TAB_ID, name: "Shell", cwd: "/home/matrix/home", status: "running", revision: 3 }] },
+      { id: "../../../secret", tabs: [] },
+      { tabs: [] },
     ])).toEqual([
-      { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running", attachedClients: 1 },
+      { sessionId: SESSION_ID, workspaceId: WORKSPACE_ID, tabId: TAB_ID, workspaceRevision: 2, revision: 3, name: "Shell", cwd: "/home/matrix/home", state: "running" },
     ]);
   });
 
-  it("fetches shell sessions (by name) through the authenticated gateway", async () => {
+  it("fetches shared workspace tabs through the authenticated gateway", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
-      sessions: [{ name: SHELL_NAME, visualStatus: "running", attachedClients: 1 }],
+      workspaces: [{ id: WORKSPACE_ID, revision: 2, tabs: [{ id: TAB_ID, name: "Shell", cwd: "~", status: "running", revision: 3 }] }],
     }));
 
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
     await expect(gateway.getTerminalSessions()).resolves.toEqual([
-      { sessionId: SHELL_NAME, cwd: "~", state: "running", visualStatus: "running", attachedClients: 1 },
+      { sessionId: SESSION_ID, workspaceId: WORKSPACE_ID, tabId: TAB_ID, workspaceRevision: 2, revision: 3, name: "Shell", cwd: "~", state: "running" },
     ]);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://app.matrix-os.test/api/terminal/sessions",
+      "https://app.matrix-os.test/api/terminal/workspaces",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer clerk-token" }),
       }),
     );
   });
 
-  it("deletes shell sessions by name (force) and rejects unsafe names locally", async () => {
+  it("terminates tabs by TerminalRef and rejects unsafe refs locally", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({}, { status: 404 }));
 
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
-    await expect(gateway.deleteTerminalSession(SHELL_NAME)).resolves.toBe(true);
+    await expect(gateway.deleteTerminalSession(SESSION_ID)).resolves.toBe(true);
     await expect(gateway.deleteTerminalSession("../bad")).resolves.toBe(false);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      `https://app.matrix-os.test/api/terminal/sessions/${SHELL_NAME}?force=1`,
+      `https://app.matrix-os.test/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ID}`,
       expect.objectContaining({ method: "DELETE" }),
     );
   });
 
-  it("creates shell sessions with two-word names for every collision retry", async () => {
-    const postedNames: string[] = [];
+  it("creates a tab in the ensured main workspace", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input, init) => {
-      if (String(input).endsWith("/api/terminal/sessions") && init?.method === "POST") {
-        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
-        if (typeof body.name === "string") postedNames.push(body.name);
-        if (postedNames.length <= 3) {
-          return jsonResponse({ error: { code: "session_exists", message: "Request failed" } }, { status: 409 });
-        }
-        return jsonResponse({ name: body.name }, { status: 201 });
-      }
+      if (String(input).endsWith("/api/terminal/workspaces/ensure") && init?.method === "POST") return jsonResponse({ workspace: { id: WORKSPACE_ID } });
+      if (String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST") return jsonResponse({ tab: { id: TAB_ID } }, { status: 201 });
       return jsonResponse({});
     });
 
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
     const created = await gateway.createTerminalSession();
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(created).toBe(postedNames[3]);
-    expect(postedNames.slice(0, 3)).toEqual([
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-    ]);
-    expect(postedNames[3]).toMatch(TWO_WORD_SESSION_NAME_PATTERN);
-    expect(postedNames.every((name) => name.split("-").length === 2)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(created).toBe(SESSION_ID);
   });
 
   it("builds token-authenticated terminal websocket URLs", () => {
-    expect(buildTerminalWebSocketUrl("https://app.matrix-os.test/", "ws token")).toBe(
-      "wss://app.matrix-os.test/ws/terminal?token=ws%20token",
+    expect(buildTerminalWebSocketUrl("https://app.matrix-os.test/", SESSION_ID, "ws token")).toBe(
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&token=ws+token`,
     );
     expect(isSafeSessionId(SESSION_ID)).toBe(true);
     expect(isSafeSessionId("../bad")).toBe(false);
   });
 
-  it("sends resize, input, and detach frames (no attach frame; name is in the query)", () => {
-    jest.useFakeTimers();
+  it("sends resize, input, and detach frames with the canonical TerminalRef", () => {
     const ws = new MockWebSocket() as unknown as WebSocket;
     const messages: unknown[] = [];
     const statuses: string[] = [];
     const connection = new MobileTerminalConnection(ws, {
-      sessionId: SHELL_NAME,
+      sessionId: SESSION_ID,
       cols: 220,
       rows: 70,
       onMessage: (frame) => messages.push(frame),
@@ -132,16 +118,6 @@ describe("mobile terminal client", () => {
 
     connection.attach();
     (ws as unknown as MockWebSocket).onopen?.();
-    (ws as unknown as MockWebSocket).onmessage?.({
-      data: JSON.stringify({
-        type: "attached",
-        session: SHELL_NAME,
-        state: "running",
-        canonicalSize: { cols: 220, rows: 70 },
-        lease: { epoch: 7 },
-      }),
-    });
-    jest.advanceTimersByTime(10_000);
     connection.sendInput("pwd\r");
     connection.resize(999, 999);
     (ws as unknown as MockWebSocket).onmessage?.({ data: JSON.stringify({ type: "output", data: "ok" }) });
@@ -149,72 +125,13 @@ describe("mobile terminal client", () => {
 
     expect(statuses).toEqual(["connecting", "open"]);
     expect((ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame))).toEqual([
-      { type: "ping" },
-      { type: "input", data: "pwd\r" },
-      { type: "resize", cols: 500, rows: 200 },
-      { type: "detach" },
+      { type: "resize", terminalRef: TERMINAL_REF, mode: "soft", size: { cols: 220, rows: 70 } },
+      { type: "input", terminalRef: TERMINAL_REF, data: "pwd\r" },
+      { type: "resize", terminalRef: TERMINAL_REF, mode: "soft", size: { cols: 500, rows: 200 } },
+      { type: "detach", terminalRef: TERMINAL_REF },
     ]);
-    expect(messages).toEqual([
-      {
-        type: "attached",
-        sessionId: SHELL_NAME,
-        state: "running",
-        canonicalSize: { cols: 220, rows: 70 },
-        leaseEpoch: 7,
-      },
-      { type: "output", data: "ok" },
-    ]);
+    expect(messages).toEqual([{ type: "output", data: "ok" }]);
     expect((ws as unknown as MockWebSocket).closed).toBe(true);
-    jest.useRealTimers();
-  });
-
-  it("parses canonical presentation frames and stops renewing when displaced", () => {
-    jest.useFakeTimers();
-    const ws = new MockWebSocket() as unknown as WebSocket;
-    const messages: unknown[] = [];
-    const connection = new MobileTerminalConnection(ws, {
-      sessionId: SHELL_NAME,
-      cols: 100,
-      rows: 30,
-      onMessage: (frame) => messages.push(frame),
-    });
-
-    connection.attach();
-    (ws as unknown as MockWebSocket).onopen?.();
-    (ws as unknown as MockWebSocket).onmessage?.({
-      data: JSON.stringify({
-        type: "attached",
-        session: SHELL_NAME,
-        state: "running",
-        canonicalSize: { cols: 100, rows: 30 },
-        lease: { epoch: 12 },
-      }),
-    });
-    (ws as unknown as MockWebSocket).onmessage?.({
-      data: JSON.stringify({ type: "canonical-size", cols: 96, rows: 28 }),
-    });
-    (ws as unknown as MockWebSocket).onmessage?.({
-      data: JSON.stringify({ type: "presentation-reset" }),
-    });
-    (ws as unknown as MockWebSocket).onmessage?.({
-      data: JSON.stringify({ type: "lease-revoked", epoch: 12 }),
-    });
-    jest.advanceTimersByTime(30_000);
-
-    expect(messages).toEqual([
-      {
-        type: "attached",
-        sessionId: SHELL_NAME,
-        state: "running",
-        canonicalSize: { cols: 100, rows: 30 },
-        leaseEpoch: 12,
-      },
-      { type: "canonical-size", cols: 96, rows: 28 },
-      { type: "presentation-reset" },
-      { type: "lease-revoked" },
-    ]);
-    expect((ws as unknown as MockWebSocket).sent).toEqual([]);
-    jest.useRealTimers();
   });
 
   it("opens terminal sockets with browser-compatible query auth and native bearer headers", async () => {
@@ -225,15 +142,13 @@ describe("mobile terminal client", () => {
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
     const terminalClient = new MobileTerminalClient(gateway);
     const connection = await terminalClient.connect({
-      sessionId: SHELL_NAME,
-      cols: 120,
-      rows: 40,
+      sessionId: SESSION_ID,
       onMessage: jest.fn(),
     });
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      `wss://app.matrix-os.test/ws/terminal/session?session=${SHELL_NAME}&client=hard&cols=120&rows=40&lease=exclusive&token=ws-token`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&token=ws-token`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );
@@ -247,15 +162,13 @@ describe("mobile terminal client", () => {
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
     const terminalClient = new MobileTerminalClient(gateway);
     const connection = await terminalClient.connect({
-      sessionId: SHELL_NAME,
-      cols: 120,
-      rows: 40,
+      sessionId: SESSION_ID,
       onMessage: jest.fn(),
     });
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      `wss://app.matrix-os.test/ws/terminal/session?session=${SHELL_NAME}&client=hard&cols=120&rows=40&lease=exclusive`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );
@@ -265,6 +178,7 @@ describe("mobile terminal client", () => {
     const ws = new MockWebSocket() as unknown as WebSocket;
     (ws as unknown as MockWebSocket).readyState = 0;
     const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
       cwd: "projects",
       onMessage: jest.fn(),
     });
