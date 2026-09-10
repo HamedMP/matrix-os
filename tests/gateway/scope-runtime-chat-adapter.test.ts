@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createScopeRuntimeChatProviderAdapter } from "../../packages/gateway/src/collaboration/scope-runtime-chat-adapter.js";
-
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const runtimeHandle = "runtime_22222222222222222222222222222222";
-
 describe("scope runtime canonical Chat adapter", () => {
   it("runs visible text in the exact fixed-profile generation and stops it", async () => {
     const client = {
@@ -26,7 +24,6 @@ describe("scope runtime canonical Chat adapter", () => {
     });
     const events = [];
     for await (const event of adapter.start(runInput())) events.push(event);
-
     expect(client.createRuntime).toHaveBeenCalledWith({
       scopeHandle: "scope_10000000000040008000000000000001",
       workload: "chat_ai",
@@ -46,7 +43,6 @@ describe("scope runtime canonical Chat adapter", () => {
     ]);
     expect(client.stopRuntime).toHaveBeenCalledWith({ runtimeHandle });
   });
-
   it("fails closed before launch for stale generations and owner-context inputs", async () => {
     const client = {
       capability: () => ({ available: false as const, reason: "supervisor_unavailable" as const }),
@@ -65,13 +61,11 @@ describe("scope runtime canonical Chat adapter", () => {
     for await (const event of adapter.start(runInput())) unavailable.push(event);
     expect(unavailable).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
     expect(client.createRuntime).not.toHaveBeenCalled();
-
     const unsafe = [];
     for await (const event of adapter.start({ ...runInput(), executionRoot: "/home/matrix/home" })) unsafe.push(event);
     expect(unsafe).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
     expect(client.createRuntime).not.toHaveBeenCalled();
   });
-
   it("coalesces abort and explicit cancellation into one runtime stop", async () => {
     const abortController = new AbortController();
     let finishRun: ((value: { runtimeHandle: string; executionGeneration: string; text: string }) => void) | undefined;
@@ -99,7 +93,6 @@ describe("scope runtime canonical Chat adapter", () => {
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: "state.updated" } });
     const completion = iterator.next();
     await vi.waitFor(() => expect(client.runChat).toHaveBeenCalled());
-
     abortController.abort();
     await adapter.cancel?.({
       owner: { type: "personal", ownerId: "owner" },
@@ -110,11 +103,9 @@ describe("scope runtime canonical Chat adapter", () => {
     finishRun?.({ runtimeHandle, executionGeneration: "7", text: "" });
     await completion;
     await iterator.return?.(undefined);
-
     expect(client.stopRuntime).toHaveBeenCalledTimes(1);
   });
 });
-
 function runInput() {
   return {
     owner: { type: "personal" as const, ownerId: "owner" },

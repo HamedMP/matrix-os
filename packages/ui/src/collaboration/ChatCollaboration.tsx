@@ -237,6 +237,7 @@ type SharedChatAction =
   | { type: "loaded"; scope: SharedScope; chat: SharedChat; messages: SharedMessage[]; clearForegroundError: boolean }
   | { type: "load_failed" }
   | { type: "page_started" }
+  | { type: "page_cancelled" }
   | { type: "page_loaded"; messages: SharedMessage[]; hasMore: boolean }
   | { type: "page_failed" }
   | { type: "recovery_failed" }
@@ -269,6 +270,7 @@ function reduceSharedChat(state: SharedChatState, action: SharedChatAction): Sha
         error: action.clearForegroundError || state.error === "load" || state.error === "unavailable" ? null : state.error };
     case "load_failed": return { ...state, loading: false, error: "load" };
     case "page_started": return { ...state, loadingMoreMessages: true, historyPageError: false };
+    case "page_cancelled": return { ...state, loadingMoreMessages: false };
     case "page_loaded": return { ...state, messages: action.messages, hasMoreMessages: action.hasMore,
       loadingMoreMessages: false, historyPageError: false };
     case "page_failed": return { ...state, loadingMoreMessages: false, historyPageError: true };
@@ -317,6 +319,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
   const recoverCanonical = useCallback(async () => {
     // Fence pending history pages and older refreshes before reading canonical state.
     const generation = ++loadGeneration.current;
+    dispatch({ type: "page_cancelled" });
     try {
       const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
       const [scopeValue, chatValue] = await Promise.all([api.get(base), api.get(`${base}/chat`)]);
