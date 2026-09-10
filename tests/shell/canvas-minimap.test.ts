@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useCanvasGroups } from "../../shell/src/stores/canvas-groups.js";
-import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 
 function resetStores() {
-  useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });
+  useDesktopMode.setState({ mode: "canvas", previousMode: null });
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
   useCanvasGroups.setState({ groups: [] });
   useWindowManager.setState({
