@@ -31,6 +31,16 @@ export interface VoiceNoteResult {
   error?: string;
 }
 
+function diagnosticErrorKind(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error
+    && "code" in error
+    && (error as Error & { code?: unknown }).code === "ENOENT";
+}
+
 async function readBoundedResponse(response: Response): Promise<Buffer | undefined> {
   const contentLength = Number(response.headers?.get?.("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_CHANNEL_VOICE_BYTES) {
@@ -71,9 +81,22 @@ async function preserveOwnerAudio(filePath: string, buffer: Buffer): Promise<boo
     file = undefined;
     await rename(temporaryPath, filePath);
     return true;
-  } catch (_error: unknown) {
-    await file?.close().catch(() => undefined);
-    await unlink(temporaryPath).catch(() => undefined);
+  } catch (error: unknown) {
+    console.warn("[voice] owner audio persistence failed", diagnosticErrorKind(error));
+    if (file) {
+      try {
+        await file.close();
+      } catch (closeError: unknown) {
+        console.warn("[voice] owner audio handle cleanup failed", diagnosticErrorKind(closeError));
+      }
+    }
+    try {
+      await unlink(temporaryPath);
+    } catch (unlinkError: unknown) {
+      if (!isMissingFileError(unlinkError)) {
+        console.warn("[voice] owner audio temp cleanup failed", diagnosticErrorKind(unlinkError));
+      }
+    }
     return false;
   }
 }
@@ -115,7 +138,8 @@ export async function handleVoiceNote(params: {
         redirect: "error",
         signal: AbortSignal.timeout(30_000),
       });
-    } catch (_error: unknown) {
+    } catch (error: unknown) {
+      console.warn("[voice] audio download failed", diagnosticErrorKind(error));
       return {
         filePath,
         transcript: null,
@@ -163,7 +187,8 @@ export async function handleVoiceNote(params: {
   try {
     const result = await stt.transcribe(buffer);
     return { filePath, transcript: result.text, durationMs: result.durationMs };
-  } catch (_error: unknown) {
+  } catch (error: unknown) {
+    console.warn("[voice] transcription failed", diagnosticErrorKind(error));
     return { filePath, transcript: null, durationMs: 0, error: "Transcription unavailable" };
   }
 }
