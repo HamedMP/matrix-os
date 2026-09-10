@@ -235,7 +235,7 @@ describe("collaboration gateway routes", () => {
     const path = `/api/collaboration/scopes/${collaborationIds.scope}/chat/requests`;
     const body = {
       clientRequestId: request(80),
-      expectedRevision: "1",
+      expectedRevision: "2",
       text: "Summarize our discussion",
       selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
     };
