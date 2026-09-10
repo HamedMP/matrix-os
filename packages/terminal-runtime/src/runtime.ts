@@ -1,6 +1,7 @@
 import {
   TerminalRefSchema,
   TerminalPaneActionSchema,
+  TerminalTabIdSchema,
   TerminalWorkspaceIdSchema,
   type TerminalPaneAction,
   type TerminalRef,
@@ -168,6 +169,7 @@ export class TerminalRuntime {
   }
 
   async createTab(workspaceIdInput: string, input: {
+    tabId?: string;
     name: string;
     cwd: string;
     command?: string[];
@@ -176,49 +178,63 @@ export class TerminalRuntime {
     accessScope?: TerminalTab["accessScope"];
   }): Promise<TerminalTab> {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
+    const requestedTabId = input.tabId ? TerminalTabIdSchema.parse(input.tabId) : undefined;
     return this.runWorkspaceMutation(async () => {
+      const existing = requestedTabId
+        ? await this.store.getTab({ workspaceId, tabId: requestedTabId })
+        : undefined;
+      if (existing && existing.status !== "starting") return existing;
       const workspaces = await this.listWorkspaces();
       const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
       if (!workspace) throw new TerminalRuntimeError("not_found");
-      if (workspace.tabs.filter(tabOccupiesAdmission).length >= this.maxTabsPerWorkspace) {
+      if (!existing && workspace.tabs.filter(tabOccupiesAdmission).length >= this.maxTabsPerWorkspace) {
         throw new TerminalRuntimeError("capacity");
       }
-      if (workspaces.reduce(
+      if (!existing && workspaces.reduce(
         (count, candidate) => count + candidate.tabs.filter(tabOccupiesAdmission).length,
         0,
       ) >= this.maxTabsTotal) {
         throw new TerminalRuntimeError("capacity");
       }
       const releaseObserverReservation = this.reserveObserverSlot(workspaceId);
-      let stagedTab: TerminalTab | undefined;
+      let stagedTab: TerminalTab | undefined = existing;
       let runtimeIds: { tabId: number; paneId: string } | undefined;
+      let createdRuntimeTab = false;
       let sessionName: string | undefined;
+      let startupCommand: string[] = [];
       try {
         const runtimeWorkspace = await this.requireRuntimeWorkspace(workspaceId);
         sessionName = runtimeWorkspace.zellijSessionName;
         await this.zellij.ensureSession(runtimeWorkspace.zellijSessionName, runtimeWorkspace.canonicalSize);
-        stagedTab = await this.store.createTab(workspaceId, {
+        stagedTab ??= await this.store.createTab(workspaceId, {
           ...input,
           accessScope: input.accessScope ?? "owner",
         });
         const stagedWorkspace = await this.requireRuntimeWorkspace(workspaceId);
         const internalTab = stagedWorkspace.tabs[stagedTab.id];
         if (!internalTab) throw new Error("Terminal tab staging failed");
-        runtimeIds = await this.zellij.createTab(stagedWorkspace.zellijSessionName, {
-          internalName: internalTab.zellijTabName,
-          cwd: internalTab.cwd,
-          ...(input.command ? { command: input.command } : {}),
-        });
+        startupCommand = internalTab.startupCommand ?? input.command ?? [];
+        runtimeIds = existing
+          ? await this.zellij.findTabByInternalName?.(stagedWorkspace.zellijSessionName, internalTab.zellijTabName)
+          : undefined;
+        if (!runtimeIds) {
+          runtimeIds = await this.zellij.createTab(stagedWorkspace.zellijSessionName, {
+            internalName: internalTab.zellijTabName,
+            cwd: internalTab.cwd,
+            ...(startupCommand?.length ? { command: startupCommand } : {}),
+          });
+          createdRuntimeTab = true;
+        }
         const tab = await this.store.activateTab({ workspaceId, tabId: stagedTab.id }, runtimeIds);
         await this.restartObserver(workspaceId);
         return tab;
       } catch (error) {
-        if (stagedTab && sessionName) {
+        if (stagedTab && sessionName && (!existing || createdRuntimeTab)) {
           try {
             await this.rollbackTabCreation(sessionName, {
               workspaceId,
               tabId: stagedTab.id,
-            }, runtimeIds?.tabId);
+            }, runtimeIds?.tabId, existing ? startupCommand : undefined);
           } catch (rollbackError) {
             console.error(
               "[terminal-runtime] failed to roll back terminal tab creation",
@@ -244,7 +260,11 @@ export class TerminalRuntime {
   private async reconcileWorkspaceNow(workspaceId: string): Promise<void> {
     const workspace = await this.requireRuntimeWorkspace(workspaceId);
     const needsObserver = Object.values(workspace.tabs)
-      .some((tab) => tab.status !== "exited" && tab.status !== "failed");
+      .some((tab) => (
+        tab.status === "starting"
+          ? tab.startupCommand !== undefined
+          : tab.status !== "exited" && tab.status !== "failed"
+      ));
     const releaseObserverReservation = needsObserver
       ? this.reserveObserverSlot(workspaceId)
       : () => undefined;
@@ -253,6 +273,15 @@ export class TerminalRuntime {
       for (const tab of Object.values(workspace.tabs).sort((left, right) => left.order - right.order)) {
         if (tab.status === "exited" || tab.status === "failed") continue;
         let ids = await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
+        if (tab.status === "starting" && tab.startupCommand === undefined) {
+          // Records without startup intent predate stable client-supplied tab
+          // IDs. Recover an already-created Zellij tab when possible; an
+          // absent one cannot be retried by a client and must stop consuming
+          // admission capacity.
+          if (ids) await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
+          else await this.store.markTabExited({ workspaceId, tabId: tab.id });
+          continue;
+        }
         if (!ids) {
           if (tab.status !== "starting") {
             await this.store.markTabExited({ workspaceId, tabId: tab.id });
@@ -261,6 +290,7 @@ export class TerminalRuntime {
           ids = await this.zellij.createTab(workspace.zellijSessionName, {
             internalName: tab.zellijTabName,
             cwd: tab.cwd,
+            ...(tab.startupCommand?.length ? { command: tab.startupCommand } : {}),
           });
         }
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
@@ -322,11 +352,23 @@ export class TerminalRuntime {
       await this.runWorkspaceMutation(async () => {
         const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
         const tab = workspace.tabs[ref.tabId];
-        if (!tab || tab.zellijTabId === null) throw new TerminalRuntimeError("not_found");
-        if (!this.zellij.closeTab) throw new TerminalRuntimeError("unavailable");
+        if (!tab) throw new TerminalRuntimeError("not_found");
+        let zellijTabId = tab.zellijTabId;
+        if (zellijTabId === null && tab.status === "starting") {
+          if (!this.zellij.findTabByInternalName) throw new TerminalRuntimeError("unavailable");
+          zellijTabId = (await this.zellij.findTabByInternalName(
+            workspace.zellijSessionName,
+            tab.zellijTabName,
+          ))?.tabId ?? null;
+        }
+        if (zellijTabId !== null && !this.zellij.closeTab) {
+          throw new TerminalRuntimeError("unavailable");
+        }
         await this.drainTabInput(key);
         await this.closeAttachment(key, true);
-        await this.zellij.closeTab(workspace.zellijSessionName, tab.zellijTabId);
+        if (zellijTabId !== null) {
+          await this.zellij.closeTab!(workspace.zellijSessionName, zellijTabId);
+        }
         await this.store.markTabExited(ref);
         await this.restartObserver(ref.workspaceId);
       });
@@ -546,7 +588,20 @@ export class TerminalRuntime {
     return result;
   }
 
-  private async rollbackTabCreation(sessionName: string, ref: TerminalRef, zellijTabId?: number): Promise<void> {
+  private async rollbackTabCreation(
+    sessionName: string,
+    ref: TerminalRef,
+    zellijTabId?: number,
+    recoveryCommand?: string[],
+  ): Promise<void> {
+    if (recoveryCommand) {
+      await this.store.restoreTabStartupIntent(ref, recoveryCommand);
+      if (zellijTabId !== undefined) {
+        if (!this.zellij.closeTab) throw new Error("Terminal tab rollback unavailable");
+        await this.zellij.closeTab(sessionName, zellijTabId);
+      }
+      return;
+    }
     try {
       if (zellijTabId !== undefined) {
         if (!this.zellij.closeTab) throw new Error("Terminal tab rollback unavailable");

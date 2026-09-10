@@ -94,6 +94,25 @@ describe("terminal workspace store", () => {
     expect(workspaceAfterRetry.revision).toBe(workspaceAfterExit.revision);
   });
 
+  it("persists startup intent internally until activation without exposing it publicly", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-startup-intent-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const workspace = await store.ensureWorkspace();
+    const tab = await store.createTab(workspace.id, {
+      name: "setup",
+      cwd: "projects/matrix-os",
+      command: ["sh", "-lc", "claude"],
+    });
+
+    expect(tab).not.toHaveProperty("startupCommand");
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.startupCommand)
+      .toEqual(["sh", "-lc", "claude"]);
+
+    await store.activateTab({ workspaceId: workspace.id, tabId: tab.id }, { tabId: 1, paneId: "terminal_1" });
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]).not.toHaveProperty("startupCommand");
+  });
+
   it("advances presentation revision only for intentional snapshot replacement", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-presentation-revision-"));
     homes.push(homePath);

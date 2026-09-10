@@ -46,6 +46,7 @@ export class TerminalRuntimeSocketClient {
   }
 
   async createTab(workspaceId: string, input: {
+    tabId?: string;
     name: string;
     cwd: string;
     accessScope?: TerminalTab["accessScope"];

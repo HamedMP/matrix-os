@@ -1,4 +1,4 @@
-import type { TerminalPaneAction } from "@matrix-os/contracts";
+import { TerminalRefSchema, type TerminalPaneAction } from "@matrix-os/contracts";
 
 export class TerminalPaneActionsUnavailableError extends Error {
   constructor() {
@@ -24,16 +24,23 @@ export async function dispatchTerminalPaneRequest({
   chatId?: string;
   action: TerminalPaneAction;
 }): Promise<unknown> {
-  const session = `/api/terminal/sessions/${encodeURIComponent(sessionName)}`;
+  const [workspaceId, tabId, extra] = sessionName.split(":");
+  const canonicalRef = extra === undefined
+    ? TerminalRefSchema.safeParse({ workspaceId, tabId })
+    : null;
+  const target = canonicalRef?.success
+    ? `/api/terminal/workspaces/${encodeURIComponent(canonicalRef.data.workspaceId)}/tabs/${encodeURIComponent(canonicalRef.data.tabId)}`
+    : `/api/terminal/sessions/${encodeURIComponent(sessionName)}`;
   try {
     return await post(
-      `${session}/pane-actions${chatId ? `?chatId=${encodeURIComponent(chatId)}` : ""}`,
+      `${target}/pane-actions${chatId ? `?chatId=${encodeURIComponent(chatId)}` : ""}`,
       action,
     );
   } catch (error: unknown) {
     if (!isMissingRoute(error)) throw error;
+    if (canonicalRef?.success) throw new TerminalPaneActionsUnavailableError();
     if (action.type === "split" && !chatId)
-      return post(`${session}/panes`, { direction: action.direction });
+      return post(`${target}/panes`, { direction: action.direction });
     throw new TerminalPaneActionsUnavailableError();
   }
 }

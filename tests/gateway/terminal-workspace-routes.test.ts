@@ -240,12 +240,14 @@ describe("terminal workspace gateway routes", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        tabId: "tt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         name: "main",
         cwd: "projects/matrix-os",
         agent: { providerId: "codex", threadId: "thread_terminal_01" },
       }),
     })).status).toBe(201);
     expect(runtime.createTab).toHaveBeenCalledWith(workspace.id, {
+      tabId: "tt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       name: "main",
       cwd: "projects/matrix-os",
       agent: { providerId: "codex", threadId: "thread_terminal_01" },

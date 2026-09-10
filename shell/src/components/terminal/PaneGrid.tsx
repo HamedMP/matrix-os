@@ -13,7 +13,7 @@ interface PaneGridProps {
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
-  shouldDestroyPane?: (paneId: string) => boolean;
+  shouldDestroyPane?: (paneId: string) => boolean | string;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
   canvasZoom?: number;
@@ -51,7 +51,7 @@ interface PaneNodeRendererProps {
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
-  shouldDestroyPane?: (paneId: string) => boolean;
+  shouldDestroyPane?: (paneId: string) => boolean | string;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
   canvasZoom?: number;
@@ -137,7 +137,7 @@ interface SplitContainerProps {
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
-  shouldDestroyPane?: (paneId: string) => boolean;
+  shouldDestroyPane?: (paneId: string) => boolean | string;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
   canvasZoom?: number;
