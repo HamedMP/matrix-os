@@ -17,6 +17,7 @@ import type { SharedQueuedTurn } from "./repository.js";
 const RequestIdSchema = CollaborationIdSchema;
 const HashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const MAX_SHARED_PENDING = 32;
+const MAX_APPROVAL_RECONCILIATION_BATCH = 64;
 
 export class CollaborationChatCommandError extends Error {
   constructor(readonly code: "capacity" | "conflict" | "forbidden" | "not_found" | "unavailable") {
@@ -57,6 +58,19 @@ export class CollaborationChatCommands {
       clientRequestId: string;
       actorId: string;
     }): Promise<void>;
+    /**
+     * Resolve an approval whose external outcome is unknown without replaying the
+     * approval decision. Implementations must stop or recover the backing run to
+     * a canonical terminal state before returning.
+     */
+    reconcileApproval?(input: {
+      commandId: string;
+      scopeId: string;
+      chatId: string;
+      runId: string;
+      approvalId: string;
+      decision: "approve" | "approve_for_session" | "decline" | "cancel";
+    }): Promise<"completed" | "failed">;
   }) {
     this.now = options.now ?? (() => new Date());
   }
@@ -220,6 +234,69 @@ export class CollaborationChatCommands {
     return this.finishExternalCommand(reserved.result.id, "completed");
   }
 
+  async reconcilePendingApprovals(limit = MAX_APPROVAL_RECONCILIATION_BATCH): Promise<number> {
+    const boundedLimit = z.number().int().min(1).max(MAX_APPROVAL_RECONCILIATION_BATCH).parse(limit);
+    const commands = await this.options.db.selectFrom("chat_collaboration_commands")
+      .selectAll()
+      .where("kind", "=", "approval")
+      .where("state", "in", ["accepted", "reconciling"])
+      .orderBy("created_at", "asc")
+      .limit(boundedLimit)
+      .execute();
+    let reconciled = 0;
+    for (const command of commands) {
+      try {
+        const inferred = await canonicalApprovalOutcome(this.options.db, command);
+        const outcome = inferred ?? await this.reconcileUnknownApproval(command);
+        if (!outcome) continue;
+        if (await this.settleReconciledApproval(command.id, outcome)) reconciled += 1;
+      } catch (error: unknown) {
+        console.warn(
+          "[chat/collaboration-commands] approval reconciliation deferred",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+    }
+    return reconciled;
+  }
+
+  private async reconcileUnknownApproval(
+    command: Selectable<ChatCollaborationCommandsTable>,
+  ): Promise<"completed" | "failed" | null> {
+    if (!this.options.reconcileApproval || !command.run_id || !command.approval_id || !command.decision) {
+      return null;
+    }
+    return this.options.reconcileApproval({
+      commandId: command.id,
+      scopeId: command.scope_id,
+      chatId: command.chat_id,
+      runId: command.run_id,
+      approvalId: command.approval_id,
+      decision: CanonicalChatApprovalDecisionSchema.parse(command.decision),
+    });
+  }
+
+  private async settleReconciledApproval(
+    commandId: string,
+    state: "completed" | "failed",
+  ): Promise<boolean> {
+    return this.options.db.transaction().execute(async (trx) => {
+      const command = await trx.selectFrom("chat_collaboration_commands").selectAll()
+        .where("id", "=", commandId).forUpdate().executeTakeFirst();
+      if (!command || !["accepted", "reconciling"].includes(command.state)) return false;
+      const result = commandResult(command, state);
+      const updated = await trx.updateTable("chat_collaboration_commands").set({
+        state,
+        result_ref: jsonb(result),
+        updated_at: this.now().toISOString(),
+      }).where("id", "=", commandId)
+        .where("state", "in", ["accepted", "reconciling"])
+        .returning("id")
+        .executeTakeFirst();
+      return updated !== undefined;
+    });
+  }
+
   private async finishExternalCommand(
     commandId: string,
     state: "completed" | "reconciling",
@@ -237,6 +314,31 @@ export class CollaborationChatCommands {
       return result;
     });
   }
+}
+
+async function canonicalApprovalOutcome(
+  db: Kysely<OwnerCollaborationDatabase>,
+  command: Selectable<ChatCollaborationCommandsTable>,
+): Promise<"completed" | "failed" | null> {
+  if (!command.run_id || !command.approval_id) return "failed";
+  const run = await db.selectFrom("chat_runs").select("status")
+    .where("id", "=", command.run_id)
+    .where("chat_id", "=", command.chat_id)
+    .executeTakeFirst();
+  if (!run) return "failed";
+  const events = await db.selectFrom("chat_run_events").select("event")
+    .where("run_id", "=", command.run_id)
+    .orderBy("run_seq", "desc")
+    .limit(256)
+    .execute();
+  for (const row of events) {
+    const event = parseJson(row.event) as { type?: unknown; approvalId?: unknown };
+    if (event.type === "approval.resolved" && event.approvalId === command.approval_id) {
+      return "completed";
+    }
+  }
+  if (["completed", "failed", "aborted"].includes(run.status)) return "failed";
+  return null;
 }
 
 function parseIdentity(input: CommandIdentity): CommandIdentity {
