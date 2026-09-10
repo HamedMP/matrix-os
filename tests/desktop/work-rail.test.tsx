@@ -477,72 +477,29 @@ describe("WorkRail", () => {
     expect(document.activeElement).toBe(pin);
   });
 
-  it("scrolls only an overflowing Chat title while hover actions are visible", async () => {
-    let resize!: ResizeObserverCallback;
-    class TitleResizeObserver implements ResizeObserver {
-      constructor(callback: ResizeObserverCallback) { resize = callback; }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("ResizeObserver", TitleResizeObserver);
-    setup();
-    const chat = await screen.findByRole("button", { name: "Recent global" });
-    const title = within(chat).getByTitle("Recent global");
-    const viewport = title.parentElement!;
-    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 120 });
-    Object.defineProperty(title, "scrollWidth", { configurable: true, value: 220 });
+  it("keeps an old long Chat title accessible and selectable", async () => {
+    const longTitle = "A previously saved Chat title that is intentionally long enough to overflow the narrow Recents rail ".repeat(2).trim();
+    const longChat = record("chat_old_long", longTitle, { updatedAt: "2026-08-28T12:00:00.000Z" });
+    const client = { list: vi.fn(async () => ({ items: [longChat] })) } as unknown as CanonicalChatClient;
+    const onSelectChat = vi.fn();
+    render(<WorkRail client={client} projects={[]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()}
+      onNewProjectChat={vi.fn()} onSelectChat={onSelectChat} onCollapse={vi.fn()} />);
 
-    act(() => resize([], {} as ResizeObserver));
-
-    expect(viewport.dataset.overflowing).toBe("true");
-    expect(title.className).toContain("group-hover/chat:animate-[chat-title-scroll_4s_ease-in-out_infinite_alternate]");
-    expect(title.className).toContain("group-focus-within/chat:animate-[chat-title-scroll_4s_ease-in-out_infinite_alternate]");
-    expect(title.className).toContain("motion-reduce:animate-none");
-    expect(viewport.style.getPropertyValue("--chat-title-scroll-distance")).toBe("156px");
+    const chat = await screen.findByRole("button", { name: longTitle });
+    expect(within(chat).getByTitle(longTitle).textContent).toBe(longTitle);
+    fireEvent.click(chat);
+    expect(onSelectChat).toHaveBeenCalledWith(longChat);
   });
 
-  it("keeps short Chat titles stable when hover actions are visible", async () => {
-    const observers: Array<{ callback: ResizeObserverCallback; elements: Set<Element> }> = [];
-    class TitleResizeObserver implements ResizeObserver {
-      private readonly entry: { callback: ResizeObserverCallback; elements: Set<Element> };
-      constructor(callback: ResizeObserverCallback) {
-        this.entry = { callback, elements: new Set() };
-        observers.push(this.entry);
-      }
-      observe(element: Element) { this.entry.elements.add(element); }
-      unobserve(element: Element) { this.entry.elements.delete(element); }
-      disconnect() { this.entry.elements.clear(); }
-    }
-    vi.stubGlobal("ResizeObserver", TitleResizeObserver);
-    setup();
+  it("keeps a short Chat title accessible and selectable", async () => {
+    const { actions } = setup();
     const chat = await screen.findByRole("button", { name: "Recent global" });
-    const title = within(chat).getByTitle("Recent global");
-    const viewport = title.parentElement!;
-    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 180 });
-    Object.defineProperty(title, "scrollWidth", { configurable: true, value: 60 });
-    const observer = observers.find((candidate) => candidate.elements.has(viewport))!;
-
-    act(() => observer.callback([], observer as unknown as ResizeObserver));
-
-    expect(viewport.dataset.overflowing).toBe("false");
-    expect(title.className).not.toContain("chat-title-scroll");
-    expect(viewport.style.getPropertyValue("--chat-title-scroll-distance")).toBe("0px");
+    expect(within(chat).getByTitle("Recent global").textContent).toBe("Recent global");
+    fireEvent.click(chat);
+    expect(actions.onSelectChat).toHaveBeenCalledWith(recent);
   });
 
-  it("preserves overlay scrolling for a selected pinned Chat row", async () => {
-    const observers: Array<{ callback: ResizeObserverCallback; elements: Set<Element> }> = [];
-    class TitleResizeObserver implements ResizeObserver {
-      private readonly entry: { callback: ResizeObserverCallback; elements: Set<Element> };
-      constructor(callback: ResizeObserverCallback) {
-        this.entry = { callback, elements: new Set() };
-        observers.push(this.entry);
-      }
-      observe(element: Element) { this.entry.elements.add(element); }
-      unobserve(element: Element) { this.entry.elements.delete(element); }
-      disconnect() { this.entry.elements.clear(); }
-    }
-    vi.stubGlobal("ResizeObserver", TitleResizeObserver);
+  it("preserves selected pinned Chat actions with the bounded title", async () => {
     const client = { list: vi.fn(async () => ({ items: [pinned] })) } as unknown as CanonicalChatClient;
     render(
       <WorkRail client={client} projects={[]} active activeChatId="chat_pinned"
@@ -550,20 +507,11 @@ describe("WorkRail", () => {
         onSelectChat={vi.fn()} onCollapse={vi.fn()} />,
     );
     const chat = await screen.findByRole("button", { name: "Pinned global" });
-    const title = within(chat).getByTitle("Pinned global");
-    const viewport = title.parentElement!;
-    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 110 });
-    Object.defineProperty(title, "scrollWidth", { configurable: true, value: 190 });
-    const observer = observers.find((candidate) => candidate.elements.has(viewport))!;
-    act(() => observer.callback([], observer as unknown as ResizeObserver));
-
-    const actions = screen.getByRole("button", { name: "Unpin Pinned global" }).parentElement!;
+    const unpin = screen.getByRole("button", { name: "Unpin Pinned global" });
     expect(chat.getAttribute("aria-current")).toBe("page");
-    expect(viewport.dataset.overflowing).toBe("true");
-    expect(actions.className).toContain("absolute");
-    expect(actions.getAttribute("style")).toContain(
-      "background: linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)",
-    );
+    expect(within(chat).getByTitle("Pinned global")).toBeTruthy();
+    unpin.focus();
+    expect(document.activeElement).toBe(unpin);
   });
 
   it("opens an autofocused Chat search dialog from the top of the rail", async () => {

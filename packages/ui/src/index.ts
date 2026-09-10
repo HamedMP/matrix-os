@@ -76,7 +76,7 @@ export type { TerminalControlsState, TerminalControlsTransport, TerminalControls
 export { GettingStartedVisibilityProvider, GettingStartedBlocker, useGettingStartedVisibility, useGettingStartedBlocker, useGettingStartedPopoverFocus } from "./getting-started-visibility.js";
 export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from "./terminal/terminal-pane-request.js";
 
-export { createChatAgentClient, type ChatAgentClient } from "./chat-agents/client.js";
+export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection } from "./chat-agents/client.js";
 export { ChatAgentsEntry } from "./chat-agents/ChatAgentsEntry.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
 export { isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
