@@ -70,13 +70,16 @@ export async function reserveFundingSources(
   amountMicrousd: number,
   balance: FundedAiReservationBalance,
   checkedAt: string,
+  allowedSources: { promotional: boolean; addon: boolean } = { promotional: true, addon: true },
 ): Promise<{
   promotionalReservedMicrousd: number;
   addonReservedMicrousd: number;
   grantAllocations: Array<{ grantEntryId: string; amountMicrousd: number }>;
 }> {
-  const protection = await activePromotionalProtection(executor, identity);
-  const grants = await executor.selectFrom("ai_funded_promotional_grant_balances")
+  const protection = allowedSources.promotional
+    ? await activePromotionalProtection(executor, identity)
+    : new Map<string, number>();
+  const grants = allowedSources.promotional ? await executor.selectFrom("ai_funded_promotional_grant_balances")
     .selectAll()
     .where("owner_id", "=", identity.ownerId)
     .where("machine_id", "=", identity.machineId)
@@ -85,7 +88,7 @@ export async function reserveFundingSources(
     .orderBy(sql<number>`CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END`)
     .orderBy("expires_at").orderBy("created_at").orderBy("grant_entry_id")
     .limit(MAX_PROMOTIONAL_GRANTS_PER_RUNTIME + 1)
-    .forUpdate().execute();
+    .forUpdate().execute() : [];
   if (grants.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
     throw new Error("Funded AI promotional grant limit invariant violated");
   }
@@ -105,11 +108,17 @@ export async function reserveFundingSources(
   }
   const promotionalReservedMicrousd = amountMicrousd - remaining;
   const addonReservedMicrousd = remaining;
+  if (!allowedSources.addon && addonReservedMicrousd > 0) {
+    throw new AiFundedPolicyError("insufficient_credit");
+  }
   // Only explicit add-on attribution is evidence that an active reservation
   // consumed add-on credit. Legacy NULL attribution must not be guessed from
   // the aggregate reserved balance because that can block unrelated funding.
   const existingAddonReserved = await activeAddonProtection(executor, identity);
   if (addonReservedMicrousd > exactInteger(balance.addon_balance_microusd) - existingAddonReserved) {
+    if (!allowedSources.promotional || !allowedSources.addon) {
+      throw new AiFundedPolicyError("insufficient_credit");
+    }
     throw new Error("Funded AI add-on reservation allocation invariant violated");
   }
   return { promotionalReservedMicrousd, addonReservedMicrousd, grantAllocations };
