@@ -1,6 +1,7 @@
 import {
   SpeechCancellationResponseSchema,
   SpeechCapabilitiesResponseSchema,
+  SpeechLanguageHintsSchema,
   SpeechRequestIdSchema,
   SpeechSafeErrorResponseSchema,
   SpeechSourceKindSchema,
@@ -19,7 +20,6 @@ const MAX_DICTATION_BODY_BYTES = 10 * 1024 * 1024 + 64 * 1024;
 const CANCELLATION_BODY_BYTES = 1_024;
 const HandleSchema = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
 const RuntimeQuerySchema = z.object({ runtimeSlot: RuntimeSlotSchema }).strict();
-const LanguageHintsSchema = z.array(z.string().trim().min(1).max(35)).max(8);
 
 type SafeErrorCode =
   | "unauthorized"
@@ -163,7 +163,7 @@ export function createSpeechRuntimeRoutes(options: {
     let languageHints: readonly string[] | undefined;
     if (typeof languageHintsRaw === "string") {
       try {
-        const parsed = LanguageHintsSchema.safeParse(JSON.parse(languageHintsRaw));
+        const parsed = SpeechLanguageHintsSchema.safeParse(JSON.parse(languageHintsRaw));
         if (!parsed.success) return c.json(safeError("invalid_request"), 400);
         languageHints = parsed.data;
       } catch (error: unknown) {

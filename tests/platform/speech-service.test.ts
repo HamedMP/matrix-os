@@ -161,6 +161,49 @@ describe("platform speech service", () => {
     expect(adapter.transcribe).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects request-id reuse with different language hints", async () => {
+    const hintedPolicy: PlatformSpeechPolicy = {
+      ...policy,
+      dictation: { ...policy.dictation, languageHints: true },
+    };
+    const adapterStarted = Promise.withResolvers<void>();
+    const allowAdapter = Promise.withResolvers<void>();
+    const adapter: FileTranscriptionAdapter = {
+      id: "openai-file",
+      transcribe: vi.fn(async () => {
+        adapterStarted.resolve();
+        await allowAdapter.promise;
+        return { text: "hello world" };
+      }),
+    };
+    const { speech } = service({ adapter, policy: hintedPolicy });
+    const first = speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      languageHints: ["en"],
+      signal: new AbortController().signal,
+    });
+    await adapterStarted.promise;
+    await expect(speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      languageHints: ["fr"],
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "request_conflict" });
+    allowAdapter.resolve();
+    await expect(first).resolves.toMatchObject({ outcome: "transcript" });
+    expect(adapter.transcribe).toHaveBeenCalledTimes(1);
+    expect(adapter.transcribe).toHaveBeenCalledWith(expect.objectContaining({
+      languageHints: ["en"],
+    }));
+  });
+
   it("honors cancel-before-registration and exposes no provider details", async () => {
     const { speech, adapter } = service();
     await speech.cancel(identity, requestId);
@@ -453,6 +496,130 @@ describe("platform speech service", () => {
       executionStarted: true,
       retrySafety: "new_request_may_consume_allowance",
       outcomeCode: "timeout",
+    });
+  });
+
+  it("drains shutdown after admission before dispatch and releases the hold", async () => {
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const admissionFinished = Promise.withResolvers<void>();
+    const allowAdmissionReturn = Promise.withResolvers<void>();
+    const operations: SpeechOperationsRepository = {
+      ...repository,
+      admit: vi.fn(async (...args) => {
+        const admitted = await repository.admit(...args);
+        admissionFinished.resolve();
+        await allowAdmissionReturn.promise;
+        return admitted;
+      }),
+      claimDispatch: vi.fn(repository.claimDispatch),
+    };
+    const { speech, funding, adapter } = service({ operations });
+    const result = speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    });
+    await admissionFinished.promise;
+    let shutdownFinished = false;
+    const shutdown = Promise.resolve(speech.shutdown()).then(() => { shutdownFinished = true; });
+    await Promise.resolve();
+    expect(shutdownFinished).toBe(false);
+    allowAdmissionReturn.resolve();
+
+    await shutdown;
+    await expect(result).rejects.toMatchObject({ code: "cancelled" });
+    expect(operations.claimDispatch).not.toHaveBeenCalled();
+    expect(adapter.transcribe).not.toHaveBeenCalled();
+    expect(funding.release).toHaveBeenCalledTimes(1);
+    expect(funding.settle).not.toHaveBeenCalled();
+  });
+
+  it("drains shutdown after a dispatch claim without starting the adapter", async () => {
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const claimCommitted = Promise.withResolvers<void>();
+    const allowClaimReturn = Promise.withResolvers<void>();
+    const operations: SpeechOperationsRepository = {
+      ...repository,
+      claimDispatch: vi.fn(async (...args) => {
+        const claim = await repository.claimDispatch(...args);
+        claimCommitted.resolve();
+        await allowClaimReturn.promise;
+        return claim;
+      }),
+    };
+    const { speech, funding, adapter } = service({ operations });
+    const result = speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    });
+    await claimCommitted.promise;
+    let shutdownFinished = false;
+    const shutdown = Promise.resolve(speech.shutdown()).then(() => { shutdownFinished = true; });
+    await Promise.resolve();
+    expect(shutdownFinished).toBe(false);
+    allowClaimReturn.resolve();
+
+    await shutdown;
+    await expect(result).rejects.toMatchObject({ code: "cancelled" });
+    expect(adapter.transcribe).not.toHaveBeenCalled();
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
+      mode: "conservative",
+    });
+  });
+
+  it("waits for in-flight cancellation settlement before shutdown resolves", async () => {
+    const adapterStarted = Promise.withResolvers<void>();
+    const settleEntered = Promise.withResolvers<void>();
+    const allowSettlement = Promise.withResolvers<void>();
+    const adapter: FileTranscriptionAdapter = {
+      id: "openai-file",
+      transcribe: vi.fn(async ({ signal }) => {
+        adapterStarted.resolve();
+        await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => {
+          reject(new SpeechAdapterError("cancelled", "Transcription was cancelled"));
+        }, { once: true }));
+        return { text: "unreachable" };
+      }),
+    };
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => ({ reservationId: "funding_1", reservedMicrousd: 120 })),
+      settle: vi.fn(async () => {
+        settleEntered.resolve();
+        await allowSettlement.promise;
+      }),
+      release: vi.fn(async () => undefined),
+    };
+    const { speech } = service({ adapter, funding });
+    const result = speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    });
+    await adapterStarted.promise;
+    let shutdownFinished = false;
+    const shutdown = Promise.resolve(speech.shutdown()).then(() => { shutdownFinished = true; });
+    await settleEntered.promise;
+    expect(shutdownFinished).toBe(false);
+    allowSettlement.resolve();
+
+    await shutdown;
+    await expect(result).rejects.toMatchObject({ code: "cancelled" });
+    expect(funding.settle).toHaveBeenCalledTimes(1);
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      cancellationRequested: true,
+      outcomeCode: "cancelled",
     });
   });
 });
