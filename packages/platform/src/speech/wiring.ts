@@ -51,6 +51,7 @@ function fixtureFunding(secret: string): SpeechFundingPort {
         input.identity.runtimeSlot,
         input.requestId,
         input.policyRevision,
+        input.modelId,
       ].join("\0")).digest("hex").slice(0, 48);
       return { reservationId: `fixture_${suffix}`, reservedMicrousd: 0 };
     },

@@ -66,10 +66,14 @@ describe("funded AI speech wallet adapter", () => {
       identity,
       requestId: `sp_${now.getTime()}_abcdefghijklmnop`,
       policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
       maximumCostMicrousd: 120,
     }));
 
     expect(reservation).toEqual({ reservationId: "speech_funding_1", reservedMicrousd: 120 });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select("model_id").where("reservation_id", "=", reservation.reservationId)
+      .executeTakeFirstOrThrow()).toEqual({ model_id: "gpt-4o-transcribe" });
     expect(await db.executor.selectFrom("ai_runtime_credentials")
       .select(["audience", "scope", "expires_at"]).where("machine_id", "=", identity.machineId)
       .executeTakeFirstOrThrow()).toEqual({
@@ -112,6 +116,7 @@ describe("funded AI speech wallet adapter", () => {
       identity,
       requestId: `sp_${now.getTime()}_ponmlkjihgfedcba`,
       policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
       maximumCostMicrousd: 120,
     }))).rejects.toBeInstanceOf(SpeechFundingError);
     expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute()).toEqual([]);
@@ -133,6 +138,7 @@ describe("funded AI speech wallet adapter", () => {
       identity,
       requestId: `sp_${now.getTime()}_abcdefghijklmnoq`,
       policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
       maximumCostMicrousd: 80,
     }));
     await db.transaction((trx) => funding.release(trx.executor, reservation.reservationId));
@@ -161,6 +167,7 @@ describe("funded AI speech wallet adapter", () => {
         identity,
         requestId: `sp_${now.getTime()}_abcdefghijklmnoz`,
         policyRevision: "speech-1",
+        modelId: "gpt-4o-transcribe",
         maximumCostMicrousd: 80,
       });
       await sql`SELECT missing_speech_column`.execute(trx.executor);
@@ -170,5 +177,37 @@ describe("funded AI speech wallet adapter", () => {
     expect(await db.executor.selectFrom("ai_funded_runtime_balances")
       .select("reserved_microusd").where("machine_id", "=", identity.machineId)
       .executeTakeFirstOrThrow()).toEqual({ reserved_microusd: 0 });
+  });
+
+  it("rotates the internal credential namespace without stranding an existing runtime", async () => {
+    await funded.grantCredit({
+      entryId: "addon_rotation",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 300,
+      sourceReference: "invoice_rotation",
+    });
+    const first = port(["addon"]);
+    await db.transaction((trx) => first.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_rotationrequestaa`,
+      policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 40,
+    }));
+    const rotated = createAiFundedSpeechFundingPort({
+      allowedSources: ["addon"],
+      credentialHashSecret: "r".repeat(32),
+      reservationIdFactory: () => "speech_funding_rotated",
+      now: () => now,
+    });
+    await expect(db.transaction((trx) => rotated.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_rotationrequestbb`,
+      policyRevision: "speech-2",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 40,
+    }))).resolves.toEqual({ reservationId: "speech_funding_rotated", reservedMicrousd: 40 });
+    expect(await db.executor.selectFrom("ai_runtime_credentials").select("token_id").execute()).toHaveLength(2);
   });
 });

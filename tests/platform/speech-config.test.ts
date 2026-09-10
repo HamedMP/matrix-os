@@ -46,6 +46,7 @@ describe("platform speech configuration", () => {
     ["missing operator price", { PLATFORM_SPEECH_MICROUSD_PER_MINUTE: undefined }],
     ["implicit funding source", { PLATFORM_SPEECH_FUNDING_SOURCES: undefined }],
     ["zero real price", { PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "0" }],
+    ["route-incompatible upload size", { PLATFORM_SPEECH_MAX_BYTES: String(10 * 1024 * 1024 + 1) }],
   ])("rejects enabled OpenAI mode with %s", (_label, changed) => {
     expect(() => loadPlatformSpeechConfig({
       PLATFORM_SPEECH_ENABLED: "true",
