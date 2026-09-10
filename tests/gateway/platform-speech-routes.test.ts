@@ -140,11 +140,22 @@ describe("gateway speech routes", () => {
     const second = root.request("/api/speech/transcriptions", { method: "POST", body: recordingForm(secondId) });
     await vi.waitFor(() => expect(speech.transcribe).toHaveBeenCalledTimes(2));
 
-    const rejected = await root.request("/api/speech/transcriptions", {
-      method: "POST",
-      body: recordingForm("sp_1788998400002_cdefghijklmnopqr"),
+    let pulledChunks = 0;
+    const rejectedBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulledChunks += 1;
+        controller.enqueue(new Uint8Array(1024 * 1024));
+        if (pulledChunks === 5) controller.close();
+      },
     });
+    const rejected = await root.request(new Request("http://localhost/api/speech/transcriptions", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: rejectedBody,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" }));
     expect(rejected.status).toBe(429);
+    expect(pulledChunks).toBeLessThan(5);
     expect(speech.transcribe).toHaveBeenCalledTimes(2);
 
     finish();
