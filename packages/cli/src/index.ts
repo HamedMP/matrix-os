@@ -17,6 +17,7 @@ export const PUBLISHED_CLI_COMMANDS = new Set([
   "forward",
   "doctor",
   "instance",
+  "collaboration",
   "completion",
 ]);
 

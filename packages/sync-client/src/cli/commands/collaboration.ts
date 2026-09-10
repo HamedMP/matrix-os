@@ -4,10 +4,15 @@ import {
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
   CollaborationCreateDiscussionRequestSchema,
+  CollaborationCreateAiRequestSchema,
+  CollaborationAiRequestControlSchema,
+  CollaborationApprovalDecisionRequestSchema,
+  CollaborationAiRequestsResponseSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationInvitationSchema,
   CollaborationPageRequestSchema,
   CollaborationScopeSchema,
+  CollaborationResourceIdSchema,
 } from "@matrix-os/contracts/collaboration";
 import { defineCommand } from "citty";
 import { z } from "zod/v4";
@@ -18,7 +23,7 @@ import { resolveCliProfile } from "../profiles.js";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const ScopeIdSchema = z.uuid();
 const RevisionSchema = z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/);
-const COLLABORATION_PATH = /^\/api\/collaboration\/(?:inbox|shared|invitations\/[0-9a-f-]+(?:\/accept)?|scopes\/[0-9a-f-]+(?:\/chat(?:\/messages)?|\/user-state)?)?(?:\?[^#]*)?$/i;
+const COLLABORATION_PATH = /^\/api\/collaboration\/(?:inbox|shared|invitations\/[0-9a-f-]+(?:\/accept)?|scopes\/[0-9a-f-]+(?:\/chat(?:\/messages|\/requests(?:\/[A-Za-z0-9_.:-]+\/(?:cancel|retry))?|\/approvals\/[A-Za-z0-9_.:-]+\/decision)?|\/user-state)?)?(?:\?[^#]*)?$/i;
 
 interface CollaborationRequestInput {
   platformUrl: string;
@@ -140,6 +145,12 @@ const scopeArgs = {
   scope: { type: "string", required: true },
 } as const;
 
+const controlArgs = {
+  ...scopeArgs,
+  revision: { type: "string", required: true },
+  request: { type: "string", required: true },
+} as const;
+
 export const collaborationCommand = defineCommand({
   meta: { name: "collaboration", description: "Access Chats shared with your account" },
   subCommands: {
@@ -223,6 +234,91 @@ export const collaborationCommand = defineCommand({
         });
       }),
     }),
+    requests: defineCommand({
+      meta: { name: "requests", description: "List the ordered shared AI queue" },
+      args: scopeArgs,
+      run: async ({ args }) => run(args, async (platformUrl, token) => {
+        const scopeId = value(args, "scope", ScopeIdSchema);
+        return CollaborationAiRequestsResponseSchema.parse(await collaborationRequest({
+          platformUrl, token, method: "GET", path: `/api/collaboration/scopes/${scopeId}/chat/requests`,
+        }));
+      }),
+    }),
+    ask: defineCommand({
+      meta: { name: "ask", description: "Add an attributed request to the shared AI queue" },
+      args: {
+        ...scopeArgs,
+        revision: { type: "string", required: true },
+        message: { type: "string", required: true },
+        instance: { type: "string", required: false, default: "claude_shared" },
+        model: { type: "string", required: false, default: "claude-opus-4-6" },
+      },
+      run: async ({ args }) => run(args, async (platformUrl, token) => {
+        const scopeId = value(args, "scope", ScopeIdSchema);
+        const body = CollaborationCreateAiRequestSchema.parse({
+          clientRequestId: randomUUID(),
+          expectedRevision: value(args, "revision", RevisionSchema),
+          text: args.message,
+          selection: { instanceId: args.instance, model: args.model },
+        });
+        return collaborationRequest({
+          platformUrl, token, method: "POST",
+          path: `/api/collaboration/scopes/${scopeId}/chat/requests`, body,
+        });
+      }),
+    }),
+    cancel: defineCommand({
+      meta: { name: "cancel", description: "Cancel an eligible shared AI request" },
+      args: controlArgs,
+      run: async ({ args }) => run(args, (platformUrl, token) => requestControl(platformUrl, token, args, "cancel")),
+    }),
+    retry: defineCommand({
+      meta: { name: "retry", description: "Retry an eligible shared AI request as a new attempt" },
+      args: controlArgs,
+      run: async ({ args }) => run(args, (platformUrl, token) => requestControl(platformUrl, token, args, "retry")),
+    }),
+    approve: defineCommand({
+      meta: { name: "approve", description: "Submit an owner decision for a shared AI approval" },
+      args: {
+        ...scopeArgs,
+        revision: { type: "string", required: true },
+        approval: { type: "string", required: true },
+        run: { type: "string", required: true },
+        decision: { type: "string", required: true },
+      },
+      run: async ({ args }) => run(args, async (platformUrl, token) => {
+        const scopeId = value(args, "scope", ScopeIdSchema);
+        const approvalId = value(args, "approval", CollaborationResourceIdSchema);
+        const body = CollaborationApprovalDecisionRequestSchema.parse({
+          clientRequestId: randomUUID(),
+          expectedRevision: value(args, "revision", RevisionSchema),
+          runId: value(args, "run", CollaborationResourceIdSchema),
+          decision: args.decision,
+        });
+        return collaborationRequest({
+          platformUrl, token, method: "POST",
+          path: `/api/collaboration/scopes/${scopeId}/chat/approvals/${approvalId}/decision`, body,
+        });
+      }),
+    }),
   },
-  run: () => console.log("Usage: matrix collaboration inbox|shared|accept|open|discuss"),
+  run: () => console.log("Usage: matrix collaboration inbox|shared|accept|open|discuss|requests|ask|cancel|retry|approve"),
 });
+
+async function requestControl(
+  platformUrl: string,
+  token: string,
+  args: Record<string, unknown>,
+  action: "cancel" | "retry",
+): Promise<unknown> {
+  const scopeId = value(args, "scope", ScopeIdSchema);
+  const requestId = value(args, "request", CollaborationResourceIdSchema);
+  const body = CollaborationAiRequestControlSchema.parse({
+    clientRequestId: randomUUID(),
+    expectedRevision: value(args, "revision", RevisionSchema),
+  });
+  return collaborationRequest({
+    platformUrl, token, method: "POST",
+    path: `/api/collaboration/scopes/${scopeId}/chat/requests/${requestId}/${action}`, body,
+  });
+}

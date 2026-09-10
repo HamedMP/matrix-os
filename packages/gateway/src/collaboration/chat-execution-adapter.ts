@@ -53,6 +53,16 @@ export class CollaborationChatExecutionAdapter {
       ?? (() => `qturn_${randomUUID().replaceAll("-", "")}`);
   }
 
+  capability() {
+    return {
+      defaultSelection: {
+        instanceId: "claude_shared",
+        model: "claude-opus-4-6",
+      },
+      approvals: [],
+    };
+  }
+
   async list(context: AuthorizedCollaborationContext): Promise<CollaborationAiRequest[]> {
     requireChatContext(context, "read");
     const rows = await this.options.repository.listSharedQueuedTurns(ownerFor(context), context.resourceId);
@@ -176,6 +186,7 @@ export class CollaborationChatExecutionAdapter {
       text,
       selection: row.selection,
       ...(row.retryOfRequestId ? { retryOfRequestId: row.retryOfRequestId } : {}),
+      ...(row.runId ? { runId: row.runId } : {}),
       acceptedAt: row.createdAt,
       updatedAt: row.updatedAt,
     });

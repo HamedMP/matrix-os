@@ -105,6 +105,14 @@ describe("shared Chat canonical queue", () => {
     })).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("rejects a stale scope revision before accepting shared work", async () => {
+    await expect(repository.enqueueSharedQueuedTurn(owner, {
+      ...request(14, collaborationActors.editor),
+      expectedRevision: 2,
+    })).rejects.toMatchObject({ code: "conflict" });
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat)).resolves.toEqual([]);
+  });
+
   it("allows 32 pending requests and rejects the thirty-third without consuming order", async () => {
     for (let index = 1; index <= 32; index += 1) {
       await expect(repository.enqueueSharedQueuedTurn(
