@@ -4,7 +4,8 @@ import { canonicalBoundedText, canonicalSafeLabel, canonicalEncodedByteLength } 
 export const ChatAgentIdSchema = z.string().regex(/^bot_[a-z0-9]{8,64}$/);
 export const ChatContextSnapshotSchema = z.object({
   chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,120}$/),
-  title: canonicalSafeLabel(160, 640),
+  // Match persisted Chat titles, including existing 200-character titles.
+  title: canonicalBoundedText(200, 1024),
   throughSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   text: z.string().max(16_000),
   truncated: z.boolean(),

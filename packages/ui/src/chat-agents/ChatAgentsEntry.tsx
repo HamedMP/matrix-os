@@ -28,8 +28,8 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, se
       <button type="button" className={`${button} justify-self-start`} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>New Agent</button>
       {!state.agents.length && !state.error ? <div className="rounded-xl border px-4 py-6 text-sm" style={muted}>No Agents yet. Create a reusable role for meeting briefs, reviews, or other work you repeat.</div> : null}
       {state.agents.map((agent) => <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} className={`${button} flex flex-col gap-1 text-left`} onClick={() => edit(agent)}>
-        <span className="font-medium">{agent.name}</span>
-        <span className="text-xs" style={muted}>{agent.description || "Saved Hermes role"}</span>
+        <span className="w-full min-w-0 truncate font-medium" title={agent.name}>{agent.name}</span>
+        <span className="w-full min-w-0 truncate text-xs" title={agent.description} style={muted}>{agent.description || "Saved Hermes role"}</span>
       </button>)}
     </div>;
 }

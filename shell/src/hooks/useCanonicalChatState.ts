@@ -9,6 +9,7 @@ import type {
 } from "@matrix-os/contracts";
 import {
   createChatMentionRequestTracker,
+  compactChatTitle,
   createSharedCanonicalChatEventSource,
   createCanonicalChatRefresh,
   applyCanonicalChatContent,
@@ -253,6 +254,7 @@ export function useCanonicalChatState(): ChatState {
     const sourceChatId = activeChatId;
     setSubmitting(true);
     setSafeError(null);
+    const send = async () => {
       const uploadedReferences: string[] = [];
       let turnAdmitted = false;
       let admissionAttempted = false;
@@ -269,7 +271,7 @@ export function useCanonicalChatState(): ChatState {
           autoRestoreChatRef.current = false;
           record = await client.create({
             clientRequestId: options.clientRequestId ? `${options.clientRequestId}_chat` : requestId(),
-            title: (options.displayText?.trim() || text.trim()).slice(0, 200),
+            title: compactChatTitle(options.displayText?.trim() || text),
             currentSelection: selection,
           });
         }
@@ -344,10 +346,12 @@ export function useCanonicalChatState(): ChatState {
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
         if (activeChatIdRef.current === sourceChatId) setSafeError("Message could not be sent. Try again.");
         return turnAdmitted;
-      } finally {
-        submittingRef.current = false;
-        setSubmitting(false);
       }
+    };
+    return send().finally(() => {
+      submittingRef.current = false;
+      setSubmitting(false);
+    });
   }, [activeChatId, client, loadDetail, loadList, mentionRequests]);
 
   const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {

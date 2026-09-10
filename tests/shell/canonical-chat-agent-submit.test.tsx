@@ -92,3 +92,27 @@ it("keeps a new Chat draft selected until admission succeeds and reuses its crea
   expect(result.current.sessionId).toBeUndefined();
   expect(createKeys).toEqual(["req_agent_fixed_chat", "req_agent_fixed_chat"]);
 });
+
+it("creates a compact ellipsized title without shortening the actual request", async () => {
+  const creates: { title: string }[] = [];
+  const turns: { parts: { text?: string }[] }[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/events?")) return new Response(new ReadableStream());
+    if (url.includes("/api/chats?")) return Response.json({ items: [] });
+    if (url.endsWith("/api/chats") && init?.method === "POST") {
+      creates.push(JSON.parse(init.body as string));
+      return Response.json(record);
+    }
+    if (url.includes("/turns?")) {
+      turns.push(JSON.parse(init!.body as string));
+      return Response.json({}, { status: 503 });
+    }
+    throw new Error("UnexpectedRequest");
+  }));
+  const { result } = renderHook(() => useCanonicalChatState());
+  const text = ("Personal Daily Brief: " + "Review today's messages and meetings. ".repeat(10)).trim();
+  await act(async () => { await result.current.submitMessage(text, undefined, options); });
+  expect(creates[0]!.title.length).toBeLessThanOrEqual(80);
+  expect(creates[0]!.title.endsWith("...")).toBe(true);
+  expect(turns[0]!.parts[0]!.text).toBe(text);
+});

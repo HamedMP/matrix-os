@@ -82,6 +82,21 @@ describe("server-resolved Chat mention context", () => {
     await expect(context.revalidate(owner, "chat_current", prepared.context)).rejects.toMatchObject({ code: "context_unavailable" });
   });
 
+  it("admits Agents and references when an existing Chat has a 200-character title", async () => {
+    const title = "A".repeat(200);
+    await repository.kysely.updateTable("chats").set({ title }).execute();
+    const agent = await agents.create(owner, {
+      clientRequestId: "req_long_title", name: "Brief helper", description: "",
+      instructions: "Summarize the day.", selection: { instanceId: "hermes_default", model: "gpt-5.6-sol" },
+    });
+    const prepared = await context.prepare(owner, "chat_current", {
+      ...request, parts: [...request.parts, mention("agent", agent.id), mention("chat", "chat_source")],
+    });
+    expect(prepared.context?.history?.title).toBe(title);
+    expect(prepared.context?.chats[0]?.title).toBe(title);
+    expect((await context.preview(owner, "chat_source")).title).toBe(title);
+  });
+
   it("fails closed for the disabled switch while ordinary Chat remains unchanged", async () => {
     enabled = false;
     await expect(context.prepare(owner, "chat_current", {
