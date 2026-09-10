@@ -58,3 +58,7 @@ One logical service, three capabilities: file transcription, live transcription,
 - Supported recording formats on packaged Electron/macOS, Chromium, Safari, and Web Mobile.
 - Provider live-session shutdown, interruption and verified usage; test direct WebRTC plus server control against platform-relayed WebSocket.
 - Explicit bounded speech allowance defaults from operator policy; do not invent commercial prices.
+
+## Deep self-review
+
+[implementation.md](implementation.md) records source-backed gaps and their design corrections. In particular, the existing funded start receipt is replayable, the wallet is machine-scoped, the legacy channel helper persists owner audio before STT, and the mobile transport lifetime omits user identity from its effect dependencies. These details require explicit changes rather than direct reuse. The OpenAI file and realtime transcription guides were rechecked during review; no live provider call was made.

@@ -172,11 +172,11 @@ As a user, I can ask the computer to open an app or perform a task during a voic
 
 ### Functional Requirements
 
-- **FR-001**: Implement US-01–09 before enabling the first speech release, with US-04–05 tracked as a separately shippable mobile repair.
+- **FR-001**: Implement US-01–03 and US-06–09 before enabling the first speech release. US-04–05 are a separately shippable mobile repair and do not gate speech availability.
 - **FR-002**: There is one platform speech service with capability-specific adapters for completed recording transcription, optional live transcription, and later voice conversation.
 - **FR-003**: All active transcription entry points, including chat, channel voice notes, and the kernel transcription tool, delegate to that service. Remove redundant provider integrations after migration verification.
 - **FR-004**: The initial transcription provider is OpenAI using a platform-held credential. End-user provider accounts and selected chat harnesses do not determine dictation availability.
-- **FR-005**: Initial recording limits are proposed as 120 seconds and 10 MiB, enforced by the service as well as the client. Availability exposes effective limits. Longer imported recordings are explicitly unsupported until separately designed.
+- **FR-005**: Initial recording limits are proposed as 120 seconds and 10 MiB, enforced by the service as well as the client. Availability exposes effective limits. These are dictation limits. Existing kernel/channel imports require a separately bounded owner-audio policy and compatibility review before migration; never silently apply the dictation limit to them.
 - **FR-006**: Every request/session is associated with an authenticated owner, computer, runtime, capability, and unique request identity.
 - **FR-007**: Platform speech allowance and concurrency admission occur before provider work. Usage settlement is idempotent and based on verified usage, never solely client-claimed duration.
 - **FR-008**: Speech credits/eligibility are an explicit capability policy. Do not infer eligibility from an unrelated chat model or accidentally require an Anthropic account to use OpenAI dictation.
@@ -228,4 +228,4 @@ Native Mobile microphone capture is explicitly outside the initial recording sco
 
 ## Technical Design and Evidence
 
-See [research.md](research.md) for the current implementation inventory and provider feasibility, and [plan.md](plan.md) for service boundaries, endpoint authentication, migration, tests, and delivery phases.
+See [research.md](research.md) for the current implementation inventory and provider feasibility, [plan.md](plan.md) for service boundaries and phases, and [implementation.md](implementation.md) for the self-review findings, concrete contracts, race handling and delivery gates.
