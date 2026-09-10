@@ -55,9 +55,29 @@ describe("shared Chat durable controls", () => {
     expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toEqual([]);
   });
 
+  it("rejects work accepted under an older scope authorization epoch", async () => {
+    await repository.enqueueSharedQueuedTurn(owner, aiRequest(70, collaborationActors.editor));
+    await fixture.db.updateTable("collaboration_scopes").set({ auth_epoch: 2, updated_at: now })
+      .where("id", "=", collaborationIds.scope).execute();
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      turnId: "cturn_stale_auth_epoch",
+      runId: "run_stale_auth_epoch",
+      messageId: "msg_stale_auth_epoch",
+      claimedAt: now,
+    })).resolves.toBeNull();
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+      .resolves.toMatchObject([{ state: "unauthorized", requestingActorId: collaborationActors.editor }]);
+    expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toEqual([]);
+  });
+
   it("lets editors cancel only their own request while owners control the scope", async () => {
     const ownerRequest = await repository.enqueueSharedQueuedTurn(owner, aiRequest(1, collaborationActors.owner));
-    const editorRequest = await repository.enqueueSharedQueuedTurn(owner, aiRequest(2, collaborationActors.editor));
+    const editorRequest = await repository.enqueueSharedQueuedTurn(
+      owner,
+      aiRequest(2, collaborationActors.editor, 2),
+    );
     const commands = createCommands();
 
     await expect(commands.cancel({
@@ -139,7 +159,7 @@ describe("shared Chat durable controls", () => {
     expect(submitApproval).toHaveBeenCalledTimes(1);
   });
 
-  it("persists an unknown external outcome and never replays it after restart", async () => {
+  it("reconciles an unknown approval outcome after restart without replaying it", async () => {
     const run = await activeRunWithApproval("approval_shared_unknown");
     const firstDispatch = vi.fn(async () => { throw new Error("connection lost after send"); });
     const input = {
@@ -157,9 +177,50 @@ describe("shared Chat durable controls", () => {
     expect(firstDispatch).toHaveBeenCalledOnce();
 
     const afterRestartDispatch = vi.fn(async () => undefined);
-    await expect(createCommands(afterRestartDispatch).decideApproval(input))
-      .resolves.toMatchObject({ state: "reconciling" });
+    const reconcileApproval = vi.fn(async () => {
+      await settleRunAfterUnknownApproval(run.id);
+      return "failed" as const;
+    });
+    const restarted = createCommands(afterRestartDispatch, reconcileApproval);
+    await expect(restarted.reconcilePendingApprovals()).resolves.toBe(1);
+    await expect(restarted.decideApproval(input)).resolves.toMatchObject({ state: "failed" });
     expect(afterRestartDispatch).not.toHaveBeenCalled();
+    expect(reconcileApproval).toHaveBeenCalledWith(expect.objectContaining({
+      commandId: expect.any(String),
+      scopeId: collaborationIds.scope,
+      chatId: collaborationIds.chat,
+      runId: run.id,
+      approvalId: "approval_shared_unknown",
+    }));
+    await expect(fixture.db.selectFrom("chat_runs").select("status")
+      .where("id", "=", run.id).executeTakeFirstOrThrow()).resolves.toMatchObject({ status: "failed" });
+  });
+
+  it("reconciles an accepted approval reservation left by a crash before dispatch", async () => {
+    const run = await activeRunWithApproval("approval_shared_crashed");
+    const first = createCommands(vi.fn(async () => { throw new Error("process terminated"); }));
+    const input = {
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      approvalId: "approval_shared_crashed",
+      runId: run.id,
+      decision: "decline" as const,
+      clientRequestId: uuid(131),
+      payloadHash: "5".repeat(64),
+      expectedRevision: 3,
+    };
+    await expect(first.decideApproval(input)).rejects.toMatchObject({ code: "unavailable" });
+    await fixture.db.updateTable("chat_collaboration_commands").set({ state: "accepted" })
+      .where("client_request_id", "=", input.clientRequestId).execute();
+
+    const reconcileApproval = vi.fn(async () => {
+      await settleRunAfterUnknownApproval(run.id);
+      return "failed" as const;
+    });
+    const restarted = createCommands(vi.fn(async () => undefined), reconcileApproval);
+    await expect(restarted.reconcilePendingApprovals()).resolves.toBe(1);
+    await expect(restarted.decideApproval(input)).resolves.toMatchObject({ state: "failed" });
+    expect(reconcileApproval).toHaveBeenCalledOnce();
   });
 
   it("rejects a stale control revision without changing the queue", async () => {
@@ -176,11 +237,15 @@ describe("shared Chat durable controls", () => {
       .resolves.toMatchObject([{ id: queued.id, state: "queued" }]);
   });
 
-  function createCommands(submitApproval = vi.fn(async () => undefined)) {
+  function createCommands(
+    submitApproval = vi.fn(async () => undefined),
+    reconcileApproval = vi.fn(async () => "failed" as const),
+  ) {
     return new CollaborationChatCommands({
       db: fixture.db,
       now: () => new Date(now),
       submitApproval,
+      reconcileApproval,
     });
   }
 
@@ -217,9 +282,24 @@ describe("shared Chat durable controls", () => {
     }).execute();
     return claimed.run;
   }
+
+  async function settleRunAfterUnknownApproval(runId: string): Promise<void> {
+    await fixture.db.transaction().execute(async (trx) => {
+      await trx.updateTable("chat_runs").set({
+        status: "failed",
+        outcome: "failed",
+        completed_at: now,
+        updated_at: now,
+      }).where("id", "=", runId).execute();
+      await trx.updateTable("chat_turns").set({ status: "failed", updated_at: now })
+        .where("id", "=", `cturn_${runId.slice("run_".length)}`).execute();
+      await trx.updateTable("chat_queued_turns").set({ status: "interrupted", updated_at: now })
+        .where("claimed_run_id", "=", runId).execute();
+    });
+  }
 });
 
-function aiRequest(index: number, actorId: string) {
+function aiRequest(index: number, actorId: string, expectedRevision = 1) {
   return {
     chatId: collaborationIds.chat,
     scopeId: collaborationIds.scope,
@@ -228,7 +308,7 @@ function aiRequest(index: number, actorId: string) {
     requestingActorId: actorId,
     acceptedAuthEpoch: 1,
     payloadHash: index.toString(16).padStart(64, "0"),
-    expectedRevision: 1,
+    expectedRevision,
     parts: [{ type: "text" as const, text: `Control request ${index}` }],
     driverKind: "claude_code" as const,
     selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },

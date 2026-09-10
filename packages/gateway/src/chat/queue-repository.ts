@@ -252,6 +252,9 @@ export class ChatQueueRepository {
         const pendingCount = await this.sharedPendingCount(executor, chatId);
         return { ...toSharedQueuedTurn(duplicate), pendingCount, alreadyAccepted: true };
       }
+      if (Number(chat.revision) !== input.expectedRevision) {
+        throw new SharedChatQueueError("conflict");
+      }
       const pendingCount = await this.sharedPendingCount(executor, chatId);
       if (pendingCount >= MAX_SHARED_PENDING_TURNS) throw new SharedChatQueueError("capacity");
       const lastAccepted = await trx.selectFrom("chat_queued_turns")
@@ -628,7 +631,7 @@ export class ChatQueueRepository {
     const claimedAt = new Date(input.claimedAt).toISOString();
     return this.transact(async (trx) => {
       const candidateScope = await trx.selectFrom("chat_queued_turns")
-        .select(["collaboration_scope_id", "requesting_actor_id"])
+        .select(["collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch"])
         .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
         .orderBy("position")
@@ -656,7 +659,8 @@ export class ChatQueueRepository {
         if (sharedScope.lifecycle !== "shared" || sharedScope.execution_generation === null
           || sharedScope.execution_eligibility === null) {
           sharedAdmission = "unavailable";
-        } else if (!candidateScope.requesting_actor_id) {
+        } else if (!candidateScope.requesting_actor_id || candidateScope.accepted_auth_epoch === null
+          || Number(candidateScope.accepted_auth_epoch) !== Number(sharedScope.auth_epoch)) {
           sharedAdmission = "unauthorized";
         } else {
           const member = await sharedTrx.selectFrom("collaboration_members")
