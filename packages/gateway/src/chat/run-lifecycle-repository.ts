@@ -68,8 +68,12 @@ function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
       && ["completed", "failed", "aborted"].includes(activity.status));
 }
 
-function isRetentionProtectedActivity(activity: CanonicalChatRunActivity): boolean {
-  return isTerminalActivity(activity);
+function isRetentionProtectedActivity(
+  activity: CanonicalChatRunActivity,
+  resolvedApprovalIds: readonly string[],
+): boolean {
+  return isTerminalActivity(activity)
+    || (activity.type === "approval.requested" && !resolvedApprovalIds.includes(activity.approvalId));
 }
 
 function railTransitionForActivity(activity: CanonicalChatRunActivity): {
@@ -361,9 +365,35 @@ export class ChatRunLifecycleRepository {
           .orderBy("run_seq")
           .orderBy("id")
           .execute();
-        const evictedIds = candidates.flatMap((row) => {
-          const persisted = CanonicalChatRunActivitySchema.safeParse(row.event);
-          return persisted.success && !isRetentionProtectedActivity(persisted.data) ? [row.id] : [];
+        const parsedCandidates = candidates.map((row) => ({
+          id: row.id,
+          activity: CanonicalChatRunActivitySchema.safeParse(row.event),
+        }));
+        // Bounded by the 500 persisted events plus at most 100 incoming events.
+        const resolvedApprovalIds = activities.flatMap((activity) =>
+          activity.type === "approval.resolved" ? [activity.approvalId] : []);
+        const requestedApprovalIds = parsedCandidates.flatMap(({ activity }) =>
+          activity.success && activity.data.type === "approval.requested" ? [activity.data.approvalId] : []);
+        for (const { activity } of parsedCandidates) {
+          if (activity.success && activity.data.type === "approval.resolved"
+            && !resolvedApprovalIds.includes(activity.data.approvalId)) {
+            resolvedApprovalIds.push(activity.data.approvalId);
+          }
+        }
+        if (requestedApprovalIds.length > 0) {
+          const outcomes = await trx.selectFrom("chat_approval_outcomes")
+            .select("approval_id")
+            .where("run_id", "=", runId)
+            .where("approval_id", "in", requestedApprovalIds)
+            .execute();
+          for (const outcome of outcomes) {
+            if (!resolvedApprovalIds.includes(outcome.approval_id)) {
+              resolvedApprovalIds.push(outcome.approval_id);
+            }
+          }
+        }
+        const evictedIds = parsedCandidates.flatMap(({ id, activity }) => {
+          return activity.success && !isRetentionProtectedActivity(activity.data, resolvedApprovalIds) ? [id] : [];
         }).slice(0, overflow);
         if (evictedIds.length !== overflow) {
           throw new ChatConflictError(chatId, Number(current.revision));
