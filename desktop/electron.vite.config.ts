@@ -10,7 +10,9 @@ const desktopUpdateChannel =
 const codingAgentsDesktopWorkspace =
   process.env.VITE_CODING_AGENTS_DESKTOP_WORKSPACE !== "0";
 
-export default defineConfig({
+// Evaluate after electron-vite removes its temporary bundled config file, so
+// that generated file cannot make the source checkout appear uncommitted.
+export default defineConfig(() => ({
   main: {
     // Workspace contracts export TypeScript source for package consumers.
     // Bundle the schemas and Zod so the built Electron main process never
@@ -70,4 +72,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));
