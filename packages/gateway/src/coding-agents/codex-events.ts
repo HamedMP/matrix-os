@@ -137,7 +137,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.started"),
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
-    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning"]),
+    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase"]),
     preview: SafeDisplayStringSchema.optional(),
     previewKind: z.enum(["command", "path", "text"]).optional(),
     detail: SafeDisplayStringSchema.optional(),

@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
 import { buildAgentLaunch } from "../agent-launcher.js";
 import {
   buildKernelCredentialLaunch,
@@ -274,6 +275,7 @@ export function createClaudeChatProviderAdapter(options: {
     let resultText = "";
     let sawResult = false;
     let resultFailed = false;
+    let usageFailure: ReturnType<typeof classifyClaudeUsageFailure>;
     let resultSubtype: "success" | "error" | "other" | undefined;
     let emittedState = resumeState;
     let steerPrompt: string | undefined;
@@ -339,6 +341,9 @@ export function createClaudeChatProviderAdapter(options: {
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
       const line = ClaudeStreamLineSchema.parse(JSON.parse(raw));
+      if (usageFailure?.category !== "quota_exhausted") {
+        usageFailure = classifyClaudeUsageFailure(line) ?? usageFailure;
+      }
       if (line.session_id && (
         line.session_id !== emittedState?.sessionId
         || (line.model !== undefined && line.model !== emittedState.model)
@@ -478,9 +483,9 @@ export function createClaudeChatProviderAdapter(options: {
       if (buffered.trim()) parseLine(buffered);
       flushPendingDelta();
       emitBufferedResult();
-      const classifiedFailure = resultFailed
+      const classifiedFailure = usageFailure ?? (resultFailed
         ? classifiedClaudeFailureEvidence(`${resultText}\n${stderrEvidence}`)
-        : undefined;
+        : undefined);
       if (!sawResult || resultFailed) {
         console.warn("[chat-claude] Claude CLI result did not complete the Run", {
           category: classifiedFailure?.category ?? (resultFailed ? "result_error" : "missing_result"),
@@ -538,7 +543,7 @@ export function createClaudeChatProviderAdapter(options: {
         queue.finish();
         return;
       }
-      const classifiedFailure = classifiedClaudeFailureEvidence(`${resultText}\n${stderrEvidence}`)
+      const classifiedFailure = usageFailure ?? classifiedClaudeFailureEvidence(`${resultText}\n${stderrEvidence}`)
         ?? classifiedClaudeCliFailure(error);
       if (!input.signal.aborted) {
         console.warn("[chat-claude] Claude CLI Run failed", {

@@ -105,6 +105,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   signal: AbortSignal;
   /** Generator return() errors can be masked by a consumer throw; report unresolved cleanup explicitly. */
   onCleanupUnconfirmed?: () => void;
+  /** Clear unresolved cleanup only after this exact owned execution has exited. */
+  onCleanupConfirmed?: () => void;
 }
 
 export interface CanonicalChatProviderAdapter<State = unknown> {
