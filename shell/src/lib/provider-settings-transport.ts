@@ -21,7 +21,7 @@ export { ProviderSettingsTransportError } from "@matrix-os/ui";
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface ProviderSettingsTransport {
-  getSnapshot(signal?: AbortSignal): Promise<ProviderSettingsSnapshot>;
+  getSnapshot(signal?: AbortSignal, options?: { refresh?: boolean }): Promise<ProviderSettingsSnapshot>;
   mutate(mutation: ProviderSettingsMutation, signal?: AbortSignal): Promise<ProviderSettingsMutationResponse>;
 }
 
@@ -105,8 +105,8 @@ export function createProviderSettingsTransport(
 ): ProviderSettingsTransport {
   const fetcher = options.fetcher ?? fetch;
   return {
-    async getSnapshot(signal) {
-      const value = await fetchJson(fetcher, "/api/ai/provider-settings?refresh=true", {
+    async getSnapshot(signal, options = {}) {
+      const value = await fetchJson(fetcher, `/api/ai/provider-settings${options.refresh ? "?refresh=true" : ""}`, {
         cache: "no-store",
         headers: { Accept: "application/json" },
         signal: requestSignal(signal),
@@ -146,7 +146,7 @@ export async function openWebProviderAgentSetup(
   const runtimeUrl = getGatewayUrl();
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => fetchJson(fetch, "/api/chat-providers?refresh=true", { signal: requestSignal(), cache: "no-store" }),
+    getCatalog: () => fetchJson(fetch, "/api/chat-providers?refresh=true&includeConnectionLabels=true", { signal: requestSignal(), cache: "no-store" }),
     openCommand: async (cmd) => {
       if (getGatewayUrl() !== runtimeUrl) return false;
       const name = `setup-${harness}-${crypto.randomUUID().slice(0, 8)}`;

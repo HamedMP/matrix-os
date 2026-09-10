@@ -355,7 +355,7 @@ export function ChatApp({
       </aside>
 
       {/* Main content */}
-      <main className="flex flex-1 flex-col min-w-0">
+      <main className="relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         <header className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
           {!sidebarOpen && (
@@ -417,13 +417,17 @@ export function ChatApp({
             </div>
           </div>
           <Button
+            data-chat-model-trigger
+            aria-label="Choose model and connection"
+            aria-haspopup="dialog"
+            aria-expanded={setupOpen}
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
-            className="h-8 gap-1.5 px-2.5 text-xs"
+            className="h-8 max-w-[12rem] gap-1.5 px-2.5 text-xs"
             onClick={() => setSetupOpen((value) => !value)}
           >
             <Settings2Icon className="size-3.5" aria-hidden="true" />
-            Setup
+            <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
           </Button>
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
@@ -431,6 +435,9 @@ export function ChatApp({
         </header>
         {setupOpen && (
           <ChatProviderSetupPanel
+            onDismiss={() => {
+              setSetupOpen(false);
+            }}
             catalog={providerState.catalog}
             choices={providerState.choices}
             selected={providerState.selected}

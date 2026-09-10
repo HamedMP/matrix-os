@@ -147,7 +147,13 @@ function ConnectedAgentsProvidersAdapter({
       }}
       onMutate={(intent) => {
         setActionError(null);
-        return controller.mutate(intent);
+        return controller.mutate(intent, {
+          onLoginAction: (action) => {
+            if (!isIdentityCurrent()) return;
+            if (action.kind === "open_terminal") openTerminal(action.terminalSessionId);
+            else if (action.kind === "open_browser") openBrowser(action.authorizationPath);
+          },
+        });
       }}
       onSetupHarness={(harness) => openDesktopProviderAgentSetup(runtimeApi, harness, isIdentityCurrent)}
       onOpenTerminal={openTerminal}

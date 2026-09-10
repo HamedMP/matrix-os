@@ -24,6 +24,7 @@ export type ProviderSettingsMutationIntent =
   | {
       type: "set_route";
       harnessInstanceId: string;
+      enableHarness?: boolean;
       route: ProviderConfigurableRoute;
       accessSourceId: string;
       accountId: string | null;

@@ -95,7 +95,7 @@ export function GatewayPanel({
       <div className="matrix-ap-panel-head">
         <div>
           <h2 id="matrix-ap-gateway-title"><span className="matrix-ap-gateway-symbol" aria-hidden="true">✦</span>Matrix AI</h2>
-          <p className="matrix-ap-help">Your Matrix gateway. Use supported models without a separate provider account.</p>
+          <p className="matrix-ap-help">Models included with your Matrix credit. No separate login.</p>
         </div>
         <span className="matrix-ap-status-chip" data-state={ready ? "ready" : "attention"}>
           <i aria-hidden="true" />{status}
@@ -103,11 +103,11 @@ export function GatewayPanel({
       </div>
 
       {!source || !policy ? (
-        <p className="matrix-ap-help">Matrix AI is not enabled for this computer. Its gateway connection and allowance must be configured by your workspace administrator. Adding an agent or signing in to a provider will not enable it.</p>
+        <p className="matrix-ap-help">Matrix AI is not enabled for this computer. Ask your workspace administrator.</p>
       ) : !ready ? (
         <p className="matrix-ap-help">{source.readiness.safeReason === "policy" || source.readiness.action === "contact_owner"
-          ? "Matrix AI access is restricted by your workspace policy. Ask your workspace administrator to check this computer’s allowance."
-          : "The gateway connection could not be confirmed. Check again before using Matrix AI."}</p>
+          ? "Matrix AI is restricted by your workspace. Ask your administrator."
+          : "Gateway connection not verified. Check again."}</p>
       ) : null}
 
       <div className="matrix-ap-credit-row">
@@ -120,10 +120,10 @@ export function GatewayPanel({
           {!ready ? (
             <button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button>
           ) : null}
-          {ready && onUseGateway && !isSelected ? (
+          {ready && onUseGateway && (!isSelected || !selectedAgentEnabled) ? (
             <button type="button" className="matrix-ap-button matrix-ap-button-primary" disabled={disabled} onClick={onUseGateway}>Use Matrix AI</button>
           ) : null}
-          {ready && isSelected ? <span className="matrix-ap-selected-tag">Selected for {selectedAgentName}</span> : null}
+          {ready && isSelected && selectedAgentEnabled ? <span className="matrix-ap-selected-tag">Selected for {selectedAgentName}</span> : null}
           {ready && !onUseGateway && !isSelected && onChooseAgent ? compatibleAgents.map((agent) => (
             <button key={agent.id} type="button" className="matrix-ap-button" onClick={() => onChooseAgent(agent.id)}>Choose {agent.displayName}</button>
           )) : null}
@@ -144,15 +144,12 @@ export function GatewayPanel({
           ) : null}
         </div>
       </div>
-      {ready && onUseGateway && !isSelected ? <p className="matrix-ap-help">Connect {selectedAgentName} using {selectedModelName}. Your own account stays saved.</p> : null}
-      {ready && savedRouteUnavailable ? <p className="matrix-ap-help">The saved model is no longer available through Matrix AI. Choose an allowed model to update this agent’s connection.</p> : null}
-      {ready && (onUseGateway || isSelected) && !selectedAgentEnabled ? <p className="matrix-ap-help">Enable {selectedAgentName} below before starting a chat. Choosing Matrix AI does not enable the agent automatically.</p> : null}
-      {ready && !onUseGateway && !isSelected ? <p className="matrix-ap-help">{compatibleAgents.length > 0
-        ? "Choose an agent above to configure its Matrix AI connection. This opens its settings without changing your saved route."
-        : "Expand a compatible agent below to use Matrix AI. Available connections depend on the installed agent."}</p> : null}
+      {ready && onUseGateway && !isSelected ? <p className="matrix-ap-help">{selectedAgentName} · {selectedModelName}</p> : null}
+      {ready && savedRouteUnavailable ? <p className="matrix-ap-help">Saved Matrix model unavailable. Choose an allowed model.</p> : null}
+      {ready && !onUseGateway && !isSelected && compatibleAgents.length === 0 ? <p className="matrix-ap-help">Connect Pi or OpenCode to use Matrix AI.</p> : null}
 
       {policy && source ? (
-        <div className="matrix-ap-policy-grid">
+        <details className="matrix-ap-advanced"><summary>Usage &amp; available models</summary><div className="matrix-ap-policy-grid">
           {canSetBudget ? <>
           <label className="matrix-ap-field">
             <span>Monthly budget</span>
@@ -213,7 +210,7 @@ export function GatewayPanel({
           ) : (
             <div className="matrix-ap-available-models"><span>Available models</span><ul>{provider?.models.filter((model) => model.enabled && source.eligibleModelIds.includes(model.id) && policy.allowedModelIds.includes(model.id)).map((model) => <li key={model.id}>{model.displayName}</li>)}</ul>{!provider?.models.some((model) => model.enabled && source.eligibleModelIds.includes(model.id) && policy.allowedModelIds.includes(model.id)) ? <p className="matrix-ap-help">No models are enabled for this computer.</p> : null}</div>
           )}
-        </div>
+        </div></details>
       ) : null}
 
       {creditDialogOpen && source && policy?.topUpEnabled && canAddCredit ? (

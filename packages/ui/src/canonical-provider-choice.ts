@@ -9,6 +9,7 @@ export interface CanonicalProviderChoice {
   instanceId: string;
   driverKind: CanonicalProviderDriverKind;
   harnessLabel: string;
+  connectionLabel?: string;
   modelId: string;
   modelLabel: string;
   interactionMode: string;
@@ -78,6 +79,7 @@ export function deriveCanonicalProviderChoices(
       instanceId: instance.id,
       driverKind: instance.driverKind,
       harnessLabel: instance.displayName,
+      ...(instance.connectionLabel ? { connectionLabel: instance.connectionLabel } : {}),
       modelId: model.id,
       modelLabel: model.displayName,
       interactionMode,

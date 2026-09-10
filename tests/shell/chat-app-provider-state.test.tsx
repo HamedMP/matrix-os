@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
+import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options.js";
 
 function providerCatalog(available = true, secondModel = false) {
   return CanonicalProviderCatalogSchema.parse({
@@ -83,6 +84,28 @@ beforeEach(() => {
 });
 
 describe("Chat canonical provider state", () => {
+  it("keeps setup out of chat layout and dismisses with Escape, trigger and outside pointer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    render(<ChatApp messages={[]} busy={false} connected conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
+    await screen.findByText("Pi");
+    const trigger = screen.getByRole("button", { name: "Choose model and connection" });
+    fireEvent.click(trigger);
+    const panel = screen.getByRole("dialog", { name: "Choose model and connection" });
+    expect(panel.className).toContain("absolute");
+    expect(screen.getByRole("button", { name: "Connect OpenCode" })).not.toBeVisible();
+    expect(screen.getByText("Execution options").parentElement).not.toHaveAttribute("open");
+    fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(screen.getByPlaceholderText("Ask anything..."));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("renames the shared Web Desktop and Web Canvas Chat from the header, rail double-click, and context menu", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     const onSwitchConversation = vi.fn();
@@ -190,17 +213,19 @@ describe("Chat canonical provider state", () => {
   });
 
   it("refreshes the canonical catalog after provider settings change", async () => {
-    const fetchMock = vi.fn(async () => Response.json(providerCatalog()));
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL) => Response.json(providerCatalog()));
     vi.stubGlobal("fetch", fetchMock);
     render(<ChatApp
       messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/chat-providers\?includeConnectionLabels=true$/);
 
     fireEvent(window, new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/chat-providers?refresh=true&includeConnectionLabels=true");
   });
 
   it("uses the canonical catalog, preserves the draft, and submits the exact harness route", async () => {
@@ -215,14 +240,18 @@ describe("Chat canonical provider state", () => {
     expect(await screen.findByText("Pi")).toBeVisible();
     const draft = screen.getByPlaceholderText("Ask anything...");
     fireEvent.change(draft, { target: { value: "Keep this draft" } });
-    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
 
-    expect(await screen.findByRole("button", { name: "Claude Sonnet 5 via Pi" })).toBeVisible();
+    expect(await screen.findByRole("option", { name: "Claude Sonnet 5 via Pi" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Claude Sonnet 5 via Pi" }).querySelector("img"))
+      .toHaveAttribute("src", TERMINAL_AGENT_OPTIONS.find((agent) => agent.id === "pi")!.logoSrc);
+    fireEvent.click(screen.getByText("Manage agents"));
     expect(screen.getByText("OpenCode — Not supported in this runtime")).toBeVisible();
     expect(screen.queryByText("Channels")).toBeNull();
     expect(draft).toHaveValue("Keep this draft");
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/chat-providers?refresh=true"), expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/chat-providers\?includeConnectionLabels=true$/), expect.any(Object));
 
+    fireEvent.click(screen.getByText("Execution options"));
     fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
     fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });
     fireEvent.change(screen.getByLabelText("Reasoning"), { target: { value: "high" } });
@@ -249,7 +278,8 @@ describe("Chat canonical provider state", () => {
     />);
 
     expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(screen.getByText("Manage agents"));
     expect(await screen.findByText("Pi — Disabled in Settings")).toBeVisible();
     expect(screen.getByPlaceholderText("AI harness unavailable")).toBeDisabled();
   });
@@ -263,7 +293,8 @@ describe("Chat canonical provider state", () => {
       onProviderSetupAction={onProviderSetupAction}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(screen.getByText("Manage agents"));
     fireEvent.click(await screen.findByRole("button", { name: "Configure Pi" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
 
@@ -304,8 +335,10 @@ describe("Chat canonical provider state", () => {
     />);
 
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Continue" } });
-    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Claude Opus 5 via Pi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Claude Opus 5 via Pi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(screen.getByText("Execution options"));
     fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
     fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -354,7 +387,8 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(screen.getByText("Manage agents"));
     fireEvent.click(await screen.findByRole("button", { name: "Connect OpenCode" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not open setup. Open Settings to continue.");
@@ -370,7 +404,7 @@ describe("Chat canonical provider state", () => {
     />);
 
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Hello" } });
-    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
     expect(screen.queryByText("Channels")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Hello", undefined, expect.not.objectContaining({

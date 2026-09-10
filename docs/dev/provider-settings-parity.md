@@ -356,6 +356,42 @@ the required active tax registrations.
 
 ## Delivery stack
 
+### Setup interaction contract
+
+- Agent artwork reuses the Terminal new-tab assets; do not replace recognizable
+  coding-agent logos with text glyphs.
+- Installed Pi/OpenCode instances offer **Use Matrix AI** and **Own account**
+  before advanced routing fields. Matrix AI is still an access source, not a
+  fabricated inference vendor.
+- Explicit connection selection may send `set_route` with `enableHarness: true`.
+  Validate the installed harness, exact credential source, account, model, and
+  policy before persisting the route and enabled state together. A failed
+  mutation changes neither. Ordinary route edits do not implicitly enable an
+  agent, and an unready own-account connection must not claim funded readiness.
+- First sign-in opens the newly returned Terminal action directly. Reopening
+  Settings must not replay an old login attempt. Keep Continue as recovery if
+  the window could not open, and guard handoff against a runtime switch.
+- Provider-login named Terminal IDs can be 64 characters; route them through
+  the canonical named-session protocol, not the legacy UUID attach protocol.
+- Mounting Settings or Chat reads the existing catalog without forcing health
+  refresh. Explicit Refresh and settings-change reconciliation can refresh it;
+  this does not permit stale policy or credentials during run admission.
+- Chat model selection is a bounded, searchable overlay, not a layout-pushing
+  setup page. Unavailable agents belong under Manage agents. Preserve existing
+  Chat instance binding and permission controls. Display the canonical
+  `connectionLabel` beside the harness, so Pi/OpenCode funded through Matrix AI
+  are distinguishable from their own-account routes. Never infer funding from
+  a model ID or user-supplied account name. Updated clients request
+  `includeConnectionLabels=true`; the default catalog response omits this
+  additive field for older strict-schema clients. Admission uses the unchanged
+  internal catalog regardless of this presentation opt-in.
+
+Verification must distinguish catalog loading, Chat admission, and inference.
+A failed token-count preflight occurs after admission and does not, by itself,
+explain a failed Chat-create request. A green gateway health indicator is not
+evidence of a successful funded turn. Capture all three desktop surfaces and
+verify a real bounded funded turn before declaring the preview usable.
+
 Land this work in independently reviewable Graphite layers, each with tests
 first, applicable build/pattern gates, current visual evidence, and Greptile
 5/5:

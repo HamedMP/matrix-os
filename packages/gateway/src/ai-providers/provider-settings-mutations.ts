@@ -114,6 +114,14 @@ export function applyProviderConfigurationMutation(input: {
       if (!harness || harness.route.kind !== "configurable") {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
+      if (mutation.enableHarness === true) {
+        const driverId = resolveProviderSettingsDriverId({
+          driverId: harness.driverId, harness: harness.harness, canonical: input.canonical,
+        });
+        if (input.canonical.drivers.find((driver) => driver.id === driverId)?.installState !== "installed") {
+          throw new ProviderSettingsStoreError("invalid_request", 400);
+        }
+      }
       const source = input.snapshot.accessSources.find((candidate) => candidate.id === mutation.accessSourceId);
       const account = mutation.accountId === null
         ? null
@@ -133,6 +141,7 @@ export function applyProviderConfigurationMutation(input: {
       harness.route = mutation.route;
       harness.accessSourceId = source.id;
       harness.selectedAccountId = account?.id ?? null;
+      if (mutation.enableHarness === true) harness.enabled = true;
       return true;
     }
     case "select_account": {

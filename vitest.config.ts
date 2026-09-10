@@ -7,6 +7,9 @@ export default defineConfig({
       name: "chess-app-test-mock",
       enforce: "pre",
       resolveId(source, importer) {
+        if (source === "@matrix-os/ui") {
+          return path.resolve(__dirname, "packages/ui/src/index.ts");
+        }
         if (!importer) return null;
         const normalized = importer.split(path.sep).join("/");
         if (

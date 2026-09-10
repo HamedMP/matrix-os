@@ -10,20 +10,24 @@ import { IdentityPersonalitySection } from "../../shell/src/components/settings/
 const providerControllerState = vi.hoisted(() => ({
   snapshot: {} as unknown,
   error: null as string | null,
+  mutate: vi.fn(),
 }));
 
 vi.mock("@matrix-os/ui", () => ({
   AgentsProvidersView: ({
     onOpenTerminal,
     onOpenBrowser,
+    onMutate,
   }: {
     onOpenTerminal: (sessionId: string) => void;
     onOpenBrowser: (path: string) => void;
+    onMutate: (intent: unknown) => Promise<boolean>;
   }) => (
     <div>
       <h2>Agents &amp; providers</h2>
       <button onClick={() => onOpenTerminal("provider-login")}>Continue in Terminal</button>
       <button onClick={() => onOpenBrowser("/api/ai/providers/login-attempts/attempt-1/authorize")}>Continue in browser</button>
+      <button onClick={() => void onMutate({ type: "start_login", harnessInstanceId: "claude", accountId: null, method: "terminal" })}>Sign in</button>
     </div>
   ),
   useProviderSettingsController: () => ({
@@ -34,7 +38,7 @@ vi.mock("@matrix-os/ui", () => ({
     error: providerControllerState.error,
     onSelectHarness: vi.fn(),
     refresh: vi.fn(),
-    mutate: vi.fn(),
+    mutate: providerControllerState.mutate,
   }),
   ProviderSettingsTransportError: class ProviderSettingsTransportError extends Error {
     code: string;
@@ -48,6 +52,8 @@ vi.mock("@matrix-os/ui", () => ({
 afterEach(() => {
   providerControllerState.snapshot = {};
   providerControllerState.error = null;
+  providerControllerState.mutate.mockReset();
+  window.history.replaceState({}, "", "/");
   vi.unstubAllGlobals();
 });
 
@@ -74,6 +80,34 @@ describe("Canvas settings sections", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Provider settings are unavailable");
     expect(screen.queryByText(/Anthropic|secret|private/i)).toBeNull();
+  });
+
+  it("opens the newly returned terminal action from Sign in once, without an effect", async () => {
+    const onOpenTerminal = vi.fn();
+    providerControllerState.mutate.mockImplementation(async (_intent, options) => {
+      options.onLoginAction({ kind: "open_terminal", terminalSessionId: "provider-login" });
+      return true;
+    });
+    const view = render(<AgentSection onOpenTerminal={onOpenTerminal} />);
+    expect(onOpenTerminal).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(onOpenTerminal).toHaveBeenCalledExactlyOnceWith("provider-login"));
+    view.rerender(<AgentSection onOpenTerminal={onOpenTerminal} />);
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open a delayed login action after switching computers", async () => {
+    let deliver: (action: unknown) => void = () => {};
+    providerControllerState.mutate.mockImplementation(async (_intent, options) => {
+      deliver = options.onLoginAction;
+      return true;
+    });
+    const onOpenTerminal = vi.fn();
+    render(<AgentSection onOpenTerminal={onOpenTerminal} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    window.history.replaceState({}, "", "/vm/other?runtime=other");
+    deliver({ kind: "open_terminal", terminalSessionId: "provider-login" });
+    expect(onOpenTerminal).not.toHaveBeenCalled();
   });
 
   it("persists SOUL to its owner-controlled file", async () => {

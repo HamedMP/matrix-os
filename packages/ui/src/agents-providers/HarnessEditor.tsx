@@ -124,25 +124,25 @@ export function HarnessEditor({
 
   return (
     <section className="matrix-ap-editor" aria-label={`${harness.displayName} configuration`}>
-      {savedSourceUnsupported ? <div className="matrix-ap-notice" data-tone="warning"><strong>Saved access cannot be used by this agent</strong><span>Choose a supported connection. Matrix AI is currently available through Pi and OpenCode, not this agent.</span></div> : null}
+      {savedSourceUnsupported ? <div className="matrix-ap-notice" data-tone="warning"><strong>Choose a supported connection</strong></div> : null}
       {harness.installState !== "installed" ? (
         <div className="matrix-ap-notice" data-tone="warning">
-          <div><strong>{harness.displayName} {harness.installState === "missing" ? "is not installed" : "installation needs checking"}</strong><span>Install from this computer’s Terminal, then check again. Use the Connection action above when available.</span></div>
+          <div><strong>{harness.displayName} {harness.installState === "missing" ? "is not installed" : "installation needs checking"}</strong><span>Install from this computer’s Terminal, then check again.</span></div>
         </div>
       ) : null}
       {harness.connectivity !== "online" ? (
-        <div className="matrix-ap-notice" data-tone="warning"><strong>Connection not verified</strong><span>Saved settings are shown. Check again before starting a chat.</span><button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button></div>
+        <div className="matrix-ap-notice" data-tone="warning"><strong>Connection not verified</strong><button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button></div>
       ) : null}
       {routeUnavailable ? (
         <div className="matrix-ap-notice" data-tone="warning">
           <strong>Saved model catalog unavailable</strong>
-          <span>The saved route remains visible. Refresh the catalog or choose another available provider and model.</span>
+          <span>Choose an available model or check again.</span>
         </div>
       ) : null}
 
       <div className="matrix-ap-panel">
         <div className="matrix-ap-panel-head">
-          <div><span className="matrix-ap-eyebrow">Model</span><h3>Choose the model</h3></div>
+          <div><h3>Choose the model</h3></div>
           {!mutableRoute ? <span className="matrix-ap-fixed-tag">Fixed by {harness.displayName}</span> : null}
         </div>
         <div className="matrix-ap-form-grid">
@@ -184,6 +184,8 @@ export function HarnessEditor({
         </div>
       </div>
 
+      <details className="matrix-ap-advanced">
+        <summary>Advanced settings</summary>
       <div className="matrix-ap-panel">
         <div className="matrix-ap-panel-head">
           <div><h3>Access</h3></div>
@@ -246,8 +248,6 @@ export function HarnessEditor({
         ) : null}
         {account ? <p className="matrix-ap-help">Selected account: {account.displayName}</p> : null}
       </div>
-      <details className="matrix-ap-advanced">
-        <summary>Advanced settings</summary>
         <div className="matrix-ap-panel matrix-ap-form-grid matrix-ap-form-grid-name">
           <label className="matrix-ap-field">
             <span>Display name</span>

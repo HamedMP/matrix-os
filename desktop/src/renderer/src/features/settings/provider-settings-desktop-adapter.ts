@@ -61,13 +61,13 @@ function mapTransportError(error: unknown): DesktopProviderSettingsTransportErro
 }
 
 export function createDesktopProviderSettingsTransport(api: ApiClient): ProviderSettingsTransport & {
-  getSnapshot(signal: AbortSignal): Promise<ProviderSettingsSnapshot>;
+  getSnapshot(signal: AbortSignal, options?: { refresh?: boolean }): Promise<ProviderSettingsSnapshot>;
   mutate(mutation: ProviderSettingsMutation, signal: AbortSignal): Promise<ProviderSettingsMutationResponse>;
 } {
   return {
-    async getSnapshot(signal) {
+    async getSnapshot(signal, options = {}) {
       try {
-        const value = await api.get<unknown>(PROVIDER_SETTINGS_PATH, {
+        const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}${options.refresh ? "?refresh=true" : ""}`, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
         });
@@ -124,7 +124,7 @@ export async function openDesktopProviderAgentSetup(
 ): Promise<boolean> {
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => api.get("/api/chat-providers?refresh=true", { maxBytes: MAX_RESPONSE_BYTES, signal: AbortSignal.timeout(10_000) }),
+    getCatalog: () => api.get("/api/chat-providers?refresh=true&includeConnectionLabels=true", { maxBytes: MAX_RESPONSE_BYTES, signal: AbortSignal.timeout(10_000) }),
     openCommand: async (cmd) => {
       if (!isIdentityCurrent()) return false;
       const session = await useShellSessions.getState().create(api, { cmd });

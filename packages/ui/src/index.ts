@@ -40,6 +40,9 @@ export {
   deriveCanonicalProviderChoices,
 } from "./canonical-provider-choice.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
+export { CompactChatProviderChoices } from "./compact-chat-provider-choices.js";
+export { HarnessIcon } from "./agents-providers/HarnessRail.js";
+export { CODING_AGENT_ARTWORK } from "./coding-agent-artwork.js";
 export type {
   ProviderSettingsControllerState,
   ProviderSettingsControllerOptions,

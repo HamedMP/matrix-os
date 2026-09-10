@@ -36,6 +36,7 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { managedChatInstances } from "./managed-chat-catalog.js";
+import { configuredHarnessInstanceFromAiSnapshot, unavailableInstance, unavailableReasonFor } from "./configured-harness-catalog.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -516,69 +517,6 @@ function systemHarnessKind(kind: CanonicalProviderDriverKind): ProviderHarnessKi
   return null;
 }
 
-function unavailableReasonFor(
-  instance: InstanceDraft,
-): NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]> {
-  if (instance.availability === "setup_required") return "not_installed";
-  if (instance.availability === "auth_required") return "authentication_required";
-  return "runtime_unavailable";
-}
-
-function unavailableInstance(
-  instance: InstanceDraft,
-  reason: NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]>,
-): InstanceDraft {
-  return {
-    ...instance,
-    availability: "unavailable",
-    unavailabilityReason: reason,
-    models: [],
-    options: [],
-    defaultSelection: undefined,
-    ...(reason === "runtime_not_runnable" ? { setupActions: [] } : {}),
-  };
-}
-
-function configuredHarnessInstanceFromAiSnapshot(input: {
-  instance: InstanceDraft;
-  harness: ProviderHarnessInstance;
-  aiSnapshot?: AiProviderSnapshotV3;
-  settings: ProviderSettingsSnapshot;
-}): InstanceDraft {
-  if (input.instance.availability !== "available") {
-    return unavailableInstance(input.instance, unavailableReasonFor(input.instance));
-  }
-  const configured = input.aiSnapshot?.models.find((model) =>
-    model.vendor === input.harness.route.providerId && model.id === input.harness.route.modelId
-  );
-  const projected = input.settings.modelProviders
-    .find((provider) => provider.id === input.harness.route.providerId)
-    ?.models.find((model) => model.id === input.harness.route.modelId && model.enabled);
-  if ((!configured && !projected) || configured?.status === "unavailable" || configured?.status === "retired") {
-    return unavailableInstance(input.instance, "runtime_unavailable");
-  }
-  const modelId = input.harness.route.modelId.startsWith(`${input.harness.route.providerId}:`)
-    ? input.harness.route.modelId
-    : `${input.harness.route.providerId}:${input.harness.route.modelId}`;
-  const capabilities = (configured?.capabilities ?? ["tools"] as const).filter((capability) =>
-    capability === "reasoning" || capability === "tools" || capability === "vision"
-  );
-  const model: CanonicalModelDescriptor = {
-    id: modelId,
-    displayName: configured?.displayName ?? projected!.displayName,
-    availability: "available",
-    capabilities,
-    supportsVision: capabilities.includes("vision"),
-    supportsToolUse: capabilities.includes("tools"),
-  };
-  return {
-    ...input.instance,
-    models: [model],
-    options: [],
-    defaultSelection: { instanceId: input.instance.id, model: modelId },
-    unavailabilityReason: undefined,
-  };
-}
 
 function configuredSystemInstance(
   instance: InstanceDraft,
@@ -831,7 +769,9 @@ export function createChatProviderCatalogService(options: {
       const skills = projectSkills(options.skillsSource?.() ?? []);
       const seenCodingDrivers: CanonicalProviderDriverKind[] = [];
       const codingInstances: InstanceDraft[] = [];
-      for (const provider of coding) {
+      // The registry bounds provider count. Independent CLI timeouts must not add
+      // together; Promise.all preserves registry order even if probes finish out of order.
+      const projectedInstances = await Promise.all(coding.map(async (provider) => {
         let projectedCatalog: CodingModelCatalogProjection | null = null;
         if (options.codingModelCatalogSource) {
           try {
@@ -840,7 +780,9 @@ export function createChatProviderCatalogService(options: {
             console.warn("[chat-providers] Coding model catalog unavailable");
           }
         }
-        const instance = codingInstance(provider, skills, projectedCatalog);
+        return codingInstance(provider, skills, projectedCatalog);
+      }));
+      for (const instance of projectedInstances) {
         if (instance === null) continue;
         if (seenCodingDrivers.includes(instance.driverKind)) {
           throw new ProviderCatalogUnavailableError(false);

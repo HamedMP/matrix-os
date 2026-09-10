@@ -13,8 +13,9 @@ export function AgentSection({
   onOpenTerminal?: (terminalSessionId: string) => void;
 }) {
   const transport = useMemo(() => createProviderSettingsTransport(), []);
+  const identityKey = getGatewayUrl();
   const controller = useProviderSettingsController({
-    identityKey: getGatewayUrl(),
+    identityKey,
     transport,
   });
 
@@ -40,7 +41,17 @@ export function AgentSection({
         error={controller.error}
         onSelectHarness={controller.onSelectHarness}
         onRefresh={() => { void controller.refresh(); }}
-        onMutate={controller.mutate}
+        onMutate={(intent) => controller.mutate(intent, {
+          onLoginAction: (action) => {
+            if (getGatewayUrl() !== identityKey) return;
+            if (action.kind === "open_terminal") {
+              if (!onOpenTerminal) throw new Error("Terminal unavailable");
+              onOpenTerminal(action.terminalSessionId);
+            } else if (action.kind === "open_browser") {
+              if (!openProviderAuthorizationPath(action.authorizationPath)) throw new Error("Browser unavailable");
+            }
+          },
+        })}
         onSetupHarness={onOpenTerminal ? (harness) => openWebProviderAgentSetup(harness, onOpenTerminal) : undefined}
         onOpenTerminal={(sessionId) => { onOpenTerminal?.(sessionId); }}
         onOpenBrowser={openProviderAuthorizationPath}

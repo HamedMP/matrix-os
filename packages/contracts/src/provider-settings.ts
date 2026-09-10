@@ -530,7 +530,7 @@ export const ProviderSettingsMutationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("set_harness_enabled"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, enabled: z.boolean() }).strict(),
   z.object({ type: z.literal("set_route"), ...MutationBase, harnessInstanceId: ReferenceIdSchema,
     route: ProviderConfigurableRouteSchema, accessSourceId: ReferenceIdSchema,
-    accountId: ReferenceIdSchema.nullable() }).strict(),
+    accountId: ReferenceIdSchema.nullable(), enableHarness: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("select_account"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accountId: ReferenceIdSchema }).strict(),
   z.object({ type: z.literal("select_access_source"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accessSourceId: ReferenceIdSchema }).strict(),
   z.object({ type: z.literal("start_login"), ...MutationBase, harnessInstanceId: ReferenceIdSchema,

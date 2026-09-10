@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import React from "react";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options";
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   ProviderConnectionAttempt,
@@ -276,6 +279,142 @@ afterEach(() => {
 });
 
 describe("AgentsProvidersView", () => {
+  it.each(["pi", "opencode"] as const)("requires a saved connection before directly enabling %s, but permits disabling", (kind) => {
+    const next = snapshot();
+    const harness = next.harnesses[0]!;
+    Object.assign(harness, { harness: kind, displayName: kind, enabled: false, accessSourceId: null });
+    const { onMutate, rerender, props } = setup({ snapshot: next });
+    const toggle = screen.getByRole("switch", { name: `Enable ${kind}` });
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAccessibleDescription("Choose a connection to enable");
+    fireEvent.click(toggle);
+    expect(onMutate).not.toHaveBeenCalled();
+    const enabled = structuredClone(next);
+    enabled.harnesses[0]!.enabled = true;
+    rerender(<AgentsProvidersView {...props} snapshot={enabled} />);
+    fireEvent.click(screen.getByRole("switch", { name: `Enable ${kind}` }));
+    expect(onMutate).toHaveBeenCalledWith({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false });
+  });
+
+  it("preserves the confirmed login handoff recovery message instead of claiming settings were lost", () => {
+    setup({ error: "Sign-in started. Use Continue to open it again." });
+    expect(screen.getByRole("alert")).toHaveTextContent("Sign-in started. Use Continue to open it again.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Changes were not saved");
+  });
+
+  it("never displays arbitrary upstream error details", () => {
+    setup({ error: "Anthropic failed with /opt/private/customer-key" });
+    expect(screen.getByRole("alert")).toHaveTextContent("Changes were not saved. Refresh and try again.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("/opt/private");
+  });
+  it("uses the same shipped agent artwork as the Terminal menu", () => {
+    const next = snapshot();
+    next.harnesses = (["claude", "codex", "opencode", "pi"] as const).map((harness) => ({
+      ...next.harnesses[0]!, id: harness, harness, displayName: harness,
+    }));
+    const { container } = setup({ snapshot: next, selectedHarnessId: "claude" });
+    expect(Array.from(container.querySelectorAll(".matrix-ap-rail-item img")).map((image) => image.getAttribute("src"))).toEqual([
+      "/agent-logos/claude-code.png", "/agent-logos/codex.png", "/agent-logos/opencode-white.png", "/agent-logos/pi-coding-agent.png",
+    ]);
+    for (const option of TERMINAL_AGENT_OPTIONS) {
+      const image = container.querySelector(`img[src="${option.logoSrc}"]`);
+      expect(image).toBeInTheDocument();
+      expect(image?.parentElement).toHaveStyle({ background: option.color });
+      expect(existsSync(resolve("shell/public", option.logoSrc.slice(1)))).toBe(true);
+    }
+    expect(readFileSync("desktop/electron.vite.config.ts", "utf8")).toContain('publicDir: resolve(__dirname, "../shell/public")');
+  });
+
+  it("starts the recommended login directly without a method selection step", async () => {
+    const next = snapshot();
+    next.harnesses[1]!.accountIds = [];
+    next.harnesses[1]!.authState = "unauthenticated";
+    const onMutate = vi.fn().mockResolvedValue(true);
+    setup({ snapshot: next, selectedHarnessId: "harness_claude", onMutate });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(onMutate).toHaveBeenCalledWith({
+      type: "start_login", harnessInstanceId: "harness_claude", accountId: null, method: "terminal",
+    }));
+    expect(screen.queryByRole("button", { name: "Recommended · Terminal" })).not.toBeInTheDocument();
+  });
+
+  it("offers Matrix AI inside Pi and enables its supported route in one action", async () => {
+    const next = snapshot();
+    const harness = next.harnesses[0]!;
+    Object.assign(harness, { harness: "pi", displayName: "Pi", enabled: false, accountIds: [], selectedAccountId: null, accessSourceId: null });
+    const onMutate = vi.fn().mockResolvedValue(false);
+    setup({ snapshot: next, onMutate });
+    const connection = screen.getByRole("group", { name: "Pi connection" });
+    await act(async () => { fireEvent.click(within(connection).getByRole("button", { name: /Use Matrix AI/ })); });
+    expect(onMutate).toHaveBeenCalledWith({
+      type: "set_route", harnessInstanceId: harness.id,
+      route: { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
+      accessSourceId: "matrix_included", accountId: null, enableHarness: true,
+    });
+    expect(screen.getByRole("switch", { name: "Enable Pi" })).not.toBeChecked();
+    expect(within(connection).getByRole("button", { name: /Own account/ })).toBeVisible();
+  });
+
+  it("connects and enables a disabled OpenCode agent through its ready own profile", async () => {
+    const next = snapshot();
+    const harness = next.harnesses[0]!;
+    Object.assign(harness, { harness: "opencode", displayName: "OpenCode", enabled: false, accountIds: [], selectedAccountId: null, accessSourceId: null });
+    next.accessSources = [{ ...next.accessSources[0]!, id: "native_opencode", kind: "harness_profile", fundingKind: "owner_account", harness: "opencode", displayName: "OpenCode profile" }];
+    const onMutate = vi.fn().mockResolvedValue(true);
+    setup({ snapshot: next, onMutate });
+    fireEvent.click(within(screen.getByRole("group", { name: "OpenCode connection" })).getByRole("button", { name: /Own account/ }));
+    await waitFor(() => expect(onMutate).toHaveBeenCalledWith({
+      type: "set_route", harnessInstanceId: harness.id,
+      route: { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
+      accessSourceId: "native_opencode", accountId: null, enableHarness: true,
+    }));
+  });
+
+  it("does not describe a disabled saved Matrix route as in use", async () => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, { harness: "pi", displayName: "Pi", enabled: false, accessSourceId: "matrix_included" });
+    const { onMutate } = setup({ snapshot: next });
+    const connection = screen.getByRole("group", { name: "Pi connection" });
+    expect(within(connection).queryByRole("button", { name: /Using Matrix AI/ })).not.toBeInTheDocument();
+    const useMatrix = within(connection).getByRole("button", { name: /Use Matrix AI/ });
+    expect(useMatrix).toHaveAttribute("aria-pressed", "false");
+    await act(async () => { fireEvent.click(useMatrix); });
+    expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({ type: "set_route", enableHarness: true }));
+  });
+
+  it("keeps unavailable Matrix AI visible but never makes a blocked OpenCode route selectable", () => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, { harness: "opencode", displayName: "OpenCode", enabled: false, accessSourceId: null });
+    next.gatewayPolicy!.allowedModelIds = [];
+    const { onMutate } = setup({ snapshot: next });
+    const connection = screen.getByRole("group", { name: "OpenCode connection" });
+    expect(within(connection).getByRole("button", { name: /Use Matrix AI/ })).toBeDisabled();
+    fireEvent.click(within(connection).getByRole("button", { name: /Use Matrix AI/ }));
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+
+  it("keeps saved account logout reachable without leaving Matrix AI", async () => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, { harness: "pi", displayName: "Pi", accountIds: ["account_work"], selectedAccountId: null, accessSourceId: "matrix_included" });
+    next.accounts.find((account) => account.id === "account_work")!.authState = "authenticated";
+    const onMutate = vi.fn().mockResolvedValue(true);
+    setup({ snapshot: next, onMutate });
+    fireEvent.click(screen.getByText("Manage saved accounts"));
+    fireEvent.click(screen.getByRole("button", { name: "Log out Work" }));
+    await waitFor(() => expect(onMutate).toHaveBeenCalledWith({ type: "logout_account", accountId: "account_work" }));
+    expect(onMutate).not.toHaveBeenCalledWith(expect.objectContaining({ type: "set_route" }));
+  });
+
+  it("contains failed managed connection errors without changing the selected route", async () => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, { harness: "pi", displayName: "Pi", enabled: false, accessSourceId: null });
+    setup({ snapshot: next, onMutate: vi.fn().mockRejectedValue(new Error("private provider details")) });
+    fireEvent.click(within(screen.getByRole("group", { name: "Pi connection" })).getByRole("button", { name: /Use Matrix AI/ }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Settings could not be updated"));
+    expect(screen.getByRole("switch", { name: "Enable Pi" })).not.toBeChecked();
+    expect(screen.queryByText("private provider details")).not.toBeInTheDocument();
+  });
+
   it("derives the last checked label from the snapshot refresh time", () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-08-30T10:02:00.000Z");
@@ -295,6 +434,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByLabelText("Model")).toHaveValue("anthropic/claude-opus-5");
     expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Personal Anthropic subscription");
     expect(screen.getByRole("heading", { name: "Choose the model" })).toBeVisible();
+    fireEvent.click(screen.getByText("Advanced settings"));
     expect(screen.getByRole("heading", { name: "Access" })).toBeVisible();
     expect(screen.getByLabelText("Paid through")).toHaveValue("owner_anthropic_profile");
     expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Paid through");
@@ -658,6 +798,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByRole("button", { name: "Save budget" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Allow Claude Sonnet 5" })).not.toBeInTheDocument();
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    fireEvent.click(within(gateway).getByText("Usage & available models"));
     expect(within(gateway).getByText("Managed by your workspace")).toBeVisible();
     expect(within(gateway).getByText("$1.00")).toBeVisible();
     expect(within(gateway).getByText("Claude Opus 5")).toBeVisible();

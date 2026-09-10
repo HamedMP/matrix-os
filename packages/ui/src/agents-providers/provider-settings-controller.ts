@@ -14,6 +14,7 @@ import type { ProviderSettingsMutationIntent } from "./types.js";
 const LOAD_ERROR = "Provider settings are unavailable.";
 const MUTATION_ERROR = "Changes were not saved. Refresh and try again.";
 const CONFLICT_ERROR = "Provider settings changed. Latest settings were loaded.";
+const LOGIN_ACTION_ERROR = "Sign-in started. Use Continue to open it again.";
 const MAX_LISTENERS = 64;
 const MAX_ACTIVE_REQUESTS = 4;
 
@@ -37,7 +38,7 @@ export class ProviderSettingsTransportError extends Error {
 }
 
 export interface ProviderSettingsTransport {
-  getSnapshot(signal: AbortSignal): Promise<unknown>;
+  getSnapshot(signal: AbortSignal, options?: { refresh?: boolean }): Promise<unknown>;
   mutate(mutation: ProviderSettingsMutation, signal: AbortSignal): Promise<unknown>;
 }
 
@@ -53,6 +54,11 @@ export interface ProviderSettingsControllerState {
 export interface ProviderSettingsControllerOptions {
   identityKey: string;
   transport: ProviderSettingsTransport;
+}
+
+export interface ProviderSettingsMutationOptions {
+  /** Only the action returned by this explicit sign-in mutation is opened. */
+  onLoginAction?: (action: ProviderConnectionAttempt["action"]) => void | Promise<void>;
 }
 
 interface ApplySnapshotOptions {
@@ -130,18 +136,18 @@ export class ProviderSettingsController {
     this.update({ selectedHarnessId: harnessInstanceId });
   };
 
-  refresh = async (): Promise<void> => {
+  refresh = async (options: { refresh?: boolean } = { refresh: true }): Promise<void> => {
     if (this.disposed) return;
     if (this.pendingMutations > 0) await this.mutationTail;
-    if (!this.disposed) await this.runRefresh();
+    if (!this.disposed) await this.runRefresh(options.refresh ?? true);
   };
 
-  mutate = (intent: ProviderSettingsMutationIntent): Promise<boolean> => {
+  mutate = (intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions): Promise<boolean> => {
     if (this.disposed) return Promise.resolve(false);
     this.pendingMutations += 1;
     this.syncBusy();
 
-    const execution = this.mutationTail.then(async () => this.runMutation(intent));
+    const execution = this.mutationTail.then(async () => this.runMutation(intent, options));
     const tracked = execution.finally(() => {
       this.pendingMutations -= 1;
       this.syncBusy();
@@ -163,11 +169,11 @@ export class ProviderSettingsController {
     this.listeners.clear();
   };
 
-  private async runRefresh(): Promise<boolean> {
+  private async runRefresh(refresh = true): Promise<boolean> {
     const operationId = ++this.operationClock;
     const request = this.beginRequest("refresh");
     try {
-      const raw = await this.options.transport.getSnapshot(request.signal);
+      const raw = await this.options.transport.getSnapshot(request.signal, { refresh });
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
       return this.applySnapshot(parsed.data, { operationId });
@@ -180,7 +186,7 @@ export class ProviderSettingsController {
     }
   }
 
-  private async runMutation(intent: ProviderSettingsMutationIntent): Promise<boolean> {
+  private async runMutation(intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions): Promise<boolean> {
     if (this.disposed) return false;
     const current = this.state.snapshot;
     if (current === null
@@ -214,10 +220,27 @@ export class ProviderSettingsController {
       const raw = await this.options.transport.mutate(parsedMutation.data, request.signal);
       const parsed = ProviderSettingsMutationResponseSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
-      return this.applySnapshot(parsed.data.snapshot, {
+      if (intent.type === "start_login" && parsed.data.kind === "login_attempt"
+        && (parsed.data.attempt.harnessInstanceId !== intent.harnessInstanceId
+          || parsed.data.attempt.accountId !== intent.accountId
+          || parsed.data.attempt.method !== intent.method)) {
+        throw new ProviderSettingsTransportError("invalid_response");
+      }
+      const applied = this.applySnapshot(parsed.data.snapshot, {
         operationId,
         connectionAttempt: parsed.data.kind === "login_attempt" ? parsed.data.attempt : null,
       });
+      if (applied && !this.disposed && intent.type === "start_login"
+        && parsed.data.kind === "login_attempt" && parsed.data.attempt.state === "pending"
+        && this.state.connectionAttempt?.id === parsed.data.attempt.id && options?.onLoginAction) {
+        try {
+          await options.onLoginAction(parsed.data.attempt.action);
+        } catch (error) {
+          console.warn("[provider-settings] Sign-in handoff failed:", error instanceof Error ? error.name : typeof error);
+          if (!this.disposed) this.update({ error: LOGIN_ACTION_ERROR });
+        }
+      }
+      return applied;
     } catch (error) {
       if (this.disposed) return false;
       if (hasErrorCode(error, "revision_conflict")) {
@@ -290,7 +313,7 @@ export class ProviderSettingsController {
 export interface UseProviderSettingsControllerResult extends ProviderSettingsControllerState {
   onSelectHarness: (harnessInstanceId: string) => void;
   refresh: () => Promise<void>;
-  mutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean>;
+  mutate: (intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions) => Promise<boolean>;
 }
 
 /** Only server-advertised setup commands run; surfaces provide transport and Terminal chrome. */
@@ -324,7 +347,7 @@ export function useProviderSettingsController(
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
 
   useEffect(() => {
-    void controller.refresh();
+    void controller.refresh({ refresh: false });
     return controller.dispose;
   }, [controller]);
 

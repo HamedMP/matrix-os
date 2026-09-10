@@ -142,12 +142,13 @@ describe("ProviderSettingsController", () => {
     const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway });
     await controller.refresh();
 
+    const onLoginAction = vi.fn();
     await controller.mutate({
       type: "start_login",
       harnessInstanceId: "harness_one",
       accountId: null,
       method: "terminal",
-    });
+    }, { onLoginAction });
 
     expect(gateway.mutate).toHaveBeenCalledWith({
       type: "start_login",
@@ -159,6 +160,9 @@ describe("ProviderSettingsController", () => {
     }, expect.any(AbortSignal));
     expect(controller.getState().snapshot?.revision).toBe(2);
     expect(controller.getState().connectionAttempt?.id).toBe("attempt_one");
+    expect(onLoginAction).toHaveBeenCalledExactlyOnceWith(response.attempt.action);
+    await controller.refresh();
+    expect(onLoginAction).toHaveBeenCalledTimes(1);
   });
 
   it("serializes mutations and reads the latest confirmed revision when each starts", async () => {
@@ -187,6 +191,47 @@ describe("ProviderSettingsController", () => {
     expect(requests[1]?.expectedRevision).toBe(2);
     expect(controller.getState().snapshot?.revision).toBe(3);
     expect(controller.getState().busy).toBe(false);
+  });
+
+  it.each(["failed", "expired", "mismatched", "disposed"])("never auto-opens a %s sign-in result", async (scenario) => {
+    const response = deferred<unknown>();
+    const gateway = transport({ mutate: () => response.promise });
+    const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway });
+    await controller.refresh();
+    const onLoginAction = vi.fn();
+    const saved = controller.mutate({ type: "start_login", harnessInstanceId: "harness_one", accountId: null, method: "terminal" }, { onLoginAction });
+    await Promise.resolve();
+    if (scenario === "disposed") controller.dispose();
+    response.resolve({
+      kind: "login_attempt",
+      snapshot: { ...snapshot(2), harnesses: snapshot(2).harnesses.map((harness) => ({ ...harness, authState: "authenticating" })) },
+      attempt: {
+        id: "attempt_one", harnessInstanceId: scenario === "mismatched" ? "harness_other" : "harness_one",
+        accountId: null, method: "terminal", state: scenario === "failed" ? "failed" : "pending",
+        action: { kind: "open_terminal", terminalSessionId: "matrix-login" },
+        expiresAt: scenario === "expired" ? checkedAt : "2026-08-30T10:10:00.000Z", safeFailure: null,
+      },
+    });
+    await saved;
+    expect(onLoginAction).not.toHaveBeenCalled();
+  });
+
+  it("keeps a confirmed login and safe recovery error if opening its action fails", async () => {
+    const gateway = transport({ mutate: async () => ({
+      kind: "login_attempt",
+      snapshot: { ...snapshot(2), harnesses: snapshot(2).harnesses.map((harness) => ({ ...harness, authState: "authenticating" })) },
+      attempt: {
+        id: "attempt_one", harnessInstanceId: "harness_one", accountId: null, method: "terminal", state: "pending",
+        action: { kind: "open_terminal", terminalSessionId: "matrix-login" }, expiresAt: "2026-08-30T10:10:00.000Z", safeFailure: null,
+      },
+    }) });
+    const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway });
+    await controller.refresh();
+    await expect(controller.mutate({ type: "start_login", harnessInstanceId: "harness_one", accountId: null, method: "terminal" }, {
+      onLoginAction: async () => { throw new Error("secret provider failure"); },
+    })).resolves.toBe(true);
+    expect(controller.getState().connectionAttempt?.id).toBe("attempt_one");
+    expect(controller.getState().error).toBe("Sign-in started. Use Continue to open it again.");
   });
 
   it("keeps the last server-confirmed snapshot while a mutation is pending", async () => {

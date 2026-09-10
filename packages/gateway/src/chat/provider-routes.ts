@@ -15,13 +15,23 @@ export function createChatProviderRoutes(options: {
   routes.get("/api/chat-providers", async (context) => {
     const principal = options.getPrincipal(context);
     try {
-      const query = z.object({ refresh: z.enum(["true", "false"]).optional() }).strict().safeParse({
+      const query = z.object({
+        refresh: z.enum(["true", "false"]).optional(),
+        includeConnectionLabels: z.enum(["true", "false"]).optional(),
+      }).strict().safeParse({
         refresh: context.req.query("refresh"),
+        includeConnectionLabels: context.req.query("includeConnectionLabels"),
       });
       if (!query.success) return context.json({ error: "Invalid request" }, 400);
-      return context.json(query.data.refresh === "true"
+      const catalog = query.data.refresh === "true"
         ? await options.catalog.refresh(principal)
-        : await options.catalog.getCatalog(principal));
+        : await options.catalog.getCatalog(principal);
+      // Older clients validate instances strictly. Presentation additions must be
+      // negotiated on the wire, without modifying the authoritative admission catalog.
+      return context.json(query.data.includeConnectionLabels === "true" ? catalog : {
+        ...catalog,
+        instances: catalog.instances.map(({ connectionLabel: _connectionLabel, ...legacy }) => legacy),
+      });
     } catch (error: unknown) {
       const retryable = error instanceof ProviderCatalogUnavailableError && error.retryable;
       console.warn(

@@ -1202,14 +1202,14 @@ describe("TerminalPane scrolling", () => {
     expect(writeText.mock.calls).toEqual([[selectedScrollback], [selectedScrollback]]);
   });
 
-  it("attaches desktop canonical sessions as hard clients with proposed dimensions", async () => {
+  it.each(["main", `provider-auth-${"a".repeat(50)}`])("attaches desktop canonical session %s as a hard client with proposed dimensions", async (sessionId) => {
     render(
       <TerminalPane
         paneId="pane-hard-attach"
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={sessionId}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -1221,7 +1221,7 @@ describe("TerminalPane scrolling", () => {
     expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
       "/ws/terminal/session",
       expect.objectContaining({
-        session: "main",
+        session: sessionId,
         client: "hard",
         lease: "exclusive",
         cols: "120",
@@ -1231,6 +1231,9 @@ describe("TerminalPane scrolling", () => {
     expect(createdFitAddons[0].proposeDimensions).toHaveBeenCalled();
     expect(createdFitAddons[0].fit).not.toHaveBeenCalled();
     expect(createdTerminals[0].resize).not.toHaveBeenCalled();
+    act(() => WebSocketMock.instances[0].onopen?.());
+    expect(WebSocketMock.instances[0].send.mock.calls
+      .map(([frame]) => JSON.parse(frame)).some((frame) => frame.type === "attach")).toBe(false);
   });
 
   it("restarts a pending observer connection with an exclusive lease when the pane becomes focused", async () => {
@@ -1711,6 +1714,9 @@ describe("TerminalPane scrolling", () => {
   it("reattaches and refreshes a DOM cached terminal before re-enabling WebGL", async () => {
     const cached = createCachedTerminal();
     const fitAddon = { fit: vi.fn() };
+    // This exercises legacy PTY socket reuse/local fitting. A 32-character
+    // named shell ID is canonical and intentionally uses authoritative sizing.
+    const sessionId = "550e8400-e29b-41d4-a716-446655440000";
     restorePlan.current = {
       cached: {
         terminal: cached.terminal,
@@ -1720,11 +1726,11 @@ describe("TerminalPane scrolling", () => {
         ws: stubWs,
         lastSeq: 14,
         hasReplayCursor: true,
-        sessionId: "cached-terminal-with-dom-renderer",
+        sessionId,
       },
       reuseTerminal: true,
       reuseSocket: true,
-      sessionId: "cached-terminal-with-dom-renderer",
+      sessionId,
       lastSeq: 14,
       hasReplayCursor: true,
     };
