@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState";
 import { webcrypto } from "node:crypto";
@@ -115,4 +115,54 @@ it("creates a compact ellipsized title without shortening the actual request", a
   expect(creates[0]!.title.length).toBeLessThanOrEqual(80);
   expect(creates[0]!.title.endsWith("...")).toBe(true);
   expect(turns[0]!.parts[0]!.text).toBe(text);
+});
+
+it.each([false, true])("preserves the first operation after ambiguous acknowledgement and active state changes (initially active: %s)", async (initiallyActive) => {
+  let active = initiallyActive;
+  const requests: Array<{ url: string; body: { clientRequestId: string } }> = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    const current = { ...record, ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" } } : {}) };
+    if (url.includes("/events?")) return new Response(new ReadableStream());
+    if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+    if (url.includes("/api/chats/chat_agent?")) return Response.json({ record: current, messages: [], turns: [], runs: [], activities: [] });
+    requests.push({ url, body: JSON.parse(init!.body as string) });
+    return Response.json({}, { status: 503 });
+  }));
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.providerSelection).toBeTruthy());
+  await act(async () => { await result.current.submitMessage("Use notes", undefined, options); });
+  active = !active;
+  await act(async () => { fireEvent(window, new Event("focus")); });
+  await act(async () => { await result.current.submitMessage("Use notes", undefined, options); });
+  expect(requests).toHaveLength(2);
+  expect(requests[1]!.url).toBe(requests[0]!.url);
+  expect(requests[1]!.body.clientRequestId).toBe(requests[0]!.body.clientRequestId);
+});
+
+it("accepts a consumed queue retry without resurrecting the visible queued item", async () => {
+  let active = true;
+  let attempts = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    const current = { ...record, ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" } } : {}) };
+    if (url.includes("/events?")) return new Response(new ReadableStream());
+    if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+    if (url.includes("/api/chats/chat_agent?")) return Response.json({ record: current, messages: [], turns: [], runs: [], activities: [], queuedTurns: [] });
+    if (url.includes("/queued-turns")) {
+      if (++attempts === 1) return Response.json({}, { status: 503 });
+      const { baseRevision: _revision, ...input } = JSON.parse(init!.body as string);
+      return Response.json({ alreadyClaimed: true, queueDepth: 0, queuedTurn: {
+        ...input, id: "qturn_consumed", chatId: record.chat.id, position: 1,
+        createdAt: record.chat.createdAt, updatedAt: record.chat.updatedAt,
+      } });
+    }
+    throw new Error("Unexpected admission operation");
+  }));
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.providerSelection).toBeTruthy());
+  await act(async () => { expect(await result.current.submitMessage("Use notes", undefined, options)).toBe(false); });
+  active = false;
+  await act(async () => { fireEvent(window, new Event("focus")); });
+  await act(async () => { expect(await result.current.submitMessage("Use notes", undefined, options)).toBe(true); });
+  expect(attempts).toBe(2);
+  expect(result.current.queuedTurns).toEqual([]);
 });

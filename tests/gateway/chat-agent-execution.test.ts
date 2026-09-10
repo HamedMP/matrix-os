@@ -30,6 +30,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
   let release: (() => void) | undefined;
   let hold: Promise<void> | undefined;
   let failHermes: boolean;
+  let failBeforeCheckpoint: "failed" | "aborted" | undefined;
   let agentId: string;
   let recipeSkillsRoot: string;
 
@@ -46,7 +47,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     }
     repository = new ChatRepository((await KyselyPGlite.create()).dialect);
     await repository.bootstrap();
-    enabled = true; failHermes = false; calls = []; release = undefined; hold = undefined;
+    enabled = true; failBeforeCheckpoint = undefined; failHermes = false; calls = []; release = undefined; hold = undefined;
     const catalog = createCanonicalProviderCatalogFixture();
     const hermes = { ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes" as const,
       models: [{ ...catalog.instances[0]!.models[0]!, id: agentSelection.model }],
@@ -59,6 +60,10 @@ describe("Hermes Agent invocation through canonical Chat", () => {
         calls.push({ driver, resumed, input });
         const pending = hold; hold = undefined;
         if (pending) await pending;
+        if (driver === "codex" && failBeforeCheckpoint) {
+          const outcome = failBeforeCheckpoint; failBeforeCheckpoint = undefined;
+          yield { type: "run.completed" as const, outcome }; return;
+        }
         yield { type: "state.updated" as const, state: { sessionId: `${driver}_${input.runId}` } };
         yield { type: "assistant.delta" as const, delta: driver === "hermes" ? "Agent result: Thursday review." : "Original Chat response." };
         yield { type: "run.completed" as const, outcome: driver === "hermes" && failHermes ? "failed" as const : "completed" as const };
@@ -104,6 +109,101 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     await complete();
     return result;
   }
+
+
+  it.each(["failed", "aborted"] as const)("keeps Agent history through an ordinary %s before its checkpoint", async (outcome) => {
+    await send("req_first", [{ type: "text", text: "First ordinary" }]);
+    await send("req_agent_boundary", [mention("agent", agentId)]);
+    failBeforeCheckpoint = outcome;
+    await send("req_no_checkpoint", [{ type: "text", text: "Intervening request" }]);
+    await send("req_recover", [{ type: "text", text: "Continue after interruption" }]);
+    expect(calls.at(-1)?.resumed).toBe(false);
+    expect(calls.at(-1)?.input.prompt).toContain("Agent result: Thursday review.");
+    expect(calls.at(-1)?.input.prompt).toContain("Intervening request");
+    await send("req_resume_again", [{ type: "text", text: "Continue from new checkpoint" }]);
+    expect(calls.at(-1)?.resumed).toBe(true);
+    expect(calls.at(-1)?.input.prompt).toBe("Continue from new checkpoint");
+  });
+
+  it.each(["failed", "aborted"] as const)("refreshes queued recovery history after ordinary %s without a checkpoint", async (outcome) => {
+    await send("req_first", [{ type: "text", text: "First ordinary" }]);
+    await send("req_agent_boundary", [mention("agent", agentId)]);
+    failBeforeCheckpoint = outcome;
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_no_checkpoint", [{ type: "text", text: "Intervening request" }]));
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    await orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", await input("req_recover", [{ type: "text", text: "Queued recovery" }]));
+    release!();
+    await vi.waitFor(() => expect(calls).toHaveLength(4)); await complete();
+    expect(calls.at(-1)?.resumed).toBe(false);
+    expect(calls.at(-1)?.input.prompt).toContain("Agent result: Thursday review.");
+    expect(calls.at(-1)?.input.prompt).toContain("Intervening request");
+  });
+
+  it("rejects a cross-operation duplicate without poisoning the queue", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    const request = await input("req_same_operation", [mention("agent", agentId)]);
+    await orchestrator.admitTurn(principal, owner, "chat_parent", request);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", {
+      ...request, baseRevision: (await repository.get(owner, "chat_parent"))!.chat.revision,
+    })).rejects.toMatchObject({ safeError: { code: "chat_conflict" } });
+    release!(); await complete();
+    expect(await repository.listQueuedTurns(owner, "chat_parent")).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("rejects turn admission using a still-queued request ID under the same Chat lock", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_first", [{ type: "text", text: "First" }]));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const request = await input("req_queued_once", [mention("agent", agentId)]);
+    await orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", request);
+    await expect(orchestrator.admitTurn(principal, owner, "chat_parent", {
+      ...request, baseRevision: (await repository.get(owner, "chat_parent"))!.chat.revision,
+    })).rejects.toMatchObject({ safeError: { code: "chat_conflict" } });
+    release!(); await vi.waitFor(() => expect(calls).toHaveLength(2)); await complete();
+    expect(await repository.listQueuedTurns(owner, "chat_parent")).toEqual([]);
+    expect((await repository.getDetailPage(owner, "chat_parent", { limit: 100 }))!.turns).toHaveLength(2);
+  });
+
+  it("acknowledges the original queue admission after it was claimed and completed", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_predecessor", [{ type: "text", text: "First" }]));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const request = await input("req_queue_ack", [mention("agent", agentId)]);
+    const admitted = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", request);
+    release!(); await vi.waitFor(() => expect(calls).toHaveLength(2)); await complete();
+    const retry = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", request);
+    expect(retry.queuedTurn.id).toBe(admitted.queuedTurn.id);
+    expect(retry.alreadyClaimed).toBe(true);
+    expect(retry.queueDepth).toBe(0);
+    expect(calls).toHaveLength(2);
+    await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", {
+      ...request, parts: [{ type: "text", text: "Changed" }, mention("agent", agentId)],
+    })).rejects.toBeDefined();
+  });
+
+  it("pins the queued recipe body, hash, dependencies and output while refreshing predecessor history", async () => {
+    await agents.update(owner, agentId, { baseRevision: 1, recipe: {
+      skills: ["matrix-personal-daily-brief"], integrations: [{ service: "gmail", accountLabel: "Work" }], output: "Original output",
+    } });
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_predecessor", [{ type: "text", text: "First" }]));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const queued = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", await input("req_pinned_recipe", [mention("agent", agentId)]));
+    await writeFile(join(recipeSkillsRoot, "personal-daily-brief/SKILL.md"), "---\nname: matrix-personal-daily-brief\ndescription: Edited.\nauthor: Matrix OS\n---\nFuture instructions\n");
+    await agents.update(owner, agentId, { baseRevision: 2, recipe: {
+      skills: ["matrix-integrations"], integrations: [{ service: "google_calendar" }], output: "Future output",
+    } });
+    release!(); await vi.waitFor(() => expect(calls).toHaveLength(2)); await complete();
+    const detail = await repository.getDetailPage(owner, "chat_parent", { limit: 100 });
+    expect(detail!.runs.at(-1)?.context?.agent?.recipe).toEqual(queued.queuedTurn.context?.agent?.recipe);
+    expect(calls.at(-1)?.input.prompt).toContain("Read inbox and calendar for the current day.");
+    expect(calls.at(-1)?.input.prompt).toContain("Original output");
+    expect(calls.at(-1)?.input.prompt).toContain("Original Chat response.");
+    expect(calls.at(-1)?.input.prompt).not.toContain("Future");
+  });
 
   it("runs Hermes in place, preserves the default binding and transcript, and returns to the original harness", async () => {
     await send("req_normal", [{ type: "text", text: "Keep this original conversation" }]);
@@ -198,12 +298,14 @@ describe("Hermes Agent invocation through canonical Chat", () => {
   });
 
   it("deduplicates an accepted Agent turn and rejects a changed request with its idempotency key", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
     const request = await input("req_idempotent_bot", [{ type: "text", text: "One job" }, mention("agent", agentId)]);
     const first = await orchestrator.admitTurn(principal, owner, "chat_parent", request);
-    await complete();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
     const duplicate = await orchestrator.admitTurn(principal, owner, "chat_parent", request);
     expect(duplicate.run.id).toBe(first.run.id);
     expect(calls).toHaveLength(1);
+    release!(); await complete();
     await expect(orchestrator.admitTurn(principal, owner, "chat_parent", {
       ...request, parts: [{ type: "text", text: "Changed job" }, mention("agent", agentId)],
     })).rejects.toMatchObject({ safeError: { code: "chat_conflict" } });

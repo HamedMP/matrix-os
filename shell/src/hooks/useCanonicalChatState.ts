@@ -298,18 +298,21 @@ export function useCanonicalChatState(): ChatState {
           clientRequestId: options.clientRequestId ?? requestId(), baseRevision: record.chat.revision,
           parts, selection, interactionMode: options.interactionMode!, permissionMode: options.permissionMode!,
         };
-        const requestScope = `${record.activeRun ? "queue" : "send"}:${record.chat.id}`;
+        const requestScope = record.chat.id;
+        let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
         if (options.resources?.length) {
           const { clientRequestId: seed, baseRevision: _revision, ...semanticInput } = input;
-          input.clientRequestId = mentionRequests.get(client, requestScope, semanticInput, seed);
+          const attempt = mentionRequests.resolve(client, requestScope, semanticInput, operation, seed);
+          input.clientRequestId = attempt.clientRequestId;
+          operation = attempt.operation;
         }
-        if (record.activeRun && options.resources?.length) {
+        if (operation === "queue") {
           const queued = await client.queueTurn(record.chat.id, input);
           turnAdmitted = true;
           mentionRequests.accepted(requestScope, input.clientRequestId);
           const current = detailRef.current;
           if (activeChatIdRef.current === record.chat.id && current?.record.chat.id === record.chat.id) {
-            const queuedTurns = [...(current.queuedTurns ?? []).filter((row) => row.id !== queued.queuedTurn.id), queued.queuedTurn];
+            const queuedTurns = [...(current.queuedTurns ?? []).filter((row) => row.id !== queued.queuedTurn.id), ...(queued.alreadyClaimed ? [] : [queued.queuedTurn])];
             const next = { ...current, queuedTurns };
             detailRef.current = next;
             setDetail(next);

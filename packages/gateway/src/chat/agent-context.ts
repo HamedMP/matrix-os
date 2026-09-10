@@ -107,7 +107,7 @@ export class ChatAgentContext {
       throw new ChatAgentContextError("context_unavailable");
     }
     // A normal harness checkpoint cannot know about an intervening Bot session.
-    const needsHistory = Boolean(agent || current.runs.at(-1)?.context?.agent);
+    const needsHistory = Boolean(agent || current.runs.at(-1)?.context?.agent || current.runs.at(-1)?.context?.history);
     const historyText = needsHistory ? transcript(current.messages, 12_000) : undefined;
     const chats: ChatContextSnapshot[] = [];
     for (const reference of chatReferences) chats.push(await this.snapshot(owner, reference.id, 8_000));
@@ -169,7 +169,7 @@ export class ChatAgentContext {
 }
 
 export function contextPrompt(prompt: string, context?: ChatRunContext): string {
-  if (!context) return prompt;
+  if (!context || (!context.agent && !context.history && !context.chats.length)) return prompt;
   const segments: string[] = [];
   if (context.agent) segments.push(
     `Act as the saved Agent ${JSON.stringify(context.agent.name)} for this request.`,

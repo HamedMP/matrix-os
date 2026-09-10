@@ -61,6 +61,7 @@ export interface EnqueuedQueuedTurn {
   queuedTurn: CanonicalChatQueuedTurn;
   queueDepth: number;
   alreadyQueued: boolean;
+  alreadyClaimed?: boolean;
 }
 
 export interface CancelQueuedTurnInput {
@@ -148,6 +149,24 @@ export class ChatQueueRepository {
     ) => Promise<void>,
   ) {}
 
+  async findAdmission(ownerInput: ChatOwner, chatId: string, clientRequestId: string, requestHash?: string): Promise<EnqueuedQueuedTurn | null> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    CanonicalChatIdSchema.parse(chatId);
+    CanonicalChatRequestIdSchema.parse(clientRequestId);
+    return this.transact(async (trx) => {
+      const chat = await ownedChat(trx, owner, chatId);
+      if (!chat) throw new ChatNotFoundError(chatId);
+      const row = await trx.selectFrom("chat_queued_turns").selectAll()
+        .where("chat_id", "=", chatId).where("client_request_id", "=", clientRequestId).executeTakeFirst();
+      if (!row) return null;
+      const queuedTurn = toQueuedTurn(row);
+      if (!["queued", "claimed"].includes(row.status) || (queuedTurn.context && queuedTurn.context.requestHash !== requestHash)) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
+      return { queuedTurn, queueDepth: await this.queueDepth(trx, chatId), alreadyQueued: true, ...(row.status === "claimed" ? { alreadyClaimed: true } : {}) };
+    });
+  }
+
   async enqueue(
     ownerInput: ChatOwner,
     input: EnqueueQueuedTurnInput,
@@ -172,12 +191,17 @@ export class ChatQueueRepository {
         .where("client_request_id", "=", clientRequestId)
         .executeTakeFirst();
       if (duplicate) {
-        if (duplicate.status !== "queued" || toQueuedTurn(duplicate).context?.requestHash !== context?.requestHash) {
+        if (!["queued", "claimed"].includes(duplicate.status) || toQueuedTurn(duplicate).context?.requestHash !== context?.requestHash) {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const depth = await this.queueDepth(trx, chatId);
-        return { queuedTurn: toQueuedTurn(duplicate), queueDepth: depth, alreadyQueued: true };
+        return { queuedTurn: toQueuedTurn(duplicate), queueDepth: depth, alreadyQueued: true, ...(duplicate.status === "claimed" ? { alreadyClaimed: true } : {}) };
       }
+      // Both admission paths hold this same Chat lock. A request ID belongs to
+      // one operation; rejecting here prevents a duplicate from blocking claim.
+      const admitted = await trx.selectFrom("chat_turns").select("id")
+        .where("chat_id", "=", chatId).where("client_request_id", "=", clientRequestId).executeTakeFirst();
+      if (admitted) throw new ChatConflictError(chatId, Number(chat.revision));
       if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }

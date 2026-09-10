@@ -895,6 +895,10 @@ export class ChatRepository {
     return this.queue.enqueue(owner, input);
   }
 
+  async findQueuedAdmission(owner: ChatOwner, chatId: string, clientRequestId: string, requestHash?: string) {
+    return this.queue.findAdmission(owner, chatId, clientRequestId, requestHash);
+  }
+
   async listQueuedTurns(owner: ChatOwner, chatId: string): Promise<CanonicalChatQueuedTurn[]> {
     return this.queue.list(owner, chatId);
   }

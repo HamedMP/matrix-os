@@ -514,7 +514,7 @@ export function useCanonicalChatRouteController({
     input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
   ) => {
     const current = detailRef.current;
-    if (!current?.record.activeRun) return null;
+    if (!current || (!current.record.activeRun && !input.clientRequestId)) return null;
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
     try {
@@ -524,6 +524,11 @@ export function useCanonicalChatRouteController({
         baseRevision: current.record.chat.revision,
       });
       if (!isCurrentScope()) return null;
+      if (response.alreadyClaimed) {
+        await loadDetail(current.record.chat.id);
+        setError(null);
+        return response;
+      }
       detailRequestSequence.current += 1;
       updateDetail((currentDetail) => {
         if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id

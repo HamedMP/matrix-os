@@ -55,16 +55,16 @@ export function ChatMentionControls({ client, resources, permissionMode, confirm
   const [previewId, setPreviewId] = useState<string | null>(null);
   const preview = chats.find((chat) => chat.id === previewId);
   if (!agent && !chats.length) return null;
-  return <div className="grid gap-2 px-3 py-2 text-xs" style={{ color: "var(--text-secondary, var(--matrix-muted-fg))" }}>
-    {agent ? <div className="grid gap-2">
-      <span><strong>{agent.label}</strong> · Hermes · this request only</span>
+  return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 px-3 py-2 text-xs" style={{ color: "var(--text-secondary, var(--matrix-muted-fg))" }}>
+    {agent ? <div className="grid min-w-0 gap-2">
+      <span className="flex min-w-0 items-center gap-1"><strong className="min-w-0 truncate" title={agent.label}>{agent.label}</strong><span className="shrink-0">· Hermes · this request only</span></span>
       {permissionMode === "full_access" ? <span>Full access on this computer.</span> : <label className="flex items-start gap-2">
         <input type="checkbox" checked={confirmed} onChange={(event) => onConfirm(event.target.checked)} />
         Allow Full access on this computer for this Agent request.
       </label>}
     </div> : null}
     {chats.length ? <div className="flex flex-wrap items-center gap-2"><span>Chat context:</span>{chats.map((chat) => (
-      <button key={chat.id} type="button" className="max-w-52 truncate rounded-md border px-2 py-1.5 underline-offset-2 hover:underline" aria-label={`Preview ${chat.label}`} disabled={!client} onClick={() => setPreviewId(chat.id)}>{chat.label}</button>
+      <button key={chat.id} type="button" className="max-w-52 truncate rounded-md border px-2 py-1.5 underline-offset-2 hover:underline" aria-label={`Preview ${chat.label}`} title={chat.label} disabled={!client} onClick={() => setPreviewId(chat.id)}>{chat.label}</button>
     ))}</div> : null}
     {client && preview ? <ContextPreview key={preview.id} client={client} reference={preview} onClose={() => setPreviewId(null)} /> : null}
   </div>;

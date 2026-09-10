@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -105,4 +105,10 @@ describe("server-catalogued Chat Agent recipes", () => {
       moduleUrl: pathToFileURL(join(bundle, "packages/gateway/dist/chat/agent-recipe.js")).href,
     })).resolves.toBe(join(bundle, "skills/matrix"));
   });
+});
+
+it("ships explicit inbox and preceding-day query guidance in the canonical Daily Brief skill", async () => {
+  const skill = await readFile("skills/matrix/personal-daily-brief/SKILL.md", "utf8");
+  expect(skill).toContain('query: "in:inbox newer_than:1d"');
+  expect(skill).toContain("maxResults: 30");
 });

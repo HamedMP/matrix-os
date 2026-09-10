@@ -197,7 +197,8 @@ export const CanonicalChatQueuedTurnSchema = z.object({
 
 export const CanonicalChatQueueAdmissionResponseSchema = z.object({
   queuedTurn: CanonicalChatQueuedTurnSchema,
-  queueDepth: z.number().int().min(1).max(20),
+  queueDepth: z.number().int().min(0).max(20),
+  alreadyClaimed: z.boolean().optional(),
 }).strict();
 
 export const CanonicalChatQueueUpdateResponseSchema = z.object({

@@ -23,6 +23,7 @@ describe("Chat Agent HTTP boundary", () => {
   let home: string;
   let enabled: boolean;
   let user: string | null;
+  let catalog: ReturnType<typeof createCanonicalProviderCatalogFixture>;
   let app: ReturnType<typeof createChatAgentRoutes>;
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-agent-routes-"));
@@ -41,7 +42,7 @@ describe("Chat Agent HTTP boundary", () => {
       services: [{ id: "gmail", name: "Gmail" }, { id: "google_calendar", name: "Google Calendar" }],
     });
     enabled = true; user = owner.ownerId;
-    const catalog = createCanonicalProviderCatalogFixture();
+    catalog = createCanonicalProviderCatalogFixture();
     catalog.drivers.push({ ...catalog.drivers[0]!, kind: "hermes", displayName: "Hermes" });
     catalog.instances.push({ ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes",
       models: [{ ...catalog.instances[0]!.models[0]!, id: fields.selection.model }],
@@ -57,6 +58,20 @@ describe("Chat Agent HTTP boundary", () => {
     await agents.close(); await repository.kysely.destroy(); await rm(home, { recursive: true, force: true });
   });
   const json = (method: string, body: unknown) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  it("accepts recipe-only PATCH after the saved model becomes unavailable while rejecting a supplied unavailable selection", async () => {
+    const created = await (await app.request("/api/chat-agents", json("POST", fields))).json();
+    catalog.instances = catalog.instances.filter((instance) => instance.id !== fields.selection.instanceId);
+    const recipe = { skills: ["matrix-integrations"], integrations: [{ service: "gmail", accountLabel: "Work" }], output: "Edited daily brief" };
+    const updated = await app.request(`/api/chat-agents/${created.id}`, json("PATCH", { baseRevision: 1, recipe }));
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ selection: fields.selection, recipe });
+    const rejected = await app.request(`/api/chat-agents/${created.id}`, json("PATCH", {
+      baseRevision: 2, selection: fields.selection, description: "Changed selection must be ready",
+    }));
+    expect(rejected.status).toBe(400);
+    expect((await agents.get(owner, created.id))?.revision).toBe(2);
+  });
 
   it("defaults to a quiet disabled feature and rejects mutations when switched off", async () => {
     enabled = false;

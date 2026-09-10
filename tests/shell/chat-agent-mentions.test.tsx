@@ -100,3 +100,20 @@ it("supports choosing a reference from the keyboard", async () => {
   fireEvent.click(option);
   expect(document.activeElement).toBe(editor);
 });
+
+it.each(["chat", "agent"] as const)("keeps a long %s label inspectable through selection and removal", async (kind) => {
+  const long = { kind, id: kind === "chat" ? "chat_long" : "bot_longlabel", label: "A".repeat(kind === "chat" ? 200 : 80) };
+  vi.mocked(client.search).mockResolvedValue({ enabled: true, resources: [long] });
+  render(<ChatApp {...base} onSubmit={vi.fn()} agentClient={client} />);
+  const editor = screen.getByRole("textbox", { name: "Message chat" });
+  await waitFor(() => expect((editor as HTMLTextAreaElement).disabled).toBe(false));
+  fireEvent.change(editor, { target: { value: "@A" } });
+  const option = await screen.findByRole("option", { name: long.label });
+  expect(screen.getByTitle(long.label)).toBeTruthy();
+  fireEvent.click(option);
+  expect(screen.getAllByTitle(long.label).length).toBeGreaterThan(0);
+  const remove = screen.getByRole("button", { name: `Remove ${long.label}` });
+  fireEvent.click(remove);
+  expect(screen.queryByRole("button", { name: `Remove ${long.label}` })).toBeNull();
+  expect(document.activeElement).toBe(editor);
+});

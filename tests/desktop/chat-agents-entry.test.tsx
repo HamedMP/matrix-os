@@ -55,6 +55,57 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("shared Agents entry", () => {
+  it("keeps a long saved name inspectable in its acknowledgement and library row", async () => {
+    const client = clientFixture();
+    const name = "A".repeat(80);
+    render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: name } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Help" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+    const notice = await screen.findByRole("status");
+    expect(notice.title).toContain(name);
+    fireEvent.click(await screen.findByRole("button", { name: `Edit ${name}` }));
+    expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe(name);
+  });
+
+
+  it("omits an unchanged unavailable model for a recipe-only edit", async () => {
+    const client = clientFixture();
+    client.list.mockResolvedValue({ enabled: true, agents: [saved] });
+    client.catalog.mockResolvedValue(createCanonicalProviderCatalogFixture());
+    render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add recipe" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Expected output" }), { target: { value: "Edited brief" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(client.update).toHaveBeenCalledTimes(1));
+    expect(client.update.mock.calls[0]![1]).not.toHaveProperty("selection");
+    expect(client.update.mock.calls[0]![1]).toMatchObject({ recipe: { output: "Edited brief" } });
+  });
+  it("explains duplicate account rows and allows correcting the pair", async () => {
+    const client = clientFixture();
+    render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Add integration" }), { target: { value: "gmail" } });
+    expect(screen.getAllByRole("combobox", { name: "Gmail account" })).toHaveLength(2);
+    expect(screen.getAllByText("Choose a different account or remove this duplicate integration.").length).toBeGreaterThan(0);
+    expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getAllByRole("combobox", { name: "Gmail account" })[1]!, { target: { value: "Work" } });
+    expect(screen.queryByText("Choose a different account or remove this duplicate integration.")).toBeNull();
+    expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove Gmail" })[0]!);
+    expect((screen.getByRole("combobox", { name: "Gmail account" }) as HTMLSelectElement).value).toBe("Work");
+    fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+    await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
+    expect(client.create.mock.calls[0]![0].recipe?.integrations).toEqual([
+      { service: "google_calendar", accountLabel: "Calendar" }, { service: "gmail", accountLabel: "Work" },
+    ]);
+  });
+
   it("keeps the existing Chat mounted and creates a saved role without executing it", async () => {
     const client = clientFixture();
     render(<><textarea aria-label="Existing draft" defaultValue="Keep this original draft" /><ChatAgentsEntry client={client} /></>);

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { Dialog } from "../Dialog.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
-import { accountForNewIntegration } from "./AgentRecipeEditor.js";
+import { accountForNewIntegration } from "./recipe-integrations.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import type { ChatAgentClient, ChatAgentIntegrationConnection } from "./client.js";
 
@@ -43,7 +43,7 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
     recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
     connectionError={state.connectionError}
     change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} />;
-  return <div className="mt-5 grid gap-3">
+  return <div className="mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
       <div className="grid gap-2 sm:grid-cols-2">
         <button type="button" className={`${button} text-left`} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>New Agent</button>
         {state.recipeCatalog?.enabled ? <button type="button" aria-label="Personal Daily Brief" className={`${button} min-w-0 text-left`} disabled={!state.catalog || state.agents.length >= 100}
@@ -54,7 +54,7 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
         ? "Recipe templates are unavailable." : "Connection status is unavailable. Recipe account choices will ask when run."}</p>
         <button type="button" className={button} onClick={retryRecipes}>Retry recipe options</button></div> : null}
       {!state.agents.length && !state.error ? <div className="rounded-xl border px-4 py-6 text-sm" style={muted}>No Agents yet. Create a reusable role for meeting briefs, reviews, or other work you repeat.</div> : null}
-      {state.agents.map((agent) => <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} className={`${button} flex flex-col gap-1 text-left`} onClick={() => edit(agent)}>
+      {state.agents.map((agent) => <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} className={`${button} flex min-w-0 max-w-full flex-col gap-1 overflow-hidden text-left`} onClick={() => edit(agent)}>
         <span className="w-full min-w-0 truncate font-medium" title={agent.name}>{agent.name}</span>
         <span className="w-full min-w-0 truncate text-xs" title={agent.description} style={muted}>{agent.description || "Saved Hermes role"}</span>
       </button>)}
@@ -134,10 +134,11 @@ function AgentLibrary({ client, onClose, onSetup }: { client: ChatAgentClient; o
       || (draft.recipe !== undefined && draft.recipe !== null && !ChatAgentRecipeSchema.safeParse(draft.recipe).success)) return;
     patch({ pending: true, error: "" });
     try {
-      const fields = { name: draft.name, description: draft.description, instructions: draft.instructions, selection: draft.selection };
+      const fields = { name: draft.name, description: draft.description, instructions: draft.instructions };
       const saved = state.editing === "new"
-        ? await client.create({ ...fields, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
-        : await client.update(state.editing!.id, { ...fields, baseRevision: state.editing!.revision,
+        ? await client.create({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
+        : await client.update(state.editing!.id, { ...fields,
+          ...(JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
           ...(draft.recipe === undefined ? {} : { recipe: draft.recipe }) });
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
@@ -164,7 +165,7 @@ function AgentLibrary({ client, onClose, onSetup }: { client: ChatAgentClient; o
   };
   return <Dialog open onClose={() => { if (!state.pending) onClose(); }} aria-label="Agents" className="ph-no-capture" style={{
     background: "var(--bg-surface, var(--matrix-card))", color: "var(--text-primary, var(--matrix-card-fg))",
-    border: "1px solid var(--border-default, var(--matrix-border))", maxWidth: "600px", width: "min(92vw, 600px)",
+    border: "1px solid var(--border-default, var(--matrix-border))", boxSizing: "border-box", minWidth: 0, maxWidth: "600px", width: "min(92vw, 600px)",
   }}>
     <div className="flex items-center justify-between gap-3">
       <h2 className="text-lg font-semibold">{state.editing === "new" ? "New Agent" : state.editing ? "Edit Agent" : "Agents"}</h2>
@@ -174,7 +175,7 @@ function AgentLibrary({ client, onClose, onSetup }: { client: ChatAgentClient; o
     <AgentLibraryBody state={state} models={models} edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
       setup={onSetup ? () => { onClose(); onSetup(); } : undefined} />
-    {state.error ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 text-sm">{state.notice}</p> : null}
+    {state.error ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
   </Dialog>;
 }
 

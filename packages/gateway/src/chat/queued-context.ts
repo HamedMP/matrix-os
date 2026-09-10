@@ -14,7 +14,7 @@ export async function queuedRunContext(
     .orderBy("attempt", "desc").limit(1).executeTakeFirst();
   const previousContext = previous?.context_snapshot == null ? undefined
     : ChatRunContextSchema.parse(parseJson(previous.context_snapshot));
-  if (!queued.context?.history && !previousContext?.agent) return queued.context;
+  if (!queued.context?.history && !previousContext?.agent && !previousContext?.history) return queued.context;
   const rows = await db.selectFrom("chat_messages").selectAll()
     .where("chat_id", "=", queued.chatId).orderBy("seq", "desc").limit(41).execute();
   const history = transcript(rows.slice(0, 40).reverse().map(toMessage), 12_000);

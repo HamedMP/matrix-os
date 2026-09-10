@@ -372,7 +372,7 @@ export function CanonicalChatWorkspace({
     if (
       !selection
       || !mentionPermission.allowed
-      || activeRun
+      || (activeRun && !mentionResources.length)
       || uploadingAttachments
     ) return;
     if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) {
@@ -402,20 +402,25 @@ export function CanonicalChatWorkspace({
         interactionMode: selection.interactionMode,
         permissionMode: mentionPermission.permissionMode,
       };
-      const requestScope = `send:${routedComposerChatId ?? `new:${projectId ?? "global"}`}`;
-      const clientRequestId = mentionResources.length ? mentionRequests.get(client, requestScope, input) : undefined;
-      const admitted = await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId);
+      const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
+      const attempt = mentionResources.length ? mentionRequests.resolve(client, requestScope, input, "send") : undefined;
+      const clientRequestId = attempt?.clientRequestId;
+      const admitted = attempt?.operation === "queue"
+        ? await controller.queueTurn({ ...input, clientRequestId })
+        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId);
       if (admitted && clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
       if (!admitted || !isCurrentSubmission()) return;
-      reportedChatId.current = admitted.record.chat.id;
-      const admittedProjectId = admitted.record.projectId ?? null;
-      if (admittedProjectId !== projectId && onProjectChanged) {
-        onProjectChanged(admitted.record.chat.id, admittedProjectId, admitted.record.chat.title);
-      } else {
-        onActiveChatChanged?.(admitted.record.chat.id, admitted.record.chat.title);
+      if ("record" in admitted) {
+        reportedChatId.current = admitted.record.chat.id;
+        const admittedProjectId = admitted.record.projectId ?? null;
+        if (admittedProjectId !== projectId && onProjectChanged) {
+          onProjectChanged(admitted.record.chat.id, admittedProjectId, admitted.record.chat.title);
+        } else {
+          onActiveChatChanged?.(admitted.record.chat.id, admitted.record.chat.title);
+        }
+        setGlobalView("conversation");
+        setDraftProjectId(admittedProjectId);
       }
-      setGlobalView("conversation");
-      setDraftProjectId(admittedProjectId);
       setDraft("");
       setReferenceTokens([]);
       attachments.clear();
@@ -427,7 +432,7 @@ export function CanonicalChatWorkspace({
   const submitQueueAction = async (submission: SharedChatComposerSubmission) => {
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
-      (!activeRun && !editingQueuedTurn)
+      (!activeRun && !editingQueuedTurn && !mentionResources.length)
       || !controller.detail
       || !selection
       || !mentionPermission.allowed
@@ -461,11 +466,14 @@ export function CanonicalChatWorkspace({
         selection: { instanceId: selection.instanceId, model: selection.model, ...(selection.options.length ? { options: selection.options } : {}) },
         interactionMode: selection.interactionMode, permissionMode: mentionPermission.permissionMode,
       };
-      const requestScope = `queue:${routedComposerChatId}`;
-      const clientRequestId = mentionResources.length ? mentionRequests.get(client, requestScope, input) : undefined;
+      const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
+      const attempt = mentionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
+      const clientRequestId = attempt?.clientRequestId;
       const response = editingQueuedTurn
         ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts)
-        : await controller.queueTurn({ ...input, clientRequestId });
+        : attempt?.operation === "send"
+          ? await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId)
+          : await controller.queueTurn({ ...input, clientRequestId });
       if (response && clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
       if (!isCurrentSubmission()) return;
       if (!response) {

@@ -99,12 +99,16 @@ export async function admitCanonicalTurn(
         );
       }
     }
-    const resumeState = prepared?.context?.history ? undefined : await loadChatResumeState({
+    const resumeState = prepared?.context?.agent ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
     });
+    if (resumeState !== undefined && prepared?.context?.history) {
+      const { history: _history, ...context } = prepared.context;
+      prepared.context = context;
+    }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),

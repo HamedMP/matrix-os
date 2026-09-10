@@ -165,6 +165,7 @@ export class CanonicalChatOrchestrator {
       | "get"
       | "admitTurn"
       | "enqueueQueuedTurn"
+      | "findQueuedAdmission"
       | "claimNextQueuedTurn"
       | "listQueuedChatIds"
       | "beginSteer"
@@ -528,7 +529,7 @@ export class CanonicalChatOrchestrator {
               throw new Error("Queued execution root provenance changed");
             }
           }
-          resumeState = claimed.run.context?.history ? undefined : await loadChatResumeState({
+          resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
             repository: this.options.repository, owner, chatId, adapter,
             instanceId: claimed.run.instanceId,
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,

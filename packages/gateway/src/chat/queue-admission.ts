@@ -1,4 +1,4 @@
-import type { ChatAgentContext } from "./agent-context.js";
+import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
 import { randomUUID } from "node:crypto";
 import {
   CanonicalChatQueueAdmissionResponseSchema,
@@ -58,7 +58,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   owner: ChatOwner;
   chatId: string;
   input: CanonicalQueueChatTurnRequest;
-  repository: Pick<ChatRepository, "get" | "enqueueQueuedTurn">;
+  repository: Pick<ChatRepository, "get" | "enqueueQueuedTurn" | "findQueuedAdmission">;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: Pick<CanonicalChatProviderRegistry, "get">;
   executionRoots?: ChatExecutionRootResolver;
@@ -73,6 +73,9 @@ export async function enqueueCanonicalQueuedTurn(options: {
       404,
     );
   }
+  const duplicate = await options.repository.findQueuedAdmission(options.owner, options.chatId, input.clientRequestId,
+    chatContextRequestHash(input));
+  if (duplicate) return CanonicalChatQueueAdmissionResponseSchema.parse({ queuedTurn: duplicate.queuedTurn, queueDepth: duplicate.queueDepth, ...(duplicate.alreadyClaimed ? { alreadyClaimed: true } : {}) });
   if (!record.activeRun) {
     throw new CanonicalQueueAdmissionError(
       safeError("chat_conflict", "Queue next is available only while a Run is active.", true, ["retry"]),
@@ -171,5 +174,6 @@ export async function enqueueCanonicalQueuedTurn(options: {
   return CanonicalChatQueueAdmissionResponseSchema.parse({
     queuedTurn: enqueued.queuedTurn,
     queueDepth: enqueued.queueDepth,
+    ...(enqueued.alreadyClaimed ? { alreadyClaimed: true } : {}),
   });
 }

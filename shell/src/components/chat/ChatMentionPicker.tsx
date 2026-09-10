@@ -31,12 +31,12 @@ export function ChatMentionPicker({ client, scope, query, resources, onSelect, o
     const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="option"]:not(:disabled)'));
     const index = options.indexOf(document.activeElement as HTMLButtonElement);
     options[(index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length]?.focus();
-  }} className="max-h-56 overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-sm" role="listbox" aria-label="Agents and Chat context">
+  }} className="min-w-0 max-w-full max-h-56 overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-sm" role="listbox" aria-label="Agents and Chat context">
     {items.map((resource, index) => <div key={`${resource.kind}:${resource.id}`}>
       {index === 0 || items[index - 1]?.kind !== resource.kind ? <div className="px-2 py-1 text-xs text-muted-foreground">{resource.kind === "agent" ? "Agents" : "Chats"}</div> : null}
       <button type="button" role="option" aria-selected={false} disabled={!canAddChatMention(resources, resource)}
-        className="w-full rounded-md px-2 py-2 text-left text-sm hover:bg-accent disabled:opacity-40"
-        onClick={() => onSelect(resource)}>{resource.label}</button>
+        className="w-full min-w-0 rounded-md px-2 py-2 text-left text-sm hover:bg-accent disabled:opacity-40"
+        onClick={() => onSelect(resource)}><span className="block min-w-0 truncate" title={resource.label}>{resource.label}</span></button>
     </div>)}
     {!items.length ? <p className="px-2 py-2 text-xs text-muted-foreground">{result?.key !== key ? "Searching…" : result.error ? "References could not be loaded. Try again." : "No matching Agents or Chats."}</p> : null}
   </div>;

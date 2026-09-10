@@ -55,6 +55,9 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
         }
         return accepted;
       }
+      const queued = await trx.selectFrom("chat_queued_turns").select("id")
+        .where("chat_id", "=", input.chatId).where("client_request_id", "=", turn.clientRequestId).executeTakeFirst();
+      if (queued) throw new ChatConflictError(input.chatId, Number(current.revision));
       if (current.lifecycle !== "active") {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
