@@ -149,6 +149,7 @@ import { createCodingAgentProviderRegistry } from "./coding-agents/provider-regi
 import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
 import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
 import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
+import { createRuntimeClaudeModelCatalogSource } from "./chat/claude-runtime-model-catalog.js";
 import { createNativeCodingModelCatalogSource } from "./chat/native-coding-model-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import {
@@ -4300,6 +4301,12 @@ export async function createGateway(config: GatewayConfig) {
     ? createCodexModelCatalogSource({ executable: codexExecutable, cwd: homePath })
     : undefined;
   const nativeCodingModelCatalogSource = createNativeCodingModelCatalogSource({ homePath });
+  const resolveClaudeCredentialLaunch = () => buildKernelCredentialLaunch(
+    homePath, process.env, undefined, fundedCredentialProvider,
+  );
+  const claudeModelCatalogSource = createRuntimeClaudeModelCatalogSource({
+    homePath, resolveCredentialLaunch: resolveClaudeCredentialLaunch,
+  });
   const canonicalChatProviderCatalog = createChatProviderCatalogService({
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
@@ -4309,7 +4316,10 @@ export async function createGateway(config: GatewayConfig) {
     executableDriverKinds: canonicalExecutableDriverKinds,
     credentialedDriverKinds: ["pi", "opencode"],
     skillsSource: () => loadSkills(homePath),
-    codingModelCatalogSource: async (provider) => {
+    invalidateCodingModelCatalog: claudeModelCatalogSource.invalidate,
+    codingModelCatalogSource: async (provider, principal) => {
+      const claudeModels = await claudeModelCatalogSource(provider, principal);
+      if (claudeModels) return claudeModels;
       const codexModels = await codexModelCatalogSource?.(provider);
       return codexModels ?? nativeCodingModelCatalogSource(provider);
     },
@@ -4328,12 +4338,7 @@ export async function createGateway(config: GatewayConfig) {
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
         homePath,
-        resolveCredentialLaunch: () => buildKernelCredentialLaunch(
-          homePath,
-          process.env,
-          undefined,
-          fundedCredentialProvider,
-        ),
+        resolveCredentialLaunch: resolveClaudeCredentialLaunch,
       }));
     }
     if (codingAgentThreadStore) {
