@@ -5,8 +5,10 @@ import {
   type CanvasGroup,
 } from "../../shell/src/stores/canvas-groups.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 
 function resetStores() {
+  useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });
   useCanvasGroups.setState({ groups: [] });
   useWindowManager.setState({
     windows: [],
