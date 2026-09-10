@@ -1,4 +1,5 @@
 export const palette = {
+  surfaceInverse: "#0D0C0C",
   forest: "#434E3F",
   forestDeep: "#2E3A2A",
   deep: "#32352E",
@@ -15,6 +16,9 @@ export const palette = {
   brandCoral: "#D06E53",
   brandMuted: "#7A786B",
 } as const;
+
+/** Loading motion palette from Desktop-app Figma 518:16718. */
+export const bootGradientColors = ["#647141", "#BED77B", "#F1C377", "#EAB6A7", "#C6D8E3", "#6D777D", "#647141"] as const;
 
 export const fonts = {
   display: "var(--font-serif-display), 'Instrument Serif', Georgia, serif",
