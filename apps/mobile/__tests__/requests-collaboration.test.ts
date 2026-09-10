@@ -74,7 +74,7 @@ describe("mobile collaboration requests", () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       json: jest.fn()
-        .mockResolvedValueOnce({ requests: [], approvals: [], defaultSelection })
+        .mockResolvedValueOnce({ requests: [], approvals: [], defaultSelection, resourceRevision: "4" })
         .mockResolvedValueOnce({
           resourceRevision: "5",
           request: {

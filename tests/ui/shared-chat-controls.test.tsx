@@ -43,7 +43,7 @@ describe("shared Chat AI controls", () => {
     const updateDraft = vi.fn();
     const api = {
       baseUrl: "https://app.matrix-os.com",
-      get: vi.fn(async () => ({ requests: [], approvals: [], defaultSelection })),
+      get: vi.fn(async () => ({ requests: [], approvals: [], defaultSelection, resourceRevision: "4" })),
       post: vi.fn(async () => {
         if (fail) throw new Error("private provider detail");
         return { request: request(), resourceRevision: "5" };
@@ -84,7 +84,7 @@ describe("shared Chat AI controls", () => {
   it("keeps Ask AI disabled when current scope capabilities deny requests", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
-      get: vi.fn(async () => ({ requests: [], approvals: [], defaultSelection })),
+      get: vi.fn(async () => ({ requests: [], approvals: [], defaultSelection, resourceRevision: "4" })),
       post: vi.fn(), delete: vi.fn(),
     };
     render(<SharedChatControls api={api} scope={{ ...baseScope,
@@ -102,6 +102,7 @@ describe("shared Chat AI controls", () => {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async () => ({
         defaultSelection,
+        resourceRevision: "8",
         approvals: [],
         requests: [
           request(),
@@ -121,12 +122,17 @@ describe("shared Chat AI controls", () => {
     expect(screen.getByText("2 · Nima")).toBeVisible();
     expect(screen.getByRole("button", { name: "Cancel request 1" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Retry request 2" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel request 1" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scopeId}/chat/requests/qturn_one/cancel`,
+      expect.objectContaining({ expectedRevision: "8" }),
+    ));
   });
 
   it("keeps viewers read-only even when M2 is available", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
-      get: vi.fn(async () => ({ requests: [request()], approvals: [], defaultSelection })),
+      get: vi.fn(async () => ({ requests: [request()], approvals: [], defaultSelection, resourceRevision: "4" })),
       post: vi.fn(), delete: vi.fn(),
     };
     render(<SharedChatControls api={api} scope={{ ...baseScope, role: "viewer",
@@ -151,6 +157,7 @@ describe("shared Chat AI controls", () => {
         approvals: [{ approvalId: "approval_one", runId: "run_one", requestId: "qturn_one",
           title: "Publish release", risk: "high", allowedDecisions: ["approve", "decline"], state: "pending" }],
         defaultSelection,
+        resourceRevision: "4",
       })),
       post: vi.fn(async () => ({ state: "completed" })), delete: vi.fn(),
     };

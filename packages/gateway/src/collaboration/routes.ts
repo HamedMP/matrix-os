@@ -312,6 +312,7 @@ export function createCollaborationRoutes(options: {
     return c.json(CollaborationAiRequestsResponseSchema.parse({
       requests,
       ...await adapter.capability(context, requests),
+      resourceRevision: await adapter.resourceRevision(context),
     }));
   }));
 

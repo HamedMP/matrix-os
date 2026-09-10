@@ -1,6 +1,7 @@
 import {
   CollaborationActorProofSchema,
   CollaborationAiRequestSchema,
+  CollaborationAiRequestsResponseSchema,
   CollaborationApprovalDecisionRequestSchema,
   CollaborationCreateAiRequestSchema,
   CollaborationCapabilityModeSchema,
@@ -384,5 +385,11 @@ describe("collaboration contracts", () => {
       acceptedAt: now,
       updatedAt: now,
     })).toMatchObject({ state: "queued", actor: { displayName: "Ada" } });
+    expect(CollaborationAiRequestsResponseSchema.parse({
+      requests: [],
+      approvals: [],
+      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      resourceRevision: "6",
+    })).toMatchObject({ resourceRevision: "6" });
   });
 });
