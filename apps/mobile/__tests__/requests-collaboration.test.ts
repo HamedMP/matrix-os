@@ -76,9 +76,12 @@ describe("mobile collaboration requests", () => {
       json: jest.fn()
         .mockResolvedValueOnce({ requests: [], approvals: [], defaultSelection })
         .mockResolvedValueOnce({
-          id: "qturn_one", chatId: "chat_one", acceptedSequence: "1",
-          actor: { actorId: "user_editor", displayName: "Ada" }, state: "queued", text: "Summarize",
-          selection: defaultSelection, acceptedAt: "2026-09-07T12:01:00.000Z", updatedAt: "2026-09-07T12:01:00.000Z",
+          resourceRevision: "5",
+          request: {
+            id: "qturn_one", chatId: "chat_one", acceptedSequence: "1",
+            actor: { actorId: "user_editor", displayName: "Ada" }, state: "queued", text: "Summarize",
+            selection: defaultSelection, acceptedAt: "2026-09-07T12:01:00.000Z", updatedAt: "2026-09-07T12:01:00.000Z",
+          },
         })
         .mockResolvedValue({ state: "accepted" }),
     } as unknown as Response);

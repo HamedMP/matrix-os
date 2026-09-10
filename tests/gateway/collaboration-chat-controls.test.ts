@@ -191,6 +191,39 @@ describe("shared Chat durable controls", () => {
     expect(submitApproval).toHaveBeenCalledTimes(1);
   });
 
+  it("projects only unresolved approvals from runs claimed by the selected shared scope", async () => {
+    const run = await activeRunWithApproval("approval_shared_projection");
+    await expect(repository.listSharedPendingApprovals(
+      owner, collaborationIds.chat, collaborationIds.scope,
+    )).resolves.toEqual([expect.objectContaining({
+      approvalId: "approval_shared_projection",
+      runId: run.id,
+      requestId: "qturn_control_50_user_collaboration_owner",
+      title: "Approve scoped action",
+    })]);
+
+    await fixture.db.insertInto("chat_run_events").values({
+      id: "activity_approval_shared_projection_resolved",
+      chat_id: collaborationIds.chat,
+      run_id: run.id,
+      run_seq: 2,
+      event: JSON.stringify({
+        id: "activity_approval_shared_projection_resolved",
+        chatId: collaborationIds.chat,
+        runId: run.id,
+        sequence: 2,
+        type: "approval.resolved",
+        approvalId: "approval_shared_projection",
+        decision: "approve",
+        occurredAt: now,
+      }),
+      occurred_at: now,
+    }).execute();
+    await expect(repository.listSharedPendingApprovals(
+      owner, collaborationIds.chat, collaborationIds.scope,
+    )).resolves.toEqual([]);
+  });
+
   it("reconciles an unknown approval outcome after restart without replaying it", async () => {
     const run = await activeRunWithApproval("approval_shared_unknown");
     const firstDispatch = vi.fn(async () => { throw new Error("connection lost after send"); });

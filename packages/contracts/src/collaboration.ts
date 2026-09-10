@@ -370,6 +370,11 @@ export const CollaborationAiRequestSchema = z.object({
   updatedAt: z.iso.datetime(),
 }).strict();
 
+export const CollaborationAiRequestAcceptedResponseSchema = z.object({
+  request: CollaborationAiRequestSchema,
+  resourceRevision: CollaborationRevisionSchema,
+}).strict();
+
 export const CollaborationApprovalSchema = z.object({
   approvalId: CollaborationResourceIdSchema,
   runId: CollaborationResourceIdSchema,
@@ -533,6 +538,7 @@ export const CollaborationClientFrameSchema = z.discriminatedUnion("type", [
 
 export type CollaborationActorProof = z.infer<typeof CollaborationActorProofSchema>;
 export type CollaborationApproval = z.infer<typeof CollaborationApprovalSchema>;
+export type CollaborationAiRequestAcceptedResponse = z.infer<typeof CollaborationAiRequestAcceptedResponseSchema>;
 export type CollaborationAiRequest = z.infer<typeof CollaborationAiRequestSchema>;
 export type CollaborationAiRequestState = z.infer<typeof CollaborationAiRequestStateSchema>;
 export type CollaborationDeleteCondition = z.infer<typeof CollaborationDeleteConditionSchema>;

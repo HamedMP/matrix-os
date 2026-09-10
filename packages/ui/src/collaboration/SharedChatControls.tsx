@@ -1,5 +1,5 @@
 import {
-  CollaborationAiRequestSchema,
+  CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestsResponseSchema,
   type CollaborationApproval,
   type CollaborationAiRequest,
@@ -96,7 +96,7 @@ function sharedComposerPresentation(
   const writableRole = scope.role === "owner" || scope.role === "editor";
   const canDiscuss = scope.lifecycle === "shared" && writableRole && scope.capabilities.discuss;
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && state.availability === "available" && state.defaultSelection !== null;
+    && scope.capabilities.requestAi && state.availability === "available" && state.defaultSelection !== null;
   const aiMode = draft.mode === "ai";
   const canCompose = aiMode ? canRequestAi : canDiscuss;
   const sending = discussionSending || state.pendingAction === "submit";
@@ -162,7 +162,10 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
 }) {
   const [state, dispatch] = useReducer(reduceSharedAi, initialSharedAiState);
   const hadAvailable = useRef(false);
+  const latestResourceRevision = useRef(resourceRevision);
   const endpoint = `/api/collaboration/scopes/${encodeURIComponent(scope.id)}/chat`;
+
+  useEffect(() => { latestResourceRevision.current = resourceRevision; }, [resourceRevision]);
 
   const load = useCallback(async () => {
     try {
@@ -180,19 +183,20 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
 
   const writableRole = scope.role === "owner" || scope.role === "editor";
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && state.availability === "available" && state.defaultSelection !== null;
+    && scope.capabilities.requestAi && state.availability === "available" && state.defaultSelection !== null;
 
   const submitAi = async () => {
     if (!canRequestAi || !state.defaultSelection || !draft.text.trim() || state.pendingAction) return;
     dispatch({ type: "action_started", key: "submit" });
     try {
-      const accepted = CollaborationAiRequestSchema.parse(await api.post(`${endpoint}/requests`, {
+      const accepted = CollaborationAiRequestAcceptedResponseSchema.parse(await api.post(`${endpoint}/requests`, {
         clientRequestId: crypto.randomUUID(),
         expectedRevision: scope.revision,
         text: draft.text.trim(),
         selection: state.defaultSelection,
       }));
-      dispatch({ type: "request_accepted", request: accepted });
+      latestResourceRevision.current = accepted.resourceRevision;
+      dispatch({ type: "request_accepted", request: accepted.request });
       updateDraft("", "ai");
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] shared AI request failed",
@@ -210,7 +214,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     try {
       await api.post(`${endpoint}/requests/${encodeURIComponent(request.id)}/${action}`, {
         clientRequestId: crypto.randomUUID(),
-        expectedRevision: resourceRevision,
+        expectedRevision: latestResourceRevision.current,
       });
       await load();
     } catch (failure: unknown) {
@@ -229,7 +233,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     try {
       await api.post(`${endpoint}/approvals/${encodeURIComponent(approval.approvalId)}/decision`, {
         clientRequestId: crypto.randomUUID(),
-        expectedRevision: resourceRevision,
+        expectedRevision: latestResourceRevision.current,
         runId: approval.runId,
         decision,
       });

@@ -1,6 +1,6 @@
 import {
   CollaborationChatMessagesResponseSchema,
-  CollaborationAiRequestSchema,
+  CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestsResponseSchema,
   CollaborationCreateAiRequestSchema,
   CollaborationAiRequestControlSchema,
@@ -128,7 +128,7 @@ export function postSharedAiRequest(
   });
   return fetchAuthenticatedJson({
     url: url(`/api/collaboration/scopes/${id}/chat/requests`), token,
-    schema: CollaborationAiRequestSchema, errorMessage: ERROR,
+    schema: CollaborationAiRequestAcceptedResponseSchema, errorMessage: ERROR,
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
 }
