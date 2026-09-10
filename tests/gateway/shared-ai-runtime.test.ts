@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationAuthorizationError } from "../../packages/gateway/src/collaboration/authority.js";
-import { createSharedAiCancellationDispatcher } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
+import {
+  createSharedAiApprovalReconciler,
+  createSharedAiCancellationDispatcher,
+} from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
 
 describe("shared AI runtime cancellation", () => {
   it("reauthorizes the actor immediately before stopping the external run", async () => {
@@ -52,5 +55,26 @@ describe("shared AI runtime cancellation", () => {
 
     await expect(dispatch(input)).rejects.toMatchObject({ code: "not_found" });
     expect(cancelSharedRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("interrupts and terminally reconciles an approval with an unknown outcome", async () => {
+    const cancelSharedRun = vi.fn(async () => { throw new Error("runtime disconnected"); });
+    const reconcileActiveRuns = vi.fn(async () => 1);
+    const reconcile = createSharedAiApprovalReconciler({
+      resolveOwnerId: vi.fn(async () => "user_owner"),
+      readRunStatus: vi.fn(async () => "failed" as const),
+      orchestrator: { cancelSharedRun, reconcileActiveRuns },
+    });
+
+    await expect(reconcile({
+      commandId: "10000000-0000-4000-8000-000000000009",
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      chatId: "chat_shared",
+      runId: "run_shared",
+      approvalId: "approval_shared",
+      decision: "approve",
+    })).resolves.toBe("failed");
+    expect(cancelSharedRun).toHaveBeenCalledOnce();
+    expect(reconcileActiveRuns).toHaveBeenCalledWith({ type: "personal", ownerId: "user_owner" });
   });
 });

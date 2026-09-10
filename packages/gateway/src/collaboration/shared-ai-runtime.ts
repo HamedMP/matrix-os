@@ -131,6 +131,15 @@ export async function createSharedAiRuntime(options: {
       authority: options.authority,
       orchestrator: options.orchestrator,
     }),
+    reconcileApproval: createSharedAiApprovalReconciler({
+      resolveOwnerId: (scopeId, chatId) => ownerIdFor(options.db, scopeId, chatId),
+      readRunStatus: async (chatId, runId) => {
+        const run = await options.db.selectFrom("chat_runs").select("status")
+          .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
+        return run?.status ?? null;
+      },
+      orchestrator: options.orchestrator,
+    }),
   });
 
   const dispatch = async (scopeId: string, chatId: string): Promise<void> => {
@@ -249,6 +258,7 @@ export async function createSharedAiRuntime(options: {
   let wakeInFlight: Promise<void> | undefined;
   const runQueueWake = async (): Promise<void> => {
     try {
+      await commands.reconcilePendingApprovals();
       const currentPolicy = await policy.getM2();
       if (currentPolicy.mode === "off" || currentPolicy.mode === "read_only") return;
       const rows = await options.db.selectFrom("chat_queued_turns as queued")
@@ -323,6 +333,42 @@ export function createSharedAiCancellationDispatcher(options: {
       input.chatId,
       input.runId,
     );
+  };
+}
+
+export function createSharedAiApprovalReconciler(options: {
+  resolveOwnerId(scopeId: string, chatId: string): Promise<string>;
+  readRunStatus(
+    chatId: string,
+    runId: string,
+  ): Promise<"accepted" | "running" | "waiting_for_approval" | "waiting_for_input" | "completed" | "failed" | "aborted" | null>;
+  orchestrator: Pick<CanonicalChatOrchestrator, "cancelSharedRun" | "reconcileActiveRuns">;
+}) {
+  return async (input: {
+    commandId: string;
+    scopeId: string;
+    chatId: string;
+    runId: string;
+    approvalId: string;
+    decision: "approve" | "approve_for_session" | "decline" | "cancel";
+  }): Promise<"completed" | "failed"> => {
+    const owner = {
+      type: "personal" as const,
+      ownerId: await options.resolveOwnerId(input.scopeId, input.chatId),
+    };
+    try {
+      await options.orchestrator.cancelSharedRun(owner, input.scopeId, input.chatId, input.runId);
+    } catch (error: unknown) {
+      console.warn(
+        "[collaboration] unknown approval run stop deferred to recovery",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
+    await options.orchestrator.reconcileActiveRuns(owner);
+    const status = await options.readRunStatus(input.chatId, input.runId);
+    if (status === "completed") return "completed";
+    if (status === null || status === "failed" || status === "aborted") return "failed";
+    throw new Error("Shared approval Run remains active after reconciliation");
   };
 }
 

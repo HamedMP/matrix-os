@@ -3,8 +3,9 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  createSingleUseCommandSocketSlot,
   parseScopeRuntimeWorkerArguments,
   parseScopeRuntimeChatRequest,
   prepareScopeRuntimeWorkerEnvironment,
@@ -26,6 +27,23 @@ const argumentsFixture = [
 const execFileAsync = promisify(execFile);
 
 describe("scope runtime worker boundary", () => {
+  it("caps command sockets at one and drains the active socket on shutdown", () => {
+    const slot = createSingleUseCommandSocketSlot<{ destroy(): void }>();
+    let closeFirst = () => undefined;
+    const first = { destroy: vi.fn() };
+    const second = { destroy: vi.fn() };
+
+    expect(slot.claim(first, (listener) => { closeFirst = listener; })).toBe(true);
+    expect(slot.claim(second, () => undefined)).toBe(false);
+    expect(second.destroy).toHaveBeenCalledOnce();
+    slot.destroyActive();
+    expect(first.destroy).toHaveBeenCalledOnce();
+
+    closeFirst();
+    expect(slot.claim(second, () => undefined)).toBe(false);
+    expect(second.destroy).toHaveBeenCalledTimes(2);
+  });
+
   it("is a standalone entrypoint inside the minimal root", async () => {
     const source = await readFile("packages/scope-runtime/src/worker.ts", "utf8");
     const imports = [...source.matchAll(/from\s+["']([^"']+)["']/g)]
