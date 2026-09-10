@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { insertUserMachine, createPlatformDb, type PlatformDB } from "../../packages/platform/src/db.js";
 import {
   SpeechOperationStateError,
+  SpeechOperationRateLimitError,
   createSpeechOperationsRepository,
 } from "../../packages/platform/src/speech/operations.js";
 import {
@@ -156,6 +157,25 @@ describePostgres("speech operation PostgreSQL concurrency", () => {
     });
   });
 
+  it("serializes deployment-wide admission across platform processes", async () => {
+    const repoA = createSpeechOperationsRepository({ db: dbA, now: () => now, maximumActiveOperations: 1 });
+    const repoB = createSpeechOperationsRepository({ db: dbB, now: () => now, maximumActiveOperations: 1 });
+    let reservations = 0;
+    const first = admission(`sp_${now.getTime()}_globaladmissiona`);
+    const second = {
+      ...admission(`sp_${now.getTime()}_globaladmissionb`),
+      contentFingerprint: "b".repeat(64),
+    };
+    const results = await Promise.allSettled([
+      repoA.admit(first, async () => ({ reservationId: `funding_${++reservations}`, reservedMicrousd: 20 })),
+      repoB.admit(second, async () => ({ reservationId: `funding_${++reservations}`, reservedMicrousd: 20 })),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")[0])
+      .toMatchObject({ reason: expect.any(SpeechOperationRateLimitError) });
+    expect(reservations).toBe(1);
+  });
+
   it("lets a committed dispatch claim win without releasing its hold", async () => {
     const requestId = `sp_${now.getTime()}_dispatchwinsracea`;
     const repoA = createSpeechOperationsRepository({ db: dbA, now: () => now });
@@ -259,11 +279,13 @@ describePostgres("speech operation PostgreSQL concurrency", () => {
         await allowReserve.promise;
         return { reservationId: "funding_a", reservedMicrousd: 120 };
       }),
+      start: vi.fn(async () => undefined),
       settle: vi.fn(async () => undefined),
       release: vi.fn(async () => undefined),
     };
     const fundingB = {
       reserve: vi.fn(async () => ({ reservationId: "funding_b", reservedMicrousd: 120 })),
+      start: vi.fn(async () => undefined),
       settle: vi.fn(async () => undefined),
       release: vi.fn(async () => undefined),
     };
@@ -338,11 +360,13 @@ describePostgres("speech operation PostgreSQL concurrency", () => {
         await allowReserve.promise;
         return { reservationId: "funding_hint_a", reservedMicrousd: 120 };
       }),
+      start: vi.fn(async () => undefined),
       settle: vi.fn(async () => undefined),
       release: vi.fn(async () => undefined),
     };
     const fundingB = {
       reserve: vi.fn(async () => ({ reservationId: "funding_hint_b", reservedMicrousd: 120 })),
+      start: vi.fn(async () => undefined),
       settle: vi.fn(async () => undefined),
       release: vi.fn(async () => undefined),
     };
