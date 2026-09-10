@@ -63,6 +63,7 @@ export * from "#provider-settings";
 export * from "#funded-ai";
 export * from "#getting-started";
 export * from "#safe-client-error";
+export * from "#speech";
 export * from "#support-chat-properties";
 export * from "#sync";
 export * from "#terminal-clipboard";

@@ -2,6 +2,7 @@ import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
 import { migrateAiFunded } from './migrations/ai-funded.js';
+import { migrateSpeech } from './migrations/speech.js';
 import { migrateProvisioningJobs } from './migrations/provisioning-jobs.js';
 import { migrateCheckout } from './migrations/checkout.js';
 import { migrateOnboarding } from './migrations/onboarding.js';
@@ -26,6 +27,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'identity', run: migrateIdentity },
   { name: 'user-machines', run: migrateUserMachines },
   { name: 'ai-funded', run: migrateAiFunded },
+  { name: 'speech', run: migrateSpeech },
   { name: 'provisioning-jobs', run: migrateProvisioningJobs },
   { name: 'checkout', run: migrateCheckout },
   { name: 'onboarding', run: migrateOnboarding },
