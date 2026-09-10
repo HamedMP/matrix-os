@@ -14,6 +14,15 @@ import { describe, expect, it, vi } from "vitest";
 import { OSWindow, OSWindowSafeView, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow.js";
 
 describe("Electron OS window chrome", () => {
+  it("places resize controls above the entire frame, outside the content and sidebar", () => {
+    const { container } = render(<OSWindow surfaceId="terminal" sidebarWidth={240}
+      sidebar={<div>Sessions</div>} frameControls={<div data-testid="resize-controls" />}>
+      <div>Terminal</div>
+    </OSWindow>);
+    const controls = container.querySelector('[data-testid="resize-controls"]')!;
+    expect(controls.parentElement).toBe(container.querySelector("[data-os-window]"));
+    expect(controls.closest("[data-os-window-main]")).toBeNull();
+  });
   it("owns sidebar visibility and toggles it from the reusable title trigger", () => {
     const { container } = render(
       <OSWindow

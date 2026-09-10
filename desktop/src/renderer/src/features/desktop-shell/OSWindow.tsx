@@ -285,6 +285,7 @@ export function OSWindow({
   sidebarWidth,
   sidebar,
   topBar,
+  frameControls,
   topBarReservesSafeArea = true,
   safeAreaLayout = "pane",
   className,
@@ -296,6 +297,7 @@ export function OSWindow({
   sidebarWidth?: number;
   sidebar?: ReactNode;
   topBar?: ReactNode;
+  frameControls?: ReactNode;
   topBarReservesSafeArea?: boolean;
   safeAreaLayout?: OSWindowSafeArea;
 }) {
@@ -364,6 +366,7 @@ export function OSWindow({
           {topBar}
         </div>
       ) : null}
+      {frameControls}
     </section>
     </OSWindowSafeAreaContext.Provider>
     </OSWindowSidebarContext.Provider>
