@@ -35,6 +35,7 @@
     "@matrix-os/kernel": "workspace:*",
     "@matrix-os/observability": "workspace:*",
     "@matrix-os/scope-runtime": "workspace:*",
+    "@matrix-os/terminal-runtime": "workspace:*",
     "@pipedream/sdk": "^2.4.3",
     "@types/node-cron": "^3.0.11",
     "chokidar": "^4.0.0",

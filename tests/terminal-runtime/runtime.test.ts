@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { TerminalPaneAction } from "@matrix-os/contracts";
 import {
   TerminalRuntime,
   type ZellijAttachment,
@@ -28,6 +29,7 @@ class FakeZellij implements ZellijRuntimeAdapter {
   readonly deletedSessions: string[] = [];
   readonly renamedTabs: Array<{ tabId: number; name: string }> = [];
   readonly resizedSessions: Array<{ cols: number; rows: number }> = [];
+  readonly paneActions: Array<{ sessionName: string; tabId: number; action: TerminalPaneAction }> = [];
   failNextSubscription = false;
   subscriptionFailuresRemaining = 0;
   failNextObserverClose = false;
@@ -164,6 +166,9 @@ class FakeZellij implements ZellijRuntimeAdapter {
   }
   async writeToPane(_sessionName: string, _paneId: string, data: Uint8Array): Promise<void> {
     this.targetedWrites.push(new TextDecoder().decode(data));
+  }
+  async paneAction(sessionName: string, tabId: number, action: TerminalPaneAction): Promise<void> {
+    this.paneActions.push({ sessionName, tabId, action });
   }
 }
 
@@ -373,6 +378,35 @@ describe("project-scoped terminal runtime", () => {
     await expect(runtime.writeInput({ workspaceId: workspace.id, tabId: tab.id }, "late"))
       .rejects.toThrow(/unavailable/i);
     expect(zellij.targetedWrites).toEqual([]);
+    await runtime.shutdown();
+  });
+
+  it("targets pane actions through the tab's stable runtime reference", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "agent", cwd: "projects/matrix-os" });
+
+    await runtime.paneAction(
+      { workspaceId: workspace.id, tabId: tab.id },
+      { type: "fullscreen" },
+    );
+
+    expect(zellij.paneActions).toEqual([{
+      sessionName: [...zellij.sessions.keys()][0],
+      tabId: 1,
+      action: { type: "fullscreen" },
+    }]);
+
+    await runtime.paneAction(
+      { workspaceId: workspace.id, tabId: tab.id },
+      { type: "close" },
+    );
+
+    expect(zellij.closedTabs).toEqual([1]);
+    expect((await runtime.listWorkspaces())[0]?.tabs[0]?.status).toBe("exited");
     await runtime.shutdown();
   });
 

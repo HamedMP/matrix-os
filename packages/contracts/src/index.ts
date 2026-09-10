@@ -170,7 +170,7 @@ export const TerminalTabSchema = z.object({
   uiState: z.object({
     placement: z.enum(["active", "background"]).default("active"),
     lastSeenSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().default(null),
-    pinned: z.boolean().default(false),
+    pinned: z.boolean().optional(),
     layoutName: SafeDisplayStringSchema.optional(),
     legacyTabs: z.array(z.object({
       name: SafeDisplayStringSchema.optional(),
