@@ -250,6 +250,7 @@ export function createApp(deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
+  internalSpeechRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   collaboration?: PlatformCollaborationRuntime;
   customerVpsService?: CustomerVpsService;
@@ -591,6 +592,12 @@ export function createApp(deps: {
   // Collaboration routes must precede personal session routing so recipients
   // without a provisioned computer reach the owner's registered authority.
   deps.collaboration?.register(app);
+
+  // Runtime speech uses its own runtime-bound credential and must never fall
+  // through to Clerk session routing or the tenant proxy.
+  if (deps.internalSpeechRuntimeRoutes) {
+    app.route('/internal/containers/:handle/speech', deps.internalSpeechRuntimeRoutes);
+  }
 
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
