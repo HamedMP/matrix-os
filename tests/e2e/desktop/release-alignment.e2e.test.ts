@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { readBuildSource } from "../../../scripts/release/build-source.mjs";
+import { closeElectronApp } from "./fixtures/close-electron";
 
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
@@ -45,13 +46,12 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
   }, 60_000);
 
   afterAll(async () => {
-    if (app) {
-      const process = app.process();
-      const timer = setTimeout(() => { if (process.exitCode === null) process.kill("SIGKILL"); }, 5_000);
-      try { await app.close(); } finally { clearTimeout(timer); }
+    try {
+      if (app) await closeElectronApp(app);
+    } finally {
+      await gateway?.close();
+      if (profile) rmSync(profile, { recursive: true, force: true });
     }
-    await gateway?.close();
-    if (profile) rmSync(profile, { recursive: true, force: true });
   }, 20_000);
 
   it("embeds the actual source and prompts only after the running cloud source differs", async () => {
