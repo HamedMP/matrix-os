@@ -150,6 +150,10 @@ function modelSlug(reference: string | undefined): string | undefined {
 }
 
 function readOnlyConfig(baseUrl: string | undefined): string {
+  // Portable credentials use the Anthropic SDK's origin/prefix convention.
+  // OpenCode's AI SDK appends /messages, so its baseURL must include /v1.
+  const prefix = baseUrl?.replace(/\/+$/, "");
+  const apiBaseUrl = prefix && (prefix.endsWith("/v1") ? prefix : `${prefix}/v1`);
   return JSON.stringify({
     // Canonical Chat already limits OpenCode to non-mutating tools. Disabling
     // snapshots avoids indexing the owner's entire Matrix HOME (which may
@@ -162,7 +166,7 @@ function readOnlyConfig(baseUrl: string | undefined): string {
       grep: "allow",
       list: "allow",
     },
-    ...(baseUrl ? { provider: { anthropic: { options: { baseURL: baseUrl } } } } : {}),
+    ...(apiBaseUrl ? { provider: { anthropic: { options: { baseURL: apiBaseUrl } } } } : {}),
   });
 }
 

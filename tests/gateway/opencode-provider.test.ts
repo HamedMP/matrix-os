@@ -160,13 +160,22 @@ describe("OpenCode coding-agent provider", () => {
     });
   });
 
-  it("runs the verified JSON contract with exact model, safe config, and selected credentials", async () => {
+  it.each([
+    ["https://relay.example.test", "https://relay.example.test/v1"],
+    ["https://relay.example.test/", "https://relay.example.test/v1"],
+    ["https://relay.example.test/v1", "https://relay.example.test/v1"],
+    ["https://relay.example.test/v1/", "https://relay.example.test/v1"],
+    ["https://relay.example.test/anthropic", "https://relay.example.test/anthropic/v1"],
+  ])("runs the JSON contract with the API prefix for %s", async (baseUrl, expectedBaseUrl) => {
     const fake = fakeSpawn([
       line("step_start", { part: { id: "part_step", type: "step-start" } }),
       line("text", { part: { id: "part_text", type: "text", text: "Done", time: { end: 1 } } }),
     ]);
     const adapter = provider(fake.spawnFn, {
       env: { PATH: "/runtime/bin", UPGRADE_TOKEN: "gateway-secret" },
+      resolveCredentialLaunch: async () => ({
+        env: { ANTHROPIC_API_KEY: "selected-key", ANTHROPIC_BASE_URL: baseUrl },
+      }),
     });
 
     const result = await adapter.startThread({ principal, thread: thread(), request: request(), now: () => now, nextEventId: ids() });
@@ -188,8 +197,10 @@ describe("OpenCode coding-agent provider", () => {
     expect(config).toMatchObject({
       snapshot: false,
       permission: { "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow" },
-      provider: { anthropic: { options: { baseURL: "https://relay.example.test" } } },
+      provider: { anthropic: { options: { baseURL: expectedBaseUrl } } },
     });
+    expect(fake.calls[0]!.env.ANTHROPIC_BASE_URL).toBe(baseUrl);
+    expect(`${config.provider.anthropic.options.baseURL}/messages`).toBe(`${expectedBaseUrl}/messages`);
     expect(config.permission).not.toHaveProperty("webfetch");
     expect(config.permission).not.toHaveProperty("websearch");
     expect(result).toMatchObject({
