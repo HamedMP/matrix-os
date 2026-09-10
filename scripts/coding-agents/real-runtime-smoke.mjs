@@ -17,7 +17,12 @@ const RUNTIME_ID = /^rt_[A-Za-z0-9_-]{1,128}$/;
 const THREAD_ID = /^thread_[A-Za-z0-9_-]{1,128}$/;
 const TASK_ID = /^task_[A-Za-z0-9_-]{1,128}$/;
 const REVIEW_ID = SAFE_REFERENCE;
-const TERMINAL_ID = SAFE_REFERENCE;
+const TERMINAL_WORKSPACE_ID = /^tws_[0-9a-f]{32}$/;
+const TERMINAL_TAB_ID = /^tt_[0-9a-f]{32}$/;
+const TerminalRefSchema = z.object({
+  workspaceId: z.string().regex(TERMINAL_WORKSPACE_ID),
+  tabId: z.string().regex(TERMINAL_TAB_ID),
+}).strict();
 const WORKTREE_ID = /^wt_[a-z0-9]{12,40}$/;
 const EVENT_ID = /^evt_[A-Za-z0-9_-]{1,128}$/;
 const APPROVAL_ID = /^appr_[A-Za-z0-9_-]{1,128}$/;
@@ -135,18 +140,31 @@ const AgentThreadSummarySchema = z.object({
   attention: z.enum(["none", "approval_required", "input_required", "failed", "completed"]).default("none"),
   projectId: ReferenceIdSchema.optional(),
   taskId: z.string().regex(TASK_ID).optional(),
-  terminalSessionId: z.string().regex(TERMINAL_ID).optional(),
+  terminalRef: TerminalRefSchema.optional(),
   eventCursor: ReferenceIdSchema.optional(),
   createdAt: z.string().regex(ISO_DATETIME),
   updatedAt: z.string().regex(ISO_DATETIME),
 }).strict();
 
-const TerminalSessionSummarySchema = z.object({
-  id: z.string().regex(TERMINAL_ID),
+const TerminalTabSchema = z.object({
+  id: z.string().regex(TERMINAL_TAB_ID),
+  workspaceId: z.string().regex(TERMINAL_WORKSPACE_ID),
   name: SafeDisplayStringSchema,
-  status: z.enum(["starting", "running", "idle", "exited", "stale", "unavailable"]),
-  attachable: z.boolean(),
-  cwdLabel: SafeDisplayStringSchema.optional(),
+  cwd: z.string().max(4096),
+  status: z.enum(["starting", "running", "idle", "exited", "failed", "unavailable"]),
+  revision: z.number().int().min(0),
+  order: z.number().int().min(0),
+  createdAt: z.string().regex(ISO_DATETIME),
+  updatedAt: z.string().regex(ISO_DATETIME),
+}).strict();
+const TerminalWorkspaceSchema = z.object({
+  id: z.string().regex(TERMINAL_WORKSPACE_ID),
+  scope: z.enum(["main", "project"]),
+  projectId: ReferenceIdSchema.optional(),
+  canonicalSize: z.object({ cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) }).strict(),
+  status: z.enum(["maintenance", "starting", "running", "degraded", "stopped"]),
+  revision: z.number().int().min(0),
+  tabs: z.array(TerminalTabSchema).max(10_000),
   createdAt: z.string().regex(ISO_DATETIME),
   updatedAt: z.string().regex(ISO_DATETIME),
 }).strict();
@@ -348,7 +366,7 @@ const AgentThreadEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("terminal.bound"),
-    terminalSessionId: z.string().regex(TERMINAL_ID),
+    terminalRef: TerminalRefSchema,
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("thread.error"),
@@ -374,7 +392,7 @@ const RuntimeSummarySchema = z.object({
   projects: boundedListSchema(ProjectSummarySchema, 50),
   activeThreads: ThreadListSchema,
   attentionThreads: ThreadListSchema.default({ items: [], hasMore: false, limit: 20 }),
-  terminalSessions: boundedListSchema(TerminalSessionSummarySchema, 50),
+  terminalWorkspaces: boundedListSchema(TerminalWorkspaceSchema, 100),
   previewSessions: boundedListSchema(PreviewSessionSummarySchema, 50).default({ items: [], hasMore: false, limit: 50 }),
   recentActivity: boundedListSchema(ActivityEventSummarySchema, 100),
   limits: z.object({
@@ -465,7 +483,7 @@ export function createSmokeConfig(argv = process.argv.slice(2), env = process.en
     requireReadyProvider: Boolean(flags.requireReadyProvider),
     requireThreadSnapshot: Boolean(flags.requireThreadSnapshot),
     minActiveThreads: flags.minActiveThreads,
-    minTerminalSessions: flags.minTerminalSessions,
+    minTerminalTabs: flags.minTerminalTabs,
     minPreviewSessions: flags.minPreviewSessions,
     minReviews: flags.minReviews,
   };
@@ -494,7 +512,7 @@ export async function runRuntimeSmoke(options) {
   checks.push({
     name: "runtime summary",
     status: "passed",
-    detail: `${summary.providers.length} providers, ${summary.activeThreads.items.length} active threads, ${summary.terminalSessions.items.length} terminals`,
+    detail: `${summary.providers.length} providers, ${summary.activeThreads.items.length} active threads, ${summary.terminalWorkspaces.items.reduce((count, workspace) => count + workspace.tabs.length, 0)} terminal tabs`,
   });
 
   const threads = await runCheck({
@@ -714,8 +732,8 @@ function parseArgs(argv) {
       flags.minActiveThreads = parseSummaryMinimumCount(argv[++index], "min-active-threads");
       continue;
     }
-    if (arg === "--min-terminal-sessions") {
-      flags.minTerminalSessions = parseSummaryMinimumCount(argv[++index], "min-terminal-sessions");
+    if (arg === "--min-terminal-tabs") {
+      flags.minTerminalTabs = parseSummaryMinimumCount(argv[++index], "min-terminal-tabs");
       continue;
     }
     if (arg === "--min-preview-sessions") {
@@ -792,7 +810,11 @@ function evaluateRequirements({ summary, reviewCount, checkedThreadSnapshot, req
   }
 
   checked += assertMinimum(summary.activeThreads.items.length, request.minActiveThreads, fail);
-  checked += assertMinimum(summary.terminalSessions.items.length, request.minTerminalSessions, fail);
+  checked += assertMinimum(
+    summary.terminalWorkspaces.items.reduce((count, workspace) => count + workspace.tabs.length, 0),
+    request.minTerminalTabs,
+    fail,
+  );
   checked += assertMinimum(summary.previewSessions.items.length, request.minPreviewSessions, fail);
   checked += assertMinimum(reviewCount, request.minReviews, fail);
 
