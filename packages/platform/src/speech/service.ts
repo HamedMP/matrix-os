@@ -56,6 +56,7 @@ export interface SpeechFundingPort {
       identity: SpeechOperationIdentity;
       requestId: string;
       policyRevision: string;
+      modelId: string;
       maximumCostMicrousd: number;
     },
   ): Promise<{ reservationId: string; reservedMicrousd: number }>;
@@ -301,6 +302,7 @@ export function createPlatformSpeechService(options: {
           identity: input.identity,
           requestId: parsedRequestId.data,
           policyRevision: options.policy.revision,
+          modelId: options.policy.modelId,
           maximumCostMicrousd,
         }));
       } catch (error: unknown) {
