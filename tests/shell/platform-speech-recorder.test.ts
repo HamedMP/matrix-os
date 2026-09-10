@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { encodePcm16Wav } from "../../shell/src/lib/platform-speech-recorder.js";
+import {
+  encodePcm16Wav,
+  resolveSpeechWorkletUrl,
+} from "../../shell/src/lib/platform-speech-recorder.js";
 
 describe("platform speech PCM recorder", () => {
   it("packages bounded mono PCM16 samples as a structurally valid WAV", async () => {
@@ -27,5 +30,12 @@ describe("platform speech PCM recorder", () => {
   it("rejects invalid sample rates and empty recordings", () => {
     expect(() => encodePcm16Wav([], 16_000)).toThrow(/empty/i);
     expect(() => encodePcm16Wav([new Int16Array([1])], 1)).toThrow(/sample rate/i);
+  });
+
+  it("binds the worklet asset to the explicit computer and runtime", () => {
+    window.history.replaceState({}, "", "/vm/alice?runtime=studio");
+    expect(resolveSpeechWorkletUrl()).toBe(
+      `${window.location.origin}/vm/alice/~runtime/studio/speech-pcm-capture-worklet.js`,
+    );
   });
 });

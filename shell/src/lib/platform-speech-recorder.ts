@@ -2,12 +2,13 @@ import type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
 } from "@matrix-os/ui";
+import { getGatewayUrl } from "./gateway.js";
 
 const WAV_HEADER_BYTES = 44;
 const MAX_PCM_CHUNKS = 512;
 const MIN_SAMPLE_RATE = 8_000;
 const MAX_SAMPLE_RATE = 96_000;
-const DEFAULT_WORKLET_URL = "/speech-pcm-capture-worklet.js";
+const WORKLET_ASSET_PATH = "/speech-pcm-capture-worklet.js";
 const FLUSH_TIMEOUT_MS = 500;
 
 export class PlatformSpeechRecorderError extends Error {
@@ -15,6 +16,10 @@ export class PlatformSpeechRecorderError extends Error {
     super(safeMessage);
     this.name = "PlatformSpeechRecorderError";
   }
+}
+
+export function resolveSpeechWorkletUrl(): string {
+  return `${getGatewayUrl()}${WORKLET_ASSET_PATH}`;
 }
 
 function writeAscii(view: DataView, offset: number, value: string): void {
@@ -73,7 +78,6 @@ function canCapturePcm(): boolean {
 export function createWebPcmSpeechCaptureAdapter(options: {
   workletUrl?: string;
 } = {}): PlatformSpeechCaptureAdapter {
-  const workletUrl = options.workletUrl ?? DEFAULT_WORKLET_URL;
   return {
     isSupported: canCapturePcm,
     async start(input): Promise<PlatformSpeechCapture> {
@@ -100,7 +104,7 @@ export function createWebPcmSpeechCaptureAdapter(options: {
       try {
         if (input.signal.aborted) throw new DOMException("Aborted", "AbortError");
         context = new AudioContext({ sampleRate: 16_000 });
-        await context.audioWorklet.addModule(workletUrl);
+        await context.audioWorklet.addModule(options.workletUrl ?? resolveSpeechWorkletUrl());
         if (input.signal.aborted) throw new DOMException("Aborted", "AbortError");
         if (!Number.isSafeInteger(context.sampleRate)
           || context.sampleRate < MIN_SAMPLE_RATE || context.sampleRate > MAX_SAMPLE_RATE) {
