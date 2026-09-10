@@ -80,6 +80,21 @@ describe("owner-controlled Chat Agent definitions", () => {
     expect(await store.list(owner)).toEqual([restored]);
   });
 
+  it("round-trips a recipe and clears it with an explicit null update", async () => {
+    const recipe = {
+      skills: ["matrix-personal-daily-brief", "matrix-integrations"] as const,
+      integrations: [{ service: "gmail" }, { service: "google_calendar", accountLabel: "Work" }],
+      output: "English daily brief with source links",
+    };
+    const created = await store.create(owner, { ...input, clientRequestId: "req_recipe", recipe });
+    expect((await store.get(owner, created.id))?.recipe).toEqual(recipe);
+    const cleared = await store.update(owner, created.id, { baseRevision: created.revision, recipe: null });
+    expect(cleared.recipe).toBeUndefined();
+    const restarted = new ChatAgentStore({ homePath: home, db });
+    expect((await restarted.get(owner, created.id))?.recipe).toBeUndefined();
+    await restarted.close();
+  });
+
   it("rejects symlinked definitions and never follows them to another owner's contents", async () => {
     const created = await store.create(owner, input);
     const root = join(home, "agents/custom/chat-bots");

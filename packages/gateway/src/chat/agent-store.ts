@@ -178,13 +178,18 @@ export class ChatAgentStore {
 
   async update(owner: ChatOwner, agentId: string, inputValue: UpdateChatAgentRequest): Promise<ChatAgent> {
     const id = ChatAgentIdSchema.parse(agentId);
-    const { baseRevision, ...patch } = UpdateChatAgentRequestSchema.parse(inputValue);
+    const { baseRevision, recipe, ...patch } = UpdateChatAgentRequestSchema.parse(inputValue);
     return this.withOwnerLock(owner, async () => {
       const directory = await this.directory([this.ownerKey(owner)]);
       const existing = directory ? await this.read(join(directory, `${id}.md`)) : null;
       if (!existing) throw new ChatAgentStoreError("agent_not_found");
       if (existing.agent.revision !== baseRevision) throw new ChatAgentStoreError("agent_conflict");
-      const agent = ChatAgentSchema.parse({ ...existing.agent, ...patch, revision: baseRevision + 1,
+      const { recipe: _existingRecipe, ...withoutRecipe } = existing.agent;
+      const agent = ChatAgentSchema.parse({
+        ...(recipe === null ? withoutRecipe : existing.agent),
+        ...patch,
+        ...(recipe && { recipe }),
+        revision: baseRevision + 1,
         updatedAt: (this.options.now?.() ?? new Date()).toISOString() });
       await this.write(directory!, { agent, createHash: existing.createHash }, false);
       return agent;

@@ -27,7 +27,7 @@ if [ -d "${MATRIX_SKILLS_SOURCE}/app-builder" ]; then
   exit 0
 fi
 
-for skill_dir in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
+for skill_dir in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design personal-daily-brief; do
   "$HERMES_BIN" skills install --force --yes "${MATRIX_SKILLS_SOURCE}/skills/matrix/${skill_dir}"
 done
 

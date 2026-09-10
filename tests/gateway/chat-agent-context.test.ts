@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KyselyPGlite } from "kysely-pglite";
@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { ChatAgentStore } from "../../packages/gateway/src/chat/agent-store.js";
 import { ChatAgentContext, contextPrompt } from "../../packages/gateway/src/chat/agent-context.js";
+import { createChatAgentRecipeResolver } from "../../packages/gateway/src/chat/agent-recipe.js";
 import { jsonb } from "../../packages/gateway/src/chat/records.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_context" };
@@ -32,7 +33,24 @@ describe("server-resolved Chat mention context", () => {
     agents = new ChatAgentStore({ homePath: home, db: repository.kysely });
     await agents.bootstrap();
     enabled = true;
-    context = new ChatAgentContext({ repository, agents, enabled: () => enabled });
+    const skillsRoot = join(home, "skills/matrix");
+    for (const [directory, id, description, body] of [
+      ["personal-daily-brief", "matrix-personal-daily-brief", "Prepare a personal daily brief.", "Read inbox and calendar without writing."],
+      ["integrations", "matrix-integrations", "Use Matrix integrations safely.", "Use the real Matrix integration tools."],
+    ]) {
+      await mkdir(join(skillsRoot, directory), { recursive: true });
+      await writeFile(join(skillsRoot, directory, "SKILL.md"),
+        `---\nname: ${id}\ndescription: ${description}\nauthor: Matrix OS\n---\n${body}\n`);
+    }
+    context = new ChatAgentContext({
+      repository,
+      agents,
+      enabled: () => enabled,
+      recipes: createChatAgentRecipeResolver({
+        skillsRoot,
+        services: [{ id: "gmail", name: "Gmail" }, { id: "google_calendar", name: "Google Calendar" }],
+      }),
+    });
     for (const id of ["chat_current", "chat_source"]) {
       await repository.create(owner, { id, clientRequestId: `req_${id}`, title: id === "chat_source" ? "Launch decisions" : "Current Chat" });
     }
@@ -80,6 +98,58 @@ describe("server-resolved Chat mention context", () => {
     await context.revalidate(owner, "chat_current", prepared.context);
     await agents.update(owner, agent.id, { baseRevision: 2, archived: true });
     await expect(context.revalidate(owner, "chat_current", prepared.context)).rejects.toMatchObject({ code: "context_unavailable" });
+  });
+
+  it("pins recipe instructions and renders explicit integration and output guidance", async () => {
+    const agent = await agents.create(owner, {
+      clientRequestId: "req_recipe_bot",
+      name: "Daily brief",
+      description: "Prepare the day",
+      instructions: "Act as my daily briefing assistant.",
+      selection: { instanceId: "hermes_default", model: "openai:gpt-5.6-sol" },
+      recipe: {
+        skills: ["matrix-personal-daily-brief", "matrix-integrations"],
+        integrations: [{ service: "gmail" }, { service: "google_calendar", accountLabel: "Work" }],
+        output: "English daily brief with source links",
+      },
+    });
+    const prepared = await context.prepare(owner, "chat_current", {
+      ...request,
+      parts: [...request.parts, mention("agent", agent.id)],
+    });
+    expect(prepared.context?.agent?.recipe?.skills.map((skill) => skill.instructions)).toEqual([
+      "Read inbox and calendar without writing.",
+      "Use the real Matrix integration tools.",
+    ]);
+    const prompt = contextPrompt("Prepare the next steps", prepared.context);
+    expect(prompt).toContain("Read inbox and calendar without writing.");
+    expect(prompt).toContain("gmail (account not specified)");
+    expect(prompt).toContain('google_calendar (account "Work")');
+    expect(prompt).toContain("English daily brief with source links");
+    expect(prompt).toContain("call list_integration_inventory");
+    expect(prompt).toContain("describe_service for each selected service before call_service");
+    expect(prompt).toContain("ask the user which account to use");
+    expect(prompt).toContain("do not grant write permission");
+
+    await writeFile(join(home, "skills/matrix/personal-daily-brief/SKILL.md"),
+      "---\nname: matrix-personal-daily-brief\ndescription: Edited\nauthor: Matrix OS\n---\nEdited future instructions.\n");
+    await context.revalidate(owner, "chat_current", prepared.context);
+    expect(contextPrompt("Prepare the next steps", prepared.context)).not.toContain("Edited future instructions.");
+  });
+
+  it("rejects unavailable recipe dependencies before admission", async () => {
+    const agent = await agents.create(owner, {
+      clientRequestId: "req_missing_recipe_service",
+      name: "Unavailable brief",
+      description: "",
+      instructions: "Prepare a brief.",
+      selection: { instanceId: "hermes_default", model: "openai:gpt-5.6-sol" },
+      recipe: { skills: [], integrations: [{ service: "not_installed" }], output: "Brief" },
+    });
+    await expect(context.prepare(owner, "chat_current", {
+      ...request,
+      parts: [...request.parts, mention("agent", agent.id)],
+    })).rejects.toMatchObject({ code: "context_unavailable" });
   });
 
   it("admits Agents and references when an existing Chat has a 200-character title", async () => {

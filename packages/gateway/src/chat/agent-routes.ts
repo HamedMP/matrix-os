@@ -1,5 +1,6 @@
 import {
   ChatAgentIdSchema, ChatAgentSchema, ChatAgentListResponseSchema, ChatMentionSearchResponseSchema,
+  ChatAgentRecipeCatalogSchema,
   ChatContextSnapshotSchema, CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
   CanonicalChatIdSchema, type CanonicalChatModelSelection,
 } from "@matrix-os/contracts";
@@ -9,6 +10,7 @@ import { z } from "zod/v4";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import { ChatAgentStoreError, type ChatAgentStore } from "./agent-store.js";
 import { ChatAgentContextError, type ChatAgentContext } from "./agent-context.js";
+import type { ChatAgentRecipeResolver } from "./agent-recipe.js";
 import type { ChatRepository } from "./repository.js";
 import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
 
@@ -21,6 +23,7 @@ export function createChatAgentRoutes(options: {
   agents?: ChatAgentStore;
   repository?: ChatRepository;
   context?: ChatAgentContext;
+  recipes?: ChatAgentRecipeResolver;
   enabled(): boolean;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   getPrincipal(context: Context): RequestPrincipal;
@@ -50,6 +53,10 @@ export function createChatAgentRoutes(options: {
     if (!options.agents || !options.repository || !options.context) throw new Error("Chat Agent services unavailable");
     return { agents: options.agents, repository: options.repository, context: options.context };
   }
+  function requireRecipes() {
+    if (!options.recipes) throw new Error("Chat Agent recipe services unavailable");
+    return options.recipes;
+  }
   async function validSelection(principal: RequestPrincipal, selection: CanonicalChatModelSelection): Promise<boolean> {
     const catalog = await options.catalog.getCatalog(principal);
     const checked = validateChatProviderSelection({ catalog, selection,
@@ -62,6 +69,13 @@ export function createChatAgentRoutes(options: {
     if (!options.enabled()) return c.json({ enabled: false, agents: [] });
     const { agents } = requireServices();
     return c.json(ChatAgentListResponseSchema.parse({ enabled: true, agents: await agents.list(scope) }));
+  });
+  routes.get("/api/chat-agents/recipe-catalog", async (c) => {
+    owner(c);
+    if (!options.enabled()) {
+      return c.json(ChatAgentRecipeCatalogSchema.parse({ enabled: false, skills: [], services: [] }));
+    }
+    return c.json(ChatAgentRecipeCatalogSchema.parse(await requireRecipes().catalog()));
   });
   routes.post("/api/chat-agents", limit, async (c) => {
     const principal = options.getPrincipal(c);

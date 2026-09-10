@@ -21,6 +21,7 @@
     "#canonical-chat": "./src/canonical-chat.ts",
     "#chat-agents": "./src/chat-agents.ts",
     "#chat-agent-context": "./src/chat-agent-context.ts",
+    "#chat-agent-recipe": "./src/chat-agent-recipe.ts",
     "#canonical-chat-api": "./src/canonical-chat-api.ts",
     "#canonical-chat-content": "./src/canonical-chat-content.ts",
     "#canonical-chat-approvals": "./src/canonical-chat-approvals.ts",

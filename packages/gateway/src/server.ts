@@ -4416,7 +4416,10 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.route("/", createChatAgentRoutes({
     ...(canonicalChatRuntime && chatRepository ? {
-      agents: canonicalChatRuntime.agents, context: canonicalChatRuntime.context, repository: chatRepository,
+      agents: canonicalChatRuntime.agents,
+      context: canonicalChatRuntime.context,
+      recipes: canonicalChatRuntime.recipes,
+      repository: chatRepository,
     } : {}),
     enabled: chatAgentsEnabled,
     catalog: canonicalChatProviderCatalog,

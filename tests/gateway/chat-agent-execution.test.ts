@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KyselyPGlite } from "kysely-pglite";
@@ -31,9 +31,19 @@ describe("Hermes Agent invocation through canonical Chat", () => {
   let hold: Promise<void> | undefined;
   let failHermes: boolean;
   let agentId: string;
+  let recipeSkillsRoot: string;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-agent-execution-"));
+    recipeSkillsRoot = join(home, "skills/matrix");
+    for (const [directory, id, body] of [
+      ["personal-daily-brief", "matrix-personal-daily-brief", "Read inbox and calendar for the current day."],
+      ["integrations", "matrix-integrations", "Use Matrix integration tools after inventory."],
+    ]) {
+      await mkdir(join(recipeSkillsRoot, directory), { recursive: true });
+      await writeFile(join(recipeSkillsRoot, directory, "SKILL.md"),
+        `---\nname: ${id}\ndescription: Recipe fixture.\nauthor: Matrix OS\n---\n${body}\n`);
+    }
     repository = new ChatRepository((await KyselyPGlite.create()).dialect);
     await repository.bootstrap();
     enabled = true; failHermes = false; calls = []; release = undefined; hold = undefined;
@@ -60,7 +70,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
       };
     };
     const runtime = await createCanonicalChatRuntime({
-      homePath: home, enabled: () => enabled,
+      homePath: home, recipeSkillsRoot, enabled: () => enabled,
       repository, catalog: { getCatalog: async () => catalog },
       adapters: new CanonicalChatProviderRegistry([adapter("codex"), adapter("hermes")]),
     });
@@ -137,6 +147,54 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     expect(calls.at(-1)?.input.prompt).toContain("Separate decisions from open questions.");
     expect(calls.at(-1)?.input.prompt).not.toContain("A different role for future work");
     expect(calls.at(-1)?.resumed).toBe(false);
+  });
+
+  it("resolves recipe content before dispatch and reuses the pinned snapshot on retry", async () => {
+    await agents.update(owner, agentId, {
+      baseRevision: 1,
+      recipe: {
+        skills: ["matrix-personal-daily-brief", "matrix-integrations"],
+        integrations: [{ service: "gmail" }, { service: "google_calendar", accountLabel: "Work" }],
+        output: "English daily brief with source links",
+      },
+    });
+    failHermes = true;
+    const admitted = await send("req_recipe_failed", [{ type: "text", text: "Prepare today" }, mention("agent", agentId)]);
+    expect(admitted.run.context?.agent?.recipe?.skills[0]?.instructions).toBe("Read inbox and calendar for the current day.");
+    expect(calls.at(-1)?.input.prompt).toContain("google_calendar (account \"Work\")");
+    expect(calls.at(-1)?.input.prompt).toContain("English daily brief with source links");
+
+    await writeFile(join(recipeSkillsRoot, "personal-daily-brief/SKILL.md"),
+      "---\nname: matrix-personal-daily-brief\ndescription: Edited.\nauthor: Matrix OS\n---\nEdited future recipe.\n");
+    failHermes = false;
+    const retried = await orchestrator.retryTurn(principal, owner, "chat_parent", admitted.turn.id, {
+      clientRequestId: "req_retry_recipe", baseRevision: (await repository.get(owner, "chat_parent"))!.chat.revision,
+    });
+    await complete();
+    expect(retried.run.context).toEqual(admitted.run.context);
+    expect(calls.at(-1)?.input.prompt).toContain("Read inbox and calendar for the current day.");
+    expect(calls.at(-1)?.input.prompt).not.toContain("Edited future recipe.");
+  });
+
+  it("rejects unavailable recipe services and skills before provider execution", async () => {
+    await agents.update(owner, agentId, {
+      baseRevision: 1,
+      recipe: { skills: [], integrations: [{ service: "not_installed" }], output: "Brief" },
+    });
+    await expect(send("req_bad_recipe_service", [mention("agent", agentId)]))
+      .rejects.toMatchObject({ safeError: { code: "resource_unavailable" } });
+    expect(calls).toEqual([]);
+    expect((await repository.get(owner, "chat_parent"))!.chat.messageCount).toBe(0);
+
+    await agents.update(owner, agentId, {
+      baseRevision: 2,
+      recipe: { skills: ["matrix-personal-daily-brief"], integrations: [], output: "Brief" },
+    });
+    await rm(join(recipeSkillsRoot, "personal-daily-brief/SKILL.md"));
+    await expect(send("req_missing_recipe_skill", [mention("agent", agentId)]))
+      .rejects.toMatchObject({ safeError: { code: "resource_unavailable" } });
+    expect(calls).toEqual([]);
+    expect((await repository.get(owner, "chat_parent"))!.chat.messageCount).toBe(0);
   });
 
   it("deduplicates an accepted Agent turn and rejects a changed request with its idempotency key", async () => {

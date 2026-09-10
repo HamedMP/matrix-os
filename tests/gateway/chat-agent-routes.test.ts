@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KyselyPGlite } from "kysely-pglite";
@@ -7,6 +7,7 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { ChatAgentStore } from "../../packages/gateway/src/chat/agent-store.js";
 import { ChatAgentContext } from "../../packages/gateway/src/chat/agent-context.js";
 import { createChatAgentRoutes } from "../../packages/gateway/src/chat/agent-routes.js";
+import { createChatAgentRecipeResolver } from "../../packages/gateway/src/chat/agent-recipe.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 
@@ -29,6 +30,16 @@ describe("Chat Agent HTTP boundary", () => {
     await repository.bootstrap();
     agents = new ChatAgentStore({ homePath: home, db: repository.kysely });
     await agents.bootstrap();
+    const skillsRoot = join(home, "skills/matrix");
+    for (const [directory, id] of [["integrations", "matrix-integrations"], ["personal-daily-brief", "matrix-personal-daily-brief"]]) {
+      await mkdir(join(skillsRoot, directory), { recursive: true });
+      await writeFile(join(skillsRoot, directory, "SKILL.md"),
+        `---\nname: ${id}\ndescription: ${id === "matrix-integrations" ? "Use Matrix integrations safely." : "Prepare a personal daily brief."}\nauthor: Matrix OS\n---\nInstructions for ${id}.\n`);
+    }
+    const recipes = createChatAgentRecipeResolver({
+      skillsRoot,
+      services: [{ id: "gmail", name: "Gmail" }, { id: "google_calendar", name: "Google Calendar" }],
+    });
     enabled = true; user = owner.ownerId;
     const catalog = createCanonicalProviderCatalogFixture();
     catalog.drivers.push({ ...catalog.drivers[0]!, kind: "hermes", displayName: "Hermes" });
@@ -37,7 +48,7 @@ describe("Chat Agent HTTP boundary", () => {
       supports: { ...catalog.instances[0]!.supports, permissionModes: ["full_access"] },
     });
     app = createChatAgentRoutes({ agents, repository,
-      context: new ChatAgentContext({ repository, agents, enabled: () => enabled }),
+      context: new ChatAgentContext({ repository, agents, recipes, enabled: () => enabled }), recipes,
       catalog: { getCatalog: async () => catalog }, enabled: () => enabled,
       getPrincipal: () => { if (!user) throw new MissingRequestPrincipalError(); return { userId: user, source: "jwt" }; },
     });
@@ -50,9 +61,27 @@ describe("Chat Agent HTTP boundary", () => {
   it("defaults to a quiet disabled feature and rejects mutations when switched off", async () => {
     enabled = false;
     expect(await (await app.request("/api/chat-agents")).json()).toEqual({ enabled: false, agents: [] });
+    expect(await (await app.request("/api/chat-agents/recipe-catalog")).json()).toEqual({ enabled: false, skills: [], services: [] });
     expect(await (await app.request("/api/chat-mentions")).json()).toEqual({ enabled: false, resources: [] });
     expect((await app.request("/api/chat-agents", json("POST", fields))).status).toBe(409);
     expect(await agents.list(owner)).toEqual([]);
+  });
+
+  it("returns authenticated recipe metadata without instructions, accounts or credentials", async () => {
+    const response = await app.request("/api/chat-agents/recipe-catalog");
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result).toEqual({
+      enabled: true,
+      skills: [
+        { id: "matrix-integrations", name: "Matrix Integrations", description: "Use Matrix integrations safely." },
+        { id: "matrix-personal-daily-brief", name: "Personal Daily Brief", description: "Prepare a personal daily brief." },
+      ],
+      services: [{ id: "gmail", name: "Gmail" }, { id: "google_calendar", name: "Google Calendar" }],
+    });
+    expect(JSON.stringify(result)).not.toMatch(/instructions|accounts|credential|token/i);
+    user = null;
+    expect((await app.request("/api/chat-agents/recipe-catalog")).status).toBe(401);
   });
 
   it("creates and edits a durable Hermes role using the authenticated owner only", async () => {

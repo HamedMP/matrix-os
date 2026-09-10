@@ -3,12 +3,14 @@ import { CanonicalChatModelSelectionSchema, CanonicalChatRequestIdSchema, Canoni
 import { IsoTimestampSchema } from "#contract-primitives";
 import { canonicalBoundedText, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { ChatAgentIdSchema } from "#chat-agent-context";
+import { ChatAgentRecipeSchema } from "#chat-agent-recipe";
 
 export const ChatAgentFieldsSchema = z.object({
   name: canonicalSafeLabel(80, 320),
   description: z.string().trim().max(400).default(""),
   instructions: canonicalBoundedText(8_000, 24 * 1024),
   selection: CanonicalChatModelSelectionSchema,
+  recipe: ChatAgentRecipeSchema.optional(),
 }).strict();
 export const CreateChatAgentRequestSchema = ChatAgentFieldsSchema.extend({
   clientRequestId: CanonicalChatRequestIdSchema,
@@ -16,6 +18,7 @@ export const CreateChatAgentRequestSchema = ChatAgentFieldsSchema.extend({
 export const UpdateChatAgentRequestSchema = ChatAgentFieldsSchema.partial().extend({
   baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   archived: z.boolean().optional(),
+  recipe: ChatAgentRecipeSchema.nullable().optional(),
 }).strict().refine((value) => Object.keys(value).length > 1, { message: "An update is required" });
 export const ChatAgentSchema = ChatAgentFieldsSchema.extend({
   id: ChatAgentIdSchema,

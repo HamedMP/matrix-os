@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { canonicalBoundedText, canonicalSafeLabel, canonicalEncodedByteLength } from "#canonical-chat-primitives";
+import { ResolvedChatAgentRecipeSchema } from "#chat-agent-recipe";
 
 export const ChatAgentIdSchema = z.string().regex(/^bot_[a-z0-9]{8,64}$/);
 export const ChatContextSnapshotSchema = z.object({
@@ -20,6 +21,7 @@ export const ChatRunContextSchema = z.object({
     revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
     name: canonicalSafeLabel(80, 320),
     instructions: canonicalBoundedText(8_000, 24 * 1024),
+    recipe: ResolvedChatAgentRecipeSchema.optional(),
   }).strict().optional(),
   chats: z.array(ChatContextSnapshotSchema).max(3),
   history: ChatContextSnapshotSchema.optional(),
