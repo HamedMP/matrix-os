@@ -216,7 +216,6 @@ describe("truthful account setup", () => {
     render(<AccountsPanel {...input} accounts={[account]} sources={[source]} harness={{ ...input.harness, authState: "expired",
       connectivity: "unknown", accountIds: [account.id], selectedAccountId: account.id, accessSourceId: account.accessSourceId }} />);
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    fireEvent.click(screen.getByRole("button", { name: /Recommended.*Terminal/ }));
     await waitFor(() => expect(input.onMutate).toHaveBeenCalledWith({ type: "start_login", harnessInstanceId: "claude_default", accountId: null, method: "terminal" }));
     expect(screen.queryByRole("button", { name: /Add account/ })).not.toBeInTheDocument();
   });
@@ -246,14 +245,13 @@ describe("truthful account setup", () => {
     expect(screen.queryByRole("dialog", { name: "Remove Personal" })).not.toBeInTheDocument();
   });
 
-  it("retains login choices when starting authentication fails", async () => {
+  it("keeps one-click sign in available when starting authentication fails", async () => {
     const input = props();
     input.onMutate.mockResolvedValue(false);
     render(<AccountsPanel {...input} />);
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    fireEvent.click(screen.getByRole("button", { name: /Recommended.*Terminal/ }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("could not be updated"));
-    expect(screen.getByRole("button", { name: /Recommended.*Terminal/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
   });
 
   it("keeps one visible native setup action for an authenticated generic agent", async () => {
@@ -261,9 +259,9 @@ describe("truthful account setup", () => {
     const onSetupHarness = vi.fn().mockResolvedValue(true);
     render(<AccountsPanel {...input} harness={{ ...input.harness, harness: "opencode", displayName: "OpenCode",
       authState: "authenticated", loginMethods: [], recommendedLoginMethod: null }} canLogin={false} onSetupHarness={onSetupHarness} />);
-    fireEvent.click(screen.getByRole("button", { name: "Open OpenCode setup in Terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
     await waitFor(() => expect(onSetupHarness).toHaveBeenCalledWith("opencode"));
-    expect(screen.getAllByRole("button", { name: /setup in Terminal/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Connect OpenCode" })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /Add account/ })).not.toBeInTheDocument();
   });
 

@@ -6,17 +6,17 @@ import {
 import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
 import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 
-/** Independent reads run together; neither result can authorize the other. */
+/** Independent reads run together; canonical state still gates funded projection. */
 export async function readProviderSettingsEnrichment(input: {
-  canonical: AiProviderSnapshotV3;
+  canonical: AiProviderSnapshotV3 | Promise<AiProviderSnapshotV3>;
   fundingSummary?: FundedAiFundingSummaryReader;
   genericModelCatalog?: GenericHarnessModelCatalogReader;
   refresh: boolean;
 }) {
-  const [funded, genericModelCatalog] = await Promise.all([
+  const [canonical, funded, genericModelCatalog] = await Promise.all([
+    input.canonical,
     (async () => {
-      if (!input.fundingSummary || !input.canonical.accessSources.some((source) =>
-        source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon")) return undefined;
+      if (!input.fundingSummary) return undefined;
       try {
         const state = await input.fundingSummary.getFundingSummary();
         return {
@@ -40,5 +40,9 @@ export async function readProviderSettingsEnrichment(input: {
       }
     })(),
   ]);
-  return { ...funded, genericModelCatalog };
+  const hasMatrixSource = canonical.accessSources.some((source) =>
+    source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
+  return { ...(hasMatrixSource ? funded : undefined), genericModelCatalog };
 }
+
+export type ProviderSettingsEnrichment = Awaited<ReturnType<typeof readProviderSettingsEnrichment>>;

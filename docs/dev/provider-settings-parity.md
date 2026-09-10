@@ -223,8 +223,9 @@ All three desktop presentations use the shared compact, expandable agent list.
 Matrix AI appears above that list even when configuration or funding is missing;
 its card explains the missing state rather than disappearing. Show compatible
 agent navigation when the selected agent cannot use the managed connection.
-Selecting Matrix AI changes an explicit eligible provider/model/access-source
-route; it never silently enables a disabled agent. A saved source ID alone is
+The explicit **Use Matrix AI** connection action saves an eligible route and
+enables an installed agent atomically when supported. Ordinary model/route
+edits never silently enable a disabled agent. A saved source ID alone is
 not enough to label a route selected when its model is no longer allowed.
 Generic managed routes are currently executable through Pi/OpenCode. Hermes
 and OpenClaw system-runtime configuration does not yet apply that funding path;
@@ -368,6 +369,11 @@ the required active tax registrations.
   policy before persisting the route and enabled state together. A failed
   mutation changes neither. Ordinary route edits do not implicitly enable an
   agent, and an unready own-account connection must not claim funded readiness.
+  Clients opt into `includeCapabilities=true` on Settings reads and actions;
+  only a server-confirmed `atomicConnectSupported` flag permits this new field.
+  Older runtimes retain plain route selection for enabled agents and show an
+  update requirement for one-step connection of disabled agents. Default wire
+  snapshots stay unchanged for older strict-schema clients.
 - First sign-in opens the newly returned Terminal action directly. Reopening
   Settings must not replay an old login attempt. Keep Continue as recovery if
   the window could not open, and guard handoff against a runtime switch.
@@ -376,6 +382,14 @@ the required active tax registrations.
 - Mounting Settings or Chat reads the existing catalog without forcing health
   refresh. Explicit Refresh and settings-change reconciliation can refresh it;
   this does not permit stale policy or credentials during run admission.
+  Cold Settings inventory, funding summary, and model discovery overlap within
+  the serialized read; do not queue independent checks behind CLI discovery or
+  cache authorization to hide loading delays.
+- Chat's Settings gear opens **Agents & providers** directly in Web Canvas,
+  Web Desktop, and Electron Desktop, even while model choices are loading.
+  Model selection has its own compact trigger. Shared picker colors use scoped
+  CSS variables with both hosts' token fallbacks; sharing JSX alone is not
+  visual parity. The Web settings inset matches Electron's content frame.
 - Chat model selection is a bounded, searchable overlay, not a layout-pushing
   setup page. Unavailable agents belong under Manage agents. Preserve existing
   Chat instance binding and permission controls. Display the canonical

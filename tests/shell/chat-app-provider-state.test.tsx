@@ -6,7 +6,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
-import { PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
+import { OPEN_PROVIDER_SETTINGS_EVENT, PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
 import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options.js";
 
 function providerCatalog(available = true, secondModel = false) {
@@ -84,6 +84,21 @@ beforeEach(() => {
 });
 
 describe("Chat canonical provider state", () => {
+  it("opens Agents & providers directly from Settings even while the model catalog is pending", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    const openSettings = vi.fn();
+    window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openSettings);
+    try {
+      render(<ChatApp messages={[]} busy={false} connected conversations={[]}
+        onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Open Agents & providers settings" }));
+      expect(openSettings).toHaveBeenCalledOnce();
+      expect(screen.queryByRole("dialog", { name: "Choose model and connection" })).toBeNull();
+    } finally {
+      window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openSettings);
+    }
+  });
+
   it("keeps setup out of chat layout and dismisses with Escape, trigger and outside pointer", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     render(<ChatApp messages={[]} busy={false} connected conversations={[]}

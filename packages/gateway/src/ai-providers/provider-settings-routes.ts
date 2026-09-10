@@ -4,6 +4,7 @@ import {
   ProviderDependencyCountsSchema,
   ProviderSettingsMutationSchema,
   type ProviderSettingsMutation,
+  type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
@@ -13,6 +14,11 @@ import {
 
 const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
+
+function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean): ProviderSettingsSnapshot {
+  return include ? { ...snapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
+    && snapshot.supportedActions.includes("set_harness_enabled") } : snapshot;
+}
 const DeleteAccountBodySchema = z.object({
   expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   idempotencyKey: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
@@ -137,9 +143,10 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));
-    if (!refresh.success) return invalidRequest(context);
+    const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
+    if (!refresh.success || !capabilities.success) return invalidRequest(context);
     try {
-      return context.json(await options.store.getSnapshot({ refresh: refresh.data === "true" }));
+      return context.json(withCapabilities(await options.store.getSnapshot({ refresh: refresh.data === "true" }), capabilities.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -148,10 +155,13 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
   app.post("/provider-settings/actions", mutationBodyLimit, async (context) => {
     const authError = authorize(context, options);
     if (authError) return authError;
+    const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
+    if (!capabilities.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
     try {
-      return context.json(await options.store.mutate(mutation.data));
+      const result = await options.store.mutate(mutation.data);
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }

@@ -115,7 +115,7 @@ describe("desktop provider settings transport", () => {
     const abort = new AbortController();
 
     await expect(transport.getSnapshot(abort.signal)).resolves.toEqual(snapshot());
-    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings", {
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
     });
@@ -133,7 +133,7 @@ describe("desktop provider settings transport", () => {
     const transport = createDesktopProviderSettingsTransport(api({ post }));
     await expect(transport.mutate(mutation, new AbortController().signal))
       .resolves.toMatchObject({ kind: "snapshot", snapshot: { revision: 2 } });
-    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions", mutation, expect.objectContaining({
+    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true", mutation, expect.objectContaining({
       maxBytes: 1024 * 1024,
       signal: expect.any(AbortSignal),
     }));
@@ -216,6 +216,24 @@ describe("desktop provider connection actions", () => {
     await expect(openExistingProviderTerminalSession(client, "provider-login")).resolves.toBe(false);
     expect(useTabs.getState().tabs).toEqual([]);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the exact server-generated 64-character provider authentication session", async () => {
+    const name = `provider-auth-${"a".repeat(50)}`;
+    const get = vi.fn().mockResolvedValue({ sessions: [{ name, status: "active" }] });
+    const post = vi.fn();
+
+    await expect(openExistingProviderTerminalSession(api({ get, post }), name)).resolves.toBe(true);
+    expect(useShellSessions.getState().sessions).toEqual([{ name, status: "active" }]);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(name);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each(["a".repeat(65), "pty_opaque", "7b8dab65-31fa-4c47-9e72-c92edf0de941"])("does not reinterpret invalid or legacy PTY ID %s as a named login session", async (name) => {
+    const get = vi.fn();
+    await expect(openExistingProviderTerminalSession(api({ get }), name)).resolves.toBe(false);
+    expect(get).not.toHaveBeenCalled();
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 
   it("does not open a provider login session after the desktop identity changes", async () => {

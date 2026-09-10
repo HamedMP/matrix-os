@@ -73,14 +73,15 @@ export function AgentsProvidersView({
   const compatibleGatewayAgents = supports("set_route") ? snapshot.harnesses.filter((item) =>
     item.id !== selectedId && item.installState === "installed" && item.route.kind === "configurable"
     && configurationHarnessKinds.includes(item.harness) && gatewayModelsFor(item).length > 0) : [];
-  const useGateway = canUseGateway && harness && gatewaySource && gatewayModel ? async () => {
+  const useGateway = canUseGateway && harness && (harness.enabled || snapshot.atomicConnectSupported === true) && gatewaySource && gatewayModel ? async () => {
     if (mutationsDisabled) return;
     setGatewayPending(true);
     setGatewayError(false);
     try {
       const saved = await onMutate({ type: "set_route", harnessInstanceId: harness.id,
         route: { kind: "configurable", providerId: gatewaySource.providerId, modelId: gatewayModel.id },
-        accessSourceId: gatewaySource.id, accountId: null, enableHarness: true });
+        accessSourceId: gatewaySource.id, accountId: null,
+        ...(snapshot.atomicConnectSupported === true ? { enableHarness: true } : {}) });
       if (saved === false) setGatewayError(true);
     } catch (caught) {
       console.warn("[provider-settings] Matrix connection failed:", caught instanceof Error ? caught.name : typeof caught);

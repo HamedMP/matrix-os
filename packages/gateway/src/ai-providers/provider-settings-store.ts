@@ -51,7 +51,7 @@ import {
   sameProviderDependencyCounts,
 } from "./provider-settings-receipts.js";
 import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
-import { readProviderSettingsEnrichment } from "./provider-settings-enrichment.js";
+import { readProviderSettingsEnrichment, type ProviderSettingsEnrichment } from "./provider-settings-enrichment.js";
 
 const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
@@ -162,9 +162,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     }
   }
 
-  async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false) {
+  async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false,
+    enrichment?: ProviderSettingsEnrichment) {
     try {
-      const { fundingSummary, fundedPolicy, genericModelCatalog } = await readProviderSettingsEnrichment({
+      const { fundingSummary, fundedPolicy, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
         canonical, fundingSummary: this.#fundingSummary,
         genericModelCatalog: this.#genericModelCatalog, refresh,
       });
@@ -228,8 +229,18 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (this.#runtime && !this.#runtime.isRecoveryReady()) {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
-      const canonical = await this.#canonical(options.refresh === true);
-      return await this.#project(canonical, await this.#configuration(canonical), options.refresh === true);
+      const refresh = options.refresh === true;
+      const inventory = this.#canonical(refresh);
+      // Begin these bounded observations inside the serialized read, not behind
+      // inventory. Never share results across mutations or authorize from them alone.
+      const [canonical, enrichment] = await Promise.all([
+        inventory,
+        readProviderSettingsEnrichment({
+          canonical: inventory, fundingSummary: this.#fundingSummary,
+          genericModelCatalog: this.#genericModelCatalog, refresh,
+        }),
+      ]);
+      return await this.#project(canonical, await this.#configuration(canonical), refresh, enrichment);
     });
   }
 

@@ -16,7 +16,7 @@ import type {
 import { AppError } from "../../../../shared/app-error";
 import { buildGatewayUrl, type ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
-import { isValidShellSessionName, useShellSessions } from "../../stores/shell-sessions";
+import { isExistingShellSessionName, useShellSessions } from "../../stores/shell-sessions";
 import { useTabs } from "../../stores/tabs";
 
 const PROVIDER_SETTINGS_PATH = "/api/ai/provider-settings";
@@ -67,7 +67,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
   return {
     async getSnapshot(signal, options = {}) {
       try {
-        const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}${options.refresh ? "?refresh=true" : ""}`, {
+        const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}?includeCapabilities=true${options.refresh ? "&refresh=true" : ""}`, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
         });
@@ -86,7 +86,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
         throw new DesktopProviderSettingsTransportError("invalid_request");
       }
       try {
-        const value = await api.post<unknown>(PROVIDER_SETTINGS_ACTIONS_PATH, mutation.data, {
+        const value = await api.post<unknown>(`${PROVIDER_SETTINGS_ACTIONS_PATH}?includeCapabilities=true`, mutation.data, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
         });
@@ -105,7 +105,7 @@ export async function openExistingProviderTerminalSession(
   terminalSessionId: string,
   isIdentityCurrent: () => boolean = () => true,
 ): Promise<boolean> {
-  if (!isValidShellSessionName(terminalSessionId)) return false;
+  if (!isExistingShellSessionName(terminalSessionId)) return false;
   const sessions = await useShellSessions.getState().load(api);
   if (!isIdentityCurrent()) return false;
   const exists = sessions?.some((session) => (

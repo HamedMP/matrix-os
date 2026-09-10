@@ -21,6 +21,7 @@ const later = "2026-09-30T10:00:00.000Z";
 function snapshot(): ProviderSettingsSnapshot {
   const value = {
     contractVersion: 1,
+    atomicConnectSupported: true,
     projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: 12 },
     revision: 12,
     refreshedAt: now,
@@ -353,6 +354,29 @@ describe("AgentsProvidersView", () => {
     });
     expect(screen.getByRole("switch", { name: "Enable Pi" })).not.toBeChecked();
     expect(within(connection).getByRole("button", { name: /Own account/ })).toBeVisible();
+  });
+
+  it("asks for a runtime update before connecting a disabled agent on a legacy gateway", () => {
+    const next = snapshot();
+    delete next.atomicConnectSupported;
+    Object.assign(next.harnesses[0]!, { harness: "pi", displayName: "Pi", enabled: false });
+    const onMutate = vi.fn();
+    setup({ snapshot: next, onMutate });
+    const connection = screen.getByRole("group", { name: "Pi connection" });
+    expect(within(connection).getByRole("button", { name: /Use Matrix AI/ })).toBeDisabled();
+    expect(within(connection).getByText(/Update this computer/)).toBeVisible();
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+
+  it("keeps Matrix route selection compatible with an already-enabled legacy agent", async () => {
+    const next = snapshot();
+    delete next.atomicConnectSupported;
+    Object.assign(next.harnesses[0]!, { harness: "pi", displayName: "Pi", enabled: true });
+    const onMutate = vi.fn().mockResolvedValue(true);
+    setup({ snapshot: next, onMutate });
+    await act(async () => { fireEvent.click(within(screen.getByRole("group", { name: "Pi connection" })).getByRole("button", { name: /Use Matrix AI/ })); });
+    expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({ type: "set_route" }));
+    expect(onMutate.mock.calls[0]![0]).not.toHaveProperty("enableHarness");
   });
 
   it("connects and enables a disabled OpenCode agent through its ready own profile", async () => {

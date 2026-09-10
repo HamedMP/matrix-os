@@ -37,6 +37,7 @@ import { useVoice } from "@/hooks/useVoice";
 import {
   CANONICAL_PROVIDER_SETUP_ERROR,
   executeCanonicalProviderSetupAction,
+  openProviderSettings,
 } from "@/lib/canonical-provider-setup";
 import {
   DEFAULT_HERMES_CHANNELS,
@@ -66,6 +67,7 @@ import {
   MessageSquareIcon,
   BotIcon,
   Settings2Icon,
+  ChevronDownIcon,
 } from "@/lib/hugeicons";
 
 type ConversationMeta = RenameableConversation;
@@ -426,8 +428,21 @@ export function ChatApp({
             className="h-8 max-w-[12rem] gap-1.5 px-2.5 text-xs"
             onClick={() => setSetupOpen((value) => !value)}
           >
-            <Settings2Icon className="size-3.5" aria-hidden="true" />
             <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
+            <ChevronDownIcon className="size-3.5" aria-hidden="true" />
+          </Button>
+          <Button
+            aria-label="Open Agents & providers settings"
+            title="Agents & providers"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            onClick={() => {
+              setSetupOpen(false);
+              openProviderSettings();
+            }}
+          >
+            <Settings2Icon className="size-3.5" aria-hidden="true" />
           </Button>
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>

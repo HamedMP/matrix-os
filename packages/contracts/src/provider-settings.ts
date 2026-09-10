@@ -367,6 +367,8 @@ export const ProviderSettingsSupportedActionSchema = z.enum([
 /** UI mutation projection derived from, and explicitly lineaged to, AiProviderSnapshotV3. */
 export const ProviderSettingsSnapshotSchema = z.object({
   contractVersion: z.literal(1),
+  /** Returned only to clients opting into extended runtime capabilities. */
+  atomicConnectSupported: z.boolean().optional(),
   projectionOf: z.object({
     contract: z.literal("AiProviderSnapshotV3"),
     contractVersion: z.literal(3),

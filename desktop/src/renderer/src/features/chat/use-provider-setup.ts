@@ -30,13 +30,13 @@ export function useProviderSetup(
     action: CanonicalProviderSetupAction,
   ) => {
     const provider = findProviderForSetupAction(providers, action);
-    const opened = provider
+    const opened = provider && action.kind !== "open_settings"
       ? await executeProviderSetupAction({ provider, action, api, openTab })
       : await executeCatalogProviderSetupAction({ instance, action, api, openTab });
     if (!opened) {
       toast.error(SETUP_ERROR);
       return;
     }
-    await onRefresh?.();
+    if (action.kind !== "open_settings") await onRefresh?.();
   }, [api, onRefresh, openTab, providers]);
 }

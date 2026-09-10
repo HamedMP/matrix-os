@@ -106,7 +106,7 @@ export function createProviderSettingsTransport(
   const fetcher = options.fetcher ?? fetch;
   return {
     async getSnapshot(signal, options = {}) {
-      const value = await fetchJson(fetcher, `/api/ai/provider-settings${options.refresh ? "?refresh=true" : ""}`, {
+      const value = await fetchJson(fetcher, `/api/ai/provider-settings?includeCapabilities=true${options.refresh ? "&refresh=true" : ""}`, {
         cache: "no-store",
         headers: { Accept: "application/json" },
         signal: requestSignal(signal),
@@ -122,7 +122,7 @@ export function createProviderSettingsTransport(
       if (new TextEncoder().encode(body).byteLength > MAX_MUTATION_BYTES) {
         throw new ProviderSettingsTransportError("invalid_request");
       }
-      const value = await fetchJson(fetcher, "/api/ai/provider-settings/actions", {
+      const value = await fetchJson(fetcher, "/api/ai/provider-settings/actions?includeCapabilities=true", {
         method: "POST",
         cache: "no-store",
         headers: { Accept: "application/json", "Content-Type": "application/json" },

@@ -1,0 +1,29 @@
+/* Shared picker colors must not depend on either host's Tailwind theme aliases. */
+.matrix-chat-model-choices {
+  --model-choice-border: var(--border-default, var(--border));
+  --model-choice-secondary: var(--text-tertiary, var(--muted-foreground));
+  --model-choice-hover: var(--bg-hover, var(--muted));
+  --model-choice-focus: var(--accent, var(--primary));
+}
+
+.matrix-chat-model-search {
+  border-color: var(--model-choice-border);
+}
+
+.matrix-chat-model-secondary {
+  color: var(--model-choice-secondary);
+}
+
+.matrix-chat-model-option {
+  min-height: 3rem;
+}
+
+.matrix-chat-model-option:hover:not(:disabled) {
+  background-color: var(--model-choice-hover);
+}
+
+.matrix-chat-model-search:focus-visible,
+.matrix-chat-model-option:focus-visible {
+  outline: 2px solid var(--model-choice-focus);
+  outline-offset: -2px;
+}

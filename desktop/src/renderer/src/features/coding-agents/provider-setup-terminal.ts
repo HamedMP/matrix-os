@@ -9,6 +9,7 @@ import { useTabs } from "../../stores/tabs";
 import { useShellSessions } from "../../stores/shell-sessions";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { providerSupportsSetupAction } from "./provider-readiness";
+import { openProviderSettings } from "../settings/open-provider-settings";
 
 const MAX_PROVIDER_SETUP_ACTIONS = 10;
 const MAX_SETUP_SESSION_NAME_LENGTH = 31;
@@ -152,12 +153,19 @@ export async function executeCatalogProviderSetupAction(input: {
   api: ApiClient | null;
   openTab: ReturnType<typeof useTabs.getState>["openTab"];
 }): Promise<boolean> {
-  if (input.action.kind !== "foreground_terminal" || !input.api) return false;
-  const prefix = catalogActionPrefix(input.instance);
-  if (!input.action.id.startsWith(`${prefix}_`)) return false;
   if (!input.instance.setupActions.some((candidate) => sameCatalogAction(candidate, input.action))) {
     return false;
   }
+  if (input.action.kind === "open_settings") {
+    // Retired system-harness model setup actions must not redirect to the
+    // coding-agent account surface. The explicit Settings gear remains available.
+    if (!["pi", "opencode", "codex", "claude_code"].includes(input.instance.driverKind)) return false;
+    openProviderSettings();
+    return true;
+  }
+  if (!input.api) return false;
+  const prefix = catalogActionPrefix(input.instance);
+  if (!input.action.id.startsWith(`${prefix}_`)) return false;
   return await openProviderSetupTerminal(input.api, {
     key: `${input.instance.id}:${input.action.id}`,
     label: input.action.label,

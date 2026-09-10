@@ -275,30 +275,26 @@ export class AiProviderService implements AiProviderSnapshotReader {
   async getSnapshot(options: { refresh?: boolean } = {}): Promise<AiProviderSnapshotV3> {
     const now = this.#now().toISOString();
     const { credentials, savedModel } = await this.#credentials.read();
-    const drivers = await this.#drivers();
+    // These observations are independent. A slow CLI must not serialize the
+    // funding and credential checks behind its bounded inventory deadline.
+    const [drivers, funded, apiKeyReadiness, profileReadiness] = await Promise.all([
+      this.#drivers(),
+      credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
+        ? this.#fundedReadiness.read()
+        : undefined,
+      this.#resolveOwnerReadiness(
+        "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true,
+      ),
+      this.#resolveOwnerReadiness(
+        "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
+      ),
+    ]);
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     const codexReadiness = readinessForDriver(codexDriver, now);
-    const funded = credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
-      ? await this.#fundedReadiness.read()
-      : undefined;
     const matrixReadiness = funded?.readiness ?? readinessForObservation(
       credentials.matrixIncluded.state === "ready" ? "unverified" : credentials.matrixIncluded.state,
       "matrix",
       now,
-    );
-    const apiKeyReadiness = await this.#resolveOwnerReadiness(
-      "owner_anthropic_key",
-      credentials.ownerApiKey.state,
-      "api_key",
-      now,
-      options.refresh === true,
-    );
-    const profileReadiness = await this.#resolveOwnerReadiness(
-      "owner_anthropic_profile",
-      credentials.ownerProfile.state,
-      "profile",
-      now,
-      options.refresh === true,
     );
     const catalog = buildBundledModelCatalog();
 

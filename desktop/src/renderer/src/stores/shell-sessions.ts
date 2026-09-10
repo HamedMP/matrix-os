@@ -57,10 +57,17 @@ interface ShellSessionsState {
 }
 
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
+const EXISTING_SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const LEGACY_PTY_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_CWD = "projects";
 
 export function isValidShellSessionName(name: string): boolean {
   return SHELL_SESSION_NAME_PATTERN.test(name);
+}
+
+/** Server-created login sessions can be longer than user-created/renamed names. */
+export function isExistingShellSessionName(name: string): boolean {
+  return !LEGACY_PTY_SESSION_ID_PATTERN.test(name) && EXISTING_SHELL_SESSION_NAME_PATTERN.test(name);
 }
 
 function shellConnectCommand(name: string): string {
@@ -93,7 +100,7 @@ function isSafeDisplayCwd(value: unknown): value is string {
 function asShellSession(value: unknown): ShellSessionSummary | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  if (typeof record.name !== "string" || !isValidShellSessionName(record.name)) return null;
+  if (typeof record.name !== "string" || !isExistingShellSessionName(record.name)) return null;
   const shell: ShellSessionSummary = { name: record.name };
   if (isSafeDisplayCwd(record.cwd)) shell.cwd = record.cwd;
   if (typeof record.pinned === "boolean") shell.pinned = record.pinned;
@@ -344,7 +351,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
   },
 
   adoptCreatedSession: (name) => {
-    if (!isValidShellSessionName(name)) return;
+    if (!isExistingShellSessionName(name)) return;
     set((state) => (
       state.sessions.some((session) => session.name === name)
         ? state

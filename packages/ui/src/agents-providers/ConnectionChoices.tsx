@@ -29,6 +29,7 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
     ?? ownTargets.find(({ model }) => model.id === harness.route.modelId) ?? ownTargets[0];
   const ownSelected = !gatewaySelected && ownTargets.some(({ source }) => source.id === harness.accessSourceId);
   const usingGateway = gatewaySelected && harness.enabled;
+  const needsUpdate = !harness.enabled && snapshot.atomicConnectSupported !== true;
   const selectOwn = async () => {
     setFailed(false);
     setPending(true);
@@ -37,7 +38,7 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
         ? await onMutate({ type: "set_route", harnessInstanceId: harness.id,
           route: { kind: "configurable", providerId: ownTarget.source.providerId, modelId: ownTarget.model.id },
           accessSourceId: ownTarget.source.id, accountId: ownTarget.source.accountId,
-          ...(ownTarget.source.readiness.state === "ready" ? { enableHarness: true } : {}) })
+          ...(ownTarget.source.readiness.state === "ready" && snapshot.atomicConnectSupported === true ? { enableHarness: true } : {}) })
         : await onSetupHarness?.();
       if (result === false) setFailed(true);
     } catch (error) {
@@ -53,10 +54,11 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
         <span>{gatewaySelected ? "Matrix credit · no separate login" : gatewaySource?.readiness.state === "ready" && onUseGateway ? "Matrix credit · no separate login" : "Not available for this connection"}</span>
       </button>
       <button type="button" className="matrix-ap-connection-choice" aria-pressed={ownSelected}
-        disabled={disabled || pending || !(ownTarget && canSetRoute) && !onSetupHarness} onClick={() => { void selectOwn(); }}>
+        disabled={disabled || pending || needsUpdate || !(ownTarget && canSetRoute) && !onSetupHarness} onClick={() => { void selectOwn(); }}>
         <strong>Own account</strong><span>{ownSelected ? "Selected" : `Connect through ${harness.displayName}`}</span>
       </button>
     </div>
+    {needsUpdate ? <p className="matrix-ap-help" role="status">Update this computer to connect and enable an agent in one step.</p> : null}
     {failed ? <p role="alert" className="matrix-ap-help">Connection could not be updated. Try again.</p> : null}
   </div>;
 }

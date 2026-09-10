@@ -2,11 +2,12 @@ import type {
   CanonicalProviderCatalog, CanonicalProviderInstanceDescriptor, CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
-import { ChevronDown, Cpu } from "@renderer/lib/hugeicons";
+import { ChevronDown, Cpu, Settings2Icon } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import { CompactChatProviderChoices, canonicalProviderAvailabilityLabel, deriveCanonicalProviderChoices } from "@matrix-os/ui";
 import { changeCanonicalComposerInstance, createCanonicalComposerSelection, type CanonicalComposerSelection } from "./canonical-composer-state";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
+import { openProviderSettings } from "../settings/open-provider-settings";
 
 export function ProviderModelPicker({ catalog, selection, instanceLocked, disabled = false,
   unavailableProviderLabel, menuSide = "top", onSetupAction, onNewChat, onChange,
@@ -24,7 +25,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   const [open, setOpen] = useState(false);
   const selectedInstance = catalog.instances.find((instance) => instance.id === selection?.instanceId);
   const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
-  return <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+  return <><Popover.Root open={open && !disabled} onOpenChange={setOpen}>
     <Popover.Trigger asChild>
       <button type="button" disabled={disabled} aria-label="Choose model and provider"
         data-provider-instance={selectedInstance?.id ?? ""} data-model={selectedModel?.id ?? ""}
@@ -53,17 +54,24 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
           onChange({ ...base, model: choice.modelId });
           setOpen(false);
         }} />
-      <details className="mt-2 border-t border-border pt-2">
+      <details className="mt-2 border-t border-[var(--border-subtle)] pt-2">
         <summary className="cursor-pointer py-2 text-sm font-medium">Manage agents</summary>
         {catalog.instances.filter((instance) => instance.availability !== "available").map((instance) => <div key={instance.id} className="py-2">
-          <p className="text-xs text-muted-foreground">{instance.displayName} — {canonicalProviderAvailabilityLabel(instance)}</p>
+          <p className="text-xs text-[var(--text-secondary)]">{instance.displayName} — {canonicalProviderAvailabilityLabel(instance)}</p>
           {onSetupAction && instance.setupActions.map((action) => <button key={action.id} type="button"
-            className="mt-1 min-h-9 rounded-lg px-2 text-sm hover:bg-muted"
+            className="mt-1 min-h-9 rounded-lg px-2 text-sm hover:bg-[var(--bg-hover)]"
             onClick={() => { setOpen(false); onSetupAction(instance, action); }}>{action.label}</button>)}
         </div>)}
         {instanceLocked && onNewChat && <button type="button" className="min-h-9 text-sm"
           onClick={() => { setOpen(false); onNewChat(); }}>Start a new chat</button>}
       </details>
     </Popover.Content></Popover.Portal>
-  </Popover.Root>;
+  </Popover.Root>
+    <button type="button" aria-label="Open Agents & providers settings" title="Agents & providers"
+      className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      style={{ color: "var(--text-secondary)" }}
+      onClick={() => { setOpen(false); openProviderSettings(); }}>
+      <Settings2Icon size={15} aria-hidden />
+    </button>
+  </>;
 }

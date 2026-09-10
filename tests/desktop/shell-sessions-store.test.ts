@@ -115,6 +115,19 @@ describe("useShellSessions", () => {
     expect(accepted?.map((session) => session.name)).toEqual(["matrix-main"]);
   });
 
+  it("retains 64-character provider login sessions but excludes opaque PTY identifiers", async () => {
+    const name = `provider-auth-${"a".repeat(50)}`;
+    const rejected = ["a".repeat(65), "pty_opaque", "7b8dab65-31fa-4c47-9e72-c92edf0de941", "../secret"];
+    const get = vi.fn().mockResolvedValue({ sessions: [name, ...rejected].map((name) => ({ name, status: "active" })) });
+
+    expect(await useShellSessions.getState().load(makeApi({ get }))).toEqual([{ name, status: "active" }]);
+    expect(useShellSessions.getState().sessions).toEqual([{ name, status: "active" }]);
+    expect(isValidShellSessionName(name)).toBe(false);
+    const put = vi.fn();
+    await expect(useShellSessions.getState().rename(makeApi({ put }), "matrix-main", name)).resolves.toBe(false);
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("preserves the last authoritative snapshot when the sessions payload is malformed", async () => {
     const previous = [{ name: "matrix-existing", status: "active" as const }];
     useShellSessions.setState({ sessions: previous });
