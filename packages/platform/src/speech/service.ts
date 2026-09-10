@@ -4,6 +4,7 @@ import {
   SPEECH_CONTRACT_VERSION,
   SPEECH_MAX_TRANSCRIPT_CHARS,
   SpeechCancellationResponseSchema,
+  SpeechLanguageHintsSchema,
   SpeechMediaTypeSchema,
   SpeechRequestIdSchema,
   SpeechSourceKindSchema,
@@ -169,9 +170,10 @@ function contentFingerprint(
   secret: string,
   input: Pick<SpeechTranscriptionInput, "audio" | "mediaType" | "sourceKind">,
   policyRevision: string,
+  languageHints: readonly string[],
 ): string {
   const hash = createHmac("sha256", secret);
-  hash.update(`${input.sourceKind}\0${input.mediaType}\0${policyRevision}\0`, "utf8");
+  hash.update(`${input.sourceKind}\0${input.mediaType}\0${policyRevision}\0${JSON.stringify(languageHints)}\0`, "utf8");
   hash.update(input.audio);
   return hash.digest("hex");
 }
@@ -188,12 +190,17 @@ export function createPlatformSpeechService(options: {
   policy: PlatformSpeechPolicy;
   cleanupIntervalMs?: number;
   cleanupBatchSize?: number;
+  shutdownDrainTimeoutMs?: number;
 }): PlatformSpeechService {
   validatePolicy(options.policy);
   if (new TextEncoder().encode(options.fingerprintSecret).byteLength < 32) {
     throw new Error("Speech fingerprint secret is too short");
   }
-  const active = new Map<string, AbortController>();
+  const shutdownDrainTimeoutMs = options.shutdownDrainTimeoutMs ?? 8_000;
+  safeInteger(shutdownDrainTimeoutMs, 1, 10_000, "shutdown drain timeout");
+  const active = new Map<string, AbortController[]>();
+  const activeTasks = new Set<Promise<void>>();
+  const shutdownController = new AbortController();
   let activeSlots = 0;
   let shuttingDown = false;
   const cleanupIntervalMs = options.cleanupIntervalMs ?? 60 * 60_000;
@@ -214,6 +221,7 @@ export function createPlatformSpeechService(options: {
     cleanupPromise = running;
   }, cleanupIntervalMs);
   cleanupTimer.unref?.();
+  let shutdownPromise: Promise<void> | undefined;
 
   function capabilities(): SpeechCapabilitiesResponse {
     const dictation = { ...options.policy.dictation, supportedMediaTypes: [...options.policy.dictation.supportedMediaTypes] };
@@ -231,7 +239,7 @@ export function createPlatformSpeechService(options: {
 
   async function transcribe(input: SpeechTranscriptionInput): Promise<SpeechTranscriptionResponse> {
     if (shuttingDown || !options.policy.enabled) throw new SpeechServiceError("unavailable");
-    if (input.signal.aborted) throw new SpeechServiceError("cancelled");
+    if (input.signal.aborted || shutdownController.signal.aborted) throw new SpeechServiceError("cancelled");
     const parsedRequestId = SpeechRequestIdSchema.safeParse(input.requestId);
     const parsedSource = SpeechSourceKindSchema.safeParse(input.sourceKind);
     const parsedMediaType = SpeechMediaTypeSchema.safeParse(input.mediaType);
@@ -243,7 +251,9 @@ export function createPlatformSpeechService(options: {
     if (!selectedPolicy.supportedMediaTypes.includes(parsedMediaType.data)) {
       throw new SpeechServiceError("invalid_media");
     }
-    if (input.languageHints && input.languageHints.length > 0 && !selectedPolicy.languageHints) {
+    const parsedLanguageHints = SpeechLanguageHintsSchema.safeParse(input.languageHints ?? []);
+    if (!parsedLanguageHints.success) throw new SpeechServiceError("invalid_request");
+    if (parsedLanguageHints.data.length > 0 && !selectedPolicy.languageHints) {
       throw new SpeechServiceError("invalid_request");
     }
     let durationMs: number;
@@ -257,8 +267,20 @@ export function createPlatformSpeechService(options: {
     activeSlots += 1;
     const maximumCostMicrousd = microusdForDuration(selectedPolicy.maxDurationMs, options.policy.microusdPerMinute);
     const actualCostMicrousd = microusdForDuration(durationMs, options.policy.microusdPerMinute);
-    const fingerprint = contentFingerprint(options.fingerprintSecret, input, options.policy.revision);
+    const fingerprint = contentFingerprint(
+      options.fingerprintSecret,
+      input,
+      options.policy.revision,
+      parsedLanguageHints.data,
+    );
     const operationKey = `${input.identity.ownerId}\0${input.identity.machineId}\0${input.identity.runtimeSlot}\0${input.requestId}`;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([input.signal, controller.signal, shutdownController.signal]);
+    const operationControllers = active.get(operationKey) ?? [];
+    operationControllers.push(controller);
+    active.set(operationKey, operationControllers);
+    const taskCompletion = Promise.withResolvers<void>();
+    activeTasks.add(taskCompletion.promise);
     try {
       let admitted: SpeechOperationRecord;
       try {
@@ -283,7 +305,7 @@ export function createPlatformSpeechService(options: {
         throw error;
       }
       if (admitted.cancellationRequested) throw new SpeechServiceError("cancelled");
-      if (input.signal.aborted) {
+      if (signal.aborted) {
         await options.operations.cancel(input.identity, parsedRequestId.data, (trx, reservationId) => (
           options.funding.release(trx, reservationId)
         ));
@@ -309,19 +331,16 @@ export function createPlatformSpeechService(options: {
         if (cancellationFailure) throw cancellationFailure.error;
         return true;
       };
-      input.signal.addEventListener("abort", requestCancellation, { once: true });
+      signal.addEventListener("abort", requestCancellation, { once: true });
       try {
         const claim = await options.operations.claimDispatch(input.identity, parsedRequestId.data);
-        const cancelledAfterClaim = await persistCancellationIfAborted(input.signal);
+        const cancelledAfterClaim = await persistCancellationIfAborted(signal);
         if (!claim.claimed) {
           if (cancelledAfterClaim || claim.operation.cancellationRequested) {
             throw new SpeechServiceError("cancelled");
           }
           throw new SpeechServiceError("result_not_replayable");
         }
-        const controller = new AbortController();
-        active.set(operationKey, controller);
-        const signal = AbortSignal.any([input.signal, controller.signal]);
         try {
           const beforeDispatch = await options.operations.get(input.identity, parsedRequestId.data);
           if (!beforeDispatch || beforeDispatch.cancellationRequested
@@ -332,7 +351,7 @@ export function createPlatformSpeechService(options: {
           const result = await options.adapter.transcribe({
             audio: input.audio,
             mediaType: parsedMediaType.data,
-            languageHints: input.languageHints,
+            languageHints: parsedLanguageHints.data.length > 0 ? parsedLanguageHints.data : undefined,
             signal,
           });
           if (await persistCancellationIfAborted(signal)) throw new SpeechServiceError("cancelled");
@@ -393,14 +412,17 @@ export function createPlatformSpeechService(options: {
           if (cancelled) throw new SpeechServiceError("cancelled");
           if (timedOut) throw new SpeechServiceError("timeout");
           throw new SpeechServiceError("transcription_failed");
-        } finally {
-          active.delete(operationKey);
         }
       } finally {
-        input.signal.removeEventListener("abort", requestCancellation);
+        signal.removeEventListener("abort", requestCancellation);
       }
     } finally {
+      const remainingControllers = (active.get(operationKey) ?? []).filter((entry) => entry !== controller);
+      if (remainingControllers.length > 0) active.set(operationKey, remainingControllers);
+      else active.delete(operationKey);
       activeSlots -= 1;
+      activeTasks.delete(taskCompletion.promise);
+      taskCompletion.resolve();
     }
   }
 
@@ -420,16 +442,39 @@ export function createPlatformSpeechService(options: {
       throw error;
     }
     const operationKey = `${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}\0${requestId}`;
-    active.get(operationKey)?.abort();
+    for (const controller of active.get(operationKey) ?? []) controller.abort();
     return cancellation(operation);
   }
 
-  async function shutdown(): Promise<void> {
+  function shutdown(): Promise<void> {
+    if (shutdownPromise) return shutdownPromise;
     shuttingDown = true;
     clearInterval(cleanupTimer);
-    for (const controller of active.values()) controller.abort();
-    active.clear();
-    await cleanupPromise;
+    shutdownController.abort();
+    for (const controllers of active.values()) {
+      for (const controller of controllers) controller.abort();
+    }
+    const pending = [...activeTasks, ...(cleanupPromise ? [cleanupPromise] : [])];
+    if (pending.length === 0) {
+      shutdownPromise = Promise.resolve();
+      return shutdownPromise;
+    }
+    shutdownPromise = new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve();
+      };
+      const timeout = setTimeout(() => {
+        console.warn("[platform-speech] shutdown drain timed out");
+        finish();
+      }, shutdownDrainTimeoutMs);
+      timeout.unref();
+      void Promise.all(pending).then(finish);
+    });
+    return shutdownPromise;
   }
 
   return { capabilities, transcribe, status, cancel, shutdown };
