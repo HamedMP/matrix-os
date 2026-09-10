@@ -191,7 +191,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     try {
       const accepted = CollaborationAiRequestAcceptedResponseSchema.parse(await api.post(`${endpoint}/requests`, {
         clientRequestId: crypto.randomUUID(),
-        expectedRevision: scope.revision,
+        expectedRevision: latestResourceRevision.current,
         text: draft.text.trim(),
         selection: state.defaultSelection,
       }));

@@ -136,11 +136,15 @@ describe("native shared Chat screen", () => {
   });
 
   it("keeps a failed AI draft and shows the accepted ordered queue", async () => {
+    const aiScope = { ...(await mockFetchScope()), revision: "9" };
+    const aiChat = { ...(await mockFetchChat()), revision: "4" };
     mockFetchInbox.mockResolvedValue({ items: [] });
     mockFetchShared.mockResolvedValue({ items: [{
       scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
-      status: "accepted", resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+      status: "accepted", resource: { scope: aiScope, chat: aiChat },
     }] });
+    mockFetchScope.mockResolvedValue(aiScope);
+    mockFetchChat.mockResolvedValue(aiChat);
     mockPostAiRequest.mockRejectedValueOnce(new Error("offline"));
 
     render(<SharedScreen />);
@@ -153,7 +157,7 @@ describe("native shared Chat screen", () => {
 
     fireEvent.press(screen.getByLabelText("Request AI"));
     await waitFor(() => expect(mockPostAiRequest).toHaveBeenLastCalledWith(
-      "clerk-token", scopeId, "1", "Summarize",
+      "clerk-token", scopeId, "4", "Summarize",
       { instanceId: "claude_shared", model: "claude-opus-4-6" }, expect.any(String),
     ));
     expect(await screen.findByText("1 · Ada")).toBeTruthy();

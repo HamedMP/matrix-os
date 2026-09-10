@@ -71,7 +71,7 @@ describe("shared Chat AI controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Request AI" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scopeId}/chat/requests`,
-      expect.objectContaining({ expectedRevision: "1", text: "Summarize decisions", selection: defaultSelection }),
+      expect.objectContaining({ expectedRevision: "4", text: "Summarize decisions", selection: defaultSelection }),
     ));
     await waitFor(() => expect(updateDraft).toHaveBeenCalledWith("", "ai"));
     fireEvent.click(screen.getByRole("button", { name: "Cancel request 1" }));

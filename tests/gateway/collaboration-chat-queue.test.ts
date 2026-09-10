@@ -105,12 +105,14 @@ describe("shared Chat canonical queue", () => {
     })).rejects.toMatchObject({ code: "conflict" });
   });
 
-  it("rejects a stale scope revision before accepting shared work", async () => {
-    await expect(repository.enqueueSharedQueuedTurn(owner, {
-      ...request(14, collaborationActors.editor),
-      expectedRevision: 2,
-    })).rejects.toMatchObject({ code: "conflict" });
-    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat)).resolves.toEqual([]);
+  it("does not conflate the scope revision with the canonical Chat revision", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ revision: 2, updated_at: now })
+      .where("id", "=", collaborationIds.scope).execute();
+
+    await expect(repository.enqueueSharedQueuedTurn(
+      owner,
+      request(14, collaborationActors.editor, 1),
+    )).resolves.toMatchObject({ acceptedSequence: 1, resourceRevision: 2 });
   });
 
   it("allows 32 pending requests and rejects the thirty-third without consuming order", async () => {
@@ -179,8 +181,9 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
 
   it("enforces the 32-pending ceiling under simultaneous admission", async () => {
     const results = await Promise.allSettled(Array.from({ length: 33 }, (_value, index) =>
-      repository.enqueueSharedQueuedTurn(
-        owner,
+      enqueueAfterConflict(
+        repository,
+        fixture,
         request(index + 1, index % 2 === 0 ? collaborationActors.owner : collaborationActors.editor),
       )));
 
@@ -197,9 +200,9 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
 
   it("serializes actor-scoped idempotency without conflating two actors", async () => {
     const [first, replay, otherActor] = await Promise.all([
-      repository.enqueueSharedQueuedTurn(owner, request(40, collaborationActors.owner)),
-      repository.enqueueSharedQueuedTurn(owner, request(40, collaborationActors.owner)),
-      repository.enqueueSharedQueuedTurn(owner, request(40, collaborationActors.editor)),
+      enqueueAfterConflict(repository, fixture, request(40, collaborationActors.owner)),
+      enqueueAfterConflict(repository, fixture, request(40, collaborationActors.owner)),
+      enqueueAfterConflict(repository, fixture, request(40, collaborationActors.editor)),
     ]);
 
     expect([first.alreadyAccepted, replay.alreadyAccepted].sort()).toEqual([false, true]);

@@ -509,7 +509,7 @@ export default function SharedScreen() {
     dispatch({ type: "patch", patch: { sending: true, aiError: "" } });
     try {
       const accepted = await postSharedAiRequest(
-        await token(), requestScopeId, scope.revision, state.aiDraft.trim(), state.defaultSelection, randomUuid(),
+        await token(), requestScopeId, chat.revision, state.aiDraft.trim(), state.defaultSelection, randomUuid(),
       );
       await saveCollaborationDraft(AsyncStorage, {
         actorId: userId, scopeId: requestScopeId, chatId: requestChatId, mode: "ai", text: "",
