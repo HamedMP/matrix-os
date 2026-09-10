@@ -125,8 +125,22 @@ export function createClaudeModelCatalogSource(options: {
       return value;
     };
     const request = Promise.race([Promise.resolve().then(load), deadline])
-      .catch((_error: unknown) => {
-        console.warn("[chat-providers] Claude model discovery unavailable");
+      .catch((error: unknown) => {
+        if (!(error instanceof Error) || error instanceof TypeError
+          || error instanceof ReferenceError || error instanceof RangeError) {
+          console.error("[chat-providers] Unexpected Claude model discovery failure", {
+            category: error instanceof Error ? "programming_error" : "non_error_throw",
+          });
+          // Do not disguise programming failures as cached discovery outages.
+          // The catalog orchestration boundary still normalizes client errors.
+          throw error;
+        }
+        const category = controller.signal.aborted ? "timeout"
+          : error instanceof z.ZodError || error instanceof SyntaxError ? "invalid_metadata"
+            : "discovery_failed";
+        // Metadata/SDK errors may contain owner credentials or native output.
+        // Log only the checked category, never raw error messages or objects.
+        console.warn("[chat-providers] Claude model discovery unavailable", { category });
         const value = hit && hit.staleAt > Date.now() ? hit.value : null;
         if (contextKey) save({ contextKey, value,
           expiresAt: value ? Math.min(Date.now() + 5_000, hit!.staleAt) : Date.now() + 5_000,
