@@ -20,7 +20,6 @@ import {
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
-import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
@@ -107,7 +106,6 @@ import {
   generateIconBatch,
   createUsageTracker,
   createMemoryStore,
-  loadSkills,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import {
@@ -147,10 +145,7 @@ import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/pro
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
-import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
-import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
-import { createRuntimeClaudeModelCatalogSource } from "./chat/claude-runtime-model-catalog.js";
-import { createNativeCodingModelCatalogSource } from "./chat/native-coding-model-catalog.js";
+import { createGatewayChatProviderCatalog } from "./chat/runtime-provider-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import {
   closeCanonicalChatEventLifecycle,
@@ -4297,17 +4292,12 @@ export async function createGateway(config: GatewayConfig) {
       ? ["opencode" as const]
       : []),
   ];
-  const codexModelCatalogSource = codexExecutable
-    ? createCodexModelCatalogSource({ executable: codexExecutable, cwd: homePath })
-    : undefined;
-  const nativeCodingModelCatalogSource = createNativeCodingModelCatalogSource({ homePath });
-  const resolveClaudeCredentialLaunch = () => buildKernelCredentialLaunch(
-    homePath, process.env, undefined, fundedCredentialProvider,
-  );
-  const claudeModelCatalogSource = createRuntimeClaudeModelCatalogSource({
-    homePath, resolveCredentialLaunch: resolveClaudeCredentialLaunch,
-  });
-  const canonicalChatProviderCatalog = createChatProviderCatalogService({
+  const {
+    catalog: canonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+  } = createGatewayChatProviderCatalog({
+    homePath,
+    codexExecutable,
+    fundedCredentialProvider,
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
     systemRuntimeSources: agentRuntimeServices.systemRuntimeSources,
@@ -4315,14 +4305,6 @@ export async function createGateway(config: GatewayConfig) {
     harnessSettingsSource: providerSettingsStore,
     executableDriverKinds: canonicalExecutableDriverKinds,
     credentialedDriverKinds: ["pi", "opencode"],
-    skillsSource: () => loadSkills(homePath),
-    invalidateCodingModelCatalog: claudeModelCatalogSource.invalidate,
-    codingModelCatalogSource: async (provider, principal) => {
-      const claudeModels = await claudeModelCatalogSource(provider, principal);
-      if (claudeModels) return claudeModels;
-      const codexModels = await codexModelCatalogSource?.(provider);
-      return codexModels ?? nativeCodingModelCatalogSource(provider);
-    },
   });
   if (chatRepository) {
     canonicalChatExecutionRoots = createChatExecutionRootResolver({
