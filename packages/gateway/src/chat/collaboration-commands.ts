@@ -18,6 +18,7 @@ const RequestIdSchema = CollaborationIdSchema;
 const HashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const MAX_SHARED_PENDING = 32;
 const MAX_APPROVAL_RECONCILIATION_BATCH = 64;
+const ACCEPTED_APPROVAL_STALE_MS = 30_000;
 
 export class CollaborationChatCommandError extends Error {
   constructor(readonly code: "capacity" | "conflict" | "forbidden" | "not_found" | "unavailable") {
@@ -184,6 +185,7 @@ export class CollaborationChatCommands {
     const decision = CanonicalChatApprovalDecisionSchema.parse(input.decision);
     const runId = z.string().min(1).max(128).parse(input.runId);
     const approvalId = z.string().min(1).max(128).parse(input.approvalId);
+    await this.reconcileApprovalReplay(identity);
     const reserved = await this.options.db.transaction().execute(async (trx) => {
       const authorized = await authorizeCommand(trx, identity, "approval", undefined, this.now());
       if (authorized.role !== "owner") throw new CollaborationChatCommandError("forbidden");
@@ -236,20 +238,21 @@ export class CollaborationChatCommands {
 
   async reconcilePendingApprovals(limit = MAX_APPROVAL_RECONCILIATION_BATCH): Promise<number> {
     const boundedLimit = z.number().int().min(1).max(MAX_APPROVAL_RECONCILIATION_BATCH).parse(limit);
+    const acceptedBefore = new Date(this.now().getTime() - ACCEPTED_APPROVAL_STALE_MS).toISOString();
     const commands = await this.options.db.selectFrom("chat_collaboration_commands")
       .selectAll()
       .where("kind", "=", "approval")
-      .where("state", "in", ["accepted", "reconciling"])
+      .where((eb) => eb.or([
+        eb("state", "=", "reconciling"),
+        eb.and([eb("state", "=", "accepted"), eb("updated_at", "<=", acceptedBefore)]),
+      ]))
       .orderBy("created_at", "asc")
       .limit(boundedLimit)
       .execute();
     let reconciled = 0;
     for (const command of commands) {
       try {
-        const inferred = await canonicalApprovalOutcome(this.options.db, command);
-        const outcome = inferred ?? await this.reconcileUnknownApproval(command);
-        if (!outcome) continue;
-        if (await this.settleReconciledApproval(command.id, outcome)) reconciled += 1;
+        if (await this.reconcileApprovalCommand(command)) reconciled += 1;
       } catch (error: unknown) {
         console.warn(
           "[chat/collaboration-commands] approval reconciliation deferred",
@@ -258,6 +261,33 @@ export class CollaborationChatCommands {
       }
     }
     return reconciled;
+  }
+
+  private async reconcileApprovalReplay(identity: CommandIdentity): Promise<void> {
+    const command = await this.options.db.selectFrom("chat_collaboration_commands").selectAll()
+      .where("scope_id", "=", identity.scopeId)
+      .where("actor_id", "=", identity.actorId)
+      .where("client_request_id", "=", identity.clientRequestId)
+      .where("kind", "=", "approval")
+      .executeTakeFirst();
+    if (command?.state !== "reconciling") return;
+    try {
+      await this.reconcileApprovalCommand(command);
+    } catch (error: unknown) {
+      console.warn(
+        "[chat/collaboration-commands] approval replay reconciliation deferred",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
+  }
+
+  private async reconcileApprovalCommand(
+    command: Selectable<ChatCollaborationCommandsTable>,
+  ): Promise<boolean> {
+    const inferred = await canonicalApprovalOutcome(this.options.db, command);
+    const outcome = inferred ?? await this.reconcileUnknownApproval(command);
+    if (!outcome) return false;
+    return this.settleReconciledApproval(command.id, outcome);
   }
 
   private async reconcileUnknownApproval(
@@ -326,17 +356,11 @@ async function canonicalApprovalOutcome(
     .where("chat_id", "=", command.chat_id)
     .executeTakeFirst();
   if (!run) return "failed";
-  const events = await db.selectFrom("chat_run_events").select("event")
+  const outcome = await db.selectFrom("chat_approval_outcomes").select("decision")
     .where("run_id", "=", command.run_id)
-    .orderBy("run_seq", "desc")
-    .limit(256)
-    .execute();
-  for (const row of events) {
-    const event = parseJson(row.event) as { type?: unknown; approvalId?: unknown };
-    if (event.type === "approval.resolved" && event.approvalId === command.approval_id) {
-      return "completed";
-    }
-  }
+    .where("approval_id", "=", command.approval_id)
+    .executeTakeFirst();
+  if (outcome) return outcome.decision === command.decision ? "completed" : "failed";
   if (["completed", "failed", "aborted"].includes(run.status)) return "failed";
   return null;
 }

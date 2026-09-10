@@ -68,6 +68,10 @@ function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
       && ["completed", "failed", "aborted"].includes(activity.status));
 }
 
+function isRetentionProtectedActivity(activity: CanonicalChatRunActivity): boolean {
+  return isTerminalActivity(activity);
+}
+
 function railTransitionForActivity(activity: CanonicalChatRunActivity): {
   runStatus: "running" | "waiting_for_approval" | "waiting_for_input";
   attention: "none" | "approval_required" | "input_required";
@@ -359,7 +363,7 @@ export class ChatRunLifecycleRepository {
           .execute();
         const evictedIds = candidates.flatMap((row) => {
           const persisted = CanonicalChatRunActivitySchema.safeParse(row.event);
-          return persisted.success && !isTerminalActivity(persisted.data) ? [row.id] : [];
+          return persisted.success && !isRetentionProtectedActivity(persisted.data) ? [row.id] : [];
         }).slice(0, overflow);
         if (evictedIds.length !== overflow) {
           throw new ChatConflictError(chatId, Number(current.revision));
@@ -381,6 +385,14 @@ export class ChatRunLifecycleRepository {
           const row = existingById.get(activity.id);
           if (!row) throw new ChatConflictError(chatId, Number(current.revision));
           const persisted = CanonicalChatRunActivitySchema.parse(row.event);
+          if (activity.type === "approval.resolved") {
+            if (persisted.type !== "approval.resolved"
+              || persisted.approvalId !== activity.approvalId
+              || persisted.decision !== activity.decision) {
+              throw new ChatConflictError(chatId, Number(current.revision));
+            }
+            await persistApprovalOutcome(trx, persisted, Number(current.revision));
+          }
           if (persisted.type !== "agent.activity" || activity.type !== "agent.activity") continue;
           if (!canTransitionAgentActivity(persisted, activity)) {
             throw new ChatConflictError(chatId, Number(current.revision));
@@ -413,6 +425,9 @@ export class ChatRunLifecycleRepository {
           occurred_at: sequenced.occurredAt,
         }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
         if (row) {
+          if (sequenced.type === "approval.resolved") {
+            await persistApprovalOutcome(trx, sequenced, Number(current.revision));
+          }
           changed += 1;
           railTransition = railTransitionForActivity(sequenced) ?? railTransition;
           if (sequenced.type === "terminal.bound") {
@@ -679,5 +694,28 @@ export class ChatRunLifecycleRepository {
       });
       return { run: toRun(updated), transitioned: true };
     });
+  }
+}
+
+async function persistApprovalOutcome(
+  trx: Executor,
+  activity: Extract<CanonicalChatRunActivity, { type: "approval.resolved" }>,
+  latestRevision: number,
+): Promise<void> {
+  await trx.insertInto("chat_approval_outcomes").values({
+    run_id: activity.runId,
+    approval_id: activity.approvalId,
+    chat_id: activity.chatId,
+    decision: activity.decision,
+    activity_id: activity.id,
+    resolved_at: activity.occurredAt,
+  }).onConflict((conflict) => conflict.columns(["run_id", "approval_id"]).doNothing()).execute();
+  const outcome = await trx.selectFrom("chat_approval_outcomes")
+    .select(["chat_id", "decision"])
+    .where("run_id", "=", activity.runId)
+    .where("approval_id", "=", activity.approvalId)
+    .executeTakeFirstOrThrow();
+  if (outcome.chat_id !== activity.chatId || outcome.decision !== activity.decision) {
+    throw new ChatConflictError(activity.chatId, latestRevision);
   }
 }
