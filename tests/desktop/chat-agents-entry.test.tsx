@@ -1,65 +1,79 @@
 // @vitest-environment jsdom
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatAgentsEntry } from "../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ChatAgentsEntry as AgentsLauncher } from "../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
+import { ChatAgentsWorkspace } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
+import { ChatAgentsContent } from "../../packages/ui/src/chat-agents/ChatAgentsContent.js";
 import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
+import { saved, recipeCatalog, clientFixture } from "./chat-agents-fixture";
 
-const saved = { id: "bot_meeting01", revision: 1, name: "Meeting helper", description: "Prepare meetings",
-  instructions: "Summarize decisions.", selection: { instanceId: "hermes_default", model: "openai:gpt-5.6-sol" },
-  archived: false, createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z" };
-const recipeCatalog = {
-  enabled: true,
-  skills: [
-    { id: "matrix-integrations" as const, name: "Matrix integrations", description: "Use connected Matrix integrations." },
-    { id: "matrix-personal-daily-brief" as const, name: "Personal Daily Brief", description: "Prepare a source-backed daily brief." },
-  ],
-  services: [
-    { id: "gmail", name: "Gmail" },
-    { id: "google_calendar", name: "Google Calendar" },
-  ],
-};
-const connections = [
-  { service: "gmail", account_label: "Work", account_email: "work@example.test", status: "active" },
-  { service: "gmail", account_label: "Personal", account_email: "personal@example.test", status: "active" },
-  { service: "google_calendar", account_label: "Calendar", account_email: "calendar@example.test", status: "active" },
-];
-function clientFixture() {
-  const catalog = createCanonicalProviderCatalogFixture();
-  catalog.instances.push({ ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes",
-    models: [{ ...catalog.instances[0]!.models[0]!, id: saved.selection.model }],
-  });
-  const client = {
-    list: vi.fn(async () => ({ enabled: true, agents: [] })),
-    catalog: vi.fn(async () => catalog),
-    recipeCatalog: vi.fn(async () => recipeCatalog),
-    integrations: vi.fn(async () => connections),
-    create: vi.fn(async (input) => ({ ...saved, name: input.name, description: input.description,
-      instructions: input.instructions, selection: input.selection, ...(input.recipe ? { recipe: input.recipe } : {}) })),
-    update: vi.fn(async (_id, input) => ({ ...saved, revision: 2,
-      ...(input.name === undefined ? {} : { name: input.name }),
-      ...(input.description === undefined ? {} : { description: input.description }),
-      ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-      ...(input.selection === undefined ? {} : { selection: input.selection }),
-      ...(input.recipe === undefined ? {} : input.recipe === null ? {} : { recipe: input.recipe }),
-    })),
-    search: vi.fn(async () => ({ enabled: true, resources: [] })), preview: vi.fn(),
-  } satisfies ChatAgentClient;
-  return client;
+function ChatAgentsEntry({ client, scopeKey = "chat_one" }: { client: ChatAgentClient; scopeKey?: string }) {
+  return <ChatAgentsWorkspace>
+    <aside><AgentsLauncher client={client} /></aside>
+    <main><ChatAgentsContent client={client} scopeKey={scopeKey}>
+      <textarea aria-label="Chat draft" defaultValue="Original draft" />
+    </ChatAgentsContent></main>
+  </ChatAgentsWorkspace>;
 }
-beforeEach(() => {
-  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
-  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
-});
 afterEach(cleanup);
 
 describe("shared Agents entry", () => {
-  it("keeps the Agents dialog and editor controls styled with native Web tokens", async () => {
+  it("replaces only the main pane and restores the same Chat draft and keyboard focus", async () => {
+    render(<ChatAgentsEntry client={clientFixture()} />);
+    const draft = screen.getByRole("textbox", { name: "Chat draft" });
+    fireEvent.change(draft, { target: { value: "Keep this unsent text" } });
+    const launcher = await screen.findByRole("button", { name: "Agents" });
+    fireEvent.click(launcher);
+    expect(screen.queryByRole("textbox", { name: "Chat draft" })).toBeNull();
+    expect(draft.isConnected).toBe(true);
+    expect(screen.getByRole("region", { name: "Agents" }).closest("main")).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Unsent Agent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Back to Chat" }));
+    expect(screen.getByRole("textbox", { name: "Chat draft" })).toBe(draft);
+    expect((draft as HTMLTextAreaElement).value).toBe("Keep this unsent text");
+    expect(document.activeElement).toBe(launcher);
+  });
+
+  it("leaves Agents when the host navigates to another Chat", async () => {
+    const client = clientFixture();
+    const view = render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    await screen.findByRole("button", { name: "New Agent" });
+    view.rerender(<ChatAgentsEntry client={client} scopeKey="chat_two" />);
+    expect(screen.queryByRole("region", { name: "Agents" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Chat draft" })).toBeTruthy();
+  });
+
+  it("does not display the old account's Agent editor after a runtime switch", async () => {
+    const client = clientFixture();
+    const view = render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Private draft" } });
+    view.rerender(<ChatAgentsEntry client={clientFixture()} />);
+    expect(screen.queryByRole("region", { name: "Agents" })).toBeNull();
+    expect(screen.queryByDisplayValue("Private draft")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe("");
+  });
+  it("opens Agents as page content without a modal", async () => {
+    render(<ChatAgentsEntry client={clientFixture()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    await screen.findByRole("button", { name: "New Agent" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("region", { name: "Agents" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to Chat" })).toBeTruthy();
+  });
+  it("keeps the Agents page and editor controls styled with native Web tokens", async () => {
     const client = clientFixture();
     render(<ChatAgentsEntry client={client} />);
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
-    const content = screen.getByLabelText("Agents").firstElementChild as HTMLDivElement;
+    const content = screen.getByRole("region", { name: "Agents" });
     expect(content.style.background).toBe("var(--bg-surface, var(--matrix-card, var(--card)))");
     expect(content.style.color).toBe("var(--text-primary, var(--matrix-card-fg, var(--foreground)))");
     expect(content.style.border).toContain("var(--border-default, var(--matrix-border, var(--border)))");
@@ -132,7 +146,7 @@ describe("shared Agents entry", () => {
     await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
     expect(client.create.mock.calls[0]![0]).toMatchObject({ name: saved.name, instructions: saved.instructions, selection: saved.selection });
     expect(await screen.findByText(/@Meeting helper/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close Agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to Chat" }));
     expect(screen.getByRole("textbox", { name: "Existing draft" })).toBe(editor);
     expect((editor as HTMLTextAreaElement).value).toBe("Keep this original draft");
   });

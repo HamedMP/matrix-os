@@ -6,6 +6,7 @@ Status: implementation authorized by Yuhan on 2026-09-10. This supersedes the ea
 
 - Keep all existing Chat navigation, transcript, attachments, drafts, controls, Projects, Tasks, and streaming behavior.
 - Add an Agents entry using existing Chat navigation styling. Its panel creates, inspects, edits, and archives reusable Hermes roles; creating an Agent does not start a Run.
+- Agents occupies the main Chat content area instead of opening a modal. Keep the navigation rail available; on narrow Web screens, dismiss the rail after opening Agents. Back to Chat restores the same mounted conversation, draft, model and streamed updates. Selecting another Chat or a different runtime leaves Agent configuration. Recipe fields use the page's single scroll area.
 - Extend the existing `@` picker with two labelled kinds: Agents execute the selected saved role; Chats supply context from another authorized conversation.
 - One Agent and at most three referenced Chats per request. Selecting a suggestion does not send. Invocations are not sticky; the default Chat harness and model remain unchanged.
 - `MATRIX_CHAT_AGENTS_ENABLED=1` is the server feature switch, default off. The server advertises availability; UI and all admission paths use that truth. With it off, ordinary Chat behavior remains available and new references fail closed.

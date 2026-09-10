@@ -55,7 +55,7 @@ export function AgentRecipeEditor({ recipe, hadRecipe, catalog, connections, loa
   const catalogSkills = catalog?.skills ?? [];
   const missingSkillIds = recipe.skills.filter((id) => !catalogSkills.some((skill) => skill.id === id));
 
-  return <section className="grid max-h-96 gap-4 overflow-y-auto overscroll-contain rounded-xl border p-3" aria-labelledby={`${ids}-title`}>
+  return <section className="grid min-w-0 gap-4 rounded-xl border p-3" aria-labelledby={`${ids}-title`}>
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <h3 id={`${ids}-title`} className="text-sm font-medium">Recipe</h3>

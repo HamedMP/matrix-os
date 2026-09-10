@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { Dialog } from "../Dialog.js";
+import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { accountForNewIntegration } from "./recipe-integrations.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
@@ -62,10 +62,12 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
     </div>;
 }
 
-function AgentLibrary({ client, onClose, onSetup }: { client: ChatAgentClient; onClose(): void; onSetup?: () => void }) {
+export function ChatAgentsPanel({ client, onClose, onSetup }: { client: ChatAgentClient; onClose(): void; onSetup?: () => void }) {
+  const heading = useRef<HTMLHeadingElement>(null);
   const [state, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
     recipeCatalog: null, connections: [], recipeLoading: true, recipeError: "", connectionError: "" });
+  useEffect(() => { heading.current?.focus(); }, [state.editing]);
   const patch = (value: Partial<Library>) => setState((current) => ({ ...current, ...value }));
   useEffect(() => {
     let current = true;
@@ -164,26 +166,28 @@ function AgentLibrary({ client, onClose, onSetup }: { client: ChatAgentClient; o
       patch({ pending: false, error: "Agent could not be archived. Try again." });
     }
   };
-  return <Dialog open onClose={() => { if (!state.pending) onClose(); }} aria-label="Agents" className="ph-no-capture" style={{
-    ...chatAgentSurfaceStyle, boxSizing: "border-box", minWidth: 0, maxWidth: "600px", width: "min(92vw, 600px)",
-  }}>
-    <div className="flex items-center justify-between gap-3">
-      <h2 className="text-lg font-semibold">{state.editing === "new" ? "New Agent" : state.editing ? "Edit Agent" : "Agents"}</h2>
-      <button type="button" className={button} disabled={state.pending} onClick={onClose} aria-label="Close Agents">Close</button>
-    </div>
+  return <section aria-label="Agents" className="ph-no-capture flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={chatAgentSurfaceStyle}>
+    <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 sm:px-6">
+      <h2 ref={heading} tabIndex={-1} className="min-w-0 truncate text-lg font-semibold outline-none">{state.editing === "new" ? "New Agent" : state.editing ? "Edit Agent" : "Agents"}</h2>
+      <button type="button" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>Back to Chat</button>
+    </header>
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
+    <div className="mx-auto w-full max-w-3xl">
     <p className="mt-2 text-sm" style={muted}>Save a role and call it with @ in any Chat. Each request runs through Hermes on this computer.</p>
     <AgentLibraryBody state={state} models={models} edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
       setup={onSetup ? () => { onClose(); onSetup(); } : undefined} />
     {state.error ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
-  </Dialog>;
+    </div>
+    </div>
+  </section>;
 }
 
-export function ChatAgentsEntry({ client, onSetup, icon, className = "" }: {
-  client?: ChatAgentClient; onSetup?: () => void; icon?: ReactNode; className?: string;
+export function ChatAgentsEntry({ client, onSetup, onOpen, icon, className = "" }: {
+  client?: ChatAgentClient; onSetup?: () => void; onOpen?: () => void; icon?: ReactNode; className?: string;
 }) {
   const [availability, setAvailability] = useState<{ client: ChatAgentClient; enabled: boolean } | null>(null);
-  const [opened, setOpened] = useState<ChatAgentClient | null>(null);
+  const navigation = useChatAgentsNavigation();
   useEffect(() => {
     if (!client) return;
     let current = true;
@@ -197,9 +201,7 @@ export function ChatAgentsEntry({ client, onSetup, icon, className = "" }: {
     window.addEventListener("focus", refresh);
     return () => { current = false; window.removeEventListener("focus", refresh); };
   }, [client]);
-  if (!client || availability?.client !== client || !availability.enabled) return null;
-  return <>
-    <button type="button" className={`${chatAgentLauncherClass} ${className}`} style={chatAgentMutedStyle} onClick={() => setOpened(client)}>{icon}Agents</button>
-    {opened === client ? <AgentLibrary client={client} onSetup={onSetup} onClose={() => setOpened(null)} /> : null}
-  </>;
+  if (!navigation || !client || availability?.client !== client || !availability.enabled) return null;
+  return <button type="button" aria-pressed={navigation.opened?.client === client} className={`${chatAgentLauncherClass} aria-pressed:bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))] ${className}`} style={chatAgentMutedStyle}
+    onClick={(event) => { navigation.open({ client, onSetup }, event.currentTarget); onOpen?.(); }}>{icon}Agents</button>;
 }

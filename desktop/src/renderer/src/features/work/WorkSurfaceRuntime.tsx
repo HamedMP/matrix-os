@@ -1,4 +1,5 @@
 import { chatMessageVersionUrl } from "@matrix-os/contracts";
+import { ChatAgentsWorkspace } from "@matrix-os/ui";
 import {
   createCanonicalChatClient,
   createCanonicalChatEventSource,
@@ -88,7 +89,7 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
     () => ({ client, eventSource, projectedChatTitles, projectChat }),
     [client, eventSource, projectChat, projectedChatTitles],
   );
-  return <WorkSurfaceRuntimeContext.Provider value={value}>{children}</WorkSurfaceRuntimeContext.Provider>;
+  return <WorkSurfaceRuntimeContext.Provider value={value}><ChatAgentsWorkspace>{children}</ChatAgentsWorkspace></WorkSurfaceRuntimeContext.Provider>;
 }
 
 export function useWorkSurfaceRuntime(): WorkSurfaceRuntime | null {

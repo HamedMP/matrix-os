@@ -6,7 +6,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { ChatAgentsEntry, type ChatAgentClient } from "@matrix-os/ui";
+import { ChatAgentsEntry, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
@@ -170,14 +170,18 @@ function groupConversationsByTime(conversations: ConversationMeta[]) {
   return groups.filter((g) => g.items.length > 0);
 }
 
-export function ChatApp({
+export function ChatApp(props: ChatAppProps) {
+  return <ChatAgentsWorkspace><ChatAppContent {...props} /></ChatAgentsWorkspace>;
+}
+
+function ChatAppContent({
   messages,
   sessionId,
   busy,
   connected,
   conversations,
-  onNewChat,
-  onSwitchConversation,
+  onNewChat: createChat,
+  onSwitchConversation: switchConversation,
   activeConversationTitle,
   onRenameConversation,
   onSubmit,
@@ -190,6 +194,9 @@ export function ChatApp({
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
+  const agentsNavigation = useChatAgentsNavigation();
+  const onNewChat = () => { agentsNavigation?.close(); createChat(); };
+  const onSwitchConversation = (id: string) => { agentsNavigation?.close(); switchConversation(id); };
   const composer = useChatComposerDraft(sessionId ?? "new", agentClient);
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);
@@ -326,7 +333,7 @@ export function ChatApp({
           </Button>
         </div>
 
-        <div className="px-3 pb-2"><ChatAgentsEntry icon={<BotIcon className="size-4" />} client={agentClient} onSetup={() => setSetupOpen(true)} className="rounded-lg px-2 py-2 text-left text-sm hover:bg-accent" /></div>
+        <div className="px-3 pb-2"><ChatAgentsEntry icon={<BotIcon className="size-4" />} client={agentClient} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} className="rounded-lg px-2 py-2 text-left text-sm hover:bg-accent" /></div>
         {/* Search */}
         <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
@@ -354,7 +361,7 @@ export function ChatApp({
                   <RenameableConversationRow
                     key={conv.id}
                     conversation={conv}
-                    active={conv.id === sessionId}
+                    active={conv.id === sessionId && (!agentsNavigation?.opened || agentsNavigation.opened.client !== agentClient)}
                     mobile={mobile}
                     editing={editingChat?.source === "rail" && editingChat.id === conv.id}
                     renamePending={renamePending && editingChat?.id === conv.id}
@@ -386,6 +393,7 @@ export function ChatApp({
       </aside>
 
       {/* Main content */}
+      <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"}>
       <main className="flex flex-1 flex-col min-w-0">
         {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
         {/* Top bar */}
@@ -590,6 +598,7 @@ export function ChatApp({
         setPreviewFile(null);
         if (previewTrigger.current?.isConnected) previewTrigger.current.focus();
       }} /> : null}
+      </ChatAgentsContent>
     </div>
   );
 }
