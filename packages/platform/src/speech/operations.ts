@@ -164,6 +164,7 @@ export function createSpeechOperationsRepository(options: {
   maximumRequestAgeMs?: number;
   futureClockSkewMs?: number;
   metadataRetentionMs?: number;
+  activeOperationTtlMs?: number;
   maximumActiveOperations?: number;
   maximumActiveOperationsPerOwner?: number;
   maximumAdmissionsPerOwner?: number;
@@ -173,6 +174,7 @@ export function createSpeechOperationsRepository(options: {
   const maximumRequestAgeMs = options.maximumRequestAgeMs ?? 5 * 60_000;
   const futureClockSkewMs = options.futureClockSkewMs ?? 30_000;
   const metadataRetentionMs = options.metadataRetentionMs ?? 24 * 60 * 60_000;
+  const activeOperationTtlMs = options.activeOperationTtlMs ?? 2 * 60_000;
   const maximumActiveOperations = options.maximumActiveOperations ?? 16;
   const maximumActiveOperationsPerOwner = options.maximumActiveOperationsPerOwner
     ?? Math.min(2, maximumActiveOperations);
@@ -181,6 +183,8 @@ export function createSpeechOperationsRepository(options: {
   if (maximumRequestAgeMs < 60_000 || maximumRequestAgeMs > 24 * 60 * 60_000
     || futureClockSkewMs < 0 || futureClockSkewMs > 5 * 60_000
     || metadataRetentionMs < maximumRequestAgeMs || metadataRetentionMs > 30 * 24 * 60 * 60_000
+    || !Number.isSafeInteger(activeOperationTtlMs) || activeOperationTtlMs < 60_000
+    || activeOperationTtlMs > 10 * 60_000
     || !Number.isSafeInteger(maximumActiveOperations) || maximumActiveOperations < 1 || maximumActiveOperations > 1_000
     || !Number.isSafeInteger(maximumActiveOperationsPerOwner) || maximumActiveOperationsPerOwner < 1
     || maximumActiveOperationsPerOwner > maximumActiveOperations
@@ -247,15 +251,16 @@ export function createSpeechOperationsRepository(options: {
       }
       await sql`SELECT pg_advisory_xact_lock(hashtext('matrix-speech-admission'))`.execute(trx.executor);
       const activeStates: SpeechExecutionState[] = ["received", "reserved", "dispatching"];
+      const activeCutoff = new Date(checked.getTime() - activeOperationTtlMs).toISOString();
       const active = await trx.executor.selectFrom("speech_operations")
         .select(({ fn }) => fn.countAll<number>().as("count"))
         .where("execution_state", "in", activeStates)
-        .where("expires_at", ">", checkedAt).executeTakeFirstOrThrow();
+        .where("updated_at", ">", activeCutoff).executeTakeFirstOrThrow();
       const ownerActive = await trx.executor.selectFrom("speech_operations")
         .select(({ fn }) => fn.countAll<number>().as("count"))
         .where("owner_id", "=", admission.identity.ownerId)
         .where("execution_state", "in", activeStates)
-        .where("expires_at", ">", checkedAt).executeTakeFirstOrThrow();
+        .where("updated_at", ">", activeCutoff).executeTakeFirstOrThrow();
       const ownerAdmissions = await trx.executor.selectFrom("speech_operations")
         .select(({ fn }) => fn.countAll<number>().as("count"))
         .where("owner_id", "=", admission.identity.ownerId)

@@ -119,6 +119,25 @@ describe("speech operation repository", () => {
       .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
   });
 
+  it("evicts crashed active work from admission capacity before metadata expires", async () => {
+    let checked = now;
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => checked,
+      maximumActiveOperations: 1,
+      activeOperationTtlMs: 60_000,
+    });
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    checked = new Date(now.getTime() + 60_001);
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${checked.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_2", reservedMicrousd: 20 })))
+      .resolves.toMatchObject({ executionState: "reserved" });
+    expect(await db.executor.selectFrom("speech_operations").select("operation_id").execute()).toHaveLength(2);
+  });
+
   it("grants one durable dispatch claim rather than replaying a start receipt", async () => {
     const repo = repository();
     await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));

@@ -111,6 +111,9 @@ describe("platform speech service", () => {
       signal: new AbortController().signal,
     })).resolves.toMatchObject({ outcome: "transcript", text: "hello world", audioDurationMs: 1_000 });
     expect(funding.reserve).toHaveBeenCalledTimes(1);
+    expect(funding.reserve).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      modelId: "gpt-transcribe",
+    }));
     expect(funding.start).toHaveBeenCalledTimes(1);
     expect(adapter.transcribe).toHaveBeenCalledTimes(1);
     expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {

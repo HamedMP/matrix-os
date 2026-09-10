@@ -77,7 +77,7 @@ function commonConfig(env: NodeJS.ProcessEnv): Omit<EnabledSpeechConfigBase, "mi
       admissionWindowMs: 60_000,
     },
     limits: {
-      maxBytes: integer(env.PLATFORM_SPEECH_MAX_BYTES, 10 * 1024 * 1024, 44, 64 * 1024 * 1024),
+      maxBytes: integer(env.PLATFORM_SPEECH_MAX_BYTES, 10 * 1024 * 1024, 44, 10 * 1024 * 1024),
       maxDurationMs: integer(env.PLATFORM_SPEECH_MAX_DURATION_MS, 120_000, 1_000, 60 * 60_000),
       maxTranscriptChars: integer(env.PLATFORM_SPEECH_MAX_TRANSCRIPT_CHARS, 32_000, 1, 32_000),
     },

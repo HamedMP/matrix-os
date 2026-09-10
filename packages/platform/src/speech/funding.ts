@@ -23,6 +23,7 @@ const ReserveSchema = z.object({
   identity: IdentitySchema,
   requestId: ReferenceSchema,
   policyRevision: ReferenceSchema,
+  modelId: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
   maximumCostMicrousd: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 }).strict();
 const ReservationIdSchema = ReferenceSchema;
@@ -47,8 +48,8 @@ function utcMonthStart(at: Date): string {
   return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
 }
 
-function platformCredentialId(identity: z.output<typeof IdentitySchema>): string {
-  const digest = createHash("sha256")
+function platformCredentialId(identity: z.output<typeof IdentitySchema>, secret: string): string {
+  const digest = createHmac("sha256", secret)
     .update(`${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}`)
     .digest("hex")
     .slice(0, 48);
@@ -60,6 +61,7 @@ function payloadHash(input: z.output<typeof ReserveSchema>): string {
     identity: input.identity,
     requestId: input.requestId,
     policyRevision: input.policyRevision,
+    modelId: input.modelId,
     maximumCostMicrousd: input.maximumCostMicrousd,
   })).digest("hex");
 }
@@ -111,7 +113,7 @@ export function createAiFundedSpeechFundingPort(options: {
     identity: z.output<typeof IdentitySchema>,
     checkedAt: string,
   ): Promise<string> {
-    const tokenId = platformCredentialId(identity);
+    const tokenId = platformCredentialId(identity, options.credentialHashSecret);
     const tokenHash = createHmac("sha256", options.credentialHashSecret)
       .update(`${tokenId}\0${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}`)
       .digest("hex");
@@ -229,7 +231,7 @@ export function createAiFundedSpeechFundingPort(options: {
         owner_id: input.identity.ownerId,
         machine_id: input.identity.machineId,
         runtime_slot: input.identity.runtimeSlot,
-        model_id: ACTIVE_SPEECH_SCOPE,
+        model_id: input.modelId,
         reserved_microusd: input.maximumCostMicrousd,
         promotional_reserved_microusd: allocation.promotionalReservedMicrousd,
         addon_reserved_microusd: allocation.addonReservedMicrousd,
