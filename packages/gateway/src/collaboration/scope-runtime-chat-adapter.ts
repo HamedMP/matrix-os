@@ -38,6 +38,27 @@ export function createScopeRuntimeChatProviderAdapter(options: {
 }): CanonicalChatProviderAdapter<State> {
   const scopeHandle = `scope_${options.scopeId.replaceAll("-", "")}`;
   if (!/^scope_[a-f0-9]{32}$/.test(scopeHandle)) throw new Error("Invalid collaboration scope handle");
+  let stoppedRuntimeHandle: string | undefined;
+  let stopInFlight: Promise<void> | undefined;
+  const stop = async (state: State | undefined): Promise<void> => {
+    if (!state || stoppedRuntimeHandle === state.runtimeHandle) {
+      await stopInFlight;
+      return;
+    }
+    if (stopInFlight) {
+      await stopInFlight;
+      if (stoppedRuntimeHandle === state.runtimeHandle) return;
+    }
+    const operation = options.client.stopRuntime({ runtimeHandle: state.runtimeHandle }).then(() => {
+      stoppedRuntimeHandle = state.runtimeHandle;
+    });
+    stopInFlight = operation;
+    try {
+      await operation;
+    } finally {
+      if (stopInFlight === operation) stopInFlight = undefined;
+    }
+  };
 
   return {
     driverKind: "claude_code" satisfies CanonicalProviderDriverKind,
@@ -57,15 +78,9 @@ export function createScopeRuntimeChatProviderAdapter(options: {
         return;
       }
       let state: State | undefined;
-      let stopped = false;
       let stage: "create" | "state" | "inference" | "projection" = "create";
-      const stop = async () => {
-        if (!state || stopped) return;
-        stopped = true;
-        await options.client.stopRuntime({ runtimeHandle: state.runtimeHandle });
-      };
       const abort = () => {
-        void stop().catch((error: unknown) => {
+        void stop(state).catch((error: unknown) => {
           console.warn("[collaboration] scope runtime cancellation failed",
             error instanceof Error ? error.name : "UnknownError");
         });
@@ -79,8 +94,10 @@ export function createScopeRuntimeChatProviderAdapter(options: {
           harnessVersion: options.harnessVersion,
         });
         if (created.executionGeneration !== options.executionGeneration) {
-          await options.client.stopRuntime({ runtimeHandle: created.runtimeHandle });
-          stopped = true;
+          await stop(StateSchema.parse({
+            runtimeHandle: created.runtimeHandle,
+            executionGeneration: created.executionGeneration,
+          }));
           yield failure("Shared AI is temporarily unavailable.");
           return;
         }
@@ -91,7 +108,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
         });
         yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state });
         if (input.signal.aborted) {
-          await stop();
+          await stop(state);
           yield CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "aborted" });
           return;
         }
@@ -122,7 +139,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
       } finally {
         input.signal.removeEventListener("abort", abort);
         try {
-          await stop();
+          await stop(state);
         } catch (error: unknown) {
           input.onCleanupUnconfirmed?.();
           console.warn("[collaboration] isolated Chat cleanup unconfirmed",
@@ -133,7 +150,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
     async cancel(input) {
       if (!input.state) return;
       const state = StateSchema.parse(input.state);
-      await options.client.stopRuntime({ runtimeHandle: state.runtimeHandle });
+      await stop(state);
     },
   };
 }

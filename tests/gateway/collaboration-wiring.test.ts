@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -177,6 +177,47 @@ describe("gateway collaboration wiring", () => {
             profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
           },
         });
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps collaboration available with M2 disabled when the broker socket cannot start", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-broker-failure-"));
+    const supervisorSocket = join(temp, "supervisor.sock");
+    const brokerSocket = join(temp, "broker.sock");
+    const supervisor = await startSupervisor(supervisorSocket);
+    await writeFile(brokerSocket, "unsafe non-socket path", { flag: "wx" });
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedChat(fixture);
+    const runtime = await createGatewayCollaboration({
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    try {
+      await expect(runtime.enableSharedAi({
+        orchestrator: {} as unknown as CanonicalChatOrchestrator,
+        homePath: temp,
+        supervisorSocket,
+        brokerSocket,
+      })).resolves.toEqual({ available: false });
+      await expect(fixture.db.selectFrom("collaboration_scopes")
+        .select(["execution_generation", "execution_eligibility"])
+        .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow())
+        .resolves.toMatchObject({ execution_generation: null, execution_eligibility: null });
     } finally {
       await runtime.shutdown();
       await new Promise<void>((resolve) => supervisor.close(() => resolve()));
