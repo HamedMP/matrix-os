@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestSchema,
+  CollaborationApprovalSchema,
   CollaborationCreateAiRequestSchema,
+  type CollaborationAiRequestAcceptedResponse,
   type CollaborationAiRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -39,7 +42,8 @@ export class CollaborationChatExecutionAdapter {
   private readonly createQueuedTurnId: () => string;
 
   constructor(private readonly options: {
-    repository: Pick<ChatRepository, "enqueueSharedQueuedTurn" | "listSharedQueuedTurns">;
+    repository: Pick<ChatRepository,
+      "enqueueSharedQueuedTurn" | "listSharedQueuedTurns" | "listSharedPendingApprovals">;
     commands: Pick<CollaborationChatCommands, "cancel" | "retry" | "decideApproval">;
     resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
     resolveEligibility(scopeId: string): Promise<unknown>;
@@ -53,13 +57,34 @@ export class CollaborationChatExecutionAdapter {
       ?? (() => `qturn_${randomUUID().replaceAll("-", "")}`);
   }
 
-  capability() {
+  async capability(
+    context: AuthorizedCollaborationContext,
+    requests: readonly CollaborationAiRequest[],
+  ) {
+    requireChatContext(context, "read");
+    const pending = await this.options.repository.listSharedPendingApprovals(
+      ownerFor(context), context.resourceId, context.scopeId,
+    );
+    const approvals = pending.flatMap((approval) => {
+      const request = requests.find((candidate) => candidate.id === approval.requestId
+        && candidate.runId === approval.runId);
+      if (!request) return [];
+      return [CollaborationApprovalSchema.parse({
+        approvalId: approval.approvalId,
+        runId: approval.runId,
+        requestId: request.id,
+        title: approval.title,
+        risk: approval.risk,
+        allowedDecisions: approval.allowedDecisions,
+        state: "pending",
+      })];
+    }).slice(0, 100);
     return {
       defaultSelection: {
         instanceId: "claude_shared",
         model: "claude-opus-4-6",
       },
-      approvals: [],
+      approvals,
     };
   }
 
@@ -72,7 +97,7 @@ export class CollaborationChatExecutionAdapter {
   async submit(
     context: AuthorizedCollaborationContext,
     inputValue: unknown,
-  ): Promise<CollaborationAiRequest> {
+  ): Promise<CollaborationAiRequestAcceptedResponse> {
     requireChatContext(context, "request_ai");
     const input = CollaborationCreateAiRequestSchema.parse(inputValue);
     const eligibility = ScopeEligibilitySchema.parse(await this.options.resolveEligibility(context.scopeId));
@@ -109,7 +134,10 @@ export class CollaborationChatExecutionAdapter {
     });
     await this.notify(context.scopeId);
     if (!queued.alreadyAccepted) this.kickDispatch(context.scopeId, context.resourceId);
-    return this.project(queued);
+    return CollaborationAiRequestAcceptedResponseSchema.parse({
+      request: await this.project(queued),
+      resourceRevision: String(queued.resourceRevision),
+    });
   }
 
   async cancel(

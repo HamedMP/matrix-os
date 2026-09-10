@@ -256,10 +256,13 @@ describe("collaboration gateway routes", () => {
     });
     expect(admitted.status).toBe(201);
     expect(await admitted.json()).toMatchObject({
-      id: "qturn_shared_route_1",
-      acceptedSequence: "1",
-      actor: { actorId: collaborationActors.owner, displayName: "Nima Owner" },
-      state: "queued",
+      resourceRevision: "3",
+      request: {
+        id: "qturn_shared_route_1",
+        acceptedSequence: "1",
+        actor: { actorId: collaborationActors.owner, displayName: "Nima Owner" },
+        state: "queued",
+      },
     });
     const listed = await signedJson({
       actorId: collaborationActors.owner,

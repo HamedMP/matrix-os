@@ -1,6 +1,6 @@
 # Implementation and Internal Acceptance Guide
 
-This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented in the Graphite review stack #1571–#1578, topped by `codex/collaboration-chat-validation`; the review layers remain one PR1 product milestone and exist only to satisfy repository size limits. PR2's isolated execution foundation is merged and dormant. PR3/M2 is implemented locally on `codex/collaboration-shared-ai-queue`, but has not been deployed, enabled for a cohort, or validated on a production-equivalent VPS. Later milestones remain unimplemented and disabled.
+This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented in the Graphite review stack #1571–#1578, topped by `codex/collaboration-chat-validation`; the review layers remain one PR1 product milestone and exist only to satisfy repository size limits. PR2's isolated execution foundation is merged and dormant. PR3/M2 is published as review stack #1601–#1603, but has not been enabled for a cohort or validated on a production-equivalent VPS. Later milestones remain unimplemented and disabled.
 
 ## PR1 local evidence — 2026-09-07
 
@@ -51,9 +51,9 @@ Validation results:
 | Package TypeScript | Contracts, gateway, UI, and sync-client checks passed. Native mobile still reports only the unchanged React Native dependency typing failures already recorded under PR1. |
 | React Doctor, changed scope | `packages/ui` scored 100/100 with no findings; `apps/mobile` scored 97/100 with no findings. |
 | Local browser evidence | 1/1 focused Playwright assertion passed and produced the linked screenshot. |
-| Exact release acceptance harness | The labeled disposable-preview workflow now pins `scope-runtime-chat-v1`, its source-controlled digest and harness version, executes a real `runtime.chat` Agent SDK round trip through a bounded fake inference broker, and restores the dormant systemd/marker state. This is prepared but has not run on a PR head yet. |
+| Exact release acceptance harness | The labeled disposable-preview workflow pins `scope-runtime-chat-v1`, its source-controlled digest and harness version, executes a real `runtime.chat` Agent SDK round trip through a bounded fake inference broker, and restores the dormant systemd/marker state. Two disposable preview attempts accepted the requested deployment but remained on the bootstrap bundle instead of installing the exact PR artifact, so the harness correctly did not claim a pass. This remains a preview updater/platform blocker rather than M2 acceptance evidence. |
 
-Still required before M2 is review-ready or internally enabled: publish the review stack, run the exact-head disposable VPS workflow, record its profile generation/artifact, exercise the complete two-account AI journey on the named production surfaces, and perform the M2-off/read-only rollback drill while confirming M1 discussion remains available. No release-artifact pass or production enablement is claimed here.
+Still required before M2 is internally enabled: repair the disposable preview's exact-version install path, rerun the exact-head VPS workflow and record its profile generation/artifact, exercise the complete two-account AI journey on the named production surfaces, and perform the M2-off/read-only rollback drill while confirming M1 discussion remains available. No release-artifact pass or production enablement is claimed here.
 
 ## Prepare a slice
 

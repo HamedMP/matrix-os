@@ -18,7 +18,7 @@ const baseScope = {
   authEpoch: "1",
   authorityGeneration: "1",
   role: "editor" as const,
-  capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+  capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true },
 };
 const defaultSelection = { instanceId: "claude_shared", model: "claude-opus-4-6" };
 
@@ -46,7 +46,7 @@ describe("shared Chat AI controls", () => {
       get: vi.fn(async () => ({ requests: [], approvals: [], defaultSelection })),
       post: vi.fn(async () => {
         if (fail) throw new Error("private provider detail");
-        return request();
+        return { request: request(), resourceRevision: "5" };
       }),
       delete: vi.fn(),
     };
@@ -74,6 +74,27 @@ describe("shared Chat AI controls", () => {
       expect.objectContaining({ expectedRevision: "1", text: "Summarize decisions", selection: defaultSelection }),
     ));
     await waitFor(() => expect(updateDraft).toHaveBeenCalledWith("", "ai"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel request 1" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scopeId}/chat/requests/qturn_one/cancel`,
+      expect.objectContaining({ expectedRevision: "5" }),
+    ));
+  });
+
+  it("keeps Ask AI disabled when current scope capabilities deny requests", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ requests: [], approvals: [], defaultSelection })),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<SharedChatControls api={api} scope={{ ...baseScope,
+      capabilities: { ...baseScope.capabilities, requestAi: false } }} actorId="user_editor"
+      resourceRevision="4" draft={{ text: "Private AI draft", mode: "discussion" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()}
+      discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
+
+    expect(await screen.findByRole("button", { name: "Ask AI" })).toBeDisabled();
+    expect(api.post).not.toHaveBeenCalled();
   });
 
   it("renders immutable queue order and scopes editor controls to their own requests", async () => {
@@ -122,7 +143,7 @@ describe("shared Chat AI controls", () => {
 
   it("shows pending approvals only to owners and submits one attributed decision", async () => {
     const ownerScope = { ...baseScope, role: "owner" as const,
-      capabilities: { read: true, discuss: true, manageMembers: true, requestAi: false } };
+      capabilities: { read: true, discuss: true, manageMembers: true, requestAi: true } };
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async () => ({

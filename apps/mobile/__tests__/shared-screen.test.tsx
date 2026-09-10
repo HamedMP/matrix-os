@@ -88,7 +88,7 @@ describe("native shared Chat screen", () => {
     mockFetchScope.mockResolvedValue({
       id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: "chat_one", membershipMode: "direct", lifecycle: "shared",
       revision: "1", authEpoch: "1", authorityGeneration: "1", role: "editor",
-      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true },
     });
     mockFetchChat.mockResolvedValue({ id: "chat_one", scopeId, title: "Launch plan", lifecycle: "active", revision: "1", messageCount: "1" });
     mockFetchMessages.mockResolvedValue({ messages: [{
@@ -102,10 +102,13 @@ describe("native shared Chat screen", () => {
       defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
     });
     mockPostAiRequest.mockResolvedValue({
-      id: "request_one", chatId: "chat_one", acceptedSequence: "1",
-      actor: { actorId: "user_editor", displayName: "Ada" }, state: "queued", text: "Summarize",
-      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
-      acceptedAt: "2026-09-07T12:01:00.000Z", updatedAt: "2026-09-07T12:01:00.000Z",
+      resourceRevision: "2",
+      request: {
+        id: "request_one", chatId: "chat_one", acceptedSequence: "1",
+        actor: { actorId: "user_editor", displayName: "Ada" }, state: "queued", text: "Summarize",
+        selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+        acceptedAt: "2026-09-07T12:01:00.000Z", updatedAt: "2026-09-07T12:01:00.000Z",
+      },
     });
     mockControlAiRequest.mockResolvedValue({ state: "accepted" });
     mockDecideAiApproval.mockResolvedValue({ state: "accepted" });
@@ -155,7 +158,10 @@ describe("native shared Chat screen", () => {
     ));
     expect(await screen.findByText("1 · Ada")).toBeTruthy();
     expect(screen.getByText(/queued · Summarize/)).toBeTruthy();
-    expect(screen.getByLabelText("Cancel request 1")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Cancel request 1"));
+    await waitFor(() => expect(mockControlAiRequest).toHaveBeenCalledWith(
+      "clerk-token", scopeId, "request_one", "cancel", "2", expect.any(String),
+    ));
     expect(screen.queryByDisplayValue("Summarize")).toBeNull();
   });
 
@@ -176,6 +182,72 @@ describe("native shared Chat screen", () => {
     expect(await screen.findByText("Viewers can read this Chat but cannot post messages or request AI.")).toBeTruthy();
     expect(screen.getByLabelText("Ask AI mode").props.accessibilityState.disabled).toBe(true);
     expect(screen.getByLabelText("Message everyone").props.editable).toBe(false);
+  });
+
+  it("keeps Ask AI disabled when the current scope capability denies requests", async () => {
+    const disabledScope = {
+      ...(await mockFetchScope()),
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+    };
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: disabledScope, chat: await mockFetchChat() },
+    }] });
+    mockFetchScope.mockResolvedValue(disabledScope);
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    expect((await screen.findByLabelText("Ask AI mode")).props.accessibilityState.disabled).toBe(true);
+    expect(mockPostAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not let a completed AI submission from one Chat overwrite another Chat", async () => {
+    const secondScopeId = "10000000-0000-4000-8000-000000000002";
+    const scopeFor = (id: string, chatId: string) => ({
+      id, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+      revision: "1", authEpoch: "1", authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true },
+    });
+    const chatFor = (id: string, selectedScopeId: string, title: string) => ({
+      id, scopeId: selectedScopeId, title, lifecycle: "active", revision: "1", messageCount: "0",
+    });
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [
+      { scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+        status: "accepted", resource: { scope: scopeFor(scopeId, "chat_a"), chat: chatFor("chat_a", scopeId, "Chat A") } },
+      { scopeId: secondScopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+        status: "accepted", resource: { scope: scopeFor(secondScopeId, "chat_b"), chat: chatFor("chat_b", secondScopeId, "Chat B") } },
+    ] });
+    mockFetchScope.mockImplementation(async (_token: string, selectedScopeId: string) => selectedScopeId === scopeId
+      ? scopeFor(scopeId, "chat_a") : scopeFor(secondScopeId, "chat_b"));
+    mockFetchChat.mockImplementation(async (_token: string, selectedScopeId: string) => selectedScopeId === scopeId
+      ? chatFor("chat_a", scopeId, "Chat A") : chatFor("chat_b", secondScopeId, "Chat B"));
+    mockFetchMessages.mockResolvedValue({ messages: [] });
+    let finishRequest!: (value: unknown) => void;
+    mockPostAiRequest.mockImplementationOnce(() => new Promise((resolve) => { finishRequest = resolve; }));
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Chat A"));
+    fireEvent.press(await screen.findByLabelText("Ask AI mode"));
+    fireEvent.changeText(screen.getByLabelText("Ask AI"), "A stale request");
+    fireEvent.press(screen.getByLabelText("Request AI"));
+    await waitFor(() => expect(finishRequest).toBeDefined());
+    fireEvent.press(screen.getByLabelText("Back to Shared with me"));
+    fireEvent.press(await screen.findByLabelText("Open Chat B"));
+    expect(await screen.findByText("Chat B")).toBeTruthy();
+    await act(async () => finishRequest({
+      resourceRevision: "2",
+      request: {
+        id: "request_a", chatId: "chat_a", acceptedSequence: "1",
+        actor: { actorId: "user_editor", displayName: "Ada" }, state: "queued", text: "A stale request",
+        selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+        acceptedAt: "2026-09-07T12:01:00.000Z", updatedAt: "2026-09-07T12:01:00.000Z",
+      },
+    }));
+
+    await waitFor(() => expect(screen.queryByText(/queued · A stale request/)).toBeNull());
+    expect(screen.getByText("Chat B")).toBeTruthy();
   });
 
   it("discards an old Chat history page after opening another shared Chat", async () => {

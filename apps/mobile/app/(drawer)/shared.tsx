@@ -94,10 +94,21 @@ const initialState: ScreenState = {
 
 type ScreenAction =
   | { type: "patch"; patch: Partial<ScreenState> }
+  | { type: "ai_request_accepted"; scopeId: string; chatId: string; request: CollaborationAiRequest; resourceRevision: string }
   | { type: "append_items"; additions: DiscoveryItem[]; inboxCursor?: string | null; sharedCursor?: string | null };
 
 function screenReducer(state: ScreenState, action: ScreenAction): ScreenState {
   if (action.type === "patch") return { ...state, ...action.patch };
+  if (action.type === "ai_request_accepted") {
+    if (state.view.kind !== "chat" || state.view.scopeId !== action.scopeId || state.chat?.id !== action.chatId) return state;
+    return {
+      ...state,
+      chat: { ...state.chat, revision: action.resourceRevision },
+      aiDraft: "",
+      aiRequests: [...state.aiRequests.filter((candidate) => candidate.id !== action.request.id), action.request]
+        .sort(compareAcceptedSequence),
+    };
+  }
   const items = action.additions.reduce<DiscoveryItem[]>((combined, item) => (
     combined.some((existing) => discoveryKey(existing) === discoveryKey(item)) ? combined : [...combined, item]
   ), state.items);
@@ -192,6 +203,7 @@ export default function SharedScreen() {
       approvals: [],
       defaultSelection: null,
       aiError: "",
+      sending: false,
       hasMoreMessages: false,
       loadingMoreMessages: false,
     } });
@@ -488,24 +500,37 @@ export default function SharedScreen() {
   };
   const requestAi = async () => {
     if (!scope || !chat || view.kind !== "chat" || !state.aiDraft.trim() || !state.defaultSelection
-      || state.aiAvailability !== "available" || scope.role === "viewer") return;
+      || state.aiAvailability !== "available" || scope.role === "viewer" || !scope.capabilities.requestAi) return;
+    const generation = chatLoadGeneration.current;
+    const requestScopeId = view.scopeId;
+    const requestChatId = chat.id;
+    const isCurrentChat = () => generation === chatLoadGeneration.current
+      && eventScopeRef.current === requestScopeId && chatRef.current?.id === requestChatId;
     dispatch({ type: "patch", patch: { sending: true, aiError: "" } });
     try {
-      const request = await postSharedAiRequest(
-        await token(), view.scopeId, scope.revision, state.aiDraft.trim(), state.defaultSelection, randomUuid(),
+      const accepted = await postSharedAiRequest(
+        await token(), requestScopeId, scope.revision, state.aiDraft.trim(), state.defaultSelection, randomUuid(),
       );
       await saveCollaborationDraft(AsyncStorage, {
-        actorId: userId, scopeId: view.scopeId, chatId: chat.id, mode: "ai", text: "",
+        actorId: userId, scopeId: requestScopeId, chatId: requestChatId, mode: "ai", text: "",
       });
-      dispatch({ type: "patch", patch: {
-        aiDraft: "",
-        aiRequests: [...state.aiRequests.filter((candidate) => candidate.id !== request.id), request]
-          .sort(compareAcceptedSequence),
-      } });
+      if (!isCurrentChat()) return;
+      chatRef.current = { ...chatRef.current!, revision: accepted.resourceRevision };
+      dispatch({
+        type: "ai_request_accepted",
+        scopeId: requestScopeId,
+        chatId: requestChatId,
+        request: accepted.request,
+        resourceRevision: accepted.resourceRevision,
+      });
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] shared AI request failed", failure instanceof Error ? failure.name : "UnknownError");
-      dispatch({ type: "patch", patch: { aiError: "AI request was not accepted. Your draft is still here—try again." } });
-    } finally { dispatch({ type: "patch", patch: { sending: false } }); }
+      if (isCurrentChat()) {
+        dispatch({ type: "patch", patch: { aiError: "AI request was not accepted. Your draft is still here—try again." } });
+      }
+    } finally {
+      if (isCurrentChat()) dispatch({ type: "patch", patch: { sending: false } });
+    }
   };
   const refreshAiRequests = async (scopeId: string) => {
     const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(await token(), scopeId));
@@ -745,7 +770,8 @@ function sharedChatComposerPresentation(state: ScreenState, canDiscuss: boolean)
   const viewer = state.scope?.role === "viewer";
   const aiMode = state.composerMode === "ai";
   const aiAvailable = state.aiAvailability === "available" && state.defaultSelection !== null;
-  const canRequestAi = !viewer && aiAvailable && state.scope?.lifecycle === "shared";
+  const canRequestAi = !viewer && aiAvailable && state.scope?.lifecycle === "shared"
+    && state.scope.capabilities.requestAi;
   const canWrite = aiMode ? canRequestAi : canDiscuss;
   const value = aiMode ? state.aiDraft : state.draft;
   const status = viewer
