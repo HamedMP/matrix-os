@@ -1,16 +1,17 @@
 import { z } from "zod/v4";
-import type { SpeechMediaType } from "@matrix-os/contracts";
+import { SPEECH_MAX_TRANSCRIPT_CHARS, type SpeechMediaType } from "@matrix-os/contracts";
 
 const TRANSCRIPTIONS_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions";
 const DEFAULT_TIMEOUT_MS = 55_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024;
-const MAX_TRANSCRIPT_CHARS = 32_000;
 const ModelSchema = z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
-const ResponseSchema = z.object({ text: z.string().max(MAX_TRANSCRIPT_CHARS) }).passthrough();
+const ResponseSchema = z.object({ text: z.string().max(SPEECH_MAX_TRANSCRIPT_CHARS) }).passthrough();
 
 export type SpeechAdapterErrorCode =
   | "misconfigured"
   | "unsupported_options"
+  | "cancelled"
+  | "timeout"
   | "request_failed"
   | "invalid_response";
 
@@ -33,7 +34,21 @@ export interface FileTranscriptionAdapter {
   transcribe(input: FileTranscriptionInput): Promise<{ text: string }>;
 }
 
-async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+function startBestEffortCleanup(cleanup: () => Promise<void>): void {
+  try {
+    void cleanup().catch((_error: unknown) => {
+      console.warn("[speech-adapter] Response cleanup failed");
+    });
+  } catch (_error: unknown) {
+    console.warn("[speech-adapter] Response cleanup failed");
+  }
+}
+
+async function readBoundedText(
+  response: Response,
+  maxBytes: number,
+  abortFailure: () => SpeechAdapterError | undefined,
+): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -45,7 +60,7 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
       if (next.done) break;
       total += next.value.byteLength;
       if (total > maxBytes) {
-        await reader.cancel();
+        startBestEffortCleanup(() => reader.cancel());
         throw new SpeechAdapterError("invalid_response", "Transcription response exceeded its limit");
       }
       value += decoder.decode(next.value, { stream: true });
@@ -53,6 +68,8 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
     value += decoder.decode();
     return value;
   } catch (error: unknown) {
+    const abortError = abortFailure();
+    if (abortError) throw abortError;
     if (error instanceof SpeechAdapterError) throw error;
     throw new SpeechAdapterError("invalid_response", "Transcription response was invalid");
   } finally {
@@ -81,47 +98,72 @@ export function createOpenAiFileTranscriptionAdapter(options: {
   return {
     id: "openai-file",
     async transcribe(input) {
+      if (input.signal.aborted) {
+        throw new SpeechAdapterError("cancelled", "Transcription was cancelled");
+      }
       if (input.languageHints && input.languageHints.length > 0) {
         throw new SpeechAdapterError(
           "unsupported_options",
           "Language hints require a validated adapter contract",
         );
       }
-      const form = new FormData();
-      form.set("model", options.model);
-      form.set("file", new Blob([Uint8Array.from(input.audio)], { type: input.mediaType }), "recording.wav");
-      let response: Response;
+      const deadlineSignal = AbortSignal.timeout(timeoutMs);
+      let firstAbort: "cancelled" | "timeout" | undefined;
+      const markCancelled = () => { firstAbort ??= "cancelled"; };
+      const markTimedOut = () => { firstAbort ??= "timeout"; };
+      input.signal.addEventListener("abort", markCancelled, { once: true });
+      deadlineSignal.addEventListener("abort", markTimedOut, { once: true });
+      if (input.signal.aborted) markCancelled();
+      if (deadlineSignal.aborted) markTimedOut();
+      const abortFailure = () => firstAbort === "cancelled"
+        ? new SpeechAdapterError("cancelled", "Transcription was cancelled")
+        : firstAbort === "timeout"
+          ? new SpeechAdapterError("timeout", "Transcription timed out")
+          : undefined;
       try {
-        response = await fetchImpl(TRANSCRIPTIONS_ENDPOINT, {
-          method: "POST",
-          redirect: "error",
-          headers: { authorization: `Bearer ${options.apiKey}` },
-          body: form,
-          signal: AbortSignal.any([input.signal, AbortSignal.timeout(timeoutMs)]),
-        });
-      } catch (error: unknown) {
-        if (error instanceof SpeechAdapterError) throw error;
-        throw new SpeechAdapterError("request_failed", "Transcription request failed");
-      }
-      if (!response.ok) {
-        await response.body?.cancel();
-        throw new SpeechAdapterError("request_failed", "Transcription request failed");
-      }
-      const body = await readBoundedText(response, maxResponseBytes);
-      let decoded: unknown;
-      try {
-        decoded = JSON.parse(body);
-      } catch (error: unknown) {
-        if (!(error instanceof SyntaxError)) {
+        const form = new FormData();
+        form.set("model", options.model);
+        form.set("file", new Blob([Uint8Array.from(input.audio)], { type: input.mediaType }), "recording.wav");
+        let response: Response;
+        try {
+          response = await fetchImpl(TRANSCRIPTIONS_ENDPOINT, {
+            method: "POST",
+            redirect: "error",
+            headers: { authorization: `Bearer ${options.apiKey}` },
+            body: form,
+            signal: AbortSignal.any([input.signal, deadlineSignal]),
+          });
+        } catch (error: unknown) {
+          const abortError = abortFailure();
+          if (abortError) throw abortError;
+          if (error instanceof SpeechAdapterError) throw error;
+          throw new SpeechAdapterError("request_failed", "Transcription request failed");
+        }
+        if (!response.ok) {
+          if (response.body) startBestEffortCleanup(() => response.body!.cancel());
+          throw new SpeechAdapterError("request_failed", "Transcription request failed");
+        }
+        const body = await readBoundedText(response, maxResponseBytes, abortFailure);
+        const completedBodyAbort = abortFailure();
+        if (completedBodyAbort) throw completedBodyAbort;
+        let decoded: unknown;
+        try {
+          decoded = JSON.parse(body);
+        } catch (error: unknown) {
+          if (!(error instanceof SyntaxError)) {
+            throw new SpeechAdapterError("invalid_response", "Transcription response was invalid");
+          }
           throw new SpeechAdapterError("invalid_response", "Transcription response was invalid");
         }
-        throw new SpeechAdapterError("invalid_response", "Transcription response was invalid");
+        const parsed = ResponseSchema.safeParse(decoded);
+        if (!parsed.success) {
+          throw new SpeechAdapterError("invalid_response", "Transcription response was invalid");
+        }
+        return { text: parsed.data.text.trim() };
+      } finally {
+        input.signal.removeEventListener("abort", markCancelled);
+        deadlineSignal.removeEventListener("abort", markTimedOut);
       }
-      const parsed = ResponseSchema.safeParse(decoded);
-      if (!parsed.success) {
-        throw new SpeechAdapterError("invalid_response", "Transcription response was invalid");
-      }
-      return { text: parsed.data.text.trim() };
     },
   };
 }

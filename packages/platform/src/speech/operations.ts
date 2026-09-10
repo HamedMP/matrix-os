@@ -34,11 +34,26 @@ const FundingReservationSchema = z.object({
   reservationId: ReferenceSchema,
   reservedMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict();
-const CompletionSchema = z.object({
-  executionState: z.enum(["succeeded", "failed", "uncertain"]),
-  outcomeCode: SpeechOutcomeCodeSchema,
+const CompletionCostShape = {
   actualCostMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-}).strict();
+};
+const CompletionSchema = z.discriminatedUnion("executionState", [
+  z.object({
+    ...CompletionCostShape,
+    executionState: z.literal("succeeded"),
+    outcomeCode: z.enum(["transcript", "no_speech"]),
+  }).strict(),
+  z.object({
+    ...CompletionCostShape,
+    executionState: z.literal("failed"),
+    outcomeCode: z.enum(["invalid_media", "timeout", "provider_failure"]),
+  }).strict(),
+  z.object({
+    ...CompletionCostShape,
+    executionState: z.literal("uncertain"),
+    outcomeCode: z.enum(["timeout", "provider_failure", "cancelled"]),
+  }).strict(),
+]);
 
 export interface SpeechOperationIdentity {
   ownerId: string;
@@ -122,6 +137,18 @@ function requestTimestamp(requestId: string): number {
   return Number(requestId.slice(3, 16));
 }
 
+function matchesImmutableAdmission(
+  row: SpeechOperationsTable,
+  admission: z.output<typeof AdmissionSchema>,
+): boolean {
+  return row.content_fingerprint === admission.contentFingerprint
+    && row.source_kind === admission.sourceKind
+    && row.policy_revision === admission.policyRevision
+    && row.adapter_id === admission.adapterId
+    && row.model_id === admission.modelId
+    && exactNullableInteger(row.audio_duration_ms) === admission.audioDurationMs;
+}
+
 export function createSpeechOperationsRepository(options: {
   db: PlatformDB;
   now?: () => Date;
@@ -189,12 +216,7 @@ export function createSpeechOperationsRepository(options: {
       const existing = await scopedRow(trx.executor, admission.identity, admission.requestId);
       if (existing) {
         if (existing.tombstone) return operationRecord(existing);
-        if (existing.content_fingerprint !== admission.contentFingerprint
-          || existing.source_kind !== admission.sourceKind
-          || existing.policy_revision !== admission.policyRevision
-          || existing.adapter_id !== admission.adapterId
-          || existing.model_id !== admission.modelId
-          || exactNullableInteger(existing.audio_duration_ms) !== admission.audioDurationMs) {
+        if (!matchesImmutableAdmission(existing, admission)) {
           throw new SpeechOperationConflictError();
         }
         return operationRecord(existing);
@@ -227,7 +249,7 @@ export function createSpeechOperationsRepository(options: {
       if (!inserted) {
         const raced = await scopedRow(trx.executor, admission.identity, admission.requestId);
         if (!raced) throw new SpeechOperationConflictError();
-        if (!raced.tombstone && raced.content_fingerprint !== admission.contentFingerprint) {
+        if (!raced.tombstone && !matchesImmutableAdmission(raced, admission)) {
           throw new SpeechOperationConflictError();
         }
         return operationRecord(raced);
