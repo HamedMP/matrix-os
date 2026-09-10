@@ -19,6 +19,7 @@ suite("Electron Desktop speech input", () => {
   let page: Page;
   let userDataDir: string;
   const speechDiagnostics: string[] = [];
+  let chatMutationRequests = 0;
 
   beforeAll(async () => {
     gateway = await startStubGateway({
@@ -37,12 +38,14 @@ suite("Electron Desktop speech input", () => {
           ownerAudio: { enabled: false },
         },
       },
+      speechTranscript: "spoken Electron draft",
+      speechTranscriptionDelayMs: 750,
     });
     userDataDir = mkdtempSync(join(tmpdir(), "matrix-speech-electron-"));
     mkdirSync(EVIDENCE_DIR, { recursive: true });
     app = await _electron.launch({
       executablePath: ELECTRON_EXECUTABLE,
-      args: [DESKTOP_MAIN],
+      args: ["--use-fake-device-for-media-stream", DESKTOP_MAIN],
       env: {
         ...process.env,
         OPERATOR_GATEWAY_URL: gateway.url,
@@ -53,6 +56,10 @@ suite("Electron Desktop speech input", () => {
     page.on("console", (message) => {
       if (message.text().includes("[speech-draft]")) speechDiagnostics.push(message.text());
     });
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() !== "GET" && path.startsWith("/api/chats")) chatMutationRequests += 1;
+    });
     await page.setViewportSize({ width: 1440, height: 900 });
   }, 60_000);
 
@@ -62,7 +69,7 @@ suite("Electron Desktop speech input", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  it("renders a single manual voice-input action at an accessible touch size", async () => {
+  it("records into one editable draft that waits for manual send", async () => {
     await page.getByRole("button", { name: "Continue in browser" }).click();
     await expect.poll(() => gateway.state.tokenRequests).toBeGreaterThan(0);
     await expect.poll(() => page.evaluate(() => window.operator.invoke("auth:status", {})))
@@ -89,6 +96,25 @@ suite("Electron Desktop speech input", () => {
     const box = await microphone.boundingBox();
     expect(box?.width).toBeGreaterThanOrEqual(36);
     expect(box?.height).toBeGreaterThanOrEqual(36);
+
+    await microphone.click();
+    const stop = page.getByRole("button", { name: "Stop recording" });
+    await stop.waitFor({ state: "visible", timeout: 10_000 });
+    await page.waitForTimeout(300);
+    await stop.click();
+    await page.getByRole("button", { name: "Cancel transcription" })
+      .waitFor({ state: "visible", timeout: 10_000 });
+    await microphone.waitFor({ state: "visible", timeout: 10_000 });
+    expect(gateway.state.speechTranscriptionRequests).toBe(1);
+
+    const editor = page.getByRole("textbox", { name: "Start a chat" });
+    await expect.poll(() => editor.textContent()).toContain("spoken Electron draft");
+    expect(chatMutationRequests).toBe(0);
+    await editor.press("End");
+    await editor.type(" plus typed context");
+    await expect.poll(() => editor.textContent())
+      .toContain("spoken Electron draft plus typed context");
+    await expect.poll(() => page.getByRole("button", { name: "Send" }).count()).toBe(1);
     await page.screenshot({ path: join(EVIDENCE_DIR, "electron-chat-speech-ready.png") });
   }, 40_000);
 });
