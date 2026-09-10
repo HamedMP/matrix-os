@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   SpeechCancellationResponseSchema,
   SpeechCapabilitiesResponseSchema,
+  SpeechLanguageHintsSchema,
   SpeechRequestIdSchema,
   SpeechSafeErrorResponseSchema,
   SpeechStatusResponseSchema,
@@ -15,6 +16,12 @@ describe("speech contracts", () => {
     );
     expect(() => SpeechRequestIdSchema.parse("request_1")).toThrow();
     expect(() => SpeechRequestIdSchema.parse(`sp_1789056000000_${"x".repeat(65)}`)).toThrow();
+  });
+
+  it("normalizes and bounds transcription language hints", () => {
+    expect(SpeechLanguageHintsSchema.parse([" en ", "fr-CA"])).toEqual(["en", "fr-CA"]);
+    expect(() => SpeechLanguageHintsSchema.parse(Array.from({ length: 9 }, () => "en"))).toThrow();
+    expect(() => SpeechLanguageHintsSchema.parse(["x".repeat(36)])).toThrow();
   });
 
   it("keeps capability output provider-neutral and separates source policies", () => {

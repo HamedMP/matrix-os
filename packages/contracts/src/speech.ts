@@ -9,6 +9,7 @@ export const SpeechRequestIdSchema = z.string()
   .regex(/^sp_[0-9]{13}_[A-Za-z0-9_-]{16,64}$/);
 export const SpeechSourceKindSchema = z.enum(["dictation", "owner_audio"]);
 export const SpeechMediaTypeSchema = z.enum(["audio/wav"]);
+export const SpeechLanguageHintsSchema = z.array(z.string().trim().min(1).max(35)).max(8);
 export const SpeechExecutionStateSchema = z.enum([
   "received",
   "reserved",
