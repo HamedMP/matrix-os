@@ -4,6 +4,7 @@ import {
   CollaborationAiRequestSchema,
   CollaborationApprovalSchema,
   CollaborationCreateAiRequestSchema,
+  CollaborationRevisionSchema,
   type CollaborationAiRequestAcceptedResponse,
   type CollaborationAiRequest,
 } from "@matrix-os/contracts";
@@ -47,6 +48,7 @@ export class CollaborationChatExecutionAdapter {
     commands: Pick<CollaborationChatCommands, "cancel" | "retry" | "decideApproval">;
     resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
     resolveEligibility(scopeId: string): Promise<unknown>;
+    resolveResourceRevision(scopeId: string, chatId: string): Promise<number | null>;
     requestDispatch(scopeId: string, chatId: string): Promise<void>;
     onCommitted?(scopeId: string): Promise<void>;
     now?: () => Date;
@@ -92,6 +94,13 @@ export class CollaborationChatExecutionAdapter {
     requireChatContext(context, "read");
     const rows = await this.options.repository.listSharedQueuedTurns(ownerFor(context), context.resourceId);
     return Promise.all(rows.map((row) => this.project(row)));
+  }
+
+  async resourceRevision(context: AuthorizedCollaborationContext): Promise<string> {
+    requireChatContext(context, "read");
+    const revision = await this.options.resolveResourceRevision(context.scopeId, context.resourceId);
+    if (revision === null) throw new CollaborationAuthorizationError("not_found", "Shared Chat access is required");
+    return CollaborationRevisionSchema.parse(String(revision));
   }
 
   async submit(

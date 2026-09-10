@@ -389,6 +389,7 @@ export const CollaborationAiRequestsResponseSchema = z.object({
   requests: z.array(CollaborationAiRequestSchema).max(COLLABORATION_PAGE_LIMIT),
   approvals: z.array(CollaborationApprovalSchema).max(COLLABORATION_PAGE_LIMIT),
   defaultSelection: CanonicalChatModelSelectionSchema,
+  resourceRevision: CollaborationRevisionSchema,
 }).strict();
 
 const CollaborationDirectoryBaseSchema = z.object({

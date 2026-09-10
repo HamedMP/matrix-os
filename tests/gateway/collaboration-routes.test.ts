@@ -72,6 +72,11 @@ describe("collaboration gateway routes", () => {
         submitApproval: async () => undefined,
       }),
       resolveParticipant,
+      resolveResourceRevision: async (_scopeId, chatId) => {
+        const row = await fixture.db.selectFrom("chats").select("revision")
+          .where("id", "=", chatId).executeTakeFirst();
+        return row ? Number(row.revision) : null;
+      },
       resolveEligibility: async (scopeId) => {
         const row = await fixture.db.selectFrom("collaboration_scopes")
           .select("execution_eligibility").where("id", "=", scopeId).executeTakeFirst();
@@ -271,8 +276,12 @@ describe("collaboration gateway routes", () => {
       path,
       m2Policy: true,
     });
-    expect(listed.status).toBe(200);
-    expect(await listed.json()).toMatchObject({ requests: [{ id: "qturn_shared_route_1" }] });
+    const listedBody = await listed.json();
+    expect(listed.status, JSON.stringify(listedBody)).toBe(200);
+    expect(listedBody).toMatchObject({
+      requests: [{ id: "qturn_shared_route_1" }],
+      resourceRevision: "3",
+    });
   });
 
   it("lets viewers read and keep private state but rejects every discussion write", async () => {

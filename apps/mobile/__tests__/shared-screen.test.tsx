@@ -100,6 +100,7 @@ describe("native shared Chat screen", () => {
     mockFetchAiRequests.mockResolvedValue({
       requests: [], approvals: [],
       defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      resourceRevision: "1",
     });
     mockPostAiRequest.mockResolvedValue({
       resourceRevision: "2",
@@ -145,6 +146,10 @@ describe("native shared Chat screen", () => {
     }] });
     mockFetchScope.mockResolvedValue(aiScope);
     mockFetchChat.mockResolvedValue(aiChat);
+    mockFetchAiRequests.mockResolvedValue({
+      requests: [], approvals: [], resourceRevision: "4",
+      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    });
     mockPostAiRequest.mockRejectedValueOnce(new Error("offline"));
 
     render(<SharedScreen />);

@@ -234,9 +234,11 @@ export default function SharedScreen() {
         const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(actorToken, scopeId));
         if (generation === chatLoadGeneration.current) {
           aiWasAvailableRef.current = true;
+          const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
+          chatRef.current = refreshedChat;
           dispatch({ type: "patch", patch: {
             aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-            defaultSelection: ai.defaultSelection, aiError: "",
+            defaultSelection: ai.defaultSelection, aiError: "", chat: refreshedChat,
           } });
         }
       } catch (failure: unknown) {
@@ -319,9 +321,11 @@ export default function SharedScreen() {
       const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(actorToken, scopeId));
       if (generation === chatLoadGeneration.current && eventScopeRef.current === scopeId) {
         aiWasAvailableRef.current = true;
+        const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
+        chatRef.current = refreshedChat;
         dispatch({ type: "patch", patch: {
           aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-          defaultSelection: ai.defaultSelection, aiError: "",
+          defaultSelection: ai.defaultSelection, aiError: "", chat: refreshedChat,
         } });
       }
     } catch (failure: unknown) {
@@ -536,9 +540,12 @@ export default function SharedScreen() {
     const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(await token(), scopeId));
     if (eventScopeRef.current !== scopeId) return;
     aiWasAvailableRef.current = true;
+    const currentChat = chatRef.current;
+    const refreshedChat = currentChat ? { ...currentChat, revision: ai.resourceRevision } : null;
+    if (refreshedChat) chatRef.current = refreshedChat;
     dispatch({ type: "patch", patch: {
       aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-      defaultSelection: ai.defaultSelection, aiError: "",
+      defaultSelection: ai.defaultSelection, aiError: "", ...(refreshedChat ? { chat: refreshedChat } : {}),
     } });
   };
   const controlAi = async (request: CollaborationAiRequest, action: "cancel" | "retry") => {
