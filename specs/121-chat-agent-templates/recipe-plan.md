@@ -29,18 +29,22 @@
 
 Files: `packages/contracts/src/chat-agent-recipe.ts`, `chat-agents.ts`, `chat-agent-context.ts`; `packages/gateway/src/chat/agent-recipe.ts`, `agent-context.ts`, `agent-routes.ts`; `skills/matrix/personal-daily-brief/SKILL.md`.
 
-- [ ] Add failing contract and execution tests for `{ skills: ["matrix-personal-daily-brief", "matrix-integrations"], integrations: [{ service: "gmail" }, { service: "google_calendar" }], output: "English daily brief with source links" }`. Reject unknown skill IDs, duplicate references, oversized snapshots and forged resolved content.
-- [ ] Add optional typed `recipe` to Agent configuration and bounded `recipe` snapshot to admitted Agent context. Read only server-catalogued skill files, pin their bodies and hashes, and include dependencies/output in the provider prompt. Existing runs use their pinned content after edits.
-- [ ] Expose authenticated `GET /api/chat-agents/recipe-catalog` using the existing principal/feature checks; return bundled skill metadata and registry service labels, never credentials. Existing CRUD routes keep body limits and revision/idempotency semantics.
-- [ ] Verify missing skills fail before dispatch with generic errors and existing ordinary Agents remain compatible.
+- [x] Add failing contract and execution tests for `{ skills: ["matrix-personal-daily-brief", "matrix-integrations"], integrations: [{ service: "gmail" }, { service: "google_calendar" }], output: "English daily brief with source links" }`. Reject unknown skill IDs, duplicate references, oversized snapshots and forged resolved content.
+- [x] Add optional typed `recipe` to Agent configuration and bounded `recipe` snapshot to admitted Agent context. Read only server-catalogued skill files, pin their bodies and hashes, and include dependencies/output in the provider prompt. Existing runs use their pinned content after edits.
+- [x] Expose authenticated `GET /api/chat-agents/recipe-catalog` using the existing principal/feature checks; return bundled skill metadata and registry service labels, never credentials. Existing CRUD routes keep body limits and revision/idempotency semantics.
+- [x] Verify missing skills fail before dispatch with generic errors and existing ordinary Agents remain compatible.
 
 ## Task 3: Shared editor and Daily Brief validation
 
 Files: `packages/ui/src/chat-agents/AgentRecipeEditor.tsx`, `AgentEditor.tsx`, `ChatAgentsEntry.tsx`, `client.ts`, `ChatContextReceipt.tsx`; shared UI tests.
 
-- [ ] Add failing interaction tests: Personal Daily Brief fills name/instructions/recipe, account selections survive save/reopen, load failures preserve changes, creating the Agent does not run it.
-- [ ] Load catalog and existing `/api/integrations` metadata through the surface's authenticated transport. Display explicit missing/connected/unavailable states; save chosen skill IDs, service/account labels and output. Keep bounded scrolling and truncated labels.
-- [ ] Display pinned recipe provenance with the canonical Run receipt.
+- [x] Add failing interaction tests: Personal Daily Brief fills name/instructions/recipe, account selections survive save/reopen, load failures preserve changes, creating the Agent does not run it.
+- [x] Load catalog and existing `/api/integrations` metadata through the surface's authenticated transport. Display explicit missing/connected/unavailable states; save chosen skill IDs, service/account labels and output. Keep bounded scrolling and truncated labels.
+- [x] Display pinned recipe provenance with the canonical Run receipt.
 - [ ] Run focused tests, required type/build checks, React audit and source review. Update the existing PR only after local verification.
 - [ ] Publish/deploy the exact Preview version through the already authorized Preview workflow. Exercise Web Canvas, Web Desktop and Electron Desktop. Run the first Daily Brief with actual Matrix-connected Gmail and Calendar; require visible source reads, source-linked output, persistence and no-reload delivery. Missing authorization or connections must remain visible rather than producing fabricated data.
 - [ ] Keep PR unmerged until Yuhan's explicit Human Review/merge authorization.
+
+## Local validation checkpoint
+
+At `377be3ba8`, 289 distinct covering tests, five package typechecks and both production builds passed. The single consolidated final fix wave is under scoped re-review. Synthetic UI evidence and its limits are recorded in [evidence/README.md](evidence/README.md). Exact Preview and real intended-account validation remain open.
