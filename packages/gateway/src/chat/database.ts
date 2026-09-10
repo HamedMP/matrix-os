@@ -1,4 +1,5 @@
 import { sql, type ColumnType, type Generated, type Kysely } from "kysely";
+import { bootstrapMessagePurpose, type ChatMessagePurpose } from "./message-purpose.js";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
@@ -52,6 +53,7 @@ export interface ChatMessagesTable {
   chat_id: string;
   seq: number;
   role: "user" | "assistant" | "tool" | "system";
+  purpose: ChatMessagePurpose;
   state: "pending" | "committed" | "failed";
   turn_id: string | null;
   run_id: string | null;
@@ -300,6 +302,7 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
       UNIQUE (chat_id, seq)
     )
   `.execute(db);
+  await bootstrapMessagePurpose(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_attachments (
       id TEXT PRIMARY KEY,

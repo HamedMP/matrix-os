@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { messagePurpose } from "./message-purpose.js";
 import {
   CanonicalChatRunActivitySchema,
   CanonicalChatIdSchema,
@@ -883,6 +884,7 @@ export class ChatRepository {
         chat_id: input.chatId,
         seq: message.seq,
         role: message.role,
+        purpose: messagePurpose(message),
         state: message.state,
         turn_id: message.turnId ?? null,
         run_id: message.runId ?? null,
