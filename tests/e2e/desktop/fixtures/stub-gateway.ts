@@ -15,6 +15,7 @@ import {
   type AgentThreadSnapshot,
   type ProjectAgentWorkspace,
   type RuntimeSummary,
+  type SpeechCapabilitiesResponse,
 } from "@matrix-os/contracts";
 
 export interface StubGateway {
@@ -31,6 +32,7 @@ export interface StubGateway {
   state: {
     deviceCodeRequests: number;
     tokenRequests: number;
+    speechCapabilityRequests: number;
     terminalInputs: string[];
     terminalInputEvents: Array<{ session: string; data: string }>;
     terminalResizeEvents: Array<{ session: string; cols: number; rows: number }>;
@@ -45,6 +47,7 @@ export interface StubGateway {
 
 export interface StubGatewayOptions {
   terminalSnapshotAnsi?: string;
+  speechCapabilities?: SpeechCapabilitiesResponse;
   rootFileEntries?: Array<{
     name: string;
     type: "directory" | "file";
@@ -630,6 +633,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
   const state: StubGateway["state"] = {
     deviceCodeRequests: 0,
     tokenRequests: 0,
+    speechCapabilityRequests: 0,
     terminalInputs: [],
     terminalInputEvents: [],
     terminalResizeEvents: [],
@@ -694,6 +698,12 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         handle: "neo",
         displayName: "Thomas Anderson",
       });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/speech/capabilities" && options.speechCapabilities) {
+      state.speechCapabilityRequests += 1;
+      json(res, 200, options.speechCapabilities);
       return;
     }
 
