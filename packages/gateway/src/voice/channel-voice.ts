@@ -32,7 +32,18 @@ export interface VoiceNoteResult {
 }
 
 function diagnosticErrorKind(error: unknown): string {
-  return error instanceof Error ? error.name : "UnknownError";
+  if (!(error instanceof Error)) return "UnknownError";
+  switch (error.name) {
+    case "AbortError":
+    case "Error":
+    case "RangeError":
+    case "SyntaxError":
+    case "TimeoutError":
+    case "TypeError":
+      return error.name;
+    default:
+      return "UnknownError";
+  }
 }
 
 function isMissingFileError(error: unknown): boolean {

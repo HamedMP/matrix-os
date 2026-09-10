@@ -36,6 +36,7 @@ describe("handleVoiceNote", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
     rmSync(homePath, { recursive: true, force: true });
   });
 
@@ -186,6 +187,27 @@ describe("handleVoiceNote", () => {
     expect(result.transcript).toBeNull();
     expect(result.error).toBe("Audio download unavailable");
     expect(result.durationMs).toBe(0);
+  });
+
+  it("bounds provider-specific download diagnostics to an allowlisted error kind", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const providerError = new Error("private provider detail");
+    providerError.name = "ProviderSpecificFailure";
+    globalThis.fetch = vi.fn().mockRejectedValue(providerError);
+
+    const result = await handleVoiceNote({
+      audioUrl: "https://api.telegram.org/file/bot123/missing.ogg",
+      channel: "telegram",
+      homePath,
+      stt: createMockStt(),
+    });
+
+    expect(result.error).toBe("Audio download unavailable");
+    expect(warning).toHaveBeenCalledWith("[voice] audio download failed", "UnknownError");
+    expect(warning).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("ProviderSpecificFailure"),
+    );
   });
 
   it("STT failure returns { filePath, transcript: null, error }", async () => {
