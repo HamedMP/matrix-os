@@ -8,6 +8,8 @@
 **Scope:** Canonical contracts, persistence, provider execution, shared Desktop surfaces, workspace resources, migration, and implementation sequencing
 **Related delivery:** MAT-299, MAT-318, MAT-321, MAT-344, MAT-364, and MAT-468
 
+**Startup/recovery contract:** [OM-234: startup, usage errors, and model discovery](./chat-startup-and-model-discovery.md).
+
 ## Purpose
 
 Matrix OS needs one durable user-facing Chat abstraction. A Chat is the task the

@@ -1,5 +1,7 @@
 # Canonical Chat startup, usage errors, and model discovery
 
+Related delivery: OM-234. This supplements the [canonical Chat architecture](./spec.md).
+
 ## 1. Scope / Trigger
 
 Use this contract when changing provider startup recovery, native error projection,
