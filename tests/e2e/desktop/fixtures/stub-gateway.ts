@@ -31,6 +31,7 @@ export interface StubGateway {
     deviceCodeRequests: number;
     tokenRequests: number;
     speechCapabilityRequests: number;
+    speechTranscriptionRequests: number;
     terminalInputs: string[];
     terminalInputEvents: Array<{ session: string; data: string }>;
     terminalResizeEvents: Array<{ session: string; cols: number; rows: number }>;
@@ -45,6 +46,8 @@ export interface StubGateway {
 
 export interface StubGatewayOptions {
   speechCapabilities?: SpeechCapabilitiesResponse;
+  speechTranscript?: string;
+  speechTranscriptionDelayMs?: number;
   rootFileEntries?: Array<{
     name: string;
     type: "directory" | "file";
@@ -569,6 +572,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     deviceCodeRequests: 0,
     tokenRequests: 0,
     speechCapabilityRequests: 0,
+    speechTranscriptionRequests: 0,
     terminalInputs: [],
     terminalInputEvents: [],
     terminalResizeEvents: [],
@@ -635,12 +639,6 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       return;
     }
 
-    if (req.method === "GET" && path === "/api/speech/capabilities" && options.speechCapabilities) {
-      state.speechCapabilityRequests += 1;
-      json(res, 200, options.speechCapabilities);
-      return;
-    }
-
     if (req.method === "GET" && path === "/api/chats") {
       json(res, 200, { items: [] });
       return;
@@ -666,6 +664,35 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     // Everything below requires the bearer header (verifies header injection).
     if (req.headers.authorization !== `Bearer ${currentToken}`) {
       json(res, 401, { error: "unauthorized" });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/speech/capabilities" && options.speechCapabilities) {
+      state.speechCapabilityRequests += 1;
+      json(res, 200, options.speechCapabilities);
+      return;
+    }
+
+    if (req.method === "POST" && path === "/api/speech/transcriptions" && options.speechTranscript) {
+      state.speechTranscriptionRequests += 1;
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const requestId = Buffer.concat(chunks).toString("utf8")
+        .match(/sp_[0-9]{13}_[A-Za-z0-9_-]{16,64}/)?.[0];
+      if (!requestId) {
+        json(res, 400, { error: { code: "invalid_request", message: "Invalid speech request" } });
+        return;
+      }
+      const delayMs = options.speechTranscriptionDelayMs ?? 0;
+      if (delayMs > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
+      json(res, 200, {
+        contractVersion: 1,
+        requestId,
+        status: "succeeded",
+        outcome: "transcript",
+        text: options.speechTranscript,
+        audioDurationMs: 500,
+      });
       return;
     }
 
