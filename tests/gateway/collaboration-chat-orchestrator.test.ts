@@ -21,7 +21,6 @@ const runtimeHandle = "runtime_22222222222222222222222222222222";
 describe("canonical shared Chat orchestration", () => {
   let fixture: CollaborationTestDatabase;
   let repository: ChatRepository;
-
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
     repository = new ChatRepository(fixture.db);
@@ -29,9 +28,7 @@ describe("canonical shared Chat orchestration", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat();
   });
-
   afterEach(async () => fixture.destroy());
-
   it("claims only the selected scope and dispatches through its isolated adapter without personal resume", async () => {
     await repository.enqueueSharedQueuedTurn(owner, {
       chatId: collaborationIds.chat,
@@ -73,7 +70,6 @@ describe("canonical shared Chat orchestration", () => {
       collaborationGuard: { assertPersonalExecutionAllowed: personalGuard },
       now: () => new Date(now),
     });
-
     await orchestrator.dispatchNextSharedQueued(
       owner,
       collaborationIds.chat,
@@ -94,7 +90,6 @@ describe("canonical shared Chat orchestration", () => {
       },
     );
     await orchestrator.drain();
-
     expect(personalGuard).not.toHaveBeenCalled();
     const messages = await fixture.db.selectFrom("chat_messages")
       .select(["role", "actor_id", "purpose", "parts"])
@@ -130,7 +125,6 @@ describe("canonical shared Chat orchestration", () => {
     await expect(fixture.db.selectFrom("chat_outbox").selectAll()
       .where("chat_id", "=", collaborationIds.chat).execute()).resolves.toEqual([]);
   });
-
   it("preserves an explicit unavailable request when the rollout fence changes after claim", async () => {
     await enqueueSharedRequest("qturn_policy_changed");
     const orchestrator = new CanonicalChatOrchestrator({
@@ -139,21 +133,18 @@ describe("canonical shared Chat orchestration", () => {
       adapters: new CanonicalChatProviderRegistry([]),
       now: () => new Date(now),
     });
-
     await orchestrator.dispatchNextSharedQueued(
       owner,
       collaborationIds.chat,
       collaborationIds.scope,
       () => { throw new SharedChatRunPreparationError("unavailable"); },
     );
-
     const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
     expect(requests).toMatchObject([{ id: "qturn_policy_changed", state: "unavailable" }]);
     await expect(fixture.db.selectFrom("chat_runs").select("outcome")
       .where("chat_id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
       .resolves.toEqual({ outcome: "failed" });
   });
-
   it("marks an accepted shared request interrupted after gateway restart without replaying it", async () => {
     await enqueueSharedRequest("qturn_interrupted_restart");
     const claimed = await repository.claimNextQueuedTurn(owner, {
@@ -175,12 +166,10 @@ describe("canonical shared Chat orchestration", () => {
       collaborationGuard: { assertPersonalExecutionAllowed: async () => { throw sharedFence; } },
       now: () => new Date(now),
     });
-
     await expect(orchestrator.reconcileActiveRuns(owner)).resolves.toBe(1);
     const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
     expect(requests).toMatchObject([{ id: "qturn_interrupted_restart", state: "interrupted" }]);
   });
-
   it("preserves an interrupted request when isolated dispatch ends without a known completion", async () => {
     await enqueueSharedRequest("qturn_interrupted_dispatch");
     const client = {
@@ -200,7 +189,6 @@ describe("canonical shared Chat orchestration", () => {
       adapters: new CanonicalChatProviderRegistry([]),
       now: () => new Date(now),
     });
-
     await orchestrator.dispatchNextSharedQueued(
       owner,
       collaborationIds.chat,
@@ -214,12 +202,10 @@ describe("canonical shared Chat orchestration", () => {
       }),
     );
     await orchestrator.drain();
-
     const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
     expect(requests).toMatchObject([{ id: "qturn_interrupted_dispatch", state: "interrupted" }]);
     expect(client.runChat).toHaveBeenCalledTimes(1);
   });
-
   async function enqueueSharedRequest(queuedTurnId: string): Promise<void> {
     await repository.enqueueSharedQueuedTurn(owner, {
       chatId: collaborationIds.chat,
@@ -243,7 +229,6 @@ describe("canonical shared Chat orchestration", () => {
       acceptedAt: now,
     });
   }
-
   async function seedSharedChat(): Promise<void> {
     await fixture.db.insertInto("chats").values({
       id: collaborationIds.chat, owner_type: "personal", owner_id: collaborationActors.owner,
@@ -270,7 +255,6 @@ describe("canonical shared Chat orchestration", () => {
     ]).execute();
   }
 });
-
 function member(actorId: string, role: "owner" | "editor") {
   return {
     scope_id: collaborationIds.scope, actor_id: actorId, role, status: "accepted" as const,
