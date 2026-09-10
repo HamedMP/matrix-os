@@ -24,6 +24,8 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: Matrix OS uses the microphone only when you start voice input in Chat.
   notarize: true
 dmg:
   title: Matrix OS
