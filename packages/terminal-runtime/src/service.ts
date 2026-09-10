@@ -9,6 +9,7 @@ import { TerminalWorkspaceStore } from "./workspace-store.js";
 import { ZellijCliRuntimeAdapter } from "./zellij-adapter.js";
 import { resolveTerminalRuntimeLimits } from "./runtime-config.js";
 import { startTerminalOrphanSweepLifecycle } from "./orphan-sweep-lifecycle.js";
+import { runBestEffortTerminalShutdown } from "./service-shutdown.js";
 import {
   createUserSystemdTerminalRuntime,
   loadInstalledTerminalRuntimeGeneration,
@@ -110,7 +111,7 @@ async function main(): Promise<void> {
     closing = true;
     await server.close();
     await orphanSweep.close();
-    await runtime.shutdown();
+    await runBestEffortTerminalShutdown(() => runtime.shutdown());
   };
   process.once("SIGTERM", () => { void close().then(() => process.exit(0)); });
   process.once("SIGINT", () => { void close().then(() => process.exit(0)); });

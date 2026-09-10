@@ -212,6 +212,13 @@ type SharedScope = z.infer<typeof CollaborationScopeSchema>;
 type SharedChat = z.infer<typeof CollaborationChatSchema>;
 type SharedChatError = "load" | "send" | "unavailable" | null;
 
+class CollaborationRecoverySupersededError extends Error {
+  constructor() {
+    super("CollaborationRecoverySuperseded");
+    this.name = "CollaborationRecoverySupersededError";
+  }
+}
+
 interface SharedChatState {
   scope: SharedScope | null;
   chat: SharedChat | null;
@@ -326,7 +333,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
         if (additions.length === 0) throw new Error("CollaborationRecoveryIncomplete");
         combined = [...combined, ...additions];
       }
-      if (generation !== loadGeneration.current) throw new Error("CollaborationRecoverySuperseded");
+      if (generation !== loadGeneration.current) throw new CollaborationRecoverySupersededError();
       dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: combined, clearForegroundError: false });
       markRead(api, base, combined);
     } catch (failure: unknown) {
@@ -384,6 +391,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
       try {
         await recoverCanonical();
       } catch (failure: unknown) {
+        if (failure instanceof CollaborationRecoverySupersededError) return;
         console.warn("[chat-collaboration] sent message refresh failed", failure instanceof Error ? failure.name : "UnknownError");
         dispatch({ type: "load_failed" });
       }

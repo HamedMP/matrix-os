@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalRuntimeSocketClient } from "../../packages/terminal-runtime/src/socket-client.js";
+import { TerminalRuntimeError } from "../../packages/terminal-runtime/src/errors.js";
 import { TerminalRuntimeSocketServer } from "../../packages/terminal-runtime/src/socket-server.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "../../packages/terminal-runtime/src/socket-framing.js";
 import {
@@ -156,6 +157,50 @@ describe("terminal runtime Unix socket API", () => {
       { workspaceId: workspace.id, tabId: created.id },
       { pinned: true, baseRevision: created.revision },
     )).resolves.toMatchObject({ uiState: { pinned: true } });
+
+    await server.close();
+  });
+
+  it("preserves typed domain failures across the socket boundary", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-errors-"));
+    directories.push(directory);
+    const socketPath = join(directory, "terminal-runtime.sock");
+    const deleteWorkspace = vi.fn(async (_workspaceId: string, input: { confirmTerminate: boolean }) => {
+      if (!input.confirmTerminate) throw new TerminalRuntimeError("confirmation_required");
+    });
+    const server = new TerminalRuntimeSocketServer({
+      socketPath,
+      runtime: {
+        listWorkspaces: async () => { throw new TerminalRuntimeError("not_found"); },
+        ensureWorkspace: async () => { throw new TerminalRuntimeError("not_found"); },
+        createTab: async () => { throw new TerminalRuntimeError("not_found"); },
+        getSnapshot: async () => undefined,
+        resize: async () => { throw new TerminalRuntimeError("not_found"); },
+        attach: async () => { throw new TerminalRuntimeError("not_found"); },
+        updateTabUiState: async () => { throw new TerminalRuntimeError("conflict"); },
+        deleteWorkspace,
+      },
+    });
+    await server.start();
+    const client = new TerminalRuntimeSocketClient({ socketPath });
+
+    await expect(client.listWorkspaces()).rejects.toMatchObject({
+      name: "TerminalRuntimeError",
+      code: "not_found",
+      message: "Terminal operation failed",
+    });
+    await expect(client.deleteWorkspace(
+      "tws_0123456789abcdef0123456789abcdef",
+      { confirmTerminate: false },
+    )).rejects.toMatchObject({
+      name: "TerminalRuntimeError",
+      code: "confirmation_required",
+      message: "Terminal termination confirmation required",
+    });
+    expect(deleteWorkspace).toHaveBeenCalledWith(
+      "tws_0123456789abcdef0123456789abcdef",
+      expect.objectContaining({ confirmTerminate: false }),
+    );
 
     await server.close();
   });

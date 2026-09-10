@@ -9,6 +9,7 @@ import {
 } from "@matrix-os/contracts";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
+import { TerminalRuntimeError } from "./errors.js";
 import {
   TerminalWorkspaceStore,
   type TerminalRuntimeWorkspaceState,
@@ -172,20 +173,21 @@ export class TerminalRuntime {
     command?: string[];
     agent?: TerminalTab["agent"];
     git?: TerminalTab["git"];
+    accessScope?: TerminalTab["accessScope"];
   }): Promise<TerminalTab> {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     return this.runWorkspaceMutation(async () => {
       const workspaces = await this.listWorkspaces();
       const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
-      if (!workspace) throw new Error("Terminal workspace not found");
+      if (!workspace) throw new TerminalRuntimeError("not_found");
       if (workspace.tabs.filter(tabOccupiesAdmission).length >= this.maxTabsPerWorkspace) {
-        throw new Error("Terminal workspace tab capacity reached");
+        throw new TerminalRuntimeError("capacity");
       }
       if (workspaces.reduce(
         (count, candidate) => count + candidate.tabs.filter(tabOccupiesAdmission).length,
         0,
       ) >= this.maxTabsTotal) {
-        throw new Error("Terminal runtime tab capacity reached");
+        throw new TerminalRuntimeError("capacity");
       }
       const releaseObserverReservation = this.reserveObserverSlot(workspaceId);
       let stagedTab: TerminalTab | undefined;
@@ -195,7 +197,10 @@ export class TerminalRuntime {
         const runtimeWorkspace = await this.requireRuntimeWorkspace(workspaceId);
         sessionName = runtimeWorkspace.zellijSessionName;
         await this.zellij.ensureSession(runtimeWorkspace.zellijSessionName, runtimeWorkspace.canonicalSize);
-        stagedTab = await this.store.createTab(workspaceId, input);
+        stagedTab = await this.store.createTab(workspaceId, {
+          ...input,
+          accessScope: input.accessScope ?? "owner",
+        });
         const stagedWorkspace = await this.requireRuntimeWorkspace(workspaceId);
         const internalTab = stagedWorkspace.tabs[stagedTab.id];
         if (!internalTab) throw new Error("Terminal tab staging failed");
@@ -248,10 +253,16 @@ export class TerminalRuntime {
       for (const tab of Object.values(workspace.tabs).sort((left, right) => left.order - right.order)) {
         if (tab.status === "exited" || tab.status === "failed") continue;
         let ids = await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
-        ids ??= await this.zellij.createTab(workspace.zellijSessionName, {
-          internalName: tab.zellijTabName,
-          cwd: tab.cwd,
-        });
+        if (!ids) {
+          if (tab.status !== "starting") {
+            await this.store.markTabExited({ workspaceId, tabId: tab.id });
+            continue;
+          }
+          ids = await this.zellij.createTab(workspace.zellijSessionName, {
+            internalName: tab.zellijTabName,
+            cwd: tab.cwd,
+          });
+        }
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }
       await this.restartObserver(workspaceId);
@@ -264,7 +275,8 @@ export class TerminalRuntime {
     const ref = TerminalRefSchema.parse(refInput);
     const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
     const tab = workspace.tabs[ref.tabId];
-    if (!tab || tab.zellijTabId === null || !this.zellij.renameTab) throw new Error("Terminal tab unavailable");
+    if (!tab || tab.zellijTabId === null) throw new TerminalRuntimeError("not_found");
+    if (!this.zellij.renameTab) throw new TerminalRuntimeError("unavailable");
     await this.zellij.renameTab(workspace.zellijSessionName, tab.zellijTabId, input.name);
     return this.store.renameTab(ref, input);
   }
@@ -288,7 +300,7 @@ export class TerminalRuntime {
   }): Promise<TerminalWorkspace> {
     const ref = TerminalRefSchema.parse(refInput);
     const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-    if (!workspace.tabs[ref.tabId]) throw new Error("Terminal tab not found");
+    if (!workspace.tabs[ref.tabId]) throw new TerminalRuntimeError("not_found");
     if (input.mode === "soft") return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
     const updated = await this.store.updateCanonicalSize(ref.workspaceId, input.size);
     await this.zellij.resizeSession?.(workspace.zellijSessionName, updated.canonicalSize);
@@ -301,16 +313,17 @@ export class TerminalRuntime {
   async terminateTab(refInput: TerminalRef): Promise<void> {
     const ref = TerminalRefSchema.parse(refInput);
     const key = refKey(ref);
-    if (this.terminatingTabKeys.has(key)) throw new Error("Terminal tab termination in progress");
+    if (this.terminatingTabKeys.has(key)) throw new TerminalRuntimeError("conflict");
     if (this.terminatingTabKeys.size >= this.maxAttachments * 2) {
-      throw new Error("Terminal tab termination capacity reached");
+      throw new TerminalRuntimeError("capacity");
     }
     this.terminatingTabKeys.add(key);
     try {
       await this.runWorkspaceMutation(async () => {
         const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
         const tab = workspace.tabs[ref.tabId];
-        if (!tab || tab.zellijTabId === null || !this.zellij.closeTab) throw new Error("Terminal tab unavailable");
+        if (!tab || tab.zellijTabId === null) throw new TerminalRuntimeError("not_found");
+        if (!this.zellij.closeTab) throw new TerminalRuntimeError("unavailable");
         await this.drainTabInput(key);
         await this.closeAttachment(key, true);
         await this.zellij.closeTab(workspace.zellijSessionName, tab.zellijTabId);
@@ -327,14 +340,11 @@ export class TerminalRuntime {
     await this.enqueueWrite(ref, dataInput, async (data) => {
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
+      if (!tab || tab.zellijPaneId === null) throw new TerminalRuntimeError("not_found");
       if (
-        !tab ||
         (tab.status !== "running" && tab.status !== "idle") ||
-        tab.zellijPaneId === null ||
         !this.zellij.writeToPane
-      ) {
-        throw new Error("Terminal tab unavailable");
-      }
+      ) throw new TerminalRuntimeError("unavailable");
       await this.zellij.writeToPane(workspace.zellijSessionName, tab.zellijPaneId, data);
     });
   }
@@ -365,7 +375,7 @@ export class TerminalRuntime {
   async deletionImpact(workspaceIdInput: string): Promise<{ runningTabs: number; tabs: TerminalTab[] }> {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     const workspace = (await this.listWorkspaces()).find((item) => item.id === workspaceId);
-    if (!workspace) throw new Error("Terminal workspace not found");
+    if (!workspace) throw new TerminalRuntimeError("not_found");
     const tabs = workspace.tabs.filter((tab) => tab.status === "running" || tab.status === "starting" || tab.status === "idle");
     return { runningTabs: tabs.length, tabs };
   }
@@ -374,9 +384,11 @@ export class TerminalRuntime {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     await this.runWorkspaceMutation(async () => {
       const impact = await this.deletionImpact(workspaceId);
-      if (impact.runningTabs > 0 && !input.confirmTerminate) throw new Error("Terminal termination confirmation required");
+      if (impact.runningTabs > 0 && !input.confirmTerminate) {
+        throw new TerminalRuntimeError("confirmation_required");
+      }
       const workspace = await this.requireRuntimeWorkspace(workspaceId);
-      if (!this.zellij.deleteSession) throw new Error("Terminal workspace deletion unavailable");
+      if (!this.zellij.deleteSession) throw new TerminalRuntimeError("unavailable");
       this.deletingWorkspaceId = workspaceId;
       try {
         await this.drainWorkspaceInput(workspaceId);
@@ -424,10 +436,10 @@ export class TerminalRuntime {
     const key = refKey(ref);
     let attachment = this.attachments.get(key);
     if (!attachment) {
-      if (this.attachments.size >= this.maxAttachments) throw new Error("Terminal attachment capacity reached");
+      if (this.attachments.size >= this.maxAttachments) throw new TerminalRuntimeError("capacity");
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
-      if (!tab || tab.zellijPaneId === null) throw new Error("Terminal tab unavailable");
+      if (!tab || tab.zellijPaneId === null) throw new TerminalRuntimeError("not_found");
       const next: AttachmentState = {
         ref,
         handle: undefined as unknown as ZellijAttachment,
@@ -453,7 +465,7 @@ export class TerminalRuntime {
       attachment = next;
     }
     if (!attachment.viewers.has(viewerId) && attachment.viewers.size >= this.maxViewersPerTab) {
-      throw new Error("Terminal viewer capacity reached");
+      throw new TerminalRuntimeError("capacity");
     }
     attachment.viewers.set(viewerId, {
       id: viewerId,
@@ -464,9 +476,9 @@ export class TerminalRuntime {
     let detached = false;
     return {
       write: async (data) => {
-        if (detached) throw new Error("Terminal viewer detached");
+        if (detached) throw new TerminalRuntimeError("conflict");
         const viewer = attachment!.viewers.get(viewerId);
-        if (!viewer) throw new Error("Terminal viewer unavailable");
+        if (!viewer) throw new TerminalRuntimeError("unavailable");
         viewer.lastTouched = Date.now();
         await this.enqueueWrite(ref, data, (encoded) => attachment!.handle.write(encoded));
       },
@@ -520,7 +532,7 @@ export class TerminalRuntime {
   }
 
   private runWorkspaceMutation<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.shuttingDown) return Promise.reject(new Error("Terminal runtime shutting down"));
+    if (this.shuttingDown) return Promise.reject(new TerminalRuntimeError("unavailable"));
     const result = this.workspaceMutationChain.then(operation);
     this.workspaceMutationChain = result.then(
       () => undefined,
@@ -578,7 +590,7 @@ export class TerminalRuntime {
       existing = undefined;
     }
     if (!existing && !this.observerReservations.has(workspaceId) && this.observerCount() >= this.maxObservers) {
-      throw new Error("Terminal observer capacity reached");
+      throw new TerminalRuntimeError("capacity");
     }
     const observerInput = {
       paneIds: [...paneRefs.keys()],
@@ -698,7 +710,7 @@ export class TerminalRuntime {
       this.observerReservations.set(workspaceId, currentReservations + 1);
     } else {
       if (this.observerCount() + this.observerReservations.size >= this.maxObservers) {
-        throw new Error("Terminal observer capacity reached");
+        throw new TerminalRuntimeError("capacity");
       }
       this.observerReservations.set(workspaceId, 1);
     }
@@ -717,9 +729,9 @@ export class TerminalRuntime {
     dataInput: string,
     writer: (data: Uint8Array) => Promise<void>,
   ): Promise<void> {
-    if (this.shuttingDown) throw new Error("Terminal runtime shutting down");
+    if (this.shuttingDown) throw new TerminalRuntimeError("unavailable");
     if (this.deletingWorkspaceId === ref.workspaceId) {
-      throw new Error("Terminal workspace deletion in progress");
+      throw new TerminalRuntimeError("conflict", "Terminal workspace deletion in progress");
     }
     const data = new TextEncoder().encode(z.string().min(1).max(64 * 1024).parse(dataInput));
     const key = refKey(ref);
@@ -730,14 +742,14 @@ export class TerminalRuntime {
         const idle = [...this.inputQueues.entries()]
           .filter(([, candidate]) => candidate.pendingBytes === 0)
           .sort((left, right) => left[1].lastTouched - right[1].lastTouched)[0];
-        if (!idle) throw new Error("Terminal input queue capacity reached");
+        if (!idle) throw new TerminalRuntimeError("capacity");
         this.inputQueues.delete(idle[0]);
       }
       queue = { chain: Promise.resolve(), pendingBytes: 0, lastTouched: Date.now() };
       this.inputQueues.set(key, queue);
     }
     if (queue.pendingBytes + data.byteLength > this.maxPendingInputBytes) {
-      throw new Error("Terminal input queue capacity reached");
+      throw new TerminalRuntimeError("capacity");
     }
     queue.pendingBytes += data.byteLength;
     queue.lastTouched = Date.now();
@@ -761,10 +773,10 @@ export class TerminalRuntime {
 
   private assertTabAcceptsInput(key: string): void {
     if (this.terminatingTabKeys.has(key)) {
-      throw new Error("Terminal tab termination in progress");
+      throw new TerminalRuntimeError("conflict", "Terminal tab termination in progress");
     }
     if (this.closingPaneTabKeys.has(key) || this.untrackedPaneClosures > 0) {
-      throw new Error("Terminal tab closure in progress");
+      throw new TerminalRuntimeError("conflict", "Terminal tab closure in progress");
     }
   }
 
@@ -895,7 +907,7 @@ export class TerminalRuntime {
 
   private async requireRuntimeWorkspace(workspaceId: string): Promise<TerminalRuntimeWorkspaceState> {
     const workspace = await this.store.getRuntimeWorkspace(workspaceId);
-    if (!workspace) throw new Error("Terminal workspace not found");
+    if (!workspace) throw new TerminalRuntimeError("not_found");
     return workspace;
   }
 }

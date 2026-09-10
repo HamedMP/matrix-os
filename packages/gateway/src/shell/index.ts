@@ -23,3 +23,4 @@ export * from "./user-systemd-zellij-adapter.js";
 export * from "./terminal-acceptance-routes.js";
 export * from "./terminal-window-layout-routes.js";
 export * from "./terminal-window-layout-store.js";
+export * from "./workspace-routes.js";

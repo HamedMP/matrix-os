@@ -15,6 +15,7 @@ import {
   type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { TerminalRuntimeError } from "./errors.js";
 import {
   MAX_TERMINAL_SNAPSHOT_ANSI_BYTES,
   MAX_TERMINAL_SNAPSHOT_BYTES,
@@ -143,7 +144,7 @@ export class TerminalWorkspaceStore {
     const now = this.now().toISOString();
     return this.mutate((state) => {
       const workspace = state.workspaces[targetWorkspaceId];
-      if (!workspace) throw new Error("Terminal workspace not found");
+      if (!workspace) throw new TerminalRuntimeError("not_found");
       const id = tabId();
       const tab = InternalTabSchema.parse({
         id,
@@ -183,7 +184,7 @@ export class TerminalWorkspaceStore {
     const name = SafeDisplayStringSchema.parse(input.name);
     return this.mutate((state) => {
       const workspace = state.workspaces[targetWorkspaceId];
-      if (!workspace) throw new Error("Terminal workspace not found");
+      if (!workspace) throw new TerminalRuntimeError("not_found");
       const existing = Object.values(workspace.tabs).find((tab) => tab.migrationKey === migrationKey);
       if (existing) return this.toPublicTab(existing);
       const id = tabId();
@@ -242,7 +243,7 @@ export class TerminalWorkspaceStore {
     return this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
-      if (!workspace || !tab) throw new Error("Terminal tab not found");
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       tab.zellijTabId = zellijTabId;
       tab.zellijPaneId = zellijPaneId;
       tab.status = "running";
@@ -262,7 +263,7 @@ export class TerminalWorkspaceStore {
     await this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
-      if (!workspace || !tab) throw new Error("Terminal tab not found");
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       delete workspace.tabs[ref.tabId];
       Object.values(workspace.tabs)
         .sort((left, right) => left.order - right.order)
@@ -287,7 +288,7 @@ export class TerminalWorkspaceStore {
     return this.mutate(async (state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
-      if (!workspace || !tab) throw new Error("Terminal tab not found");
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       const previous = await this.readSnapshot(ref);
       const now = this.now().toISOString();
       tab.revision = Math.max(tab.revision, previous?.revision ?? 0) + 1;
@@ -322,7 +323,7 @@ export class TerminalWorkspaceStore {
     return this.mutate(async (state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
-      if (!workspace || !tab) throw new Error("Terminal tab not found");
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       const previous = await this.readSnapshot(ref);
       if (
         previous?.seq === seq &&
@@ -362,8 +363,8 @@ export class TerminalWorkspaceStore {
     return this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
-      if (!workspace || !tab) throw new Error("Terminal tab not found");
-      if (tab.revision !== baseRevision) throw new Error("Terminal tab revision conflict");
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
+      if (tab.revision !== baseRevision) throw new TerminalRuntimeError("conflict");
       tab.name = name;
       tab.revision += 1;
       tab.updatedAt = now;
@@ -381,12 +382,12 @@ export class TerminalWorkspaceStore {
     const now = this.now().toISOString();
     return this.mutate((state) => {
       const workspace = state.workspaces[workspaceId];
-      if (!workspace) throw new Error("Terminal workspace not found");
-      if (workspace.revision !== baseRevision) throw new Error("Terminal workspace revision conflict");
+      if (!workspace) throw new TerminalRuntimeError("not_found");
+      if (workspace.revision !== baseRevision) throw new TerminalRuntimeError("conflict");
       const existingIds = Object.keys(workspace.tabs);
       if (new Set(tabIds).size !== tabIds.length || tabIds.length !== existingIds.length ||
           existingIds.some((id) => !tabIds.includes(id))) {
-        throw new Error("Terminal tab order is incomplete");
+        throw new TerminalRuntimeError("invalid_request");
       }
       tabIds.forEach((id, order) => { workspace.tabs[id]!.order = order; });
       workspace.revision += 1;
@@ -408,8 +409,8 @@ export class TerminalWorkspaceStore {
     return this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
-      if (!workspace || !tab) throw new Error("Terminal tab not found");
-      if (tab.revision !== baseRevision) throw new Error("Terminal tab revision conflict");
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
+      if (tab.revision !== baseRevision) throw new TerminalRuntimeError("conflict");
       tab.uiState = {
         placement: input.placement ?? tab.uiState?.placement ?? "active",
         lastSeenSeq: input.lastSeenSeq === undefined ? tab.uiState?.lastSeenSeq ?? null : input.lastSeenSeq,
@@ -432,7 +433,7 @@ export class TerminalWorkspaceStore {
     return this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
-      if (!workspace || !tab) throw new Error("Terminal tab not found");
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       if (tab.status === "exited" && tab.exitCode === exitCode) return this.toPublicTab(tab);
       tab.status = "exited";
       tab.exitCode = exitCode;
@@ -451,7 +452,7 @@ export class TerminalWorkspaceStore {
     const now = this.now().toISOString();
     return this.mutate((state) => {
       const workspace = state.workspaces[workspaceId];
-      if (!workspace) throw new Error("Terminal workspace not found");
+      if (!workspace) throw new TerminalRuntimeError("not_found");
       workspace.canonicalSize = size;
       workspace.revision += 1;
       workspace.updatedAt = now;
@@ -464,7 +465,7 @@ export class TerminalWorkspaceStore {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     const workspace = await this.mutate((state) => {
       const existing = state.workspaces[workspaceId];
-      if (!existing) throw new Error("Terminal workspace not found");
+      if (!existing) throw new TerminalRuntimeError("not_found");
       delete state.workspaces[workspaceId];
       state.revision += 1;
       return structuredClone(existing);
@@ -532,7 +533,9 @@ export class TerminalWorkspaceStore {
 
   private async persistSnapshot(snapshot: TerminalSnapshot): Promise<void> {
     const content = `${JSON.stringify(SnapshotSchema.parse(snapshot))}\n`;
-    if (Buffer.byteLength(content) > MAX_TERMINAL_SNAPSHOT_BYTES) throw new Error("Terminal snapshot capacity reached");
+    if (Buffer.byteLength(content) > MAX_TERMINAL_SNAPSHOT_BYTES) {
+      throw new TerminalRuntimeError("capacity");
+    }
     const target = this.snapshotPath(snapshot.terminalRef.tabId);
     await writeTextAtomic(target, content);
   }

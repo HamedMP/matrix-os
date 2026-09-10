@@ -10,6 +10,7 @@ import {
   type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
+import { terminalRuntimeErrorDetails } from "./errors.js";
 import type { TerminalSnapshot } from "./workspace-store.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
 import { MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES } from "./limits.js";
@@ -25,6 +26,7 @@ export interface TerminalRuntimeControlApi {
   createTab(workspaceId: string, input: {
     name: string;
     cwd: string;
+    accessScope?: TerminalTab["accessScope"];
     command?: string[];
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab>;
@@ -212,11 +214,12 @@ export class TerminalRuntimeSocketServer {
       return null;
     } catch (error: unknown) {
       console.error("[terminal-runtime] control request failed", error);
+      const details = terminalRuntimeErrorDetails(error);
       socket.end(encodeSocketResponseFrame({
         version: 1,
         requestId: parsed.data.requestId,
         ok: false,
-        error: { code: "failed", message: "Terminal operation failed" },
+        error: details,
       } satisfies TerminalRuntimeResponse));
       return null;
     }

@@ -188,6 +188,26 @@ class FakeZellij implements ZellijRuntimeAdapter {
 }
 
 describe("project-scoped terminal runtime", () => {
+  it("persists the trusted access scope supplied for a chat terminal", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const runtime = new TerminalRuntime({
+      store: new TerminalWorkspaceStore({ homePath }),
+      zellij: new FakeZellij(),
+    });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+
+    const tab = await runtime.createTab(workspace.id, {
+      name: "chat",
+      cwd: "projects/matrix-os",
+      accessScope: "chat",
+    });
+
+    expect(tab.accessScope).toBe("chat");
+    expect((await runtime.listWorkspaces())[0]?.tabs[0]?.accessScope).toBe("chat");
+    await runtime.shutdown();
+  });
+
   it("rejects an attachment when its pane exits while the adapter is opening it", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
@@ -225,16 +245,16 @@ describe("project-scoped terminal runtime", () => {
     const firstTab = await limited.createTab(firstWorkspace.id, { name: "one", cwd: "projects/first" });
     await limited.createTab(firstWorkspace.id, { name: "two", cwd: "projects/first" });
     await expect(limited.createTab(firstWorkspace.id, { name: "three", cwd: "projects/first" }))
-      .rejects.toThrow("Terminal workspace tab capacity reached");
+      .rejects.toMatchObject({ code: "capacity" });
     await limited.createTab(secondWorkspace.id, { name: "three", cwd: "projects/second" });
     await expect(limited.createTab(secondWorkspace.id, { name: "four", cwd: "projects/second" }))
-      .rejects.toThrow("Terminal runtime tab capacity reached");
+      .rejects.toMatchObject({ code: "capacity" });
 
     expect((await limited.listWorkspaces()).flatMap((workspace) => workspace.tabs)).toHaveLength(3);
     await limited.terminateTab({ workspaceId: firstWorkspace.id, tabId: firstTab.id });
     await limited.createTab(firstWorkspace.id, { name: "replacement", cwd: "projects/first" });
     await expect(limited.createTab(secondWorkspace.id, { name: "still-full", cwd: "projects/second" }))
-      .rejects.toThrow("Terminal runtime tab capacity reached");
+      .rejects.toMatchObject({ code: "capacity" });
     expect((await limited.listWorkspaces()).flatMap((workspace) => workspace.tabs)).toHaveLength(4);
     expect(zellij.closedTabs).toHaveLength(1);
     expect(zellij.deletedSessions).toEqual([]);
@@ -559,7 +579,7 @@ describe("project-scoped terminal runtime", () => {
     await expect(runtime.createTab(second.id, {
       name: "second",
       cwd: "projects/second",
-    })).rejects.toThrow("Terminal observer capacity reached");
+    })).rejects.toMatchObject({ code: "capacity" });
 
     expect(zellij.observers.has(firstRuntimeWorkspace!.zellijSessionName)).toBe(true);
     expect(zellij.observers.has(secondRuntimeWorkspace!.zellijSessionName)).toBe(false);
@@ -776,7 +796,7 @@ describe("project-scoped terminal runtime", () => {
     ]);
     releaseDeletion();
     await deletion;
-    await expect(creation).rejects.toThrow("Terminal workspace not found");
+    await expect(creation).rejects.toMatchObject({ code: "not_found" });
 
     expect(tabCreatedBeforeDeletionFinished).toBe(false);
     expect(zellij.sessions.size).toBe(0);
@@ -803,7 +823,7 @@ describe("project-scoped terminal runtime", () => {
     await new Promise<void>((resolve) => { setImmediate(resolve); });
     releaseDeletion();
     await deletion;
-    await expect(reconciliation).rejects.toThrow("Terminal workspace not found");
+    await expect(reconciliation).rejects.toMatchObject({ code: "not_found" });
     expect(zellij.sessions.size).toBe(0);
     await runtime.shutdown();
   });
@@ -1116,7 +1136,7 @@ describe("project-scoped terminal runtime", () => {
     expect(zellij.attachments.size).toBe(0);
   });
 
-  it("reconciles stable Matrix tab IDs after the Zellij server restarts", async () => {
+  it("marks a lost running tab exited instead of replacing its process with an empty shell", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
     const store = new TerminalWorkspaceStore({ homePath });
@@ -1134,9 +1154,9 @@ describe("project-scoped terminal runtime", () => {
     await restartedRuntime.restoreAll();
 
     const restored = (await restartedRuntime.listWorkspaces())[0]!;
-    expect(restored.tabs[0]?.id).toBe(tab.id);
+    expect(restored.tabs[0]).toMatchObject({ id: tab.id, status: "exited" });
     expect(restartedZellij.sessions.size).toBe(1);
-    expect([...restartedZellij.sessions.values()][0]?.size).toBe(1);
+    expect([...restartedZellij.sessions.values()][0]?.size).toBe(0);
     await restartedRuntime.shutdown();
   });
 

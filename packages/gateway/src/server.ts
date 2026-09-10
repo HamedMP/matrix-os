@@ -325,6 +325,7 @@ import {
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
+import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -4688,6 +4689,10 @@ export async function createGateway(config: GatewayConfig) {
   void chatAttachmentCleanup.runNow().catch((error: unknown) => {
     logBestEffortFailure("Initial temporary Chat attachment cleanup failed", error);
   });
+  const terminalPasteAssetCleanup = startTerminalPasteAssetCleanup({
+    homePath,
+    onFailure: logBestEffortFailure,
+  });
 
   return {
     app,
@@ -4702,6 +4707,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await terminalPasteAssetCleanup.close();
       await chatIdleReaper?.close().catch((error: unknown) => {
         logBestEffortFailure("Chat idle runtime reconciliation shutdown failed", error);
       });
