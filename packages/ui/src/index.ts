@@ -59,6 +59,14 @@ export type {
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
+export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
+export type {
+  PlatformSpeechCapture,
+  PlatformSpeechCaptureAdapter,
+  PlatformSpeechDraftClient,
+  PlatformSpeechDraftPhase,
+  UsePlatformSpeechDraftResult,
+} from "./speech/use-platform-speech-draft.js";
 
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatContextMenu } from "./chat/ChatContextMenu.js";

@@ -20,6 +20,11 @@ import {
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+import {
+  createPlatformSpeechClient,
+  loadPlatformSpeechRuntimeConfig,
+} from "./speech/platform-client.js";
+import { createSpeechGatewayRoutes } from "./speech/routes.js";
 import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
@@ -423,6 +428,10 @@ export async function createGateway(config: GatewayConfig) {
     : undefined;
   const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
     ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
+    : undefined;
+  const platformSpeechRuntimeConfig = loadPlatformSpeechRuntimeConfig(process.env);
+  const platformSpeechClient = platformSpeechRuntimeConfig
+    ? createPlatformSpeechClient(platformSpeechRuntimeConfig)
     : undefined;
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,
@@ -2000,6 +2009,10 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.route("/api/speech", createSpeechGatewayRoutes({
+    client: platformSpeechClient,
+    getOwnerId: (c) => requireRequestPrincipal(c).userId,
+  }));
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
