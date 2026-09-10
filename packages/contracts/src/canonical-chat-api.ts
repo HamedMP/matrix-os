@@ -1,4 +1,4 @@
-import { ChatRunContextSchema } from "./chat-agent-context.js";
+import { ChatRunContextSchema } from "#chat-agent-context";
 import { z } from "zod/v4";
 import {
   CanonicalChatMessagePartSchema,
