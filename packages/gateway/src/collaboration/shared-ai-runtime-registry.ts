@@ -6,13 +6,11 @@ import {
   type KernelCredentialAccessSourceId,
 } from "../kernel-credentials.js";
 import type { ScopeRuntimeBrokerAuthorization } from "./scope-runtime-broker.js";
-
 const MAX_CAPACITY = 64;
 const MAX_TTL_MS = 5 * 60_000;
 const GenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
 const ReferenceSchema = z.string().min(1).max(256);
 const ModelSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9._:/-]+$/);
-
 export interface SharedAiRuntimeBinding {
   runtimeHandle: string;
   scopeId: string;
@@ -23,28 +21,23 @@ export interface SharedAiRuntimeBinding {
   accessSourceId: KernelCredentialAccessSourceId;
   modelId?: string;
 }
-
 interface StoredBinding extends SharedAiRuntimeBinding {
   expiresAt: number;
 }
-
 export class SharedAiRuntimeRegistry {
   private readonly entries = new Map<string, StoredBinding>();
   private readonly now: () => Date;
   private readonly capacity: number;
   private readonly ttlMs: number;
-
   constructor(options: { now?: () => Date; capacity?: number; ttlMs?: number } = {}) {
     this.now = options.now ?? (() => new Date());
     this.capacity = Math.max(1, Math.min(Math.trunc(options.capacity ?? MAX_CAPACITY), MAX_CAPACITY));
     this.ttlMs = Math.max(1, Math.min(Math.trunc(options.ttlMs ?? 2 * 60_000), MAX_TTL_MS));
   }
-
   get size(): number {
     this.sweep();
     return this.entries.size;
   }
-
   bind(input: SharedAiRuntimeBinding): void {
     const binding = parseBinding(input);
     this.sweep();
@@ -56,7 +49,6 @@ export class SharedAiRuntimeRegistry {
       expiresAt: this.now().getTime() + this.ttlMs,
     });
   }
-
   selectModel(runtimeHandleInput: string, modelIdInput: string): void {
     const runtimeHandle = RuntimeHandleSchema.parse(runtimeHandleInput);
     const modelId = ModelSchema.parse(modelIdInput);
@@ -69,7 +61,6 @@ export class SharedAiRuntimeRegistry {
       expiresAt: this.now().getTime() + this.ttlMs,
     });
   }
-
   lookup(input: { runtimeHandle: string; executionGeneration: string }): SharedAiRuntimeBinding | null {
     const runtimeHandle = RuntimeHandleSchema.safeParse(input.runtimeHandle);
     const generation = GenerationSchema.safeParse(input.executionGeneration);
@@ -80,7 +71,6 @@ export class SharedAiRuntimeRegistry {
     const { expiresAt: _expiresAt, ...binding } = entry;
     return binding;
   }
-
   authorize(input: {
     runtimeHandle: string;
     executionGeneration: string;
@@ -100,16 +90,13 @@ export class SharedAiRuntimeRegistry {
       allowedEgressOrigins: [],
     };
   }
-
   release(runtimeHandleInput: string): void {
     const runtimeHandle = RuntimeHandleSchema.safeParse(runtimeHandleInput);
     if (runtimeHandle.success) this.entries.delete(runtimeHandle.data);
   }
-
   shutdown(): void {
     this.entries.clear();
   }
-
   private sweep(): void {
     const now = this.now().getTime();
     for (const [handle, entry] of this.entries) {
@@ -117,7 +104,6 @@ export class SharedAiRuntimeRegistry {
     }
   }
 }
-
 function parseBinding(input: SharedAiRuntimeBinding): SharedAiRuntimeBinding {
   return {
     runtimeHandle: RuntimeHandleSchema.parse(input.runtimeHandle),

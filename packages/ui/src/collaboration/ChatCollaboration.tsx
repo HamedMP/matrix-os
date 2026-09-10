@@ -292,6 +292,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
 }) {
   const [state, dispatch] = useReducer(reduceSharedChat, initialSharedChatState);
   const loadGeneration = useRef(0);
+  const recoveryGeneration = useRef<number | null>(null);
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
   const draftStore = useMemo(() => createCollaborationDraftStore(storage ?? browserStorage()), [storage]);
@@ -319,7 +320,8 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
   const recoverCanonical = useCallback(async () => {
     // Fence pending history pages and older refreshes before reading canonical state.
     const generation = ++loadGeneration.current;
-    dispatch({ type: "page_cancelled" });
+    recoveryGeneration.current = generation;
+    dispatch({ type: "page_started" });
     try {
       const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
       const [scopeValue, chatValue] = await Promise.all([api.get(base), api.get(`${base}/chat`)]);
@@ -342,16 +344,21 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
     } catch (failure: unknown) {
       if (generation === loadGeneration.current) dispatch({ type: "recovery_failed" });
       throw failure;
+    } finally {
+      if (recoveryGeneration.current === generation) {
+        recoveryGeneration.current = null;
+        dispatch({ type: "page_cancelled" });
+      }
     }
   }, [api, scopeId]);
   useEffect(() => {
     dispatch({ type: "reset" });
     void load(true);
-    return () => { loadGeneration.current += 1; };
+    return () => { loadGeneration.current += 1; recoveryGeneration.current = null; };
   }, [load]);
   const loadMoreMessages = async () => {
     const after = state.messages.at(-1)?.sequence;
-    if (!after || !state.chat || state.loadingMoreMessages) return;
+    if (!after || !state.chat || state.loadingMoreMessages || recoveryGeneration.current !== null) return;
     const generation = loadGeneration.current;
     dispatch({ type: "page_started" });
     try {

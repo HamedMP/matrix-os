@@ -13,11 +13,9 @@ import {
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
-
 const now = "2026-09-10T00:00:00.000Z";
 const owner = { type: "personal" as const, ownerId: collaborationActors.owner };
 const runtimeHandle = "runtime_22222222222222222222222222222222";
-
 describe("canonical shared Chat orchestration", () => {
   let fixture: CollaborationTestDatabase;
   let repository: ChatRepository;

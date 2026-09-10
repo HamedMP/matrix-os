@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SharedAiRuntimeRegistry } from "../../packages/gateway/src/collaboration/shared-ai-runtime-registry.js";
-
 const runtime = (suffix: string) => `runtime_${suffix.padStart(32, "0")}`;
-
 describe("shared AI runtime registry", () => {
   it("authorizes only the exact active runtime generation, action, and selected model", () => {
     const registry = new SharedAiRuntimeRegistry({ now: () => new Date("2026-09-10T00:00:00.000Z") });
@@ -16,7 +14,6 @@ describe("shared AI runtime registry", () => {
       accessSourceId: "owner_anthropic_key",
     });
     registry.selectModel(runtime("1"), "claude-opus-4-6");
-
     expect(registry.authorize({
       runtimeHandle: runtime("1"), executionGeneration: "7",
       action: "inference.messages", modelId: "claude-opus-4-6",
@@ -34,13 +31,11 @@ describe("shared AI runtime registry", () => {
       runtimeHandle: runtime("1"), executionGeneration: "7",
       action: "egress.fetch", url: "https://example.com",
     })).toEqual({ allowed: false });
-
     registry.release(runtime("1"));
     expect(registry.authorize({
       runtimeHandle: runtime("1"), executionGeneration: "7", action: "inference.messages",
     })).toEqual({ allowed: false });
   });
-
   it("is bounded and evicts expired entries before rejecting new active work", () => {
     let current = new Date("2026-09-10T00:00:00.000Z");
     const registry = new SharedAiRuntimeRegistry({ now: () => current, capacity: 2, ttlMs: 1_000 });
