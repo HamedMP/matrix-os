@@ -1,3 +1,4 @@
+import type { ChatAgentContext } from "./agent-context.js";
 import { randomUUID } from "node:crypto";
 import {
   CanonicalChatQueueAdmissionResponseSchema,
@@ -61,6 +62,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: Pick<CanonicalChatProviderRegistry, "get">;
   executionRoots?: ChatExecutionRootResolver;
+  agentContext?: ChatAgentContext;
   now: () => Date;
 }): Promise<CanonicalChatQueueAdmissionResponse> {
   const input = CanonicalQueueChatTurnRequestSchema.parse(options.input);
@@ -77,12 +79,15 @@ export async function enqueueCanonicalQueuedTurn(options: {
       409,
     );
   }
+  const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
+  const effective = { ...input, ...prepared };
   const catalog = await options.catalog.getCatalog(options.principal);
   const validated = validateChatProviderSelection({
     catalog,
-    selection: input.selection,
-    ...(record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-    requirements: requirementsFor(input),
+    selection: effective.selection,
+    ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
+    requirements: requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
+      part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
   });
   if (!validated.ok) {
     throw new CanonicalQueueAdmissionError(
@@ -139,8 +144,9 @@ export async function enqueueCanonicalQueuedTurn(options: {
     parts: input.parts,
     driverKind: validated.instance.driverKind,
     selection: validated.selection,
-    interactionMode: input.interactionMode,
+    interactionMode: effective.interactionMode,
     permissionMode: input.permissionMode,
+    ...(prepared?.context ? { context: prepared.context } : {}),
     ...(resolvedRoot ? {
       executionRoot: resolvedRoot.ref,
       executionRootFingerprint: resolvedRoot.fingerprint,

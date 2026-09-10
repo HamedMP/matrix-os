@@ -48,7 +48,13 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
         .where("chat_id", "=", input.chatId)
         .where("client_request_id", "=", turn.clientRequestId)
         .executeTakeFirst();
-      if (duplicate) return deps.hydrateAdmission(trx, owner, toTurn(duplicate));
+      if (duplicate) {
+        const accepted = await deps.hydrateAdmission(trx, owner, toTurn(duplicate));
+        if (accepted.run.context?.requestHash !== run.context?.requestHash) {
+          throw new ChatConflictError(input.chatId, Number(current.revision));
+        }
+        return accepted;
+      }
       if (current.lifecycle !== "active") {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
@@ -59,7 +65,7 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
       if (await deps.activeRunQuery(trx, input.chatId)) throw new ChatBusyError(input.chatId);
-      if (current.bound_instance_id && (current.bound_instance_id !== run.instanceId
+      if (!run.context?.agent && current.bound_instance_id && (current.bound_instance_id !== run.instanceId
         || current.bound_driver_kind !== run.driverKind)) {
         throw new ChatProviderInstanceLockedError(input.chatId);
       }
@@ -126,6 +132,7 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
         started_at: run.startedAt ?? null,
         completed_at: run.completedAt ?? null,
         history_boundary_seq: run.historyBoundarySeq,
+        context_snapshot: run.context ? jsonb(run.context) : null,
         capability_snapshot: jsonb(run.capabilitySnapshot),
         created_at: run.createdAt,
         updated_at: run.updatedAt,
@@ -146,10 +153,12 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
         revision,
         message_count: sql<number>`message_count + 1`,
         last_message_preview: deps.preview(message),
-        current_selection: jsonb(run.selection),
-        bound_driver_kind: current.bound_driver_kind ?? run.driverKind,
-        bound_instance_id: current.bound_instance_id ?? run.instanceId,
-        bound_at_turn_id: current.bound_at_turn_id ?? turn.id,
+        ...(!run.context?.agent ? {
+          current_selection: jsonb(run.selection),
+          bound_driver_kind: current.bound_driver_kind ?? run.driverKind,
+          bound_instance_id: current.bound_instance_id ?? run.instanceId,
+          bound_at_turn_id: current.bound_at_turn_id ?? turn.id,
+        } : {}),
         updated_at: sql`now()`,
       }).where("id", "=", input.chatId).where("revision", "=", input.baseRevision)
         .returningAll().executeTakeFirst();

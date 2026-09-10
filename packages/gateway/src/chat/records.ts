@@ -249,6 +249,7 @@ export function toRun(row: Selectable<ChatRunsTable>): CanonicalChatRun {
     ...(row.started_at === null ? {} : { startedAt: asIso(row.started_at) }),
     ...(row.completed_at === null ? {} : { completedAt: asIso(row.completed_at) }),
     historyBoundarySeq: Number(row.history_boundary_seq),
+    ...(row.context_snapshot == null ? {} : { context: parseJson(row.context_snapshot) }),
     capabilitySnapshot: parseJson(row.capability_snapshot),
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at),

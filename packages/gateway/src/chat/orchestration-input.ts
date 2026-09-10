@@ -1,4 +1,5 @@
 import { CanonicalChatSafeErrorSchema, type CanonicalChatSafeError, type CanonicalCreateChatTurnRequest, type CanonicalChatMessage } from "@matrix-os/contracts";
+import { ChatAgentContextError } from "./agent-context.js";
 import { ChatNotFoundError, ChatBusyError, ChatProviderInstanceLockedError, ChatRunNotAcknowledgeableError, ChatRunNotActiveError, ChatConflictError } from "./errors.js";
 
 export class CanonicalChatOrchestrationError extends Error {
@@ -75,6 +76,13 @@ export function requirementsFor(input: CanonicalCreateChatTurnRequest) {
 }
 
 export function mapRepositoryError(error: unknown): never {
+  if (error instanceof ChatAgentContextError) {
+    throw new CanonicalChatOrchestrationError(error.code === "context_unavailable"
+      ? safeError("resource_unavailable", "The selected Agent or Chat is unavailable.")
+      : safeError("capability_mismatch", error.code === "agent_permission_required"
+        ? "This Agent requires Full access. Select it before sending."
+        : "Agents and Chat references are disabled."), 400);
+  }
   if (error instanceof ChatNotFoundError) {
     throw new CanonicalChatOrchestrationError(safeError("chat_not_found", "Chat not found."), 404);
   }

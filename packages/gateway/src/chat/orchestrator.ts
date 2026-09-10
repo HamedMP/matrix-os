@@ -1,4 +1,5 @@
 import { admitCanonicalTurn } from "./turn-admission.js";
+import { contextPrompt, type ChatAgentContext } from "./agent-context.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, promptFor, retryPromptFor, requirementsFor } from "./orchestration-input.js";
 export { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestration-input.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -188,6 +189,7 @@ export class CanonicalChatOrchestrator {
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     executionRoots?: ChatExecutionRootResolver;
+    agentContext?: ChatAgentContext;
     collaborationGuard?: {
       assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
     };
@@ -277,6 +279,7 @@ export class CanonicalChatOrchestrator {
         chatId,
         input: CanonicalQueueChatTurnRequestSchema.parse(inputValue),
         repository: this.options.repository,
+        agentContext: this.options.agentContext,
         catalog: this.options.catalog,
         adapters: this.options.adapters,
         ...(this.options.executionRoots ? { executionRoots: this.options.executionRoots } : {}),
@@ -305,6 +308,8 @@ export class CanonicalChatOrchestrator {
     if (!context) {
       throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
     }
+    try { await this.options.agentContext?.revalidate(owner, chatId, context.latestRun.context); }
+    catch (error: unknown) { return mapRepositoryError(error); }
     const catalog = await this.options.catalog.getCatalog(principal);
     const validated = validateChatProviderSelection({
       catalog,
@@ -342,7 +347,7 @@ export class CanonicalChatOrchestrator {
         );
       }
     }
-    const resumeState = await loadChatResumeState({
+    const resumeState = context.latestRun.context?.history ? undefined : await loadChatResumeState({
       repository: this.options.repository, owner, chatId, adapter,
       instanceId: context.latestRun.instanceId,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
@@ -372,6 +377,7 @@ export class CanonicalChatOrchestrator {
       selection: validated.selection,
       interactionMode: context.latestRun.interactionMode,
       permissionMode: context.latestRun.permissionMode,
+      ...(context.latestRun.context ? { context: context.latestRun.context } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
         executionRootFingerprint: resolvedRoot.fingerprint,
@@ -522,7 +528,7 @@ export class CanonicalChatOrchestrator {
               throw new Error("Queued execution root provenance changed");
             }
           }
-          resumeState = await loadChatResumeState({
+          resumeState = claimed.run.context?.history ? undefined : await loadChatResumeState({
             repository: this.options.repository, owner, chatId, adapter,
             instanceId: claimed.run.instanceId,
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
@@ -573,6 +579,7 @@ export class CanonicalChatOrchestrator {
     let failureStage: ChatRunFailureDiagnostic["stage"] = "preparation";
     try {
       await this.assertPersonalExecutionAllowed(owner, run.chatId);
+      await this.options.agentContext?.revalidate(owner, run.chatId, run.context);
       if (resolvedRoot && this.options.executionRoots) {
         const provenance: ChatExecutionRootProvenance = {
           ref: resolvedRoot.ref!,
@@ -592,7 +599,7 @@ export class CanonicalChatOrchestrator {
         chatId: run.chatId,
         turnId: run.turnId,
         runId: run.id,
-        prompt: promptOverride ?? promptFor(message.parts),
+        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), run.context),
         parts: message.parts,
         selection: run.selection,
         interactionMode: run.interactionMode,

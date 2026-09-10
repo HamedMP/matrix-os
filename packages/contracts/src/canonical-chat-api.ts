@@ -1,3 +1,4 @@
+import { ChatRunContextSchema } from "./chat-agent-context.js";
 import { z } from "zod/v4";
 import {
   CanonicalChatMessagePartSchema,
@@ -180,6 +181,7 @@ export const CanonicalChatRunSteeringResponseSchema = z.object({
 });
 
 export const CanonicalChatQueuedTurnSchema = z.object({
+  context: ChatRunContextSchema.optional(),
   id: CanonicalChatQueuedTurnIdSchema,
   chatId: CanonicalChatSchema.shape.id,
   clientRequestId: CanonicalChatRequestIdSchema,

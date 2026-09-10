@@ -26,7 +26,7 @@ export function chatContextRequestHash(input: CanonicalCreateChatTurnRequest): s
   })).digest("hex");
 }
 
-function transcript(messages: CanonicalChatMessage[], limit: number): { text: string; truncated: boolean } {
+export function transcript(messages: CanonicalChatMessage[], limit: number): { text: string; truncated: boolean } {
   const lines = messages.filter((message) => message.state === "committed"
     && (message.role === "user" || message.role === "assistant"))
     .flatMap((message) => {
@@ -113,6 +113,11 @@ export class ChatAgentContext {
       permissionMode: input.permissionMode,
       ...(context ? { context } : {}),
     };
+  }
+
+  async preview(owner: ChatOwner, chatId: string): Promise<ChatContextSnapshot> {
+    if (!this.options.enabled()) throw new ChatAgentContextError("feature_disabled");
+    return this.snapshot(owner, chatId, 8_000);
   }
 
   async revalidate(owner: ChatOwner, chatId: string, context?: ChatRunContext): Promise<void> {

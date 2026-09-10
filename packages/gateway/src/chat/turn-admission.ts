@@ -1,3 +1,4 @@
+import { type ChatAgentContext } from "./agent-context.js";
 import { randomUUID } from "node:crypto";
 import {
   CanonicalCreateChatTurnRequestSchema, CanonicalChatMessageSchema, CanonicalChatTurnSchema,
@@ -20,6 +21,7 @@ export interface TurnAdmissionOptions {
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
+  agentContext?: ChatAgentContext;
   now?: () => Date;
   assertOpen(): void;
   assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
@@ -43,12 +45,17 @@ export async function admitCanonicalTurn(
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
     const record = await deps.repository.get(owner, chatId);
     if (!record) return mapRepositoryError(new ChatNotFoundError(chatId));
+    let prepared;
+    try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
+    catch (error: unknown) { return mapRepositoryError(error); }
+    const effective = { ...input, ...prepared };
     const catalog = await deps.catalog.getCatalog(principal);
     const validated = validateChatProviderSelection({
       catalog,
-      selection: input.selection,
-      ...(record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-      requirements: requirementsFor(input),
+      selection: effective.selection,
+      ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
+      requirements: requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
+        part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
     });
     if (!validated.ok) {
       throw new CanonicalChatOrchestrationError(validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
@@ -92,7 +99,7 @@ export async function admitCanonicalTurn(
         );
       }
     }
-    const resumeState = await loadChatResumeState({
+    const resumeState = prepared?.context?.history ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
@@ -133,7 +140,8 @@ export async function admitCanonicalTurn(
       driverKind: validated.instance.driverKind,
       instanceId: validated.instance.id,
       selection: validated.selection,
-      interactionMode: input.interactionMode,
+      interactionMode: effective.interactionMode,
+      ...(prepared?.context ? { context: prepared.context } : {}),
       permissionMode: input.permissionMode,
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,

@@ -1033,7 +1033,7 @@ export class ChatRepository {
         || run.driverKind !== latest.driver_kind || run.instanceId !== latest.instance_id) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
-      if (current.bound_driver_kind !== run.driverKind || current.bound_instance_id !== run.instanceId) {
+      if (!run.context?.agent && (current.bound_driver_kind !== run.driverKind || current.bound_instance_id !== run.instanceId)) {
         throw new ChatProviderInstanceLockedError(chatId);
       }
       await trx.insertInto("chat_runs").values({
@@ -1054,6 +1054,7 @@ export class ChatRepository {
         started_at: null,
         completed_at: null,
         history_boundary_seq: run.historyBoundarySeq,
+        context_snapshot: run.context ? jsonb(run.context) : null,
         capability_snapshot: jsonb(run.capabilitySnapshot),
         created_at: run.createdAt,
         updated_at: run.updatedAt,
@@ -1073,7 +1074,7 @@ export class ChatRepository {
       const revision = input.baseRevision + 1;
       const updated = await trx.updateTable("chats").set({
         revision,
-        current_selection: jsonb(run.selection),
+        ...(!run.context?.agent ? { current_selection: jsonb(run.selection) } : {}),
         attention: "none",
         updated_at: run.updatedAt,
       }).where("id", "=", chatId).where("revision", "=", input.baseRevision)

@@ -176,6 +176,7 @@ export class ChatRunLifecycleRepository {
       .where("chat_runs.chat_id", "=", input.chatId)
       .where("chat_runs.driver_kind", "=", input.driverKind)
       .where("chat_runs.instance_id", "=", input.instanceId)
+      .where(sql<boolean>`chat_runs.context_snapshot -> 'agent' IS NULL`)
       // A new user turn continues the native conversation even when its last
       // run failed. Explicit retry callers retain the completed-only boundary.
       .where("chat_runs.status", "in", input.includeInterrupted

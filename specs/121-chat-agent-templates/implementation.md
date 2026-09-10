@@ -20,7 +20,7 @@ References carry typed stable IDs, never trusted labels or client-supplied trans
 
 An Agent invocation runs Hermes in a fresh session, using the current request and bounded current-Chat history. It does not borrow another Bot's provider checkpoint or alter the parent Chat binding. Ordinary follow-ups after an invocation receive intervening canonical conversation context rather than resuming an unaware checkpoint. Results and activities use the existing canonical pipeline and carry Agent attribution; completion is not Task completion.
 
-Queued work keeps references and resolved snapshots durable. Dispatch rechecks feature availability, Agent archival and source access. Retry reuses the accepted snapshot and rechecks authority. New references cannot be steered into an active Run; the UI uses Queue next for them. Normal steering remains unchanged.
+Queued work keeps references and resolved snapshots durable. Current-Chat history is refreshed under the claim transaction so the just-completed reply is included; referenced Chats and Agent definitions stay pinned. Queue text edits retain typed references; changing references requires cancelling and re-queuing. Dispatch rechecks feature availability, Agent archival and source access. Retry reuses the accepted snapshot and rechecks authority. New references cannot be steered into an active Run; the UI uses Queue next for them. Normal steering remains unchanged.
 
 ## Security and failure boundaries
 
@@ -29,7 +29,8 @@ Queued work keeps references and resolved snapshots durable. Dispatch rechecks f
 | GET `/api/chat-agents` | Existing request principal; personal owner only | Server flag; bounded Agent list; coarse readiness |
 | POST `/api/chat-agents` | Same owner | Body limit; bounded strict schema; idempotency key |
 | PATCH `/api/chat-agents/:agentId` | Same owner | Body limit; safe ID; revision compare; explicit fields |
-| GET `/api/chat-agents/mentions` | Same owner | Bounded query; current Chat exclusion; max results |
+| GET `/api/chat-mentions` | Same owner | Bounded query; current Chat exclusion; max results |
+| GET `/api/chat-context/:chatId` | Same owner; private active Chat only | Safe ID; 40 messages / 8 KB text; no tools or attachments |
 | Existing create/queue/retry turn APIs | Existing owner / collaboration guard | Flag, one Agent / three Chats, no forged snapshot, current catalog readiness |
 | Dispatch / resumed queue | Server-owned snapshot | Recheck archival, reference access, flag and execution root |
 
@@ -61,3 +62,14 @@ Use Graphite for stack operations. Each layer must remain deploy-safe with the s
 - [ ] Required typecheck, patterns, tests, React audit and production builds recorded.
 - [ ] Exact-head real Hermes / streaming evidence and Human Review environment prepared.
 - [ ] Public docs prepared with an accurate feature-switch boundary.
+
+### Backend checkpoint (2026-09-10)
+
+The first two layers implement file definitions, authenticated CRUD/search/preview,
+server feature gating, runtime startup/shutdown wiring, canonical persistence,
+one-request Hermes routing, default-binding preservation, retry/queue snapshots,
+and steering guards. Gateway TypeScript passes; 80 focused Agent/contract/Hermes
+adapter tests pass, and the 93 existing repository/orchestrator regressions passed
+after the admission changes. Pattern scan: zero violations, five existing warning
+categories. These are automated tests with protocol doubles, not live Hermes or
+Human Review evidence. UI and exact-head Preview verification remain pending.

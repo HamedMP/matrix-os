@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { CanonicalChatModelSelectionSchema, CanonicalChatRequestIdSchema } from "#canonical-chat";
+import { CanonicalChatModelSelectionSchema, CanonicalChatRequestIdSchema, CanonicalChatResourceReferenceSchema } from "#canonical-chat";
 import { IsoTimestampSchema } from "#contract-primitives";
 import { canonicalBoundedText, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { ChatAgentIdSchema } from "#chat-agent-context";
@@ -32,3 +32,9 @@ export type ChatAgent = z.infer<typeof ChatAgentSchema>;
 export type CreateChatAgentRequest = z.infer<typeof CreateChatAgentRequestSchema>;
 export type UpdateChatAgentRequest = z.infer<typeof UpdateChatAgentRequestSchema>;
 export type ChatAgentListResponse = z.infer<typeof ChatAgentListResponseSchema>;
+
+export const ChatMentionSearchResponseSchema = z.object({
+  enabled: z.boolean(),
+  resources: z.array(CanonicalChatResourceReferenceSchema).max(40),
+}).strict();
+export type ChatMentionSearchResponse = z.infer<typeof ChatMentionSearchResponseSchema>;
