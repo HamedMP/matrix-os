@@ -19,6 +19,8 @@
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
+    "#chat-agents": "./src/chat-agents.ts",
+    "#chat-agent-context": "./src/chat-agent-context.ts",
     "#canonical-chat-api": "./src/canonical-chat-api.ts",
     "#canonical-chat-content": "./src/canonical-chat-content.ts",
     "#canonical-chat-approvals": "./src/canonical-chat-approvals.ts",

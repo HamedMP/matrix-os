@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ChatRunContextSchema } from "#chat-agent-context";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { MAX_AGENT_ATTACHMENT_BYTES } from "#agent-thread-contracts";
 import {
@@ -84,6 +85,8 @@ export const CanonicalChatResourceKindSchema = z.enum([
   "task",
   "app",
   "terminal_session",
+  "agent",
+  "chat",
 ]);
 
 export const CanonicalChatResourceReferenceSchema = z.object({
@@ -180,6 +183,7 @@ export const CanonicalChatRunSchema = z.object({
   startedAt: IsoTimestampSchema.optional(),
   completedAt: IsoTimestampSchema.optional(),
   historyBoundarySeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  context: ChatRunContextSchema.optional(),
   capabilitySnapshot: z.object({
     revision: canonicalReferenceId(160),
     rootChat: z.boolean(),
@@ -198,6 +202,9 @@ export const CanonicalChatRunSchema = z.object({
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
 }).strict().superRefine((run, ctx) => {
+  if (run.context?.agent && run.driverKind !== "hermes") {
+    ctx.addIssue({ code: "custom", path: ["context", "agent"], message: "Saved Agents execute with Hermes" });
+  }
   if (run.instanceId !== run.selection.instanceId) {
     ctx.addIssue({ code: "custom", path: ["selection", "instanceId"], message: "Run Instance mismatch" });
   }

@@ -117,10 +117,21 @@ export const CanonicalChatUserInputPartSchema = CanonicalChatMessagePartSchema
     message: "Part is not accepted as user input",
   });
 
+function validMentionCounts(parts: z.infer<typeof CanonicalChatUserInputPartSchema>[]): boolean {
+  const references = parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
+  const agents = references.filter((reference) => reference.kind === "agent");
+  const chats = references.filter((reference) => reference.kind === "chat");
+  return agents.length <= 1 && chats.length <= 3
+    && new Set(chats.map((chat) => chat.id)).size === chats.length;
+}
+
+const MentionAwareInputPartsSchema = z.array(CanonicalChatUserInputPartSchema).min(1).max(64)
+  .refine(validMentionCounts, { message: "Use one Agent and up to three distinct Chats" });
+
 export const CanonicalCreateChatTurnRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+  parts: MentionAwareInputPartsSchema,
   selection: CanonicalChatModelSelectionSchema,
   interactionMode: canonicalReferenceId(80),
   permissionMode: canonicalReferenceId(80),
@@ -137,7 +148,7 @@ export const CanonicalQueueChatTurnRequestSchema = CanonicalCreateChatTurnReques
 export const CanonicalUpdateQueuedChatTurnRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+  parts: MentionAwareInputPartsSchema,
 }).strict();
 
 export const CanonicalSteerQueuedChatTurnRequestSchema = z.object({
@@ -149,7 +160,9 @@ export const CanonicalSteerQueuedChatTurnRequestSchema = z.object({
 export const CanonicalSteerChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   expectedTurnId: CanonicalChatTurnSchema.shape.id,
-  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64).refine((parts) => !parts.some(
+    (part) => part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind),
+  ), { message: "Queue Agent and Chat references as a new turn" }),
 }).strict();
 
 export const CanonicalChatRunSteeringResponseSchema = z.object({
