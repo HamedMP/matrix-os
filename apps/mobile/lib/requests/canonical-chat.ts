@@ -1,4 +1,5 @@
 import {
+  chatMessageVersionUrl,
   CanonicalChatDetailResponseSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
@@ -35,7 +36,7 @@ export function fetchChats(
     return Promise.reject(new Error(CHATS_UNAVAILABLE_ERROR));
   }
   return fetchAuthenticatedJson({
-    url,
+    url: chatMessageVersionUrl(url),
     token: clerkToken,
     schema: CanonicalChatListResponseSchema,
     errorMessage: CHATS_UNAVAILABLE_ERROR,
@@ -81,7 +82,7 @@ export function fetchChatDetail(
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
   }
   return fetchAuthenticatedJson({
-    url,
+    url: chatMessageVersionUrl(url),
     token: clerkToken,
     schema: CanonicalChatDetailResponseSchema,
     errorMessage: CHAT_DETAIL_ERROR,
@@ -105,7 +106,7 @@ export async function admitChatTurn(
   }
   const body = CanonicalCreateChatTurnRequestSchema.parse(input);
   return fetchAuthenticatedJson({
-    url,
+    url: chatMessageVersionUrl(url),
     token: clerkToken,
     schema: CanonicalChatTurnAdmissionResponseSchema,
     errorMessage: CHAT_TURN_ERROR,
