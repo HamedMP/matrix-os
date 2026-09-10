@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { evaluateRuntimeCompatibility } from "@matrix-os/contracts";
+import { evaluateDesktopReleaseState } from "@matrix-os/contracts";
 import { DesktopUpdateSnapshotSchema } from "../../../shared/desktop-update";
 import type { ApiClient } from "./api";
 import { readSystemVersionIdentity, safeSystemVersion } from "./system-version";
@@ -38,7 +38,7 @@ function guard(scope: Scope) {
 const options = (signal: AbortSignal) => ({ signal, maxBytes: 64 * 1024, timeoutMs: 10_000 });
 
 export async function loadRepairPlan(scope: Scope & {
-  readLocal: () => Promise<{ version: unknown; snapshot: unknown }>;
+  readLocal: () => Promise<{ version: unknown; snapshot: unknown; source?: unknown }>;
 }): Promise<RepairPlan> {
   guard(scope);
   const [localResult, infoResult, cloudResult] = await Promise.allSettled([
@@ -68,30 +68,39 @@ export async function loadRepairPlan(scope: Scope & {
     cloud.state = checked.data.updateAvailable && cloud.available !== cloud.installed ? "update" : "current";
   }
   if (cloud.state === "current" && cloud.running && cloud.running !== cloud.installed) cloud.state = "pending";
-  const status = evaluateRuntimeCompatibility(info);
-  let targets: RepairTarget[] = [];
-  let reason: string;
-  if (status === "desktop-update-required") {
-    targets = local.state === "update" ? ["local"] : [];
-    reason = targets.length ? "The cloud computer requires a newer desktop app. We'll update the desktop app."
-      : "The cloud computer requires a newer desktop app, but an automatic app update is not available. Check again or install the latest app.";
-  } else if (status === "runtime-update-required") {
-    targets = cloud.state === "update" ? ["cloud"] : [];
-    reason = targets.length ? "Your desktop app requires a newer cloud computer. We'll update the cloud computer."
-      : "Your desktop app requires a newer cloud computer, but its update could not be confirmed. Check again.";
+  const { status, protocol } = evaluateDesktopReleaseState(info, localResult.status === "fulfilled" ? localResult.value.source : null);
+  const targets: RepairTarget[] = [];
+  if (protocol === "desktop-update-required") {
+    if (local.state === "update") targets.push("local");
+  } else if (protocol === "runtime-update-required") {
+    if (cloud.state === "update") targets.push("cloud");
   } else {
     if (cloud.state === "update") targets.push("cloud");
-    if (local.state === "update") targets.push("local");
+    if (local.state === "update" && (status !== "runtime-update-required" || cloud.state === "update")) targets.push("local");
+  }
+  let reason: string;
+  if (targets.length) {
     reason = targets.length === 2 ? "Both have newer releases. We'll update the cloud computer first, then the desktop app."
       : targets[0] === "cloud" ? "A newer cloud release is available. We'll update the cloud computer."
-      : targets[0] === "local" ? "A newer app release is available. We'll update the desktop app."
-      : local.state === "current" && cloud.state === "current" ? "Both are up to date on their current update channels."
-      : "Some version checks are unavailable. Check again to confirm what needs updating.";
+      : "A newer app release is available. We'll update the desktop app.";
+  } else if (status === "runtime-update-required" || status === "different-releases") {
+    reason = "The desktop app and cloud computer have different changes installed. A matching update is not available on their current channels. Check again later.";
+  } else {
+    reason = status === "aligned" && local.state === "current" && cloud.state === "current"
+      ? "Both contain the same changes and are up to date on their current update channels."
+      : "Some release checks are unavailable. Check again to confirm what needs updating.";
   }
-  if (cloud.installed && cloud.running && cloud.installed !== cloud.running && !targets.length) {
+  if (protocol === "desktop-update-required" || protocol === "runtime-update-required") {
+    const required = protocol === "desktop-update-required" ? "desktop app" : "cloud computer";
+    reason = `The ${required} must be updated to support this connection. ${targets.length
+      ? "Its current channel has an update available."
+      : "A required update is not available on its current channel. Check again later."}`;
+  } else if (targets.length && status === "runtime-update-required") reason = `The cloud computer is missing changes included in your desktop app. ${reason}`;
+  else if (targets.length && status === "different-releases") reason = `The desktop app and cloud computer have different changes installed. ${reason}`;
+  if (cloud.installed && cloud.running && cloud.installed !== cloud.running && !targets.length && protocol !== "desktop-update-required") {
     reason = "The cloud update is installed, but its services are still running the previous version. Check again after the restart completes.";
   }
-  return { local, cloud, targets, reason, compatibilityUpdateRequired: status === "desktop-update-required" || status === "runtime-update-required", ...(checked.success ? { channel: checked.data.channel } : {}) };
+  return { local, cloud, targets, reason, compatibilityUpdateRequired: status !== "aligned", ...(checked.success ? { channel: checked.data.channel } : {}) };
 }
 
 export async function repairVersions(plan: RepairPlan, scope: Scope & {

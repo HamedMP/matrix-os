@@ -62,6 +62,11 @@ import {
 } from './r2-capability.js';
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
 import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
+import { createSpeechRuntimeRoutes } from './speech/routes.js';
+import {
+  createUnavailablePlatformSpeechService,
+  type PlatformSpeechService,
+} from './speech/service.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -205,6 +210,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
+  internalSpeechRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   collaboration?: PlatformCollaborationRuntime;
   customerVpsService?: CustomerVpsService;
@@ -307,6 +313,20 @@ async function startPlatformServerWithCleanup(
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
+  const speechService: PlatformSpeechService = createUnavailablePlatformSpeechService({
+    dictation: {
+      enabled: true,
+      maxBytes: 10 * 1024 * 1024,
+      maxDurationMs: 120_000,
+      maxTranscriptChars: 32_000,
+      supportedMediaTypes: ['audio/wav'],
+      languageHints: false,
+    },
+    ownerAudio: { enabled: false },
+  });
+  const internalSpeechRuntimeRoutes = platformSecret.length >= 32
+    ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
+    : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   if (fundedAiConfig.enabled) {
     fundedAiRepository = createAiFundedPolicyRepository({
@@ -998,6 +1018,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
+    internalSpeechRuntimeRoutes,
     fundedAiRepository,
     collaboration,
     customerVpsService,
@@ -1052,6 +1073,7 @@ async function startPlatformServerWithCleanup(
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           collaboration?.shutdown(),
+          Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),

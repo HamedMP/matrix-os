@@ -306,7 +306,8 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
     }
   }, [api, scopeId]);
   const recoverCanonical = useCallback(async () => {
-    const generation = loadGeneration.current;
+    // Fence pending history pages and older refreshes before reading canonical state.
+    const generation = ++loadGeneration.current;
     const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
     const [scopeValue, chatValue] = await Promise.all([api.get(base), api.get(`${base}/chat`)]);
     const nextScope = CollaborationScopeSchema.parse(scopeValue);

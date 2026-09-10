@@ -1,3 +1,4 @@
+export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
 import { z } from "zod/v4";
@@ -23,7 +24,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.153.4";
+export const CODEX_VERIFIED_VERSION = "0.154.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
@@ -54,6 +55,7 @@ export * from "#provider-settings";
 export * from "#funded-ai";
 export * from "#getting-started";
 export * from "#safe-client-error";
+export * from "#speech";
 export * from "#support-chat-properties";
 export * from "#terminal-clipboard";
 export * from "#terminal-links";
