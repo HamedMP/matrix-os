@@ -136,7 +136,17 @@ export function createSpeechGatewayRoutes(options: {
     }
   });
 
-  app.post("/transcriptions", bodyLimit({
+  app.post("/transcriptions", async (c, next) => {
+    if (activeTranscriptions >= MAX_ACTIVE_GATEWAY_TRANSCRIPTIONS) {
+      return c.json(safeError("rate_limited"), 429);
+    }
+    activeTranscriptions += 1;
+    try {
+      return await next();
+    } finally {
+      activeTranscriptions -= 1;
+    }
+  }, bodyLimit({
     maxSize: MAX_MULTIPART_BYTES,
     onError: (c) => c.json(safeError("invalid_request"), 413),
   }), async (c) => {
@@ -144,43 +154,35 @@ export function createSpeechGatewayRoutes(options: {
     if ("response" in resolved) return resolved.response;
     const { client } = resolved;
     if (!client) return c.json(safeError(options.client ? "not_found" : "unavailable"), options.client ? 404 : 503);
-    if (activeTranscriptions >= MAX_ACTIVE_GATEWAY_TRANSCRIPTIONS) {
-      return c.json(safeError("rate_limited"), 429);
-    }
-    activeTranscriptions += 1;
+    let body: Awaited<ReturnType<typeof c.req.parseBody>>;
     try {
-      let body: Awaited<ReturnType<typeof c.req.parseBody>>;
-      try {
-        body = await c.req.parseBody({ all: true });
-      } catch (error: unknown) {
-        console.warn("[gateway-speech] multipart parse failed", error instanceof Error ? error.name : "UnknownError");
-        return c.json(safeError("invalid_request"), 400);
-      }
-      if (Object.keys(body).some((key) => key !== "requestId" && key !== "recording")) {
-        return c.json(safeError("invalid_request"), 400);
-      }
-      const requestId = SpeechRequestIdSchema.safeParse(single(body.requestId));
-      const recording = single(body.recording);
-      if (!requestId.success || !(recording instanceof File)) {
-        return c.json(safeError("invalid_request"), 400);
-      }
-      if (recording.type !== "audio/wav" || recording.size < 44 || recording.size > MAX_RECORDING_BYTES) {
-        return c.json(safeError("invalid_media"), 422);
-      }
-      try {
-        const result = await client.transcribe({
-          requestId: requestId.data,
-          sourceKind: "dictation",
-          audio: new Uint8Array(await recording.arrayBuffer()),
-          mediaType: "audio/wav",
-          signal: c.req.raw.signal,
-        });
-        return c.json(SpeechTranscriptionResponseSchema.parse(result), 200);
-      } catch (error: unknown) {
-        return clientError(c, error);
-      }
-    } finally {
-      activeTranscriptions -= 1;
+      body = await c.req.parseBody({ all: true });
+    } catch (error: unknown) {
+      console.warn("[gateway-speech] multipart parse failed", error instanceof Error ? error.name : "UnknownError");
+      return c.json(safeError("invalid_request"), 400);
+    }
+    if (Object.keys(body).some((key) => key !== "requestId" && key !== "recording")) {
+      return c.json(safeError("invalid_request"), 400);
+    }
+    const requestId = SpeechRequestIdSchema.safeParse(single(body.requestId));
+    const recording = single(body.recording);
+    if (!requestId.success || !(recording instanceof File)) {
+      return c.json(safeError("invalid_request"), 400);
+    }
+    if (recording.type !== "audio/wav" || recording.size < 44 || recording.size > MAX_RECORDING_BYTES) {
+      return c.json(safeError("invalid_media"), 422);
+    }
+    try {
+      const result = await client.transcribe({
+        requestId: requestId.data,
+        sourceKind: "dictation",
+        audio: new Uint8Array(await recording.arrayBuffer()),
+        mediaType: "audio/wav",
+        signal: c.req.raw.signal,
+      });
+      return c.json(SpeechTranscriptionResponseSchema.parse(result), 200);
+    } catch (error: unknown) {
+      return clientError(c, error);
     }
   });
 
