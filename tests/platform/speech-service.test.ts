@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createSpeechOperationsRepository } from "../../packages/platform/src/speech/operations.js";
+import {
+  createSpeechOperationsRepository,
+  type SpeechOperationsRepository,
+} from "../../packages/platform/src/speech/operations.js";
+import {
+  SpeechAdapterError,
+  type FileTranscriptionAdapter,
+} from "../../packages/platform/src/speech/adapters/openai.js";
 import {
   SpeechServiceError,
   createPlatformSpeechService,
+  type PlatformSpeechPolicy,
+  type SpeechFundingPort,
 } from "../../packages/platform/src/speech/service.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
@@ -45,14 +54,36 @@ describe("platform speech service", () => {
 
   afterEach(async () => destroyTestPlatformDb(db));
 
-  function service() {
-    const operations = createSpeechOperationsRepository({ db, now: () => now });
-    const funding = {
+  const policy: PlatformSpeechPolicy = {
+    enabled: true,
+    revision: "speech-policy-1",
+    modelId: "gpt-transcribe",
+    microusdPerMinute: 60,
+    dictation: {
+      enabled: true,
+      maxBytes: 10 * 1024 * 1024,
+      maxDurationMs: 120_000,
+      maxTranscriptChars: 32_000,
+      supportedMediaTypes: ["audio/wav"],
+      languageHints: false,
+    },
+    ownerAudio: { enabled: false },
+  };
+
+  function service(options: {
+    operations?: SpeechOperationsRepository;
+    funding?: SpeechFundingPort;
+    adapter?: FileTranscriptionAdapter;
+    policy?: PlatformSpeechPolicy;
+  } = {}) {
+    const operations = options.operations ?? createSpeechOperationsRepository({ db, now: () => now });
+    const funding = options.funding ?? {
       reserve: vi.fn(async () => ({ reservationId: "funding_1", reservedMicrousd: 120 })),
       settle: vi.fn(async () => undefined),
       release: vi.fn(async () => undefined),
     };
-    const adapter = { id: "openai-file", transcribe: vi.fn(async () => ({ text: "hello world" })) };
+    const adapter = options.adapter
+      ?? { id: "openai-file", transcribe: vi.fn(async () => ({ text: "hello world" })) };
     return {
       funding,
       adapter,
@@ -61,21 +92,7 @@ describe("platform speech service", () => {
         funding,
         adapter,
         fingerprintSecret: "f".repeat(32),
-        policy: {
-          enabled: true,
-          revision: "speech-policy-1",
-          modelId: "gpt-transcribe",
-          microusdPerMinute: 60,
-          dictation: {
-            enabled: true,
-            maxBytes: 10 * 1024 * 1024,
-            maxDurationMs: 120_000,
-            maxTranscriptChars: 32_000,
-            supportedMediaTypes: ["audio/wav"],
-            languageHints: false,
-          },
-          ownerAudio: { enabled: false },
-        },
+        policy: options.policy ?? policy,
       }),
     };
   }
@@ -100,6 +117,31 @@ describe("platform speech service", () => {
       executionState: "succeeded",
       outcomeCode: "transcript",
     });
+  });
+
+  it("advertises only transcript limits accepted by the response contract", () => {
+    const ownerAudioPolicy: PlatformSpeechPolicy = {
+      ...policy,
+      ownerAudio: {
+        enabled: true,
+        maxBytes: 64 * 1024 * 1024,
+        maxDurationMs: 60 * 60_000,
+        maxTranscriptChars: 32_000,
+        supportedMediaTypes: ["audio/wav"],
+        languageHints: false,
+      },
+    };
+    expect(service({ policy: ownerAudioPolicy }).speech.capabilities().fileTranscription)
+      .toMatchObject({
+        dictation: { maxTranscriptChars: 32_000 },
+        ownerAudio: { maxTranscriptChars: 32_000 },
+      });
+    expect(() => service({
+      policy: {
+        ...ownerAudioPolicy,
+        ownerAudio: { ...ownerAudioPolicy.ownerAudio, maxTranscriptChars: 32_001 },
+      },
+    })).toThrow("Speech transcript limit is invalid");
   });
 
   it("does not redispatch or replay transcript content for a repeated POST", async () => {
@@ -133,5 +175,284 @@ describe("platform speech service", () => {
     expect(error).toMatchObject({ code: "cancelled" });
     expect(adapter.transcribe).not.toHaveBeenCalled();
     expect(JSON.stringify(error)).not.toMatch(/openai|funding_1|machine_123/i);
+  });
+
+  it("rejects pre-aborted input before admission or allowance reservation", async () => {
+    const operations = createSpeechOperationsRepository({ db, now: () => now });
+    const claimDispatch = vi.spyOn(operations, "claimDispatch");
+    const controller = new AbortController();
+    controller.abort();
+    const { speech, funding, adapter } = service({ operations });
+    await expect(speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: controller.signal,
+    })).rejects.toMatchObject({ code: "cancelled" });
+    expect(funding.reserve).not.toHaveBeenCalled();
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(funding.settle).not.toHaveBeenCalled();
+    expect(claimDispatch).not.toHaveBeenCalled();
+    expect(adapter.transcribe).not.toHaveBeenCalled();
+    expect(await operations.get(identity, requestId)).toBeUndefined();
+  });
+
+  it("releases once and never dispatches when aborted after admission", async () => {
+    const controller = new AbortController();
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const operations: SpeechOperationsRepository = {
+      ...repository,
+      admit: async (...args) => {
+        const admitted = await repository.admit(...args);
+        controller.abort();
+        return admitted;
+      },
+      claimDispatch: vi.fn(repository.claimDispatch),
+    };
+    const { speech, funding, adapter } = service({ operations });
+    await expect(speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: controller.signal,
+    })).rejects.toMatchObject({ code: "cancelled" });
+    expect(funding.reserve).toHaveBeenCalledTimes(1);
+    expect(funding.release).toHaveBeenCalledTimes(1);
+    expect(funding.settle).not.toHaveBeenCalled();
+    expect(operations.claimDispatch).not.toHaveBeenCalled();
+    expect(adapter.transcribe).not.toHaveBeenCalled();
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "cancelled",
+      cancellationRequested: true,
+      executionStarted: false,
+      retrySafety: "terminal_no_retry_needed",
+      outcomeCode: "cancelled",
+    });
+  });
+
+  it("races caller abort against an in-flight dispatch claim durably", async () => {
+    const caller = new AbortController();
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const claimEntered = Promise.withResolvers<void>();
+    const allowClaim = Promise.withResolvers<void>();
+    const operations: SpeechOperationsRepository = {
+      ...repository,
+      claimDispatch: vi.fn(async (...args) => {
+        claimEntered.resolve();
+        await allowClaim.promise;
+        return repository.claimDispatch(...args);
+      }),
+    };
+    const { speech, funding, adapter } = service({ operations });
+    const result = speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: caller.signal,
+    });
+    await claimEntered.promise;
+    caller.abort();
+    await vi.waitFor(() => expect(funding.release).toHaveBeenCalledTimes(1));
+    allowClaim.resolve();
+
+    await expect(result).rejects.toMatchObject({ code: "cancelled" });
+    expect(operations.claimDispatch).toHaveBeenCalledTimes(1);
+    expect(adapter.transcribe).not.toHaveBeenCalled();
+    expect(funding.settle).not.toHaveBeenCalled();
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "cancelled",
+      cancellationRequested: true,
+      executionStarted: false,
+      outcomeCode: "cancelled",
+    });
+  });
+
+  it("settles conservatively when caller abort follows a committed dispatch claim", async () => {
+    const caller = new AbortController();
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const operations: SpeechOperationsRepository = {
+      ...repository,
+      claimDispatch: vi.fn(async (...args) => {
+        const claimed = await repository.claimDispatch(...args);
+        caller.abort();
+        return claimed;
+      }),
+    };
+    const { speech, funding, adapter } = service({ operations });
+
+    await expect(speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: caller.signal,
+    })).rejects.toMatchObject({ code: "cancelled" });
+    expect(adapter.transcribe).not.toHaveBeenCalled();
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
+      mode: "conservative",
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      cancellationRequested: true,
+      executionStarted: true,
+      outcomeCode: "cancelled",
+    });
+  });
+
+  it("settles conservatively when cancellation follows the dispatch claim", async () => {
+    const adapterStarted = Promise.withResolvers<void>();
+    const adapter: FileTranscriptionAdapter = {
+      id: "openai-file",
+      transcribe: vi.fn(async ({ signal }) => {
+        adapterStarted.resolve();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(
+            new SpeechAdapterError("cancelled", "Transcription was cancelled"),
+          ), { once: true });
+        });
+        return { text: "unreachable" };
+      }),
+    };
+    const { speech, funding } = service({ adapter });
+    const result = speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    });
+    await adapterStarted.promise;
+    await speech.cancel(identity, requestId);
+    await expect(result).rejects.toMatchObject({ code: "cancelled" });
+    expect(adapter.transcribe).toHaveBeenCalledTimes(1);
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(funding.settle).toHaveBeenCalledTimes(1);
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
+      mode: "conservative",
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      cancellationRequested: true,
+      executionStarted: true,
+      retrySafety: "new_request_may_consume_allowance",
+      outcomeCode: "cancelled",
+    });
+  });
+
+  it("persists caller abort after dispatch before conservative settlement", async () => {
+    const adapterStarted = Promise.withResolvers<void>();
+    const adapter: FileTranscriptionAdapter = {
+      id: "openai-file",
+      transcribe: vi.fn(async ({ signal }) => {
+        adapterStarted.resolve();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(
+            new SpeechAdapterError("cancelled", "Transcription was cancelled"),
+          ), { once: true });
+        });
+        return { text: "unreachable" };
+      }),
+    };
+    const caller = new AbortController();
+    const { speech, funding } = service({ adapter });
+    const result = speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: caller.signal,
+    });
+    await adapterStarted.promise;
+    caller.abort();
+
+    await expect(result).rejects.toMatchObject({ code: "cancelled" });
+    expect(adapter.transcribe).toHaveBeenCalledTimes(1);
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
+      mode: "conservative",
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      cancellationRequested: true,
+      executionStarted: true,
+      outcomeCode: "cancelled",
+    });
+  });
+
+  it("suppresses a successful adapter result when caller abort wins after dispatch", async () => {
+    const adapterStarted = Promise.withResolvers<void>();
+    const allowAdapterSuccess = Promise.withResolvers<void>();
+    const adapter: FileTranscriptionAdapter = {
+      id: "openai-file",
+      transcribe: vi.fn(async () => {
+        adapterStarted.resolve();
+        await allowAdapterSuccess.promise;
+        return { text: "must not be delivered" };
+      }),
+    };
+    const caller = new AbortController();
+    const { speech, funding } = service({ adapter });
+    const result = speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: caller.signal,
+    });
+    await adapterStarted.promise;
+    caller.abort();
+    allowAdapterSuccess.resolve();
+
+    await expect(result).rejects.toMatchObject({ code: "cancelled" });
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
+      mode: "conservative",
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      cancellationRequested: true,
+      executionStarted: true,
+      outcomeCode: "cancelled",
+    });
+  });
+
+  it("preserves adapter deadline semantics through conservative settlement", async () => {
+    const adapter: FileTranscriptionAdapter = {
+      id: "openai-file",
+      transcribe: vi.fn(async () => {
+        throw new SpeechAdapterError("timeout", "Transcription timed out");
+      }),
+    };
+    const { speech, funding } = service({ adapter });
+    await expect(speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "timeout" });
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
+      mode: "conservative",
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      cancellationRequested: false,
+      executionStarted: true,
+      retrySafety: "new_request_may_consume_allowance",
+      outcomeCode: "timeout",
+    });
   });
 });

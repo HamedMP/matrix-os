@@ -2,16 +2,19 @@ import { createHmac } from "node:crypto";
 import type { Transaction } from "kysely";
 import {
   SPEECH_CONTRACT_VERSION,
+  SPEECH_MAX_TRANSCRIPT_CHARS,
+  SpeechCancellationResponseSchema,
   SpeechMediaTypeSchema,
   SpeechRequestIdSchema,
   SpeechSourceKindSchema,
+  SpeechStatusResponseSchema,
   type SpeechCapabilitiesResponse,
   type SpeechCancellationResponse,
   type SpeechStatusResponse,
   type SpeechTranscriptionResponse,
 } from "@matrix-os/contracts";
 import type { PlatformDatabase } from "../db.js";
-import type { FileTranscriptionAdapter } from "./adapters/openai.js";
+import { SpeechAdapterError, type FileTranscriptionAdapter } from "./adapters/openai.js";
 import { inspectSpeechWav, SpeechMediaError } from "./media.js";
 import {
   SpeechOperationConflictError,
@@ -116,7 +119,7 @@ function validatePolicy(policy: PlatformSpeechPolicy): void {
     if (!source.enabled) continue;
     safeInteger(source.maxBytes, 44, 64 * 1024 * 1024, "byte limit");
     safeInteger(source.maxDurationMs, 1, 60 * 60_000, "duration limit");
-    safeInteger(source.maxTranscriptChars, 1, 32_000, "transcript limit");
+    safeInteger(source.maxTranscriptChars, 1, SPEECH_MAX_TRANSCRIPT_CHARS, "transcript limit");
     if (source.supportedMediaTypes.length < 1 || source.supportedMediaTypes.length > 8
       || source.supportedMediaTypes.some((mediaType) => mediaType !== "audio/wav")) {
       throw new Error("Speech media policy is invalid");
@@ -132,7 +135,7 @@ function operationStatus(operation: SpeechOperationRecord): SpeechStatusResponse
     : operation.executionState === "cancelled"
       ? "terminal_no_retry_needed"
       : "same_request_safe_before_dispatch";
-  return {
+  return SpeechStatusResponseSchema.parse({
     contractVersion: SPEECH_CONTRACT_VERSION,
     requestId: operation.requestId,
     executionState: operation.executionState,
@@ -142,17 +145,17 @@ function operationStatus(operation: SpeechOperationRecord): SpeechStatusResponse
     outcomeCode: operation.outcomeCode,
     createdAt: operation.createdAt,
     updatedAt: operation.updatedAt,
-  };
+  });
 }
 
 function cancellation(operation: SpeechOperationRecord): SpeechCancellationResponse {
-  return {
+  return SpeechCancellationResponseSchema.parse({
     contractVersion: SPEECH_CONTRACT_VERSION,
     requestId: operation.requestId,
     executionState: operation.executionState,
     cancellationRequested: true,
     executionStarted: operation.executionStarted,
-  };
+  });
 }
 
 function microusdForDuration(durationMs: number, microusdPerMinute: number): number {
@@ -207,6 +210,7 @@ export function createPlatformSpeechService(options: {
 
   async function transcribe(input: SpeechTranscriptionInput): Promise<SpeechTranscriptionResponse> {
     if (shuttingDown || !options.policy.enabled) throw new SpeechServiceError("unavailable");
+    if (input.signal.aborted) throw new SpeechServiceError("cancelled");
     const parsedRequestId = SpeechRequestIdSchema.safeParse(input.requestId);
     const parsedSource = SpeechSourceKindSchema.safeParse(input.sourceKind);
     const parsedMediaType = SpeechMediaTypeSchema.safeParse(input.mediaType);
@@ -258,65 +262,121 @@ export function createPlatformSpeechService(options: {
         throw error;
       }
       if (admitted.cancellationRequested) throw new SpeechServiceError("cancelled");
-      const claim = await options.operations.claimDispatch(input.identity, parsedRequestId.data);
-      if (!claim.claimed) {
-        if (claim.operation.cancellationRequested) throw new SpeechServiceError("cancelled");
-        throw new SpeechServiceError("result_not_replayable");
+      if (input.signal.aborted) {
+        await options.operations.cancel(input.identity, parsedRequestId.data, (trx, reservationId) => (
+          options.funding.release(trx, reservationId)
+        ));
+        throw new SpeechServiceError("cancelled");
       }
-      const controller = new AbortController();
-      active.set(operationKey, controller);
-      const signal = AbortSignal.any([input.signal, controller.signal]);
+      let cancellationAttempt: Promise<void> | undefined;
+      let cancellationFailure: { error: unknown } | undefined;
+      const requestCancellation = () => {
+        cancellationAttempt ??= options.operations.cancel(
+          input.identity,
+          parsedRequestId.data,
+          (trx, reservationId) => options.funding.release(trx, reservationId),
+        ).then(
+          () => undefined,
+          (error: unknown) => { cancellationFailure = { error }; },
+        );
+      };
+      const persistCancellationIfAborted = async (signal: AbortSignal): Promise<boolean> => {
+        if (!signal.aborted) return false;
+        requestCancellation();
+        const attempt = cancellationAttempt;
+        if (attempt) await attempt;
+        if (cancellationFailure) throw cancellationFailure.error;
+        return true;
+      };
+      input.signal.addEventListener("abort", requestCancellation, { once: true });
       try {
-        const result = await options.adapter.transcribe({
-          audio: input.audio,
-          mediaType: parsedMediaType.data,
-          languageHints: input.languageHints,
-          signal,
-        });
-        const text = result.text.trim();
-        if (text.length > selectedPolicy.maxTranscriptChars
-          || new TextEncoder().encode(text).byteLength > 128 * 1024) {
+        const claim = await options.operations.claimDispatch(input.identity, parsedRequestId.data);
+        const cancelledAfterClaim = await persistCancellationIfAborted(input.signal);
+        if (!claim.claimed) {
+          if (cancelledAfterClaim || claim.operation.cancellationRequested) {
+            throw new SpeechServiceError("cancelled");
+          }
+          throw new SpeechServiceError("result_not_replayable");
+        }
+        const controller = new AbortController();
+        active.set(operationKey, controller);
+        const signal = AbortSignal.any([input.signal, controller.signal]);
+        try {
+          const beforeDispatch = await options.operations.get(input.identity, parsedRequestId.data);
+          if (!beforeDispatch || beforeDispatch.cancellationRequested
+            || await persistCancellationIfAborted(signal)) {
+            controller.abort();
+            throw new SpeechServiceError("cancelled");
+          }
+          const result = await options.adapter.transcribe({
+            audio: input.audio,
+            mediaType: parsedMediaType.data,
+            languageHints: input.languageHints,
+            signal,
+          });
+          if (await persistCancellationIfAborted(signal)) throw new SpeechServiceError("cancelled");
+          const text = result.text.trim();
+          if (text.length > selectedPolicy.maxTranscriptChars
+            || new TextEncoder().encode(text).byteLength > 128 * 1024) {
+            throw new SpeechServiceError("transcription_failed");
+          }
+          if (await persistCancellationIfAborted(signal)) throw new SpeechServiceError("cancelled");
+          const completed = await options.operations.complete(input.identity, parsedRequestId.data, {
+            executionState: "succeeded",
+            outcomeCode: text.length > 0 ? "transcript" : "no_speech",
+            actualCostMicrousd,
+          }, (trx, reservationId) => options.funding.settle(trx, reservationId, {
+            mode: "exact",
+            actualCostMicrousd,
+          }));
+          if (await persistCancellationIfAborted(signal) || completed.cancellationRequested) {
+            throw new SpeechServiceError("cancelled");
+          }
+          return text.length > 0
+            ? {
+                contractVersion: SPEECH_CONTRACT_VERSION,
+                requestId: parsedRequestId.data,
+                status: "succeeded",
+                outcome: "transcript",
+                text,
+                audioDurationMs: durationMs,
+              }
+            : {
+                contractVersion: SPEECH_CONTRACT_VERSION,
+                requestId: parsedRequestId.data,
+                status: "succeeded",
+                outcome: "no_speech",
+                audioDurationMs: durationMs,
+              };
+        } catch (error: unknown) {
+          let current = await options.operations.get(input.identity, parsedRequestId.data);
+          const cancelled = current?.cancellationRequested === true
+            || signal.aborted
+            || (error instanceof SpeechAdapterError && error.code === "cancelled")
+            || (error instanceof SpeechServiceError && error.code === "cancelled");
+          const timedOut = error instanceof SpeechAdapterError && error.code === "timeout";
+          if (cancelled && current && !current.cancellationRequested) {
+            current = await options.operations.cancel(
+              input.identity,
+              parsedRequestId.data,
+              (trx, reservationId) => options.funding.release(trx, reservationId),
+            );
+          }
+          if (current?.executionState === "dispatching") {
+            await options.operations.complete(input.identity, parsedRequestId.data, {
+              executionState: "uncertain",
+              outcomeCode: cancelled ? "cancelled" : timedOut ? "timeout" : "provider_failure",
+              actualCostMicrousd: current.reservedMicrousd ?? maximumCostMicrousd,
+            }, (trx, reservationId) => options.funding.settle(trx, reservationId, { mode: "conservative" }));
+          }
+          if (cancelled) throw new SpeechServiceError("cancelled");
+          if (timedOut) throw new SpeechServiceError("timeout");
           throw new SpeechServiceError("transcription_failed");
+        } finally {
+          active.delete(operationKey);
         }
-        const completed = await options.operations.complete(input.identity, parsedRequestId.data, {
-          executionState: "succeeded",
-          outcomeCode: text.length > 0 ? "transcript" : "no_speech",
-          actualCostMicrousd,
-        }, (trx, reservationId) => options.funding.settle(trx, reservationId, {
-          mode: "exact",
-          actualCostMicrousd,
-        }));
-        if (completed.cancellationRequested) throw new SpeechServiceError("cancelled");
-        return text.length > 0
-          ? {
-              contractVersion: SPEECH_CONTRACT_VERSION,
-              requestId: parsedRequestId.data,
-              status: "succeeded",
-              outcome: "transcript",
-              text,
-              audioDurationMs: durationMs,
-            }
-          : {
-              contractVersion: SPEECH_CONTRACT_VERSION,
-              requestId: parsedRequestId.data,
-              status: "succeeded",
-              outcome: "no_speech",
-              audioDurationMs: durationMs,
-            };
-      } catch (error: unknown) {
-        if (error instanceof SpeechServiceError && error.code === "cancelled") throw error;
-        const current = await options.operations.get(input.identity, parsedRequestId.data);
-        if (current?.executionState === "dispatching") {
-          await options.operations.complete(input.identity, parsedRequestId.data, {
-            executionState: "uncertain",
-            outcomeCode: current.cancellationRequested ? "cancelled" : "provider_failure",
-            actualCostMicrousd: current.reservedMicrousd ?? maximumCostMicrousd,
-          }, (trx, reservationId) => options.funding.settle(trx, reservationId, { mode: "conservative" }));
-        }
-        if (current?.cancellationRequested || signal.aborted) throw new SpeechServiceError("cancelled");
-        throw new SpeechServiceError("transcription_failed");
       } finally {
-        active.delete(operationKey);
+        input.signal.removeEventListener("abort", requestCancellation);
       }
     } finally {
       activeSlots -= 1;

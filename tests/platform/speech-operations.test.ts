@@ -59,8 +59,19 @@ describe("speech operation repository", () => {
     expect(first).toMatchObject({ executionState: "reserved", fundingReservationId: "funding_1" });
     expect(replay).toEqual(first);
     expect(reserveCalls).toBe(1);
-    await expect(repo.admit({ ...admission, contentFingerprint: "b".repeat(64) }, reserve))
-      .rejects.toBeInstanceOf(SpeechOperationConflictError);
+    const conflicts = [
+      { contentFingerprint: "b".repeat(64) },
+      { sourceKind: "owner_audio" as const },
+      { policyRevision: "speech-policy-2" },
+      { adapterId: "alternate-file" },
+      { modelId: "alternate-transcribe" },
+      { audioDurationMs: 1_001 },
+    ];
+    for (const changed of conflicts) {
+      await expect(repo.admit({ ...admission, ...changed }, reserve))
+        .rejects.toBeInstanceOf(SpeechOperationConflictError);
+    }
+    expect(reserveCalls).toBe(1);
   });
 
   it("grants one durable dispatch claim rather than replaying a start receipt", async () => {
@@ -118,5 +129,19 @@ describe("speech operation repository", () => {
     expect(cancelled).toMatchObject({ executionStarted: true, cancellationRequested: true });
     expect(releases).toBe(0);
     expect((await repo.get(identity, requestId))?.executionState).toBe("dispatching");
+  });
+
+  it("rejects persisted lifecycle shapes that status contracts cannot represent", async () => {
+    const repo = repository();
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    const row = await db.executor.selectFrom("speech_operations").selectAll()
+      .where("operation_id", "=", requestId).executeTakeFirstOrThrow();
+    await db.executor.deleteFrom("speech_operations").where("operation_id", "=", requestId).execute();
+    await expect(db.executor.insertInto("speech_operations").values({
+      ...row,
+      execution_state: "succeeded",
+      safe_outcome_code: null,
+      dispatch_claimed_at: null,
+    }).execute()).rejects.toThrow();
   });
 });
