@@ -98,6 +98,7 @@ interface AuthServiceDeps {
 export class AuthService {
   private credential: StoredCredential | null = null;
   private authGeneration = 0;
+  private sessionVerification: { generation: number; promise: Promise<void> } | null = null;
   private profile: ConnectionProfile | null = null;
   private flowState: "idle" | "pending" | "authorized" | "expired" = "idle";
   private flowNonce = 0;
@@ -450,7 +451,42 @@ export class AuthService {
     }
   }
 
-  // The session token expired or the gateway rejected it (401). Drop the
+  // A feature-level 401 does not establish that the account credential is
+  // invalid. Only the platform identity authority can make that decision.
+  async revalidateSession(generation: number): Promise<void> {
+    this.expireCredentialIfNeeded();
+    const credential = this.credential;
+    if (!credential || generation !== this.authGeneration) return;
+    if (this.sessionVerification?.generation === generation) {
+      return this.sessionVerification.promise;
+    }
+    const promise = (async () => {
+      try {
+        const fetchFn = this.deps.fetchFn ?? fetch;
+        const response = await fetchFn(new URL("/api/auth/computers", this.deps.runtimeSelectionOrigin).toString(), {
+          method: "GET",
+          headers: { authorization: `Bearer ${credential.accessToken}` },
+          signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
+          redirect: "error",
+        });
+        if (response.status === 401 && this.credential === credential && this.authGeneration === generation) {
+          await this.expireSession();
+        }
+        // Verification needs only the status, never the inventory payload.
+        await response.body?.cancel();
+      } catch (error: unknown) {
+        console.warn("[auth] session verification unavailable:", error instanceof Error ? error.name : typeof error);
+      }
+    })();
+    this.sessionVerification = { generation, promise };
+    try {
+      await promise;
+    } finally {
+      if (this.sessionVerification?.promise === promise) this.sessionVerification = null;
+    }
+  }
+
+  // The session token expired or the authority rejected it (401). Drop the
   // credential but KEEP the profile so platformHost/runtime survive for a
   // one-click re-auth, then notify the renderer to show sign-in. Idempotent.
   async expireSession(): Promise<void> {

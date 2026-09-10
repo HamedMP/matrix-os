@@ -179,7 +179,7 @@ export const INVOKE_CHANNELS = {
     ]),
   },
   "auth:sign-out": { request: Empty, response: Ok },
-  "auth:session-expired": { request: Empty, response: Ok },
+  "auth:session-expired": { request: z.object({ authGeneration: z.number().int().nonnegative() }).strict(), response: Ok },
   "support:get-identity": { request: Empty, response: SupportIdentityResponseSchema },
   "runtime:list-computers": {
     request: Empty,

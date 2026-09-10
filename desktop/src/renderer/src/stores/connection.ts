@@ -71,10 +71,12 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         ? createApiClient({
             baseUrl: status.platformHost,
             getRuntimeSlot: () => get().runtimeSlot,
-            // A 401 means the session token expired/was revoked. Drop it in the
-            // trusted core (which emits auth:changed → refresh → sign-in screen).
+            // Ask trusted main to verify this credential generation. A feature
+            // failure or a late response must not clear a valid/new session.
             onUnauthorized: () => {
-              void invoke("auth:session-expired", {});
+              void invoke("auth:session-expired", { authGeneration: status.authGeneration }).catch((error: unknown) => {
+                console.warn("[connection] session verification failed:", error instanceof Error ? error.name : typeof error);
+              });
             },
           })
         : null;

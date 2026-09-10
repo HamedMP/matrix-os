@@ -18,6 +18,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
       getStatus: vi.fn(),
       signOut: vi.fn(),
       expireSession: vi.fn(),
+      revalidateSession: vi.fn(),
       selectRuntime: vi.fn(),
     },
     store: {
@@ -88,6 +89,14 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
 describe("registerIpcHandlers", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("verifies feature auth failures through trusted main instead of clearing the session", async () => {
+    const harness = makeHarness();
+    await expect(harness.invoke("auth:session-expired", { authGeneration: 3 })).resolves.toEqual({ ok: true });
+    expect(harness.ctx.auth.revalidateSession).toHaveBeenCalledWith(3);
+    expect(harness.ctx.auth.expireSession).not.toHaveBeenCalled();
+    await expect(harness.invoke("auth:session-expired", {})).rejects.toThrow("invalid request");
   });
 
   it("returns a generic error when handler implementations throw raw errors", async () => {
