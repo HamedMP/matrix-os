@@ -343,7 +343,7 @@ export function ChatApp({
         </div>
 
         {/* Conversation list */}
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
           <div className="px-2 pb-3">
             {timeGroups.map((group) => (
               <div key={group.label}>
