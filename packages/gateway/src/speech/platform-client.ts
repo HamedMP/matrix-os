@@ -196,6 +196,12 @@ export function createPlatformSpeechClient(
       }
       return parsed.data;
     }
+    // The browser has already authenticated to its gateway. A 401 from the
+    // platform is therefore a broken/expired runtime credential, not a browser
+    // session error, and must not be reflected as user authentication state.
+    if (response.status === 401) {
+      throw new PlatformSpeechClientError("unavailable", "Speech is unavailable", 503);
+    }
     if (options.notFound && response.status === 404) return undefined;
     const parsedError = SpeechSafeErrorResponseSchema.safeParse(payload);
     if (!parsedError.success) {

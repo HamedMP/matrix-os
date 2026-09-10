@@ -117,4 +117,15 @@ describe("platform speech runtime client", () => {
     });
     await expect(client.capabilities()).rejects.toBeInstanceOf(PlatformSpeechClientError);
   });
+
+  it("normalizes upstream runtime authentication failures as internal unavailability", async () => {
+    const client = createPlatformSpeechClient(loadPlatformSpeechRuntimeConfig(runtimeEnv)!, {
+      fetchFn: vi.fn(async () => new Response(JSON.stringify({
+        error: { code: "unauthorized", message: "Unauthorized" },
+      }), { status: 401, headers: { "content-type": "application/json" } })),
+    });
+    const error = await client.capabilities().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(PlatformSpeechClientError);
+    expect(error).toMatchObject({ code: "unavailable", status: 503, safeMessage: "Speech is unavailable" });
+  });
 });

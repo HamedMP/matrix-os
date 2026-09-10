@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createSpeechGatewayRoutes } from "../../packages/gateway/src/speech/routes.js";
 import type { PlatformSpeechClient } from "../../packages/gateway/src/speech/platform-client.js";
+import { RequestPrincipalMisconfiguredError } from "../../packages/gateway/src/request-principal.js";
 
 const requestId = "sp_1788998400000_abcdefghijklmnop";
 const capabilities = {
@@ -50,6 +51,13 @@ function app(speech: PlatformSpeechClient, ownerId = "user_alice") {
     getOwnerId: () => ownerId,
   }));
   return root;
+}
+
+function recordingForm(operationId: string): FormData {
+  const form = new FormData();
+  form.set("requestId", operationId);
+  form.set("recording", new File([new Uint8Array(44)], "recording.wav", { type: "audio/wav" }));
+  return form;
 }
 
 describe("gateway speech routes", () => {
@@ -110,5 +118,49 @@ describe("gateway speech routes", () => {
     });
     expect(cancel.status).toBe(413);
     expect(speech.cancel).not.toHaveBeenCalled();
+  });
+
+  it("admits only a bounded number of recordings before multipart parsing", async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const speech = client();
+    speech.transcribe = vi.fn(async ({ requestId: operationId }) => {
+      await pending;
+      return {
+        contractVersion: 1,
+        requestId: operationId,
+        status: "succeeded",
+        outcome: "no_speech",
+        audioDurationMs: 1_000,
+      };
+    });
+    const root = app(speech);
+    const first = root.request("/api/speech/transcriptions", { method: "POST", body: recordingForm(requestId) });
+    const secondId = "sp_1788998400001_bcdefghijklmnopq";
+    const second = root.request("/api/speech/transcriptions", { method: "POST", body: recordingForm(secondId) });
+    await vi.waitFor(() => expect(speech.transcribe).toHaveBeenCalledTimes(2));
+
+    const rejected = await root.request("/api/speech/transcriptions", {
+      method: "POST",
+      body: recordingForm("sp_1788998400002_cdefghijklmnopqr"),
+    });
+    expect(rejected.status).toBe(429);
+    expect(speech.transcribe).toHaveBeenCalledTimes(2);
+
+    finish();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+  });
+
+  it("distinguishes foreign owners from principal wiring failures", async () => {
+    const speech = client();
+    const root = new Hono();
+    root.route("/api/speech", createSpeechGatewayRoutes({
+      client: speech,
+      getOwnerId: () => { throw new RequestPrincipalMisconfiguredError(); },
+    }));
+    const response = await root.request("/api/speech/capabilities");
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Speech request failed" });
+    expect(speech.capabilities).not.toHaveBeenCalled();
   });
 });

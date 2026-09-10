@@ -763,6 +763,9 @@ export function ChatInput({
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    if (!connected || busy || ["requesting_permission", "recording", "transcribing"].includes(speech.phase)) {
+      return;
+    }
     const text = input.trim();
     if (!text && attachments.length === 0) return;
 
@@ -778,9 +781,11 @@ export function ChatInput({
 
   const handleMicClick = () => {
     if (speech.phase === "recording") speech.stop();
-    else if (speech.phase === "transcribing") speech.cancel();
+    else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
     else void speech.start();
   };
+
+  const speechIsActive = ["requesting_permission", "recording", "transcribing"].includes(speech.phase);
 
   return (
     <div className="flex flex-col gap-2">
@@ -819,7 +824,7 @@ export function ChatInput({
               type="button"
               aria-label={
                 speech.phase === "requesting_permission"
-                  ? "Requesting microphone permission"
+                  ? "Cancel microphone request"
                   : speech.phase === "recording"
                   ? "Stop recording"
                   : speech.phase === "transcribing"
@@ -829,7 +834,7 @@ export function ChatInput({
               size="icon"
               variant="ghost"
               className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-              disabled={!connected || speech.phase === "requesting_permission"}
+              disabled={!connected && !speechIsActive}
               onClick={handleMicClick}
             >
               {speech.phase === "requesting_permission" ? (
@@ -854,6 +859,7 @@ export function ChatInput({
             size="icon"
             className="size-8 rounded-full"
             disabled={!connected
+              || speech.phase === "requesting_permission"
               || speech.phase === "recording"
               || speech.phase === "transcribing"
               || (!input.trim() && attachments.length === 0)
