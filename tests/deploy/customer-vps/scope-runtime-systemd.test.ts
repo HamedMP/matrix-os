@@ -36,6 +36,8 @@ describe("dormant scope runtime host bundle", () => {
     expect(cloudInit).toMatch(/systemctl start[^\n]*matrix-scope-runtime/);
     expect(updater).toMatch(/systemctl enable[^\n]*matrix-scope-runtime/);
     expect(updater).toMatch(/systemctl start[^\n]*matrix-scope-runtime/);
-    expect(updater).toMatch(/systemctl stop[^\n]*matrix-scope-runtime/);
+    expect(updater).toContain("systemctl cat matrix-scope-runtime.service");
+    expect(updater).toContain('runtime_services+=(matrix-scope-runtime)');
+    expect(updater).toContain('systemctl stop "${runtime_services[@]}"');
   });
 });

@@ -403,20 +403,42 @@ async function removeCommandSocket(): Promise<void> {
   }
 }
 
+interface SingleUseCommandSocketSlot<T extends { destroy(): void }> {
+  claim(socket: T, subscribeClose: (listener: () => void) => void): boolean;
+  destroyActive(): void;
+}
+
+export function createSingleUseCommandSocketSlot<T extends { destroy(): void }>(): SingleUseCommandSocketSlot<T> {
+  let claimed = false;
+  let active: T | undefined;
+  return {
+    claim(socket, subscribeClose) {
+      if (claimed) {
+        socket.destroy();
+        return false;
+      }
+      claimed = true;
+      active = socket;
+      subscribeClose(() => {
+        if (active === socket) active = undefined;
+      });
+      return true;
+    },
+    destroyActive() {
+      const socket = active;
+      active = undefined;
+      socket?.destroy();
+    },
+  };
+}
+
 async function startCommandServer(
   invocation: ReturnType<typeof parseScopeRuntimeWorkerArguments>,
-  sockets: Set<Socket>,
+  socketSlot: SingleUseCommandSocketSlot<Socket>,
 ): Promise<Server> {
   await removeCommandSocket();
-  let accepted = false;
   const server = createServer({ allowHalfOpen: true }, (socket: Socket) => {
-    if (accepted) {
-      socket.destroy();
-      return;
-    }
-    sockets.add(socket);
-    socket.once("close", () => sockets.delete(socket));
-    accepted = true;
+    if (!socketSlot.claim(socket, (listener) => socket.once("close", listener))) return;
     let input = "";
     socket.setEncoding("utf8");
     socket.setTimeout(CHAT_TIMEOUT_MS, () => socket.destroy());
@@ -474,8 +496,8 @@ export async function runScopeRuntimeWorker(args = process.argv.slice(2)): Promi
   }
   const invocation = parseScopeRuntimeWorkerArguments(environment.invocationArguments ?? []);
   await verifyBoundary();
-  const commandSockets = new Set<Socket>();
-  const commandServer = await startCommandServer(invocation, commandSockets);
+  const commandSocket = createSingleUseCommandSocketSlot<Socket>();
+  const commandServer = await startCommandServer(invocation, commandSocket);
   try {
     await writeScopeRuntimeReadiness(invocation.runtimeHandle);
   } catch (error: unknown) {
@@ -487,7 +509,7 @@ export async function runScopeRuntimeWorker(args = process.argv.slice(2)): Promi
   try {
     await waitForScopeRuntimeShutdown();
   } finally {
-    for (const socket of commandSockets) socket.destroy();
+    commandSocket.destroyActive();
     commandServer.close();
     await new Promise<void>((resolve) => commandServer.close(() => resolve()));
     await removeCommandSocket();
