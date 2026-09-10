@@ -2,7 +2,12 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { ChatSharing } from "./chat/ChatSharing";
-import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
+import {
+  ChatAttachments,
+  ChatContextMenu,
+  usePlatformSpeechDraft,
+  type PlatformSpeechCaptureAdapter,
+} from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
 import { ChatFilePanel, loadChatFile } from "./chat/ChatFilePanel";
@@ -38,7 +43,15 @@ import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import { useVoice } from "@/hooks/useVoice";
+import {
+  BrowserSpeechClientError,
+  createBrowserSpeechClient,
+  type BrowserSpeechClient,
+} from "@/lib/platform-speech-client";
+import {
+  createWebPcmSpeechCaptureAdapter,
+  PlatformSpeechRecorderError,
+} from "@/lib/platform-speech-recorder";
 import {
   CANONICAL_PROVIDER_SETUP_ERROR,
   executeCanonicalProviderSetupAction,
@@ -64,7 +77,8 @@ import {
   PlusIcon,
   SendIcon,
   MicIcon,
-  MicOffIcon,
+  CircleStop,
+  XCircleIcon,
   Loader2Icon,
   PanelLeftIcon,
   SearchIcon,
@@ -490,6 +504,7 @@ export function ChatApp({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
+            speechScopeKey={sessionId ?? "new-chat"}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
@@ -568,6 +583,7 @@ export function ChatApp({
                 </div>
               )}
               <ChatInput
+                speechScopeKey={sessionId ?? "new-chat"}
                 connected={connected && providerState.selected !== null}
                 busy={busy}
                 onSubmit={submitWithHermesSetup}
@@ -591,6 +607,7 @@ export function ChatApp({
 }
 
 function EmptyState({
+  speechScopeKey,
   onSubmit,
   connected,
   suggestions,
@@ -601,6 +618,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
+  speechScopeKey: string;
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
   connected: boolean;
   suggestions: string[];
@@ -626,6 +644,7 @@ function EmptyState({
 
         {/* Input */}
         <ChatInput
+          speechScopeKey={speechScopeKey}
           connected={connected && providerReady}
           busy={false}
           onSubmit={onSubmit}
@@ -686,7 +705,8 @@ function AssistantBubble({
   );
 }
 
-function ChatInput({
+export function ChatInput({
+  speechScopeKey,
   connected,
   busy,
   onSubmit,
@@ -695,7 +715,10 @@ function ChatInput({
   onDraftConsumed,
   unavailablePlaceholder,
   attachmentsEnabled,
+  speechClient,
+  speechCaptureAdapter,
 }: {
+  speechScopeKey: string;
   connected: boolean;
   busy: boolean;
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
@@ -704,20 +727,26 @@ function ChatInput({
   onDraftConsumed?: (id: number) => void;
   unavailablePlaceholder?: string;
   attachmentsEnabled: boolean;
+  speechClient?: BrowserSpeechClient;
+  speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
 }) {
   const [input, setInput] = useState("");
+  const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
+  const [speechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
 
-  const {
-    isRecording,
-    isTranscribing,
-    isSupported,
-    startRecording,
-    stopRecording,
-  } = useVoice({
-    onTranscription: (text) => setInput(text),
-    onError: (err) => console.error("Voice error:", err),
+  const speech = usePlatformSpeechDraft({
+    scopeKey: speechScopeKey,
+    client: speechClient ?? defaultSpeechClient,
+    captureAdapter: speechCaptureAdapter ?? speechCapture,
+    safeErrorMessage: (caught) => caught instanceof BrowserSpeechClientError
+      ? caught.safeMessage
+      : caught instanceof PlatformSpeechRecorderError ? caught.safeMessage : undefined,
+    onDraft: (text) => setInput((current) => {
+      const trimmed = current.trimEnd();
+      return trimmed.length > 0 ? `${trimmed} ${text}` : text;
+    }),
   });
 
   useEffect(() => {
@@ -734,6 +763,9 @@ function ChatInput({
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    if (!connected || busy || ["requesting_permission", "recording", "transcribing"].includes(speech.phase)) {
+      return;
+    }
     const text = input.trim();
     if (!text && attachments.length === 0) return;
 
@@ -748,9 +780,12 @@ function ChatInput({
   };
 
   const handleMicClick = () => {
-    if (isRecording) stopRecording();
-    else startRecording();
+    if (speech.phase === "recording") speech.stop();
+    else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
+    else void speech.start();
   };
+
+  const speechIsActive = ["requesting_permission", "recording", "transcribing"].includes(speech.phase);
 
   return (
     <div className="flex flex-col gap-2">
@@ -773,46 +808,73 @@ function ChatInput({
             }
           }}
           placeholder={
-            isTranscribing ? "Transcribing..."
-              : isRecording ? "Listening..."
+            speech.phase === "transcribing" ? "Transcribing into an editable draft..."
+              : speech.phase === "requesting_permission" ? "Waiting for microphone permission..."
+              : speech.phase === "recording" ? "Recording — stop when you're done"
                 : connected ? "Ask anything..."
                   : unavailablePlaceholder ?? "Connecting..."
           }
-          disabled={!connected || isRecording}
+          disabled={!connected}
           rows={1}
           className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
         />
         <div className="flex items-center gap-0.5 mb-2 mr-2">
-          {isSupported && (
+          {speech.isSupported && (
             <Button
               type="button"
+              aria-label={
+                speech.phase === "requesting_permission"
+                  ? "Cancel microphone request"
+                  : speech.phase === "recording"
+                  ? "Stop recording"
+                  : speech.phase === "transcribing"
+                    ? "Cancel transcription"
+                    : "Start voice input"
+              }
               size="icon"
               variant="ghost"
-              className={`size-8 rounded-full ${isRecording ? "text-red-500 animate-pulse" : "text-muted-foreground hover:text-foreground"}`}
-              disabled={!connected || isTranscribing}
+              className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
+              disabled={!connected && !speechIsActive}
               onClick={handleMicClick}
             >
-              {isTranscribing ? (
+              {speech.phase === "requesting_permission" ? (
                 <Loader2Icon className="size-4 animate-spin" />
-              ) : isRecording ? (
-                <MicOffIcon className="size-4" />
+              ) : speech.phase === "transcribing" ? (
+                <XCircleIcon className="size-4" />
+              ) : speech.phase === "recording" ? (
+                <CircleStop className="size-4" />
               ) : (
                 <MicIcon className="size-4" />
               )}
             </Button>
+          )}
+          {speech.phase === "recording" && (
+            <span aria-live="polite" className="px-1 text-xs tabular-nums text-muted-foreground">
+              {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
+            </span>
           )}
           <Button
             type="button"
             aria-label="Send"
             size="icon"
             className="size-8 rounded-full"
-            disabled={!connected || (!input.trim() && attachments.length === 0) || busy}
+            disabled={!connected
+              || speech.phase === "requesting_permission"
+              || speech.phase === "recording"
+              || speech.phase === "transcribing"
+              || (!input.trim() && attachments.length === 0)
+              || busy}
             onClick={() => handleSubmit()}
           >
             <SendIcon className="size-4" />
           </Button>
         </div>
       </div>
+      {speech.error && (
+        <p role="alert" className="px-3 text-xs text-destructive">
+          {speech.error}
+        </p>
+      )}
     </div>
   );
 }

@@ -185,6 +185,37 @@ test.describe("Visual regression", () => {
     });
   });
 
+  test("speech-ready chat exposes the manual recording entry point", async ({ page }) => {
+    await page.route("**/api/speech/capabilities", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        contractVersion: 1,
+        fileTranscription: {
+          status: "ready",
+          dictation: {
+            enabled: true,
+            maxBytes: 10 * 1024 * 1024,
+            maxDurationMs: 120_000,
+            maxTranscriptChars: 32_000,
+            supportedMediaTypes: ["audio/wav"],
+            languageHints: false,
+          },
+          ownerAudio: { enabled: false },
+        },
+      }),
+    }));
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(300);
+    await page.keyboard.type("Chat");
+    await page.keyboard.press("Enter");
+    const microphone = page.getByRole("button", { name: "Start voice input" });
+    await expect(microphone).toBeVisible();
+    await expect(page).toHaveScreenshot("chat-speech-ready.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
   test("settings panel", async ({ page }) => {
     const settingsButton = page.getByRole("button", { name: "Settings", exact: true });
     await settingsButton.dblclick();
