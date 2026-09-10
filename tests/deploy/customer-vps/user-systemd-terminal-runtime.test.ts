@@ -107,6 +107,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
   it("connects the gateway only to the shared runtime socket", () => {
     const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf8");
     const build = readFileSync(join(root, "scripts/build-host-bundle.sh"), "utf8");
+    const service = readFileSync(
+      join(root, "distro/customer-vps/systemd/matrix-terminal-runtime.service"),
+      "utf8",
+    );
 
     expect(server).not.toContain("resolveUserSystemdTerminalActivation");
     expect(server).not.toContain("process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED");
@@ -121,6 +125,12 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(server).not.toContain("createUserSystemdZellijAdapter");
     expect(server).not.toContain("createUserSystemdTerminalRuntime");
     expect(server).not.toContain('MATRIX_TERMINAL_USER_SYSTEMD_ENABLED !== "0"');
+    expect(build).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
+    expect(build).toContain("matrix-terminal-runtime");
+    expect(service).toContain("User=matrix");
+    expect(service).toContain("RuntimeDirectory=matrix");
+    expect(service).toContain("ExecStart=/opt/matrix/bin/matrix-terminal-runtime");
+    expect(service).toContain("KillMode=control-group");
   });
 
   it("installs a fixed attach helper that resolves each descriptor-pinned generation", () => {
