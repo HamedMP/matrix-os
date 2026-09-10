@@ -126,12 +126,11 @@ export async function createSharedAiRuntime(options: {
     submitApproval: async () => {
       throw new Error("The fixed shared Chat adapter does not expose approval callbacks");
     },
-    submitCancellation: async (input) => options.orchestrator.cancelSharedRun(
-      { type: "personal", ownerId: await ownerIdFor(options.db, input.scopeId, input.chatId) },
-      input.scopeId,
-      input.chatId,
-      input.runId,
-    ),
+    submitCancellation: createSharedAiCancellationDispatcher({
+      policy,
+      authority: options.authority,
+      orchestrator: options.orchestrator,
+    }),
   });
 
   const dispatch = async (scopeId: string, chatId: string): Promise<void> => {
@@ -238,11 +237,13 @@ export async function createSharedAiRuntime(options: {
   try {
     await brokerServer.start();
   } catch (error: unknown) {
+    console.warn("[collaboration] shared AI broker unavailable",
+      error instanceof Error ? error.name : "UnknownError");
     registry.shutdown();
-    await broker.close();
+    await brokerServer.close();
     await client.close();
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
-    throw error;
+    return { available: false as const, async shutdown(): Promise<void> {} };
   }
   let stopped = false;
   let wakeInFlight: Promise<void> | undefined;
@@ -290,6 +291,38 @@ export async function createSharedAiRuntime(options: {
       await brokerServer.close();
       await client.close();
     },
+  };
+}
+
+export function createSharedAiCancellationDispatcher(options: {
+  policy: Pick<CollaborationPolicyClient, "getM2">;
+  authority: Pick<CollaborationAuthority, "authorize">;
+  orchestrator: Pick<CanonicalChatOrchestrator, "cancelSharedRun">;
+}) {
+  return async (input: {
+    scopeId: string;
+    chatId: string;
+    runId: string;
+    requestId: string;
+    clientRequestId: string;
+    actorId: string;
+  }): Promise<void> => {
+    const currentPolicy = await options.policy.getM2();
+    const context = await options.authority.authorize({
+      scopeId: input.scopeId,
+      actorId: input.actorId,
+      action: "control_execution",
+      executionPolicy: currentPolicy,
+    });
+    if (context.resourceKind !== "chat" || context.resourceId !== input.chatId) {
+      throw new CollaborationAuthorizationError("not_found", "Shared Chat access is required");
+    }
+    await options.orchestrator.cancelSharedRun(
+      { type: "personal", ownerId: context.ownerId },
+      input.scopeId,
+      input.chatId,
+      input.runId,
+    );
   };
 }
 

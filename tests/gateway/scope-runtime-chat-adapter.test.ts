@@ -71,6 +71,48 @@ describe("scope runtime canonical Chat adapter", () => {
     expect(unsafe).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
     expect(client.createRuntime).not.toHaveBeenCalled();
   });
+
+  it("coalesces abort and explicit cancellation into one runtime stop", async () => {
+    const abortController = new AbortController();
+    let finishRun: ((value: { runtimeHandle: string; executionGeneration: string; text: string }) => void) | undefined;
+    const client = {
+      capability: () => ({
+        available: true as const,
+        profileId: "scope-runtime-chat-v1",
+        executionGeneration: "7",
+        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai" as const] }],
+      }),
+      createRuntime: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", state: "running" as const })),
+      runChat: vi.fn(() => new Promise<{ runtimeHandle: string; executionGeneration: string; text: string }>((resolve) => {
+        finishRun = resolve;
+      })),
+      stopRuntime: vi.fn(async () => ({ state: "stopped" })),
+    };
+    const adapter = createScopeRuntimeChatProviderAdapter({
+      client,
+      scopeId,
+      executionGeneration: "7",
+      adapterId: "claude-code",
+      harnessVersion: "2.1.240",
+    });
+    const iterator = adapter.start({ ...runInput(), signal: abortController.signal });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: "state.updated" } });
+    const completion = iterator.next();
+    await vi.waitFor(() => expect(client.runChat).toHaveBeenCalled());
+
+    abortController.abort();
+    await adapter.cancel?.({
+      owner: { type: "personal", ownerId: "owner" },
+      chatId: "chat_shared",
+      runId: "run_shared",
+      state: { runtimeHandle, executionGeneration: "7" },
+    });
+    finishRun?.({ runtimeHandle, executionGeneration: "7", text: "" });
+    await completion;
+    await iterator.return?.(undefined);
+
+    expect(client.stopRuntime).toHaveBeenCalledTimes(1);
+  });
 });
 
 function runInput() {
