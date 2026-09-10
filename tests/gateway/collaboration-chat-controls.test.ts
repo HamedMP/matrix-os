@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CollaborationChatCommands } from "../../packages/gateway/src/chat/collaboration-commands.js";
+import { ChatRunLifecycleRepository } from "../../packages/gateway/src/chat/run-lifecycle-repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
   collaborationActors,
@@ -182,7 +183,6 @@ describe("shared Chat durable controls", () => {
       return "failed" as const;
     });
     const restarted = createCommands(afterRestartDispatch, reconcileApproval);
-    await expect(restarted.reconcilePendingApprovals()).resolves.toBe(1);
     await expect(restarted.decideApproval(input)).resolves.toMatchObject({ state: "failed" });
     expect(afterRestartDispatch).not.toHaveBeenCalled();
     expect(reconcileApproval).toHaveBeenCalledWith(expect.objectContaining({
@@ -210,7 +210,10 @@ describe("shared Chat durable controls", () => {
       expectedRevision: 3,
     };
     await expect(first.decideApproval(input)).rejects.toMatchObject({ code: "unavailable" });
-    await fixture.db.updateTable("chat_collaboration_commands").set({ state: "accepted" })
+    await fixture.db.updateTable("chat_collaboration_commands").set({
+      state: "accepted",
+      updated_at: "2026-09-09T11:59:00.000Z",
+    })
       .where("client_request_id", "=", input.clientRequestId).execute();
 
     const reconcileApproval = vi.fn(async () => {
@@ -221,6 +224,115 @@ describe("shared Chat durable controls", () => {
     await expect(restarted.reconcilePendingApprovals()).resolves.toBe(1);
     await expect(restarted.decideApproval(input)).resolves.toMatchObject({ state: "failed" });
     expect(reconcileApproval).toHaveBeenCalledOnce();
+  });
+
+  it("does not reconcile a live accepted approval while dispatch is still in flight", async () => {
+    const run = await activeRunWithApproval("approval_shared_live");
+    const reconcileApproval = vi.fn(async () => "failed" as const);
+    const commands = createCommands(vi.fn(async () => undefined), reconcileApproval);
+    await fixture.db.insertInto("chat_collaboration_commands").values({
+      id: uuid(232),
+      scope_id: collaborationIds.scope,
+      chat_id: collaborationIds.chat,
+      target_request_id: null,
+      run_id: run.id,
+      approval_id: "approval_shared_live",
+      actor_id: collaborationActors.owner,
+      client_request_id: uuid(132),
+      kind: "approval",
+      payload_hash: "6".repeat(64),
+      expected_state_revision: 3,
+      decision: "approve",
+      authorized_epoch: 1,
+      state: "accepted",
+      result_ref: JSON.stringify({
+        id: uuid(232),
+        kind: "approval",
+        state: "accepted",
+        approvalId: "approval_shared_live",
+        decision: "approve",
+      }),
+      created_at: now,
+      updated_at: now,
+    }).execute();
+
+    await expect(commands.reconcilePendingApprovals()).resolves.toBe(0);
+    expect(reconcileApproval).not.toHaveBeenCalled();
+  });
+
+  it("preserves a successful approval after its resolution event leaves the recent window", async () => {
+    const run = await activeRunWithApproval("approval_shared_evicted");
+    const input = {
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      approvalId: "approval_shared_evicted",
+      runId: run.id,
+      decision: "approve" as const,
+      clientRequestId: uuid(133),
+      payloadHash: "7".repeat(64),
+      expectedRevision: 3,
+    };
+    await expect(createCommands(vi.fn(async () => {
+      throw new Error("connection lost after successful approval");
+    })).decideApproval(input)).rejects.toMatchObject({ code: "unavailable" });
+    const lifecycle = new ChatRunLifecycleRepository(
+      fixture.db,
+      (fn) => fixture.db.transaction().execute(fn),
+      async () => undefined,
+    );
+    await lifecycle.appendRunActivities(owner, collaborationIds.chat, run.id, [{
+      id: "activity_approval_shared_evicted_resolved",
+      chatId: collaborationIds.chat,
+      runId: run.id,
+      occurredAt: now,
+      type: "approval.resolved",
+      approvalId: "approval_shared_evicted",
+      decision: "approve",
+    }]);
+    await fixture.db.deleteFrom("chat_run_events")
+      .where("id", "=", "activity_approval_shared_evicted_resolved")
+      .execute();
+    await fixture.db.updateTable("chat_runs").set({
+      status: "completed",
+      outcome: "completed",
+      completed_at: now,
+      updated_at: now,
+    }).where("id", "=", run.id).execute();
+
+    const reconcileApproval = vi.fn(async () => "failed" as const);
+    const restarted = createCommands(vi.fn(async () => undefined), reconcileApproval);
+    await expect(restarted.reconcilePendingApprovals()).resolves.toBe(1);
+    await expect(restarted.decideApproval(input)).resolves.toMatchObject({ state: "completed" });
+    expect(reconcileApproval).not.toHaveBeenCalled();
+  });
+
+  it("does not infer a specific approval succeeded from the terminal Run alone", async () => {
+    const run = await activeRunWithApproval("approval_shared_without_evidence");
+    const input = {
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      approvalId: "approval_shared_without_evidence",
+      runId: run.id,
+      decision: "approve" as const,
+      clientRequestId: uuid(134),
+      payloadHash: "9".repeat(64),
+      expectedRevision: 3,
+    };
+    await expect(createCommands(vi.fn(async () => {
+      throw new Error("connection lost after ambiguous approval");
+    })).decideApproval(input)).rejects.toMatchObject({ code: "unavailable" });
+    await fixture.db.updateTable("chat_runs").set({
+      status: "completed",
+      outcome: "completed",
+      completed_at: now,
+      updated_at: now,
+    }).where("id", "=", run.id).execute();
+
+    const reconcileApproval = vi.fn(async () => "failed" as const);
+    const restarted = createCommands(vi.fn(async () => undefined), reconcileApproval);
+    await expect(restarted.reconcilePendingApprovals()).resolves.toBe(1);
+    await expect(restarted.decideApproval(input)).resolves.toMatchObject({ state: "failed" });
+    expect(reconcileApproval).not.toHaveBeenCalled();
   });
 
   it("rejects a stale control revision without changing the queue", async () => {

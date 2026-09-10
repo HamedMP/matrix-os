@@ -161,6 +161,15 @@ export interface ChatRunEventsTable {
   occurred_at: Timestamp;
 }
 
+export interface ChatApprovalOutcomesTable {
+  run_id: string;
+  approval_id: string;
+  chat_id: string;
+  decision: "approve" | "approve_for_session" | "decline" | "cancel";
+  activity_id: string;
+  resolved_at: Timestamp;
+}
+
 export interface ChatTerminalBindingsTable {
   chat_id: string;
   session_id: string;
@@ -243,6 +252,7 @@ export interface ChatDatabase {
   chat_queued_turns: ChatQueuedTurnsTable;
   chat_run_steers: ChatRunSteersTable;
   chat_run_events: ChatRunEventsTable;
+  chat_approval_outcomes: ChatApprovalOutcomesTable;
   chat_terminal_bindings: ChatTerminalBindingsTable;
   chat_run_adapter_state: ChatRunAdapterStateTable;
   chat_outbox: ChatOutboxTable;
@@ -533,6 +543,34 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
     )
   `.execute(db);
   await sql`
+    CREATE TABLE IF NOT EXISTS chat_approval_outcomes (
+      run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+      approval_id TEXT NOT NULL,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      decision TEXT NOT NULL CHECK (decision IN ('approve', 'approve_for_session', 'decline', 'cancel')),
+      activity_id TEXT NOT NULL,
+      resolved_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (run_id, approval_id)
+    )
+  `.execute(db);
+  await sql`
+    INSERT INTO chat_approval_outcomes (
+      run_id, approval_id, chat_id, decision, activity_id, resolved_at
+    )
+    SELECT run_id, approval_id, MIN(chat_id), MIN(decision), MIN(activity_id), MAX(resolved_at)
+    FROM (
+      SELECT run_id, event ->> 'approvalId' AS approval_id, chat_id,
+        event ->> 'decision' AS decision, id AS activity_id, occurred_at AS resolved_at
+      FROM chat_run_events
+      WHERE event ->> 'type' = 'approval.resolved'
+        AND event ->> 'approvalId' IS NOT NULL
+        AND event ->> 'decision' IN ('approve', 'approve_for_session', 'decline', 'cancel')
+    ) AS resolved
+    GROUP BY run_id, approval_id
+    HAVING COUNT(DISTINCT chat_id) = 1 AND COUNT(DISTINCT decision) = 1
+    ON CONFLICT (run_id, approval_id) DO NOTHING
+  `.execute(db);
+  await sql`
     ALTER TABLE chat_run_events
     ADD COLUMN IF NOT EXISTS run_seq BIGINT
   `.execute(db);
@@ -644,6 +682,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_project ON chats(owner_type, owner_id, project_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_page ON chat_messages(chat_id, seq)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_run_events_run_occurred ON chat_run_events(run_id, occurred_at, id)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_approval_outcomes_chat ON chat_approval_outcomes(chat_id, run_id)`.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_run_events_run_sequence
     ON chat_run_events(run_id, run_seq)

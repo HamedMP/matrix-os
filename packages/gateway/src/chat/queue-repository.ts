@@ -659,6 +659,10 @@ export class ChatQueueRepository {
         if (sharedScope.lifecycle !== "shared" || sharedScope.execution_generation === null
           || sharedScope.execution_eligibility === null) {
           sharedAdmission = "unavailable";
+        // The scope auth epoch is deliberately a coarse dispatch fence: any
+        // membership authority change invalidates accepted-but-unclaimed work,
+        // which callers may retry under the current authority. This prevents a
+        // revoke or downgrade race without inventing a second member revision.
         } else if (!candidateScope.requesting_actor_id || candidateScope.accepted_auth_epoch === null
           || Number(candidateScope.accepted_auth_epoch) !== Number(sharedScope.auth_epoch)) {
           sharedAdmission = "unauthorized";
