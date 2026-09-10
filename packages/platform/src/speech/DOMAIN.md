@@ -35,3 +35,5 @@ Startup currently mounts an authenticated, disabled capability response. Enablin
 6. owner-audio retention compatibility tests.
 
 No default provider price is encoded in this foundation, and no live provider or private-audio validation is claimed.
+Focused repository and service tests use a mock `SpeechFundingPort`; they validate transaction orchestration only and do not satisfy the real wallet, funding-source, or `speech:transcribe` policy gates above.
+The lifecycle CHECK is enforced for new writes but added `NOT VALID` on upgrades so legacy metadata cannot block platform startup. Reconciliation and constraint validation remain an enablement task if pre-foundation rows exist.

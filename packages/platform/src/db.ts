@@ -1454,8 +1454,95 @@ async function migrateSchema(db: Executor): Promise<void> {
           AND content_fingerprint IS NULL
           AND funding_reservation_id IS NULL
         )
+      ),
+      CONSTRAINT speech_operation_lifecycle_shape CHECK (
+        (
+          execution_state IN ('received', 'reserved')
+          AND cancellation_requested = FALSE
+          AND dispatch_claimed_at IS NULL
+          AND safe_outcome_code IS NULL
+        )
+        OR (
+          execution_state = 'dispatching'
+          AND dispatch_claimed_at IS NOT NULL
+          AND safe_outcome_code IS NULL
+        )
+        OR (
+          execution_state = 'succeeded'
+          AND dispatch_claimed_at IS NOT NULL
+          AND safe_outcome_code IS NOT NULL
+          AND safe_outcome_code IN ('transcript', 'no_speech')
+        )
+        OR (
+          execution_state = 'failed'
+          AND dispatch_claimed_at IS NOT NULL
+          AND safe_outcome_code IS NOT NULL
+          AND safe_outcome_code IN ('invalid_media', 'timeout', 'provider_failure')
+        )
+        OR (
+          execution_state = 'uncertain'
+          AND dispatch_claimed_at IS NOT NULL
+          AND safe_outcome_code IS NOT NULL
+          AND safe_outcome_code IN ('timeout', 'provider_failure', 'cancelled')
+          AND (safe_outcome_code <> 'cancelled' OR cancellation_requested = TRUE)
+        )
+        OR (
+          execution_state = 'cancelled'
+          AND cancellation_requested = TRUE
+          AND dispatch_claimed_at IS NULL
+          AND safe_outcome_code IS NOT NULL
+          AND safe_outcome_code = 'cancelled'
+        )
       )
     )
+  `.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE speech_operations
+          ADD CONSTRAINT speech_operation_lifecycle_shape CHECK (
+            (
+              execution_state IN ('received', 'reserved')
+              AND cancellation_requested = FALSE
+              AND dispatch_claimed_at IS NULL
+              AND safe_outcome_code IS NULL
+            )
+            OR (
+              execution_state = 'dispatching'
+              AND dispatch_claimed_at IS NOT NULL
+              AND safe_outcome_code IS NULL
+            )
+            OR (
+              execution_state = 'succeeded'
+              AND dispatch_claimed_at IS NOT NULL
+              AND safe_outcome_code IS NOT NULL
+              AND safe_outcome_code IN ('transcript', 'no_speech')
+            )
+            OR (
+              execution_state = 'failed'
+              AND dispatch_claimed_at IS NOT NULL
+              AND safe_outcome_code IS NOT NULL
+              AND safe_outcome_code IN ('invalid_media', 'timeout', 'provider_failure')
+            )
+            OR (
+              execution_state = 'uncertain'
+              AND dispatch_claimed_at IS NOT NULL
+              AND safe_outcome_code IS NOT NULL
+              AND safe_outcome_code IN ('timeout', 'provider_failure', 'cancelled')
+              AND (safe_outcome_code <> 'cancelled' OR cancellation_requested = TRUE)
+            )
+            OR (
+              execution_state = 'cancelled'
+              AND cancellation_requested = TRUE
+              AND dispatch_claimed_at IS NULL
+              AND safe_outcome_code IS NOT NULL
+              AND safe_outcome_code = 'cancelled'
+            )
+          ) NOT VALID;
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+    END $$
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_speech_operations_active
