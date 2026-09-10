@@ -13,12 +13,12 @@ import {
   type ScopeRuntimeProfileCatalog,
 } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
 
-const PROFILE_DIGEST = "db0bcb5905e1543f87fcd81de4f44e80be89116aaf54fd98a502874f06e91738";
+const PROFILE_DIGEST = "6650e74684fd322251882f65c36e1226149087dac346eee8a43da426a57fad8e";
 const REQUEST_ID = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
 const SCOPE_HANDLE = "scope_11111111111111111111111111111111";
 const RUNTIME_HANDLE = "runtime_22222222222222222222222222222222";
 const catalog: ScopeRuntimeProfileCatalog = {
-  "scope-runtime-proof-v1": {
+  "scope-runtime-chat-v1": {
     profileVersion: 1,
     profileDigest: PROFILE_DIGEST,
     identity: { mode: "dynamic", uidMin: 61_184, uidMax: 65_519 },
@@ -83,7 +83,7 @@ function capabilityResponse(requestId = REQUEST_ID): ScopeRuntimeResponse {
     ok: true,
     supervisorVersion: "1.0.0",
     profile: {
-      profileId: "scope-runtime-proof-v1",
+      profileId: "scope-runtime-chat-v1",
       profileVersion: 1,
       profileDigest: PROFILE_DIGEST,
       executionGeneration: "1",
@@ -106,7 +106,7 @@ describe("scope runtime protocol", () => {
       type: "runtime.create",
       requestId: REQUEST_ID,
       scopeHandle: SCOPE_HANDLE,
-      profileId: "scope-runtime-proof-v1",
+      profileId: "scope-runtime-chat-v1",
       workload: "chat_ai",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
@@ -124,13 +124,33 @@ describe("scope runtime protocol", () => {
         type: "runtime.create",
         requestId: REQUEST_ID,
         scopeHandle: SCOPE_HANDLE,
-        profileId: "scope-runtime-proof-v1",
+        profileId: "scope-runtime-chat-v1",
         workload: "chat_ai",
         adapterId: "claude-code",
         harnessVersion: "2.1.240",
         ...injected,
       }).success).toBe(false);
     }
+
+    expect(ScopeRuntimeRequestSchema.parse({
+      version: 1,
+      type: "runtime.chat",
+      requestId: REQUEST_ID,
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "1",
+      model: "claude-opus-4-6",
+      prompt: "Summarize the visible shared discussion.",
+    })).toMatchObject({ type: "runtime.chat", runtimeHandle: RUNTIME_HANDLE });
+    expect(ScopeRuntimeRequestSchema.safeParse({
+      version: 1,
+      type: "runtime.chat",
+      requestId: REQUEST_ID,
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "1",
+      model: "claude-opus-4-6",
+      prompt: "Run with owner context",
+      ownerHome: "/home/matrix/home",
+    }).success).toBe(false);
   });
 });
 
@@ -151,7 +171,7 @@ describe("scope runtime client", () => {
 
     await expect(client.refreshCapability()).resolves.toMatchObject({
       available: true,
-      profileId: "scope-runtime-proof-v1",
+      profileId: "scope-runtime-chat-v1",
       executionGeneration: "1",
       supportedAdapters: [{
         adapterId: "claude-code",
@@ -236,6 +256,17 @@ describe("scope runtime client", () => {
           state: "running",
         };
       }
+      if (request.type === "runtime.chat") {
+        return {
+          version: 1,
+          type: "runtime.chat.result",
+          requestId: request.requestId,
+          ok: true,
+          runtimeHandle: request.runtimeHandle,
+          executionGeneration: "1",
+          text: "Scoped response",
+        };
+      }
       return {
         version: 1,
         type: "runtime.result",
@@ -265,6 +296,16 @@ describe("scope runtime client", () => {
       runtimeHandle: RUNTIME_HANDLE,
       executionGeneration: "1",
       state: "running",
+    });
+    await expect(client.runChat({
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "1",
+      model: "claude-opus-4-6",
+      prompt: "Summarize the visible shared discussion.",
+    })).resolves.toEqual({
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "1",
+      text: "Scoped response",
     });
     await expect(client.stopRuntime({ runtimeHandle: RUNTIME_HANDLE })).resolves.toEqual({
       runtimeHandle: RUNTIME_HANDLE,

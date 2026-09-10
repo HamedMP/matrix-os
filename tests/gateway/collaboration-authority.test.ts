@@ -107,7 +107,7 @@ describe("CollaborationAuthority", () => {
   it("enables M2 requests only for an eligible scope, enabled cohort, and writable role", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({
       execution_generation: 1,
-      execution_eligibility: JSON.stringify({ profileId: "scope-runtime-proof-v1" }),
+      execution_eligibility: JSON.stringify({ profileId: "scope-runtime-chat-v1" }),
     }).where("id", "=", collaborationIds.scope).execute();
     const repository = new CollaborationRepository(fixture.db, { now: () => new Date(now) });
     const m2 = new CollaborationAuthority(repository, { now: () => new Date(now) });

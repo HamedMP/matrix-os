@@ -92,6 +92,7 @@ export interface UpdateQueuedTurnInput {
 
 export interface ClaimNextQueuedTurnInput {
   chatId: string;
+  collaborationScopeId?: string;
   turnId: string;
   runId: string;
   messageId: string;
@@ -104,6 +105,14 @@ export interface ClaimedQueuedTurn {
   turn: CanonicalChatTurn;
   run: CanonicalChatRun;
   queueDepth: number;
+  sharedExecution?: {
+    scopeId: string;
+    requestingActorId: string;
+    authEpoch: number;
+    authorityGeneration: number;
+    executionGeneration: number;
+    executionEligibility: unknown;
+  };
 }
 
 export interface EnqueueSharedQueuedTurnInput extends Omit<EnqueueQueuedTurnInput, "baseRevision" | "createdAt"> {
@@ -628,12 +637,17 @@ export class ChatQueueRepository {
     const turnId = CanonicalChatTurnSchema.shape.id.parse(input.turnId);
     const runId = CanonicalChatRunSchema.shape.id.parse(input.runId);
     const messageId = CanonicalChatMessageSchema.shape.id.parse(input.messageId);
+    const collaborationScopeId = input.collaborationScopeId === undefined
+      ? undefined
+      : CollaborationIdSchema.parse(input.collaborationScopeId);
     const claimedAt = new Date(input.claimedAt).toISOString();
     return this.transact(async (trx) => {
       const candidateScope = await trx.selectFrom("chat_queued_turns")
         .select(["collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch"])
         .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
+        .$if(collaborationScopeId !== undefined, (query) =>
+          query.where("collaboration_scope_id", "=", collaborationScopeId!))
         .orderBy("position")
         .executeTakeFirst();
       let sharedScope: {
@@ -688,6 +702,8 @@ export class ChatQueueRepository {
       const candidate = await trx.selectFrom("chat_queued_turns").selectAll()
         .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
+        .$if(collaborationScopeId !== undefined, (query) =>
+          query.where("collaboration_scope_id", "=", collaborationScopeId!))
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
@@ -889,6 +905,17 @@ export class ChatQueueRepository {
         turn,
         run,
         queueDepth: await this.queueDepth(trx, chatId),
+        ...(row.collaboration_scope_id && row.requesting_actor_id && sharedScope?.execution_generation
+          && sharedScope.execution_eligibility ? {
+            sharedExecution: {
+              scopeId: row.collaboration_scope_id,
+              requestingActorId: row.requesting_actor_id,
+              authEpoch: Number(sharedScope.auth_epoch),
+              authorityGeneration: Number(sharedScope.authority_generation),
+              executionGeneration: Number(sharedScope.execution_generation),
+              executionEligibility: sharedScope.execution_eligibility,
+            },
+          } : {}),
       };
     });
   }

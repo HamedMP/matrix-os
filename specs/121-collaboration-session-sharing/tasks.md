@@ -119,10 +119,10 @@
 ### Implementation — M2 / PR3
 
 - [x] T053 [US3] (PR3) Extend the canonical queue to shared idle/busy admission, 32 pending, immutable accepted sequence, actor/hash/epoch fields, and existing one-run guard in `packages/gateway/src/chat/queue-repository.ts`
-- [ ] T054 [US3] (PR3) Implement durable approval/cancel/retry command claims, attribution, and distinct attempts in `packages/gateway/src/chat/collaboration-commands.ts`
+- [x] T054 [US3] (PR3) Implement durable approval/cancel/retry command claims, attribution, and distinct attempts in `packages/gateway/src/chat/collaboration-commands.ts`
 - [ ] T055 [US3] (PR3) Reauthorize original actors before claim/dispatch and preserve explicit unauthorized/unavailable/interrupted outcomes in `packages/gateway/src/chat/orchestrator.ts`
-- [ ] T056 [US3] (PR3) Wire PR2 scoped execution context and provenance into the canonical Chat adapter in `packages/gateway/src/collaboration/chat-execution-adapter.ts`
-- [ ] T057 [US3] (PR3) Add shared AI request/control endpoints and versioned event projections in `packages/gateway/src/collaboration/routes.ts`
+- [x] T056 [US3] (PR3) Wire PR2 scoped execution context and provenance into the canonical Chat adapter in `packages/gateway/src/collaboration/chat-execution-adapter.ts`
+- [x] T057 [US3] (PR3) Add shared AI request/control endpoints and versioned event projections in `packages/gateway/src/collaboration/routes.ts`
 - [ ] T058 [US3] (PR3) Add discussion/AI mode, ordered queue, approvals, attributed controls, preserved draft-on-failure, and recovery UI in `packages/ui/src/collaboration/SharedChatControls.tsx`
 
 **Checkpoint**: PR1/M1 is usable for discussion only. PR3/M2 adds AI only after PR2 proves isolation.

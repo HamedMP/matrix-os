@@ -1,4 +1,7 @@
-import { access, constants, lstat, open } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { access, constants, lstat, open, unlink } from "node:fs/promises";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import { connect, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -6,6 +9,13 @@ export const SCOPE_RUNTIME_WORKER_HARNESS_VERSION = "2.1.240";
 
 const RUNTIME_HANDLE = /^runtime_[a-f0-9]{32}$/;
 const SCOPE_HANDLE = /^scope_[a-f0-9]{32}$/;
+const EXECUTION_GENERATION = /^(0|[1-9][0-9]{0,19})$/;
+const COMMAND_SOCKET = "/run/matrix-scope-command/worker.sock";
+const SDK_DIRECTORY = "/opt/matrix/scope-sdk/sdk";
+const NATIVE_EXECUTABLE = "/opt/matrix/scope-sdk/native/claude";
+const BROKER_SOCKET = "/run/matrix-scope/broker.sock";
+const MAX_CHAT_FRAME_BYTES = 128 * 1024;
+const CHAT_TIMEOUT_MS = 50_000;
 
 const SENSITIVE_ENVIRONMENT_KEY = /(?:^|_)(?:API_?KEY|AUTH_?TOKEN|TOKEN|SECRET|PASSWORD|CREDENTIAL|DATABASE_URL)(?:$|_)/i;
 const FORBIDDEN_PATHS = [
@@ -44,16 +54,17 @@ function workerFailure(name: string, message: string): Error {
 }
 
 export function parseScopeRuntimeWorkerArguments(input: readonly string[]) {
-  const [runtimeHandle, scopeHandle, workload, adapterId, harnessVersion] = input;
-  if (input.length !== 5
+  const [runtimeHandle, scopeHandle, workload, adapterId, harnessVersion, executionGeneration] = input;
+  if (input.length !== 6
     || typeof runtimeHandle !== "string" || !RUNTIME_HANDLE.test(runtimeHandle)
     || typeof scopeHandle !== "string" || !SCOPE_HANDLE.test(scopeHandle)
     || workload !== "chat_ai"
     || adapterId !== "claude-code"
-    || harnessVersion !== SCOPE_RUNTIME_WORKER_HARNESS_VERSION) {
+    || harnessVersion !== SCOPE_RUNTIME_WORKER_HARNESS_VERSION
+    || typeof executionGeneration !== "string" || !EXECUTION_GENERATION.test(executionGeneration)) {
     throw workerFailure("ScopeRuntimeInvocationError", "Invalid scope runtime worker invocation");
   }
-  return { runtimeHandle, scopeHandle, workload, adapterId, harnessVersion };
+  return { runtimeHandle, scopeHandle, workload, adapterId, harnessVersion, executionGeneration };
 }
 
 export function validateScopeRuntimeWorkerEnvironment(
@@ -200,6 +211,250 @@ export async function waitForScopeRuntimeShutdown(): Promise<void> {
   });
 }
 
+export function parseScopeRuntimeChatRequest(
+  input: unknown,
+  invocation: ReturnType<typeof parseScopeRuntimeWorkerArguments>,
+): { requestId: string; model: string; prompt: string } {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw workerFailure("ScopeRuntimeInvocationError", "Invalid Chat request");
+  }
+  const value = input as Record<string, unknown>;
+  const keys = Object.keys(value).sort();
+  const expected = [
+    "executionGeneration", "model", "prompt", "runtimeHandle", "type", "version",
+  ].sort();
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])
+    || value.version !== 1 || value.type !== "runtime.chat"
+    || value.runtimeHandle !== invocation.runtimeHandle
+    || value.executionGeneration !== invocation.executionGeneration
+    || typeof value.model !== "string" || !/^[A-Za-z0-9._:/-]{1,256}$/.test(value.model)
+    || typeof value.prompt !== "string" || value.prompt.length < 1
+    || Buffer.byteLength(value.prompt, "utf8") > 64 * 1024) {
+    throw workerFailure("ScopeRuntimeInvocationError", "Invalid Chat request");
+  }
+  return { requestId: randomUUID(), model: value.model, prompt: value.prompt };
+}
+
+function brokerRequest(frame: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const socket = connect({ path: BROKER_SOCKET });
+    let response = Buffer.alloc(0);
+    let settled = false;
+    const finish = (error?: Error, value?: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(value ?? {});
+    };
+    socket.setTimeout(30_000, () => finish(workerFailure("ScopeRuntimeBrokerError", "Broker timed out")));
+    socket.once("connect", () => socket.write(`${JSON.stringify(frame)}\n`));
+    socket.on("data", (chunk) => {
+      const bytes = Buffer.from(chunk);
+      response = Buffer.concat([response, bytes], response.length + bytes.length);
+      if (response.length > 512 * 1024) {
+        finish(workerFailure("ScopeRuntimeBrokerError", "Broker response exceeded capacity"));
+        return;
+      }
+      const newline = response.indexOf(0x0a);
+      if (newline < 0) return;
+      try {
+        const parsed: unknown = JSON.parse(response.subarray(0, newline).toString("utf8"));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          finish(workerFailure("ScopeRuntimeBrokerError", "Broker response is invalid"));
+          return;
+        }
+        finish(undefined, parsed as Record<string, unknown>);
+      } catch (error: unknown) {
+        finish(workerFailure("ScopeRuntimeBrokerError", "Broker response is invalid"));
+      }
+    });
+    socket.once("error", () => finish(workerFailure("ScopeRuntimeBrokerError", "Broker unavailable")));
+  });
+}
+
+async function readHttpBody(request: AsyncIterable<Buffer | string>): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > 256 * 1024) throw workerFailure("ScopeRuntimeBrokerError", "Provider request exceeded capacity");
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks, size).toString("utf8");
+}
+
+async function startInferenceBridge(
+  invocation: ReturnType<typeof parseScopeRuntimeWorkerArguments>,
+): Promise<{ server: HttpServer; port: number }> {
+  const server = createHttpServer(async (request, response) => {
+    try {
+      const body = await readHttpBody(request);
+      const brokerResponse = await brokerRequest({
+        version: 1,
+        action: "inference.messages",
+        requestId: randomUUID(),
+        runtimeHandle: invocation.runtimeHandle,
+        executionGeneration: invocation.executionGeneration,
+        method: request.method,
+        path: request.url,
+        headers: {
+          ...(typeof request.headers["anthropic-version"] === "string"
+            ? { "anthropic-version": request.headers["anthropic-version"] } : {}),
+          ...(typeof request.headers["anthropic-beta"] === "string"
+            ? { "anthropic-beta": request.headers["anthropic-beta"] } : {}),
+        },
+        body,
+      });
+      if (brokerResponse.ok !== true || typeof brokerResponse.status !== "number"
+        || typeof brokerResponse.body !== "string" || !brokerResponse.headers
+        || typeof brokerResponse.headers !== "object") {
+        response.writeHead(502).end();
+        return;
+      }
+      response.writeHead(brokerResponse.status, brokerResponse.headers as Record<string, string>);
+      response.end(brokerResponse.body);
+    } catch (error: unknown) {
+      console.warn("[scope-runtime] inference bridge failed:",
+        error instanceof Error ? error.name : "UnknownError");
+      response.writeHead(502).end();
+    }
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw workerFailure("ScopeRuntimeBrokerError", "Bridge unavailable");
+  return { server, port: address.port };
+}
+
+async function closeHttpServer(server: HttpServer): Promise<void> {
+  server.closeAllConnections();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function executeChat(
+  invocation: ReturnType<typeof parseScopeRuntimeWorkerArguments>,
+  input: unknown,
+): Promise<string> {
+  const request = parseScopeRuntimeChatRequest(input, invocation);
+  const bridge = await startInferenceBridge(invocation);
+  try {
+    const runtime = await import(pathToFileURL(`${SDK_DIRECTORY}/sdk.mjs`).href) as {
+      query?: (input: unknown) => AsyncIterable<Record<string, unknown>>;
+    };
+    if (typeof runtime.query !== "function") throw workerFailure("ScopeRuntimeInvocationError", "SDK unavailable");
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), CHAT_TIMEOUT_MS);
+    let text: string | undefined;
+    try {
+      for await (const message of runtime.query({
+        prompt: request.prompt,
+        options: {
+          abortController,
+          allowedTools: [],
+          cwd: "/workspace",
+          disallowedTools: ["*"],
+          env: {
+            ANTHROPIC_API_KEY: "",
+            ANTHROPIC_AUTH_TOKEN: "scope-runtime-placeholder",
+            ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
+            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+            CLAUDE_CONFIG_DIR: "/workspace/.claude",
+            HOME: "/workspace",
+            NO_COLOR: "1",
+            PATH: "/opt/matrix/runtime/node/bin",
+          },
+          executable: "node",
+          maxTurns: 1,
+          model: request.model,
+          pathToClaudeCodeExecutable: NATIVE_EXECUTABLE,
+          persistSession: false,
+          settingSources: [],
+          tools: [],
+        },
+      })) {
+        if (message.type === "result" && message.subtype === "success"
+          && message.is_error !== true && typeof message.result === "string") text = message.result;
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (text === undefined || Buffer.byteLength(text, "utf8") > 96 * 1024) {
+      throw workerFailure("ScopeRuntimeInvocationError", "SDK result unavailable");
+    }
+    return text;
+  } finally {
+    await closeHttpServer(bridge.server);
+  }
+}
+
+async function removeCommandSocket(): Promise<void> {
+  try {
+    const entry = await lstat(COMMAND_SOCKET);
+    if (!entry.isSocket() || entry.isSymbolicLink()) {
+      throw workerFailure("ScopeRuntimeFilesystemError", "Invalid command socket");
+    }
+    await unlink(COMMAND_SOCKET);
+  } catch (error: unknown) {
+    if (!(error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT")) throw error;
+  }
+}
+
+async function startCommandServer(
+  invocation: ReturnType<typeof parseScopeRuntimeWorkerArguments>,
+  sockets: Set<Socket>,
+): Promise<Server> {
+  await removeCommandSocket();
+  let accepted = false;
+  const server = createServer({ allowHalfOpen: true }, (socket: Socket) => {
+    if (accepted) {
+      socket.destroy();
+      return;
+    }
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    accepted = true;
+    let input = "";
+    socket.setEncoding("utf8");
+    socket.setTimeout(CHAT_TIMEOUT_MS, () => socket.destroy());
+    socket.on("data", (chunk) => {
+      input += chunk;
+      if (Buffer.byteLength(input, "utf8") > MAX_CHAT_FRAME_BYTES) socket.destroy();
+    });
+    socket.once("end", () => {
+      void (async () => {
+        try {
+          const frames = input.split("\n").filter((frame) => frame.trim());
+          if (frames.length !== 1) throw workerFailure("ScopeRuntimeInvocationError", "Invalid Chat frame");
+          const raw: unknown = JSON.parse(frames[0]!);
+          const text = await executeChat(invocation, raw);
+          if (!socket.destroyed) socket.end(`${JSON.stringify({
+            version: 1,
+            type: "runtime.chat.result",
+            requestId: randomUUID(),
+            ok: true,
+            runtimeHandle: invocation.runtimeHandle,
+            executionGeneration: invocation.executionGeneration,
+            text,
+          })}\n`);
+        } catch (error: unknown) {
+          console.warn("[scope-runtime] Chat execution failed:",
+            error instanceof Error ? error.name : "UnknownError");
+          socket.destroy();
+        }
+      })();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(COMMAND_SOCKET, resolve);
+  });
+  return server;
+}
+
 export async function runScopeRuntimeWorker(args = process.argv.slice(2)): Promise<void> {
   const environment = prepareScopeRuntimeWorkerEnvironment(
     args,
@@ -219,14 +474,24 @@ export async function runScopeRuntimeWorker(args = process.argv.slice(2)): Promi
   }
   const invocation = parseScopeRuntimeWorkerArguments(environment.invocationArguments ?? []);
   await verifyBoundary();
+  const commandSockets = new Set<Socket>();
+  const commandServer = await startCommandServer(invocation, commandSockets);
   try {
     await writeScopeRuntimeReadiness(invocation.runtimeHandle);
   } catch (error: unknown) {
+    commandServer.close();
     if (!(error instanceof Error)) throw error;
     throw workerFailure("ScopeRuntimeReadinessError", "Scope runtime readiness unavailable");
   }
   process.stdout.write("scope_runtime_worker_ready\n");
-  await waitForScopeRuntimeShutdown();
+  try {
+    await waitForScopeRuntimeShutdown();
+  } finally {
+    for (const socket of commandSockets) socket.destroy();
+    commandServer.close();
+    await new Promise<void>((resolve) => commandServer.close(() => resolve()));
+    await removeCommandSocket();
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

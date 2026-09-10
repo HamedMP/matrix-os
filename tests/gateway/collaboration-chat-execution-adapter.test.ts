@@ -134,7 +134,7 @@ function createAdapter(overrides: Record<string, unknown> = {}) {
     commands,
     resolveParticipant: async (actorId) => ({ actorId, displayName: "Ada Editor" }),
     resolveEligibility: async () => ({
-      profileId: "scope-runtime-proof-v1",
+      profileId: "scope-runtime-chat-v1",
       profileVersion: 1,
       profileDigest: "a".repeat(64),
       adapterId: "claude-code",

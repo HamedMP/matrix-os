@@ -52,6 +52,12 @@ export interface ScopeRuntimeReconciledRuntime {
 export interface ScopeRuntimeLauncher {
   list(): Promise<ScopeRuntimeReconciledRuntime[]>;
   start(input: ScopeRuntimeLaunchRequest): Promise<void>;
+  runChat(input: {
+    runtimeHandle: string;
+    executionGeneration: string;
+    model: string;
+    prompt: string;
+  }): Promise<{ text: string }>;
   stop(runtimeHandle: string): Promise<void>;
 }
 
@@ -67,6 +73,19 @@ function runtimeFailure(
   return ScopeRuntimeResponseSchema.parse({
     version: 1,
     type: "runtime.result",
+    requestId,
+    ok: false,
+    error,
+  });
+}
+
+function chatFailure(
+  requestId: string,
+  error: "runtime_not_found" | "runtime_unavailable" | "generation_mismatch",
+): ScopeRuntimeResponse {
+  return ScopeRuntimeResponseSchema.parse({
+    version: 1,
+    type: "runtime.chat.result",
     requestId,
     ok: false,
     error,
@@ -191,6 +210,37 @@ export async function createScopeRuntimeController(options: {
     }
   }
 
+  async function runChat(
+    request: Extract<ScopeRuntimeRequest, { type: "runtime.chat" }>,
+  ): Promise<ScopeRuntimeResponse> {
+    const executionGeneration = runtimes.get(request.runtimeHandle);
+    if (executionGeneration === undefined) return chatFailure(request.requestId, "runtime_not_found");
+    if (executionGeneration !== request.executionGeneration) {
+      return chatFailure(request.requestId, "generation_mismatch");
+    }
+    try {
+      const result = await options.launcher.runChat({
+        runtimeHandle: request.runtimeHandle,
+        executionGeneration,
+        model: request.model,
+        prompt: request.prompt,
+      });
+      return ScopeRuntimeResponseSchema.parse({
+        version: 1,
+        type: "runtime.chat.result",
+        requestId: request.requestId,
+        ok: true,
+        runtimeHandle: request.runtimeHandle,
+        executionGeneration,
+        text: result.text,
+      });
+    } catch (error: unknown) {
+      console.warn("[scope-runtime] fixed-profile Chat failed:",
+        error instanceof Error ? error.name : "UnknownError");
+      return chatFailure(request.requestId, "runtime_unavailable");
+    }
+  }
+
   return {
     async handle(input: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse> {
       const request = ScopeRuntimeRequestSchema.parse(input);
@@ -215,9 +265,9 @@ export async function createScopeRuntimeController(options: {
           profile: { ...SCOPE_RUNTIME_PROFILE, executionGeneration: options.executionGeneration },
         });
       }
-      return request.type === "runtime.create"
-        ? createRuntime(request)
-        : stopRuntime(request);
+      if (request.type === "runtime.create") return createRuntime(request);
+      if (request.type === "runtime.chat") return runChat(request);
+      return stopRuntime(request);
     },
     size(): number {
       return runtimes.size;
