@@ -1,4 +1,4 @@
-import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import { defineConfig, externalizeDepsPlugin, type UserConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
@@ -12,7 +12,7 @@ const codingAgentsDesktopWorkspace =
 
 // Evaluate after electron-vite removes its temporary bundled config file, so
 // that generated file cannot make the source checkout appear uncommitted.
-export default defineConfig(() => ({
+export default defineConfig((): UserConfig => ({
   main: {
     // Workspace contracts export TypeScript source for package consumers.
     // Bundle the schemas and Zod so the built Electron main process never
