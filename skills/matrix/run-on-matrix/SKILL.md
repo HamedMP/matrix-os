@@ -60,7 +60,7 @@ Choose a finite monitoring lifetime (for example 24 hours), record the expiry an
 
 ## Have agents review each other
 
-After a worker produces a coherent commit, assign another agent a read-only review of the exact base/head diff and relevant context. Reviewers do not modify the author's worktree. Give risk-specific responsibilities when useful: one can check auth/concurrency/resource bounds and another can check UX/contracts/tests. A worker can review another worker's independent change after finishing its own assignment.
+After a worker produces a coherent commit, assign another agent a read-only review of the exact base/head diff and relevant context. Enforce a read-only sandbox for reviewers accessing a live writer worktree (for example, verified `codex exec -s read-only` support), or give the reviewer a separate immutable-commit worktree. A prompt saying “read-only” alone is insufficient. Reviewers do not modify the author's worktree. Give risk-specific responsibilities when useful: one can check auth/concurrency/resource bounds and another can check UX/contracts/tests. A worker can review another worker's independent change after finishing its own assignment.
 
 For independent fixes A and B, commit both before cross-review: B reviews A and A reviews B using immutable SHAs; each author fixes its own branch, then the other rechecks the revised SHA. The remote coordinator advances these states and handles bounded waits or blocked workers without leaving both agents waiting indefinitely.
 
