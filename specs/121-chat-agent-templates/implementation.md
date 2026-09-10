@@ -27,6 +27,7 @@ Queued work keeps references and resolved snapshots durable. Current-Chat histor
 | Route / operation | Authentication and authorization | Validation / limits |
 | --- | --- | --- |
 | GET `/api/chat-agents` | Existing request principal; personal owner only | Server flag; bounded Agent list; coarse readiness |
+| GET `/api/chat-agents/recipe-catalog` | Existing request principal; personal owner only | Server flag; bounded bundled skill and integration service metadata; no credentials |
 | POST `/api/chat-agents` | Same owner | Body limit; bounded strict schema; idempotency key |
 | PATCH `/api/chat-agents/:agentId` | Same owner | Body limit; safe ID; revision compare; explicit fields |
 | GET `/api/chat-mentions` | Same owner | Bounded query; current Chat exclusion; max results |
@@ -48,6 +49,46 @@ Queued work keeps references and resolved snapshots durable. Current-Chat histor
 4. **Validation and delivery**: required checks, React audit, current screenshots, real Hermes execution and no-reload streaming on an exact-head Preview VPS; separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/`. Keep flag off by default and wait for Yuhan's Human Review feedback before merging.
 
 Use Graphite for stack operations. Each layer must remain deploy-safe with the switch off. Provider protocol doubles are not evidence of real Hermes execution.
+
+### Recipe extension (2026-09-10)
+
+New Web Chat titles compact to at most 80 characters including `...` while the
+original request remains intact. Existing titles retain their canonical
+200-character limit and remain valid as Agent context. Long titles and Agent
+labels use bounded ellipsis in each applicable presentation, including existing
+Electron Recents entries; full text remains available when inspecting the title.
+
+A saved Agent may also declare a recipe: selected bundled skills, integration
+dependencies with optional account labels, and the expected output. Existing
+Agents without a recipe remain valid. Skills are resolved from the server's
+fixed catalogue; clients cannot supply file paths or resolved instruction bodies.
+Admission pins the skill content and hashes together with the dependency and
+output configuration in the canonical Run snapshot. Edits affect future
+admissions; queued work and retries retain their accepted recipe.
+
+The shared Agents editor displays the catalogue and connection metadata through
+the surface's authenticated transport. It preserves missing or inactive account
+references and distinguishes a failed lookup from an empty connection list.
+Multiple accounts require an explicit selection or an explicit choice to ask
+when running. Saving an Agent does not run it or start an OAuth flow. Recipe
+selections guide the workflow within the existing Hermes Full access mode.
+
+Personal Daily Brief is the first editable recipe template. It uses the native
+Matrix integrations tools, with the bundled command as a fallback, to read the
+selected Gmail and Google Calendar accounts. It produces an English brief with
+today's schedule, actionable follow-ups, priorities, source links or IDs,
+retrieval time and data gaps. The requested timezone defines today. Reads are
+bounded to the preceding 24 hours of inbox messages and today's calendar, at
+most 30 messages and 50 events. It must report missing access instead of
+connecting or syncing accounts, and it must not send mail, modify calendar
+events, schedule future runs, or create extra files containing private data.
+
+The first real-data validation requires the intended connected account to be
+identified, visible evidence of source reads, a cited result that persists in
+the Chat, and delivery without a reload. A connection preflight or a scripted
+provider response establishes only that narrower layer of behavior. The public
+site documentation PR is paused at Yuhan's instruction; it remains a delivery
+follow-up before public rollout.
 
 ### Acceptance checklist
 
