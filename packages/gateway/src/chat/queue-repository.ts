@@ -1,6 +1,7 @@
 import { chatContextRequestHash } from "./agent-context.js";
 import { queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
 import { randomUUID } from "node:crypto";
+import { messagePurpose } from "./message-purpose.js";
 import {
   ChatRunContextSchema,
   CanonicalChatIdSchema,
@@ -923,6 +924,7 @@ export class ChatQueueRepository {
         chat_id: chatId,
         seq: message.seq,
         role: message.role,
+        purpose: messagePurpose(message),
         state: message.state,
         turn_id: turn.id,
         run_id: null,

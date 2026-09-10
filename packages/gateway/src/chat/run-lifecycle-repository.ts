@@ -1,4 +1,5 @@
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
+import { messagePurpose } from "./message-purpose.js";
 import {
   CanonicalChatIdSchema,
   CanonicalChatMessagePartSchema,
@@ -616,6 +617,7 @@ export class ChatRunLifecycleRepository {
           chat_id: next.chatId,
           seq: next.seq,
           role: next.role,
+          purpose: messagePurpose(next),
           state: next.state,
           turn_id: next.turnId ?? null,
           run_id: next.runId ?? null,
@@ -721,6 +723,7 @@ export class ChatRunLifecycleRepository {
           chat_id: output.chatId,
           seq: output.seq,
           role: output.role,
+          purpose: messagePurpose(output),
           state: output.state,
           turn_id: output.turnId ?? null,
           run_id: output.runId ?? null,
