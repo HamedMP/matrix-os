@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { SCOPE_RUNTIME_WORKER_HARNESS_VERSION } from "./worker.js";
 
-export const SCOPE_RUNTIME_PROFILE_ID = "scope-runtime-proof-v1";
+export const SCOPE_RUNTIME_PROFILE_ID = "scope-runtime-chat-v1";
 export const SCOPE_RUNTIME_PROFILE_VERSION = 1;
 export const SCOPE_RUNTIME_HARNESS_VERSION = SCOPE_RUNTIME_WORKER_HARNESS_VERSION;
 
@@ -11,6 +11,7 @@ export const NATIVE_DIRECTORY_TOKEN = "<native-directory>";
 export const WORKER_FILE_TOKEN = "<worker-file>";
 export const BROKER_SOCKET_TOKEN = "<broker-socket>";
 export const READINESS_FILE_TOKEN = "<readiness-file>";
+export const COMMAND_DIRECTORY_TOKEN = "<command-directory>";
 
 export const FIXED_SYSTEMD_PROPERTIES = [
   "Type=exec",
@@ -56,6 +57,7 @@ export const FIXED_SYSTEMD_PROPERTIES = [
   `BindReadOnlyPaths=${WORKER_FILE_TOKEN}:/opt/matrix/scope-runtime/worker.mjs`,
   `BindPaths=${BROKER_SOCKET_TOKEN}:/run/matrix-scope/broker.sock`,
   `BindPaths=${READINESS_FILE_TOKEN}:/run/matrix-scope-readiness/ready`,
+  `BindPaths=${COMMAND_DIRECTORY_TOKEN}:/run/matrix-scope-command`,
   "WorkingDirectory=/workspace",
   "UMask=0077",
   "RuntimeMaxSec=90",
@@ -79,6 +81,7 @@ export interface ScopeRuntimeProfilePaths {
   workerFile: string;
   brokerSocket: string;
   readinessFile: string;
+  commandDirectory: string;
 }
 
 export function materializeFixedSystemdProperties(paths: ScopeRuntimeProfilePaths): string[] {
@@ -89,6 +92,7 @@ export function materializeFixedSystemdProperties(paths: ScopeRuntimeProfilePath
     [WORKER_FILE_TOKEN]: paths.workerFile,
     [BROKER_SOCKET_TOKEN]: paths.brokerSocket,
     [READINESS_FILE_TOKEN]: paths.readinessFile,
+    [COMMAND_DIRECTORY_TOKEN]: paths.commandDirectory,
   };
   return FIXED_SYSTEMD_PROPERTIES.map((property) => {
     let result: string = property;

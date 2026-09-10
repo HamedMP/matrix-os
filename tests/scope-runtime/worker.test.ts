@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   parseScopeRuntimeWorkerArguments,
+  parseScopeRuntimeChatRequest,
   prepareScopeRuntimeWorkerEnvironment,
   scrubScopeRuntimeWorkerEnvironment,
   scopeRuntimeWorkerFailureExitCode,
@@ -20,6 +21,7 @@ const argumentsFixture = [
   "chat_ai",
   "claude-code",
   "2.1.240",
+  "7",
 ];
 const execFileAsync = promisify(execFile);
 
@@ -40,12 +42,40 @@ describe("scope runtime worker boundary", () => {
       workload: "chat_ai",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
+      executionGeneration: "7",
     });
     expect(() => parseScopeRuntimeWorkerArguments([...argumentsFixture, "/bin/sh"]))
       .toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
     expect(() => parseScopeRuntimeWorkerArguments([
-      argumentsFixture[0]!, argumentsFixture[1]!, "terminal", "claude-code", "2.1.240",
+      argumentsFixture[0]!, argumentsFixture[1]!, "terminal", "claude-code", "2.1.240", "7",
     ])).toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
+  });
+
+  it("accepts only one bounded Chat job for its exact runtime generation", () => {
+    const invocation = parseScopeRuntimeWorkerArguments(argumentsFixture);
+    expect(parseScopeRuntimeChatRequest({
+      version: 1,
+      type: "runtime.chat",
+      runtimeHandle: argumentsFixture[0],
+      executionGeneration: "7",
+      model: "claude-opus-4-6",
+      prompt: "Shared prompt",
+    }, invocation)).toMatchObject({ model: "claude-opus-4-6", prompt: "Shared prompt" });
+    for (const injected of [
+      { executionGeneration: "8" },
+      { ownerHome: "/home/matrix/home" },
+      { prompt: "x".repeat(65 * 1024) },
+    ]) {
+      expect(() => parseScopeRuntimeChatRequest({
+        version: 1,
+        type: "runtime.chat",
+        runtimeHandle: argumentsFixture[0],
+        executionGeneration: "7",
+        model: "claude-opus-4-6",
+        prompt: "Shared prompt",
+        ...injected,
+      }, invocation)).toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
+    }
   });
 
   it("re-execs once with only the fixed environment before validating the boundary", () => {

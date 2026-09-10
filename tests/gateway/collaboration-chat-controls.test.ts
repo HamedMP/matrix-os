@@ -446,7 +446,7 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     kind: "chat", resource_id: collaborationIds.chat, parent_scope_id: null, membership_mode: "direct",
     lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
     authority_generation: 1, execution_generation: 1,
-    execution_eligibility: JSON.stringify({ profileId: "scope-runtime-proof-v1" }),
+    execution_eligibility: JSON.stringify({ profileId: "scope-runtime-chat-v1" }),
     deleted_at: null, created_at: now, updated_at: now,
   }).execute();
   await fixture.db.insertInto("collaboration_members").values([

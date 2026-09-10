@@ -57,6 +57,7 @@ import {
   ChatRunNotAcknowledgeableError,
   ChatRunNotActiveError,
   type ChatRepository,
+  type ClaimedQueuedTurn,
 } from "./repository.js";
 import type { ChatOwner } from "./records.js";
 import {
@@ -740,9 +741,13 @@ export class CanonicalChatOrchestrator {
     resumeState?: unknown,
     promptOverride?: string,
     admissionKey?: string,
+    executionMode: "personal" | "shared" = "personal",
+    onComplete?: () => Promise<void>,
   ): void {
     const controller = new AbortController();
-    const completion = this.dispatch(owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride)
+    const completion = this.dispatch(
+      owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, executionMode,
+    )
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       })
@@ -750,7 +755,8 @@ export class CanonicalChatOrchestrator {
         this.active.delete(run.id);
         if (this.closing) return;
         try {
-          await this.dispatchNextQueued(owner, run.chatId);
+          if (onComplete) await onComplete();
+          else await this.dispatchNextQueued(owner, run.chatId);
         } catch (error: unknown) {
           console.error(
             "[chat/orchestrator] Queued Run dispatch failed:",
@@ -768,6 +774,83 @@ export class CanonicalChatOrchestrator {
       instanceId: run.instanceId,
       completion,
     });
+  }
+
+  async dispatchNextSharedQueued(
+    owner: ChatOwner,
+    chatId: string,
+    scopeId: string,
+    createAdapter: (
+      context: NonNullable<ClaimedQueuedTurn["sharedExecution"]>,
+    ) => Promise<CanonicalChatProviderAdapter> | CanonicalChatProviderAdapter,
+  ): Promise<void> {
+    this.assertOpen();
+    if (this.atCapacity(owner)) return;
+    for (const entry of this.active.values()) {
+      if (entry.chatId === chatId && entry.owner.type === owner.type
+        && entry.owner.ownerId === owner.ownerId) return;
+    }
+    const key = `shared:${scopeId}:${chatId}`;
+    if (this.queueDispatches.has(key) || this.queueDispatches.size >= MAX_ACTIVE_RUNS_GLOBAL) return;
+    this.queueDispatches.add(key);
+    try {
+      for (let offset = 0; offset < 32 && !this.closing && !this.atCapacity(owner); offset += 1) {
+        const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+        const claimed = await this.options.repository.claimNextQueuedTurn(owner, {
+          chatId,
+          collaborationScopeId: scopeId,
+          turnId: id("cturn_"),
+          runId: id("run_"),
+          messageId: id("msg_"),
+          claimedAt: timestamp,
+        });
+        if (!claimed) return;
+        if (!claimed.sharedExecution || claimed.sharedExecution.scopeId !== scopeId
+          || claimed.run.executionRoot) {
+          await this.options.repository.finishRun(owner, {
+            chatId,
+            runId: claimed.run.id,
+            outcome: "failed",
+            completedAt: timestamp,
+            diagnostic: { stage: "preparation", category: "authorization" },
+          });
+          continue;
+        }
+        let adapter: CanonicalChatProviderAdapter;
+        try {
+          adapter = await createAdapter(claimed.sharedExecution);
+          if (adapter.driverKind !== claimed.run.driverKind) {
+            throw new Error("Shared adapter driver mismatch");
+          }
+        } catch (error: unknown) {
+          console.warn("[chat/orchestrator] Shared Run preparation failed:",
+            error instanceof Error ? error.name : "UnknownError");
+          await this.options.repository.finishRun(owner, {
+            chatId,
+            runId: claimed.run.id,
+            outcome: "failed",
+            completedAt: timestamp,
+            diagnostic: diagnoseChatRunFailure(error, "preparation"),
+          });
+          continue;
+        }
+        this.startDispatch(
+          owner,
+          claimed.message,
+          claimed.run,
+          adapter,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          "shared",
+          () => this.dispatchNextSharedQueued(owner, chatId, scopeId, createAdapter),
+        );
+        return;
+      }
+    } finally {
+      this.queueDispatches.delete(key);
+    }
   }
 
   private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
@@ -852,13 +935,14 @@ export class CanonicalChatOrchestrator {
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
     promptOverride?: string,
+    executionMode: "personal" | "shared" = "personal",
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
     let lastKnownState: unknown;
     let failureStage: ChatRunFailureDiagnostic["stage"] = "preparation";
     try {
-      await this.assertPersonalExecutionAllowed(owner, run.chatId);
+      if (executionMode === "personal") await this.assertPersonalExecutionAllowed(owner, run.chatId);
       if (resolvedRoot && this.options.executionRoots) {
         const provenance: ChatExecutionRootProvenance = {
           ref: resolvedRoot.ref!,

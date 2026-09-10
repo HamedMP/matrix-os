@@ -252,7 +252,7 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     authority_generation: 1,
     execution_generation: 1,
     execution_eligibility: JSON.stringify({
-      profileId: "scope-runtime-proof-v1",
+      profileId: "scope-runtime-chat-v1",
       profileVersion: 1,
       profileDigest: "a".repeat(64),
       adapterId: "claude-code",
