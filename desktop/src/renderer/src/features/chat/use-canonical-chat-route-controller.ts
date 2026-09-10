@@ -382,7 +382,7 @@ export function useCanonicalChatRouteController({
   }, [client, detail, loadDetail, updateDetail]);
 
   const submitTurn = useCallback(async (
-    input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
+    input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
     title: string,
     initialProjectId: string | null = projectId,
   ) => {
@@ -393,7 +393,7 @@ export function useCanonicalChatRouteController({
       let current = detail;
       if (!current) {
         const record = await client.create({
-          clientRequestId: canonicalChatRequestId(),
+          clientRequestId: input.clientRequestId ? `${input.clientRequestId}_chat` : canonicalChatRequestId(),
           title,
           ...(initialProjectId === null ? {} : { projectId: initialProjectId }),
           currentSelection: input.selection,
@@ -409,7 +409,7 @@ export function useCanonicalChatRouteController({
       }
       const admitted = await client.admitTurn(current.record.chat.id, {
         ...input,
-        clientRequestId: canonicalChatRequestId(),
+        clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       }, {
         chatScope: current.record.projectId ? "project" : "global",
@@ -511,7 +511,7 @@ export function useCanonicalChatRouteController({
   }, [client, loadDetail, updateDetail]);
 
   const queueTurn = useCallback(async (
-    input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision">,
+    input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
   ) => {
     const current = detailRef.current;
     if (!current?.record.activeRun) return null;
@@ -520,7 +520,7 @@ export function useCanonicalChatRouteController({
     try {
       const response = await client.queueTurn(current.record.chat.id, {
         ...input,
-        clientRequestId: canonicalChatRequestId(),
+        clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       });
       if (!isCurrentScope()) return null;

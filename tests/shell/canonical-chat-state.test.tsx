@@ -311,7 +311,7 @@ describe("canonical shell Chat state", () => {
     await waitFor(() => expect(result.current.sessionId).toBe("chat_a"));
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
 
-    act(() => result.current.submitMessage("Review this", [{
+    act(() => void result.current.submitMessage("Review this", [{
       name: "notes.txt",
       type: "text/plain",
       data: "data:text/plain;base64,aGVsbG8=",
@@ -358,7 +358,7 @@ describe("canonical shell Chat state", () => {
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
 
-    act(() => result.current.submitMessage("Review these", [{
+    act(() => void result.current.submitMessage("Review these", [{
       name: "first.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
     }, {
       name: "second.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
@@ -396,7 +396,7 @@ describe("canonical shell Chat state", () => {
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
 
-    act(() => result.current.submitMessage("Review this", [{
+    act(() => void result.current.submitMessage("Review this", [{
       name: "notes.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
     }], {
       instanceId: "pi_default", model: "anthropic:claude-sonnet-5",

@@ -44,7 +44,7 @@ Queued work keeps references and resolved snapshots durable. Current-Chat histor
 
 1. **Contracts and storage**: failing contract / filesystem tests; typed references, immutable snapshots, owner-scoped definitions; extract large admission functions with existing behavioral tests before adding execution logic.
 2. **Execution and routes**: failing integration tests; persisted snapshots, Hermes routing, queue/retry/steering guards, server switch, authenticated CRUD/search and startup wiring.
-3. **Existing Chat UI**: failing interaction tests; shared client/derivations, Agents panel, existing picker extension, attribution and state preservation. Use common components across Web Canvas, Web Desktop and Electron Desktop; adapt Native Mobile where its canonical Chat supports the capability.
+3. **Existing Chat UI**: failing interaction tests; shared client/derivations, Agents panel, existing picker extension, attribution and state preservation. Use common components across Web Canvas, Web Desktop and Electron Desktop. Web Mobile consumes the shared Chat surface. Native Mobile does not yet expose saved Agents or these typed mentions; its existing Chat remains unchanged. Native controls and transport support require a separate parity follow-up before advertising this capability there.
 4. **Validation and delivery**: required checks, React audit, current screenshots, real Hermes execution and no-reload streaming on an exact-head Preview VPS; separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/`. Keep flag off by default and wait for Yuhan's Human Review feedback before merging.
 
 Use Graphite for stack operations. Each layer must remain deploy-safe with the switch off. Provider protocol doubles are not evidence of real Hermes execution.
@@ -72,4 +72,39 @@ and steering guards. Gateway TypeScript passes; 80 focused Agent/contract/Hermes
 adapter tests pass, and the 93 existing repository/orchestrator regressions passed
 after the admission changes. Pattern scan: zero violations, five existing warning
 categories. These are automated tests with protocol doubles, not live Hermes or
-Human Review evidence. UI and exact-head Preview verification remain pending.
+Human Review evidence.
+
+### UI checkpoint (2026-09-10)
+
+The shared Agents library supports create, edit and archive with recoverable
+errors. Electron Desktop extends its existing composer; Web Canvas, Web Desktop
+and Web Mobile use the existing Chat component with a scoped mention draft.
+Agent selection does not send or change the default harness. Full access needs
+explicit consent. Busy requests with mentions queue, and failed submissions keep
+their draft and request identity. Historical receipts read persisted snapshots.
+The original transcript, attachments, provider controls and Task surfaces remain.
+
+The focused UI and existing composer/controller/projection regressions pass
+(136 tests). Root, Web, Electron Desktop and shared UI TypeScript checks pass;
+the pattern scan reports zero violations. Production Web and Electron Desktop
+builds passed. React audits were run for all three React packages; existing
+baseline findings remain. Full-suite results and final build verification will
+be recorded in the delivery PR. Local browser checks use real gateway routes,
+storage and SSE with a scripted adapter; they do not establish native Hermes
+execution or full presentation parity. Exact-head Preview and Human Review
+remain required before enabling or merging the feature.
+
+Final local verification: the full suite completed with 14,498 passing tests,
+34 skipped tests and 25 failures. Twenty-three failures reproduce on the
+unchanged base `5a33ceb47` (billing, host scripts, workflow assertions, date-based
+Todo checks and shell-install timeout tests). The two new native import failures
+were fixed in the backend layer; both suites then passed all 34 tests. Browser
+checks also caught a missing canonical request-ID prefix and user-message context
+attribution through `turnId`; regression tests failed before each correction.
+Ambiguous mentioned requests with attachments now retain the exact upload
+references and request key on retry. The final focused UI run passed 76 tests;
+Web TypeScript and production builds passed, and shared components are explicitly
+included in both Tailwind scans. Browser validation confirms CRUD, mention
+selection, explicit access consent, context preview and a response without reload
+using the local scripted adapter. Native Hermes and full presentation validation
+are still pending.

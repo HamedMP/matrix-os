@@ -1,6 +1,13 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
+import { ChatQueuedRequests } from "./chat/ChatQueuedRequests";
+import { ChatContextReceipt } from "@matrix-os/ui";
+import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
+import { ChatInput } from "./chat/ChatInput";
+import { useChatComposerDraft } from "./chat/useChatComposerDraft";
+import { ChatAgentsEntry, type ChatAgentClient } from "@matrix-os/ui";
+import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -32,13 +39,10 @@ import { Task } from "@/components/ai-elements/task";
 import { parseTask } from "@/components/ai-elements/task-utils";
 import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
-import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 import { Button } from "@/components/ui/button";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
-import { useVoice } from "@/hooks/useVoice";
 import {
   CANONICAL_PROVIDER_SETUP_ERROR,
   executeCanonicalProviderSetupAction,
@@ -62,10 +66,6 @@ import {
 } from "./chat/ChatTitleRename";
 import {
   PlusIcon,
-  SendIcon,
-  MicIcon,
-  MicOffIcon,
-  Loader2Icon,
   PanelLeftIcon,
   SearchIcon,
   MessageSquareIcon,
@@ -123,16 +123,11 @@ interface ChatAppProps {
   onSubmit: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
-    options?: {
-      displayText?: string;
-      promptText?: string;
-      instanceId?: string;
-      model?: string;
-      interactionMode?: string;
-      permissionMode?: string;
-      modelOptions?: Array<{ id: string; value: string | boolean }>;
-    },
-  ) => void;
+    options?: ChatSubmitOptions,
+  ) => void | Promise<boolean>;
+  agentClient?: ChatAgentClient;
+  queuedTurns?: CanonicalChatQueuedTurn[];
+  onCancelQueuedTurn?: (id: string) => Promise<boolean>;
   providerSelection?: CanonicalChatModelSelection;
   onSubmitApproval?: (
     runId: string,
@@ -187,6 +182,7 @@ export function ChatApp({
   onRenameConversation,
   onSubmit,
   providerSelection,
+  agentClient, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
   composerDraftRequest,
   onComposerDraftConsumed,
@@ -194,6 +190,7 @@ export function ChatApp({
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
+  const composer = useChatComposerDraft(sessionId ?? "new", agentClient);
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);
   const previewTrigger = useRef<HTMLElement | null>(null);
@@ -230,17 +227,19 @@ export function ChatApp({
   const submitWithHermesSetup = (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
+    mentionOptions?: ChatSubmitOptions,
   ) => {
-    if (!providerState.selected) return;
+    if (!providerState.selected) return Promise.resolve(false);
     const usesChannels = providerState.selected.driverKind === "hermes";
     const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
-    onSubmit(text, files, {
+    return onSubmit(text, files, {
       displayText: text,
       ...(promptText === text ? {} : { promptText }),
       instanceId: providerState.selected.instanceId,
       model: providerState.selected.modelId,
       interactionMode: providerState.selected.interactionMode,
-      permissionMode: providerState.selected.permissionMode,
+      permissionMode: mentionOptions?.permissionMode ?? providerState.selected.permissionMode,
+      ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources, clientRequestId: mentionOptions.clientRequestId } : {}),
       modelOptions: providerState.selected.selectedOptions,
     });
   };
@@ -327,6 +326,7 @@ export function ChatApp({
           </Button>
         </div>
 
+        <div className="px-3 pb-2"><ChatAgentsEntry icon={<BotIcon className="size-4" />} client={agentClient} onSetup={() => setSetupOpen(true)} className="rounded-lg px-2 py-2 text-left text-sm hover:bg-accent" /></div>
         {/* Search */}
         <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
@@ -487,9 +487,11 @@ export function ChatApp({
           />
         )}
 
+        <ChatQueuedRequests key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} onCancel={onCancelQueuedTurn} />
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
+            composerProps={{ composer, agentClient, scope: sessionId ?? "new", permissionMode: providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
@@ -538,6 +540,7 @@ export function ChatApp({
                       ) : (
                     <AssistantBubble content={msg.content} onAction={submitWithHermesSetup} />
                       )}
+                    <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
                     </div>
                   );
                 })}
@@ -568,6 +571,7 @@ export function ChatApp({
                 </div>
               )}
               <ChatInput
+                key={`composer:${sessionId ?? "new"}`} composer={composer} agentClient={agentClient} scope={sessionId ?? "new"} permissionMode={providerState.selected?.permissionMode ?? "supervised"}
                 connected={connected && providerState.selected !== null}
                 busy={busy}
                 onSubmit={submitWithHermesSetup}
@@ -591,6 +595,7 @@ export function ChatApp({
 }
 
 function EmptyState({
+  composerProps,
   onSubmit,
   connected,
   suggestions,
@@ -601,7 +606,8 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
-  onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode">;
+  onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   suggestions: string[];
   mobile: boolean;
@@ -626,6 +632,7 @@ function EmptyState({
 
         {/* Input */}
         <ChatInput
+          key={`composer:${composerProps.scope}`} {...composerProps}
           connected={connected && providerReady}
           busy={false}
           onSubmit={onSubmit}
@@ -683,136 +690,5 @@ function AssistantBubble({
         )}
       </MessageContent>
     </Message>
-  );
-}
-
-function ChatInput({
-  connected,
-  busy,
-  onSubmit,
-  autoFocus,
-  draftRequest,
-  onDraftConsumed,
-  unavailablePlaceholder,
-  attachmentsEnabled,
-}: {
-  connected: boolean;
-  busy: boolean;
-  onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
-  autoFocus?: boolean;
-  draftRequest?: { id: number; text: string } | null;
-  onDraftConsumed?: (id: number) => void;
-  unavailablePlaceholder?: string;
-  attachmentsEnabled: boolean;
-}) {
-  const [input, setInput] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
-
-  const {
-    isRecording,
-    isTranscribing,
-    isSupported,
-    startRecording,
-    stopRecording,
-  } = useVoice({
-    onTranscription: (text) => setInput(text),
-    onError: (err) => console.error("Voice error:", err),
-  });
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
-    if (autoFocus) textareaRef.current?.focus();
-  }, [autoFocus]);
-
-  useEffect(() => {
-    if (!draftRequest) return;
-    setInput(draftRequest.text);
-    textareaRef.current?.focus();
-    onDraftConsumed?.(draftRequest.id);
-  }, [draftRequest, onDraftConsumed]);
-
-  const handleSubmit = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const text = input.trim();
-    if (!text && attachments.length === 0) return;
-
-    if (attachments.length > 0) {
-      const files = await getBase64Files();
-      onSubmit(text || `Attached ${files.length} file(s)`, files);
-      clearAll();
-    } else {
-      onSubmit(text);
-    }
-    setInput("");
-  };
-
-  const handleMicClick = () => {
-    if (isRecording) stopRecording();
-    else startRecording();
-  };
-
-  return (
-    <div className="flex flex-col gap-2">
-      <Attachments attachments={attachments} onRemove={removeFile} />
-      <div className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
-        <AttachmentButton
-          onFilesSelected={addFiles}
-          disabled={!connected || !attachmentsEnabled}
-          title={attachmentsEnabled ? "Attach files" : "Attachments are unavailable for this harness"}
-          className="mb-2.5 ml-3"
-        />
-        <Textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit();
-            }
-          }}
-          placeholder={
-            isTranscribing ? "Transcribing..."
-              : isRecording ? "Listening..."
-                : connected ? "Ask anything..."
-                  : unavailablePlaceholder ?? "Connecting..."
-          }
-          disabled={!connected || isRecording}
-          rows={1}
-          className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
-        />
-        <div className="flex items-center gap-0.5 mb-2 mr-2">
-          {isSupported && (
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className={`size-8 rounded-full ${isRecording ? "text-red-500 animate-pulse" : "text-muted-foreground hover:text-foreground"}`}
-              disabled={!connected || isTranscribing}
-              onClick={handleMicClick}
-            >
-              {isTranscribing ? (
-                <Loader2Icon className="size-4 animate-spin" />
-              ) : isRecording ? (
-                <MicOffIcon className="size-4" />
-              ) : (
-                <MicIcon className="size-4" />
-              )}
-            </Button>
-          )}
-          <Button
-            type="button"
-            aria-label="Send"
-            size="icon"
-            className="size-8 rounded-full"
-            disabled={!connected || (!input.trim() && attachments.length === 0) || busy}
-            onClick={() => handleSubmit()}
-          >
-            <SendIcon className="size-4" />
-          </Button>
-        </div>
-      </div>
-    </div>
   );
 }

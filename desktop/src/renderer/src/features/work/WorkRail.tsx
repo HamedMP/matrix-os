@@ -1,5 +1,8 @@
+import { ChatAgentsEntry } from "@matrix-os/ui";
+import { useUi } from "../../stores/ui";
+import { useTabs } from "../../stores/tabs";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Plus } from "@renderer/lib/hugeicons";
+import { Plus, Bot } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
@@ -279,6 +282,7 @@ export function WorkRail({
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
+      <ChatAgentsEntry icon={<Bot className="size-4" />} client={client?.agents} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <div className="contents">
         <WorkRailSection
           label="Pinned"

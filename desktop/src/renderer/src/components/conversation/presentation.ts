@@ -1,3 +1,4 @@
+import type { ChatRunContext } from "@matrix-os/contracts";
 export type ConversationMessageRole = "user" | "assistant";
 
 export interface ConversationAttachmentPresentation {
@@ -111,6 +112,8 @@ export type ConversationTurnTimelinePresentation =
   | { kind: "user-followup"; message: ConversationMessagePresentation };
 
 export interface ConversationTurnPresentation {
+  agentLabel?: string;
+  runContext?: ChatRunContext;
   id: string;
   startedAt: number;
   endedAt: number;

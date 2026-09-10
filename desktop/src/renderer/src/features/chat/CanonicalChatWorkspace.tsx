@@ -1,3 +1,5 @@
+import { createChatMentionRequestTracker } from "@matrix-os/ui";
+import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
 import { ChatContextMenu } from "@matrix-os/ui";
@@ -108,6 +110,7 @@ export function CanonicalChatWorkspace({
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
+  const [mentionRequests] = useState(createChatMentionRequestTracker);
   const projects = useBoard((state) => state.projects);
   const fileNavigation = useChatFileNavigation();
   const chromeHost = useSurfaceChromeHost();
@@ -149,6 +152,7 @@ export function CanonicalChatWorkspace({
     projectId,
     conversation: globalView === "conversation",
   });
+  const mentionResources = referenceTokens.flatMap((token) => token.type === "resource" ? [token.resource] : []);
   const [query, setQuery] = useState("");
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [composerAction, setComposerAction] = useState<"queue" | "edit" | null>(null);
@@ -182,6 +186,7 @@ export function CanonicalChatWorkspace({
     currentSelection: controller.detail?.record.chat.currentSelection,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
+  const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, mentionResources, selection?.permissionMode ?? "supervised");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -308,11 +313,17 @@ export function CanonicalChatWorkspace({
     project.id === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
     || project.slug === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
   ))?.slug;
-  const resourceSearch = useCallback((resourceQuery: string) => (
-    api
-      ? searchGlobalChatResources(api, activeProjectSlug ?? null, resourceQuery)
-      : Promise.resolve([])
-  ), [activeProjectSlug, api]);
+  const resourceSearch = useCallback(async (resourceQuery: string) => {
+    const results = await Promise.allSettled([
+      api ? searchGlobalChatResources(api, activeProjectSlug ?? null, resourceQuery) : Promise.resolve([]),
+      client.agents?.search(resourceQuery, routedComposerChatId ?? undefined).then((result) => result.enabled ? result.resources : []) ?? Promise.resolve([]),
+    ]);
+    return results.flatMap((result) => {
+      if (result.status === "fulfilled") return result.value;
+      console.warn("[chat] Resource search unavailable");
+      return [];
+    });
+  }, [activeProjectSlug, api, client.agents, routedComposerChatId]);
   const resources = projects.map((project) => ({
     kind: "project" as const,
     id: project.id ?? project.slug,
@@ -360,6 +371,7 @@ export function CanonicalChatWorkspace({
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       !selection
+      || !mentionPermission.allowed
       || activeRun
       || uploadingAttachments
     ) return;
@@ -380,7 +392,7 @@ export function CanonicalChatWorkspace({
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
-      const admitted = await controller.submitTurn({
+      const input = {
         parts,
         selection: {
           instanceId: selection.instanceId,
@@ -388,8 +400,12 @@ export function CanonicalChatWorkspace({
           ...(selection.options.length > 0 ? { options: selection.options } : {}),
         },
         interactionMode: selection.interactionMode,
-        permissionMode: selection.permissionMode,
-      }, canonicalChatTitle(submission), draftProjectId ?? projectId);
+        permissionMode: mentionPermission.permissionMode,
+      };
+      const requestScope = `send:${routedComposerChatId ?? `new:${projectId ?? "global"}`}`;
+      const clientRequestId = mentionResources.length ? mentionRequests.get(client, requestScope, input) : undefined;
+      const admitted = await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId);
+      if (admitted && clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
       if (!admitted || !isCurrentSubmission()) return;
       reportedChatId.current = admitted.record.chat.id;
       const admittedProjectId = admitted.record.projectId ?? null;
@@ -414,6 +430,7 @@ export function CanonicalChatWorkspace({
       (!activeRun && !editingQueuedTurn)
       || !controller.detail
       || !selection
+      || !mentionPermission.allowed
       || composerAction
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
@@ -439,18 +456,17 @@ export function CanonicalChatWorkspace({
         : parts;
       setDraft("");
       setReferenceTokens([]);
+      const input = {
+        parts: updatedParts,
+        selection: { instanceId: selection.instanceId, model: selection.model, ...(selection.options.length ? { options: selection.options } : {}) },
+        interactionMode: selection.interactionMode, permissionMode: mentionPermission.permissionMode,
+      };
+      const requestScope = `queue:${routedComposerChatId}`;
+      const clientRequestId = mentionResources.length ? mentionRequests.get(client, requestScope, input) : undefined;
       const response = editingQueuedTurn
         ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts)
-        : await controller.queueTurn({
-            parts: updatedParts,
-            selection: {
-              instanceId: selection.instanceId,
-              model: selection.model,
-              ...(selection.options.length > 0 ? { options: selection.options } : {}),
-            },
-            interactionMode: selection.interactionMode,
-            permissionMode: selection.permissionMode,
-          });
+        : await controller.queueTurn({ ...input, clientRequestId });
+      if (response && clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
       if (!isCurrentSubmission()) return;
       if (!response) {
         setDraft(submittedDraft);
@@ -580,7 +596,7 @@ export function CanonicalChatWorkspace({
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(selection && !uploadingAttachments && (
+        canSubmit={Boolean(selection && mentionPermission.allowed && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
@@ -630,6 +646,8 @@ export function CanonicalChatWorkspace({
         )}
         layout={workspaceLayout === "narrow" ? "narrow" : "default"}
       />
+      <ChatMentionControls client={client.agents} resources={mentionResources} permissionMode={selection?.permissionMode ?? "supervised"}
+        confirmed={mentionPermission.confirmed} onConfirm={mentionPermission.confirm} />
     </>
   );
 

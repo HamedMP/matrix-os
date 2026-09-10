@@ -1,3 +1,4 @@
+import { chatAgentAttribution } from "@matrix-os/ui";
 import { canonicalChatApprovals } from "@matrix-os/contracts";
 import type {
   CanonicalChatMessage,
@@ -660,6 +661,8 @@ export function canonicalChatPresentation(input: {
     const endedAt = Date.parse(run?.completedAt ?? run?.updatedAt ?? turn.updatedAt);
     return {
       id: turn.id,
+      ...(run?.context ? { runContext: run.context } : {}),
+      ...(chatAgentAttribution(run) ? { agentLabel: chatAgentAttribution(run) } : {}),
       startedAt,
       endedAt,
       active: isActiveRun(run),
