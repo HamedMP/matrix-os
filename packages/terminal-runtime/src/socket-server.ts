@@ -54,6 +54,7 @@ export interface TerminalRuntimeControlApi {
 }
 
 type TerminalServerFrame = z.infer<typeof TerminalTabServerFrameSchema>;
+const LIVE_TAIL_FROM_SEQ = Number.MAX_SAFE_INTEGER;
 
 function encodeSocketResponseFrame(value: unknown): Buffer {
   return encodeSocketFrame(value, MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES);
@@ -236,7 +237,10 @@ export class TerminalRuntimeSocketServer {
     const tab = resized.tabs.find((candidate) => candidate.id === ref.tabId);
     if (!tab) throw new Error("Terminal tab not found");
     const snapshot = await this.options.runtime.getSnapshot(ref);
-    let nextSeq = Math.max(request.input.fromSeq, (snapshot?.seq ?? -1) + 1);
+    const effectiveFromSeq = request.input.fromSeq === LIVE_TAIL_FROM_SEQ
+      ? (snapshot?.seq ?? -1) + 1
+      : request.input.fromSeq;
+    let nextSeq = Math.max(effectiveFromSeq, (snapshot?.seq ?? -1) + 1);
     let revision = Math.max(tab.revision, snapshot?.revision ?? 0);
     const send = (frame: TerminalServerFrame) => {
       if (!socket.destroyed) socket.write(encodeSocketResponseFrame(frame));
@@ -249,9 +253,9 @@ export class TerminalRuntimeSocketServer {
       nextSeq,
     });
     if (snapshot) {
-      send({ type: "replay-start", terminalRef: ref, revision, fromSeq: request.input.fromSeq });
-      if (request.input.fromSeq < snapshot.seq) {
-        send({ type: "replay-evicted", terminalRef: ref, revision, fromSeq: request.input.fromSeq, nextSeq: snapshot.seq });
+      send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
+      if (effectiveFromSeq < snapshot.seq) {
+        send({ type: "replay-evicted", terminalRef: ref, revision, fromSeq: effectiveFromSeq, nextSeq: snapshot.seq });
       }
       send({
         type: "snapshot",
