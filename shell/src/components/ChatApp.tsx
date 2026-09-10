@@ -823,3 +823,180 @@ function AssistantBubble({
     </Message>
   );
 }
+<<<<<<< HEAD
+=======
+
+export function ChatInput({
+  speechScopeKey,
+  connected,
+  busy,
+  onSubmit,
+  autoFocus,
+  draftRequest,
+  onDraftConsumed,
+  unavailablePlaceholder,
+  attachmentsEnabled,
+  speechClient,
+  speechCaptureAdapter,
+}: {
+  speechScopeKey: string;
+  connected: boolean;
+  busy: boolean;
+  onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
+  autoFocus?: boolean;
+  draftRequest?: { id: number; text: string } | null;
+  onDraftConsumed?: (id: number) => void;
+  unavailablePlaceholder?: string;
+  attachmentsEnabled: boolean;
+  speechClient?: BrowserSpeechClient;
+  speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
+}) {
+  const [input, setInput] = useState("");
+  const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
+  const [speechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
+
+  const speech = usePlatformSpeechDraft({
+    scopeKey: speechScopeKey,
+    client: speechClient ?? defaultSpeechClient,
+    captureAdapter: speechCaptureAdapter ?? speechCapture,
+    safeErrorMessage: (caught) => caught instanceof BrowserSpeechClientError
+      ? caught.safeMessage
+      : caught instanceof PlatformSpeechRecorderError ? caught.safeMessage : undefined,
+    onDraft: (text) => setInput((current) => {
+      const trimmed = current.trimEnd();
+      return trimmed.length > 0 ? `${trimmed} ${text}` : text;
+    }),
+  });
+
+  useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
+    if (autoFocus) textareaRef.current?.focus();
+  }, [autoFocus]);
+
+  useEffect(() => {
+    if (!draftRequest) return;
+    setInput(draftRequest.text);
+    textareaRef.current?.focus();
+    onDraftConsumed?.(draftRequest.id);
+  }, [draftRequest, onDraftConsumed]);
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!connected || busy || ["requesting_permission", "recording", "transcribing"].includes(speech.phase)) {
+      return;
+    }
+    const text = input.trim();
+    if (!text && attachments.length === 0) return;
+
+    if (attachments.length > 0) {
+      const files = await getBase64Files();
+      onSubmit(text || `Attached ${files.length} file(s)`, files);
+      clearAll();
+    } else {
+      onSubmit(text);
+    }
+    setInput("");
+  };
+
+  const handleMicClick = () => {
+    if (speech.phase === "recording") speech.stop();
+    else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
+    else void speech.start();
+  };
+
+  const speechIsActive = ["requesting_permission", "recording", "transcribing"].includes(speech.phase);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Attachments attachments={attachments} onRemove={removeFile} />
+      <div className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
+        <AttachmentButton
+          onFilesSelected={addFiles}
+          disabled={!connected || !attachmentsEnabled}
+          title={attachmentsEnabled ? "Attach files" : "Attachments are unavailable for this harness"}
+          className="mb-2.5 ml-3"
+        />
+        <Textarea
+          ref={textareaRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit();
+            }
+          }}
+          placeholder={
+            speech.phase === "transcribing" ? "Transcribing into an editable draft..."
+              : speech.phase === "requesting_permission" ? "Waiting for microphone permission..."
+              : speech.phase === "recording" ? "Recording — stop when you're done"
+                : connected ? "Ask anything..."
+                  : unavailablePlaceholder ?? "Connecting..."
+          }
+          disabled={!connected}
+          rows={1}
+          className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
+        />
+        <div className="flex items-center gap-0.5 mb-2 mr-2">
+          {speech.isSupported && (
+            <Button
+              type="button"
+              aria-label={
+                speech.phase === "requesting_permission"
+                  ? "Cancel microphone request"
+                  : speech.phase === "recording"
+                  ? "Stop recording"
+                  : speech.phase === "transcribing"
+                    ? "Cancel transcription"
+                    : "Start voice input"
+              }
+              size="icon"
+              variant="ghost"
+              className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
+              disabled={!connected && !speechIsActive}
+              onClick={handleMicClick}
+            >
+              {speech.phase === "requesting_permission" ? (
+                <Loader2Icon className="size-4 animate-spin" />
+              ) : speech.phase === "transcribing" ? (
+                <XCircleIcon className="size-4" />
+              ) : speech.phase === "recording" ? (
+                <CircleStop className="size-4" />
+              ) : (
+                <MicIcon className="size-4" />
+              )}
+            </Button>
+          )}
+          {speech.phase === "recording" && (
+            <span aria-live="polite" className="px-1 text-xs tabular-nums text-muted-foreground">
+              {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
+            </span>
+          )}
+          <Button
+            type="button"
+            aria-label="Send"
+            size="icon"
+            className="size-8 rounded-full"
+            disabled={!connected
+              || speech.phase === "requesting_permission"
+              || speech.phase === "recording"
+              || speech.phase === "transcribing"
+              || (!input.trim() && attachments.length === 0)
+              || busy}
+            onClick={() => handleSubmit()}
+          >
+            <SendIcon className="size-4" />
+          </Button>
+        </div>
+      </div>
+      {speech.error && (
+        <p role="alert" className="px-3 text-xs text-destructive">
+          {speech.error}
+        </p>
+      )}
+    </div>
+  );
+}
+>>>>>>> 31605967a (fix(speech): harden recording admission controls)
