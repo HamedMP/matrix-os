@@ -23,6 +23,7 @@ import {
   type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "./composer-reference-tokens";
+import { ConnectedDesktopSpeechInput } from "./DesktopSpeechInputControl";
 
 export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
 
@@ -178,6 +179,7 @@ export function SharedChatComposer({
   unavailableProviderLabel,
   menuSide = "top",
   layout = "default",
+  speech,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -213,12 +215,14 @@ export function SharedChatComposer({
   unavailableProviderLabel?: string;
   menuSide?: "top" | "bottom";
   layout?: "default" | "narrow";
+  speech?: { scopeKey: string; onDraft: (text: string) => void };
 }) {
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const suggestionMenuRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
+  const [speechActive, setSpeechActive] = useState(false);
   const lastEditorValueRef = useRef(value);
   const lastObservedValueRef = useRef(value);
   useEffect(() => {
@@ -336,6 +340,7 @@ export function SharedChatComposer({
           !slashMenuOpen
           && !resourceMenuOpen
           && !disabled
+          && !speechActive
           && (canSubmit ?? (value.trim().length > 0 || referenceTokens.length > 0))
         ) {
           onSubmit(currentSubmission());
@@ -424,12 +429,14 @@ export function SharedChatComposer({
       <PromptInput
         value={value}
         onChange={onChange}
-        onSubmit={() => onSubmit(currentSubmission())}
+        onSubmit={() => {
+          if (!speechActive) onSubmit(currentSubmission());
+        }}
         onAbort={onAbort}
         busy={busy}
         submitWhileBusy={submitWhileBusy}
         disabled={disabled}
-        canSubmit={canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0))}
+        canSubmit={!speechActive && (canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0)))}
         autoFocus={autoFocus}
         focusRequestId={focusRequestId}
         layout={layout}
@@ -483,6 +490,14 @@ export function SharedChatComposer({
         )}
         trailingControls={(
           <>
+            {speech ? (
+              <ConnectedDesktopSpeechInput
+                scopeKey={speech.scopeKey}
+                onDraft={speech.onDraft}
+                disabled={disabled || busy}
+                onActiveChange={setSpeechActive}
+              />
+            ) : null}
             {runActions}
             <ProviderModelPicker
               catalog={catalog}

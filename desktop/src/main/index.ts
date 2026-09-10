@@ -50,6 +50,7 @@ import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
 import { registerWindowsProtocolClients } from "./platform/protocol-registration";
+import { installMainRendererMediaPermissions } from "./media-permissions";
 import {
   fitWindowBoundsToWorkArea,
   type FittedWindowBounds,
@@ -137,6 +138,8 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
       nodeIntegration: false,
     },
   });
+
+  installMainRendererMediaPermissions(win.webContents.session, win.webContents);
 
   win.once("ready-to-show", () => win.show());
 

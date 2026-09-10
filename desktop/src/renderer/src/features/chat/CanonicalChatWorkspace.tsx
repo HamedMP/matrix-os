@@ -699,6 +699,13 @@ export function CanonicalChatWorkspace({
             }}
           />
         )}
+        speech={{
+          scopeKey: routedComposerChatId ?? `new:${projectId ?? "global"}`,
+          onDraft: (text) => setDraft((current) => {
+            const trimmed = current.trimEnd();
+            return trimmed.length > 0 ? `${trimmed} ${text}` : text;
+          }),
+        }}
         layout={workspaceLayout === "narrow" ? "narrow" : "default"}
       />
       {editingQueuedTurn ? <QueuedTurnEditContext turn={editingQueuedTurn} /> : null}
