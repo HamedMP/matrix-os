@@ -15,6 +15,7 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_EXPORT_BYTES = 512 * 1024 * 1024;
 const PROOF_HEADER = "x-matrix-collaboration-proof";
 const RUNTIME = "[A-Za-z0-9:_-]{1,128}";
+const RESOURCE = "[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}";
 
 const RUNTIME_ROUTES = [
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes/preflight$`)],
@@ -38,17 +39,17 @@ const SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/exports/${UUID}$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests/${UUID}/cancel$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests/${UUID}/retry$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/approvals/${UUID}/decision$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests/${RESOURCE}/cancel$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests/${RESOURCE}/retry$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/approvals/${RESOURCE}/decision$`)],
 ] as const;
 
 const M2_SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${UUID}/cancel$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${UUID}/retry$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/approvals/${UUID}/decision$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${RESOURCE}/cancel$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${RESOURCE}/retry$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/approvals/${RESOURCE}/decision$`)],
 ] as const;
 
 const INVITATION_ROUTES = [

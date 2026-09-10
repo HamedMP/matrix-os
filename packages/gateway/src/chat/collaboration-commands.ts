@@ -12,7 +12,7 @@ import type {
   OwnerCollaborationDatabase,
 } from "../collaboration/database.js";
 import { jsonb, parseJson } from "./records.js";
-import type { ChatRepository, SharedQueuedTurn } from "./repository.js";
+import type { SharedQueuedTurn } from "./repository.js";
 
 const RequestIdSchema = CollaborationIdSchema;
 const HashSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -39,6 +39,7 @@ interface CommandIdentity {
   actorId: string;
   clientRequestId: string;
   payloadHash: string;
+  expectedRevision: number;
 }
 
 export class CollaborationChatCommands {
@@ -46,7 +47,6 @@ export class CollaborationChatCommands {
 
   constructor(private readonly options: {
     db: Kysely<OwnerCollaborationDatabase>;
-    chatRepository: ChatRepository;
     now?: () => Date;
     submitApproval(input: {
       scopeId: string;
@@ -68,6 +68,7 @@ export class CollaborationChatCommands {
       const authorized = await authorizeCommand(trx, identity, "cancel", requestId, this.now());
       const replay = await replayCommand(trx, identity, "cancel");
       if (replay) return replay;
+      requireExpectedRevision(identity, authorized.chatRevision);
       const request = await lockRequest(trx, authorized.chatId, requestId);
       requireRequestControl(authorized.role, identity.actorId, request.requesting_actor_id);
       if (request.status !== "queued") throw new CollaborationChatCommandError("conflict");
@@ -103,6 +104,7 @@ export class CollaborationChatCommands {
       const authorized = await authorizeCommand(trx, identity, "retry", requestId, this.now());
       const replay = await replayCommand(trx, identity, "retry");
       if (replay) return replay;
+      requireExpectedRevision(identity, authorized.chatRevision);
       const original = await lockRequest(trx, authorized.chatId, requestId);
       requireRequestControl(authorized.role, identity.actorId, original.requesting_actor_id);
       if (!["cancelled", "interrupted", "unauthorized", "unavailable"].includes(original.status)) {
@@ -173,6 +175,7 @@ export class CollaborationChatCommands {
       if (authorized.role !== "owner") throw new CollaborationChatCommandError("forbidden");
       const replay = await replayCommand(trx, identity, "approval");
       if (replay) return { result: replay, dispatch: false, chatId: authorized.chatId };
+      requireExpectedRevision(identity, authorized.chatRevision);
       const decided = await trx.selectFrom("chat_collaboration_commands").select("id")
         .where("scope_id", "=", identity.scopeId)
         .where("kind", "=", "approval")
@@ -242,7 +245,12 @@ function parseIdentity(input: CommandIdentity): CommandIdentity {
     actorId: CollaborationActorIdSchema.parse(input.actorId),
     clientRequestId: RequestIdSchema.parse(input.clientRequestId),
     payloadHash: HashSchema.parse(input.payloadHash),
+    expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(input.expectedRevision),
   };
+}
+
+function requireExpectedRevision(identity: CommandIdentity, currentRevision: number): void {
+  if (identity.expectedRevision !== currentRevision) throw new CollaborationChatCommandError("conflict");
 }
 
 async function authorizeCommand(
@@ -382,6 +390,7 @@ async function insertCommand(
     client_request_id: identity.clientRequestId,
     kind: input.kind,
     payload_hash: identity.payloadHash,
+    expected_state_revision: identity.expectedRevision,
     decision: input.decision ?? null,
     authorized_epoch: authorized.authEpoch,
     state: input.state,

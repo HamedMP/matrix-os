@@ -66,6 +66,7 @@ describe("shared Chat durable controls", () => {
       requestId: ownerRequest.id,
       clientRequestId: uuid(101),
       payloadHash: "a".repeat(64),
+      expectedRevision: 3,
     })).rejects.toMatchObject({ code: "forbidden" });
     await expect(commands.cancel({
       scopeId: collaborationIds.scope,
@@ -73,6 +74,7 @@ describe("shared Chat durable controls", () => {
       requestId: editorRequest.id,
       clientRequestId: uuid(102),
       payloadHash: "b".repeat(64),
+      expectedRevision: 3,
     })).resolves.toMatchObject({ state: "completed", request: { state: "cancelled" } });
     await expect(commands.cancel({
       scopeId: collaborationIds.scope,
@@ -80,6 +82,7 @@ describe("shared Chat durable controls", () => {
       requestId: ownerRequest.id,
       clientRequestId: uuid(103),
       payloadHash: "c".repeat(64),
+      expectedRevision: 4,
     })).resolves.toMatchObject({ state: "completed", request: { state: "cancelled" } });
   });
 
@@ -92,6 +95,7 @@ describe("shared Chat durable controls", () => {
       requestId: original.id,
       clientRequestId: uuid(110),
       payloadHash: "d".repeat(64),
+      expectedRevision: 2,
     });
 
     const retried = await commands.retry({
@@ -101,6 +105,7 @@ describe("shared Chat durable controls", () => {
       newRequestId: "qturn_shared_retry_1",
       clientRequestId: uuid(111),
       payloadHash: "e".repeat(64),
+      expectedRevision: 3,
     });
     expect(retried).toMatchObject({
       state: "completed",
@@ -123,6 +128,7 @@ describe("shared Chat durable controls", () => {
       actorId: collaborationActors.owner,
       approvalId: "approval_shared_1",
       runId: run.id,
+      expectedRevision: 3,
     };
     await expect(commands.decideApproval({
       ...base, decision: "approve", clientRequestId: uuid(120), payloadHash: "1".repeat(64),
@@ -144,6 +150,7 @@ describe("shared Chat durable controls", () => {
       decision: "approve" as const,
       clientRequestId: uuid(130),
       payloadHash: "3".repeat(64),
+      expectedRevision: 3,
     };
     await expect(createCommands(firstDispatch).decideApproval(input))
       .rejects.toMatchObject({ code: "unavailable" });
@@ -155,10 +162,23 @@ describe("shared Chat durable controls", () => {
     expect(afterRestartDispatch).not.toHaveBeenCalled();
   });
 
+  it("rejects a stale control revision without changing the queue", async () => {
+    const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(60, collaborationActors.editor));
+    await expect(createCommands().cancel({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      requestId: queued.id,
+      clientRequestId: uuid(160),
+      payloadHash: "4".repeat(64),
+      expectedRevision: 1,
+    })).rejects.toMatchObject({ code: "conflict" });
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+      .resolves.toMatchObject([{ id: queued.id, state: "queued" }]);
+  });
+
   function createCommands(submitApproval = vi.fn(async () => undefined)) {
     return new CollaborationChatCommands({
       db: fixture.db,
-      chatRepository: repository,
       now: () => new Date(now),
       submitApproval,
     });

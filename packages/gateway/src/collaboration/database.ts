@@ -116,6 +116,7 @@ export interface ChatCollaborationCommandsTable {
   client_request_id: string;
   kind: "approval" | "cancel" | "retry";
   payload_hash: string;
+  expected_state_revision: number;
   decision: string | null;
   authorized_epoch: number;
   state: "accepted" | "completed" | "failed" | "reconciling";
@@ -159,6 +160,7 @@ export async function bootstrapCollaborationDatabase(
       client_request_id UUID NOT NULL,
       kind TEXT NOT NULL CHECK (kind IN ('approval', 'cancel', 'retry')),
       payload_hash TEXT NOT NULL CHECK (payload_hash ~ '^[a-f0-9]{64}$'),
+      expected_state_revision BIGINT NOT NULL CHECK (expected_state_revision >= 0),
       decision TEXT,
       authorized_epoch BIGINT NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('accepted', 'completed', 'failed', 'reconciling')),
@@ -167,6 +169,19 @@ export async function bootstrapCollaborationDatabase(
       updated_at TIMESTAMPTZ NOT NULL,
       UNIQUE (scope_id, actor_id, client_request_id, kind)
     )
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_collaboration_commands
+    ADD COLUMN IF NOT EXISTS expected_state_revision BIGINT
+  `.execute(db);
+  await sql`
+    UPDATE chat_collaboration_commands
+    SET expected_state_revision = 0
+    WHERE expected_state_revision IS NULL
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_collaboration_commands
+    ALTER COLUMN expected_state_revision SET NOT NULL
   `.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_collaboration_one_approval_decision
