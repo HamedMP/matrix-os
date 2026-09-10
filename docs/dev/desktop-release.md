@@ -99,6 +99,37 @@ DMG background errors fail the build.
 
 ## Updates
 
+### Desktop and cloud release alignment
+
+Each Electron build embeds the actual checkout commit and up to 256 ancestors.
+Release jobs fetch sufficient Git history and reject a release SHA that differs
+from the checkout or contains uncommitted source changes. Only the release
+workflow's package-version stamping is exempt; dirty local builds report unknown
+provenance. This metadata is exposed through the bounded `app:get-version`
+IPC response; installed apps do not need Git or GitHub access to compare releases.
+
+The update reminder compares that source with the running gateway's
+`/api/system/info.build.sha`, which is already present in older host bundles.
+Different commits trigger an advisory reminder even when both releases advertise
+the same legacy protocol number. An ancestor identifies missing cloud changes;
+different branches or history beyond the bounded window remain different without
+inventing an ordering. Matching source proves release alignment, not that every
+configuration, external provider, or feature is operational.
+
+Checks run at startup, computer switches, and reconnect. Focus checks have a
+15-minute cooldown, and there is no periodic alignment poll. Network failures and
+missing provenance stay quiet and are never reported as aligned, unless a valid
+protocol window explicitly requires an upgrade. Such an unsupported protocol
+keeps its required-component recovery direction; a supported protocol never
+proves source alignment. Dismissal applies
+to the current source pair on the current computer; a later release pair can prompt
+again. Updates retain each component's channel, update the cloud before Desktop
+when both are available, and verify the installed cloud target is running. If
+current channels cannot provide matching releases, the reminder does not claim
+completion or silently switch channels.
+
+### Desktop artifact discovery
+
 Packaged desktop builds use a channel-scoped Generic feed backed by GitHub
 release downloads:
 
@@ -158,35 +189,34 @@ to date.
 
 ## Desktop / VPS compatibility and update freshness
 
-Desktop and host bundles have independent product versions. The running gateway
-advertises `runtimeCompatibility` from its compiled contracts in `/api/system/info`;
-it does not infer compatibility from installed release files or equal version strings.
-`minDesktopProtocol` and `maxDesktopProtocol` define the supported API-generation
-window. Keep the previous generation supported while clients migrate. Only change
-the window when the corresponding adapters and cross-version tests justify it.
+Desktop and host bundles have independent product versions. Electron Desktop
+uses the source alignment check above for update reminders and retains explicit
+unsupported-protocol recovery. The gateway advertises `runtimeCompatibility`; its
+manually maintained protocol window is not evidence that both releases contain
+the same merged changes. Preserve older wire formats while clients migrate.
 
 Electron Desktop checks at startup, on computer switches, and on realtime/network
 reconnect. Focus checks run only when the previous check is at least 15 minutes
-old. There is no background polling timer. Network failures and invalid probe
-responses stay silent and never open an update modal. An unsupported window opens a unified update reminder with installed and available
-versions for the desktop app (the current device) and cloud computer (apps, files, and AI).
-An old gateway without metadata is explicitly unverified but remains usable.
-Compatibility warnings use a centered, dismissible modal without moving the
-titlebar or unmounting the workspace. The titlebar remains draggable while the
-modal is open. Later, Escape, or clicking outside dismisses each warning kind
-once per computer session, so rechecks do not repeatedly interrupt work.
-One primary action checks both current channels again and updates the component
-that needs it. If both have updates, the cloud computer goes first; the desktop app
-restarts only after the installed and running cloud versions match the target.
-Protocol incompatibility selects the required component; missing metadata alone
-never proves which version is older. Versions are compared within each component's
-own channel, never between desktop semver and bundle dates. Failed checks stay
-explicitly unavailable. Update progress may be hidden without cancelling an
-accepted update. Changing the active computer cancels subsequent steps, and all
-cloud requests stay bound to the original runtime. The button discloses a local
-restart before confirmation; opening the reminder never installs either update. Native embeds suspend only while the modal is open
-and resume on dismissal. Confirmed incompatibility remains advisory: users can dismiss the reminder
-and keep their current work.
+old. There is no background polling timer. Network failures and missing or invalid
+source identities stay silent unless a valid protocol window proves an upgrade
+is required.
+
+Different source identities open a centered, dismissible reminder with installed
+and available versions for both components. It preserves the titlebar and mounted
+workspace. Later, Escape, or clicking outside dismisses that release pair for the
+current computer connection; a different pair can prompt again. Native embeds
+suspend only while the modal is open and resume on dismissal.
+
+One primary action checks both channels again. If both have updates, the cloud
+computer goes first; the desktop app restarts only after the installed and running
+cloud versions match the target. Channel freshness alone does not prove alignment:
+after an update returns, reread the actual sources before reporting completion.
+Versions are compared within each component's own channel, never between desktop
+semver and bundle dates. Failed checks stay explicitly unavailable. Update
+progress may be hidden without cancelling an accepted update. Changing computers
+cancels subsequent steps, and cloud requests stay bound to the original runtime.
+The button discloses a local restart; opening the reminder never installs either
+update. Users can dismiss the reminder and keep their current work.
 
 For canonical Chat, `messageVersion=2` explicitly opts into `actorId` and `purpose`.
 Absent or `messageVersion=1` retains the message shape accepted by Desktop

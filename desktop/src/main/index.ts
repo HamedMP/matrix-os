@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session
 import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
+import { readDesktopBuildSource } from "./build-source";
 import { createCredentialStore } from "./auth/credential-store";
 import {
   installGatewayCors,
@@ -353,6 +354,7 @@ if (!gotLock) {
           await store.acknowledgeDesktopUpdateRelease(version);
         },
         getAppVersion: () => app.getVersion(),
+        buildSource: readDesktopBuildSource(),
         completeAnalyticsFlush: () => {
           completePendingAnalyticsFlush?.();
           completePendingAnalyticsFlush = null;
