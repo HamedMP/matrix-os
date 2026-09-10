@@ -152,6 +152,32 @@ describe("Native Mobile canonical Chat event source", () => {
     }
   });
 
+  it("drops a lower out-of-order cursor after a newer event was applied", async () => {
+    const stream = streamingResponse();
+    const received: unknown[] = [];
+    const source = createCanonicalChatEventSource({
+      url: "https://app.matrix-os.test/api/chats/events",
+      getToken: async () => "token",
+      fetchFn: async () => stream.response,
+    });
+    source.subscribe((event) => received.push(event));
+    try {
+      await source.start();
+      stream.emit({ type: "chat.stream.attached" });
+      stream.emit({ type: "chat.replay.end" });
+      stream.emit(contentFrame(5));
+      stream.emit(contentFrame(4));
+      await waitFor(() => expect(received).toHaveLength(1));
+
+      expect(received).toEqual([expect.objectContaining({
+        type: "chat.changed",
+        cursor: 5,
+      })]);
+    } finally {
+      source.dispose();
+    }
+  });
+
   it("applies a complete content replay without forcing a redundant snapshot", async () => {
     const streams = [streamingResponse(), streamingResponse()];
     let openCount = 0;
@@ -239,10 +265,13 @@ describe("Native Mobile canonical Chat event source", () => {
     source.dispose();
   });
 
-  it("refreshes once when the app returns to the foreground", () => {
+  it("releases the stream in background and reconnects once on foreground", () => {
     let onChange!: (state: AppStateStatus) => void;
     const remove = jest.fn();
-    const source = { reconnect: jest.fn(async () => undefined) };
+    const source = {
+      suspend: jest.fn(),
+      reconnect: jest.fn(async () => undefined),
+    };
     const subscription = reconnectCanonicalChatOnForeground(source, {
       currentState: "active",
       addEventListener(_type, listener) {
@@ -255,6 +284,7 @@ describe("Native Mobile canonical Chat event source", () => {
     onChange("active");
     onChange("active");
 
+    expect(source.suspend).toHaveBeenCalledTimes(1);
     expect(source.reconnect).toHaveBeenCalledTimes(1);
     subscription.remove();
     expect(remove).toHaveBeenCalledTimes(1);
