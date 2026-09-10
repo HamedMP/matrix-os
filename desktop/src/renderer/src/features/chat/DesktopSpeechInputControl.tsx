@@ -76,7 +76,7 @@ export function DesktopSpeechInputControl({
         title={label}
         disabled={disabled && !active}
         onClick={activate}
-        className="flex h-8 w-8 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+        className="flex h-9 w-9 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
         style={{ color: speech.phase === "recording" ? "var(--danger)" : "var(--text-secondary)" }}
       >
         {speech.phase === "requesting_permission" ? (
