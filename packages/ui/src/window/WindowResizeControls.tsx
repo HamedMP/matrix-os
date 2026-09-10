@@ -111,6 +111,8 @@ export function WindowResizeControls({
         WebkitAppRegion: "no-drag",
       };
       return <div key={direction} data-window-resize={direction} title={`Resize ${labels[direction]}`}
+        role="separator" aria-label={`Resize ${labels[direction]}`}
+        aria-orientation={diagonal ? undefined : vertical ? "horizontal" : "vertical"}
         className={`no-drag cursor-${direction}-resize`} style={style}
         onPointerDown={(event) => start(event, direction)} />;
     })}

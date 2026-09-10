@@ -8,6 +8,14 @@ afterEach(cleanup);
 const bounds = { x: 100, y: 100, width: 600, height: 400 };
 const minimum = { width: 320, height: 200 };
 describe("window resizing", () => {
+  it("exposes named resize separators for every edge and corner", () => {
+    const view = render(<WindowResizeControls bounds={bounds} minimum={minimum} onBoundsChange={() => {}} />);
+    for (const edge of ["top", "bottom", "left", "right", "top left", "top right", "bottom left", "bottom right"]) {
+      expect(view.getByRole("separator", { name: `Resize ${edge}` })).toBeTruthy();
+    }
+    expect(view.getByRole("separator", { name: "Resize left" }).getAttribute("aria-orientation")).toBe("vertical");
+    expect(view.getByRole("separator", { name: "Resize top" }).getAttribute("aria-orientation")).toBe("horizontal");
+  });
   it.each([
     ["n", { x: 100, y: 120, width: 600, height: 380 }],
     ["s", { x: 100, y: 100, width: 600, height: 420 }],
