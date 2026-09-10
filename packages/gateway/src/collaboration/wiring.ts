@@ -2,6 +2,8 @@ import { sql, type Kysely } from "kysely";
 import type { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { ChatRepository } from "../chat/repository.js";
+import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority } from "./authority.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
@@ -13,6 +15,8 @@ import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
+import { createSharedAiRuntime } from "./shared-ai-runtime.js";
+import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 
 const MAX_PROOF_KEYS = 8;
 const ARTIFACT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
@@ -116,6 +120,8 @@ export async function createGatewayCollaboration(options: {
   cleanupTimer?.unref?.();
   let registered = false;
   let closing = false;
+  let chatExecutionAdapter: CollaborationChatExecutionAdapter | undefined;
+  let sharedAiRuntime: Awaited<ReturnType<typeof createSharedAiRuntime>> | undefined;
 
   return {
     repository,
@@ -126,6 +132,38 @@ export async function createGatewayCollaboration(options: {
     chatAdapter,
     outbox,
     collaborationGuard: chatScope,
+    async enableSharedAi(input: {
+      orchestrator: CanonicalChatOrchestrator;
+      homePath: string;
+      fundedCredentialProvider?: MatrixFundedCredentialProvider;
+      supervisorSocket?: string;
+      brokerSocket?: string;
+      fetchImpl?: typeof fetch;
+    }): Promise<{ available: boolean }> {
+      if (registered || closing || sharedAiRuntime) {
+        throw new Error("Shared AI must be initialized exactly once before route registration");
+      }
+      sharedAiRuntime = await createSharedAiRuntime({
+        db: options.db,
+        repository: options.chatRepository,
+        chatScope,
+        authority,
+        verifier,
+        eventRegistry,
+        orchestrator: input.orchestrator,
+        platformBaseUrl: options.config.platformBaseUrl,
+        runtimeId: options.config.runtimeId,
+        serviceToken: options.config.serviceToken,
+        homePath: input.homePath,
+        resolveParticipant,
+        ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
+        ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
+        ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+      });
+      if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
+      return { available: sharedAiRuntime.available };
+    },
     register(input: { app: Hono; upgradeWebSocket: UpgradeWebSocket }): void {
       if (registered || closing) throw new Error("Collaboration routes are already registered or shutting down");
       registered = true;
@@ -136,6 +174,7 @@ export async function createGatewayCollaboration(options: {
         repository,
         chatScope,
         chatAdapter,
+        ...(chatExecutionAdapter ? { chatExecutionAdapter } : {}),
         resolveParticipant,
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => eventRegistry.notifyRevoked(scopeId, actorId),
@@ -152,6 +191,9 @@ export async function createGatewayCollaboration(options: {
       if (closing) return;
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      await sharedAiRuntime?.shutdown();
+      sharedAiRuntime = undefined;
+      chatExecutionAdapter = undefined;
       eventRegistry.shutdown();
       await outbox.shutdown();
       participantResolver?.shutdown();

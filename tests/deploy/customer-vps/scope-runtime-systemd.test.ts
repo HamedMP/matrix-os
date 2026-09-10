@@ -17,21 +17,25 @@ describe("dormant scope runtime host bundle", () => {
     expect(unit).toContain("CapabilityBoundingSet=");
     expect(unit).toContain("RestrictAddressFamilies=AF_UNIX");
     expect(unit).not.toContain("EnvironmentFile=");
+    const gatewayUnit = await readFile("distro/customer-vps/systemd/matrix-gateway.service", "utf8");
+    expect(gatewayUnit).toContain("Wants=matrix-scope-runtime.service");
+    expect(gatewayUnit).toMatch(/After=.*matrix-scope-runtime\.service/);
   });
 
-  it("builds the supervisor package and leaves it disabled across fresh install and update", async () => {
+  it("builds and starts the supervisor before gateway while policy keeps M2 independently gated", async () => {
     const build = await readFile("scripts/build-host-bundle.sh", "utf8");
     const cloudInit = await readFile("distro/customer-vps/cloud-init.yaml", "utf8");
     const updater = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
     const wrapper = await readFile("distro/customer-vps/host-bin/matrix-scope-runtime", "utf8");
 
     expect(build).toContain("pnpm --filter '@matrix-os/scope-runtime' build");
-    expect(build).toContain('printf \'1\\n\' > "$STAGE_DIR/app/SCOPE_RUNTIME_DISABLED"');
+    expect(build).not.toContain('printf \'1\\n\' > "$STAGE_DIR/app/SCOPE_RUNTIME_DISABLED"');
     expect(build).toContain('"$STAGE_DIR/bin/matrix-scope-runtime"');
     expect(wrapper).toContain("packages/scope-runtime/dist/main.js");
-    expect(cloudInit).not.toMatch(/systemctl enable[^\n]*matrix-scope-runtime/);
-    expect(cloudInit).not.toMatch(/systemctl start[^\n]*matrix-scope-runtime/);
-    expect(updater).not.toMatch(/systemctl enable[^\n]*matrix-scope-runtime/);
-    expect(updater).not.toMatch(/systemctl (?:start|restart)[^\n]*matrix-scope-runtime/);
+    expect(cloudInit).toMatch(/systemctl enable[^\n]*matrix-scope-runtime/);
+    expect(cloudInit).toMatch(/systemctl start[^\n]*matrix-scope-runtime/);
+    expect(updater).toMatch(/systemctl enable[^\n]*matrix-scope-runtime/);
+    expect(updater).toMatch(/systemctl start[^\n]*matrix-scope-runtime/);
+    expect(updater).toMatch(/systemctl stop[^\n]*matrix-scope-runtime/);
   });
 });
