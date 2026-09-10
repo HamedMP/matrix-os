@@ -487,35 +487,40 @@ export class ChatRepository {
     collaborationProjection?: CanonicalChatCollaboration,
   ): Promise<void> {
     if (typeof payload.runId === "string") {
-      const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
-      const sharedRun = await collaborationExecutor.selectFrom("chat_queued_turns")
-        .innerJoin("collaboration_scopes", "collaboration_scopes.id", "chat_queued_turns.collaboration_scope_id")
-        .select([
-          "collaboration_scopes.id as scope_id",
-          "collaboration_scopes.authority_generation",
-        ])
-        .where("chat_queued_turns.claimed_run_id", "=", payload.runId)
-        .where("chat_queued_turns.chat_id", "=", chatId)
-        .where("collaboration_scopes.lifecycle", "=", "shared")
+      const queuedRun = await executor.selectFrom("chat_queued_turns")
+        .select("collaboration_scope_id")
+        .where("claimed_run_id", "=", payload.runId)
+        .where("chat_id", "=", chatId)
         .executeTakeFirst();
-      if (sharedRun) {
-        const latest = await collaborationExecutor.selectFrom("collaboration_events")
-          .select(({ fn }) => fn.max<number>("scope_seq").as("scope_seq"))
-          .where("scope_id", "=", sharedRun.scope_id)
+      if (queuedRun?.collaboration_scope_id) {
+        const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
+        const sharedRun = await collaborationExecutor.selectFrom("collaboration_scopes")
+          .select([
+            "id as scope_id",
+            "authority_generation",
+          ])
+          .where("id", "=", queuedRun.collaboration_scope_id)
+          .where("lifecycle", "=", "shared")
           .executeTakeFirst();
-        const { messageDelta: _delta, failureDiagnostic: _diagnostic, ...metadata } = payload;
-        await collaborationExecutor.insertInto("collaboration_events").values({
-          scope_id: sharedRun.scope_id,
-          scope_seq: Number(latest?.scope_seq ?? 0) + 1,
-          event_id: randomUUID(),
-          resource_kind: "chat",
-          resource_id: chatId,
-          revision,
-          authority_generation: Number(sharedRun.authority_generation),
-          event_type: eventType,
-          payload: jsonb(metadata),
-        }).execute();
-        return;
+        if (sharedRun) {
+          const latest = await collaborationExecutor.selectFrom("collaboration_events")
+            .select(({ fn }) => fn.max<number>("scope_seq").as("scope_seq"))
+            .where("scope_id", "=", sharedRun.scope_id)
+            .executeTakeFirst();
+          const { messageDelta: _delta, failureDiagnostic: _diagnostic, ...metadata } = payload;
+          await collaborationExecutor.insertInto("collaboration_events").values({
+            scope_id: sharedRun.scope_id,
+            scope_seq: Number(latest?.scope_seq ?? 0) + 1,
+            event_id: randomUUID(),
+            resource_kind: "chat",
+            resource_id: chatId,
+            revision,
+            authority_generation: Number(sharedRun.authority_generation),
+            event_type: eventType,
+            payload: jsonb(metadata),
+          }).execute();
+          return;
+        }
       }
     }
     const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
