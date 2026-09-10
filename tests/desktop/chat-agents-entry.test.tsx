@@ -55,6 +55,20 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("shared Agents entry", () => {
+  it("keeps the Agents dialog and editor controls styled with native Web tokens", async () => {
+    const client = clientFixture();
+    render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    const content = screen.getByLabelText("Agents").firstElementChild as HTMLDivElement;
+    expect(content.style.background).toBe("var(--bg-surface, var(--matrix-card, var(--card)))");
+    expect(content.style.color).toBe("var(--text-primary, var(--matrix-card-fg, var(--foreground)))");
+    expect(content.style.border).toContain("var(--border-default, var(--matrix-border, var(--border)))");
+    expect(screen.getByText(/Save a role/).getAttribute("style")).toContain("var(--muted-foreground)");
+    const newAgent = await screen.findByRole("button", { name: "New Agent" });
+    expect(newAgent.className).toContain("hover:enabled:bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))]");
+    expect(newAgent.className).toContain("focus-visible:ring-[var(--ring,var(--accent,var(--matrix-accent,var(--matrix-ring))))]");
+  });
+
   it("keeps a long saved name inspectable in its acknowledgement and library row", async () => {
     const client = clientFixture();
     const name = "A".repeat(80);

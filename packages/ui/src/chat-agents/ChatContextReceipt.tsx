@@ -1,4 +1,5 @@
 import type { ChatRunContext } from "@matrix-os/contracts";
+import { chatAgentMutedStyle } from "./theme.js";
 
 function integrationName(service: string): string {
   return service.split("_").map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ");
@@ -7,7 +8,7 @@ function integrationName(service: string): string {
 /** Historical evidence reads the admitted snapshot and never refetches the source Chat. */
 export function ChatContextReceipt({ context }: { context?: ChatRunContext }) {
   if (!context?.agent && !context?.chats.length) return null;
-  return <div className="my-2 grid min-w-0 max-w-full gap-2 text-xs" style={{ color: "var(--text-secondary, var(--matrix-muted-fg))" }}>
+  return <div className="my-2 grid min-w-0 max-w-full gap-2 text-xs" style={chatAgentMutedStyle}>
     {context.agent ? <p className="truncate font-medium" title={context.agent.name}>{context.agent.name} · Hermes</p> : null}
     {context.agent?.recipe ? <details className="min-w-0 rounded-lg border px-3 py-2">
       <summary className="cursor-pointer">Recipe used</summary>

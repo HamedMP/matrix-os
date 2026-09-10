@@ -2,10 +2,11 @@ import { useId } from "react";
 import type { ChatAgentRecipe, ChatAgentRecipeCatalog } from "@matrix-os/contracts";
 import { AgentRecipeIntegrations } from "./AgentRecipeIntegrations.js";
 import type { ChatAgentIntegrationConnection } from "./client.js";
+import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "./theme.js";
 
-const button = "rounded-lg border px-3 py-2 text-sm outline-none hover:enabled:bg-[var(--bg-hover,var(--matrix-secondary))] focus-visible:ring-2 focus-visible:ring-[var(--accent,var(--matrix-accent))] disabled:opacity-50";
-const input = "w-full min-w-0 rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent,var(--matrix-accent))]";
-const muted = { color: "var(--text-secondary, var(--matrix-muted-fg))" };
+const button = chatAgentButtonClass;
+const input = chatAgentInputClass;
+const muted = chatAgentMutedStyle;
 
 function EmptyRecipe({ ids, removing, catalog, pending, loading, error, connectionError, onChange, onRetry }: {
   ids: string; removing: boolean; catalog: ChatAgentRecipeCatalog | null; pending: boolean; loading: boolean;

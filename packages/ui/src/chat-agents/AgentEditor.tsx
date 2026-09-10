@@ -3,9 +3,10 @@ import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatA
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { AgentRecipeEditor } from "./AgentRecipeEditor.js";
 import type { ChatAgentIntegrationConnection } from "./client.js";
-const button = "rounded-lg border px-3 py-2 text-sm outline-none hover:enabled:bg-[var(--bg-hover,var(--matrix-secondary))] focus-visible:ring-2 focus-visible:ring-[var(--accent,var(--matrix-accent))] disabled:opacity-50";
-const input = "w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent,var(--matrix-accent))]";
-const muted = { color: "var(--text-secondary, var(--matrix-muted-fg))" };
+import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "./theme.js";
+const button = chatAgentButtonClass;
+const input = chatAgentInputClass;
+const muted = chatAgentMutedStyle;
 export type AgentDraft = { name: string; description: string; instructions: string; selection: CanonicalChatModelSelection | null; requestId: string; recipe?: ChatAgentRecipe | null };
 
 function AgentModelField({ id, selected, pending, models, change, onSetup }: {

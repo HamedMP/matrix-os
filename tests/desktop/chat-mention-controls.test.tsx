@@ -44,6 +44,18 @@ it("previews bounded Chat context with provenance without starting work", async 
   expect(screen.getByText(/limited/i)).toBeTruthy();
   expect(client.preview).toHaveBeenCalledWith(chat.id);
 });
+it("keeps the context dialog styled when only native Web theme tokens exist", async () => {
+  const client = { preview: vi.fn(async () => ({ chatId: chat.id, title: chat.label, throughSeq: 1, text: "", truncated: false })) } as unknown as ChatAgentClient;
+  render(<ChatMentionControls client={client} resources={[chat]} permissionMode="supervised" confirmed={false} onConfirm={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Preview Meeting notes" }));
+  await screen.findByText("No committed text in this Chat.");
+  const content = screen.getByLabelText("Context from Meeting notes").firstElementChild as HTMLDivElement;
+  expect(content.style.background).toBe("var(--bg-surface, var(--matrix-card, var(--card)))");
+  expect(content.style.color).toBe("var(--text-primary, var(--matrix-card-fg, var(--foreground)))");
+  expect(content.style.border).toContain("var(--border-default, var(--matrix-border, var(--border)))");
+  expect(screen.getByText(/A fresh snapshot/).getAttribute("style")).toContain("var(--muted-foreground)");
+  expect(screen.getByRole("button", { name: "Close preview" }).className).toContain("focus-visible:ring-[var(--ring,var(--accent,var(--matrix-accent,var(--matrix-ring))))]");
+});
 it("does not display raw preview errors", async () => {
   const client = { preview: vi.fn(async () => { throw new Error("/opt/private postgres secret"); }) } as unknown as ChatAgentClient;
   render(<ChatMentionControls client={client} resources={[chat]} permissionMode="supervised" confirmed={false} onConfirm={() => {}} />);

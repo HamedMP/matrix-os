@@ -5,9 +5,10 @@ import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js"
 import { accountForNewIntegration } from "./recipe-integrations.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import type { ChatAgentClient, ChatAgentIntegrationConnection } from "./client.js";
+import { chatAgentButtonClass, chatAgentLauncherClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "./theme.js";
 
-const button = "rounded-lg border px-3 py-2 text-sm outline-none hover:enabled:bg-[var(--bg-hover,var(--matrix-secondary))] focus-visible:ring-2 focus-visible:ring-[var(--accent,var(--matrix-accent))] disabled:opacity-50";
-const muted = { color: "var(--text-secondary, var(--matrix-muted-fg))" };
+const button = chatAgentButtonClass;
+const muted = chatAgentMutedStyle;
 const requestId = () => `req_${crypto.randomUUID().replaceAll("-", "")}`;
 type Draft = AgentDraft;
 type Library = {
@@ -164,8 +165,7 @@ function AgentLibrary({ client, onClose, onSetup }: { client: ChatAgentClient; o
     }
   };
   return <Dialog open onClose={() => { if (!state.pending) onClose(); }} aria-label="Agents" className="ph-no-capture" style={{
-    background: "var(--bg-surface, var(--matrix-card))", color: "var(--text-primary, var(--matrix-card-fg))",
-    border: "1px solid var(--border-default, var(--matrix-border))", boxSizing: "border-box", minWidth: 0, maxWidth: "600px", width: "min(92vw, 600px)",
+    ...chatAgentSurfaceStyle, boxSizing: "border-box", minWidth: 0, maxWidth: "600px", width: "min(92vw, 600px)",
   }}>
     <div className="flex items-center justify-between gap-3">
       <h2 className="text-lg font-semibold">{state.editing === "new" ? "New Agent" : state.editing ? "Edit Agent" : "Agents"}</h2>
@@ -199,7 +199,7 @@ export function ChatAgentsEntry({ client, onSetup, icon, className = "" }: {
   }, [client]);
   if (!client || availability?.client !== client || !availability.enabled) return null;
   return <>
-    <button type="button" className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover,var(--matrix-secondary))] focus-visible:ring-2 focus-visible:ring-[var(--accent,var(--matrix-accent))] ${className}`} style={{ color: "var(--text-secondary, var(--matrix-muted-fg))" }} onClick={() => setOpened(client)}>{icon}Agents</button>
+    <button type="button" className={`${chatAgentLauncherClass} ${className}`} style={chatAgentMutedStyle} onClick={() => setOpened(client)}>{icon}Agents</button>
     {opened === client ? <AgentLibrary client={client} onSetup={onSetup} onClose={() => setOpened(null)} /> : null}
   </>;
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { CanonicalChatResourceReference, ChatContextSnapshot } from "@matrix-os/contracts";
 import { Dialog } from "../Dialog.js";
 import type { ChatAgentClient } from "./client.js";
+import { chatAgentButtonClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "./theme.js";
 
 export function useChatMentionPermission(scope: string, resources: CanonicalChatResourceReference[], permissionMode: string) {
   const agentId = resources.find((resource) => resource.kind === "agent")?.id;
@@ -32,13 +33,10 @@ function ContextPreview({ client, reference, onClose }: {
     });
     return () => { current = false; };
   }, [client, reference.id]);
-  return <Dialog open onClose={onClose} aria-label={`Context from ${reference.label}`} style={{
-    background: "var(--bg-surface, var(--matrix-card))", color: "var(--text-primary, var(--matrix-card-fg))",
-    border: "1px solid var(--border-default, var(--matrix-border))", maxWidth: "600px", width: "min(92vw, 600px)",
-  }}>
+  return <Dialog open onClose={onClose} aria-label={`Context from ${reference.label}`} style={{ ...chatAgentSurfaceStyle, maxWidth: "600px", width: "min(92vw, 600px)" }}>
     <div className="flex items-center justify-between gap-3"><h2 className="min-w-0 truncate text-base font-semibold">{state.snapshot?.title ?? reference.label}</h2>
-      <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={onClose}>Close preview</button></div>
-    <p className="mt-3 text-xs" style={{ color: "var(--text-secondary, var(--matrix-muted-fg))" }}>A fresh snapshot is captured when you send. Tools, attachments, and other Chat references are excluded.</p>
+      <button type="button" className={chatAgentButtonClass} onClick={onClose}>Close preview</button></div>
+    <p className="mt-3 text-xs" style={chatAgentMutedStyle}>A fresh snapshot is captured when you send. Tools, attachments, and other Chat references are excluded.</p>
     {state.error ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.snapshot ? <>
       <p className="mt-4 text-xs">{state.snapshot.truncated ? "Limited recent context" : "Chat context"} · through message {state.snapshot.throughSeq}</p>
       <pre className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border p-3 font-sans text-sm">{state.snapshot.text || "No committed text in this Chat."}</pre>
@@ -55,7 +53,7 @@ export function ChatMentionControls({ client, resources, permissionMode, confirm
   const [previewId, setPreviewId] = useState<string | null>(null);
   const preview = chats.find((chat) => chat.id === previewId);
   if (!agent && !chats.length) return null;
-  return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 px-3 py-2 text-xs" style={{ color: "var(--text-secondary, var(--matrix-muted-fg))" }}>
+  return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 px-3 py-2 text-xs" style={chatAgentMutedStyle}>
     {agent ? <div className="grid min-w-0 gap-2">
       <span className="flex min-w-0 items-center gap-1"><strong className="min-w-0 truncate" title={agent.label}>{agent.label}</strong><span className="shrink-0">· Hermes · this request only</span></span>
       {permissionMode === "full_access" ? <span>Full access on this computer.</span> : <label className="flex items-start gap-2">
