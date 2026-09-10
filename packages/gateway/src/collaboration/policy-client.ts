@@ -4,21 +4,17 @@ import {
 } from "@matrix-os/contracts";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
-
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 16 * 1024;
-
 export class CollaborationPolicyClientError extends Error {
   constructor() {
     super("Collaboration rollout policy is unavailable");
     this.name = "CollaborationPolicyClientError";
   }
 }
-
 export class CollaborationPolicyClient {
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
-
   constructor(private readonly options: {
     platformBaseUrl: string;
     runtimeId: string;
@@ -34,7 +30,6 @@ export class CollaborationPolicyClient {
     this.endpoint = `${baseUrl.origin}/internal/collaboration/policy?milestone=m2`;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
-
   async getM2(): Promise<CollaborationPolicy> {
     try {
       const response = await this.fetchImpl(this.endpoint, {
@@ -63,7 +58,6 @@ export class CollaborationPolicyClient {
     }
   }
 }
-
 async function readBoundedText(response: Response): Promise<string> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {

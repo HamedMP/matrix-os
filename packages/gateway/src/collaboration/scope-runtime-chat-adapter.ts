@@ -9,14 +9,11 @@ import {
   type CanonicalChatProviderAdapter,
 } from "../chat/provider-adapter.js";
 import type { ScopeRuntimeCapability } from "./scope-runtime-client.js";
-
 const StateSchema = z.object({
   runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/),
   executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/),
 }).strict();
-
 type State = z.infer<typeof StateSchema>;
-
 export interface ScopeRuntimeChatClient {
   capability(): ScopeRuntimeCapability;
   createRuntime(input: {
@@ -28,7 +25,6 @@ export interface ScopeRuntimeChatClient {
   runChat(input: State & { model: string; prompt: string }): Promise<State & { text: string }>;
   stopRuntime(input: { runtimeHandle: string }): Promise<unknown>;
 }
-
 export function createScopeRuntimeChatProviderAdapter(options: {
   client: ScopeRuntimeChatClient;
   scopeId: string;
@@ -59,7 +55,6 @@ export function createScopeRuntimeChatProviderAdapter(options: {
       if (stopInFlight === operation) stopInFlight = undefined;
     }
   };
-
   return {
     driverKind: "claude_code" satisfies CanonicalProviderDriverKind,
     stateSchemaVersion: 1,
@@ -154,7 +149,6 @@ export function createScopeRuntimeChatProviderAdapter(options: {
     },
   };
 }
-
 function failure(message: string) {
   return CanonicalProviderRunEventSchema.parse({
     type: "run.completed",

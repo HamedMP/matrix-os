@@ -40,12 +40,10 @@ import {
 } from "./scope-runtime-client.js";
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
-
 const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
 const QUEUE_WAKE_LIMIT = 64;
-
 const PROFILE_CATALOG: ScopeRuntimeProfileCatalog = {
   [SCOPE_RUNTIME_PROFILE_ID]: {
     profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
@@ -59,7 +57,6 @@ const PROFILE_CATALOG: ScopeRuntimeProfileCatalog = {
     },
   },
 };
-
 const ELIGIBILITY: CollaborationAiExecutionEligibility = {
   profileId: SCOPE_RUNTIME_PROFILE_ID,
   profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
@@ -67,7 +64,6 @@ const ELIGIBILITY: CollaborationAiExecutionEligibility = {
   adapterId: "claude-code",
   harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
 };
-
 export async function createSharedAiRuntime(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   repository: ChatRepository;
@@ -106,7 +102,6 @@ export async function createSharedAiRuntime(options: {
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
   await options.chatScope.reconcileExecutionEligibility({ executionGeneration, eligibility: ELIGIBILITY });
-
   const policy = new CollaborationPolicyClient({
     platformBaseUrl: options.platformBaseUrl,
     runtimeId: options.runtimeId,
@@ -141,7 +136,6 @@ export async function createSharedAiRuntime(options: {
       orchestrator: options.orchestrator,
     }),
   });
-
   const dispatch = async (scopeId: string, chatId: string): Promise<void> => {
     const preflightPolicy = await policy.getM2();
     if (preflightPolicy.mode === "off" || preflightPolicy.mode === "read_only") return;
@@ -214,6 +208,7 @@ export async function createSharedAiRuntime(options: {
     requestDispatch: dispatch,
     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
   });
+
   const broker = createScopeRuntimeBroker({
     homePath: options.homePath,
     fundedCredentialProvider: options.fundedCredentialProvider,
@@ -289,7 +284,6 @@ export async function createSharedAiRuntime(options: {
   const wakeTimer = setInterval(wakeQueued, QUEUE_WAKE_INTERVAL_MS);
   wakeTimer.unref?.();
   void wakeQueued();
-
   return {
     available: true as const,
     chatExecutionAdapter,
@@ -335,7 +329,6 @@ export function createSharedAiCancellationDispatcher(options: {
     );
   };
 }
-
 export function createSharedAiApprovalReconciler(options: {
   resolveOwnerId(scopeId: string, chatId: string): Promise<string>;
   readRunStatus(
@@ -371,7 +364,6 @@ export function createSharedAiApprovalReconciler(options: {
     throw new Error("Shared approval Run remains active after reconciliation");
   };
 }
-
 function eligibilityMatches(value: unknown): boolean {
   try {
     const parsed = parseCollaborationAiEligibility(value);

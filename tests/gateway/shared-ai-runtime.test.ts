@@ -4,7 +4,6 @@ import {
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
-
 describe("shared AI runtime cancellation", () => {
   it("reauthorizes the actor immediately before stopping the external run", async () => {
     const policy = { getM2: vi.fn(async () => ({
@@ -39,7 +38,6 @@ describe("shared AI runtime cancellation", () => {
       clientRequestId: "50000000-0000-4000-8000-000000000001",
       actorId: "user_editor",
     };
-
     await expect(dispatch(input)).resolves.toBeUndefined();
     expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
       scopeId: input.scopeId,
@@ -52,11 +50,9 @@ describe("shared AI runtime cancellation", () => {
       input.chatId,
       input.runId,
     );
-
     await expect(dispatch(input)).rejects.toMatchObject({ code: "not_found" });
     expect(cancelSharedRun).toHaveBeenCalledTimes(1);
   });
-
   it("interrupts and terminally reconciles an approval with an unknown outcome", async () => {
     const cancelSharedRun = vi.fn(async () => { throw new Error("runtime disconnected"); });
     const reconcileActiveRuns = vi.fn(async () => 1);
@@ -65,7 +61,6 @@ describe("shared AI runtime cancellation", () => {
       readRunStatus: vi.fn(async () => "failed" as const),
       orchestrator: { cancelSharedRun, reconcileActiveRuns },
     });
-
     await expect(reconcile({
       commandId: "10000000-0000-4000-8000-000000000009",
       scopeId: "10000000-0000-4000-8000-000000000001",
