@@ -89,6 +89,28 @@ function agentSettingsView() {
   };
 }
 
+async function exposeSpeechReady(page: import("@playwright/test").Page) {
+  await page.route("**/api/speech/capabilities", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      contractVersion: 1,
+      fileTranscription: {
+        status: "ready",
+        dictation: {
+          enabled: true,
+          maxBytes: 10 * 1024 * 1024,
+          maxDurationMs: 120_000,
+          maxTranscriptChars: 32_000,
+          supportedMediaTypes: ["audio/wav"],
+          languageHints: false,
+        },
+        ownerAudio: { enabled: false },
+      },
+    }),
+  }));
+}
+
 test.describe("Visual regression", () => {
   test.beforeEach(async ({ page }) => {
     // Match the platform-owned app shell request boundary so the server-rendered
@@ -186,25 +208,7 @@ test.describe("Visual regression", () => {
   });
 
   test("speech-ready chat exposes the manual recording entry point", async ({ page }) => {
-    await page.route("**/api/speech/capabilities", (route) => route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        contractVersion: 1,
-        fileTranscription: {
-          status: "ready",
-          dictation: {
-            enabled: true,
-            maxBytes: 10 * 1024 * 1024,
-            maxDurationMs: 120_000,
-            maxTranscriptChars: 32_000,
-            supportedMediaTypes: ["audio/wav"],
-            languageHints: false,
-          },
-          ownerAudio: { enabled: false },
-        },
-      }),
-    }));
+    await exposeSpeechReady(page);
     await page.keyboard.press("Meta+k");
     await page.waitForTimeout(300);
     await page.keyboard.type("Chat");
@@ -212,6 +216,31 @@ test.describe("Visual regression", () => {
     const microphone = page.getByRole("button", { name: "Start voice input" });
     await expect(microphone).toBeVisible();
     await expect(page).toHaveScreenshot("chat-speech-ready.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("speech-ready Chat exposes the manual recording entry point in Web Canvas", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.keyboard.press("Meta+k");
+    await page.keyboard.type("Mode: Canvas");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("dock-settings")).toBeVisible();
+    await page.keyboard.press("Meta+k");
+    await page.keyboard.type("Chat");
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Start voice input" })).toBeVisible();
+    await expect(page).toHaveScreenshot("chat-speech-ready-web-canvas.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("speech-ready Chat exposes the manual recording entry point in Web Mobile", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/?launch=__chat__");
+    await expect(page.getByRole("button", { name: "Start voice input" })).toBeVisible();
+    await expect(page).toHaveScreenshot("chat-speech-ready-web-mobile.png", {
       maxDiffPixelRatio: 0.01,
     });
   });
