@@ -1,4 +1,5 @@
 export { spawnKernel } from "./kernel.js";
+export { readClaudeModelInventory } from "./claude-model-inventory.js";
 export type { KernelEvent, KernelResult } from "./kernel.js";
 export { parseFrontmatter } from "./agents.js";
 export {
