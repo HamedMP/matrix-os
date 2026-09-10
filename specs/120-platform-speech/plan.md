@@ -1,6 +1,6 @@
 # Platform Speech implementation plan
 
-Status: proposed implementation design, following accepted product direction. This plan does not enable credentials or deploy a service.
+Status: proposed implementation design, following accepted product direction. This plan does not enable credentials or deploy a service. See [implementation.md](implementation.md) for the reviewed module boundaries, wire contract, dispatch state machine, draft lifecycle and delivery gates.
 
 ## Service boundaries
 
@@ -12,7 +12,7 @@ flowchart LR
   P --> A[Capability policy and usage reservations]
   P --> O[OpenAI adapter]
   P --> X[Grok adapter - later]
-  P --> M[Gemini compatibility adapter]
+  P --> M[Gemini compatibility adapter - later]
   P --> G
   G --> C
   G --> T[Canonical chat and kernel tool authorization]
@@ -34,8 +34,10 @@ All routes are proposed names. Verify platform routing order and reserve these n
 | Route | Caller/authentication | Owner/runtime authority | Public? | Phase |
 |---|---|---|---|---|
 | `GET /api/speech/capabilities` | Existing authenticated Web/Electron gateway session | Gateway principal and selected runtime | No | 1 |
-| `POST /api/speech/transcriptions` | Same gateway auth; body limit before buffering | Same; caller supplies request/draft ID, never authoritative owner | No | 1 |
+| `POST /api/speech/transcriptions` | Same gateway auth; body limit before buffering | Same; caller supplies request ID; draft binding stays client-side, never authoritative owner | No | 1 |
 | `GET /internal/speech/capabilities` | Verified runtime-to-platform credential | Platform resolves machine, runtime and owner from authenticated registration | No | 1 |
+| `GET /api/speech/transcriptions/:requestId` and internal equivalent | Authenticated principal/runtime credential | Same owner, machine and runtime as operation; metadata only | No | 1 |
+| `DELETE /api/speech/transcriptions/:requestId` and internal equivalent | Same, with body limit and cancellation rate limit | Same operation scope; idempotent cancel | No | 1 |
 | `POST /internal/speech/transcriptions` | Same, plus explicit speech capability policy | Same; reservation keyed to verified identity and operation | No | 1 |
 | `POST /api/speech/sessions` | Authenticated gateway principal | Binds chat/draft, mode and runtime server-side | No | Later |
 | `DELETE /api/speech/sessions/:id` | Same; body limit even with empty body | Session owner and runtime match | No | Later |
@@ -59,13 +61,13 @@ Platform service authentication is not just accepting an owner ID passed by a VP
 
 Use a request ID scoped to verified owner/runtime plus a bounded content fingerprint to reject ID reuse with different audio. Do not persist raw transcripts at the platform for replay. Keep non-content operation/usage metadata in Postgres with explicit retention and reconciliation.
 
-A lost response after provider execution is an uncertain outcome: no silent automatic re-run. The client retains its local recording only within its bounded active attempt, shows a deliberate retry action and sends a new request ID for a new billable attempt. Pre-execution retries use the existing ID and admission state. Reserve/start/finalize transitions must prevent concurrent duplicate upstream execution and double settlement.
+A lost response after provider execution is an uncertain outcome: no silent automatic re-run. The client retains its local recording only within its bounded active attempt, shows a deliberate retry action and sends a new request ID for a new billable attempt. Pre-execution retries use the existing ID and admission state. A separate durable dispatch claim prevents duplicate application dispatch; replaying the existing funding start receipt is not permission to call upstream. Ledger finalization is idempotent. Process/network failures can still leave provider execution uncertain; see the state table and cancellation tombstones in [implementation.md](implementation.md).
 
 ## Limits, cancellation and privacy
 
 - Proposed first release bounds: 120 seconds, 10 MiB audio, 32,000 transcript characters; 10-second control requests and 65-second end-to-end file transcription deadline. Validate deadlines against measured model behavior.
 - Enforce upload limits at every receiving boundary using streaming body limits. Do not trust client-reported duration or infer seconds from compressed byte size.
-- To enforce duration/cost, spike a bounded media probe in platform infrastructure or reserve a safe encoding-specific worst case validated against actual format. The implementation must not claim a hard duration limit without server-side verification.
+- To enforce duration/cost, spike bounded decode/sample counting or equally sound validation in platform infrastructure; container metadata alone is insufficient. The implementation must not claim a hard duration limit without server-side verification.
 - Per-owner/runtime and global concurrency/rate caps, bounded registries, TTL/stale eviction and shutdown drains. Initial policy values must be explicit and tested; these are operational limits, not new commercial prices.
 - Provider URLs are platform configuration allowlists, never user URLs; reject redirects. Cancellation propagates through gateway and platform to the provider connection, subject to upstream cancellation semantics.
 - No raw audio or transcript in platform logs, analytics, exception payloads or usage rows. Provider retention requirements must be separately verified; use available controls without asserting guarantees not supported by the account.
