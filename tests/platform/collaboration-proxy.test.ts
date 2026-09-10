@@ -177,8 +177,8 @@ describe("CollaborationProxy", () => {
   });
 
   it("classifies shared AI routes under M2 without moving discussion off M1", () => {
-    const requestId = "50000000-0000-4000-8000-000000000001";
-    const approvalId = "50000000-0000-4000-8000-000000000002";
+    const requestId = "qturn_shared_request_1";
+    const approvalId = "approval_shared_request_1";
     expect(collaborationMilestoneForRoute("GET", `/api/collaboration/scopes/${scopeId}/chat/messages`))
       .toBe("m1");
     expect(collaborationMilestoneForRoute("GET", `/api/collaboration/scopes/${scopeId}/chat/requests`))
