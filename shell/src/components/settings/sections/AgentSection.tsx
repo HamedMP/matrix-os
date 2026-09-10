@@ -22,17 +22,19 @@ export function AgentSection({
   if (controller.snapshot === null) {
     const unavailable = controller.error !== null;
     return (
-      <div className="matrix-agents-providers" aria-busy={unavailable ? undefined : "true"} data-provider-settings-adapter="shared">
-        <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"}>
-          <strong>{unavailable ? "Provider settings are unavailable" : "Loading agents & providers"}</strong>
-          <span>{unavailable ? "Refresh Settings to try again." : "Checking this computer’s provider state…"}</span>
+      <div className="px-5 py-6" data-provider-settings-adapter="shared">
+        <div className="matrix-agents-providers" aria-busy={unavailable ? undefined : "true"}>
+          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"}>
+            <strong>{unavailable ? "Provider settings are unavailable" : "Loading agents & providers"}</strong>
+            <span>{unavailable ? "Refresh Settings to try again." : "Checking this computer’s provider state…"}</span>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div data-provider-settings-adapter="shared">
+    <div className="px-5 py-6" data-provider-settings-adapter="shared">
       <AgentsProvidersView
         snapshot={controller.snapshot}
         selectedHarnessId={controller.selectedHarnessId}

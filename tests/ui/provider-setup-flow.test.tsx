@@ -253,13 +253,13 @@ describe("truthful account setup", () => {
     expect(screen.queryByRole("dialog", { name: "Remove Personal" })).not.toBeInTheDocument();
   });
 
-  it("retains the sign-in action when starting authentication fails", async () => {
+  it("keeps one-click sign in available when starting authentication fails", async () => {
     const input = props();
     input.onMutate.mockResolvedValue(false);
     render(<AccountsPanel {...input} />);
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("could not be updated"));
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
   });
 
   it("keeps one visible native setup action for an authenticated generic agent", async () => {
