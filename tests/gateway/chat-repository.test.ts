@@ -2108,6 +2108,75 @@ describe("ChatRepository", () => {
     expect(events.map((event) => event.id)).toContain("activity_approval_retention_terminal");
   });
 
+  it("preserves unresolved approval requests while evicting terminal-event overflow", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_pending_approval_retention",
+      clientRequestId: "req_create_pending_approval_retention",
+      title: "Pending approval retention",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.kysely.updateTable("chat_runs").set({
+      status: "waiting_for_approval",
+      started_at: now,
+      updated_at: now,
+    }).where("id", "=", acceptedRun.id).execute();
+    const approval: CanonicalChatRunActivity = {
+      id: "activity_pending_approval_retention",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      sequence: 1,
+      occurredAt: now,
+      type: "approval.requested",
+      approvalId: "approval_pending_retention",
+      title: "Allow the command",
+      risk: "medium",
+      allowedDecisions: ["approve", "decline"],
+    };
+    const filler = Array.from({ length: 499 }, (_, index) => ({
+      ...activity(created.chat.id, acceptedRun.id, index + 1),
+      id: `activity_pending_approval_filler_${index + 2}`,
+      sequence: index + 2,
+    }));
+    await repository.kysely.insertInto("chat_run_events").values([approval, ...filler].map((event) => ({
+      id: event.id,
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      run_seq: event.sequence,
+      event: sql`${JSON.stringify(event)}::jsonb`,
+      occurred_at: now,
+    }))).execute();
+
+    await expect(repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
+      id: "activity_pending_approval_terminal",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: now,
+      type: "run.status",
+      status: "completed",
+    }])).resolves.toBe(1);
+
+    await expect(repository.getPendingApproval(owner, {
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      approvalId: approval.approvalId,
+    })).resolves.toMatchObject({ id: approval.id, approvalId: approval.approvalId });
+    const events = await repository.kysely.selectFrom("chat_run_events")
+      .select("id")
+      .where("run_id", "=", acceptedRun.id)
+      .execute();
+    expect(events).toHaveLength(500);
+    expect(events.map((event) => event.id)).toContain(approval.id);
+  });
+
   it("keeps adapter state behind the exact Driver and Instance boundary", async () => {
     const created = await repository.create(owner, {
       id: "chat_adapter_state",
