@@ -4,17 +4,17 @@ import type { ApiClient } from "@renderer/lib/api";
 
 const version = "v2026.09.09-1";
 const next = "v2026.09.09-2";
-function fixture({ local = true, cloud = true, compatibility = "legacy" } = {}) {
-  const info = { version, runningVersion: version, updateChannel: "canary", ...(compatibility === "legacy" ? {} : {
-    runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 },
-  }) };
+function fixture({ local = true, cloud = true, cloudBehind = false } = {}) {
+  const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
+  const info = { version, runningVersion: version, updateChannel: "canary",
+    build: { sha: cloudBehind ? "a".repeat(40) : source.commit } };
   const get = vi.fn(async (path: string) => path === "/api/system/info" ? info : {
     channel: "canary", latest: { version: cloud ? next : version }, updateAvailable: cloud,
   });
   const api = { get, post: vi.fn(async () => ({ version: next })) } as unknown as ApiClient;
   const snapshot = local ? { status: "ready", version: "0.2.0", progress: 100,
     release: { version: "0.2.0", notes: "Update" } } : { status: "up-to-date" };
-  return { api, get, info, snapshot, readLocal: async () => ({ version: "0.1.0", snapshot }),
+  return { api, get, info, snapshot, source, readLocal: async () => ({ version: "0.1.0", snapshot, source }),
     signal: new AbortController().signal, isCurrent: () => true };
 }
 
@@ -26,10 +26,11 @@ describe("one-button update planning", () => {
       expect(plan.local.installed).toBe("0.1.0");
       expect(plan.cloud.installed).toBe(version);
     });
-  it("does not update the wrong component when a required local update is unavailable", async () => {
-    const plan = await loadRepairPlan(fixture({ local: false, compatibility: "future" }));
+  it("does not update Desktop when the missing cloud changes have no available update", async () => {
+    const plan = await loadRepairPlan(fixture({ local: true, cloud: false, cloudBehind: true }));
     expect(plan.targets).toEqual([]);
-    expect(plan.reason).toContain("desktop app");
+    expect(plan.compatibilityUpdateRequired).toBe(true);
+    expect(plan.reason).toContain("matching update is not available");
   });
   it("keeps an installed cloud update pending until its services restart", async () => {
     const f = fixture({ local: false, cloud: false });

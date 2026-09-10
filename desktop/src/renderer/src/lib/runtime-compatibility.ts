@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { evaluateRuntimeCompatibility, type RuntimeCompatibilityStatus } from "@matrix-os/contracts";
+import { evaluateReleaseAlignment, readRunningCommit, type ReleaseAlignmentStatus } from "@matrix-os/contracts";
 import type { ApiClient } from "./api";
+import { invoke } from "./operator";
 
 export const RUNTIME_RECONNECTED_EVENT = "matrix:runtime-reconnected";
 const FOCUS_CHECK_COOLDOWN_MS = 15 * 60_000;
 
 /** One bounded probe at a time; changing computers aborts and fences old results. */
 export function useRuntimeCompatibility(api: ApiClient | null) {
-  const [result, setResult] = useState<{ api: ApiClient | null; status: RuntimeCompatibilityStatus | "checking" }>({ api, status: "checking" });
+  const [result, setResult] = useState<{ api: ApiClient | null; status: ReleaseAlignmentStatus | "checking"; noticeKey: string | null }>({ api, status: "checking", noticeKey: null });
   const [retry, setRetry] = useState(0);
   const refresh = useCallback(() => setRetry((value) => value + 1), []);
   useEffect(() => {
@@ -22,14 +23,19 @@ export function useRuntimeCompatibility(api: ApiClient | null) {
       lastCheckedAt = Date.now();
       checking = true;
       try {
-        const info = await api.get<unknown>("/api/system/info", {
-          maxBytes: 64 * 1024, signal: controller.signal, timeoutMs: 10_000,
-        });
-        if (active) setResult({ api, status: evaluateRuntimeCompatibility(info) });
+        const [info, desktop] = await Promise.all([
+          api.get<unknown>("/api/system/info", {
+            maxBytes: 64 * 1024, signal: controller.signal, timeoutMs: 10_000,
+          }),
+          invoke("app:get-version", {}),
+        ]);
+        const status = evaluateReleaseAlignment(info, desktop.source);
+        if (active) setResult({ api, status,
+          noticeKey: status === "unavailable" ? null : `${desktop.source!.commit}:${readRunningCommit(info)}` });
       } catch (error: unknown) {
         if (active) {
           console.warn("[runtime-compatibility] check failed:", error instanceof Error ? error.name : "UnknownError");
-          setResult({ api, status: "unavailable" });
+          setResult({ api, status: "unavailable", noticeKey: null });
         }
       } finally { checking = false; }
     };
@@ -47,5 +53,6 @@ export function useRuntimeCompatibility(api: ApiClient | null) {
       window.removeEventListener(RUNTIME_RECONNECTED_EVENT, recheck);
     };
   }, [api, retry]);
-  return { status: result.api === api ? result.status : "checking", refresh };
+  return { status: result.api === api ? result.status : "checking",
+    noticeKey: result.api === api ? result.noticeKey : null, refresh };
 }

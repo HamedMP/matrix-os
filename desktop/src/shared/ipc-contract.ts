@@ -5,6 +5,7 @@
 // credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
 import {
+  BuildSourceSchema,
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   AgentThreadEventSchema,
@@ -78,6 +79,7 @@ const ZoomFactorSchema = z.number().min(0.5).max(2);
 const ZoomFactorResultSchema = z.object({ factor: ZoomFactorSchema }).strict();
 const NativeAppVersionResultSchema = z.object({
   version: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  source: BuildSourceSchema.nullable(),
 }).strict();
 
 const ProfileSchema = z

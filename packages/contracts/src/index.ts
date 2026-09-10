@@ -1,3 +1,4 @@
+export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
 import { z } from "zod/v4";

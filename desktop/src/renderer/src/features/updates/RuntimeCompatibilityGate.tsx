@@ -1,5 +1,4 @@
 import { useLayoutEffect, useState, type ReactNode } from "react";
-import type { RuntimeCompatibilityStatus } from "@matrix-os/contracts";
 import { Dialog } from "../../design/primitives";
 import { useRuntimeCompatibility } from "../../lib/runtime-compatibility";
 import { invoke } from "../../lib/operator";
@@ -11,19 +10,24 @@ import { useUi } from "../../stores/ui";
 /** Advisory only: never move the titlebar, hide apps, or unmount drafts. */
 export default function RuntimeCompatibilityGate({ children }: { children: ReactNode }) {
   const api = useConnection((state) => state.api);
-  const { status } = useRuntimeCompatibility(api);
+  const { status, noticeKey } = useRuntimeCompatibility(api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const [operationHidden, setOperationHidden] = useState(false);
-  // At most three statuses per computer session; rechecks must not nag after dismissal.
-  const [dismissed, setDismissed] = useState<RuntimeCompatibilityStatus[]>([]);
+  // Dismiss the current release pair, not every future mismatch on this computer.
+  // Keep only the last 16 pairs and scope them to the current API connection.
+  const [dismissed, setDismissed] = useState<{ api: typeof api; keys: string[] }>({ api, keys: [] });
   const [nativeEmbedsSuspended, setNativeEmbedsSuspended] = useState(false);
-  const notice = status === "checking" || status === "compatible" || status === "unavailable" ? null : status;
-  const requestedOpen = notice !== null && !dismissed.includes(notice);
+  const notice = status === "checking" || status === "aligned" || status === "unavailable" ? null : noticeKey;
+  const requestedOpen = notice !== null && (dismissed.api !== api || !dismissed.keys.includes(notice));
   const repair = useCompatibilityRepair(api, runtimeSlot, requestedOpen);
   const open = requestedOpen || (repair.busy && !operationHidden);
+  const dismiss = (key: string) => setDismissed((previous) => {
+    const keys = previous.api === api ? previous.keys : [];
+    return { api, keys: keys.includes(key) ? keys : [...keys, key].slice(-16) };
+  });
   const close = () => {
     setOperationHidden(true);
-    if (notice) setDismissed((previous) => previous.includes(notice) ? previous : [...previous, notice]);
+    if (notice) dismiss(notice);
   };
   useLayoutEffect(() => {
     if (!open) return;
@@ -35,14 +39,14 @@ export default function RuntimeCompatibilityGate({ children }: { children: React
     }).catch((error: unknown) => {
       setOperationHidden(true);
       console.warn("[runtime-compatibility] embed suspension failed:", error instanceof Error ? error.name : "UnknownError");
-      if (active && notice) setDismissed((previous) => previous.includes(notice) ? previous : [...previous, notice]);
+      if (active && notice) dismiss(notice);
     });
     return () => {
       active = false;
       setNativeEmbedsSuspended(false);
       useUi.getState().releaseRendererOverlay();
     };
-  }, [notice, open]);
+  }, [api, notice, open]);
 
   return (
     <>

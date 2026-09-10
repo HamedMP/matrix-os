@@ -9,8 +9,9 @@ import { useConnection } from "@renderer/stores/connection";
 import { useUi } from "@renderer/stores/ui";
 import type { ApiClient } from "@renderer/lib/api";
 
-const compatible = { version: "v1", runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1 } };
-const incompatible = { version: "v2", runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 } };
+const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
+const compatible = { version: "v1", build: { sha: source.commit } };
+const incompatible = { version: "v2", build: { sha: "a".repeat(40) } };
 beforeEach(() => {
   useUi.setState(useUi.getInitialState(), true);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -23,6 +24,7 @@ it.each([false, true])("restores only the active embed after modal dismissal (ne
   const api = { get, forRuntime() { return this; } } as unknown as ApiClient;
   useConnection.setState({ api });
   const invoke = vi.fn(async (channel: string, payload: { embedId?: string; active?: boolean; kind?: string }) => {
+    if (channel === "app:get-version") return { version: "0.1.0", source };
     if (channel === "embed:open") { live[payload.kind!] = Boolean(payload.active); return { embedId: payload.kind, state: "ready" }; }
     if (channel === "embed:set-active") live[payload.embedId!] = Boolean(payload.active);
     if (channel === "embed:deactivate") live[payload.embedId!] = false;
@@ -53,6 +55,7 @@ it("keeps a pending embed detached until the compatibility modal closes", async 
   const get = vi.fn().mockResolvedValue(compatible);
   useConnection.setState({ api: { get, forRuntime() { return this; } } as unknown as ApiClient });
   const invoke = vi.fn(async (channel: string, payload: { active?: boolean }) => {
+    if (channel === "app:get-version") return { version: "0.1.0", source };
     if (channel === "embed:open") return new Promise((resolve) => { finishOpen = resolve; });
     if (channel === "embed:set-active") live = Boolean(payload.active);
     if (channel === "embed:deactivate" || channel === "embed:suspend-all") live = false;

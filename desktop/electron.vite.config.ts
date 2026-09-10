@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 import { DESKTOP_DEV_RENDERER_HOST } from "./src/main/renderer-url";
+import { readBuildSource } from "../scripts/release/build-source.mjs";
 
 const desktopUpdateChannel =
   process.env.MATRIX_DESKTOP_UPDATE_CHANNEL || process.env.OPERATOR_UPDATE_CHANNEL || "";
@@ -16,6 +17,7 @@ export default defineConfig({
     // depends on source-only `.js` specifiers at runtime.
     plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@finnaai/matrix"] })],
     define: {
+      __MATRIX_DESKTOP_BUILD_SOURCE__: JSON.stringify(readBuildSource(resolve(__dirname, ".."), process.env.GITHUB_SHA)),
       __MATRIX_DESKTOP_UPDATE_CHANNEL__: JSON.stringify(desktopUpdateChannel),
       __CODING_AGENTS_DESKTOP_WORKSPACE__: JSON.stringify(codingAgentsDesktopWorkspace),
     },
