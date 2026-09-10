@@ -479,7 +479,12 @@ function eventCopy(event: AgentThreadEvent): { title: string; detail: string } {
     case "user_input.answered": return { title: "Input answered", detail: "Input answer received" };
     case "file.changed": return { title: `File ${event.changeKind}`, detail: `${event.changeKind} file` };
     case "review.ready": return { title: "Review ready", detail: `${event.summary.changedFileCount} ${event.summary.changedFileCount === 1 ? "file" : "files"} changed, +${event.summary.additions} -${event.summary.deletions}${event.summary.partial ? ", partial" : ""}` };
-    case "terminal.bound": return { title: "Terminal bound", detail: event.terminalSessionId };
+    case "terminal.bound": return {
+      title: "Terminal bound",
+      detail: event.terminalRef
+        ? `${event.terminalRef.workspaceId}/${event.terminalRef.tabId}`
+        : event.terminalSessionId ?? "Terminal unavailable",
+    };
     case "thread.error": return { title: "Thread needs attention", detail: event.error.retryable ? "Refresh the thread or check the runtime." : "Open the workspace again." };
     case "thread.completed": return { title: "Thread completed", detail: event.outcome };
     case "user.message": return { title: "You", detail: event.text };

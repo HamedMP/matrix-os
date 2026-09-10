@@ -27,7 +27,7 @@ function summary(): RuntimeSummary {
     projects: { items: [{ id: "desktop", label: "Desktop", status: "available", taskCount: 1, threadCount: 0, attentionCount: 0 }], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 24_000, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },

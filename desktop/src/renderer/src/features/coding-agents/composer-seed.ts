@@ -53,7 +53,7 @@ export function hasComposerContent(current: AgentThreadComposerDraft): boolean {
   return current.prompt.trim().length > 0
     || Boolean(current.projectId)
     || Boolean(current.taskId)
-    || Boolean(current.terminalSessionId)
+    || Boolean(current.terminalRef)
     || Boolean(current.worktreeId)
     || Boolean(current.attachments?.length);
 }
@@ -64,7 +64,7 @@ export function clearComposerLaunchContext(current: AgentThreadComposerDraft): A
     ...current,
     projectId: undefined,
     taskId: undefined,
-    terminalSessionId: undefined,
+    terminalRef: undefined,
     worktreeId: undefined,
     attachments: attachments?.length ? attachments : undefined,
   };

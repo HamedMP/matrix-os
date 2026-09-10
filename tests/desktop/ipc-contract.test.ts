@@ -527,7 +527,7 @@ describe("IPC contract", () => {
         hasMore: false,
         limit: 20,
       },
-      terminalSessions: {
+      terminalWorkspaces: {
         items: [],
         limit: 20,
         hasMore: false,
