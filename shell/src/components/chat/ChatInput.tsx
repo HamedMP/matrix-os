@@ -1,19 +1,31 @@
 "use client";
-import type { ChatAgentDraftRequest } from "@matrix-os/ui";
+import {
+  usePlatformSpeechDraft,
+  type ChatAgentDraftRequest,
+  type PlatformSpeechCaptureAdapter,
+} from "@matrix-os/ui";
 
 import { useState, useRef, useEffect } from "react";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useVoice } from "@/hooks/useVoice";
-import { SendIcon } from "@/lib/hugeicons";
+import { CircleStop, Loader2Icon, MicIcon, SendIcon, XCircleIcon } from "@/lib/hugeicons";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatMentionControls, useChatMentionPermission, type ChatAgentClient } from "@matrix-os/ui";
-import { ChatVoiceButton, ChatMentionTokens } from "./ChatInputExtras";
+import { ChatMentionTokens } from "./ChatInputExtras";
 import { handleChatInputKey } from "./chat-input-keyboard";
 import { chatInputPlaceholder, canSendChatInput } from "./chat-input-placeholder";
 import { ChatMentionPicker } from "./ChatMentionPicker";
 import type { ChatComposerDraft } from "./useChatComposerDraft";
+import {
+  BrowserSpeechClientError,
+  createBrowserSpeechClient,
+  type BrowserSpeechClient,
+} from "@/lib/platform-speech-client";
+import {
+  createWebPcmSpeechCaptureAdapter,
+  PlatformSpeechRecorderError,
+} from "@/lib/platform-speech-recorder";
 export function ChatInput({
   composer, agentClient, scope, permissionMode,
   connected,
@@ -24,6 +36,8 @@ export function ChatInput({
   onDraftConsumed,
   unavailablePlaceholder,
   attachmentsEnabled,
+  speechClient,
+  speechCaptureAdapter,
 }: {
   composer: ChatComposerDraft;
   agentClient?: ChatAgentClient;
@@ -37,6 +51,8 @@ export function ChatInput({
   onDraftConsumed?: (id: number) => void;
   unavailablePlaceholder?: string;
   attachmentsEnabled: boolean;
+  speechClient?: BrowserSpeechClient;
+  speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
 }) {
   const { text: input, setText: setInput, setDraft, resources } = composer;
   const [sending, setSending] = useState(false);
@@ -50,19 +66,25 @@ export function ChatInput({
 
   const mentionListRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef(input);
+  inputRef.current = input;
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
-  const canSend = canSendChatInput({ connected, sending, allowed: permission.allowed, busy, references: resources.length, text: input, attachments: attachments.length });
-
-  const {
-    isRecording,
-    isTranscribing,
-    isSupported,
-    startRecording,
-    stopRecording,
-  } = useVoice({
-    onTranscription: (text) => setInput(text),
-    onError: (err) => console.error("Voice error:", err),
+  const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
+  const [defaultSpeechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
+  const speech = usePlatformSpeechDraft({
+    scopeKey: scope,
+    client: speechClient ?? defaultSpeechClient,
+    captureAdapter: speechCaptureAdapter ?? defaultSpeechCapture,
+    safeErrorMessage: (caught) => caught instanceof BrowserSpeechClientError
+      ? caught.safeMessage
+      : caught instanceof PlatformSpeechRecorderError ? caught.safeMessage : undefined,
+    onDraft: (text) => {
+      const current = inputRef.current.trimEnd();
+      setInput(current.length > 0 ? `${current} ${text}` : text);
+    },
   });
+  const speechBusy = speech.phase === "recording" || speech.phase === "transcribing";
+  const canSend = !speechBusy && canSendChatInput({ connected, sending, allowed: permission.allowed, busy, references: resources.length, text: input, attachments: attachments.length });
 
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
@@ -96,8 +118,9 @@ export function ChatInput({
   };
 
   const handleMicClick = () => {
-    if (isRecording) stopRecording();
-    else startRecording();
+    if (speech.phase === "recording") speech.stop();
+    else if (speech.phase === "transcribing") speech.cancel();
+    else void speech.start();
   };
 
   return (
@@ -110,6 +133,7 @@ export function ChatInput({
       <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
       <ChatMentionControls client={agentClient} resources={resources} permissionMode={permissionMode} confirmed={permission.confirmed} onConfirm={permission.confirm} />
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+      {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
       <Attachments attachments={attachments} onRemove={removeFile} />
       <div className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
         <AttachmentButton
@@ -124,13 +148,45 @@ export function ChatInput({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(event) => handleChatInputKey(event, { query, mentionListRef, onDismiss: () => setDismissedQuery(input), onSubmit: () => void handleSubmit() })}
-          placeholder={chatInputPlaceholder({ transcribing: isTranscribing, recording: isRecording, connected, unavailable: unavailablePlaceholder })}
-          disabled={!connected || isRecording}
+          placeholder={speech.phase === "requesting_permission"
+            ? "Waiting for microphone permission..."
+            : speech.phase === "transcribing"
+              ? "Transcribing into an editable draft..."
+              : speech.phase === "recording"
+                ? "Recording — stop when you're done"
+                : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder })}
+          disabled={!connected}
           rows={1}
           className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
         />
         <div className="flex items-center gap-0.5 mb-2 mr-2">
-          {isSupported ? <ChatVoiceButton connected={connected} recording={isRecording} transcribing={isTranscribing} onClick={handleMicClick} /> : null}
+          {speech.isSupported ? (
+            <Button
+              type="button"
+              aria-label={speech.phase === "requesting_permission"
+                ? "Requesting microphone permission"
+                : speech.phase === "recording"
+                  ? "Stop recording"
+                  : speech.phase === "transcribing"
+                    ? "Cancel transcription"
+                    : "Start voice input"}
+              size="icon"
+              variant="ghost"
+              className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
+              disabled={!connected || speech.phase === "requesting_permission"}
+              onClick={handleMicClick}
+            >
+              {speech.phase === "requesting_permission" ? <Loader2Icon className="size-4 animate-spin" />
+                : speech.phase === "transcribing" ? <XCircleIcon className="size-4" />
+                  : speech.phase === "recording" ? <CircleStop className="size-4" />
+                    : <MicIcon className="size-4" />}
+            </Button>
+          ) : null}
+          {speech.phase === "recording" ? (
+            <span aria-live="polite" className="px-1 text-xs tabular-nums text-muted-foreground">
+              {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
+            </span>
+          ) : null}
           <Button
             type="button"
             aria-label={busy && mayQueue ? "Queue next" : "Send"}
