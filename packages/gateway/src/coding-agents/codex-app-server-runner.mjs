@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
@@ -12,6 +11,7 @@ import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs"
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
 import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
+import { initializeCodexProvider, ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -1101,23 +1101,13 @@ const cleanupTimer = setInterval(() => {
 }, 30_000);
 cleanupTimer.unref();
 
-const child = spawn(command, [...commandArgs, "app-server"], {
-  cwd: process.cwd(),
-  env: process.env,
-  stdio: ["pipe", "pipe", "pipe"],
-});
-const childExit = new Promise((resolve) => {
-  child.once("error", (error) => resolve({ code: null, signal: null, error }));
-  child.once("close", (code, signal) => {
-    if (stopTimer) clearTimeout(stopTimer);
-    for (const pending of pendingRpc.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("provider_stopped"));
-    }
-    pendingRpc.clear();
-    resolve({ code, signal });
-  });
-});
+const startupController = new AbortController();
+let child;
+let childExit = Promise.resolve({ code: null, signal: null });
+let providerOutput = Promise.resolve({ ok: true });
+let providerErrors = Promise.resolve({ ok: true });
+let startupReconnecting = false;
+let userStopped = false;
 
 function decodeTurnFrame(line) {
   if (Buffer.byteLength(line, "utf8") > MAX_TURN_FRAME_BYTES) return undefined;
@@ -1190,11 +1180,13 @@ input.on("close", () => {
 function stop() {
   if (stopping) return;
   stopping = true;
+  startupController.abort();
   input.close();
   wakeTurn?.();
   wakeTurn = undefined;
-  child.kill("SIGTERM");
-  stopTimer = setTimeout(() => child.kill("SIGKILL"), PROVIDER_STOP_TIMEOUT_MS);
+  if (!child) return;
+  signalCodexProviderChild(child, "SIGTERM");
+  stopTimer = setTimeout(() => signalCodexProviderChild(child, "SIGKILL"), PROVIDER_STOP_TIMEOUT_MS);
   stopTimer.unref();
 }
 
@@ -1206,8 +1198,8 @@ async function finishTurn(outcome) {
     startedToolItems.size > 0 ||
     toolItemsWithOutput.size > 0;
   if (!activeTurn && !hasUnsettledItems) {
-    if (outcome === "failed" && terminalEventCount === 0) {
-      await persist({ type: "turn.failed" });
+    if ((outcome === "failed" || outcome === "aborted") && terminalEventCount === 0) {
+      await persist({ type: outcome === "aborted" ? "turn.aborted" : "turn.failed" });
       terminalEventCount += 1;
     }
     return;
@@ -1290,29 +1282,40 @@ async function runTurn(threadId, turn) {
   }
 }
 
-const providerOutput = consumeProviderOutput(child.stdout).then(
-  () => ({ ok: true }),
-  (error) => {
-    stop();
-    return { ok: false, error };
-  },
-);
-const providerErrors = discardProviderErrors(child.stderr).then(
-  () => ({ ok: true }),
-  (error) => {
-    stop();
-    return { ok: false, error };
-  },
-);
-process.once("SIGTERM", stop);
-process.once("SIGINT", stop);
+process.once("SIGTERM", () => { userStopped = true; stop(); });
+process.once("SIGINT", () => { userStopped = true; stop(); });
 
 let exitCode = 0;
 try {
-  await request("initialize", {
-    clientInfo: { name: "matrix-os", title: "Matrix OS", version: "1" },
-    capabilities: { experimentalApi: true },
+  const initialized = await initializeCodexProvider({ command, args: commandArgs,
+    cwd: process.cwd(), env: process.env, signal: startupController.signal,
+    onRetry: async ({ label }) => {
+      startupReconnecting = true;
+      await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect",
+        kind: "phase", displayName: label });
+    },
   });
+  child = initialized.child;
+  childExit = initialized.closed.then((exit) => {
+    if (stopTimer) clearTimeout(stopTimer);
+    for (const pending of pendingRpc.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("provider_stopped"));
+    }
+    pendingRpc.clear();
+    return exit;
+  });
+  providerOutput = consumeProviderOutput(child.stdout).then(
+    () => ({ ok: true }), (error) => { stop(); return { ok: false, error }; },
+  );
+  providerErrors = discardProviderErrors(child.stderr).then(
+    () => ({ ok: true }), (error) => { stop(); return { ok: false, error }; },
+  );
+  if (startupReconnecting) {
+    await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect", outcome: "success" });
+    startupReconnecting = false;
+  }
+  startupController.signal.throwIfAborted();
   sendProvider({ method: "initialized", params: {} });
   const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
   const started = await request(threadMethod, {
@@ -1369,9 +1372,25 @@ try {
   if (exit.error) throw exit.error;
   await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_REPLAY_GRACE_MS));
   if (activeTurn || terminalEventCount === 0) exitCode = 1;
-} catch (_error) {
+} catch (error) {
   exitCode = 1;
-  await finishTurn("failed").catch(() => undefined);
+  if (error instanceof ProviderStartupCleanupUnconfirmed) {
+    // Keep the runner/thread supervised and non-terminal while its exact child
+    // remains unconfirmed. Never release canonical busy state or retry here.
+    child = error.child;
+    childExit = error.closed;
+    startupReconnecting = true;
+    await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect",
+      kind: "phase", displayName: "Waiting for startup cleanup" });
+    await childExit;
+  }
+  if (startupReconnecting) {
+    await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect",
+      outcome: userStopped ? "cancelled" : "failed" });
+  }
+  await finishTurn(userStopped ? "aborted" : "failed").catch((error) => {
+    console.warn("[coding-agents] Terminal startup state could not be persisted:", error instanceof Error ? error.name : "UnknownError");
+  });
   stop();
   await Promise.allSettled([childExit, providerOutput, providerErrors]);
 } finally {

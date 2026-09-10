@@ -11,6 +11,8 @@ import {
   type CanonicalProviderRunInput,
 } from "./provider-adapter.js";
 import { createCanonicalCliEventQueue } from "./cli-process.js";
+import { startHermesGateway } from "./hermes-startup.js";
+import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE } from "./failure-diagnostic.js";
 import {
   createHermesStdioClient,
   HermesGatewayProtocolError,
@@ -609,7 +611,7 @@ export function createHermesChatProviderAdapter(options: {
 
     const hermesRoot = join(options.homePath, ".hermes", "hermes-agent");
     const existingPythonPath = process.env.PYTHONPATH?.trim();
-    const client = createHermesStdioClient({
+    const clientOptions = {
       command: join(hermesRoot, "venv", "bin", "python"),
       args: ["-u", "-m", "tui_gateway.entry"],
       cwd: input.executionRoot ?? options.homePath,
@@ -623,27 +625,67 @@ export function createHermesChatProviderAdapter(options: {
       readyTimeoutMs: options.readyTimeoutMs,
       requestTimeoutMs: options.requestTimeoutMs,
       onEvent: handleEvent,
-      onFailure(error) {
+      onFailure(error: Error) {
         if (!completionSettled) {
           completionSettled = true;
           completion.resolve({ ok: false, error });
         }
       },
-    });
+    };
 
-    void (async () => {
+    const iteratorController = new AbortController();
+    const runSignal = AbortSignal.any([input.signal, iteratorController.signal]);
+    const execution = (async () => {
       let totalTimer: NodeJS.Timeout | undefined;
       let abortRun: (() => void) | undefined;
+      let client: ReturnType<typeof createHermesStdioClient> | undefined;
+      let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
+      let reconnectLabel: string | undefined;
+      const deadlineController = new AbortController();
+      const startupSignal = AbortSignal.any([runSignal, deadlineController.signal]);
+      const finishReconnect = (status: "completed" | "failed" | "cancelled") => {
+        if (reconnectLabel) {
+          emitAgentActivity({ activityId: "startup_reconnect", kind: "phase", label: reconnectLabel, status });
+          reconnectLabel = undefined;
+        }
+      };
       try {
         const stopped = new Promise<never>((_resolve, reject) => {
           abortRun = () => reject(new Error("Hermes Run aborted"));
-          if (input.signal.aborted) return abortRun();
-          input.signal.addEventListener("abort", abortRun, { once: true });
-          totalTimer = setTimeout(() => reject(new HermesRunFailure("timeout", "Hermes Run timed out")), timeoutMs);
+          if (runSignal.aborted) return abortRun();
+          runSignal.addEventListener("abort", abortRun, { once: true });
+          totalTimer = setTimeout(() => {
+            const error = new HermesRunFailure("timeout", "Hermes Run timed out");
+            deadlineController.abort(error);
+            reject(error);
+          }, timeoutMs);
           totalTimer.unref?.();
         });
+        // Startup performs its own cancellation + confirmed cleanup before it
+        // returns. Do not let the overall deadline abandon an owned attempt.
+        void stopped.catch((error: unknown) => {
+          console.warn("[chat/hermes] Run deadline or cancellation observed:", error instanceof Error ? error.name : "UnknownError");
+        });
         const withinRun = <T>(operation: Promise<T>) => Promise.race([operation, stopped]);
-        await withinRun(client.ready());
+        client = await startHermesGateway({ client: clientOptions, signal: startupSignal,
+          async onRetry({ label }) {
+            reconnectLabel = label;
+            emitAgentActivity({ activityId: "startup_reconnect", kind: "phase", label, status: "running" });
+          },
+          onCleanupUnconfirmed() {
+            input.onCleanupUnconfirmed?.();
+            finishReconnect("cancelled");
+            emitAgentActivity({ activityId: "startup_cleanup", kind: "phase", label: "Stopping",
+              summary: CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, status: "running" });
+          },
+          onCleanupConfirmed() {
+            input.onCleanupConfirmed?.();
+            emitAgentActivity({ activityId: "startup_cleanup", kind: "phase", label: "Stopping",
+              summary: "The startup process stopped.", status: "completed" });
+          },
+        });
+        finishReconnect("completed");
+        startupSignal.throwIfAborted();
         const rawSession = resumeState
           ? await withinRun(client.request("session.resume", {
               session_id: resumeState.sessionId,
@@ -712,6 +754,7 @@ export function createHermesChatProviderAdapter(options: {
           value: "1",
           scope: "session",
         })));
+        startupSignal.throwIfAborted();
         HermesPromptResponseSchema.parse(await withinRun(client.request("prompt.submit", {
           session_id: liveSessionId,
           text: input.prompt,
@@ -749,10 +792,11 @@ export function createHermesChatProviderAdapter(options: {
         if (final.status === "interrupted" && !input.signal.aborted) {
           throw new HermesRunFailure("interrupted", "Hermes Run was interrupted");
         }
-        queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "completed" }));
+        terminal = { type: "run.completed", outcome: "completed" };
       } catch (error: unknown) {
+        finishReconnect(input.signal.aborted ? "cancelled" : "failed");
         flushVisibleText(true);
-        if (input.signal.aborted && liveSessionId) {
+        if (runSignal.aborted && liveSessionId && client) {
           try {
             await client.request("session.interrupt", { session_id: liveSessionId }, 1_000);
           } catch (interruptError: unknown) {
@@ -781,7 +825,7 @@ export function createHermesChatProviderAdapter(options: {
               code: "provider_unavailable" as const,
               safeMessage: "The Hermes connection failed. Try again.",
             };
-        queue.push(CanonicalProviderRunEventSchema.parse({
+        terminal = {
           type: "run.completed",
           outcome: input.signal.aborted ? "aborted" : "failed",
           ...(input.signal.aborted ? {} : {
@@ -791,19 +835,36 @@ export function createHermesChatProviderAdapter(options: {
               recoveryActions: ["retry"],
             },
           }),
-        }));
+        };
       } finally {
         releaseSteerRun?.();
         releaseApprovalRun?.();
         if (deltaFlushTimer) clearTimeout(deltaFlushTimer);
         if (totalTimer) clearTimeout(totalTimer);
-        if (abortRun) input.signal.removeEventListener("abort", abortRun);
-        await client.close();
+        if (abortRun) runSignal.removeEventListener("abort", abortRun);
+        if (client && !await client.close()) {
+          input.onCleanupUnconfirmed?.();
+          emitAgentActivity({ activityId: "run_cleanup", kind: "phase", label: "Stopping",
+            summary: CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, status: "running" });
+          await client.whenExited();
+          input.onCleanupConfirmed?.();
+          emitAgentActivity({ activityId: "run_cleanup", kind: "phase", label: "Stopping",
+            summary: "The agent process stopped.", status: "completed" });
+        }
+        if (terminal) queue.push(CanonicalProviderRunEventSchema.parse(terminal));
         queue.finish();
       }
     })();
 
-    yield* queue.values();
+    try {
+      yield* queue.values();
+    } finally {
+      // The consumer may stop reading a cleanup activity after cancellation.
+      // Keep return() attached to the exact execution until startup's real-exit
+      // proof clears its dispatch-local cleanup flag; do not detach that work.
+      iteratorController.abort();
+      await execution;
+    }
   }
 
   return {

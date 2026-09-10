@@ -32,6 +32,9 @@ describe("provider launch failure reaches canonical Chat", () => {
           codexProviderEventPath(homePath, sessionId), process.version.slice(1), process.execPath,
           join(process.cwd(), "tests/fixtures/codex-launch-failure.mjs"), config], {
           cwd: homePath, stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, MATRIX_TEST_LAUNCH_FAILURE: mode,
+            // Exercise all six startup attempts without spending the production
+            // 30-second handshake budget on each deliberately silent fixture.
+            ...(mode === "handshake-timeout" ? { MATRIX_CODEX_STARTUP_TIMEOUT_MS: "500" } : {}),
             ...(mode === "spawn-eagain" ? { NODE_OPTIONS: `--import=${join(process.cwd(), "tests/fixtures/codex-spawn-eagain.mjs")}` } : {}) },
         });
         ended = once(child, "close");
@@ -56,6 +59,11 @@ describe("provider launch failure reaches canonical Chat", () => {
       await ended;
       if (mode === "spawn-eagain") expect(stderr).toContain("Injected spawn EAGAIN");
       if (mode === "resume-identity-mismatch") expect(await readFile(transcriptPath, "utf8")).not.toContain("native_failure_test");
+      if (mode === "handshake-timeout") {
+        const transcript = (await readFile(transcriptPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+        expect(transcript.filter((event) => event.type === "matrix.codex.tool.started").map((event) => event.displayName))
+          .toEqual(["Reconnecting… 1/5", "Reconnecting… 2/5", "Reconnecting… 3/5", "Reconnecting… 4/5", "Reconnecting… 5/5"]);
+      }
       now = 61_000;
       await bridge.drain();
       await collecting;
