@@ -201,6 +201,23 @@ function safeCwdSchema() {
 
 export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
+  const clientUpgradeRequired = (c: Context) => c.json({
+    error: "client_upgrade_required",
+    message: "Upgrade Matrix OS to use terminal workspaces.",
+  }, 426);
+  registerTerminalPaneActionRoutes(app, deps);
+  app.post("/sessions/:name/tabs", bodyLimit({ maxSize: 8192 }), async (c) => {
+    try {
+      if (!deps.workspace) return unavailable(c, "workspace_unavailable");
+      const body = TabBodySchema.parse(await c.req.json());
+      const name = SafeSessionNameSchema.parse(c.req.param("name"));
+      return c.json({ tab: await deps.workspace.createTab(name, body) });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+  app.all("/sessions", clientUpgradeRequired);
+  app.all("/sessions/*", clientUpgradeRequired);
   const sessionCreateRateLimiter =
     deps.sessionCreateRateLimiter ?? createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
@@ -756,7 +773,6 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
-  registerTerminalPaneActionRoutes(app, deps);
   return app;
 }
 

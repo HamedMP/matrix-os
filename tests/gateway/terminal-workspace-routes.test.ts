@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { createTerminalWorkspaceRoutes } from "../../packages/gateway/src/shell/workspace-routes.js";
+import {
+  createTerminalWorkspaceRoutes,
+  terminalRuntimeOwnerAccess,
+  terminalRuntimeRefAccess,
+} from "../../packages/gateway/src/shell/workspace-routes.js";
 import {
   createTerminalPasteAssetCleanupLifecycle,
   saveTerminalPasteAsset,
@@ -27,6 +31,74 @@ describe("terminal workspace gateway routes", () => {
     getPrincipal: () => ({ userId: "user_owner", source: "jwt" as const }),
     terminalOwnerIds: ["user_owner"],
   };
+
+  it("authorizes only exact terminal refs in the authenticated owner's runtime", async () => {
+    const tabId = "tt_0123456789abcdef0123456789abcdef";
+    const runtime = {
+      listWorkspaces: vi.fn(async () => [{
+        ...workspace,
+        tabs: [{ id: tabId, accessScope: "owner" }],
+      }]),
+    };
+    const ref = { workspaceId: workspace.id, tabId };
+
+    await expect(terminalRuntimeRefAccess(
+      { userId: "user_owner", source: "jwt" },
+      ["user_owner"],
+      runtime,
+      ref,
+    )).resolves.toBe("allowed");
+    await expect(terminalRuntimeRefAccess(
+      { userId: "user_other", source: "jwt" },
+      ["user_owner"],
+      runtime,
+      ref,
+    )).resolves.toBe("not_found");
+    await expect(terminalRuntimeRefAccess(
+      { userId: "user_owner", source: "jwt" },
+      ["user_owner"],
+      runtime,
+      { ...ref, tabId: "tt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    )).resolves.toBe("not_found");
+    expect(runtime.listWorkspaces).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps Chat and legacy terminal refs fail-closed without repository context", async () => {
+    const ownerTabId = "tt_0123456789abcdef0123456789abcdef";
+    const chatTabId = "tt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const legacyTabId = "tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const runtime = {
+      listWorkspaces: vi.fn(async () => [{
+        ...workspace,
+        tabs: [
+          { id: ownerTabId, accessScope: "owner" },
+          { id: chatTabId, accessScope: "chat" },
+          { id: legacyTabId, accessScope: "legacy" },
+        ],
+      }]),
+    };
+    const principal = { userId: "user_owner", source: "jwt" as const };
+
+    await expect(terminalRuntimeRefAccess(principal, ["user_owner"], runtime, {
+      workspaceId: workspace.id,
+      tabId: ownerTabId,
+    })).resolves.toBe("allowed");
+    await expect(terminalRuntimeRefAccess(principal, ["user_owner"], runtime, {
+      workspaceId: workspace.id,
+      tabId: chatTabId,
+    })).resolves.toBe("chat_required");
+    await expect(terminalRuntimeRefAccess(principal, ["user_owner"], runtime, {
+      workspaceId: workspace.id,
+      tabId: legacyTabId,
+    })).resolves.toBe("repository_required");
+  });
+
+  it("refuses ambiguous terminal runtime owner configuration", () => {
+    expect(terminalRuntimeOwnerAccess(
+      { userId: "user_owner", source: "jwt" },
+      ["user_owner", "user_other"],
+    )).toBe("unavailable");
+  });
 
   it("expires stale terminal paste assets before retaining a new upload", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-workspace-paste-cleanup-"));

@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
+import {
+  createAgentSessionManager,
+  hasActiveWorkspaceSessionForTerminalRef,
+} from "../../packages/gateway/src/agent-session-manager.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
 import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 import type { AgentLaunchInput, AgentLaunchSpec } from "../../packages/gateway/src/agent-launcher.js";
@@ -46,15 +49,17 @@ describe("agent-session-manager", () => {
   });
 
   function createManager(overrides: {
-    zellijRuntime?: Partial<ReturnType<typeof baseZellijRuntime>>;
-    inputWriter?: (sessionId: string, input: string) => Promise<void>;
+    terminalRuntime?: Partial<ReturnType<typeof baseTerminalRuntime>>;
+    startupRetryDelaysMs?: readonly number[];
+    startupReconcileIntervalMs?: number;
+    sleep?: (delayMs: number) => Promise<void>;
   } = {}) {
     const worktreeManager = createWorktreeManager({
       homePath,
       runCommand: vi.fn(async () => ({ stdout: "", stderr: "" })),
       now,
     });
-    const zellijRuntime = { ...baseZellijRuntime(), ...overrides.zellijRuntime };
+    const terminalRuntime = { ...baseTerminalRuntime(), ...overrides.terminalRuntime };
     const agentLauncher = {
       buildLaunch: vi.fn((input: AgentLaunchInput): AgentLaunchSpec => ({
         command: input.agent,
@@ -68,37 +73,29 @@ describe("agent-session-manager", () => {
         homePath,
         worktreeManager,
         agentLauncher,
-        zellijRuntime,
-        inputWriter: overrides.inputWriter,
+        terminalRuntime,
         now,
         idGenerator: () => "sess_abc123",
+        startupRetryDelaysMs: overrides.startupRetryDelaysMs ?? [],
+        startupReconcileIntervalMs: overrides.startupReconcileIntervalMs ?? 30_000,
+        ...(overrides.sleep ? { sleep: overrides.sleep } : {}),
       }),
       worktreeManager,
-      zellijRuntime,
+      terminalRuntime,
       agentLauncher,
     };
   }
 
-  function baseZellijRuntime() {
+  function baseTerminalRuntime() {
     return {
-      start: vi.fn(async ({ sessionId }: { sessionId: string }) => ({
-        ok: true as const,
-        status: "running" as const,
-        sessionName: `matrix-${sessionId}`,
-        publicSessionName: sessionId,
-        layoutPath: join(homePath, "system", "zellij", "layouts", `${sessionId}.kdl`),
-        createdAt: "2026-04-26T00:00:00.500Z",
-      })),
-      attachCommand: vi.fn((sessionId: string) => ["zellij", "attach", `matrix-${sessionId}`]),
-      observeCommand: vi.fn((sessionId: string) => ["zellij", "attach", `matrix-${sessionId}`, "--index", "0"]),
-      kill: vi.fn(async () => ({ ok: true as const })),
-      health: vi.fn(async () => ({
-        available: true,
-        status: "ok" as const,
-        fallbackReason: null,
-        version: "zellij 0.41.0",
-      })),
-      isAlive: vi.fn(async () => true),
+      ensureWorkspace: vi.fn(async () => ({ id: "tws_00000000000000000000000000000001" })),
+      createTab: vi.fn(async () => ({ id: "tt_00000000000000000000000000000001" })),
+      terminateTab: vi.fn(async () => undefined),
+      writeInput: vi.fn(async () => undefined),
+      listWorkspaces: vi.fn(async () => [{
+        id: "tws_00000000000000000000000000000001",
+        tabs: [{ id: "tt_00000000000000000000000000000001", status: "running" }],
+      }]),
     };
   }
 
@@ -109,7 +106,10 @@ describe("agent-session-manager", () => {
       kind: "agent" as const,
       projectSlug: "repo",
       runtime: { type: "zellij" as const, status: "exited" as const },
-      terminalSessionId: "term_inactive",
+      terminalRef: {
+        workspaceId: "tws_00000000000000000000000000000001",
+        tabId: "tt_00000000000000000000000000000001",
+      },
       transcriptPath: join(homePath, "system", "session-output", "sess_inactive.jsonl"),
       attachedClients: 0,
       writeMode: "closed" as const,
@@ -147,7 +147,7 @@ describe("agent-session-manager", () => {
   });
 
   it("starts an agent session by acquiring the worktree lease and persisting runtime metadata", async () => {
-    const { manager, zellijRuntime, agentLauncher } = createManager();
+    const { manager, terminalRuntime, agentLauncher } = createManager();
 
     const result = await manager.startSession({
       kind: "agent",
@@ -174,14 +174,15 @@ describe("agent-session-manager", () => {
         worktreeId,
         pr: 42,
         agent: "codex",
-        terminalSessionId: "term_sess_abc123",
+        terminalRef: {
+          workspaceId: "tws_00000000000000000000000000000001",
+          tabId: "tt_00000000000000000000000000000001",
+        },
         runtime: {
           type: "zellij",
           status: "running",
-          zellijSession: "sess_abc123",
-          createdAt: "2026-04-26T00:00:00.500Z",
+          createdAt: "2026-04-26T00:00:00.000Z",
         },
-        nativeAttachCommand: ["zellij", "attach", "matrix-sess_abc123"],
       },
     });
     expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
@@ -191,15 +192,44 @@ describe("agent-session-manager", () => {
       mode: "review",
       cwd: join(homePath, "projects", "repo", "worktrees", worktreeId),
     }));
-    expect(zellijRuntime.start).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: "sess_abc123",
-      launch: expect.objectContaining({ command: "codex" }),
-    }));
+    expect(terminalRuntime.ensureWorkspace).toHaveBeenCalledWith({ projectId: "proj_repo" });
+    expect(terminalRuntime.createTab).toHaveBeenCalledWith(
+      "tws_00000000000000000000000000000001",
+      expect.objectContaining({
+        name: "codex",
+        command: expect.arrayContaining(["codex"]),
+        agent: { providerId: "codex" },
+      }),
+    );
 
     const record = JSON.parse(await readFile(join(homePath, "system", "sessions", "sess_abc123.json"), "utf-8"));
     expect(record.transcriptPath).toBe(join(homePath, "system", "session-output", "sess_abc123.jsonl"));
     expect(record.writeMode).toBe("owner");
     expect(record.ownerId).toBe("user_a");
+  });
+
+  it("identifies active session-bound terminal refs for attachment authorization", async () => {
+    const { manager } = createManager();
+    const started = await manager.startSession({
+      kind: "agent",
+      agent: "codex",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+    if (!started.ok) throw new Error("Expected session startup");
+
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, started.session.terminalRef))
+      .resolves.toBe(true);
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, {
+      ...started.session.terminalRef,
+      tabId: "tt_00000000000000000000000000000002",
+    })).resolves.toBe(false);
+
+    await manager.killSession(started.session.id);
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, started.session.terminalRef))
+      .resolves.toBe(false);
   });
 
   it("includes bounded structured attachments in the agent launch prompt", async () => {
@@ -263,7 +293,7 @@ describe("agent-session-manager", () => {
   });
 
   it("rejects competing write sessions before launching a runtime", async () => {
-    const { manager, worktreeManager, zellijRuntime } = createManager();
+    const { manager, worktreeManager, terminalRuntime } = createManager();
     await worktreeManager.acquireLease({
       projectSlug: "repo",
       worktreeId,
@@ -283,7 +313,7 @@ describe("agent-session-manager", () => {
 
     expect(result).toMatchObject({ ok: false, status: 409, error: { code: "worktree_locked" } });
     expect(JSON.stringify(result)).toContain("sess_other");
-    expect(zellijRuntime.start).not.toHaveBeenCalled();
+    expect(terminalRuntime.createTab).not.toHaveBeenCalled();
   });
 
   it("sends input, kills the runtime, and releases the worktree lease", async () => {
@@ -291,8 +321,7 @@ describe("agent-session-manager", () => {
       .mockReturnValueOnce("2026-04-26T00:00:00.000Z")
       .mockReturnValueOnce("2026-04-26T00:00:10.000Z")
       .mockReturnValueOnce("2026-04-26T00:00:20.000Z");
-    const inputWriter = vi.fn(async () => undefined);
-    const { manager, zellijRuntime, worktreeManager } = createManager({ inputWriter });
+    const { manager, terminalRuntime, worktreeManager } = createManager();
     const started = await manager.startSession({
       kind: "agent",
       agent: "claude",
@@ -304,13 +333,19 @@ describe("agent-session-manager", () => {
     expect(started.ok).toBe(true);
 
     await expect(manager.sendInput("sess_abc123", "pnpm test\n")).resolves.toMatchObject({ ok: true });
-    expect(inputWriter).toHaveBeenCalledWith("sess_abc123", "pnpm test\n", undefined);
+    expect(terminalRuntime.writeInput).toHaveBeenCalledWith({
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    }, "pnpm test\n");
 
     await expect(manager.killSession("sess_abc123")).resolves.toMatchObject({
       ok: true,
       session: { runtime: { status: "exited" }, writeMode: "closed" },
     });
-    expect(zellijRuntime.kill).toHaveBeenCalledWith("sess_abc123");
+    expect(terminalRuntime.terminateTab).toHaveBeenCalledWith({
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    });
     await expect(worktreeManager.acquireLease({
       projectSlug: "repo",
       worktreeId,
@@ -320,9 +355,9 @@ describe("agent-session-manager", () => {
   });
 
   it("releases the worktree lease and closes session state when runtime kill fails", async () => {
-    const { manager, zellijRuntime, worktreeManager } = createManager({
-      zellijRuntime: {
-        kill: vi.fn(async () => {
+    const { manager, terminalRuntime, worktreeManager } = createManager({
+      terminalRuntime: {
+        terminateTab: vi.fn(async () => {
           throw new Error("zellij unavailable");
         }),
       },
@@ -342,7 +377,7 @@ describe("agent-session-manager", () => {
       status: 503,
       error: { code: "runtime_unavailable" },
     });
-    expect(zellijRuntime.kill).toHaveBeenCalledWith("sess_abc123");
+    expect(terminalRuntime.terminateTab).toHaveBeenCalled();
     await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
       ok: true,
       session: { runtime: { status: "degraded", fallbackReason: "kill_failed" }, writeMode: "closed" },
@@ -395,7 +430,10 @@ describe("agent-session-manager", () => {
       await atomicWriteJson(join(homePath, "system", "sessions", `${id}.json`), {
         ...baseSession,
         id,
-        terminalSessionId: `term_${id}`,
+        terminalRef: {
+          workspaceId: "tws_00000000000000000000000000000001",
+          tabId: `tt_${String(index + 1).padStart(32, "0")}`,
+        },
         transcriptPath: join(homePath, "system", "session-output", `${id}.jsonl`),
         lastActivityAt: `2026-04-26T00:00:0${3 - index}.000Z`,
       });
@@ -415,17 +453,13 @@ describe("agent-session-manager", () => {
     });
   });
 
-  it("marks active sessions degraded during startup reconciliation without exposing runtime errors", async () => {
-    const { manager } = createManager({
-      zellijRuntime: {
-        health: vi.fn(async () => ({
-          available: false,
-          status: "degraded" as const,
-          fallbackReason: "zellij_unavailable",
-          version: null,
-        })),
+  it("preserves active sessions and leases when startup runtime inventory is unavailable", async () => {
+    const { manager, worktreeManager } = createManager({
+      terminalRuntime: {
+        listWorkspaces: vi.fn(async () => { throw new Error("runtime unavailable"); }),
       },
     });
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
     await manager.startSession({
       kind: "agent",
       agent: "opencode",
@@ -437,39 +471,253 @@ describe("agent-session-manager", () => {
 
     const result = await manager.reconcileStartup();
 
-    expect(result).toEqual({
-      checked: 1,
-      degraded: 1,
-      releasedLeases: 1,
-      stoppedSessions: [
-        expect.objectContaining({
-          id: "sess_abc123",
-          kind: "agent",
-          ownerId: "user_a",
-          runtime: expect.objectContaining({
-            status: "degraded",
-            fallbackReason: "zellij_unavailable",
-          }),
-          terminalSessionId: "term_sess_abc123",
-          writeMode: "closed",
-        }),
-      ],
-    });
+    expect(result).toEqual({ checked: 1, degraded: 0, releasedLeases: 0, stoppedSessions: [] });
+    expect(releaseLease).not.toHaveBeenCalled();
     await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
       ok: true,
       session: {
-        runtime: {
-          status: "degraded",
-          fallbackReason: "zellij_unavailable",
-        },
+        runtime: { status: "running" },
+        writeMode: "owner",
+      },
+    });
+    manager.shutdown();
+  });
+
+  it("retries startup inventory and releases a lease after runtime recovery confirms exit", async () => {
+    const listWorkspaces = vi.fn()
+      .mockRejectedValueOnce(new Error("runtime unavailable"))
+      .mockResolvedValueOnce([{
+        id: "tws_00000000000000000000000000000001",
+        tabs: [{ id: "tt_00000000000000000000000000000001", status: "exited" }],
+      }]);
+    const sleep = vi.fn(async () => undefined);
+    const { manager, worktreeManager } = createManager({
+      terminalRuntime: { listWorkspaces },
+      startupRetryDelaysMs: [1],
+      sleep,
+    });
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
+    await manager.startSession({
+      kind: "agent",
+      agent: "opencode",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+
+    const result = await manager.reconcileStartup();
+
+    expect(sleep).toHaveBeenCalledWith(1);
+    expect(listWorkspaces).toHaveBeenCalledTimes(2);
+    expect(result.degraded).toBe(1);
+    expect(releaseLease).toHaveBeenCalled();
+  });
+
+  it("retries a failed worktree lease release during later reconciliation", async () => {
+    const { manager, worktreeManager } = createManager({
+      terminalRuntime: { listWorkspaces: vi.fn(async () => [{
+        id: "tws_00000000000000000000000000000001",
+        tabs: [{ id: "tt_00000000000000000000000000000001", status: "exited" }],
+      }]) },
+    });
+    await manager.startSession({
+      kind: "agent",
+      agent: "opencode",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease")
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        error: { code: "lease_store_unavailable", message: "Lease store is unavailable" },
+      });
+
+    const first = await manager.reconcileStartup();
+    const second = await manager.reconcileStartup();
+
+    expect(first).toMatchObject({ degraded: 1, releasedLeases: 0 });
+    expect(second).toMatchObject({ releasedLeases: 1 });
+    expect(releaseLease).toHaveBeenCalledTimes(2);
+    await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
+      ok: true,
+      session: {
+        runtime: { status: "degraded", fallbackReason: "runtime_degraded" },
         writeMode: "closed",
       },
     });
+    manager.shutdown();
   });
 
-  it("marks only a session whose independently supervised unit is no longer alive as degraded", async () => {
+  it("continues reconciliation after the bounded startup retry window", async () => {
+    const listWorkspaces = vi.fn()
+      .mockRejectedValueOnce(new Error("runtime unavailable"))
+      .mockResolvedValue([{
+        id: "tws_00000000000000000000000000000001",
+        tabs: [{ id: "tt_00000000000000000000000000000001", status: "exited" }],
+      }]);
+    const { manager, worktreeManager } = createManager({
+      terminalRuntime: { listWorkspaces },
+      startupReconcileIntervalMs: 10,
+    });
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
+    try {
+      await manager.startSession({
+        kind: "agent",
+        agent: "opencode",
+        ownerId: "user_a",
+        projectSlug: "repo",
+        worktreeId,
+        prompt: "work",
+      });
+      await manager.reconcileStartup();
+      await vi.waitFor(() => {
+        expect(listWorkspaces).toHaveBeenCalledTimes(2);
+        expect(releaseLease).toHaveBeenCalled();
+      });
+    } finally {
+      manager.shutdown();
+    }
+  });
+
+  it("continues reconciliation after healthy startup until an active runtime tab exits", async () => {
+    const listWorkspaces = vi.fn()
+      .mockResolvedValueOnce([{
+        id: "tws_00000000000000000000000000000001",
+        tabs: [{ id: "tt_00000000000000000000000000000001", status: "running" }],
+      }])
+      .mockResolvedValue([{
+        id: "tws_00000000000000000000000000000001",
+        tabs: [{ id: "tt_00000000000000000000000000000001", status: "exited" }],
+      }]);
+    const { manager, worktreeManager } = createManager({
+      terminalRuntime: { listWorkspaces },
+      startupReconcileIntervalMs: 10,
+    });
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
+    try {
+      await manager.startSession({
+        kind: "agent",
+        agent: "opencode",
+        ownerId: "user_a",
+        projectSlug: "repo",
+        worktreeId,
+        prompt: "work",
+      });
+      await manager.reconcileStartup();
+
+      await vi.waitFor(() => {
+        expect(listWorkspaces).toHaveBeenCalledTimes(2);
+        expect(releaseLease).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      manager.shutdown();
+    }
+  });
+
+  it("preserves active sessions and leases when startup runtime inventory is empty", async () => {
+    const { manager, worktreeManager } = createManager({
+      terminalRuntime: { listWorkspaces: vi.fn(async () => []) },
+    });
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
+    await manager.startSession({
+      kind: "agent",
+      agent: "opencode",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+
+    const result = await manager.reconcileStartup();
+
+    expect(result).toEqual({ checked: 1, degraded: 0, releasedLeases: 0, stoppedSessions: [] });
+    expect(releaseLease).not.toHaveBeenCalled();
+    await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
+      ok: true,
+      session: {
+        runtime: { status: "running" },
+        writeMode: "owner",
+      },
+    });
+    manager.shutdown();
+  });
+
+  it("preserves active sessions when startup runtime inventory is partial", async () => {
+    const { manager, worktreeManager } = createManager({
+      terminalRuntime: { listWorkspaces: vi.fn(async () => [{
+        id: "tws_ffffffffffffffffffffffffffffffff",
+        tabs: [],
+      }]) },
+    });
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
+    await manager.startSession({
+      kind: "agent",
+      agent: "opencode",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+
+    const result = await manager.reconcileStartup();
+
+    expect(result).toEqual({ checked: 1, degraded: 0, releasedLeases: 0, stoppedSessions: [] });
+    expect(releaseLease).not.toHaveBeenCalled();
+    await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
+      ok: true,
+      session: {
+        runtime: { status: "running" },
+        writeMode: "owner",
+      },
+    });
+    manager.shutdown();
+  });
+
+  it("continues reconciliation after partial runtime inventory", async () => {
+    const listWorkspaces = vi.fn()
+      .mockResolvedValueOnce([{
+        id: "tws_ffffffffffffffffffffffffffffffff",
+        tabs: [],
+      }])
+      .mockResolvedValue([{
+        id: "tws_00000000000000000000000000000001",
+        tabs: [{ id: "tt_00000000000000000000000000000001", status: "exited" }],
+      }]);
+    const { manager, worktreeManager } = createManager({
+      terminalRuntime: { listWorkspaces },
+      startupReconcileIntervalMs: 10,
+    });
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
+    try {
+      await manager.startSession({
+        kind: "agent",
+        agent: "opencode",
+        ownerId: "user_a",
+        projectSlug: "repo",
+        worktreeId,
+        prompt: "work",
+      });
+      await manager.reconcileStartup();
+
+      await vi.waitFor(() => {
+        expect(listWorkspaces).toHaveBeenCalledTimes(2);
+        expect(releaseLease).toHaveBeenCalled();
+      });
+    } finally {
+      manager.shutdown();
+    }
+  });
+
+  it("marks only a session whose runtime tab is no longer alive as degraded", async () => {
     const { manager } = createManager({
-      zellijRuntime: { isAlive: vi.fn(async () => false) },
+      terminalRuntime: { listWorkspaces: vi.fn(async () => [{
+        id: "tws_00000000000000000000000000000001",
+        tabs: [{ id: "tt_00000000000000000000000000000001", status: "exited" }],
+      }]) },
     });
     await manager.startSession({
       kind: "agent",
@@ -485,7 +733,7 @@ describe("agent-session-manager", () => {
     expect(result).toMatchObject({ degraded: 1, releasedLeases: 1 });
     await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
       ok: true,
-      session: { runtime: { status: "degraded", fallbackReason: "runtime_not_running" } },
+      session: { runtime: { status: "degraded", fallbackReason: "runtime_degraded" } },
     });
   });
 });

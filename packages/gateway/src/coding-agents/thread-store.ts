@@ -16,7 +16,7 @@ import {
   ProviderIdSchema,
   RequestIdSchema,
   SafeClientErrorSchema,
-  TerminalSessionIdSchema,
+  TerminalRefSchema,
   type AgentThreadEvent,
   type AgentThreadSummary,
   type AdoptAgentThreadRequest,
@@ -122,17 +122,17 @@ const StoredTurnSchema = z.object({
   }
 });
 
-const TerminalSessionStoppedReconciliationSchema = z.object({
+const TerminalTabStoppedReconciliationSchema = z.object({
   ownerId: OwnerIdSchema,
   workspaceSessionId: WorkspaceSessionIdSchema.optional(),
-  terminalSessionId: TerminalSessionIdSchema,
+  terminalRef: TerminalRefSchema,
   runtimeStatus: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
 }).strict();
 const TerminalStoppedStatusSchema = z.enum(["exited", "failed", "degraded"]);
 const PendingTerminalStopSchema = z.object({
   ownerId: OwnerIdSchema,
   workspaceSessionId: WorkspaceSessionIdSchema.optional(),
-  terminalSessionId: TerminalSessionIdSchema,
+  terminalRef: TerminalRefSchema,
   runtimeStatus: TerminalStoppedStatusSchema,
   occurredAt: IsoTimestampSchema,
 }).strict();
@@ -165,7 +165,7 @@ type ThreadCreateMutationResult = ThreadCreateResult & {
     provider: CodingAgentProviderAdapter;
   };
 };
-type TerminalSessionStoppedReconciliation = z.infer<typeof TerminalSessionStoppedReconciliationSchema>;
+type TerminalTabStoppedReconciliation = z.infer<typeof TerminalTabStoppedReconciliationSchema>;
 type ThreadEventSink = (input: {
   ownerId: string;
   threadId: string;
@@ -237,7 +237,7 @@ export interface CodingAgentThreadStore {
     inputRequestId: string,
     request: UserInputAnswerRequest,
   ): Promise<AgentThreadSnapshot>;
-  reconcileTerminalSessionStopped(input: TerminalSessionStoppedReconciliation): Promise<AgentThreadSnapshot[]>;
+  reconcileTerminalTabStopped(input: TerminalTabStoppedReconciliation): Promise<AgentThreadSnapshot[]>;
   registerEventSink(sink: ThreadEventSink): { dispose(): void };
 }
 
@@ -406,7 +406,7 @@ function applyEvent(thread: StoredThread, event: AgentThreadEvent): StoredThread
     return { ...thread, status: "running", attention: "none", updatedAt };
   }
   if (event.type === "terminal.bound") {
-    return { ...thread, terminalSessionId: event.terminalSessionId, updatedAt };
+    return { ...thread, terminalRef: event.terminalRef, updatedAt };
   }
   if (event.type === "thread.error") {
     return { ...thread, status: "failed", attention: "failed", updatedAt };
@@ -553,7 +553,7 @@ function taskThreadAggregates(threads: StoredThread[]): CodingAgentTaskThreadAgg
 }
 
 function stoppedRuntimeStatus(
-  runtimeStatus: TerminalSessionStoppedReconciliation["runtimeStatus"],
+  runtimeStatus: TerminalTabStoppedReconciliation["runtimeStatus"],
 ): runtimeStatus is PendingTerminalStop["runtimeStatus"] {
   return TerminalStoppedStatusSchema.safeParse(runtimeStatus).success;
 }
@@ -566,7 +566,8 @@ function appendPendingTerminalStop(
     ...pendingTerminalStops.filter((candidate) =>
       candidate.ownerId !== stop.ownerId ||
       candidate.workspaceSessionId !== stop.workspaceSessionId ||
-      candidate.terminalSessionId !== stop.terminalSessionId
+      candidate.terminalRef.workspaceId !== stop.terminalRef.workspaceId ||
+      candidate.terminalRef.tabId !== stop.terminalRef.tabId
     ),
     stop,
   ].slice(-MAX_PENDING_TERMINAL_STOPS);
@@ -576,9 +577,10 @@ function workspaceSessionIdForThread(threadId: string): string {
   return `sess_${threadId.slice("thread_".length)}`;
 }
 
-function terminalStopMatchesThread(stop: Pick<PendingTerminalStop, "ownerId" | "workspaceSessionId" | "terminalSessionId">, thread: StoredThread): boolean {
+function terminalStopMatchesThread(stop: Pick<PendingTerminalStop, "ownerId" | "workspaceSessionId" | "terminalRef">, thread: StoredThread): boolean {
   return thread.ownerId === stop.ownerId &&
-    thread.terminalSessionId === stop.terminalSessionId &&
+    thread.terminalRef?.workspaceId === stop.terminalRef.workspaceId &&
+    thread.terminalRef.tabId === stop.terminalRef.tabId &&
     (stop.workspaceSessionId === undefined || stop.workspaceSessionId === workspaceSessionIdForThread(thread.id));
 }
 
@@ -586,7 +588,7 @@ function consumePendingTerminalStop(
   pendingTerminalStops: PendingTerminalStop[],
   thread: StoredThread,
 ): { pendingStop?: PendingTerminalStop; pendingTerminalStops: PendingTerminalStop[] } {
-  if (!thread.terminalSessionId) {
+  if (!thread.terminalRef) {
     return { pendingTerminalStops };
   }
   const pendingStop = pendingTerminalStops.find((candidate) => terminalStopMatchesThread(candidate, thread));
@@ -598,7 +600,6 @@ function consumePendingTerminalStop(
     pendingTerminalStops: pendingTerminalStops.filter((candidate) => candidate !== pendingStop),
   };
 }
-
 
 function invalidInputAnswer(message: string): never {
   throw new z.ZodError([{ code: "custom", message, path: ["structuredAnswers"] }]);
@@ -1181,7 +1182,7 @@ export function createCodingAgentThreadStore(
         attention: "none",
         projectId: request.projectId,
         taskId: request.taskId,
-        terminalSessionId: request.terminalSessionId,
+        terminalRef: request.terminalRef,
         createdAt,
         updatedAt: createdAt,
       };
@@ -1546,9 +1547,9 @@ export function createCodingAgentThreadStore(
           return { state, result: { ok: false as const, activeThreadCount } };
         }
         const threadIds = new Set(projectThreads.map((thread) => thread.id));
-        const terminalSessionIds = new Set(
-          projectThreads.map((thread) => thread.terminalSessionId).filter((id): id is string => Boolean(id)),
-        );
+        const terminalRefKeys = projectThreads.flatMap((thread) => thread.terminalRef
+          ? [`${thread.terminalRef.workspaceId}:${thread.terminalRef.tabId}`]
+          : []);
         return {
           state: {
             ...state,
@@ -1556,7 +1557,9 @@ export function createCodingAgentThreadStore(
             events: state.events.filter((event) => !threadIds.has(event.threadId)),
             turns: state.turns.filter((turn) => !threadIds.has(turn.threadId)),
             pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
-              stop.ownerId !== principal.userId || !terminalSessionIds.has(stop.terminalSessionId)
+              stop.ownerId !== principal.userId || !terminalRefKeys.includes(
+                `${stop.terminalRef.workspaceId}:${stop.terminalRef.tabId}`,
+              )
             ),
           },
           result: { ok: true as const, deleted: projectThreads.length },
@@ -1784,8 +1787,8 @@ export function createCodingAgentThreadStore(
       publish(principal.userId, threadId, result.eventsToPublish);
       return result.snapshot;
     },
-    async reconcileTerminalSessionStopped(input) {
-      const parsed = TerminalSessionStoppedReconciliationSchema.parse(input);
+    async reconcileTerminalTabStopped(input) {
+      const parsed = TerminalTabStoppedReconciliationSchema.parse(input);
       if (!stoppedRuntimeStatus(parsed.runtimeStatus)) {
         return [];
       }
@@ -1795,7 +1798,7 @@ export function createCodingAgentThreadStore(
         const stopKey = {
           ownerId: parsed.ownerId,
           workspaceSessionId: parsed.workspaceSessionId,
-          terminalSessionId: parsed.terminalSessionId,
+          terminalRef: parsed.terminalRef,
         };
         const threadsForTerminal = state.threads.filter((thread) => terminalStopMatchesThread(stopKey, thread));
         const matchingThreads = threadsForTerminal.filter(activeThread);
@@ -1808,7 +1811,8 @@ export function createCodingAgentThreadStore(
                   !(
                     stop.ownerId === parsed.ownerId &&
                     stop.workspaceSessionId === parsed.workspaceSessionId &&
-                    stop.terminalSessionId === parsed.terminalSessionId
+                    stop.terminalRef.workspaceId === parsed.terminalRef.workspaceId &&
+                    stop.terminalRef.tabId === parsed.terminalRef.tabId
                   )
                 ),
               },
@@ -1823,7 +1827,7 @@ export function createCodingAgentThreadStore(
             pendingTerminalStops: appendPendingTerminalStop(state.pendingTerminalStops, {
               ownerId: parsed.ownerId,
               workspaceSessionId: parsed.workspaceSessionId,
-              terminalSessionId: parsed.terminalSessionId,
+              terminalRef: parsed.terminalRef,
               runtimeStatus,
               occurredAt: now().toISOString(),
             }),
@@ -1861,7 +1865,8 @@ export function createCodingAgentThreadStore(
             !(
               stop.ownerId === parsed.ownerId &&
               stop.workspaceSessionId === parsed.workspaceSessionId &&
-              stop.terminalSessionId === parsed.terminalSessionId
+              stop.terminalRef.workspaceId === parsed.terminalRef.workspaceId &&
+              stop.terminalRef.tabId === parsed.terminalRef.tabId
             )
           ),
         };
