@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PINNED_APPS,
-  TERMINAL_MIN_WINDOW_HEIGHT,
-  TERMINAL_MIN_WINDOW_WIDTH,
   isBuiltInAppPath,
   isRestorableBuiltInAppPath,
   isRetiredBuiltInAppPath,
@@ -43,8 +41,8 @@ describe("built-in app helpers", () => {
     })).toMatchObject({
       path: "__terminal__",
       title: "Terminal",
-      width: TERMINAL_MIN_WINDOW_WIDTH,
-      height: TERMINAL_MIN_WINDOW_HEIGHT,
+      width: 800,
+      height: 600,
     });
   });
 

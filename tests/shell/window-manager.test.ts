@@ -147,14 +147,41 @@ describe("Window Manager Store", () => {
     it("updates window position", () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;
-      useWindowManager.getState().moveWindow(winId, 200, 300);
+      useWindowManager.getState().moveWindow(winId, 200, 100);
       const win = useWindowManager.getState().windows[0];
       expect(win.x).toBe(200);
-      expect(win.y).toBe(300);
+      expect(win.y).toBe(100);
     });
   });
 
+  it("keeps a partly offscreen placement when restoring a desktop layout", () => {
+    const bounds = { x: -12, y: -8, width: 640, height: 480 };
+    useWindowManager.getState().loadLayout([{ path: "apps/notes.html", title: "Notes", state: "open", ...bounds }]);
+    expect(useWindowManager.getState().windows[0]).toMatchObject(bounds);
+    useWindowManager.getState().reconcileWindowsToViewport();
+    expect(useWindowManager.getState().windows[0]).toMatchObject(bounds);
+  });
+
   describe("resizeWindow", () => {
+    it("allows a terminal to shrink below its launch size and restores that size", () => {
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      const winId = useWindowManager.getState().windows[0].id;
+      useWindowManager.getState().resizeWindow(winId, 640, 400, { x: 100, y: 80 });
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 100, y: 80, width: 640, height: 400 });
+      useWindowManager.getState().closeWindow(winId);
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ width: 640, height: 400 });
+    });
+    it("updates position and dimensions in one store notification", () => {
+      useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
+      const changed = vi.fn();
+      const unsubscribe = useWindowManager.subscribe(changed);
+      const id = useWindowManager.getState().windows[0].id;
+      useWindowManager.getState().resizeWindow(id, 500, 300, { x: 60, y: 40 });
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 60, y: 40, width: 500, height: 300 });
+      unsubscribe();
+    });
     it("updates window dimensions respecting minimums", () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;
@@ -194,10 +221,10 @@ describe("Window Manager Store", () => {
       useWindowManager.getState().reconcileWindowsToViewport();
 
       expect(useWindowManager.getState().windows[0]).toMatchObject({
-        x: 20,
-        y: 20,
-        width: 760,
-        height: 422,
+        x: -32,
+        y: -16,
+        width: 864,
+        height: 510,
       });
     });
 
@@ -219,12 +246,12 @@ describe("Window Manager Store", () => {
 
       const windowRecord = useWindowManager.getState().windows[0];
       expect(windowRecord).toMatchObject({
-        x: 20,
-        y: 20,
+        x: 40,
+        y: -16,
         width: 600,
-        height: 172,
+        height: 260,
       });
-      expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(230);
+      expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(window.innerHeight + 32);
     });
 
     it("leaves spatial Canvas windows unchanged", () => {
@@ -474,7 +501,7 @@ describe("Window Manager Store", () => {
       expect(closedPaths.has("apps/closed.html")).toBe(true);
     });
 
-    it("recenters restored wide dev-mode windows so their side margins stay symmetric", () => {
+    it("preserves user placement of restored wide windows without forcing symmetric margins", () => {
       const width = Math.round(window.innerWidth * 0.9);
       const saved: LayoutWindow[] = [
         {
@@ -491,8 +518,8 @@ describe("Window Manager Store", () => {
       useWindowManager.getState().loadLayout(saved);
 
       const [restored] = useWindowManager.getState().windows;
-      expect(restored.x).toBe(Math.round((window.innerWidth - width) / 2));
-      expect(window.innerWidth - (restored.x + restored.width)).toBe(restored.x);
+      expect(restored.x).toBe(85);
+      expect(restored.width).toBe(width);
       expect(restored.y).toBe(80);
     });
 
@@ -516,13 +543,13 @@ describe("Window Manager Store", () => {
 
       const [restored] = useWindowManager.getState().windows;
       expect(restored).toMatchObject({
-        x: 20,
-        y: 20,
-        width: 860,
-        height: 522,
+        x: -32,
+        y: -16,
+        width: 964,
+        height: 610,
       });
-      expect(restored.x + restored.width).toBeLessThanOrEqual(window.innerWidth - 20);
-      expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight - 20);
+      expect(restored.x + restored.width).toBeLessThanOrEqual(window.innerWidth + 32);
+      expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight + 32);
     });
 
     it("shrinks a restored terminal below its preferred minimum on narrow desktops", () => {
@@ -541,10 +568,10 @@ describe("Window Manager Store", () => {
       }]);
 
       expect(useWindowManager.getState().windows[0]).toMatchObject({
-        x: 20,
-        y: 20,
-        width: 860,
-        height: 522,
+        x: -32,
+        y: -16,
+        width: 964,
+        height: 610,
       });
     });
 
@@ -565,10 +592,10 @@ describe("Window Manager Store", () => {
       useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
 
       expect(useWindowManager.getState().windows[0]).toMatchObject({
-        x: 20,
-        y: 20,
-        width: 860,
-        height: 522,
+        x: -32,
+        y: -16,
+        width: 964,
+        height: 610,
       });
     });
 

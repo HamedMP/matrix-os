@@ -100,8 +100,6 @@ const GATEWAY_URL = getGatewayUrl();
 // and destabilize every memo/callback that depends on `pinnedApps`. Treated as
 // read-only by convention; consumers always build new arrays rather than mutate.
 const EMPTY_PINNED_APPS: string[] = [];
-const MIN_WIDTH = 320;
-const MIN_HEIGHT = 200;
 
 interface DesktopProps {
   launchAppPath?: string | null;
@@ -120,7 +118,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
   const wmFocusWindow = useWindowManager((s) => s.focusWindow);
   const wmMoveWindow = useWindowManager((s) => s.moveWindow);
-  const wmResizeWindow = useWindowManager((s) => s.resizeWindow);
   const wmReconcileWindowsToViewport = useWindowManager((s) => s.reconcileWindowsToViewport);
   const wmGetWindow = useWindowManager((s) => s.getWindow);
   const wmSetWindows = useWindowManager((s) => s.setWindows);
@@ -240,13 +237,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     origY: number;
   } | null>(null);
 
-  const resizeRef = useRef<{
-    id: string;
-    startX: number;
-    startY: number;
-    origW: number;
-    origH: number;
-  } | null>(null);
+  const resizeRef = useRef<true | null>(null);
   const viewportReconcilePendingRef = useRef(false);
 
   useEffect(() => {
@@ -725,35 +716,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     setInteracting(hasActiveWindowInteraction(dragRef.current, resizeRef.current));
   };
 
-  const onResizeStart = (id: string, e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const win = wmGetWindow(id);
-    if (!win) return;
-    resizeRef.current = {
-      id,
-      startX: e.clientX,
-      startY: e.clientY,
-      origW: win.width,
-      origH: win.height,
-    };
-    setInteracting(true);
-    wmFocusWindow(id);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  };
-
-  const onResizeMove = (e: React.PointerEvent) => {
-    if (!resizeRef.current) return;
-    const { id, startX, startY, origW, origH } = resizeRef.current;
-    wmResizeWindow(
-      id,
-      Math.max(MIN_WIDTH, origW + (e.clientX - startX)),
-      Math.max(MIN_HEIGHT, origH + (e.clientY - startY)),
-    );
-  };
-
-  const onResizeEnd = () => {
-    resizeRef.current = null;
+  const onResizeInteractionChange = (active: boolean) => {
+    resizeRef.current = active ? true : null;
     setInteracting(hasActiveWindowInteraction(dragRef.current, resizeRef.current));
   };
 
@@ -1577,9 +1541,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               onDragStart={onDragStart}
               onFocusWindow={wmFocusWindow}
               onOpenWindow={openWindow}
-              onResizeEnd={onResizeEnd}
-              onResizeMove={onResizeMove}
-              onResizeStart={onResizeStart}
+              onResizeInteractionChange={onResizeInteractionChange}
               onToggleFullscreen={wmToggleFullscreen}
               topInset={desktopMode === "desktop" ? 38 : 0}
             />

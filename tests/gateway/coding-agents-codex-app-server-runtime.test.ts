@@ -11,11 +11,14 @@ function visibleTranscript(transcript: string): string {
   return transcript.trim().split("\n").filter((line) => JSON.parse(line).type !== "thread.started").join("\n");
 }
 
-async function waitForTranscript(path: string, pattern: RegExp): Promise<string> {
+async function waitForTranscript(
+  path: string,
+  condition: RegExp | ((transcript: string) => boolean),
+): Promise<string> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const value = await readFile(path, "utf8").catch(() => "");
-    if (pattern.test(value)) return value;
+    if (typeof condition === "function" ? condition(value) : condition.test(value)) return value;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("Timed out waiting for Codex transcript");
@@ -633,7 +636,10 @@ describe("Codex app-server control runtime", () => {
     child.stdin?.write(`matrix-turn-v2:${secondTurn}\n`);
 
     try {
-      await waitForTranscript(eventPath, /answer-2/);
+      const transcript = await waitForTranscript(
+        eventPath,
+        (value) => (value.match(/"type":"turn.completed"/g) ?? []).length >= 2,
+      );
       const requests = (await readFile(requestsPath, "utf8"))
         .trim().split("\n").map((line) => JSON.parse(line));
       expect(requests).toHaveLength(2);
@@ -651,7 +657,6 @@ describe("Codex app-server control runtime", () => {
         effort: "high",
         serviceTier: "standard",
       });
-      const transcript = await readFile(eventPath, "utf8");
       expect(transcript.match(/"type":"turn.completed"/g)).toHaveLength(2);
       expect(transcript).toContain("answer-1");
       expect(transcript).toContain("answer-2");
