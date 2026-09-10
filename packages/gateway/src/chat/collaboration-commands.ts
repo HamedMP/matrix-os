@@ -72,6 +72,14 @@ export class CollaborationChatCommands {
       approvalId: string;
       decision: "approve" | "approve_for_session" | "decline" | "cancel";
     }): Promise<"completed" | "failed">;
+    submitCancellation?(input: {
+      scopeId: string;
+      chatId: string;
+      runId: string;
+      requestId: string;
+      clientRequestId: string;
+      actorId: string;
+    }): Promise<void>;
   }) {
     this.now = options.now ?? (() => new Date());
   }
@@ -79,33 +87,78 @@ export class CollaborationChatCommands {
   async cancel(input: CommandIdentity & { requestId: string }): Promise<CollaborationChatCommandResult> {
     const identity = parseIdentity(input);
     const requestId = CanonicalChatQueuedTurnIdSchema.parse(input.requestId);
-    return this.options.db.transaction().execute(async (trx) => {
+    const reserved = await this.options.db.transaction().execute(async (trx) => {
       const authorized = await authorizeCommand(trx, identity, "cancel", requestId, this.now());
       const replay = await replayCommand(trx, identity, "cancel");
-      if (replay) return replay;
+      if (replay) return { result: replay, dispatch: false as const };
       requireExpectedRevision(identity, authorized.chatRevision);
       const request = await lockRequest(trx, authorized.chatId, requestId);
       requireRequestControl(authorized.role, identity.actorId, request.requesting_actor_id);
-      if (request.status !== "queued") throw new CollaborationChatCommandError("conflict");
-      await trx.updateTable("chat_queued_turns").set({
-        status: "cancelled",
-        cancelled_at: authorized.at,
-        updated_at: authorized.at,
-      }).where("id", "=", request.id).where("status", "=", "queued").executeTakeFirstOrThrow();
-      await compactQueue(trx, authorized.chatId, Number(request.position), authorized.at);
+      if (request.status === "queued") {
+        await trx.updateTable("chat_queued_turns").set({
+          status: "cancelled",
+          cancelled_at: authorized.at,
+          updated_at: authorized.at,
+        }).where("id", "=", request.id).where("status", "=", "queued").executeTakeFirstOrThrow();
+        await compactQueue(trx, authorized.chatId, Number(request.position), authorized.at);
+        const revision = await advanceChat(trx, authorized.chatId, authorized.chatRevision, authorized.at);
+        const result = resultForRequest(request, "cancel", "completed", {
+          status: "cancelled",
+          updated_at: authorized.at,
+        });
+        await insertCommand(trx, identity, authorized, {
+          kind: "cancel", targetRequestId: requestId, state: "completed", result,
+        });
+        await appendEvent(trx, authorized, revision, "chat.ai_request.cancelled", {
+          requestId, actorId: identity.actorId, state: "cancelled",
+        });
+        return { result, dispatch: false as const };
+      }
+      if (request.status !== "claimed" || !request.claimed_run_id || !this.options.submitCancellation) {
+        throw new CollaborationChatCommandError("conflict");
+      }
+      const result: CollaborationChatCommandResult = {
+        id: randomUUID(),
+        kind: "cancel",
+        state: "accepted",
+        request: sharedRequest(request),
+      };
       const revision = await advanceChat(trx, authorized.chatId, authorized.chatRevision, authorized.at);
-      const result = resultForRequest(request, "cancel", "completed", {
-        status: "cancelled",
-        updated_at: authorized.at,
-      });
       await insertCommand(trx, identity, authorized, {
-        kind: "cancel", targetRequestId: requestId, state: "completed", result,
+        id: result.id,
+        kind: "cancel",
+        targetRequestId: requestId,
+        runId: request.claimed_run_id,
+        state: "accepted",
+        result,
       });
-      await appendEvent(trx, authorized, revision, "chat.ai_request.cancelled", {
-        requestId, actorId: identity.actorId, state: "cancelled",
+      await appendEvent(trx, authorized, revision, "chat.ai_request.cancellation_requested", {
+        requestId, runId: request.claimed_run_id, actorId: identity.actorId, state: "accepted",
       });
-      return result;
+      return {
+        result,
+        dispatch: true as const,
+        chatId: authorized.chatId,
+        runId: request.claimed_run_id,
+      };
     });
+    if (!reserved.dispatch) return reserved.result;
+    try {
+      await this.options.submitCancellation!({
+        scopeId: identity.scopeId,
+        chatId: reserved.chatId,
+        runId: reserved.runId,
+        requestId,
+        clientRequestId: identity.clientRequestId,
+        actorId: identity.actorId,
+      });
+    } catch (error: unknown) {
+      console.warn("[chat/collaboration-commands] cancellation outcome unknown",
+        error instanceof Error ? error.name : "UnknownError");
+      await this.finishExternalCommand(reserved.result.id, "reconciling");
+      throw new CollaborationChatCommandError("unavailable");
+    }
+    return this.finishExternalCommand(reserved.result.id, "completed");
   }
 
   async retry(input: CommandIdentity & {

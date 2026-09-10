@@ -716,14 +716,15 @@ runcmd:
     matrix_uid="$(id -u matrix)"
     runuser -u matrix -- env HOME=/home/matrix/home XDG_RUNTIME_DIR="/run/user/${matrix_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" systemctl --user daemon-reload
     systemctl disable matrix-openclaw-gateway.service || true
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
+    systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     if [ -f /etc/systemd/system/matrix-integrations-agents.service ] && [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
       systemctl enable matrix-integrations-agents.service
     fi
     if [ -f /etc/systemd/system/matrix-terminal-runtime.service ]; then
       systemctl enable --now matrix-terminal-runtime.service
     fi
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
+    systemctl start matrix-restore.service matrix-scope-runtime.service
+    systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
     if [ -f /etc/systemd/system/matrix-vps-registration.service ]; then
       systemctl enable --now matrix-vps-registration.service
     fi

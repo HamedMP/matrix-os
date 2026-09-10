@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
+import {
+  CanonicalChatOrchestrator,
+  SharedChatRunPreparationError,
+} from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
@@ -102,6 +105,7 @@ describe("canonical shared Chat orchestration", () => {
       .select(["status", "outcome"])
       .where("chat_id", "=", collaborationIds.chat)
       .execute();
+    const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
     const events = await fixture.db.selectFrom("collaboration_events")
       .select("event_type")
       .where("scope_id", "=", collaborationIds.scope)
@@ -114,6 +118,7 @@ describe("canonical shared Chat orchestration", () => {
       { role: "assistant", parts: [{ type: "text", text: "Shared answer" }] },
     ]);
     expect(runs).toMatchObject([{ status: "completed", outcome: "completed" }]);
+    expect(requests).toMatchObject([{ state: "completed", runId: expect.any(String) }]);
     expect(events.map((event) => event.event_type)).toEqual([
       "chat.ai_request.accepted",
       "chat.ai_request.claimed",
@@ -125,6 +130,119 @@ describe("canonical shared Chat orchestration", () => {
     await expect(fixture.db.selectFrom("chat_outbox").selectAll()
       .where("chat_id", "=", collaborationIds.chat).execute()).resolves.toEqual([]);
   });
+
+  it("preserves an explicit unavailable request when the rollout fence changes after claim", async () => {
+    await enqueueSharedRequest("qturn_policy_changed");
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => { throw new Error("personal catalog must not be used"); } },
+      adapters: new CanonicalChatProviderRegistry([]),
+      now: () => new Date(now),
+    });
+
+    await orchestrator.dispatchNextSharedQueued(
+      owner,
+      collaborationIds.chat,
+      collaborationIds.scope,
+      () => { throw new SharedChatRunPreparationError("unavailable"); },
+    );
+
+    const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
+    expect(requests).toMatchObject([{ id: "qturn_policy_changed", state: "unavailable" }]);
+    await expect(fixture.db.selectFrom("chat_runs").select("outcome")
+      .where("chat_id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toEqual({ outcome: "failed" });
+  });
+
+  it("marks an accepted shared request interrupted after gateway restart without replaying it", async () => {
+    await enqueueSharedRequest("qturn_interrupted_restart");
+    const claimed = await repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_interrupted_restart",
+      runId: "run_interrupted_restart",
+      messageId: "msg_interrupted_restart",
+      claimedAt: now,
+    });
+    expect(claimed?.run.id).toBe("run_interrupted_restart");
+    const sharedFence = Object.assign(new Error("Shared execution is fenced"), {
+      code: "shared_execution_disabled",
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => { throw new Error("personal catalog must not be used"); } },
+      adapters: new CanonicalChatProviderRegistry([]),
+      collaborationGuard: { assertPersonalExecutionAllowed: async () => { throw sharedFence; } },
+      now: () => new Date(now),
+    });
+
+    await expect(orchestrator.reconcileActiveRuns(owner)).resolves.toBe(1);
+    const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
+    expect(requests).toMatchObject([{ id: "qturn_interrupted_restart", state: "interrupted" }]);
+  });
+
+  it("preserves an interrupted request when isolated dispatch ends without a known completion", async () => {
+    await enqueueSharedRequest("qturn_interrupted_dispatch");
+    const client = {
+      capability: () => ({
+        available: true as const,
+        profileId: "scope-runtime-chat-v1",
+        executionGeneration: "7",
+        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai" as const] }],
+      }),
+      createRuntime: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", state: "running" as const })),
+      runChat: vi.fn(async () => { throw new Error("transport interrupted"); }),
+      stopRuntime: vi.fn(async () => ({ state: "stopped" })),
+    };
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => { throw new Error("personal catalog must not be used"); } },
+      adapters: new CanonicalChatProviderRegistry([]),
+      now: () => new Date(now),
+    });
+
+    await orchestrator.dispatchNextSharedQueued(
+      owner,
+      collaborationIds.chat,
+      collaborationIds.scope,
+      (execution) => createScopeRuntimeChatProviderAdapter({
+        client,
+        scopeId: execution.scopeId,
+        executionGeneration: String(execution.executionGeneration),
+        adapterId: "claude-code",
+        harnessVersion: "2.1.240",
+      }),
+    );
+    await orchestrator.drain();
+
+    const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
+    expect(requests).toMatchObject([{ id: "qturn_interrupted_dispatch", state: "interrupted" }]);
+    expect(client.runChat).toHaveBeenCalledTimes(1);
+  });
+
+  async function enqueueSharedRequest(queuedTurnId: string): Promise<void> {
+    await repository.enqueueSharedQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      scopeId: collaborationIds.scope,
+      queuedTurnId,
+      clientRequestId: crypto.randomUUID(),
+      requestingActorId: collaborationActors.editor,
+      acceptedAuthEpoch: 1,
+      payloadHash: "b".repeat(64),
+      expectedRevision: 1,
+      parts: [{ type: "text", text: "Shared prompt" }],
+      driverKind: "claude_code",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: {
+        revision: "scope-runtime-chat-v1-1", rootChat: true, attachments: [], resources: [], tools: [],
+        approvals: false, userInput: false, resume: false, cancellation: true, steering: "none",
+        worktrees: "none", interactionModes: ["default"], permissionModes: ["supervised"],
+      },
+      acceptedAt: now,
+    });
+  }
 
   async function seedSharedChat(): Promise<void> {
     await fixture.db.insertInto("chats").values({
