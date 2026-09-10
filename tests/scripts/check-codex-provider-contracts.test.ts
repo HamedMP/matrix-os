@@ -15,16 +15,16 @@ const scriptPath = fileURLToPath(
 );
 
 describe("Codex provider contract checker", () => {
-  it("trusts the reviewed Codex 0.153.4 provider schemas", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.153.4");
-    expect(contract.verifiedVersions["0.153.4"]).toEqual({
+  it("trusts the reviewed Codex 0.154.0 provider schemas", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.154.0");
+    expect(contract.verifiedVersions["0.154.0"]).toEqual({
       schemaSha256: "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32",
     });
-    expect(appServerContract.latestVerifiedVersion).toBe("0.153.4");
-    expect(appServerContract.verifiedVersions["0.153.4"]).toEqual({
+    expect(appServerContract.latestVerifiedVersion).toBe("0.154.0");
+    expect(appServerContract.verifiedVersions["0.154.0"]).toEqual({
       schemaSha256ByTarget: {
-        "darwin-arm64": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
-        "linux-x64": "b06f77062369d481a59cc70720c12b89cb9dd49c385863923262102d3ad6c978",
+        "darwin-arm64": "24df528acec2952e6b96c1c2b061f98e60177d059e12c90cf318621380c9de9e",
+        "linux-x64": "24df528acec2952e6b96c1c2b061f98e60177d059e12c90cf318621380c9de9e",
       },
     });
     expect(appServerContract.requiredServerProtocolSchemaDigests[

@@ -145,10 +145,17 @@ it.each([
   try {
     await expect.poll(() => lines(runtime.responses)).toEqual([{ id: 42, result: { action: "cancel", content: null } }]);
     expect((await lines(runtime.events)).some(e => e.type === "matrix.codex.approval.requested")).toBe(false);
+    expect(await readFile(runtime.events, "utf8")).not.toContain("private-device-challenge");
   } finally { await runtime.close(); }
 });
 
 it.each([
+  // Codex 0.154.0 adds device verification. Matrix must not grant it or
+  // publish the challenge while that dedicated verification UI is unsupported.
+  [{ id: 42, method: "mcpServer/elicitation/request", params: {
+    mode: "openai/userVerification", title: "Verify", description: "Confirm on device",
+    challenge: "private-device-challenge",
+  } }, -32601],
   [{ ...elicitation, params: { ...elicitation.params, turnId: "old-turn" } }, -32000],
   [{ ...elicitation, params: { ...elicitation.params, threadId: "foreign-thread" } }, -32000],
   [{ ...elicitation, method: "item/unknown/request" }, -32601],
@@ -158,5 +165,6 @@ it.each([
   try {
     await expect.poll(() => lines(runtime.responses)).toEqual([{ id: 42, error: { code, message: "This request is unavailable." } }]);
     expect((await lines(runtime.events)).some(e => e.type === "matrix.codex.approval.requested")).toBe(false);
+    expect(await readFile(runtime.events, "utf8")).not.toContain("private-device-challenge");
   } finally { await runtime.close(); }
 });
