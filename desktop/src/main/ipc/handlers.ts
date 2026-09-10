@@ -208,8 +208,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     await ctx.auth.signOut();
     return { ok: true };
   });
-  handle("auth:session-expired", async () => {
-    await ctx.auth.expireSession();
+  handle("auth:session-expired", async ({ authGeneration }) => {
+    await ctx.auth.revalidateSession(authGeneration);
     return { ok: true };
   });
   handle("support:get-identity", () => ctx.fetchSupportIdentity());

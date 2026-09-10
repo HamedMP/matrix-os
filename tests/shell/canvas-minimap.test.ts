@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useCanvasGroups } from "../../shell/src/stores/canvas-groups.js";
 
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
+
+const initialDesktopMode = useDesktopMode.getState();
+afterEach(() => useDesktopMode.setState(initialDesktopMode));
+
 function resetStores() {
+  // Web Canvas geometry is unbounded; Desktop constrains windows to its viewport.
+  useDesktopMode.setState({ mode: "canvas" });
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
   useCanvasGroups.setState({ groups: [] });
   useWindowManager.setState({

@@ -622,6 +622,10 @@ export function createApp(deps: {
   }
   if (deps.customMcpRoutes) {
     app.route('/api/mcp-servers', deps.customMcpRoutes);
+  } else {
+    // Feature unavailability must never fall through to admin authentication.
+    app.all('/api/mcp-servers', (c) => c.json({ error: 'MCP servers unavailable' }, 503));
+    app.all('/api/mcp-servers/*', (c) => c.json({ error: 'MCP servers unavailable' }, 503));
   }
   if (deps.internalIntegrationRoutes) {
     const internalIntegrationApp = new Hono<{
@@ -685,6 +689,9 @@ export function createApp(deps: {
     });
     internalCustomMcpApp.route('/', deps.internalCustomMcpRoutes);
     app.route('/internal/containers/:handle/mcp-servers', internalCustomMcpApp);
+  } else {
+    app.all('/internal/containers/:handle/mcp-servers', (c) => c.json({ error: 'MCP servers unavailable' }, 503));
+    app.all('/internal/containers/:handle/mcp-servers/*', (c) => c.json({ error: 'MCP servers unavailable' }, 503));
   }
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);

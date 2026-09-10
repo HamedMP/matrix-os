@@ -18,8 +18,8 @@ export interface ApiClientOptions {
   baseUrl: string;
   getRuntimeSlot: () => string;
   fetchFn?: FetchFn;
-  // Invoked once when the gateway rejects the request with 401 (token expired
-  // or revoked), so the app can drop the stale session and prompt re-auth.
+  // Reports a rejected request so trusted main can verify session validity.
+  // Feature-level 401 responses alone are not evidence of an expired login.
   onUnauthorized?: () => void;
 }
 

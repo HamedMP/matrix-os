@@ -32,6 +32,22 @@ afterEach(() => {
 });
 
 describe("connection event wiring", () => {
+  it("reports the originating generation when an old MCP request fails after a refresh", async () => {
+    let generation = 1;
+    const invoke = vi.fn(async (channel: string) => channel === "auth:status" ? {
+      signedIn: true, handle: "neo", userId: "user-1", platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: generation,
+    } : { ok: true });
+    window.operator = { invoke, on: vi.fn() };
+    await useConnection.getState().refresh();
+    const oldApi = useConnection.getState().api!;
+    generation = 2;
+    await useConnection.getState().refresh();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 401 }));
+    await expect(oldApi.get("/api/mcp-servers")).rejects.toThrow();
+    expect(invoke).toHaveBeenCalledWith("auth:session-expired", { authGeneration: 1 });
+    expect(useConnection.getState().status).toBe("signed-in");
+  });
+
   it("flushes dirty native Notes before replacing the selected runtime credential", async () => {
     const order: string[] = [];
     const unregister = registerActiveNotesController({
