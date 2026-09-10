@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import {
+  SpeechOperationRateLimitError,
   createSpeechOperationsRepository,
   type SpeechOperationsRepository,
 } from "../../packages/platform/src/speech/operations.js";
@@ -14,6 +15,7 @@ import {
   type PlatformSpeechPolicy,
   type SpeechFundingPort,
 } from "../../packages/platform/src/speech/service.js";
+import { SpeechFundingError } from "../../packages/platform/src/speech/funding.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const now = new Date("2026-09-10T00:00:00.000Z");
@@ -79,6 +81,7 @@ describe("platform speech service", () => {
     const operations = options.operations ?? createSpeechOperationsRepository({ db, now: () => now });
     const funding = options.funding ?? {
       reserve: vi.fn(async () => ({ reservationId: "funding_1", reservedMicrousd: 120 })),
+      start: vi.fn(async () => undefined),
       settle: vi.fn(async () => undefined),
       release: vi.fn(async () => undefined),
     };
@@ -108,6 +111,7 @@ describe("platform speech service", () => {
       signal: new AbortController().signal,
     })).resolves.toMatchObject({ outcome: "transcript", text: "hello world", audioDurationMs: 1_000 });
     expect(funding.reserve).toHaveBeenCalledTimes(1);
+    expect(funding.start).toHaveBeenCalledTimes(1);
     expect(adapter.transcribe).toHaveBeenCalledTimes(1);
     expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
       mode: "exact",
@@ -117,6 +121,52 @@ describe("platform speech service", () => {
       executionState: "succeeded",
       outcomeCode: "transcript",
     });
+  });
+
+  it.each([
+    ["allowance_exhausted", "allowance_exhausted"],
+    ["unavailable", "unavailable"],
+  ] as const)("maps funding %s without exposing wallet internals", async (fundingCode, serviceCode) => {
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => { throw new SpeechFundingError(fundingCode); }),
+      start: vi.fn(async () => undefined),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const { speech, adapter } = service({ funding });
+    const error = await speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SpeechServiceError);
+    expect(error).toMatchObject({ code: serviceCode });
+    expect(adapter.transcribe).not.toHaveBeenCalled();
+    expect(JSON.stringify(error)).not.toMatch(/credit|balance|reservation|machine_123/i);
+  });
+
+  it("maps durable admission pressure to the safe rate-limit contract", async () => {
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const operations: SpeechOperationsRepository = {
+      ...repository,
+      admit: vi.fn(async () => { throw new SpeechOperationRateLimitError(); }),
+    };
+    const { speech, funding, adapter } = service({ operations });
+    const error = await speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SpeechServiceError);
+    expect(error).toMatchObject({ code: "rate_limited" });
+    expect(funding.reserve).not.toHaveBeenCalled();
+    expect(adapter.transcribe).not.toHaveBeenCalled();
   });
 
   it("advertises only transcript limits accepted by the response contract", () => {
@@ -591,6 +641,7 @@ describe("platform speech service", () => {
     };
     const funding: SpeechFundingPort = {
       reserve: vi.fn(async () => ({ reservationId: "funding_1", reservedMicrousd: 120 })),
+      start: vi.fn(async () => undefined),
       settle: vi.fn(async () => {
         settleEntered.resolve();
         await allowSettlement.promise;

@@ -142,7 +142,7 @@ function fundingSummary(
   });
 }
 
-async function recordUsageFunding(
+export async function recordUsageFunding(
   executor: PlatformDB["executor"],
   reservation: {
     reservation_id: string;

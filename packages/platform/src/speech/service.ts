@@ -17,8 +17,10 @@ import {
 import type { PlatformDatabase } from "../db.js";
 import { SpeechAdapterError, type FileTranscriptionAdapter } from "./adapters/openai.js";
 import { inspectSpeechWav, SpeechMediaError } from "./media.js";
+import { SpeechFundingError } from "./funding.js";
 import {
   SpeechOperationConflictError,
+  SpeechOperationRateLimitError,
   type SpeechOperationIdentity,
   type SpeechOperationRecord,
   type SpeechOperationsRepository,
@@ -56,6 +58,7 @@ export interface SpeechFundingPort {
       maximumCostMicrousd: number;
     },
   ): Promise<{ reservationId: string; reservedMicrousd: number }>;
+  start(trx: Transaction<PlatformDatabase>, reservationId: string): Promise<void>;
   settle(
     trx: Transaction<PlatformDatabase>,
     reservationId: string,
@@ -281,6 +284,8 @@ export function createPlatformSpeechService(options: {
         }));
       } catch (error: unknown) {
         if (error instanceof SpeechOperationConflictError) throw new SpeechServiceError("request_conflict");
+        if (error instanceof SpeechOperationRateLimitError) throw new SpeechServiceError("rate_limited");
+        if (error instanceof SpeechFundingError) throw new SpeechServiceError(error.code);
         throw error;
       }
       if (admitted.cancellationRequested) throw new SpeechServiceError("cancelled");
@@ -312,7 +317,11 @@ export function createPlatformSpeechService(options: {
       };
       signal.addEventListener("abort", requestCancellation, { once: true });
       try {
-        const claim = await options.operations.claimDispatch(input.identity, parsedRequestId.data);
+        const claim = await options.operations.claimDispatch(
+          input.identity,
+          parsedRequestId.data,
+          (trx, reservationId) => options.funding.start(trx, reservationId),
+        );
         const cancelledAfterClaim = await persistCancellationIfAborted(signal);
         if (!claim.claimed) {
           if (cancelledAfterClaim || claim.operation.cancellationRequested) {

@@ -1411,12 +1411,31 @@ async function migrateSchema(db: Executor): Promise<void> {
       owner_id TEXT NOT NULL,
       machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
       runtime_slot TEXT NOT NULL,
-      audience TEXT NOT NULL CHECK (audience = 'matrix-funded-relay'),
-      scope TEXT NOT NULL CHECK (scope = 'ai:invoke'),
+      audience TEXT NOT NULL CHECK (audience IN ('matrix-funded-relay', 'matrix-platform-speech')),
+      scope TEXT NOT NULL CHECK (scope IN ('ai:invoke', 'speech:transcribe')),
       issued_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       revoked_at TEXT
     )
+  `.execute(db);
+  await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_audience_check`.execute(db);
+  await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_scope_check`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE ai_runtime_credentials
+          ADD CONSTRAINT ai_runtime_credentials_audience_v2_check
+          CHECK (audience IN ('matrix-funded-relay', 'matrix-platform-speech'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE ai_runtime_credentials
+          ADD CONSTRAINT ai_runtime_credentials_scope_v2_check
+          CHECK (scope IN ('ai:invoke', 'speech:transcribe'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+    END $$
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_runtime_credentials_machine_issued ON ai_runtime_credentials(machine_id, issued_at DESC)`.execute(db);
   await sql`
