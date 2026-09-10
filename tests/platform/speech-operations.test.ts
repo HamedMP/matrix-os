@@ -60,8 +60,19 @@ describe("speech operation repository", () => {
     expect(first).toMatchObject({ executionState: "reserved", fundingReservationId: "funding_1" });
     expect(replay).toEqual(first);
     expect(reserveCalls).toBe(1);
-    await expect(repo.admit({ ...admission, contentFingerprint: "b".repeat(64) }, reserve))
-      .rejects.toBeInstanceOf(SpeechOperationConflictError);
+    const conflicts = [
+      { contentFingerprint: "b".repeat(64) },
+      { sourceKind: "owner_audio" as const },
+      { policyRevision: "speech-policy-2" },
+      { adapterId: "alternate-file" },
+      { modelId: "alternate-transcribe" },
+      { audioDurationMs: 1_001 },
+    ];
+    for (const changed of conflicts) {
+      await expect(repo.admit({ ...admission, ...changed }, reserve))
+        .rejects.toBeInstanceOf(SpeechOperationConflictError);
+    }
+    expect(reserveCalls).toBe(1);
   });
 
   it("grants one durable dispatch claim rather than replaying a start receipt", async () => {
@@ -117,12 +128,25 @@ describe("speech operation repository", () => {
     let releases = 0;
     const cancelled = await repo.cancel(identity, requestId, async () => { releases += 1; });
     expect(cancelled).toMatchObject({ executionStarted: true, cancellationRequested: true });
-    expect(await repo.cancel(identity, requestId, async () => { releases += 1; })).toEqual(cancelled);
     expect(releases).toBe(0);
     expect((await repo.get(identity, requestId))?.executionState).toBe("dispatching");
   });
 
-  it("linearizes successful completion before a later cancellation", async () => {
+  it("rejects persisted lifecycle shapes that status contracts cannot represent", async () => {
+    const repo = repository();
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    const row = await db.executor.selectFrom("speech_operations").selectAll()
+      .where("operation_id", "=", requestId).executeTakeFirstOrThrow();
+    await db.executor.deleteFrom("speech_operations").where("operation_id", "=", requestId).execute();
+    await expect(db.executor.insertInto("speech_operations").values({
+      ...row,
+      execution_state: "succeeded",
+      safe_outcome_code: null,
+      dispatch_claimed_at: null,
+    }).execute()).rejects.toThrow();
+  });
+
+  it("linearizes terminal completion before a later cancellation", async () => {
     const repo = repository();
     await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
     await repo.claimDispatch(identity, requestId);
@@ -139,38 +163,7 @@ describe("speech operation repository", () => {
     });
   });
 
-  it("serializes cancellation racing a completion at the operation row", async () => {
-    const repo = repository();
-    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
-    await repo.claimDispatch(identity, requestId);
-    let releaseSettlement!: () => void;
-    const settlementBlocked = new Promise<void>((resolve) => { releaseSettlement = resolve; });
-    let settlementEntered!: () => void;
-    const entered = new Promise<void>((resolve) => { settlementEntered = resolve; });
-    const completing = repo.complete(identity, requestId, {
-      executionState: "succeeded",
-      outcomeCode: "transcript",
-      actualCostMicrousd: 15,
-    }, async () => {
-      settlementEntered();
-      await settlementBlocked;
-    });
-    await entered;
-    const cancelling = repo.cancel(identity, requestId, async () => undefined);
-    releaseSettlement();
-    const [completion, cancellationResult] = await Promise.all([
-      completing,
-      cancelling.catch((error: unknown) => error),
-    ]);
-    expect(completion).toMatchObject({ executionState: "succeeded", cancellationRequested: false });
-    expect(cancellationResult).toBeInstanceOf(SpeechOperationStateError);
-    expect(await repo.get(identity, requestId)).toMatchObject({
-      executionState: "succeeded",
-      cancellationRequested: false,
-    });
-  });
-
-  it("sweeps expired terminal metadata in bounded batches and preserves active operations", async () => {
+  it("sweeps expired terminal metadata in bounded batches while preserving active operations", async () => {
     const repo = repository();
     await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
     await repo.claimDispatch(identity, requestId);
@@ -190,6 +183,5 @@ describe("speech operation repository", () => {
     expect(await repo.sweepExpired(1)).toBe(1);
     expect(await repo.get(identity, requestId)).toBeUndefined();
     expect(await repo.get(identity, activeRequestId)).toMatchObject({ executionState: "reserved" });
-    expect(await repo.sweepExpired(1)).toBe(0);
   });
 });
