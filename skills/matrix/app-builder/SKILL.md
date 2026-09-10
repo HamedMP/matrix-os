@@ -1,14 +1,14 @@
 ---
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.0.0
+version: 1.1.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
 metadata:
   agent:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
-    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app]
+    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate]
 ---
 
 # Matrix App Builder
@@ -24,15 +24,19 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite React SPAs by default. Use Matrix/Postgres bridge APIs for data instead of creating Next.js API routes.
 - Do not create Next.js, `.next/`, `app/` router files, `runtime: "node"`, `serve.start`, or `npm start` unless the user explicitly requests a server runtime or Next.js.
 - Do not create plain HTML apps unless the user explicitly asks for a plain HTML app.
-- Always create or update `matrix.json`.
+- Always create or update `matrix.json`. For apps built for the owner, include `listingTrust: "first_party"` and `scope: "personal"`; missing trust blocks launch even if the build succeeds. Never relabel downloaded/store/community apps to bypass policy.
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
 - Use injected Matrix theme variables and iframe-safe sizing. Custom apps should inherit the shell theme by default; add explicit app branding only when the user asks for it or the app has a clear domain reason.
-- For UI, ALWAYS load and follow `matrix-design-system` and `matrix-app-ui-patterns`. Key rules: inherit shell fonts through `--matrix-font-sans`/`--matrix-font-mono`, use Forest/Cream/Ember/Deep only as fallback palette values, gradient backgrounds (sand washes not flat), capsule buttons/inputs (50px radius), glass cards (22px radius), inline SVG or bundled local icons (never text characters or remote icon scripts), stable window-sized layouts, and stagger animations on mount. No exceptions.
+- For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover and read the installed `emil-design-eng` and `apple-design` SKILL.md files before designing; use `animate` for specific motion work. Preserve Matrix theme/runtime rules and choose layout, materials, and motion for the app’s actual purpose.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
 - Do not use browser `localStorage` as app persistence in the Matrix shell. Sandboxed iframes can throw `SecurityError`; use `window.MatrixOS.db` and keep local fallback paths test-only/no-op.
 - For default or first-party apps under `home/apps/**`, keep manifests deterministic: `runtime: "vite"`, `build.output: "dist"`, schema columns declared in `storage.tables`, and `icon` pointing to a committed asset in `home/system/icons/`.
+
+## Design workflow
+
+Before scaffolding, read the craft reference and installed design skills. Choose a concise design direction and primary user flow. Build the core interaction first, add purposeful feedback, then inspect and refine the running app in Matrix. Avoid a generic welcome hero, decorative statistic cards, repeated glass containers, and automatic staggered entrances. Record which skills and surfaces you actually checked.
 
 ## Standard Structure
 
@@ -64,6 +68,7 @@ Use this baseline and adjust the app name, description, category, icon, and stor
   "runtime": "vite",
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
+  "scope": "personal",
   "icon": "my-app",
   "category": "productivity",
   "build": {
@@ -209,10 +214,16 @@ Before reporting done:
 cd ~/apps/<slug>
 pnpm build
 test -f dist/index.html
-node -e 'const m=require("./matrix.json"); if (m.runtime !== "vite" || m.build?.output !== "dist") process.exit(1)'
+node <resolved-matrix-app-builder-skill-directory>/scripts/verify-app.mjs "$PWD"
 ```
 
-Then open the app in Matrix and check browser console for:
+Resolve the skill directory from the SKILL.md you loaded; the script ships beside it and needs no dependencies. Run it on the actual app directory, not the template. It verifies the owner-built Vite manifest and production entry; it never changes trust or proves a live login.
+
+### Launch and authentication
+
+Matrix supplies owner authentication. Do not build a separate login page or read/copy gateway credentials into the app. The native launcher obtains a short-lived token through `POST /api/apps/<slug>/session-token`; the launch is `/apps/<slug>/`. Missing or unknown `listingTrust` yields `403 install_blocked_by_policy`, not an expired login. An existing app you just built for the owner can have its missing metadata corrected after checking its origin; never silently promote an imported app. `401` means authentication, `403` policy, `409` scope/acknowledgment, `404` discovery, and `5xx` a server failure. Report failures accurately instead of recommending sign-in for all of them. Do not disable authentication, weaken policy, restart the VPS, or add a server to work around a launch failure.
+
+Then open the app from the Matrix launcher using the existing authenticated session. Verify app assets, icon, bridge operations, a save/reopen round trip, and the craft reference's visual/state checks. If browser access is unavailable, report launch and visual verification as pending rather than claiming the app works. Check browser console/network for:
 
 - `needs_build`
 - 404s for app bundle or icon paths

@@ -17,6 +17,7 @@ import {
 } from "../../shared/runtime-browser-url";
 import { EmbedManager, type Bounds } from "./embed-manager";
 import { LaunchTokenCache } from "./launch-token-cache";
+import { AppLaunchError, requestAppLaunchToken } from "./app-launch";
 import {
   HOSTED_SHELL_SESSION_REFRESH_RETRY_MS,
   computeHostedShellSessionRefreshDelay,
@@ -547,8 +548,8 @@ export class EmbedService {
         this.pendingActive.get(embedId) ?? true,
         () => this.pendingApps.has(embedId),
       );
-      if (!opened) {
-        if (this.pendingApps.has(embedId)) this.deps.emitState(embedId, "auth-required");
+      if (opened !== "loading") {
+        if (this.pendingApps.has(embedId)) this.deps.emitState(embedId, opened);
         return false;
       }
       this.pendingApps.delete(embedId);
@@ -820,9 +821,9 @@ export class EmbedService {
   ): Promise<OpenResult> {
     const embedId = randomUUID();
     const opened = await this.createAppEmbed(gatewayOrigin, slug, appIdentity, bounds, embedId, active);
-    if (!opened) {
+    if (opened !== "loading") {
       this.rememberPendingApp(embedId, { slug, appIdentity, bounds }, active);
-      return { embedId, state: "auth-required" };
+      return { embedId, state: opened };
     }
     return { embedId, state: "loading" };
   }
@@ -846,22 +847,28 @@ export class EmbedService {
     embedId: string,
     active = true,
     shouldAttach: () => boolean = () => true,
-  ): Promise<boolean> {
+  ): Promise<"loading" | "auth-required" | "failed"> {
     let cached = this.tokenCache.get(slug);
     if (!cached) {
-      const token = await this.fetchLaunchToken(gatewayOrigin, slug);
+      let token;
+      try {
+        token = await this.fetchLaunchToken(gatewayOrigin, slug);
+      } catch (err: unknown) {
+        console.warn("[embed-service] app launch failed:", err instanceof Error ? err.name : "UnknownError");
+        return err instanceof AppLaunchError ? err.state : "failed";
+      }
       if (token) {
         this.tokenCache.set(slug, token);
         cached = token;
       }
     }
-    if (!cached) return false;
-    if (!shouldAttach()) return false;
+    if (!cached) return "failed";
+    if (!shouldAttach()) return "failed";
     const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
     if (!resolved) {
-      console.warn("[embed-service] app launch url failed origin check:", cached.launchUrl);
+      console.warn("[embed-service] app launch url failed origin check");
       this.tokenCache.delete(slug);
-      return false;
+      return "failed";
     }
     this.manager.open("app", appIdentity, bounds, resolved, {
       id: embedId,
@@ -869,37 +876,17 @@ export class EmbedService {
       routeSlug: slug,
       onState: (state) => this.deps.emitState(embedId, state),
     });
-    return true;
+    return "loading";
   }
 
   private async fetchLaunchToken(
     gatewayOrigin: string,
     slug: string,
   ): Promise<{ launchUrl: string; expiresAt: number } | null> {
-    try {
-      const response = await this.gatewayRequest(
-        `${gatewayOrigin}/api/apps/${encodeURIComponent(slug)}/session-token`,
-        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
-      );
-      if (response.status < 200 || response.status >= 300) return null;
-      const parsed: unknown = JSON.parse(response.body);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        typeof (parsed as { launchUrl?: unknown }).launchUrl === "string" &&
-        typeof (parsed as { expiresAt?: unknown }).expiresAt === "number"
-      ) {
-        const { launchUrl, expiresAt } = parsed as { launchUrl: string; expiresAt: number };
-        return { launchUrl, expiresAt };
-      }
-      return null;
-    } catch (err: unknown) {
-      console.warn(
-        "[embed-service] launch token fetch failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-      return null;
-    }
+    return requestAppLaunchToken(() => this.gatewayRequest(
+      `${gatewayOrigin}/api/apps/${encodeURIComponent(slug)}/session-token`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    ));
   }
 
   private gatewayRequest(

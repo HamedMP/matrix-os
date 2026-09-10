@@ -239,7 +239,7 @@ export default function EmbedHost({
                   .then((result) => {
                     if (embedIdRef.current !== id) return;
                     if (result.ok) reportBounds();
-                    else setState("auth-required");
+                    else setState((current) => current === "loading" ? "auth-required" : current);
                   })
                   .catch(() => {
                     if (embedIdRef.current === id) setState("auth-required");

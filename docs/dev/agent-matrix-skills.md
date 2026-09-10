@@ -231,3 +231,30 @@ Skills are enough for instruction-heavy workflows. For reliable authenticated ac
 - `matrix.get_preview_url`
 
 The skills can then prefer those tools and fall back to shell/curl when the toolset is unavailable.
+
+## App build quality and launch verification
+
+The app-builder skill ships `scripts/verify-app.mjs`. Run it with the absolute app
+directory after the production build. It checks the owner-built Vite contract, including
+`listingTrust: "first_party"`, personal scope, and `dist/index.html`. Missing trust causes
+a policy rejection even when compilation succeeds. The verifier is read-only and must
+never be used to relabel imported/community apps. Only HTTP 401 from the native app launch
+request should ask for login; policy, manifest, network, and server failures are app failures.
+
+Builders must then launch through Matrix, verify the icon/assets and bridge, save and
+reopen data, and inspect the main flow at normal and narrow sizes. Record untested surfaces.
+A local Vite preview or successful build does not prove an authenticated Matrix launch.
+
+Design guidance lives in the builder's `references/app-craft.md`, with Matrix tokens and
+layout guidance in its companion skills. The runtime builder and kernel prompts route
+UI work through the installed `emil-design-eng`, `apple-design`, and task-specific `animate`
+skills from [Emil Kowalski's skills](https://github.com/emilkowalski/skills). Discover actual
+paths via the harness catalog; the external skills are separate from the Matrix pack.
+If absent, report that and use the shipped craft reference. Do not overwrite user-managed
+skills while syncing Matrix-owned skills.
+
+Choose task-specific layouts, clear typography, truthful states, and useful interactions.
+Gradients, glass, capsule controls, and mount staggering are not universal requirements.
+Frequent and keyboard actions stay immediate; occasional motion communicates state or
+spatial relationships and respects reduced motion. Verify in Web Canvas, Web Desktop,
+and Electron Desktop where available, plus supported mobile surfaces.
