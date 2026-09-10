@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Readable } from "node:stream";
 
 import {
   createTelegramAdapter,
@@ -304,6 +305,46 @@ describe("Telegram voice note handling", () => {
     await vi.waitFor(() => expect(messages.length).toBeGreaterThan(0));
 
     expect(messages[0]!.text).toBe("Hello from voice note");
+  });
+
+  it("stops an oversized Telegram stream before transcription", async () => {
+    let readAfterLimit = false;
+    const destroy = vi.fn();
+    mockBot.getFileStream = vi.fn(() => ({
+      destroy,
+      [Symbol.asyncIterator]() {
+        let reads = 0;
+        return {
+          async next() {
+            reads += 1;
+            if (reads === 1) return { done: false as const, value: Buffer.alloc(10 * 1024 * 1024 + 1) };
+            readAfterLimit = true;
+            return { done: true as const, value: undefined };
+          },
+        };
+      },
+    }) as unknown as Readable);
+    const stt = createMockStt();
+    const adapter = createTelegramAdapter(factory);
+    const messages: ChannelMessage[] = [];
+    adapter.onMessage = (msg) => messages.push(msg);
+    adapter.setVoiceContext({ homePath, stt });
+    await adapter.start({ enabled: true, token: "test-token-123", allowFrom: ["123"] });
+
+    mockBot.triggerMessage({
+      voice: { file_id: "too_large", duration: 5 },
+      from: { id: 123, first_name: "Hamed" },
+      chat: { id: 456 },
+    });
+
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    expect(stt.transcribe).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(readAfterLimit).toBe(false);
+    expect(messages[0]).toMatchObject({
+      text: "[Voice message - transcription failed]",
+      metadata: { source: "voice", error: "Transcription unavailable" },
+    });
   });
 
   it("voice messages without voice context are silently ignored", async () => {
