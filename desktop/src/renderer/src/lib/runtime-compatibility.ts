@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { evaluateReleaseAlignment, readRunningCommit, type ReleaseAlignmentStatus } from "@matrix-os/contracts";
+import { evaluateDesktopReleaseState, readRunningCommit } from "@matrix-os/contracts";
 import type { ApiClient } from "./api";
 import { invoke } from "./operator";
 
@@ -8,7 +8,7 @@ const FOCUS_CHECK_COOLDOWN_MS = 15 * 60_000;
 
 /** One bounded probe at a time; changing computers aborts and fences old results. */
 export function useRuntimeCompatibility(api: ApiClient | null) {
-  const [result, setResult] = useState<{ api: ApiClient | null; status: ReleaseAlignmentStatus | "checking"; noticeKey: string | null }>({ api, status: "checking", noticeKey: null });
+  const [result, setResult] = useState<{ api: ApiClient | null; status: ReturnType<typeof evaluateDesktopReleaseState>["status"] | "checking"; noticeKey: string | null }>({ api, status: "checking", noticeKey: null });
   const [retry, setRetry] = useState(0);
   const refresh = useCallback(() => setRetry((value) => value + 1), []);
   useEffect(() => {
@@ -29,9 +29,9 @@ export function useRuntimeCompatibility(api: ApiClient | null) {
           }),
           invoke("app:get-version", {}),
         ]);
-        const status = evaluateReleaseAlignment(info, desktop.source);
+        const { status, protocol } = evaluateDesktopReleaseState(info, desktop.source);
         if (active) setResult({ api, status,
-          noticeKey: status === "unavailable" ? null : `${desktop.source!.commit}:${readRunningCommit(info)}` });
+          noticeKey: status === "unavailable" ? null : `${desktop.source?.commit ?? "unknown"}:${readRunningCommit(info) ?? "unknown"}:${protocol}` });
       } catch (error: unknown) {
         if (active) {
           console.warn("[runtime-compatibility] check failed:", error instanceof Error ? error.name : "UnknownError");

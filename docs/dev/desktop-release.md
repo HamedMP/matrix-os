@@ -118,7 +118,10 @@ configuration, external provider, or feature is operational.
 
 Checks run at startup, computer switches, and reconnect. Focus checks have a
 15-minute cooldown, and there is no periodic alignment poll. Network failures and
-missing provenance stay quiet and are never reported as aligned. Dismissal applies
+missing provenance stay quiet and are never reported as aligned, unless a valid
+protocol window explicitly requires an upgrade. Such an unsupported protocol
+keeps its required-component recovery direction; a supported protocol never
+proves source alignment. Dismissal applies
 to the current source pair on the current computer; a later release pair can prompt
 again. Updates retain each component's channel, update the cloud before Desktop
 when both are available, and verify the installed cloud target is running. If
@@ -187,15 +190,16 @@ to date.
 ## Desktop / VPS compatibility and update freshness
 
 Desktop and host bundles have independent product versions. Electron Desktop
-uses the source alignment check above for update reminders. The gateway still
-advertises `runtimeCompatibility` for older Desktop clients; its manually
-maintained protocol window is not evidence that both releases contain the same
-merged changes. Preserve older wire formats while clients migrate.
+uses the source alignment check above for update reminders and retains explicit
+unsupported-protocol recovery. The gateway advertises `runtimeCompatibility`; its
+manually maintained protocol window is not evidence that both releases contain
+the same merged changes. Preserve older wire formats while clients migrate.
 
 Electron Desktop checks at startup, on computer switches, and on realtime/network
 reconnect. Focus checks run only when the previous check is at least 15 minutes
 old. There is no background polling timer. Network failures and missing or invalid
-source identities stay silent and never open an update modal.
+source identities stay silent unless a valid protocol window proves an upgrade
+is required.
 
 Different source identities open a centered, dismissible reminder with installed
 and available versions for both components. It preserves the titlebar and mounted

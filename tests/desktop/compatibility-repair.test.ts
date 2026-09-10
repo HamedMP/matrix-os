@@ -32,6 +32,14 @@ describe("one-button update planning", () => {
     expect(plan.compatibilityUpdateRequired).toBe(true);
     expect(plan.reason).toContain("matching update is not available");
   });
+  it.each([true, false])("selects only the required Desktop protocol update (available %s)", async (local) => {
+    const f = fixture({ local, cloud: true, cloudBehind: true });
+    Object.assign(f.info, { runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 } });
+    const plan = await loadRepairPlan(f);
+    expect(plan.targets).toEqual(local ? ["local"] : []);
+    expect(plan.compatibilityUpdateRequired).toBe(true);
+    expect(plan.reason).toContain("desktop app must be updated");
+  });
   it("keeps an installed cloud update pending until its services restart", async () => {
     const f = fixture({ local: false, cloud: false });
     f.info.runningVersion = "v2026.09.08-1";

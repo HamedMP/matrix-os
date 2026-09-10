@@ -29,6 +29,23 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("released Desktop and cloud content alignment", () => {
+  it("keeps explicit protocol recovery visible when local provenance is unavailable", async () => {
+    vi.stubGlobal("operator", { invoke: vi.fn(async (channel: string) => {
+      if (channel === "app:get-version") return { version: "0.1.0", source: null };
+      if (channel === "update:check") return { status: "up-to-date" };
+      return { ok: true };
+    }) });
+    const get = vi.fn(async (path: string) => path === "/api/system/update"
+      ? { channel: "dev", latest: { version: "v2026.09.10-1205" }, updateAvailable: true }
+      : { ...info, runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 } });
+    const api = { get, forRuntime() { return this; } } as unknown as ApiClient;
+    useConnection.setState({ api });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
+    expect(await screen.findByText(/desktop app must be updated/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Update", exact: true })).toBeNull();
+  });
+
   it("prompts for missing released changes even when both sides declare protocol 1", async () => {
     const get = vi.fn(async (path: string) => path === "/api/system/update"
       ? { channel: "dev", latest: { version: "v2026.09.10-1205" }, updateAvailable: true }

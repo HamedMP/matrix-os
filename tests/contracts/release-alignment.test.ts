@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateReleaseAlignment, BuildSourceSchema } from "../../packages/contracts/src/release-alignment";
+import { evaluateReleaseAlignment, evaluateDesktopReleaseState, BuildSourceSchema } from "../../packages/contracts/src/release-alignment";
 
 const oldCommit = "a".repeat(40);
 const newCommit = "b".repeat(40);
@@ -34,5 +34,19 @@ describe("released source comparison", () => {
   it("uses the running build rather than installed version metadata", () => {
     expect(evaluateReleaseAlignment({ ...info(oldCommit), installedVersion: "v2026.09.10-1205",
       runningVersion: "v2026.09.09-1199", gitCommit: newCommit }, source)).toBe("runtime-update-required");
+  });
+});
+
+
+describe("source alignment and explicit protocol recovery", () => {
+  it.each([null, source])("keeps a required Desktop upgrade visible regardless of provenance", (desktop) => {
+    const cloud = { ...info(newCommit), runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 } };
+    expect(evaluateDesktopReleaseState(cloud, desktop)).toMatchObject({ status: "desktop-update-required", protocol: "desktop-update-required" });
+  });
+  it("does not let matching sources hide a gateway protocol upgrade", () => {
+    expect(evaluateDesktopReleaseState(info(newCommit), source, 2)).toMatchObject({ alignment: "aligned", status: "runtime-update-required" });
+  });
+  it("still prompts for missing merged changes when the protocol is supported", () => {
+    expect(evaluateDesktopReleaseState(info(oldCommit), source)).toEqual({ alignment: "runtime-update-required", status: "runtime-update-required", protocol: "compatible" });
   });
 });

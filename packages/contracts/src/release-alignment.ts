@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { DESKTOP_PROTOCOL_VERSION, evaluateRuntimeCompatibility } from "./runtime-compatibility.js";
 
 const Commit = z.string().regex(/^[a-f0-9]{40}$/);
 export const BuildSourceSchema = z.object({
@@ -31,4 +32,14 @@ export function evaluateReleaseAlignment(info: unknown, desktopSource: unknown):
   // A newer cloud release, divergent branches, and history outside the bounded
   // ancestry window all differ. Do not guess their ordering from timestamps.
   return "different-releases";
+}
+
+/** Supported protocols do not prove alignment; unsupported ones retain recovery. */
+export function evaluateDesktopReleaseState(info: unknown, desktopSource: unknown,
+  desktopProtocol = DESKTOP_PROTOCOL_VERSION) {
+  const alignment = evaluateReleaseAlignment(info, desktopSource);
+  const protocol = evaluateRuntimeCompatibility(info, desktopProtocol);
+  const status = protocol === "desktop-update-required" || protocol === "runtime-update-required"
+    ? protocol : alignment;
+  return { alignment, protocol, status };
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +9,7 @@ import { readBuildSource } from "../../../scripts/release/build-source.mjs";
 
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
+const evidence = join(root, "output/playwright/release-alignment");
 const requireDesktop = createRequire(join(root, "desktop/package.json"));
 if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !existsSync(main)) {
   throw new Error("Required Desktop build is missing");
@@ -63,8 +64,12 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     gateway.setBuildCommit(source.ancestors[0] ?? "a".repeat(40));
     await recheck();
     await page.getByRole("dialog", { name: "Update Matrix OS" }).waitFor();
+    await page.getByText("Cloud computer", { exact: true }).waitFor();
+    mkdirSync(evidence, { recursive: true });
+    await page.screenshot({ path: join(evidence, "source-mismatch.png") });
     await page.getByRole("button", { name: "Later", exact: true }).click();
     await page.getByRole("button", { name: "Chat", exact: true }).waitFor();
+    await page.screenshot({ path: join(evidence, "dismissed-workspace.png") });
 
     await recheck();
     expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);

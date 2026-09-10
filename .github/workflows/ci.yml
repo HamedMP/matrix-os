@@ -576,6 +576,15 @@ jobs:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/release-alignment.e2e.test.ts
 
+      - name: Upload Desktop release alignment evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-release-alignment-evidence
+          path: output/playwright/release-alignment/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v7
