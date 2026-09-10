@@ -228,6 +228,28 @@ describe("EmbedHost", () => {
     });
   });
 
+  it("preserves an app failure reported during an auth retry", async () => {
+    let emitState: ((payload: { embedId: string; state: "failed" }) => void) | null = null;
+    vi.mocked(onEvent).mockImplementation((_channel, callback) => {
+      emitState = callback as typeof emitState;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "embed-1", state: "auth-required" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:retry-auth") {
+        emitState?.({ embedId: "embed-1", state: "failed" });
+        return Promise.resolve({ ok: false }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+    render(<EmbedHost kind="app" slug="spec-reader" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry sign-in" }));
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry sign-in" })).toBeNull();
+  });
+
   it("refreshes bounds after a successful auth retry", async () => {
     vi.mocked(invoke).mockImplementation((channel: string) => {
       if (channel === "embed:open") {

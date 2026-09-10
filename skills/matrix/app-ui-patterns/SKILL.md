@@ -31,7 +31,7 @@ Matrix OS apps render inside iframes within window frames. The OS provides title
 
 ## App Shell Pattern
 
-Most apps follow a consistent shell structure:
+Choose a structure around the primary task. This shell is an option for apps with navigation, not a required dashboard wrapper for readers, tools, or games:
 
 ```
 ┌─────────────────────────────────────┐
@@ -53,7 +53,7 @@ Most apps follow a consistent shell structure:
   grid-template-rows: auto 1fr auto;
   background: var(--bg);
   color: var(--fg);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--matrix-font-sans, system-ui, sans-serif);
 }
 
 .app-content {
@@ -70,7 +70,7 @@ Most apps follow a consistent shell structure:
 
 ## Pattern: Dashboard
 
-Greeting, key stats, quick actions, and a command/search bar.
+Use an overview only when real summaries help the user decide what to do. Do not invent statistics or add a greeting/command bar to every app. Prefer the core content for readers, focused tools, and games.
 
 ```
 ┌─────────────────────────────────────┐
@@ -86,8 +86,8 @@ Greeting, key stats, quick actions, and a command/search bar.
 └─────────────────────────────────────┘
 ```
 
-- **Greeting** uses Inter, 1.25-1.5rem, weight 600. Orbitron only if the greeting is a large hero-level display (2rem+).
-- **Stats** use Orbitron for the number only when large (1.5rem+). Inter weight 700 for smaller stat numbers. Inter for the label (tiny, uppercase, tracked).
+- **Heading** uses the inherited shell font with a size appropriate to the window. Avoid redundant greetings.
+- **Stats** use inherited fonts and tabular numbers; give labels sufficient size and contrast. Only show real, relevant metrics.
 - **Stat cards** have `--bg` background, 14px radius, 16px padding
 - **Command bar** is a composite input: text input + icon button in a single container with `--bg` background, 14-16px radius
 - Keep the dashboard to a single scroll-free view when possible
@@ -226,7 +226,7 @@ Apps should be usable at 320px width (minimum window size).
 
 ## Pattern: Loading States
 
-- **Skeleton screens**: use `--muted` background with subtle shimmer animation (2.4s, ease-in-out). Match the shape of the content that will load.
+- **Skeleton screens**: use `--muted` placeholders matching the eventual content. Shimmer is optional; keep reduced-motion placeholders static and show ready content immediately.
 - **Spinners**: use a simple 16-20px circle with `--primary` color, 2px stroke, rotating. Not a full-page overlay — inline where the content will appear.
 - **Progress bars**: 4px height, `--muted` track, fill color matches the context (Forest for neutral, Ember for important).
 

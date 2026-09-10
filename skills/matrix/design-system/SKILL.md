@@ -1,7 +1,7 @@
 ---
 name: matrix-design-system
 description: The Matrix OS visual language — colors, typography, icons, animations, and component patterns. Apply this every time you build, redesign, or polish any Matrix OS surface.
-version: 2.0.0
+version: 2.1.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -63,60 +63,49 @@ Use `--matrix-*` directly or define `--app-*` aliases from them. Do not replace 
 2. **Forest is structural.** Headers, primary buttons, nav active states.
 3. **Cream is warmth.** Secondary fills, hover states.
 4. **Deep is text.** Never use pure black `#000000`.
-5. **Backgrounds are GRADIENT**, not flat — blend sand shades (`#F7F1E7`, `#F3EAE0`, `#D6AB8B`).
+5. **Backgrounds inherit the active theme.** Quiet solid surfaces are the default for content. Use gradients only when the chosen art direction calls for depth; do not hardcode a light wash over dark mode.
 6. **Shadows always use Deep-tinted** `rgba(50,53,46,X)`, never pure black.
 
-### Gradient Backgrounds
+### Optional depth
 
-```css
-/* App page background — warm sand wash */
-background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%);
-
-/* Section with depth */
-background: linear-gradient(165deg, #E0E1CA 0%, #FAFAF5 50%, rgba(208,111,37,0.05) 100%);
-
-/* Dark section */
-background: linear-gradient(135deg, #32352E 0%, #434E3F 40%, #D6AB8B 100%);
-```
+Use token-derived shadows and surfaces to explain hierarchy. Glass, gradients, and
+texture are optional treatments for a specific purpose, never a required app backdrop.
 
 ## Typography
 
-| Role     | Font           | Usage                                                   |
-|----------|----------------|---------------------------------------------------------|
-| Display  | Orbitron       | H1/H2 only — page titles, hero headings, large stat numbers |
-| UI/Body  | Inter          | Everything else — H3+ subtitles, body, buttons, labels, nav, card titles |
-| Code     | JetBrains Mono | Terminal, code blocks, technical data                   |
-
-**Orbitron is minimal.** Only H1/H2 display headings and large metric numbers. Never for subtitles (H3+), card titles, descriptions, button labels, or anything below 16px.
+Inherit `var(--matrix-font-sans, system-ui, sans-serif)` for UI and
+`var(--matrix-font-mono, monospace)` for code. Do not load remote fonts or force a display
+font on app headings. Create hierarchy through size, weight, leading, and spacing.
+Use tabular numerals for aligned data; constrain prose measure for comfortable reading.
 
 ### Type Scale
 
 | Level      | Font     | Size      | Weight |
 |------------|----------|-----------|--------|
-| Display    | Orbitron | 3rem+     | 700-800|
-| H1         | Orbitron | 2.25rem   | 600    |
-| H2         | Orbitron | 1.75rem   | 600    |
-| H3         | Inter    | 1.25rem   | 600    |
-| H4         | Inter    | 1.125rem  | 600    |
-| Body       | Inter    | 1rem      | 400    |
-| Small      | Inter    | 0.875rem  | 400    |
-| Caption    | Inter    | 0.75rem   | 400    |
-| Label      | Inter    | 0.65rem   | 600    |
+| Display    | Inherited | 3rem+     | 700-800|
+| H1         | Inherited | 2.25rem   | 600    |
+| H2         | Inherited | 1.75rem   | 600    |
+| H3         | Inherited | 1.25rem   | 600    |
+| H4         | Inherited | 1.125rem  | 600    |
+| Body       | Inherited | 1rem      | 400    |
+| Small      | Inherited | 0.875rem  | 400    |
+| Caption    | Inherited | 0.75rem   | 400    |
+| Label      | Inherited | 0.65rem   | 600    |
 
-Labels: `letter-spacing: 0.15-0.25em; text-transform: uppercase`.
+Keep labels readable at normal text sizes; use uppercase and tracking sparingly for short section labels.
 
 ## Shapes
 
 | Element   | Border Radius | Notes                        |
 |-----------|---------------|------------------------------|
-| Buttons   | 50px          | Full capsule, always         |
-| Inputs    | 50px          | Full capsule                 |
+| Buttons   | 6-12px        | Match control density; pills optional |
+| Inputs    | 6-12px        | Keep forms compact and legible |
 | Cards     | 22px          | Soft rounded                 |
 | Inner UI  | 14-16px       | Nested elements              |
 | Badges    | 9999px        | Perfect pill                 |
 | Icons bg  | 14px          | Icon containers in stat cards|
 
-No sharp corners anywhere in Matrix OS.
+Choose a coherent radius scale for the app. Dense tables and editors may use square regions; cards and dialogs can be softer.
 
 ### Shadows
 
@@ -158,53 +147,28 @@ Default to simple line-style SVGs for all UI. Only use specialist bundled assets
 
 ## Animations
 
-Clean and subtle — barely noticed but deeply felt.
+Read the installed `emil-design-eng` and `apple-design` skills; see the builder’s
+`references/app-craft.md` for the shared process. Motion serves feedback, continuity,
+or a spatial relationship. Frequency comes first: keep typing, keyboard actions, and
+repeated navigation immediate. Do not stagger all content on page mount.
 
-### Page Mount — Staggered Fade Up
-
-```css
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.animate-in { animation: fadeUp 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; }
-/* Stagger children: 60ms gap */
-.stagger > :nth-child(1) { animation-delay: 0s; }
-.stagger > :nth-child(2) { animation-delay: 0.06s; }
-.stagger > :nth-child(3) { animation-delay: 0.12s; }
-/* ...continue pattern */
-```
-
-### Hover — Lift
+Use short ease-out transitions for occasional entry/exit, anchored to the trigger for
+popovers. Prefer transform/opacity; never `transition: all`. Springs are for continuous,
+interruptible gestures. Avoid decorative bounce and hover lift on every control.
 
 ```css
-.hoverable:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(50,53,46,0.08); }
-.hoverable:active { transform: translateY(0); }
-```
-
-### Skeleton Loading — Warm Shimmer
-
-```css
-@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-.skeleton {
-  background: linear-gradient(90deg, var(--muted) 25%, #F7F1E7 50%, var(--muted) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.8s ease-in-out infinite;
-  border-radius: 10px;
+.action { transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.action:active { transform: scale(0.97); }
+@media (prefers-reduced-motion: reduce) {
+  .action { transition: none; }
+  .action:active { transform: none; }
 }
 ```
 
-### Progress Bars
-
-Animate width from 0 to target on mount: `transition: width 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94)`.
-
-### Rules
-
-- Page load = one orchestrated wave (stagger all top-level elements)
-- Hover lift on every clickable card and button
-- Loading always uses warm-tinted skeletons, never blank space
-- Spinners: `svg-spinners:ring-resize`, never custom
-- Always respect `prefers-reduced-motion`
+Preserve visible focus and immediate non-motion feedback. Gate hover treatments behind
+`(hover: hover) and (pointer: fine)`. Use stable placeholders for loading, announce status
+accessibly, and never delay ready content to finish a shimmer or entrance. Render true
+progress rather than animating invented progress from zero on mount.
 
 ## Component Patterns
 
@@ -267,9 +231,8 @@ of inventing one-off controls.
 - No text characters used as icons (search for `>×</`, `>+</`)
 - All icon buttons visually centered
 - No components with excessive empty whitespace
-- Gradient backgrounds, not flat colors
-- Capsule-rounded buttons and inputs
-- Stagger animation on page mount
+- Theme-aware surfaces and task-appropriate control shapes
+- Purposeful, interruptible motion with reduced-motion support
 - All inputs have focus states, all buttons have hover states
-- Orbitron only on H1/H2, Inter everywhere else
+- Inherited fonts with clear hierarchy and legible labels
 - One Ember accent maximum per view
