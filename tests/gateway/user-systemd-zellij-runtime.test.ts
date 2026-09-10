@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUserSystemdZellijRuntime, workspaceRuntimeId } from "../../packages/gateway/src/user-systemd-zellij-runtime.js";
 import type { ZellijAdapter } from "../../packages/gateway/src/shell/zellij.js";
-import { createUserSystemdTerminalRuntime } from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
+import { createUserSystemdTerminalRuntime } from "../../packages/terminal-runtime/src/user-systemd-controller.js";
 
 const GENERATION = "gen_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const SESSION_ID = "sess_demo";

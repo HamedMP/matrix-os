@@ -5,3 +5,6 @@ export * from "./zellij-adapter.js";
 export * from "./socket-client.js";
 export * from "./socket-server.js";
 export * from "./socket-protocol.js";
+export * from "./runtime-config.js";
+export * from "./user-systemd-controller.js";
+export * from "./user-systemd-workspace.js";

@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { MatrixZellijShellThemeId } from "./zellij-config.js";
 import { matrixZellijConfigPaths } from "./zellij-config.js";
 import { shellError } from "./errors.js";
-import type { createUserSystemdTerminalRuntime, UserSystemdTerminalDescriptor } from "./user-systemd-terminal-runtime.js";
+import type { createUserSystemdTerminalRuntime, UserSystemdTerminalDescriptor } from "@matrix-os/terminal-runtime/user-systemd-controller";
 import { createZellijAdapter, type AttachOptions, type ZellijAdapter } from "./zellij.js";
 
 type RuntimeController = Pick<

@@ -11,7 +11,7 @@ import {
   createUserSystemdTerminalRuntime,
   type UserSystemdCommandRunner,
   type UserSystemdTerminalDescriptor,
-} from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
+} from "../../packages/terminal-runtime/src/user-systemd-controller.js";
 import type { ZellijAdapter } from "../../packages/gateway/src/shell/zellij.js";
 
 const RUNTIME_ID = "rt_0123456789abcdef0123456789abcdef";

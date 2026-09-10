@@ -54,7 +54,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
 
   it("keeps awaited readiness retries alive for one-shot controller callers", () => {
     const controller = readFileSync(
-      join(root, "packages/gateway/src/shell/user-systemd-terminal-runtime.ts"),
+      join(root, "packages/terminal-runtime/src/user-systemd-controller.ts"),
       "utf8",
     );
 

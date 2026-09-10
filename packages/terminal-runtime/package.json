@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./user-systemd-capacity": "./src/user-systemd-capacity.ts",
+    "./user-systemd-readiness": "./src/user-systemd-readiness.ts",
+    "./user-systemd-controller": "./src/user-systemd-controller.ts"
   },
   "scripts": {
     "build": "tsc"
