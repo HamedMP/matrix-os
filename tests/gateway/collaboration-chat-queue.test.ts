@@ -176,6 +176,41 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
       Array.from({ length: 12 }, (_value, index) => index + 1),
     );
   });
+
+  it("enforces the 32-pending ceiling under simultaneous admission", async () => {
+    const results = await Promise.allSettled(Array.from({ length: 33 }, (_value, index) =>
+      repository.enqueueSharedQueuedTurn(
+        owner,
+        request(index + 1, index % 2 === 0 ? collaborationActors.owner : collaborationActors.editor),
+      )));
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(32);
+    const rejected = results.filter((result) => result.status === "rejected");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({ reason: { code: "capacity" } });
+    const ordered = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
+    expect(ordered).toHaveLength(32);
+    expect(ordered.map((entry) => entry.acceptedSequence)).toEqual(
+      Array.from({ length: 32 }, (_value, index) => index + 1),
+    );
+  });
+
+  it("serializes actor-scoped idempotency without conflating two actors", async () => {
+    const [first, replay, otherActor] = await Promise.all([
+      repository.enqueueSharedQueuedTurn(owner, request(40, collaborationActors.owner)),
+      repository.enqueueSharedQueuedTurn(owner, request(40, collaborationActors.owner)),
+      repository.enqueueSharedQueuedTurn(owner, request(40, collaborationActors.editor)),
+    ]);
+
+    expect([first.alreadyAccepted, replay.alreadyAccepted].sort()).toEqual([false, true]);
+    expect(first.id).toBe(replay.id);
+    expect(otherActor).toMatchObject({ alreadyAccepted: false });
+    const ordered = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
+    expect(ordered).toHaveLength(2);
+    expect(new Set(ordered.map((entry) => entry.requestingActorId))).toEqual(
+      new Set([collaborationActors.owner, collaborationActors.editor]),
+    );
+  });
 });
 
 function request(index: number, actorId: string, expectedRevision = 1) {

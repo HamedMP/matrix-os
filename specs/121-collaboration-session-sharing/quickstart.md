@@ -1,6 +1,6 @@
 # Implementation and Internal Acceptance Guide
 
-This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented in the Graphite review stack #1571–#1578, topped by `codex/collaboration-chat-validation`; the review layers remain one PR1 product milestone and exist only to satisfy repository size limits. It has not been deployed, enabled for a cohort, or validated on a production-equivalent VPS. Later milestones remain unimplemented and disabled.
+This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented in the Graphite review stack #1571–#1578, topped by `codex/collaboration-chat-validation`; the review layers remain one PR1 product milestone and exist only to satisfy repository size limits. PR2's isolated execution foundation is merged and dormant. PR3/M2 is implemented locally on `codex/collaboration-shared-ai-queue`, but has not been deployed, enabled for a cohort, or validated on a production-equivalent VPS. Later milestones remain unimplemented and disabled.
 
 ## PR1 local evidence — 2026-09-07
 
@@ -29,6 +29,31 @@ Validation results:
 | Local Playwright UI check | 1/1 passed after it exposed and drove a fix for transparent cross-shell collaboration dialogs. |
 
 Still required before M1 is review-ready or internally enabled: full named-surface screenshots/recordings, a disposable VPS-native two-account/no-computer-recipient journey, snapshot rollback regressions on the release artifact, and the rollout/rollback drill. No runtime acceptance or production enablement is claimed here.
+
+## PR3 M2 local evidence — 2026-09-10
+
+PR3 adds actor-attributed AI requests to the canonical Chat queue, a 32-pending/one-active invariant, actor-scoped idempotency, owner approval decisions, editor-own cancel/retry, dispatch-time reauthorization, truthful interrupted/unavailable recovery, exact-profile isolated execution, and shared queue controls across the common Web/Electron UI, native mobile, and CLI. M1 discussion remains available when M2 policy is off or read-only.
+
+Current public-safe component evidence:
+
+- [Shared AI queue and owner controls](evidence/m2-shared-ai-queue.png)
+
+The screenshot was captured at 1440×900 from a temporary self-hosted Next.js route rendering the production `SharedChatControls` component in a Canvas-style Chat. A focused Playwright check asserted the ordered attributed requests, one-active/32-pending copy, owner approval controls, private Ask AI draft, and zero browser/page errors; the temporary route and test were removed after capture.
+
+Validation results:
+
+| Check | Result |
+| --- | --- |
+| Real PostgreSQL 16 queue/control run | `MATRIX_TEST_POSTGRES_URL=… pnpm exec vitest run tests/gateway/collaboration-chat-queue.test.ts tests/gateway/collaboration-chat-controls.test.ts` passed 2 files / 15 tests. Four opt-in real-server races cover simultaneous immutable ordering, the 32-pending ceiling under 33 concurrent admissions, actor-scoped idempotency, and exactly one competing owner approval call. The disposable database container was removed afterward. |
+| Common Web/Electron UI | 3 files / 19 tests passed for private discussion/AI drafts, queue recovery, viewer restrictions, author controls, approvals, and the two composer modes. |
+| Native mobile | 3 files / 20 tests passed for request transport, virtualized ordered queue, role controls, private drafts, and recovery. |
+| CLI | 7 tests passed for collaboration request listing, Ask AI, cancel, retry, and approval commands without owner credential fallback. |
+| Package TypeScript | Contracts, gateway, UI, and sync-client checks passed. Native mobile still reports only the unchanged React Native dependency typing failures already recorded under PR1. |
+| React Doctor, changed scope | `packages/ui` scored 100/100 with no findings; `apps/mobile` scored 97/100 with no findings. |
+| Local browser evidence | 1/1 focused Playwright assertion passed and produced the linked screenshot. |
+| Exact release acceptance harness | The labeled disposable-preview workflow now pins `scope-runtime-chat-v1`, its source-controlled digest and harness version, executes a real `runtime.chat` Agent SDK round trip through a bounded fake inference broker, and restores the dormant systemd/marker state. This is prepared but has not run on a PR head yet. |
+
+Still required before M2 is review-ready or internally enabled: publish the review stack, run the exact-head disposable VPS workflow, record its profile generation/artifact, exercise the complete two-account AI journey on the named production surfaces, and perform the M2-off/read-only rollback drill while confirming M1 discussion remains available. No release-artifact pass or production enablement is claimed here.
 
 ## Prepare a slice
 

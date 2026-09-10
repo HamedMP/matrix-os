@@ -15,11 +15,15 @@ const MARKER_BACKUP = "/var/tmp/matrix-scope-runtime-disabled.acceptance";
 const BUNDLE_VERSION = "/opt/matrix/app/BUNDLE_VERSION";
 const RELEASE_METADATA = "/opt/matrix/release.json";
 const EXPECTED_PROFILE_DIGEST = "6650e74684fd322251882f65c36e1226149087dac346eee8a43da426a57fad8e";
-const EXPECTED_PROFILE_ID = "scope-runtime-proof-v1";
+const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
 const MAX_FRAME_BYTES = 64 * 1024;
 const SUPERVISOR_QUERY_TIMEOUT_MS = 5_000;
 const SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000;
+const MAX_BROKER_REQUEST_BYTES = 512 * 1024;
+const MAX_PROVIDER_BODY_BYTES = 256 * 1024;
+const BROKER_SOCKET_TIMEOUT_MS = 5_000;
+const ACCEPTANCE_MODEL = "claude-haiku-4-5-20251001";
 const SYSTEMD_EXEC_STEPS = [
   "ADDRESS_FAMILIES", "CAPABILITIES", "CHDIR", "CHROOT", "EXEC", "GROUP", "NAMESPACE", "SECCOMP", "USER",
 ];
@@ -192,10 +196,142 @@ function validateCapability(response) {
   return profile;
 }
 
+function brokerResponseFrame(value) {
+  return `${JSON.stringify(value)}\n`;
+}
+
+function providerEvent(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function providerResponse() {
+  return [
+    providerEvent("message_start", {
+      type: "message_start",
+      message: {
+        id: "msg_scope_runtime_production_acceptance",
+        type: "message",
+        role: "assistant",
+        model: ACCEPTANCE_MODEL,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: {
+          input_tokens: 1,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          output_tokens: 0,
+        },
+      },
+    }),
+    providerEvent("content_block_start", {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    }),
+    providerEvent("content_block_delta", {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: "scope-sdk-ok" },
+    }),
+    providerEvent("content_block_stop", { type: "content_block_stop", index: 0 }),
+    providerEvent("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: "end_turn", stop_sequence: null },
+      usage: { output_tokens: 1 },
+    }),
+    providerEvent("message_stop", { type: "message_stop" }),
+  ].join("");
+}
+
+function parseBrokerRequest(raw) {
+  let request;
+  try {
+    request = JSON.parse(raw);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return { version: 1, requestId: randomUUID(), ok: false, error: "invalid_request" };
+  }
+  const requestId = typeof request?.requestId === "string" ? request.requestId : randomUUID();
+  const failure = (error) => ({ version: 1, requestId, ok: false, error });
+  if (request?.version !== 1 || request?.action !== "inference.messages") {
+    return failure("action_denied");
+  }
+  if (request.method === "HEAD" && request.path === "/api/hello") {
+    return {
+      version: 1,
+      requestId,
+      ok: true,
+      status: 200,
+      headers: { "content-type": "text/plain", "x-matrix-scope-broker": "acceptance" },
+      body: "",
+    };
+  }
+  if (request.method !== "POST" || request.path !== "/v1/messages?beta=true") {
+    return failure("route_denied");
+  }
+  if (typeof request.body !== "string"
+    || Buffer.byteLength(request.body, "utf8") > MAX_PROVIDER_BODY_BYTES) {
+    return failure("request_too_large");
+  }
+  try {
+    const body = JSON.parse(request.body);
+    if (!Array.isArray(body.messages) || body.model !== ACCEPTANCE_MODEL) {
+      return failure("invalid_request");
+    }
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return failure("invalid_request");
+  }
+  return {
+    version: 1,
+    requestId,
+    ok: true,
+    status: 200,
+    headers: {
+      "cache-control": "no-cache",
+      "content-type": "text/event-stream",
+      "x-matrix-scope-broker": "acceptance",
+    },
+    body: providerResponse(),
+  };
+}
+
 async function startBroker() {
   const existing = await pathType(BROKER_SOCKET);
   assert(!existing, "broker_socket_collision");
-  const server = createServer((socket) => socket.destroy());
+  const server = createServer((socket) => {
+    let request = Buffer.alloc(0);
+    let settled = false;
+    const finish = (response) => {
+      if (settled) return;
+      settled = true;
+      socket.end(brokerResponseFrame(response));
+    };
+    socket.setTimeout(BROKER_SOCKET_TIMEOUT_MS, () => finish({
+      version: 1,
+      requestId: randomUUID(),
+      ok: false,
+      error: "request_timeout",
+    }));
+    socket.on("data", (chunk) => {
+      if (settled) return;
+      const bytes = Buffer.from(chunk);
+      request = Buffer.concat([request, bytes], request.length + bytes.length);
+      if (request.length > MAX_BROKER_REQUEST_BYTES) {
+        finish({
+          version: 1,
+          requestId: randomUUID(),
+          ok: false,
+          error: "request_too_large",
+        });
+        return;
+      }
+      const newline = request.indexOf(0x0a);
+      if (newline >= 0) finish(parseBrokerRequest(request.subarray(0, newline).toString("utf8")));
+    });
+    socket.on("error", () => { settled = true; });
+  });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(BROKER_SOCKET, resolve);
@@ -332,6 +468,21 @@ async function stopRuntime(runtimeHandle, generation) {
   "runtime_stop_failed");
 }
 
+async function runRuntimeChat(runtimeHandle, generation) {
+  const response = await supervisorRequest({
+    version: 1,
+    type: "runtime.chat",
+    requestId: randomUUID(),
+    runtimeHandle,
+    executionGeneration: generation,
+    model: ACCEPTANCE_MODEL,
+    prompt: "Return the bounded acceptance response.",
+  });
+  assert(response?.type === "runtime.chat.result" && response.ok === true
+    && response.runtimeHandle === runtimeHandle && response.executionGeneration === generation
+    && response.text === "scope-sdk-ok", "runtime_chat_failed");
+}
+
 async function openCrashRequest() {
   let socket;
   const connected = new Promise((resolve, reject) => {
@@ -425,6 +576,7 @@ async function runAcceptance() {
     const firstUnit = unitForRuntime(firstHandle);
     runtimeUnits.push(firstUnit);
     uid = await assertWorkloadBoundary(firstUnit);
+    await runRuntimeChat(firstHandle, generationBefore);
 
     const crashRequest = await openCrashRequest();
     await mustCommand("/usr/bin/systemctl", ["kill", "--kill-whom=main", "--signal=SIGKILL", SERVICE],
@@ -494,6 +646,7 @@ async function runAcceptance() {
   process.stdout.write("multi_frame=closed\n");
   process.stdout.write("oversized_frame=closed\n");
   process.stdout.write("request_timeout=closed\n");
+  process.stdout.write("scope_runtime_chat=passed\n");
   process.stdout.write("restart_reconciliation=passed\n");
   process.stdout.write("shutdown_drain=passed\n");
   process.stdout.write("supervisor_version=1.0.0\n");
