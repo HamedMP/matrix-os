@@ -370,10 +370,6 @@ export const CollaborationAiRequestSchema = z.object({
   updatedAt: z.iso.datetime(),
 }).strict();
 
-export const CollaborationAiRequestsResponseSchema = z.object({
-  requests: z.array(CollaborationAiRequestSchema).max(COLLABORATION_PAGE_LIMIT),
-}).strict();
-
 export const CollaborationApprovalSchema = z.object({
   approvalId: CollaborationResourceIdSchema,
   runId: CollaborationResourceIdSchema,
@@ -382,6 +378,12 @@ export const CollaborationApprovalSchema = z.object({
   risk: z.enum(["low", "medium", "high"]),
   allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
   state: z.enum(["pending", "accepted", "completed", "reconciling"]),
+}).strict();
+
+export const CollaborationAiRequestsResponseSchema = z.object({
+  requests: z.array(CollaborationAiRequestSchema).max(COLLABORATION_PAGE_LIMIT),
+  approvals: z.array(CollaborationApprovalSchema).max(COLLABORATION_PAGE_LIMIT),
+  defaultSelection: CanonicalChatModelSelectionSchema,
 }).strict();
 
 const CollaborationDirectoryBaseSchema = z.object({
@@ -530,6 +532,7 @@ export const CollaborationClientFrameSchema = z.discriminatedUnion("type", [
 ]);
 
 export type CollaborationActorProof = z.infer<typeof CollaborationActorProofSchema>;
+export type CollaborationApproval = z.infer<typeof CollaborationApprovalSchema>;
 export type CollaborationAiRequest = z.infer<typeof CollaborationAiRequestSchema>;
 export type CollaborationAiRequestState = z.infer<typeof CollaborationAiRequestStateSchema>;
 export type CollaborationDeleteCondition = z.infer<typeof CollaborationDeleteConditionSchema>;

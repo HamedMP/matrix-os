@@ -7,6 +7,9 @@ import {
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
   CollaborationChatSchema,
+  CollaborationAiRequestsResponseSchema,
+  type CollaborationAiRequest,
+  type CollaborationApproval,
 } from "@matrix-os/contracts/collaboration";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View,
@@ -24,8 +27,12 @@ import {
   fetchCollaborationScope,
   fetchSharedChat,
   fetchSharedChatMessages,
+  fetchSharedAiRequests,
   fetchSharedCollaborations,
   postSharedChatDiscussion,
+  postSharedAiRequest,
+  controlSharedAiRequest,
+  decideSharedAiApproval,
   updateSharedChatReadState,
 } from "@/lib/requests/collaboration";
 
@@ -48,6 +55,13 @@ type ScreenState = {
   hasMoreMessages: boolean;
   loadingMoreMessages: boolean;
   draft: string;
+  aiDraft: string;
+  composerMode: "discussion" | "ai";
+  aiAvailability: "checking" | "available" | "unavailable";
+  aiRequests: CollaborationAiRequest[];
+  approvals: CollaborationApproval[];
+  defaultSelection: CollaborationAiRequest["selection"] | null;
+  aiError: string;
   loading: boolean;
   sending: boolean;
   error: string;
@@ -66,6 +80,13 @@ const initialState: ScreenState = {
   hasMoreMessages: false,
   loadingMoreMessages: false,
   draft: "",
+  aiDraft: "",
+  composerMode: "discussion",
+  aiAvailability: "checking",
+  aiRequests: [],
+  approvals: [],
+  defaultSelection: null,
+  aiError: "",
   loading: true,
   sending: false,
   error: "",
@@ -95,11 +116,12 @@ export default function SharedScreen() {
   const { theme } = useUnistyles();
   const [state, dispatch] = useReducer(screenReducer, initialState);
   const { view, inboxCursor, sharedCursor, loadingMoreItems, scope, chat, messages,
-    loadingMoreMessages, draft } = state;
+    loadingMoreMessages } = state;
   const chatLoadGeneration = useRef(0);
   const latestSequenceRef = useRef("0");
   const eventSequenceRef = useRef("0");
   const eventScopeRef = useRef<string | null>(null);
+  const aiWasAvailableRef = useRef(false);
   const chatRef = useRef<Chat | null>(null);
   const messagesRef = useRef<Message[]>([]);
   const token = useCallback(async () => {
@@ -153,6 +175,7 @@ export default function SharedScreen() {
       latestSequenceRef.current = "0";
       chatRef.current = null;
       messagesRef.current = [];
+      aiWasAvailableRef.current = false;
     }
     dispatch({ type: "patch", patch: {
       loading: true,
@@ -162,6 +185,13 @@ export default function SharedScreen() {
       chat: null,
       messages: [],
       draft: "",
+      aiDraft: "",
+      composerMode: "discussion",
+      aiAvailability: "checking",
+      aiRequests: [],
+      approvals: [],
+      defaultSelection: null,
+      aiError: "",
       hasMoreMessages: false,
       loadingMoreMessages: false,
     } });
@@ -172,7 +202,10 @@ export default function SharedScreen() {
         fetchSharedChat(actorToken, scopeId),
         fetchSharedChatMessages(actorToken, scopeId),
       ]);
-      const nextDraft = await loadCollaborationDraft(AsyncStorage, { actorId: userId, scopeId, chatId: nextChat.id });
+      const [nextDraft, nextAiDraft] = await Promise.all([
+        loadCollaborationDraft(AsyncStorage, { actorId: userId, scopeId, chatId: nextChat.id }),
+        loadCollaborationDraft(AsyncStorage, { actorId: userId, scopeId, chatId: nextChat.id, mode: "ai" }),
+      ]);
       if (generation !== chatLoadGeneration.current) return;
       chatRef.current = nextChat;
       messagesRef.current = history.messages;
@@ -183,7 +216,21 @@ export default function SharedScreen() {
         messages: history.messages,
         hasMoreMessages: BigInt(nextChat.messageCount) > BigInt(history.messages.length),
         draft: nextDraft,
+        aiDraft: nextAiDraft,
       } });
+      try {
+        const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(actorToken, scopeId));
+        if (generation === chatLoadGeneration.current) {
+          aiWasAvailableRef.current = true;
+          dispatch({ type: "patch", patch: {
+            aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
+            defaultSelection: ai.defaultSelection, aiError: "",
+          } });
+        }
+      } catch (failure: unknown) {
+        console.warn("[mobile-collaboration] shared AI unavailable", failure instanceof Error ? failure.name : "UnknownError");
+        if (generation === chatLoadGeneration.current) dispatch({ type: "patch", patch: { aiAvailability: "unavailable" } });
+      }
       const sequence = history.messages.at(-1)?.sequence;
       if (sequence) void updateSharedChatReadState(actorToken, scopeId, sequence).catch((failure: unknown) => {
         console.warn("[mobile-collaboration] read state failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -256,6 +303,24 @@ export default function SharedScreen() {
       hasMoreMessages: BigInt(nextChat.messageCount) > BigInt(combined.length),
       loading: false,
     } });
+    try {
+      const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(actorToken, scopeId));
+      if (generation === chatLoadGeneration.current && eventScopeRef.current === scopeId) {
+        aiWasAvailableRef.current = true;
+        dispatch({ type: "patch", patch: {
+          aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
+          defaultSelection: ai.defaultSelection, aiError: "",
+        } });
+      }
+    } catch (failure: unknown) {
+      console.warn("[mobile-collaboration] shared AI refresh unavailable", failure instanceof Error ? failure.name : "UnknownError");
+      if (generation === chatLoadGeneration.current && eventScopeRef.current === scopeId) {
+        dispatch({ type: "patch", patch: {
+          aiAvailability: aiWasAvailableRef.current ? "available" : "unavailable",
+          ...(aiWasAvailableRef.current ? { aiError: "Queue updates are delayed. The last confirmed order is shown." } : {}),
+        } });
+      }
+    }
     const sequence = combined.at(-1)?.sequence;
     if (sequence) void updateSharedChatReadState(actorToken, scopeId, sequence).catch((failure: unknown) => {
       console.warn("[mobile-collaboration] realtime read state failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -330,6 +395,7 @@ export default function SharedScreen() {
               chatRef.current = null;
               messagesRef.current = [];
               latestSequenceRef.current = "0";
+              aiWasAvailableRef.current = false;
               dispatch({ type: "patch", patch: {
                 scope: null,
                 chat: null,
@@ -337,6 +403,12 @@ export default function SharedScreen() {
                 hasMoreMessages: false,
                 loadingMoreMessages: false,
                 draft: "",
+                aiDraft: "",
+                aiRequests: [],
+                approvals: [],
+                defaultSelection: null,
+                aiAvailability: "unavailable",
+                aiError: "",
                 loading: false,
                 error: "This shared Chat is unavailable. Your access may have changed.",
               } });
@@ -392,25 +464,83 @@ export default function SharedScreen() {
     }
   };
   const updateDraft = (text: string) => {
-    dispatch({ type: "patch", patch: { draft: text } });
+    const mode = state.composerMode;
+    dispatch({ type: "patch", patch: mode === "ai" ? { aiDraft: text } : { draft: text } });
     if (!chat || view.kind !== "chat") return;
     void saveCollaborationDraft(AsyncStorage, {
-      actorId: userId, scopeId: view.scopeId, chatId: chat.id, text,
+      actorId: userId, scopeId: view.scopeId, chatId: chat.id, mode, text,
     }).catch((failure: unknown) => {
       console.warn("[mobile-collaboration] draft save failed", failure instanceof Error ? failure.name : "UnknownError");
     });
   };
   const send = async () => {
-    if (!scope || !chat || view.kind !== "chat" || !draft.trim() || !scope.capabilities.discuss) return;
+    if (!scope || !chat || view.kind !== "chat" || !state.draft.trim() || !scope.capabilities.discuss) return;
     dispatch({ type: "patch", patch: { sending: true, error: "" } });
     try {
-      await postSharedChatDiscussion(await token(), view.scopeId, scope.revision, draft.trim(), randomUuid());
+      await postSharedChatDiscussion(await token(), view.scopeId, scope.revision, state.draft.trim(), randomUuid());
       await saveCollaborationDraft(AsyncStorage, { actorId: userId, scopeId: view.scopeId, chatId: chat.id, text: "" });
       dispatch({ type: "patch", patch: { draft: "" } });
       await loadChat(view.scopeId);
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] discussion send failed", failure instanceof Error ? failure.name : "UnknownError");
       dispatch({ type: "patch", patch: { error: "Message was not sent. Your draft is still here—try again." } });
+    } finally { dispatch({ type: "patch", patch: { sending: false } }); }
+  };
+  const requestAi = async () => {
+    if (!scope || !chat || view.kind !== "chat" || !state.aiDraft.trim() || !state.defaultSelection
+      || state.aiAvailability !== "available" || scope.role === "viewer") return;
+    dispatch({ type: "patch", patch: { sending: true, aiError: "" } });
+    try {
+      const request = await postSharedAiRequest(
+        await token(), view.scopeId, scope.revision, state.aiDraft.trim(), state.defaultSelection, randomUuid(),
+      );
+      await saveCollaborationDraft(AsyncStorage, {
+        actorId: userId, scopeId: view.scopeId, chatId: chat.id, mode: "ai", text: "",
+      });
+      dispatch({ type: "patch", patch: {
+        aiDraft: "",
+        aiRequests: [...state.aiRequests.filter((candidate) => candidate.id !== request.id), request]
+          .sort(compareAcceptedSequence),
+      } });
+    } catch (failure: unknown) {
+      console.warn("[mobile-collaboration] shared AI request failed", failure instanceof Error ? failure.name : "UnknownError");
+      dispatch({ type: "patch", patch: { aiError: "AI request was not accepted. Your draft is still here—try again." } });
+    } finally { dispatch({ type: "patch", patch: { sending: false } }); }
+  };
+  const refreshAiRequests = async (scopeId: string) => {
+    const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(await token(), scopeId));
+    if (eventScopeRef.current !== scopeId) return;
+    aiWasAvailableRef.current = true;
+    dispatch({ type: "patch", patch: {
+      aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
+      defaultSelection: ai.defaultSelection, aiError: "",
+    } });
+  };
+  const controlAi = async (request: CollaborationAiRequest, action: "cancel" | "retry") => {
+    if (!scope || !chat || view.kind !== "chat" || state.sending || !canControlAi(scope.role, userId ?? "", request)) return;
+    dispatch({ type: "patch", patch: { sending: true, aiError: "" } });
+    try {
+      await controlSharedAiRequest(await token(), view.scopeId, request.id, action, chat.revision, randomUuid());
+      await refreshAiRequests(view.scopeId);
+    } catch (failure: unknown) {
+      console.warn("[mobile-collaboration] shared AI control failed", failure instanceof Error ? failure.name : "UnknownError");
+      dispatch({ type: "patch", patch: { aiError: "The request changed or the control could not be applied. Refresh and try again." } });
+    } finally { dispatch({ type: "patch", patch: { sending: false } }); }
+  };
+  const decideApproval = async (
+    approval: CollaborationApproval,
+    decision: "approve" | "approve_for_session" | "decline" | "cancel",
+  ) => {
+    if (!scope || !chat || view.kind !== "chat" || scope.role !== "owner" || state.sending) return;
+    dispatch({ type: "patch", patch: { sending: true, aiError: "" } });
+    try {
+      await decideSharedAiApproval(
+        await token(), view.scopeId, approval.approvalId, approval.runId, decision, chat.revision, randomUuid(),
+      );
+      await refreshAiRequests(view.scopeId);
+    } catch (failure: unknown) {
+      console.warn("[mobile-collaboration] shared AI approval failed", failure instanceof Error ? failure.name : "UnknownError");
+      dispatch({ type: "patch", patch: { aiError: "The approval changed or the decision could not be applied. Refresh and try again." } });
     } finally { dispatch({ type: "patch", patch: { sending: false } }); }
   };
   const markdownTheme = useMemo(() => ({
@@ -424,16 +554,19 @@ export default function SharedScreen() {
     onBack={() => dispatch({ type: "patch", patch: { view: { kind: "home" } } })} onAccept={accept} />;
 
   if (view.kind === "chat") {
-    return <SharedChatScreen state={state} markdownTheme={markdownTheme}
+    return <SharedChatScreen state={state} actorId={userId ?? ""} markdownTheme={markdownTheme}
       onBack={() => {
         chatLoadGeneration.current += 1;
         eventScopeRef.current = null;
         chatRef.current = null;
         messagesRef.current = [];
+        aiWasAvailableRef.current = false;
         dispatch({ type: "patch", patch: { view: { kind: "home" }, loadingMoreMessages: false } });
         void loadHome();
       }}
-      onLoadMore={loadMoreMessages} onDraftChange={updateDraft} onSend={send} />;
+      onLoadMore={loadMoreMessages} onDraftChange={updateDraft} onSend={send}
+      onModeChange={(composerMode) => dispatch({ type: "patch", patch: { composerMode } })}
+      onRequestAi={requestAi} onControlAi={controlAi} onDecideApproval={decideApproval} />;
   }
 
   return <CollaborationHomeScreen state={state} onReview={review} onOpen={loadChat} onLoadMore={loadMoreItems} />;
@@ -449,21 +582,27 @@ function InvitationScreen({ invitation, state, onBack, onAccept }: {
     <Back onPress={onBack} />
     <Text style={styles.title}>Join this shared Chat?</Text>
     <Text style={styles.body}>{invitation.owner.displayName} invited you as an {invitation.role}.</Text>
-    <View style={styles.card}><Text style={styles.cardTitle}>This share includes</Text><Text style={styles.body}>The ongoing Chat history and human discussion.</Text>
+    <View style={styles.card}><Text style={styles.cardTitle}>This share includes</Text><Text style={styles.body}>The ongoing Chat history, human discussion, and shared AI queue.</Text>
       <Text style={styles.cardTitle}>This stays private</Text><Text style={styles.body}>Its project, sibling Chats, files, apps, terminals, and private drafts.</Text></View>
-    <Text style={styles.muted}>AI requests are unavailable in shared Chats during this milestone.</Text>
+    <Text style={styles.muted}>Editors can discuss and request AI. Viewers have read-only access.</Text>
     {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
     <Action label={state.loading ? "Accepting…" : "Accept invitation"} disabled={state.loading} onPress={() => void onAccept(invitation)} />
   </ScrollView>;
 }
 
-function SharedChatScreen({ state, markdownTheme, onBack, onLoadMore, onDraftChange, onSend }: {
+function SharedChatScreen({ state, actorId, markdownTheme, onBack, onLoadMore, onDraftChange, onSend,
+  onModeChange, onRequestAi, onControlAi, onDecideApproval }: {
   state: ScreenState;
+  actorId: string;
   markdownTheme: ChatMarkdownTheme;
   onBack: () => void;
   onLoadMore: () => Promise<void>;
   onDraftChange: (text: string) => void;
   onSend: () => Promise<void>;
+  onModeChange: (mode: "discussion" | "ai") => void;
+  onRequestAi: () => Promise<void>;
+  onControlAi: (request: CollaborationAiRequest, action: "cancel" | "retry") => Promise<void>;
+  onDecideApproval: (approval: CollaborationApproval, decision: "approve" | "approve_for_session" | "decline" | "cancel") => Promise<void>;
 }) {
   const canDiscuss = state.scope?.capabilities.discuss === true;
   const renderMessage = useCallback(({ item }: ListRenderItemInfo<Message>) => (
@@ -477,35 +616,153 @@ function SharedChatScreen({ state, markdownTheme, onBack, onLoadMore, onDraftCha
       ListEmptyComponent={!state.loading ? <Text style={styles.muted}>Start the discussion. Messages are visible to everyone in this Chat.</Text> : null}
       ListFooterComponent={state.hasMoreMessages ? <Action label={state.loadingMoreMessages ? "Loading…" : "Load more messages"}
         disabled={state.loadingMoreMessages} onPress={() => void onLoadMore()} /> : null} />
-    <SharedChatComposer state={state} canDiscuss={canDiscuss} onDraftChange={onDraftChange} onSend={onSend} />
+    <SharedChatComposer state={state} actorId={actorId} canDiscuss={canDiscuss} onDraftChange={onDraftChange} onSend={onSend}
+      onModeChange={onModeChange} onRequestAi={onRequestAi} onControlAi={onControlAi} onDecideApproval={onDecideApproval} />
   </KeyboardAvoidingView>;
 }
 
 function SharedChatHeader({ state, onBack }: { state: ScreenState; onBack: () => void }) {
   return <View style={styles.header}><Back onPress={onBack} />
     <Text style={styles.title}>{state.chat?.title ?? "Shared Chat"}</Text>
-    <Text style={styles.muted}>{state.scope ? `${roleLabel(state.scope.role)} · Discussion only` : "Loading…"}</Text>
+    <Text style={styles.muted}>{state.scope ? `${roleLabel(state.scope.role)} · Live collaboration` : "Loading…"}</Text>
   </View>;
 }
 
-function SharedChatComposer({ state, canDiscuss, onDraftChange, onSend }: {
+function SharedChatComposer({ state, actorId, canDiscuss, onDraftChange, onSend, onModeChange, onRequestAi,
+  onControlAi, onDecideApproval }: {
   state: ScreenState;
+  actorId: string;
   canDiscuss: boolean;
   onDraftChange: (text: string) => void;
   onSend: () => Promise<void>;
+  onModeChange: (mode: "discussion" | "ai") => void;
+  onRequestAi: () => Promise<void>;
+  onControlAi: (request: CollaborationAiRequest, action: "cancel" | "retry") => Promise<void>;
+  onDecideApproval: (approval: CollaborationApproval, decision: "approve" | "approve_for_session" | "decline" | "cancel") => Promise<void>;
 }) {
-  const status = state.scope?.role === "viewer"
-    ? "Viewers can read this Chat but cannot post messages."
-    : canDiscuss ? "Messages are shared with everyone in this Chat." : "This Chat is read-only right now.";
+  const presentation = sharedChatComposerPresentation(state, canDiscuss);
+  const submit = presentation.aiMode ? onRequestAi : onSend;
   return <View style={styles.composer}>
-    <Text style={styles.muted}>{status}</Text>
-    <Text style={styles.muted}>AI requests are unavailable in shared Chats during this milestone.</Text>
-    {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
-    <TextInput accessibilityLabel="Message everyone" multiline value={state.draft} editable={canDiscuss && !state.sending}
-      onChangeText={onDraftChange} placeholder={canDiscuss ? "Message everyone…" : "Read-only access"} style={styles.input} />
-    <Action label={state.sending ? "Sending…" : "Send message"} disabled={Boolean(!canDiscuss || state.sending || !state.draft.trim())}
-      onPress={() => void onSend()} />
+    <View accessibilityLabel="Composer mode" style={styles.modeRow}>
+      <ModeAction label="Discussion mode" text="Discussion" active={!presentation.aiMode} disabled={!canDiscuss || state.sending}
+        onPress={() => onModeChange("discussion")} />
+      <ModeAction label="Ask AI mode" text="Ask AI" active={presentation.aiMode} disabled={!presentation.canRequestAi || state.sending}
+        onPress={() => onModeChange("ai")} />
+    </View>
+    <Text style={styles.muted}>{presentation.status}</Text>
+    <OptionalSharedAiQueue visible={presentation.aiMode && presentation.aiAvailable} state={state} actorId={actorId}
+      onControlAi={onControlAi} onDecideApproval={onDecideApproval} />
+    <SharedChatComposerErrors error={state.error} aiError={state.aiError} />
+    <TextInput accessibilityLabel={presentation.inputLabel} multiline value={presentation.value}
+      editable={presentation.canWrite && !state.sending} onChangeText={onDraftChange}
+      placeholder={presentation.placeholder} style={styles.input} />
+    <Action label={state.sending ? "Sending…" : presentation.submitLabel}
+      disabled={Boolean(!presentation.canWrite || state.sending || !presentation.value.trim())}
+      onPress={() => void submit()} />
   </View>;
+}
+
+function OptionalSharedAiQueue({ visible, ...props }: Parameters<typeof SharedAiQueue>[0] & { visible: boolean }) {
+  return visible ? <SharedAiQueue {...props} /> : null;
+}
+
+function SharedChatComposerErrors({ error, aiError }: Pick<ScreenState, "error" | "aiError">) {
+  return <>{error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+    {aiError ? <Text accessibilityRole="alert" style={styles.error}>{aiError}</Text> : null}</>;
+}
+
+function SharedAiQueue({ state, actorId, onControlAi, onDecideApproval }: {
+  state: ScreenState;
+  actorId: string;
+  onControlAi: (request: CollaborationAiRequest, action: "cancel" | "retry") => Promise<void>;
+  onDecideApproval: (approval: CollaborationApproval, decision: "approve" | "approve_for_session" | "decline" | "cancel") => Promise<void>;
+}) {
+  const rows = sharedAiRows(state);
+  const renderRow = useCallback(({ item }: ListRenderItemInfo<SharedAiQueueRow>) => (
+    <SharedAiQueueRowView row={item} role={state.scope?.role} actorId={actorId}
+      sending={state.sending} onControlAi={onControlAi} onDecideApproval={onDecideApproval} />
+  ), [actorId, onControlAi, onDecideApproval, state.scope?.role, state.sending]);
+  return <View accessibilityLabel="Shared AI queue" style={styles.queue}>
+    <Text style={styles.cardTitle}>AI requests · {state.aiRequests.length} accepted</Text>
+    <FlatList data={rows} nestedScrollEnabled contentContainerStyle={styles.queueContent}
+      keyExtractor={(row) => row.kind === "request" ? `request:${row.request.id}` : `approval:${row.approval.approvalId}`}
+      ListEmptyComponent={<Text style={styles.muted}>No AI requests yet.</Text>}
+      renderItem={renderRow} />
+  </View>;
+}
+
+type SharedAiQueueRow =
+  | { kind: "request"; request: CollaborationAiRequest }
+  | { kind: "approval"; approval: CollaborationApproval };
+
+function SharedAiQueueRowView({ row, role, actorId, sending, onControlAi, onDecideApproval }: {
+  row: SharedAiQueueRow;
+  role: Scope["role"] | undefined;
+  actorId: string;
+  sending: boolean;
+  onControlAi: (request: CollaborationAiRequest, action: "cancel" | "retry") => Promise<void>;
+  onDecideApproval: (approval: CollaborationApproval, decision: "approve" | "approve_for_session" | "decline" | "cancel") => Promise<void>;
+}) {
+  if (row.kind === "approval") return <ApprovalQueueRow approval={row.approval} sending={sending} onDecide={onDecideApproval} />;
+  const { request } = row;
+  const controllable = canControlAi(role, actorId, request);
+  const cancellable = ["queued", "claimed", "running", "waiting_for_approval"].includes(request.state);
+  const retryable = ["cancelled", "interrupted", "unauthorized", "unavailable"].includes(request.state);
+  return <View style={styles.queueItem}>
+    <Text style={styles.cardTitle}>{request.acceptedSequence} · {request.actor.displayName}</Text>
+    <Text style={styles.muted}>{request.state.replaceAll("_", " ")} · {request.text}</Text>
+    {controllable && cancellable ? <Action label={`Cancel request ${request.acceptedSequence}`}
+      disabled={sending} onPress={() => void onControlAi(request, "cancel")} /> : null}
+    {controllable && retryable ? <Action label={`Retry request ${request.acceptedSequence}`}
+      disabled={sending} onPress={() => void onControlAi(request, "retry")} /> : null}
+  </View>;
+}
+
+function ApprovalQueueRow({ approval, sending, onDecide }: {
+  approval: CollaborationApproval;
+  sending: boolean;
+  onDecide: (approval: CollaborationApproval, decision: "approve" | "approve_for_session" | "decline" | "cancel") => Promise<void>;
+}) {
+  return <View style={styles.queueItem}>
+    <Text style={styles.cardTitle}>Approval needed: {approval.title}</Text>
+    <Text style={styles.muted}>Risk: {approval.risk}</Text>
+    {approval.allowedDecisions.map((decision) => <Action key={decision}
+      label={`${decisionLabel(decision)} ${approval.title}`} disabled={sending}
+      onPress={() => void onDecide(approval, decision)} />)}
+  </View>;
+}
+
+function sharedAiRows(state: ScreenState): SharedAiQueueRow[] {
+  const rows: SharedAiQueueRow[] = state.aiRequests.map((request) => ({ kind: "request", request }));
+  if (state.scope?.role !== "owner") return rows;
+  for (const approval of state.approvals) {
+    if (approval.state === "pending") rows.push({ kind: "approval", approval });
+  }
+  return rows;
+}
+
+function sharedChatComposerPresentation(state: ScreenState, canDiscuss: boolean) {
+  const viewer = state.scope?.role === "viewer";
+  const aiMode = state.composerMode === "ai";
+  const aiAvailable = state.aiAvailability === "available" && state.defaultSelection !== null;
+  const canRequestAi = !viewer && aiAvailable && state.scope?.lifecycle === "shared";
+  const canWrite = aiMode ? canRequestAi : canDiscuss;
+  const value = aiMode ? state.aiDraft : state.draft;
+  const status = viewer
+    ? "Viewers can read this Chat but cannot post messages or request AI."
+    : state.aiAvailability === "checking" ? "Checking shared AI…"
+      : aiAvailable ? "One active run · up to 32 pending" : "AI requests are unavailable; discussion still works.";
+  return {
+    aiMode,
+    aiAvailable,
+    canRequestAi,
+    canWrite,
+    value,
+    status,
+    inputLabel: aiMode ? "Ask AI" : "Message everyone",
+    placeholder: !canWrite ? "Read-only access" : aiMode ? "Ask AI for everyone…" : "Message everyone…",
+    submitLabel: aiMode ? "Request AI" : "Send message",
+  };
 }
 
 function ChatMessageCard({ message, markdownTheme }: { message: Message; markdownTheme: ChatMarkdownTheme }) {
@@ -595,11 +852,39 @@ function Action({ label, onPress, disabled = false }: { label: string; onPress: 
     style={({ pressed }) => [styles.action, (pressed || disabled) && styles.faded]}><Text style={styles.actionText}>{label}</Text></Pressable>;
 }
 
+function ModeAction({ label, text, active, disabled, onPress }: {
+  label: string;
+  text: string;
+  active: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active, disabled }}
+    disabled={disabled} onPress={onPress} style={[styles.modeAction, active && styles.modeActionActive, disabled && styles.faded]}>
+    <Text style={styles.cardTitle}>{text}</Text>
+  </Pressable>;
+}
+
 function Back({ onPress }: { onPress: () => void }) {
   return <Pressable accessibilityRole="button" accessibilityLabel="Back to Shared with me" onPress={onPress}><Text style={styles.back}>‹ Shared with me</Text></Pressable>;
 }
 
 function roleLabel(role: "owner" | "editor" | "viewer"): string { return role[0]!.toUpperCase() + role.slice(1); }
+
+function canControlAi(role: Scope["role"] | undefined, actorId: string, request: CollaborationAiRequest): boolean {
+  return role === "owner" || (role === "editor" && request.actor.actorId === actorId);
+}
+
+function compareAcceptedSequence(left: CollaborationAiRequest, right: CollaborationAiRequest): number {
+  const leftSequence = BigInt(left.acceptedSequence);
+  const rightSequence = BigInt(right.acceptedSequence);
+  return leftSequence < rightSequence ? -1 : leftSequence > rightSequence ? 1 : 0;
+}
+
+function decisionLabel(decision: "approve" | "approve_for_session" | "decline" | "cancel"): string {
+  return decision === "approve_for_session" ? "Approve for session"
+    : `${decision[0]!.toUpperCase()}${decision.slice(1)}`;
+}
 
 function randomUuid(): string {
   const bytes = new Uint8Array(16);
@@ -624,6 +909,12 @@ const styles = StyleSheet.create((theme) => ({
   history: { flexGrow: 1, gap: 12, padding: 16 },
   message: { gap: 8, padding: 14, borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 16, backgroundColor: theme.v2.appColors.surface },
   composer: { gap: 8, padding: 16, borderTopWidth: 1, borderTopColor: theme.v2.colors.borderSubtle, backgroundColor: theme.v2.appColors.canvas },
+  modeRow: { flexDirection: "row", gap: 8 },
+  modeAction: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 10, padding: 9 },
+  modeActionActive: { backgroundColor: theme.v2.appColors.soft },
+  queue: { maxHeight: 240, gap: 8, borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 14, padding: 12 },
+  queueContent: { gap: 8 },
+  queueItem: { gap: 6, borderTopWidth: 1, borderTopColor: theme.v2.colors.borderSubtle, paddingTop: 8 },
   input: { minHeight: 72, borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 14, padding: 12, color: theme.v2.appColors.ink, fontFamily: theme.v2.fonts.body, textAlignVertical: "top" },
   action: { alignItems: "center", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, backgroundColor: theme.v2.palette.green[800] },
   actionText: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.textInverse },

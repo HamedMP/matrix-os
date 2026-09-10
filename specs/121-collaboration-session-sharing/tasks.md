@@ -123,7 +123,7 @@
 - [x] T055 [US3] (PR3) Reauthorize original actors before claim/dispatch and preserve explicit unauthorized/unavailable/interrupted outcomes in `packages/gateway/src/chat/orchestrator.ts`
 - [x] T056 [US3] (PR3) Wire PR2 scoped execution context and provenance into the canonical Chat adapter in `packages/gateway/src/collaboration/chat-execution-adapter.ts`
 - [x] T057 [US3] (PR3) Add shared AI request/control endpoints and versioned event projections in `packages/gateway/src/collaboration/routes.ts`
-- [ ] T058 [US3] (PR3) Add discussion/AI mode, ordered queue, approvals, attributed controls, preserved draft-on-failure, and recovery UI in `packages/ui/src/collaboration/SharedChatControls.tsx`
+- [x] T058 [US3] (PR3) Add discussion/AI mode, ordered queue, approvals, attributed controls, preserved draft-on-failure, and recovery UI in `packages/ui/src/collaboration/SharedChatControls.tsx`
 
 **Checkpoint**: PR1/M1 is usable for discussion only. PR3/M2 adds AI only after PR2 proves isolation.
 
@@ -279,7 +279,7 @@
 - [x] T113 (PR1) Run PR1 focused suites, the available pnpm-equivalent typechecks, `bun run check:patterns`, `bun run test`, React Doctor for `packages/ui`, `shell`, `desktop`, and `apps/mobile`, and record exact results and environment limitations in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T114 (PR1) Capture current Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile M1 screenshots/recordings and link public-safe evidence in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T115 (PR1) Run the disposable VPS-native two-account M1 journey, rollback drill, no-computer recipient flow, and snapshot regressions; record exact versions/results in `specs/121-collaboration-session-sharing/quickstart.md`
-- [ ] T116 [P] (PR3) Wire shared AI queue/controls across Web Canvas, Web Desktop, Electron Desktop, Web Mobile, Native Mobile, and CLI using `packages/ui/src/collaboration/SharedChatControls.tsx`
+- [x] T116 [P] (PR3) Wire shared AI queue/controls across Web Canvas, Web Desktop, Electron Desktop, Web Mobile, Native Mobile, and CLI using `packages/ui/src/collaboration/SharedChatControls.tsx`
 - [ ] T117 [P] (PR4) Wire terminal invitation/watch/control state across applicable Web/Electron/mobile/CLI clients using `packages/ui/src/collaboration/SharedTerminalControls.tsx`
 - [ ] T118 [P] (PR6) Wire whole-project inventory/membership/lifecycle across applicable Web/Electron/mobile/CLI clients using `packages/ui/src/collaboration/ProjectSharingDialog.tsx`
 - [ ] T119 (PR3) Validate M2 on the release artifact and record isolation/profile/queue/control/rollback evidence in `specs/121-collaboration-session-sharing/quickstart.md`

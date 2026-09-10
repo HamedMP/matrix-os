@@ -232,6 +232,9 @@ export class ChatQueueRepository {
         || scope.kind !== "chat" || scope.resource_id !== chatId) {
         throw new SharedChatQueueError("not_found");
       }
+      if (Number(scope.revision) !== input.expectedRevision) {
+        throw new SharedChatQueueError("conflict");
+      }
       if (scope.lifecycle !== "shared" || scope.membership_mode !== "direct"
         || Number(scope.auth_epoch) !== input.acceptedAuthEpoch) {
         throw new SharedChatQueueError("unavailable");

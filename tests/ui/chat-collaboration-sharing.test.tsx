@@ -178,7 +178,7 @@ describe("Chat collaboration sharing", () => {
       actorId="user_editor" runtimeId="runtime_owner" />);
     expect(await screen.findByText("Nima")).toBeVisible();
     expect(screen.getByText("Welcome")).toBeVisible();
-    expect(screen.getByText(/AI requests are unavailable/i)).toBeVisible();
+    expect(await screen.findByText(/AI requests are unavailable/i)).toBeVisible();
     fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ready" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Message was not sent");

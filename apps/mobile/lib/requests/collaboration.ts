@@ -1,5 +1,10 @@
 import {
   CollaborationChatMessagesResponseSchema,
+  CollaborationAiRequestSchema,
+  CollaborationAiRequestsResponseSchema,
+  CollaborationCreateAiRequestSchema,
+  CollaborationAiRequestControlSchema,
+  CollaborationApprovalDecisionRequestSchema,
   CollaborationChatSchema,
   CollaborationConnectionTicketResponseSchema,
   CollaborationDiscoveryResponseSchema,
@@ -8,6 +13,7 @@ import {
   CollaborationInvitationSchema,
   CollaborationPageRequestSchema,
   CollaborationRevisionSchema,
+  CollaborationResourceIdSchema,
   CollaborationScopeSchema,
   CollaborationUserStateSchema,
 } from "@matrix-os/contracts/collaboration";
@@ -21,6 +27,9 @@ const AcceptedSchema = z.looseObject({
   actorId: z.string().min(1).max(128),
   status: z.literal("accepted"),
   revision: CollaborationRevisionSchema,
+});
+const AiControlResponseSchema = z.looseObject({
+  state: z.enum(["accepted", "completed", "failed", "reconciling"]),
 });
 
 function url(path: string): string {
@@ -91,6 +100,78 @@ export function postSharedChatDiscussion(
       expectedRevision: CollaborationRevisionSchema.parse(expectedRevision),
       text: z.string().trim().min(1).max(65_536).parse(text),
     }),
+  });
+}
+
+export function fetchSharedAiRequests(token: string, scopeId: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/chat/requests`), token,
+    schema: CollaborationAiRequestsResponseSchema, errorMessage: ERROR,
+  });
+}
+
+export function postSharedAiRequest(
+  token: string,
+  scopeId: string,
+  expectedRevision: string,
+  text: string,
+  selection: unknown,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const body = CollaborationCreateAiRequestSchema.parse({
+    clientRequestId,
+    expectedRevision,
+    text,
+    selection,
+  });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/chat/requests`), token,
+    schema: CollaborationAiRequestSchema, errorMessage: ERROR,
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+export function controlSharedAiRequest(
+  token: string,
+  scopeId: string,
+  requestId: string,
+  action: "cancel" | "retry",
+  expectedRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const request = CollaborationResourceIdSchema.parse(requestId);
+  const body = CollaborationAiRequestControlSchema.parse({ clientRequestId, expectedRevision });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/chat/requests/${request}/${action}`), token,
+    schema: AiControlResponseSchema, errorMessage: ERROR,
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+export function decideSharedAiApproval(
+  token: string,
+  scopeId: string,
+  approvalId: string,
+  runId: string,
+  decision: "approve" | "approve_for_session" | "decline" | "cancel",
+  expectedRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const approval = CollaborationResourceIdSchema.parse(approvalId);
+  const body = CollaborationApprovalDecisionRequestSchema.parse({
+    clientRequestId,
+    expectedRevision,
+    runId,
+    decision,
+  });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/chat/approvals/${approval}/decision`), token,
+    schema: AiControlResponseSchema, errorMessage: ERROR,
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
 }
 
