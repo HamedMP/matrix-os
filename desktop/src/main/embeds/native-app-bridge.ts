@@ -6,6 +6,12 @@ import {
   type NativeAppQuery,
 } from "../../shared/native-app-bridge";
 
+import {
+  NATIVE_APP_GATEWAY_CHANNEL,
+  NativeAppGatewayRequestSchema,
+  type NativeAppGatewayRequest,
+} from "../../shared/native-app-gateway";
+
 const SAFE_APP_IDENTITY = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
 const MAX_APP_IDENTITY_LENGTH = 256;
 const DEFAULT_MAX_SENDERS = 64;
@@ -49,6 +55,7 @@ function isSafeAppIdentity(value: string): boolean {
 
 interface NativeAppBridgeOptions {
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
+  gatewayRequest: (slug: string, request: NativeAppGatewayRequest) => Promise<unknown>;
   gatewayOrigin: () => string;
   maxSenders?: number;
 }
@@ -127,6 +134,30 @@ export function createNativeAppQueryRequester(
   };
 }
 
+export function createNativeAppGatewayRequester(
+  options: NativeAppQueryRequesterOptions,
+): (slug: string, request: NativeAppGatewayRequest) => Promise<unknown> {
+  const fetchFn = options.fetchFn ?? fetch;
+  return async (slug, rawRequest) => {
+    if (slug !== "resource-manager") throw new Error("not authorized");
+    const request = NativeAppGatewayRequestSchema.parse(rawRequest);
+    const token = options.getToken();
+    if (!token) throw new Error("desktop authentication required");
+    const origin = new URL(options.getGatewayOrigin());
+    if (origin.protocol !== "https:" && origin.protocol !== "http:") {
+      throw new Error("invalid gateway origin");
+    }
+    const response = await fetchFn(new URL(request.url, origin).toString(), {
+      method: "GET",
+      redirect: "error",
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`activity request failed (${response.status})`);
+    return readBoundedJson(response);
+  };
+}
+
 function isSenderAtApp(sender: NativeAppSender, origin: string, slug: string): boolean {
   try {
     const url = new URL(sender.url);
@@ -183,7 +214,28 @@ export class NativeAppBridge {
     return this.options.request(identity.appIdentity, parsed.data);
   }
 
+  async gatewayFetch(sender: NativeAppSender, rawRequest: unknown): Promise<unknown> {
+    const identity = this.senders.get(sender.id);
+    if (
+      identity?.appIdentity !== "resource-manager"
+      || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)
+    ) throw new Error("not authorized");
+    const parsed = NativeAppGatewayRequestSchema.safeParse(rawRequest);
+    if (!parsed.success) throw new Error("invalid request");
+    return this.options.gatewayRequest(identity.appIdentity, parsed.data);
+  }
+
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
+    ipcMain.handle(NATIVE_APP_GATEWAY_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
+      try {
+        if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+        return await this.gatewayFetch({ id: event.sender.id, url: event.sender.getURL() }, rawRequest);
+      } catch (error: unknown) {
+        console.warn("[native-app-bridge] activity request failed:",
+          error instanceof Error ? error.message : String(error));
+        throw new Error("app gateway request failed");
+      }
+    });
     ipcMain.handle(NATIVE_APP_QUERY_CHANNEL, async (event: IpcMainInvokeEvent, rawQuery: unknown) => {
       try {
         return await this.query({ id: event.sender.id, url: event.sender.getURL() }, rawQuery);
