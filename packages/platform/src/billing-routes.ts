@@ -76,7 +76,7 @@ import {
 import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
 import type { RedditConversionsClient } from './reddit-conversions.js';
 import {
-  deliverRedditPurchaseAttribution,
+  deliverRedditAttribution,
   isSafeMarketingLandingPath,
 } from './reddit-purchase-attribution.js';
 
@@ -1127,7 +1127,7 @@ export function createBillingRoutes(options: {
           );
         });
       }
-      await deliverRedditPurchaseAttribution(event, options.redditConversions);
+      await deliverRedditAttribution(event, options.redditConversions);
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));

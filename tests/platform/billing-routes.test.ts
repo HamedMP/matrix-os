@@ -1858,6 +1858,7 @@ describe('platform billing routes', () => {
     const sendPurchase = vi.fn()
       .mockRejectedValueOnce(new Error('temporary failure'))
       .mockResolvedValue('sent');
+    const sendSignUp = vi.fn().mockResolvedValue('sent');
     vi.mocked(stripe.constructWebhookEvent).mockReturnValue({
       id: 'evt_reddit_purchase',
       type: 'checkout.session.completed',
@@ -1865,6 +1866,7 @@ describe('platform billing routes', () => {
       data: {
         object: {
           id: 'cs_reddit_purchase',
+          mode: 'payment',
           client_reference_id: 'user_123',
           amount_total: 10000,
           currency: 'usd',
@@ -1881,7 +1883,7 @@ describe('platform billing routes', () => {
       env,
       undefined,
       () => new Date('2026-05-30T00:00:00.000Z'),
-      { sendPurchase },
+      { sendPurchase, sendSignUp },
     );
 
     const request = () => app.request('/billing/webhooks/stripe', {
@@ -1894,7 +1896,7 @@ describe('platform billing routes', () => {
     expect(sendPurchase).toHaveBeenCalledTimes(2);
     expect(sendPurchase).toHaveBeenLastCalledWith({
       eventAt: 1_779_753_600_000,
-      checkoutSessionId: 'cs_reddit_purchase',
+      conversionId: 'cs_reddit_purchase',
       clerkUserId: 'user_123',
       clickId: 'reddit-click',
       eventSourceUrl: 'https://matrix-os.com/?rdt_cid=reddit-click&utm_source=reddit',
