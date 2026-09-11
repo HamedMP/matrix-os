@@ -17,7 +17,7 @@ const MAX_RECOVERY_BATCH = 100;
 const DEFAULT_EXTERNAL_TIMEOUT_MS = 30_000;
 const MAX_EXTERNAL_TIMEOUT_MS = 60_000;
 const TransferResultSchema = z.object({
-  destinationAuthorityRuntimeId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
+  destinationAuthorityRuntimeId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/),
   destinationAuthorityGeneration: z.number().int().positive(),
   publicationMarker: z.string().regex(/^publication_[A-Za-z0-9_-]{1,128}$/),
 }).strict();

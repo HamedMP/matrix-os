@@ -139,6 +139,27 @@ describe("project collaboration transition journal", () => {
     });
   });
 
+  it("moves to a new authority generation on the same owner runtime", async () => {
+    await expect(journal().prepare({
+      scopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      requestedBy: OWNER_ID,
+      clientRequestId: CLIENT_REQUEST_ID,
+      payloadHash: PAYLOAD_HASH,
+      expectedScopeRevision: 4,
+      inventoryRevision: 7,
+      inventoryHash: INVENTORY_HASH,
+      membershipHash: MEMBERSHIP_HASH,
+      destinationAuthorityRuntimeId: SOURCE_RUNTIME,
+      destinationAuthorityGeneration: 4,
+    })).resolves.toMatchObject({
+      sourceAuthorityRuntimeId: SOURCE_RUNTIME,
+      sourceAuthorityGeneration: 3,
+      destinationAuthorityRuntimeId: SOURCE_RUNTIME,
+      destinationAuthorityGeneration: 4,
+    });
+  });
+
   it("requires ordered durable stages and publishes the destination authority exactly once", async () => {
     const transitions = journal();
     await prepare();
