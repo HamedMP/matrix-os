@@ -1700,4 +1700,100 @@ describe("zellij terminal WebSocket", () => {
     expect(secondWs.sent).toContainEqual(expect.objectContaining({ lease: { epoch: 2 } }));
     await handler.dispose();
   });
+
+  it("rechecks legacy mutation admission and closes before delayed input can run", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const withMutationAdmission = vi.fn(async (_operation: () => Promise<void>) => {
+      throw new Error("project transitioned to shared authority");
+    });
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      idleAttachGraceMs: 0,
+    });
+    const session = await handler.open({
+      ws,
+      session: "main",
+      fromSeq: 0,
+      withMutationAdmission,
+    });
+
+    session.onMessage(JSON.stringify({ type: "input", data: "late input" }));
+
+    await vi.waitFor(() => expect(ws.closed).toBe(true));
+    expect(withMutationAdmission).toHaveBeenCalledTimes(1);
+    expect(pty.writes).toEqual([]);
+    expect(ws.sent).toContainEqual({
+      type: "error",
+      code: "session_shared",
+      message: "Use the shared terminal route",
+    });
+    await handler.dispose();
+  });
+
+  it("preserves accepted legacy input and resize order through mutation admission", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const accepted: number[] = [];
+    const withMutationAdmission = vi.fn(async (operation: () => Promise<void>) => {
+      accepted.push(accepted.length + 1);
+      await operation();
+    });
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      sizingDebounceMs: 0,
+    });
+    const session = await handler.open({
+      ws,
+      session: "main",
+      fromSeq: 0,
+      withMutationAdmission,
+    });
+
+    session.onMessage(JSON.stringify({ type: "input", data: "first" }));
+    session.onMessage(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
+
+    await vi.waitFor(() => expect(withMutationAdmission).toHaveBeenCalledTimes(2));
+    expect(accepted).toEqual([1, 2]);
+    expect(pty.writes).toEqual(["first"]);
+    expect(pty.resizes.at(-1)).toEqual({ cols: 120, rows: 40 });
+    session.onClose();
+    await handler.dispose();
+  });
+
+  it("bounds pending legacy mutation admissions and closes an overloaded socket", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const admission = deferred<void>();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      idleAttachGraceMs: 0,
+    });
+    const session = await handler.open({
+      ws,
+      session: "main",
+      fromSeq: 0,
+      withMutationAdmission: async (operation) => {
+        await admission.promise;
+        await operation();
+      },
+    });
+
+    for (let index = 0; index < 65; index += 1) {
+      session.onMessage(JSON.stringify({ type: "input", data: String(index) }));
+    }
+
+    await vi.waitFor(() => expect(ws.closed).toBe(true));
+    expect(ws.sent).toContainEqual({
+      type: "error",
+      code: "input_overloaded",
+      message: "Too many pending terminal actions",
+    });
+    expect(pty.writes).toEqual([]);
+    admission.resolve();
+    await handler.dispose();
+  });
 });

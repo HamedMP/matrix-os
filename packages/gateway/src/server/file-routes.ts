@@ -3,7 +3,7 @@ import {
   mkdir as mkdirAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative } from "node:path";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -22,14 +22,13 @@ import { fileDelete, trashList, trashRestore, trashEmpty } from "../trash.js";
 import { listProjects } from "../projects.js";
 import {
   ProjectFenceError,
-  type LegacyProjectOperationAdmission,
 } from "../collaboration/project-fence.js";
+import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 
 export interface FileRouteDeps {
   homePath: string;
   getOwnerId?: (c: Context) => string;
-  listOwnerProjects?: (ownerId: string) => Promise<Array<{ id: string; localPath: string }>>;
-  projectOperationAdmission?: LegacyProjectOperationAdmission;
+  projectPathAdmission?: LegacyProjectPathAdmission;
 }
 
 export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
@@ -41,38 +40,18 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     paths: readonly string[],
     operation: () => Promise<Response>,
   ): Promise<Response> {
-    if (!deps.projectOperationAdmission) return operation();
-    if (!deps.getOwnerId || !deps.listOwnerProjects) {
+    if (!deps.projectPathAdmission) return operation();
+    if (!deps.getOwnerId) {
       return c.json({ error: "File service unavailable" }, 503);
     }
     try {
       const ownerId = deps.getOwnerId(c);
-      const targets = paths
-        .map((path) => resolveWritableFileApiPath(homePath, path))
-        .filter((path): path is string => path !== null);
-      const projects = await deps.listOwnerProjects(ownerId);
-      const matched = projects.filter((project) => {
-        if (!/^proj_[A-Za-z0-9_-]{1,128}$/.test(project.id)) return false;
-        const root = resolveWithinHome(homePath, project.localPath);
-        if (!root) return false;
-        return targets.some((target) => {
-          const rel = relative(resolve(root), target);
-          return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
-        });
-      }).sort((left, right) => left.id.localeCompare(right.id));
-      if (matched.length > 32) return c.json({ error: "File service unavailable" }, 503);
-      const unique = matched.filter((project, index) => index === 0 || project.id !== matched[index - 1]!.id);
-      const run = async (index: number): Promise<Response> => {
-        const project = unique[index];
-        if (!project) return operation();
-        return deps.projectOperationAdmission!.withLegacyAdmission({
-          ownerType: "personal",
-          ownerId,
-          projectId: project.id,
-          kind: "write",
-        }, () => run(index + 1));
-      };
-      return await run(0);
+      return await deps.projectPathAdmission.withPaths({
+        ownerType: "personal",
+        ownerId,
+        paths,
+        kind: "write",
+      }, operation);
     } catch (err: unknown) {
       if (err instanceof ProjectFenceError) {
         if (["fenced", "scope_required", "conflict", "not_found"].includes(err.code)) {

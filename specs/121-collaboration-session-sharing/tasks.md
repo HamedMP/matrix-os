@@ -230,7 +230,7 @@
 
 - [x] T093 [US1] (PR5) Implement complete owner-derived project inventory, blockers, fingerprint, and expiring confirmation tokens in `packages/gateway/src/collaboration/project-inventory.ts`
 - [x] T094 [US1] (PR5) Implement durable prepared/staging/fenced/committing/active transition journal and recovery in `packages/gateway/src/collaboration/project-transition.ts`
-- [ ] T095 [US1] (PR5) Fence every legacy project writer/run admission and publish one authority after final inventory/version checks in `packages/gateway/src/collaboration/project-fence.ts`
+- [x] T095 [US1] (PR5) Fence every legacy project writer/run admission and publish one authority after final inventory/version checks in `packages/gateway/src/collaboration/project-fence.ts`
 - [x] T096 [US1] (PR5) Implement atomic inherited child bindings and future-content membership resolution in `packages/gateway/src/collaboration/project-inheritance.ts`
 
 ### Tests and implementation — PR6
