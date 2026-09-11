@@ -125,6 +125,9 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
+node "$ROOT_DIR/scripts/inline-sync-agent-recovery.mjs" \
+  "$STAGE_DIR/bin/matrix-sync-agent" \
+  "$STAGE_DIR/bin/matrix-sync-agent-recovery"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while

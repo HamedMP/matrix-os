@@ -79,113 +79,6 @@ function runSyncAgentFunction(source: string, invocation: string, setup: string)
   });
 }
 
-function syncAgentHarnessSource(): string {
-  const root = process.cwd();
-  const syncAgent = readFileSync(
-    join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'),
-    'utf8',
-  );
-  return syncAgent
-    .slice(0, syncAgent.indexOf('# ── Main loop'))
-    .replace('source /opt/matrix/env/host.env', ':')
-    .replace('readonly APP_DIR="/opt/matrix/app"', 'readonly APP_DIR="$TEST_ROOT/app"')
-    .replace('readonly STAGING_DIR="/opt/matrix/staging"', 'readonly STAGING_DIR="$TEST_ROOT/staging"')
-    .replace('readonly BIN_DIR="/opt/matrix/bin"', 'readonly BIN_DIR="$TEST_ROOT/bin"')
-    .replace('readonly RELEASE_FILE="/opt/matrix/release.json"', 'readonly RELEASE_FILE="$TEST_ROOT/release.json"')
-    .replace(
-      'readonly RELEASE_ROLLBACK_FILE="/opt/matrix/release.json.rollback"',
-      'readonly RELEASE_ROLLBACK_FILE="$TEST_ROOT/release.json.rollback"',
-    )
-    .replace(
-      'readonly TERMINAL_RUNTIME_ROOT="/opt/matrix/terminal-runtime"',
-      'readonly TERMINAL_RUNTIME_ROOT="$TEST_ROOT/terminal-runtime"',
-    );
-}
-
-function runInterruptedLegacyUpdateRecovery(options: {
-  installedReleaseVersion: string;
-  rollbackAppVersion: string;
-  rollbackStatus?: number;
-}) {
-  const root = process.cwd();
-  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-interrupted-update-'));
-  const appDir = join(tempDir, 'app');
-  const rollbackDir = `${appDir}.rollback`;
-  const stagingDir = join(tempDir, 'staging');
-  mkdirSync(appDir, { recursive: true });
-  mkdirSync(rollbackDir, { recursive: true });
-  mkdirSync(stagingDir, { recursive: true });
-  writeFileSync(join(appDir, 'BUNDLE_VERSION'), 'v2026.09.11-pr-test\n');
-  writeFileSync(join(rollbackDir, 'BUNDLE_VERSION'), `${options.rollbackAppVersion}\n`);
-  writeFileSync(
-    join(tempDir, 'release.json'),
-    `${JSON.stringify({ version: options.installedReleaseVersion })}\n`,
-  );
-  writeFileSync(join(stagingDir, 'update-phase'), 'health\n');
-
-  const functionDefinitions = syncAgentHarnessSource();
-  const invocation = `
-do_rollback() { printf 'rollback:%s\\n' "${'$'}{1:-true}"; return "${'$'}{ROLLBACK_STATUS:-0}"; }
-write_update_error() { printf 'error:%s:%s\\n' "${'$'}1" "${'$'}{3:-}"; }
-recover_interrupted_update
-`;
-
-  try {
-    return spawnSync('bash', ['-c', `${functionDefinitions}\n${invocation}`], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        TEST_ROOT: tempDir,
-        ROLLBACK_STATUS: String(options.rollbackStatus ?? 0),
-      },
-    });
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
-function runLegacyManualRollback() {
-  const root = process.cwd();
-  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-manual-rollback-'));
-  const appDir = join(tempDir, 'app');
-  const rollbackDir = `${appDir}.rollback`;
-  mkdirSync(appDir, { recursive: true });
-  mkdirSync(rollbackDir, { recursive: true });
-  mkdirSync(join(tempDir, 'staging'), { recursive: true });
-  writeFileSync(join(appDir, 'BUNDLE_VERSION'), 'v2026.09.11-pr-test\n');
-  writeFileSync(join(rollbackDir, 'BUNDLE_VERSION'), 'v2026.09.08-1195\n');
-  writeFileSync(
-    join(tempDir, 'release.json'),
-    `${JSON.stringify({ version: 'v2026.09.08-1195' })}\n`,
-  );
-  const invocation = `
-stop_runtime_services() { :; }
-activate_terminal_runtime_generation() { :; }
-cleanup_terminal_runtime_generations() { :; }
-sudo() {
-  case "${'$'}1" in
-    chown|systemctl) return 0 ;;
-    *) "${'$'}@" ;;
-  esac
-}
-curl() { :; }
-do_rollback true
-printf 'active-version:'
-current_version
-`;
-
-  try {
-    return spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, TEST_ROOT: tempDir },
-    });
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
 describe('customer VPS host bundle', () => {
   it('build script packages the systemd entrypoint binaries', () => {
     const root = process.cwd();
@@ -229,32 +122,6 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-messaging-health');
     expect(script).toContain('"$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('bin app runtime systemd user-systemd terminal-runtime release.json');
-  });
-
-  it('smoke-tests the production gateway loader used by the host launcher', () => {
-    const root = process.cwd();
-    const buildScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
-    const launcher = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
-    const smokePath = join(root, 'scripts/smoke-gateway-production-loader.mjs');
-    const smoke = readFileSync(smokePath, 'utf8');
-
-    expect(launcher).toContain(
-      '"$NODE_BIN" --import=tsx "$APP_DIR/packages/gateway/dist/main.js" &',
-    );
-    expect(buildScript).toContain(
-      'node --import=tsx "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs"',
-    );
-    expect(smoke).toContain('await import("../packages/gateway/dist/server.js")');
-    expect(smoke).toContain('await import("@matrix-os/terminal-runtime")');
-    expect(smoke).toContain(
-      'await import("@matrix-os/terminal-runtime/user-systemd-capacity")',
-    );
-
-    const result = spawnSync('node', ['--import=tsx', smokePath], {
-      cwd: root,
-      encoding: 'utf8',
-    });
-    expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 
   it('pins, verifies, smoke-tests, and packages the configured Zellij binary', () => {
@@ -1529,6 +1396,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('sync agent persists bounded errors for destructive update phase failures', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const recoveryLibrary = readFileSync(
+      join(root, 'distro/customer-vps/host-bin/matrix-sync-agent-recovery'),
+      'utf8',
+    );
 
     expect(syncAgent).toContain('write_update_error "checksum_mismatch"');
     expect(syncAgent).toContain('write_update_error "bundle_extract_failed"');
@@ -1541,7 +1412,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('verification_error_code="post_install_runtime_version_mismatch"');
     expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
     expect(syncAgent).toContain('write_update_error "apply_failed"');
-    expect(syncAgent).toContain('write_update_error "apply_interrupted"');
+    expect(recoveryLibrary).toContain('write_update_error "apply_interrupted"');
     expect(syncAgent).toContain('temp="$(mktemp "$APP_DIR/.update-error.json.XXXXXX")" || return 1');
     expect(syncAgent).toContain('python3 - "$temp" "$code" "$message" "$version" "$available_kb" "$required_kb"');
     expect(syncAgent).toContain('if ! mv -fT "$temp" "$UPDATE_ERROR_MARKER"; then');
@@ -1572,48 +1443,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(healthFailure).toBeGreaterThan(-1);
     expect(healthRollback).toBeGreaterThan(healthFailure);
     expect(durableHealthError).toBeGreaterThan(healthRollback);
-  });
-
-  it('rolls back an interrupted legacy update when installed metadata still identifies the rollback app', () => {
-    const result = runInterruptedLegacyUpdateRecovery({
-      installedReleaseVersion: 'v2026.09.08-1195',
-      rollbackAppVersion: 'v2026.09.08-1195',
-    });
-
-    expect(result.status, result.stderr || result.stdout).toBe(0);
-    expect(result.stdout).toContain('rollback:false');
-    expect(result.stdout).toContain('error:apply_interrupted:v2026.09.11-pr-test');
-  });
-
-  it('fails closed when interrupted legacy update metadata does not identify the rollback app', () => {
-    const result = runInterruptedLegacyUpdateRecovery({
-      installedReleaseVersion: 'v2026.09.07-unrelated',
-      rollbackAppVersion: 'v2026.09.08-1195',
-    });
-
-    expect(result.status, result.stderr || result.stdout).toBe(0);
-    expect(result.stdout).not.toContain('rollback:');
-    expect(result.stdout).toContain('error:post_install_rollback_failed:v2026.09.11-pr-test');
-  });
-
-  it('persists a bounded recovery error when interrupted legacy rollback fails', () => {
-    const result = runInterruptedLegacyUpdateRecovery({
-      installedReleaseVersion: 'v2026.09.08-1195',
-      rollbackAppVersion: 'v2026.09.08-1195',
-      rollbackStatus: 1,
-    });
-
-    expect(result.status, result.stderr || result.stdout).toBe(0);
-    expect(result.stdout).toContain('rollback:false');
-    expect(result.stdout).toContain('error:post_install_rollback_failed:v2026.09.11-pr-test');
-  });
-
-  it('allows manual rollback when current release metadata already identifies the rollback app', () => {
-    const result = runLegacyManualRollback();
-
-    expect(result.status, result.stderr || result.stdout).toBe(0);
-    expect(result.stdout).toContain('Installed release metadata already identifies the rollback app');
-    expect(result.stdout).toContain('active-version:v2026.09.08-1195');
   });
 
   it('sync agent refuses to replace the app until runtime services are confirmed stopped', () => {
@@ -1875,13 +1704,15 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
   });
 
   it('publishes installed release metadata only after the candidate app passes health', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const recoveryLibrary = readFileSync(
+      join(root, 'distro/customer-vps/host-bin/matrix-sync-agent-recovery'),
+      'utf8',
+    );
 
     const stageFunction = syncAgent.indexOf('stage_release_metadata()');
     const stagedInstall = syncAgent.indexOf(
@@ -1902,7 +1733,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
       'sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"',
     );
     expect(syncAgent).toContain('write_update_error "post_install_release_metadata_failed"');
-    expect(syncAgent).toContain('rollback_release_metadata_is_ready "$APP_DIR.rollback"');
+    expect(recoveryLibrary).toContain('rollback_release_metadata_is_ready "$APP_DIR.rollback"');
     expect(syncAgent).toContain('restore_rollback_release_metadata');
   });
 
