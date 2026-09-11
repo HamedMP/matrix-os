@@ -3,7 +3,7 @@ import { link, lstat, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import {
-  FILE_DOWNLOAD_TIMEOUT_MS, MAX_FILE_DOWNLOAD_BYTES,
+  FILE_DOWNLOAD_TIMEOUT_MS, FILE_DOWNLOAD_IDLE_TIMEOUT_MS,
   FileDownloadRequestSchema, safeDownloadFilename,
   type FileDownloadRequest, type FileDownloadResult, type FileDownloadErrorCode,
 } from "@matrix-os/contracts";
@@ -18,6 +18,7 @@ interface DownloadDeps {
   // The native dialog must confirm overwrites. Renderer paths are never accepted.
   chooseDestination: (filename: string) => Promise<string | null>;
   fetchFn?: typeof fetch;
+  idleTimeoutMs?: number;
 }
 class DownloadFailure extends Error {
   constructor(readonly code: FileDownloadErrorCode) { super(code); }
@@ -59,7 +60,6 @@ export function createFileDownloadService(deps: DownloadDeps) {
     let temporary: string | null = null;
     let file: FileHandle | null = null;
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-    let transferSignal: AbortSignal | null = null;
     const token = deps.auth.getToken();
     const origin = deps.auth.getGatewayOrigin();
     const current = () => {
@@ -71,8 +71,13 @@ export function createFileDownloadService(deps: DownloadDeps) {
     const assertCurrent = () => {
       if (!current()) controller.abort();
       controller.signal.throwIfAborted();
-      transferSignal?.throwIfAborted();
     };
+
+    async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+      const timer = setTimeout(() => controller.abort(new DOMException("Download stalled", "TimeoutError")), ms);
+      try { return await abortable(promise, controller.signal); }
+      finally { clearTimeout(timer); }
+    }
 
     try {
       if (!token || !current()) return { status: "cancelled" };
@@ -90,39 +95,83 @@ export function createFileDownloadService(deps: DownloadDeps) {
       const before = await destinationSnapshot(destination);
       assertCurrent();
 
-      transferSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(FILE_DOWNLOAD_TIMEOUT_MS)]);
-      const url = new URL("/api/files/blob", origin);
+      const url = new URL("/api/files/media", origin);
       url.searchParams.set("path", request.path);
+      url.searchParams.set("download", "true");
       if (request.runtimeSlot !== "primary") url.searchParams.set("runtime", request.runtimeSlot);
-      const response = await abortable((deps.fetchFn ?? fetch)(url.toString(), {
+      const response = await withTimeout((deps.fetchFn ?? fetch)(url.toString(), {
         headers: { Authorization: `Bearer ${token}`, "Accept-Encoding": "identity" },
         redirect: "error",
-        signal: transferSignal,
-      }), transferSignal);
+        signal: controller.signal,
+      }), FILE_DOWNLOAD_TIMEOUT_MS);
       if (response.body) reader = response.body.getReader();
-      if (!response.ok) throw new DownloadFailure(response.status === 413 ? "too_large"
+      if (response.status !== 200) throw new DownloadFailure(response.status === 429 ? "busy"
         : [401, 403, 404].includes(response.status) ? "unavailable" : "failed");
       const rawLength = response.headers.get("content-encoding") ? null : response.headers.get("content-length");
       const expected = rawLength === null ? null : Number(rawLength);
       if (expected !== null && (!Number.isSafeInteger(expected) || expected < 0)) throw new DownloadFailure("failed");
-      if (expected !== null && expected > MAX_FILE_DOWNLOAD_BYTES) throw new DownloadFailure("too_large");
       assertCurrent();
       temporary = join(dirname(destination), `.matrix-download-${randomUUID()}.partial`);
       file = await open(temporary, "wx", 0o600);
       let received = 0;
-      if (reader) {
-        while (true) {
-          const { done, value } = await abortable(reader.read(), transferSignal);
+      let progressAtAttempt = 0;
+      let failuresWithoutProgress = 0;
+      const rawTag = response.headers.get("etag");
+      const resumeTag = rawTag && rawTag.length <= 256 && /^"[^"\r\n]+"$/.test(rawTag) ? rawTag : null;
+      while (true) {
+        try {
+          if (reader) {
+            while (true) {
+              const { done, value } = await withTimeout(reader.read(), deps.idleTimeoutMs ?? FILE_DOWNLOAD_IDLE_TIMEOUT_MS);
+              assertCurrent();
+              if (done) break;
+              const next = received + value.byteLength;
+              if (!Number.isSafeInteger(next) || (expected !== null && next > expected)) throw new DownloadFailure("failed");
+              try { await file.writeFile(value); }
+              catch (writeError: unknown) {
+                console.warn("[file-download] destination write failed", writeError);
+                throw new DownloadFailure("failed");
+              }
+              received = next;
+            }
+          }
+          if (expected !== null && received !== expected) throw new Error("Download ended early");
+          break;
+        } catch (error: unknown) {
           assertCurrent();
-          if (done) break;
-          received += value.byteLength;
-          if (received > MAX_FILE_DOWNLOAD_BYTES) throw new DownloadFailure("too_large");
-          // FileHandle.writeFile handles partial writes; each chunk appends at
-          // the current file position without buffering the entire response.
-          await file.writeFile(value);
+          if (error instanceof DownloadFailure || expected === null || !resumeTag || received >= expected) throw error;
+          // Reconnect after infrastructure/network interruption without joining
+          // different file versions. Repeated failures with no progress are
+          // bounded; a progressing download can span multiple request lifetimes.
+          failuresWithoutProgress = received === progressAtAttempt ? failuresWithoutProgress + 1 : 0;
+          if (failuresWithoutProgress > 2) throw error;
+          progressAtAttempt = received;
+          console.warn("[file-download] resuming interrupted source", error);
+          if (reader) {
+            try { await reader.cancel(); }
+            catch (cleanupError: unknown) { console.warn("[file-download] interrupted stream cleanup", cleanupError); }
+            reader.releaseLock();
+            reader = null;
+          }
+          let retryTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await abortable(new Promise<void>((resolve) => { retryTimer = setTimeout(resolve, 250 * (failuresWithoutProgress + 1)); }), controller.signal);
+          } finally { clearTimeout(retryTimer); }
+          assertCurrent();
+          const resumed = await withTimeout((deps.fetchFn ?? fetch)(url.toString(), {
+            headers: { Authorization: `Bearer ${token}`, "Accept-Encoding": "identity", Range: `bytes=${received}-`, "If-Range": resumeTag },
+            redirect: "error", signal: controller.signal,
+          }), FILE_DOWNLOAD_TIMEOUT_MS);
+          if (resumed.body) reader = resumed.body.getReader();
+          const range = resumed.headers.get("content-range");
+          if (resumed.status !== 206 || resumed.headers.get("etag") !== resumeTag
+            || resumed.headers.get("content-encoding")
+            || range !== `bytes ${received}-${expected - 1}/${expected}`
+            || Number(resumed.headers.get("content-length")) !== expected - received) {
+            throw new DownloadFailure("unavailable");
+          }
         }
       }
-      if (expected !== null && received !== expected) throw new DownloadFailure("failed");
       await file.sync();
       await file.close();
       file = null;
@@ -140,7 +189,10 @@ export function createFileDownloadService(deps: DownloadDeps) {
       }
       return { status: "saved" };
     } catch (error: unknown) {
-      if (controller.signal.aborted) return { status: "cancelled" };
+      if (controller.signal.aborted) {
+        return controller.signal.reason instanceof Error && controller.signal.reason.name === "TimeoutError"
+          ? { status: "error", code: "timeout" } : { status: "cancelled" };
+      }
       if (error instanceof Error && error.name === "TimeoutError") return { status: "error", code: "timeout" };
       if (error instanceof DownloadFailure) return { status: "error", code: error.code };
       console.warn("[file-download] could not save file", error);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  DownloadPathSchema, FileDownloadResultSchema, MAX_FILE_DOWNLOAD_BYTES,
+  DownloadPathSchema, FileDownloadResultSchema,
   fileDownloadMessage, safeDownloadFilename, type FileDownloadResult,
 } from "@matrix-os/contracts";
 
@@ -24,11 +24,11 @@ export function useFileDownload(scope: string, transport: FileDownloadTransport)
     active.current = null;
   }, [scope]);
 
-  const download = useCallback((path: string, size?: number) => {
+  const download = useCallback((path: string, _size?: number) => {
     if (active.current) return;
     const filename = safeDownloadFilename(path);
-    if (!DownloadPathSchema.safeParse(path).success || (size !== undefined && size > MAX_FILE_DOWNLOAD_BYTES)) {
-      setState({ scope, filename, pending: false, result: { status: "error", code: size !== undefined && size > MAX_FILE_DOWNLOAD_BYTES ? "too_large" : "unavailable" } });
+    if (!DownloadPathSchema.safeParse(path).success) {
+      setState({ scope, filename, pending: false, result: { status: "error", code: "unavailable" } });
       return;
     }
     const request = { controller: new AbortController(), scope };

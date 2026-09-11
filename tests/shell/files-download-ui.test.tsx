@@ -23,7 +23,7 @@ describe("web Files download UI", () => {
     render(<FileDownloadProvider><FileDownloadAction path="projects/binary.zip" size={3} /></FileDownloadProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Download" }));
     await waitFor(() => expect(download).toHaveBeenCalledWith(expect.objectContaining({ path: "projects/binary.zip" })));
-    expect(await screen.findByText("Download sent to your browser. Check your browser’s downloads.")).toBeTruthy();
+    expect(await screen.findByText("Download sent to your browser. Check or cancel it in your browser’s downloads.")).toBeTruthy();
   });
   it("downloads the context-menu target without changing structural management actions", async () => {
     render(<FileDownloadProvider><FileContextMenu><div data-web-file-path="projects/binary.zip" data-web-file-type="file">binary.zip</div></FileContextMenu></FileDownloadProvider>);
@@ -31,7 +31,7 @@ describe("web Files download UI", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Download" }));
     await waitFor(() => expect(download).toHaveBeenCalledWith(expect.objectContaining({ path: "projects/binary.zip" })));
   });
-  it("aborts the transfer when the Files provider unmounts", async () => {
+  it("aborts pending preflight when the Files provider unmounts", async () => {
     let signal!: AbortSignal;
     let finish!: (value: unknown) => void;
     download.mockImplementation((input) => { signal = input.signal; return new Promise((resolve) => { finish = resolve; }); });

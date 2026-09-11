@@ -14,7 +14,7 @@ export function FileDownloadProvider({ children }: { children: ReactNode }) {
   const { userId, sessionId } = useAuth();
   const gateway = getGatewayUrl();
   const scope = `${gateway}|${userId ?? ""}|${sessionId ?? ""}`;
-  const client = useMemo(() => createBrowserFileDownload(gateway), [gateway]);
+  const client = useMemo(() => createBrowserFileDownload(gateway), [gateway, scope]);
   useEffect(() => () => client.dispose(), [client, scope]);
   const download = useFileDownload(scope, client.download);
   return (

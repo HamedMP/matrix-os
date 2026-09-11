@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -47,7 +48,7 @@ describe("OM-243 built Electron download", () => {
     }
   });
 
-  it("saves identical binary bytes through preview and context menu", async () => {
+  it("saves identical 64 MiB binary bytes through preview and context menu", async () => {
     const destination = join(destinationDir, gateway.filename);
     await app.evaluate(({ dialog }, filePath) => {
       dialog.showSaveDialog = async (_window, options) => {
@@ -59,13 +60,13 @@ describe("OM-243 built Electron download", () => {
     await page.getByText("Preview not available").waitFor();
     await page.getByRole("button", { name: "Download", exact: true }).click();
     await page.getByText("Download saved.", { exact: true }).waitFor();
-    expect(await readFile(destination)).toEqual(gateway.bytes);
+    expect(createHash("sha256").update(await readFile(destination)).digest("hex")).toBe(gateway.sha256);
     expect(await readdir(destinationDir)).toEqual([gateway.filename]);
     await page.getByRole("button", { name: "Dismiss download status" }).click();
     await page.getByRole("button", { name: `Open ${gateway.filename}` }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Download", exact: true }).click();
     await page.getByText("Download saved.", { exact: true }).waitFor();
-    expect(await readFile(destination)).toEqual(gateway.bytes);
+    expect(createHash("sha256").update(await readFile(destination)).digest("hex")).toBe(gateway.sha256);
     expect(gateway.requestCount()).toBe(2);
   });
 
@@ -75,4 +76,16 @@ describe("OM-243 built Electron download", () => {
     await page.getByText("Download cancelled.", { exact: true }).waitFor();
     expect(gateway.requestCount()).toBe(2);
   });
+  it("resumes a dropped real HTTP response and still saves the complete file", async () => {
+    const destination = join(destinationDir, gateway.filename);
+    const before = gateway.requestCount();
+    await app.evaluate(({ dialog }, filePath) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath }); }, destination);
+    gateway.interruptNextDownload();
+    await page.getByRole("button", { name: "Download", exact: true }).click();
+    await page.getByText("Download saved.", { exact: true }).waitFor();
+    expect(createHash("sha256").update(await readFile(destination)).digest("hex")).toBe(gateway.sha256);
+    expect(gateway.requestCount()).toBe(before + 2);
+    expect(await readdir(destinationDir)).toEqual([gateway.filename]);
+  });
+
 });

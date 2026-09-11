@@ -49,12 +49,11 @@ describe("Files single-file download actions", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("runtime:download-file", expect.objectContaining({ path: "other.bin" })));
   });
 
-  it("explains the size limit without invoking the native service", async () => {
+  it("allows a file above 10 MiB to reach the native service", async () => {
     setup();
     fireEvent.click(await screen.findByRole("button", { name: "Open large.zip" }));
     fireEvent.click(screen.getByRole("button", { name: "Download" }));
-    expect(await screen.findByText("This file exceeds the 10 MiB download limit.")).toBeTruthy();
-    expect(invoke).not.toHaveBeenCalledWith("runtime:download-file", expect.anything());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("runtime:download-file", expect.objectContaining({ path: "large.zip" })));
   });
 
   it("cancels an in-flight download and does not leak raw errors", async () => {

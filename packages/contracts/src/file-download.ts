@@ -1,9 +1,8 @@
 import { z } from "zod/v4";
 
-// Mirrors the existing Gateway GET /api/files/blob bound. Preview eligibility
-// does not restrict downloads: binary files use the same byte contract.
-export const MAX_FILE_DOWNLOAD_BYTES = 10 * 1024 * 1024;
+// Bound inactivity and header waits, not total size or transfer duration.
 export const FILE_DOWNLOAD_TIMEOUT_MS = 30_000;
+export const FILE_DOWNLOAD_IDLE_TIMEOUT_MS = 60_000;
 
 export const DownloadPathSchema = z.string().min(1).max(4096)
   .refine((path) => path === path.trim() && !/[\\\u0000-\u001f\u007f]/.test(path)
@@ -18,7 +17,7 @@ export const FileDownloadRequestSchema = z.object({
 export type FileDownloadRequest = z.infer<typeof FileDownloadRequestSchema>;
 
 export const FileDownloadErrorCodeSchema = z.enum([
-  "too_large", "busy", "unavailable", "failed", "destination_changed", "timeout",
+  "busy", "unavailable", "failed", "destination_changed", "timeout",
 ]);
 export type FileDownloadErrorCode = z.infer<typeof FileDownloadErrorCodeSchema>;
 export const FileDownloadResultSchema = z.discriminatedUnion("status", [
@@ -30,7 +29,6 @@ export const FileDownloadResultSchema = z.discriminatedUnion("status", [
 export type FileDownloadResult = z.infer<typeof FileDownloadResultSchema>;
 
 const DOWNLOAD_ERRORS: Record<FileDownloadErrorCode, string> = {
-  too_large: "This file exceeds the 10 MiB download limit.",
   busy: "A download is already in progress. Wait or cancel it before trying again.",
   unavailable: "This file is unavailable. Refresh Files and check your connection.",
   failed: "Couldn’t download this file. Check your connection and save location, then try again.",
@@ -39,7 +37,7 @@ const DOWNLOAD_ERRORS: Record<FileDownloadErrorCode, string> = {
 };
 export function fileDownloadMessage(result: FileDownloadResult): string {
   if (result.status === "saved") return "Download saved.";
-  if (result.status === "handed_off") return "Download sent to your browser. Check your browser’s downloads.";
+  if (result.status === "handed_off") return "Download sent to your browser. Check or cancel it in your browser’s downloads.";
   if (result.status === "cancelled") return "Download cancelled.";
   return DOWNLOAD_ERRORS[result.code];
 }
