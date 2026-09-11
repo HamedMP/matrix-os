@@ -91,7 +91,13 @@ function service(input: {
 
 const membershipEffects = [
   { actorId: "user_editor", role: "editor" as const, effect: "join_project" as const },
-  { actorId: "user_item_only", role: "viewer" as const, effect: "retain_item_only" as const },
+  {
+    actorId: "user_item_only",
+    role: "viewer" as const,
+    effect: "retain_item_only" as const,
+    resourceKind: "chat" as const,
+    resourceId: "chat_external",
+  },
 ];
 
 describe("project collaboration inventory", () => {
