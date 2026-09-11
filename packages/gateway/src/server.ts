@@ -3056,6 +3056,9 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     codingAgentThreadStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
     ...chatBoundWorkspaceRouteDeps,
   }));
   app.route("/api", createShellRoutes(shellRouteDeps));
