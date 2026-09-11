@@ -62,15 +62,15 @@ describe("provider terminal session handoff", () => {
 
   it("hands off full-length provider login IDs after validation against the live session list", async () => {
     const sessionId = `provider-auth-${"a".repeat(50)}`;
-    const fetcher = vi.fn(async () => Response.json({
-      sessions: [{ name: sessionId, status: "active" }],
-    }));
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, sessionId, "running"),
+    ])));
     expect(enqueueExistingTerminalSession(sessionId, "window-login")).toBe(true);
     expect(enqueueExistingTerminalSession(`${sessionId}a`, "window-login")).toBe(false);
     expect(enqueueExistingTerminalSession("550e8400-e29b-41d4-a716-446655440000", "window-login"))
       .toBe(false);
     await expect(drainExistingTerminalSessionQueue("window-login", { fetcher }))
-      .resolves.toEqual([sessionId]);
+      .resolves.toEqual([providerRef]);
     expect(hasQueuedExistingTerminalSession("window-login")).toBe(false);
   });
 

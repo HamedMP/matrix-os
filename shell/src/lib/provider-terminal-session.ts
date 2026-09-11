@@ -6,7 +6,8 @@ const QUEUE_LIMIT = 8;
 const QUEUE_TTL_MS = 10 * 60_000;
 const RESPONSE_LIMIT_BYTES = 64 * 1024;
 const TARGET_ID_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/;
-const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+const LEGACY_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WORKSPACE_ID_PATTERN = /^tws_[0-9a-f]{32}$/;
 const TAB_ID_PATTERN = /^tt_[0-9a-f]{32}$/;
 const ACTIVE_TAB_STATUSES = new Set(["starting", "running", "idle"]);
@@ -29,7 +30,9 @@ type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
 let volatileQueue: QueuedSession[] | null = null;
 
 function isHandoffSessionName(value: string): boolean {
-  return SESSION_NAME_PATTERN.test(value) && !value.startsWith("term_observe_");
+  return SESSION_NAME_PATTERN.test(value)
+    && !LEGACY_UUID_PATTERN.test(value)
+    && !value.startsWith("term_observe_");
 }
 
 function readQueue(): QueuedSession[] {

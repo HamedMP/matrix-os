@@ -2,13 +2,15 @@ import {
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
   ProviderSettingsSnapshotSchema,
+  TerminalTabIdSchema,
+  TerminalWorkspaceIdSchema,
   type ProviderSettingsMutation,
   type ProviderSettingsMutationResponse,
   type ProviderSettingsSnapshot,
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
 import { openProviderAgentSetup, ProviderSettingsTransportError } from "@matrix-os/ui";
-import { isCanonicalShellSessionId } from "../components/terminal/terminal-session-id";
+import { terminalRefKey } from "../components/terminal/terminal-session-id";
 import { getGatewayUrl } from "./gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "./canonical-provider-setup";
 
@@ -150,12 +152,32 @@ export async function openWebProviderAgentSetup(
     openCommand: async (cmd) => {
       if (getGatewayUrl() !== runtimeUrl) return false;
       const name = `setup-${harness}-${crypto.randomUUID().slice(0, 8)}`;
-      const value = await fetchJson(fetch, "/api/terminal/sessions", {
+      const ensured = await fetchJson(fetch, "/api/terminal/workspaces/ensure", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cwd: "projects", cmd }), signal: requestSignal(),
+        body: JSON.stringify({}), signal: requestSignal(),
       });
-      const sessionId = value && typeof value === "object" && "name" in value ? value.name : null;
-      if (getGatewayUrl() !== runtimeUrl || typeof sessionId !== "string" || !isCanonicalShellSessionId(sessionId)) return false;
+      const workspaceId = TerminalWorkspaceIdSchema.safeParse(
+        ensured && typeof ensured === "object"
+          ? (ensured as { workspace?: { id?: unknown } }).workspace?.id
+          : null,
+      );
+      if (getGatewayUrl() !== runtimeUrl || !workspaceId.success) return false;
+      const created = await fetchJson(
+        fetch,
+        `/api/terminal/workspaces/${encodeURIComponent(workspaceId.data)}/tabs`,
+        {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, cwd: "projects", command: ["sh", "-lc", cmd] }),
+          signal: requestSignal(),
+        },
+      );
+      const tabId = TerminalTabIdSchema.safeParse(
+        created && typeof created === "object"
+          ? (created as { tab?: { id?: unknown } }).tab?.id
+          : null,
+      );
+      if (getGatewayUrl() !== runtimeUrl || !tabId.success) return false;
+      const sessionId = terminalRefKey({ workspaceId: workspaceId.data, tabId: tabId.data });
       onOpenTerminal(sessionId);
       return true;
     },

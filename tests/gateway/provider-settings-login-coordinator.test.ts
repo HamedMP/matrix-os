@@ -114,11 +114,11 @@ describe("provider terminal login coordinator", () => {
     expect(attempt.action.kind === "open_terminal" && attempt.action.terminalSessionId.length)
       .toBeLessThanOrEqual(64);
     if (attempt.action.kind !== "open_terminal") throw new Error("Expected Terminal login");
-    // Exercise the actual generated ID across the server/client boundary. A
-    // shortened fixture masks the 64-character ID being sent to UUID-only PTY attach.
-    expect(isCanonicalShellSessionId(attempt.action.terminalSessionId)).toBe(true);
+    // The server-owned name is resolved to a canonical workspace/tab reference
+    // before the renderer attaches; it is not itself a TerminalRef.
+    expect(isCanonicalShellSessionId(attempt.action.terminalSessionId)).toBe(false);
     expect(terminalWebSocketPathForSession(attempt.action.terminalSessionId))
-      .toBe("/ws/terminal/session");
+      .toBe("/ws/terminal/tab");
     expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({
       name: attempt.action.kind === "open_terminal" ? attempt.action.terminalSessionId : "",
       cwd: "~",
@@ -208,7 +208,7 @@ describe("provider terminal login coordinator", () => {
     const second = await coordinator().startLogin(input);
     expect(second).toEqual(first);
     if (second.action.kind !== "open_terminal") throw new Error("Expected Terminal login");
-    expect(terminalWebSocketPathForSession(second.action.terminalSessionId)).toBe("/ws/terminal/session");
+    expect(terminalWebSocketPathForSession(second.action.terminalSessionId)).toBe("/ws/terminal/tab");
     expect(registry.create).toHaveBeenCalledOnce();
     const receipts = await readFile(join(homePath, "system/ai-providers/login-receipts.json"), "utf8");
     expect(receipts).toContain("login_claude_1");
@@ -263,7 +263,7 @@ describe("provider terminal login coordinator", () => {
     });
     expect(Date.parse(retried.expiresAt) - checkedAt.getTime()).toBe(10 * 60_000);
     if (retried.action.kind !== "open_terminal") throw new Error("Expected Terminal login");
-    expect(terminalWebSocketPathForSession(retried.action.terminalSessionId)).toBe("/ws/terminal/session");
+    expect(terminalWebSocketPathForSession(retried.action.terminalSessionId)).toBe("/ws/terminal/tab");
     expect(registry.create).toHaveBeenCalledOnce();
     expect(registry.delete).not.toHaveBeenCalled();
     expect(sessions).toEqual(new Set([

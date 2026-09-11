@@ -13,7 +13,7 @@ import type {
   CanonicalChatEventConsumer,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
-import { canonicalChatRunFailure, createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-os/ui";
+import { createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-os/ui";
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
@@ -843,7 +843,7 @@ export function useCanonicalChatRouteController({
       ? streamedMessagesRef.current.ids
       : [],
     status,
-    error: error ?? (detail?.record.chat.id === activeChatId ? canonicalChatRunFailure(detail) : null),
+    error,
     selectChat,
     search,
     refresh: load,

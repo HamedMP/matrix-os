@@ -150,20 +150,28 @@ describe("server-advertised setup dispatch", () => {
   });
 
   it("creates and opens the server-confirmed visible Web Terminal session", async () => {
+    const workspaceId = "tws_00000000000000000000000000000001";
+    const tabId = "tt_00000000000000000000000000000001";
     const fetcher = vi.fn().mockResolvedValueOnce(Response.json(canonicalCatalog()))
-      .mockResolvedValueOnce(Response.json({ name: "setup-opencode-1234" }));
+      .mockResolvedValueOnce(Response.json({ workspace: { id: workspaceId } }))
+      .mockResolvedValueOnce(Response.json({ tab: { id: tabId } }));
     vi.stubGlobal("fetch", fetcher);
     const onOpenTerminal = vi.fn();
     await expect(openWebProviderAgentSetup("opencode", onOpenTerminal)).resolves.toBe(true);
-    expect(fetcher).toHaveBeenNthCalledWith(2, expect.stringContaining("/api/terminal/sessions"), expect.objectContaining({
-      method: "POST", signal: expect.any(AbortSignal), body: expect.stringContaining("sh -lc 'opencode'"),
+    expect(fetcher).toHaveBeenNthCalledWith(2, expect.stringContaining("/api/terminal/workspaces/ensure"), expect.objectContaining({
+      method: "POST", signal: expect.any(AbortSignal), body: "{}",
     }));
-    expect(onOpenTerminal).toHaveBeenCalledWith("setup-opencode-1234");
+    expect(fetcher).toHaveBeenNthCalledWith(3, expect.stringContaining(`/api/terminal/workspaces/${workspaceId}/tabs`), expect.objectContaining({
+      method: "POST", signal: expect.any(AbortSignal), body: expect.stringContaining('"command":["sh","-lc","sh -lc \'opencode\'"]'),
+    }));
+    expect(onOpenTerminal).toHaveBeenCalledWith(`${workspaceId}:${tabId}`);
   });
 
   it("never opens an invalid returned Web Terminal reference", async () => {
+    const workspaceId = "tws_00000000000000000000000000000001";
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json(canonicalCatalog()))
-      .mockResolvedValueOnce(Response.json({ name: "../../secret" })));
+      .mockResolvedValueOnce(Response.json({ workspace: { id: workspaceId } }))
+      .mockResolvedValueOnce(Response.json({ tab: { id: "../../secret" } })));
     const onOpenTerminal = vi.fn();
     await expect(openWebProviderAgentSetup("opencode", onOpenTerminal)).resolves.toBe(false);
     expect(onOpenTerminal).not.toHaveBeenCalled();

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { canonicalChatRunFailure } from "@matrix-os/ui";
 import type {
   CanonicalChatApprovalDecision,
   CanonicalChatDetailResponse,
@@ -411,7 +410,7 @@ export function useCanonicalChatState(): ChatState {
   }, [client, records]);
 
   const messages = detail ? projectCanonicalTranscript(detail) : [];
-  const visibleError = safeError ?? (detail?.record.chat.id === activeChatId ? canonicalChatRunFailure(detail) : null);
+  const visibleError = safeError;
   if (visibleError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: visibleError, timestamp: Date.now() });
   }

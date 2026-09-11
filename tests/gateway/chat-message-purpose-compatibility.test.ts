@@ -56,12 +56,12 @@ describe("Chat message purpose compatibility", () => {
       .execute(repository.kysely)).rows;
   }
 
-  it.each(["fresh", "upgraded"])("admits and reads a message on a %s schema without changing the wire contract", async (schema) => {
+  it.each(["fresh", "upgraded"])("admits and reads attributed messages on a %s schema", async (schema) => {
     if (schema === "upgraded") await requirePurposeWithoutDefault();
     const admitted = await admit();
     expect(await purposes()).toEqual([{ role: "user", purpose: "ai_request" }]);
     expect(await repository.getMessages(owner, admitted.chatId, { afterSeq: 0, limit: 10 }))
-      .toEqual([admitted.message]);
+      .toEqual([{ ...admitted.message, purpose: "ai_request" }]);
   });
 
   it.each(["streamed", "final"])("stores %s assistant output with a required purpose", async (kind) => {

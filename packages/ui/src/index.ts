@@ -63,7 +63,6 @@ export type {
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
-export { canonicalChatRunFailure } from "./canonical-chat-run-error.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
 

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { CanonicalChatDetailResponseSchema } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
@@ -48,11 +49,13 @@ describe("persisted Chat run failures across desktop surfaces", () => {
       getDetail: vi.fn(async () => detail), acknowledgeCompletion: vi.fn(),
     } as unknown as CanonicalChatClient;
     const { result } = renderHook(() => useCanonicalChatRouteController({client, projectId:null, active:true}));
-    await waitFor(() => expect(result.current.error).toBe(COPY));
+    await waitFor(() => expect(result.current.detail).not.toBeNull());
+    expect(canonicalChatPresentation(result.current.detail!)[0]?.final).toMatchObject({ markdown: COPY });
     detail.runs.push({ ...detail.runs[0]!, id: "run_retry", attempt: 2, status: "completed", outcome: "completed",
       createdAt: "2026-08-25T00:01:00.000Z", updatedAt: "2026-08-25T00:02:00.000Z" });
     detail.record.chat.revision += 1;
     await act(async () => { await result.current.refresh(); });
-    await waitFor(() => expect(result.current.error).toBeNull());
+    await waitFor(() => expect(result.current.detail?.record.chat.revision).toBe(detail.record.chat.revision));
+    expect(canonicalChatPresentation(result.current.detail!).some((turn) => turn.final?.markdown === COPY)).toBe(false);
   });
 });
