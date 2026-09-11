@@ -640,6 +640,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
   };
   let currentToken = TOKEN;
   const activeTerminalOutputs: Partial<Record<string, (data: string) => void>> = {};
+  const terminalOutputSequences: Record<string, number> = {};
   let createdHermesConversation = false;
   const hermesConversationContexts = new Map<string, Map<string, string>>([
     [TOKEN, new Map()],
@@ -1303,7 +1304,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
   });
 
   function runTerminalTab(ws: WebSocket, workspaceId: string, tabId: string): void {
-    let seq = 0;
+    let seq = terminalOutputSequences[tabId] ?? 0;
     const terminalRef = { workspaceId, tabId };
     const tab = terminalTabs.find((candidate) => candidate.id === tabId);
     if (workspaceId !== TERMINAL_WORKSPACE_ID || !tab) {
@@ -1322,6 +1323,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     }));
     const sendOutput = (data: string) => {
       seq += 1;
+      terminalOutputSequences[tabId] = seq;
       ws.send(JSON.stringify({ type: "output", terminalRef, revision, seq, data }));
     };
     activeTerminalOutputs[session] = sendOutput;
