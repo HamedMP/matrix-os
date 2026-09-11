@@ -7,6 +7,7 @@ import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { readBuildSource } from "../../../scripts/release/build-source.mjs";
 import { closeElectronApp } from "./fixtures/close-electron";
+import hostInfo from "../../fixtures/host-release-system-info.json";
 
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
@@ -81,5 +82,32 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     gateway.setBuildCommit(source.commit);
     await recheck();
     expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
+  });
+
+  it("shows the host-bundle replay and preserves a draft after dismissal", async () => {
+    const dialog = page.getByRole("dialog", { name: "Update Matrix OS" });
+    await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
+    const composer = page.getByRole("textbox", { name: "Start a chat" });
+    await composer.fill("Unsent release alignment regression draft");
+    let response = structuredClone(hostInfo);
+    await page.route("**/api/system/info", (route) => route.fulfill({ json: response }));
+    await recheck();
+    await dialog.waitFor();
+    await page.screenshot({ path: join(evidence, "host-bundle-mismatch.png") });
+    await dialog.getByRole("button", { name: "Later", exact: true }).click();
+    await expect.poll(() => composer.inputValue()).toBe("Unsent release alignment regression draft");
+    await recheck();
+    expect(await dialog.count()).toBe(0);
+
+    // A different installed release is not proof that the running process changed.
+    response = { ...hostInfo, version: "v2026.09.10-1209",
+      release: { ...hostInfo.release, version: "v2026.09.10-1209", gitCommit: source.commit } };
+    await recheck();
+    expect(await dialog.count()).toBe(0);
+    response.runningVersion = response.version;
+    await recheck();
+    expect(await dialog.count()).toBe(0);
+    await composer.fill("");
+    await page.unroute("**/api/system/info");
   });
 });

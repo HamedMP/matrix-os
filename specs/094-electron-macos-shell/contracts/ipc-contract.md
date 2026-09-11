@@ -43,7 +43,11 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
   [-16384, 16384]; arrays capped.
 - `app:get-version.source` is captured from the checkout during the Electron build,
   not read from a user's Git repository at runtime. The renderer compares it with
-  the running gateway's `/api/system/info.build.sha`. Equal sources are aligned;
+  the running gateway's `/api/system/info.build.sha`. Native host bundles without
+  a valid image SHA use `release.gitCommit` only when schema/kind are recognized
+  and `release.version`, `version`, and explicit `runningVersion` all agree.
+  Package/template `installedVersion` does not identify the running process.
+  Equal sources are aligned;
   a cloud source in Desktop's ancestry is behind; other differing sources remain
   different without guessing their order. Missing or invalid provenance is unknown.
   The legacy protocol window is not evidence that two releases contain the same changes.
