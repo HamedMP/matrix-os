@@ -47,7 +47,11 @@ suite("packaged Electron terminal clipboard", () => {
     await app.evaluate(({ clipboard }, value) => clipboard.writeText(value), text);
   }
 
-  async function terminalPoint(text: string, characterIndex: number): Promise<CellPoint> {
+  async function terminalPoint(
+    text: string,
+    characterIndex: number,
+    cellOffset = 0.5,
+  ): Promise<CellPoint> {
     const surface = terminalSurface();
     const row = surface.locator('.xterm-accessibility-tree [role="listitem"]', { hasText: text }).last();
     await row.waitFor({ timeout: 10_000 });
@@ -71,7 +75,7 @@ suite("packaged Electron terminal clipboard", () => {
     if (!resize) throw new Error("terminal column count is unavailable");
     const cellWidth = screenBox.width / resize.cols;
     return {
-      x: screenBox.x + (start + characterIndex + 0.5) * cellWidth,
+      x: screenBox.x + (start + characterIndex + cellOffset) * cellWidth,
       y: rowBox.y + rowBox.height / 2,
     };
   }
@@ -82,8 +86,12 @@ suite("packaged Electron terminal clipboard", () => {
     endText: string,
     endIndexExclusive: number,
   ): Promise<void> {
-    const start = await terminalPoint(startText, startIndex);
-    const end = await terminalPoint(endText, Math.max(0, endIndexExclusive - 0.5));
+    // xterm shifts selection coordinates by half a cell before rounding. A
+    // synthetic pointer exactly at the midpoint can therefore land on either
+    // side when Chromium and xterm use slightly different fractional widths.
+    // Keep both anchors safely inside the intended selection halves.
+    const start = await terminalPoint(startText, startIndex, 0.25);
+    const end = await terminalPoint(endText, Math.max(0, endIndexExclusive - 1), 0.75);
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
     await page.mouse.move(end.x, end.y, { steps: 6 });
