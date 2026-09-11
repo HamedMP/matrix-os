@@ -10,6 +10,7 @@ import type {
   ZellijObserverEvent,
   ZellijRuntimeAdapter,
 } from "./runtime.js";
+import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
@@ -75,6 +76,7 @@ export interface WorkspaceZellijLifecycle {
 
 export interface ZellijCliRuntimeAdapterOptions {
   homePath: string;
+  env?: Record<string, string>;
   binaryPath?: string;
   timeoutMs?: number;
   run?: (args: string[], binaryPath?: string) => Promise<string>;
@@ -104,16 +106,21 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   private readonly spawnSubscriptionProcess: NonNullable<ZellijCliRuntimeAdapterOptions["spawnSubscription"]>;
   private readonly workspaceLayoutPath: string;
   private readonly workspaceLifecycle?: WorkspaceZellijLifecycle;
+  private readonly runtimeEnvironment: Record<string, string>;
 
   constructor(options: ZellijCliRuntimeAdapterOptions) {
     this.homePath = options.homePath;
     this.binaryPath = options.binaryPath ?? "/opt/matrix/bin/zellij";
     this.workspaceLayoutPath = join(options.homePath, "system", "zellij", "runtime-workspace.kdl");
     this.workspaceLifecycle = options.workspaceLifecycle;
+    this.runtimeEnvironment = options.env ?? createTerminalRuntimeEnvironment({
+      homePath: options.homePath,
+      uid: process.getuid?.() ?? 0,
+    });
     const currentGenerationRunner = createCommandRunner({
       binaryPath: this.binaryPath,
       cwd: this.homePath,
-      env: runtimeEnv(options.homePath),
+      env: this.runtimeEnvironment,
       timeoutMs: options.timeoutMs ?? 10_000,
     });
     this.runCommand = options.run ?? ((args, binaryPath) => {
@@ -121,7 +128,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       return createCommandRunner({
         binaryPath,
         cwd: this.homePath,
-        env: runtimeEnv(options.homePath),
+        env: this.runtimeEnvironment,
         timeoutMs: options.timeoutMs ?? 10_000,
       })(args);
     });
@@ -136,7 +143,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       });
     });
     this.spawnSubscriptionProcess = options.spawnSubscription ?? ((args, onLine, onExit, binaryPath) => {
-      return spawnLineProcess(binaryPath ?? this.binaryPath, args, this.homePath, runtimeEnv(this.homePath), onLine, onExit);
+      return spawnLineProcess(binaryPath ?? this.binaryPath, args, this.homePath, this.runtimeEnvironment, onLine, onExit);
     });
   }
 
@@ -170,7 +177,14 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const names = z.array(z.string().regex(LEGACY_SESSION_NAME)).max(10_000).parse(namesInput);
     for (const name of names) {
       try { await this.run(["delete-session", name, "--force"]); }
-      catch (error) { console.warn("[terminal-runtime] legacy session already stopped", name, error); }
+      catch (error) {
+        if (!isMissingZellijSessionFailure(error)) throw error;
+        console.warn(
+          "[terminal-runtime] legacy session already stopped",
+          name,
+          error instanceof Error ? error.name : "unknown_error",
+        );
+      }
     }
   }
 
@@ -229,7 +243,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const paneId = z.string().regex(PANE_ID).parse(input.paneId);
     const pty = this.spawnPtyProcess(["attach", sessionName], {
       cwd: this.homePath,
-      env: runtimeEnv(this.homePath),
+      env: this.runtimeEnvironment,
       cols: input.size.cols,
       rows: input.size.rows,
       binaryPath,
@@ -692,18 +706,6 @@ function spawnLineProcess(
       });
     },
   };
-}
-
-function runtimeEnv(homePath: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value !== "string" || key === "ZELLIJ" || key === "ZELLIJ_SESSION_NAME" || key === "ZELLIJ_PANE_ID") continue;
-    env[key] = value;
-  }
-  env.HOME = homePath;
-  env.MATRIX_HOME = homePath;
-  env.ZELLIJ_CONFIG_DIR = join(homePath, "system", "zellij");
-  return env;
 }
 
 function safeJson(line: string): unknown {
