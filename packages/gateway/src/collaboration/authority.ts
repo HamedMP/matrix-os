@@ -9,6 +9,7 @@ export type CollaborationAction =
   | "discuss"
   | "manage_members"
   | "publish_snapshot"
+  | "mutate_project"
   | "request_ai"
   | "control_execution"
   | "recover";
@@ -169,9 +170,9 @@ function requireRoleCapability(role: CollaborationRole, action: CollaborationAct
     return;
   }
   const allowed = role === "owner"
-    ? ["read", "discuss", "manage_members", "publish_snapshot", "recover"]
+    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "recover"]
     : role === "editor"
-      ? ["read", "discuss"]
+      ? ["read", "discuss", "mutate_project"]
       : ["read"];
   if (!allowed.includes(action)) {
     throw new CollaborationAuthorizationError("forbidden", "Role does not allow this action");
