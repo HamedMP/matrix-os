@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { readBuildSource } from "../../../scripts/release/build-source.mjs";
@@ -39,12 +39,20 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     app = await _electron.launch({ executablePath: requireDesktop("electron") as string, args: [main],
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
     page = await app.firstWindow();
+    page.setDefaultTimeout(8_000);
     // Authentication is confined to the loopback fixture's fake device flow.
     const initialInfo = page.waitForResponse((value) => value.url().endsWith("/api/system/info"));
     await page.getByRole("button", { name: /continue in browser/i }).click();
     await (await initialInfo).finished();
     await page.getByRole("button", { name: "Chat", exact: true }).waitFor({ timeout: 15_000 });
   }, 60_000);
+
+  afterEach(async ({ task }) => {
+    if (task.result?.state === "fail" && page && !page.isClosed()) {
+      mkdirSync(evidence, { recursive: true });
+      await page.screenshot({ path: join(evidence, "failure.png") });
+    }
+  });
 
   afterAll(async () => {
     try {
@@ -87,27 +95,29 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
   it("shows the host-bundle replay and preserves a draft after dismissal", async () => {
     const dialog = page.getByRole("dialog", { name: "Update Matrix OS" });
     await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
     const composer = page.getByRole("textbox", { name: "Start a chat" });
     await composer.fill("Unsent release alignment regression draft");
     let response = structuredClone(hostInfo);
-    await page.route("**/api/system/info", (route) => route.fulfill({ json: response }));
+    gateway.setSystemInfo(response);
     await recheck();
     await dialog.waitFor();
     await page.screenshot({ path: join(evidence, "host-bundle-mismatch.png") });
     await dialog.getByRole("button", { name: "Later", exact: true }).click();
-    await expect.poll(() => composer.inputValue()).toBe("Unsent release alignment regression draft");
+    await expect.poll(() => composer.textContent()).toBe("Unsent release alignment regression draft");
     await recheck();
     expect(await dialog.count()).toBe(0);
 
     // A different installed release is not proof that the running process changed.
     response = { ...hostInfo, version: "v2026.09.10-1209",
       release: { ...hostInfo.release, version: "v2026.09.10-1209", gitCommit: source.commit } };
+    gateway.setSystemInfo(response);
     await recheck();
     expect(await dialog.count()).toBe(0);
     response.runningVersion = response.version;
+    gateway.setSystemInfo(response);
     await recheck();
     expect(await dialog.count()).toBe(0);
     await composer.fill("");
-    await page.unroute("**/api/system/info");
   });
 });
