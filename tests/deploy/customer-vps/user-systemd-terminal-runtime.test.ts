@@ -131,6 +131,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(build).toContain("matrix-terminal-runtime");
     expect(service).toContain("User=matrix");
     expect(service).toContain("RuntimeDirectory=matrix");
+    expect(service).toContain("ConditionPathExists=/opt/matrix/bin/matrix-terminal-runtime");
     expect(service).toContain("ExecStart=/opt/matrix/bin/matrix-terminal-runtime");
     expect(service).toContain("KillMode=control-group");
   });
