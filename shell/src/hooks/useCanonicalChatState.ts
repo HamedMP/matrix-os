@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatApprovalDecision,
+  CanonicalSubmitChatInputRequest,
   CanonicalChatDetailResponse,
   CanonicalChatRecord,
 } from "@matrix-os/contracts";
@@ -54,6 +55,8 @@ export function useCanonicalChatState(): ChatState {
     eventSource.connectionState(),
   );
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
+  // One active input attempt per hook; bounded and retained for ambiguous retries.
+  const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
   const composerDraftSequence = useRef(0);
   const detailRequestGeneration = useRef(0);
   const pendingEventSourceDisposalRef = useRef<{
@@ -340,6 +343,35 @@ export function useCanonicalChatState(): ChatState {
       });
   }, [client, loadDetail]);
 
+  const submitInput = useCallback(async (
+    runId: string,
+    inputRequestId: string,
+    input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">,
+  ) => {
+    const current = detailRef.current;
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current
+      || current.record.activeRun.runId !== runId || inputAttempt.current?.inFlight) return false;
+    const chatId = current.record.chat.id;
+    // Retry identity never contains answers, including secret text.
+    const key = JSON.stringify([chatId, runId, inputRequestId]);
+    const attempt = inputAttempt.current?.key === key
+      ? inputAttempt.current : { key, clientRequestId: requestId(), inFlight: false };
+    inputAttempt.current = attempt;
+    attempt.inFlight = true;
+    try {
+      await client.submitInput(chatId, runId, inputRequestId, { ...input, clientRequestId: attempt.clientRequestId });
+      if (activeChatIdRef.current === chatId) await loadDetail(chatId);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell input submission failed:", error instanceof Error ? error.name : "UnknownError");
+      if (activeChatIdRef.current === chatId) await loadDetail(chatId);
+      if (activeChatIdRef.current === chatId) setSafeError("Your answer could not be submitted. Try again.");
+      return false;
+    } finally {
+      attempt.inFlight = false;
+    }
+  }, [client, loadDetail]);
+
   const submitApproval = useCallback(async (
     runId: string,
     approvalId: string,
@@ -435,5 +467,6 @@ export function useCanonicalChatState(): ChatState {
     switchConversation,
     abortCurrent,
     submitApproval,
+    submitInput,
   };
 }

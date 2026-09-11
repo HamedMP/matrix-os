@@ -1,3 +1,4 @@
+import { createClaudeInputController } from "./claude-input-control.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
 import { buildAgentLaunch } from "../agent-launcher.js";
@@ -220,9 +221,11 @@ export function createClaudeChatProviderAdapter(options: {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const activeRuns = new Map<string, {
     ownerId: string;
+    ownerType: CanonicalProviderRunInput["owner"]["type"];
     chatId: string;
     abort: () => void;
     steer: (prompt: string) => void;
+    submitInput: ReturnType<typeof createClaudeInputController>["submit"];
   }>();
 
   async function* execute(
@@ -254,6 +257,9 @@ export function createClaudeChatProviderAdapter(options: {
       const separator = launch.args.indexOf("--");
       launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--resume", resumeState.sessionId);
     }
+    const promptSeparator = launch.args.indexOf("--");
+    if (promptSeparator >= 0) launch.args.splice(promptSeparator);
+    launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
     const credentialLaunch = options.resolveCredentialLaunch
       ? await options.resolveCredentialLaunch()
       : {
@@ -281,10 +287,19 @@ export function createClaudeChatProviderAdapter(options: {
     let steerPrompt: string | undefined;
     const processController = new AbortController();
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
+    let finishInput: (() => void) | undefined;
+    let writeControl: ((frame: string) => Promise<void>) | undefined;
+    const inputControl = createClaudeInputController({
+      write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
+      emit: event => queue.push(event),
+      onError: () => processController.abort(),
+    });
     const activeRun = {
       ownerId: input.owner.ownerId,
+      ownerType: input.owner.type,
       chatId: input.chatId,
       abort: () => processController.abort(),
+      submitInput: inputControl.submit,
       steer(prompt: string) {
         if (!emittedState) throw new Error("Claude Run state unavailable");
         steerPrompt = prompt;
@@ -341,6 +356,7 @@ export function createClaudeChatProviderAdapter(options: {
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
       const line = ClaudeStreamLineSchema.parse(JSON.parse(raw));
+      if (inputControl.handle(line)) return;
       if (usageFailure?.category !== "quota_exhausted") {
         usageFailure = classifyClaudeUsageFailure(line) ?? usageFailure;
       }
@@ -446,6 +462,7 @@ export function createClaudeChatProviderAdapter(options: {
           executionRoot: input.executionRoot,
         });
         resultFailed = line.is_error === true || line.subtype === "error";
+        finishInput?.();
       }
     };
 
@@ -468,6 +485,14 @@ export function createClaudeChatProviderAdapter(options: {
       maxStdoutBytes: MAX_STREAM_BYTES,
       maxStderrBytes: MAX_STDERR_BYTES,
       spawnFn: options.spawnFn,
+      onStart(write, end) {
+        writeControl = write;
+        finishInput = end;
+        void write(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: input.prompt }, parent_tool_use_id: null })}\n`).catch(error => {
+          console.warn("[chat-claude] Initial input write failed", error instanceof Error ? error.name : "UnknownError");
+          processController.abort();
+        });
+      },
       onStdout(chunk) {
         buffered += chunk.toString("utf8");
         const lines = buffered.split("\n");
@@ -579,9 +604,14 @@ export function createClaudeChatProviderAdapter(options: {
     serializeState: (value) => ClaudeChatStateSchema.parse(value),
     start: (input) => execute(input),
     resume: (input) => execute(input, ClaudeChatStateSchema.parse(input.resumeState)),
+    async submitInput(input) {
+      const active = activeRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type || active.chatId !== input.chatId) throw new Error("Input Run unavailable");
+      await active.submitInput(input);
+    },
     async steer(input) {
       const active = activeRuns.get(input.runId);
-      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) {
+      if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type || active.chatId !== input.chatId) {
         throw new Error("Claude active Run unavailable");
       }
       active.steer(input.prompt);

@@ -256,7 +256,8 @@ function activityFromEvent(input: {
     return { ...base, type: "approval.resolved", approvalId: event.approvalId, decision: event.decision };
   }
   if (event.type === "user_input.requested") {
-    return { ...base, type: "input.requested", requestId: event.request.requestId, title: event.request.title };
+    return { ...base, type: "input.requested", requestId: event.request.requestId, title: event.request.title,
+      safeDescription: event.request.safeDescription, questions: event.request.questions, expiresAt: event.request.expiresAt };
   }
   if (event.type === "user_input.answered") {
     return { ...base, type: "input.resolved", requestId: event.requestId };

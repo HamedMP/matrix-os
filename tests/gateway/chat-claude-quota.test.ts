@@ -21,6 +21,7 @@ async function replay(lines: unknown[], exitCode = 1, cancel = false) {
   const controller = new AbortController();
   const spawnFn = vi.fn(() => {
     const child = Object.assign(new EventEmitter(), {
+      stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } },
       stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(),
     });
     queueMicrotask(() => {

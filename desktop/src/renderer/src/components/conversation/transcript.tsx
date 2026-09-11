@@ -1,3 +1,4 @@
+import { CanonicalChatInputForm } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   CheckCircle2,
@@ -267,6 +268,13 @@ function Request({
       }
     }
   };
+  if (request.input) return (
+    <ConversationItem messageId={`request:${request.id}`}>
+      <CanonicalChatInputForm request={request.input} onSubmit={callbacks.submitInput
+        ? answer => callbacks.submitInput!(request.input!.runId, request.input!.requestId, answer)
+        : undefined} />
+    </ConversationItem>
+  );
   const Icon = request.requestKind === "approval" ? ShieldAlert : MessageCircle;
   return (
     <ConversationItem messageId={`request:${request.id}`}>

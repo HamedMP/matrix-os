@@ -17,9 +17,11 @@ it.each([true, false])("keeps steered replies distinct with text_start=%s", asyn
     const stdout = new EventEmitter();
     const stderr = new EventEmitter();
     const lifecycle = new EventEmitter();
-    const attempt = starts++;
-    const reply = ["STEP1: initial read complete", "STEP2: redirected read complete", "STEER_OK ORBIT-228"][attempt]!;
-    queueMicrotask(() => {
+    starts++;
+    let attempt = 0;
+    const replyFor = (attempt: number) => ["STEP1: initial read complete", "STEP2: redirected read complete", "STEER_OK ORBIT-228"][attempt]!;
+    const respond = () => queueMicrotask(() => {
+      const reply = replyFor(attempt);
       for (const event of [
         { type: "session", id: args[args.indexOf("--session-id") + 1] },
         { type: "message_start", message: { role: "assistant", content: [] } },
@@ -27,9 +29,11 @@ it.each([true, false])("keeps steered replies distinct with text_start=%s", asyn
         { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: reply } },
         { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: reply }] } },
       ]) stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
-      if (attempt === 2) lifecycle.emit("exit", 0, null);
+      if (attempt === 2) stdout.emit("data", Buffer.from(JSON.stringify({ type: "agent_settled" }) + "\n"));
+      attempt++;
     });
     return {
+      stdin: { write(line: string) { const frame = JSON.parse(line); if (frame.type === "prompt" || frame.type === "steer") respond(); return true; } },
       stdout,
       stderr,
       once: lifecycle.once.bind(lifecycle),
@@ -74,6 +78,7 @@ it.each([true, false])("keeps steered replies distinct with text_start=%s", asyn
     });
   }
   await resultPromise;
+  expect(starts).toBe(1);
   const completed = published.filter((event) => event.type === "assistant.text.completed");
   expect(completed).toHaveLength(3);
   expect(new Set(completed.map((event) => event.messageId)).size).toBe(3);

@@ -1,4 +1,5 @@
 "use client";
+import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
@@ -46,6 +47,7 @@ export interface ChatState {
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
+  submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   submitApproval?: (
     runId: string,
     approvalId: string,

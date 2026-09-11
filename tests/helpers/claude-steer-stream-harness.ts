@@ -23,6 +23,8 @@ export const FINAL_TEXT = "The focused streaming review is complete.";
 
 // Only the external CLI process is controlled. No canonical events are injected.
 class ControlledClaudeChild extends EventEmitter {
+  readonly inputFrames: unknown[] = [];
+  readonly stdin = { write: (frame: string, callback?: (error?: Error | null) => void) => { this.inputFrames.push(JSON.parse(frame)); callback?.(); return true; } };
   readonly stdout = new EventEmitter();
   readonly stderr = new EventEmitter();
   exited = false;

@@ -217,6 +217,7 @@ export function DesktopWindow({
                 onRenameConversation={chat.renameConversation}
                 onSubmit={chat.submitMessage}
                 onSubmitApproval={chat.submitApproval}
+              onSubmitInput={chat.submitInput}
                 providerSelection={chat.providerSelection}
                 composerDraftRequest={chat.composerDraftRequest}
                 onComposerDraftConsumed={chat.consumeComposerDraft}

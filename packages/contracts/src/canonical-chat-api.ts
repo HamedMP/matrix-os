@@ -216,6 +216,20 @@ export const CanonicalCancelChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
 }).strict();
 
+export const CanonicalSubmitChatInputRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  answer: z.string().trim().min(1).max(32_000).refine(value => new TextEncoder().encode(value).byteLength <= 32 * 1024).optional(),
+  structuredAnswers: z.record(canonicalReferenceId(128), z.array(z.string().trim().min(1).max(400).refine(value => new TextEncoder().encode(value).byteLength <= 700)).min(1).max(11))
+    .refine(value => Object.keys(value).length > 0 && Object.keys(value).length <= 8).optional(),
+}).strict().refine(value => value.answer !== undefined || value.structuredAnswers !== undefined)
+  .refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 40 * 1024);
+export const CanonicalChatInputSubmissionResponseSchema = z.object({
+  requestId: canonicalReferenceId(128),
+  submission: z.enum(["accepted", "already_submitted"]),
+}).strict();
+export type CanonicalSubmitChatInputRequest = z.infer<typeof CanonicalSubmitChatInputRequestSchema>;
+export type CanonicalChatInputSubmissionResponse = z.infer<typeof CanonicalChatInputSubmissionResponseSchema>;
+
 export const CanonicalSubmitChatApprovalRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   decision: CanonicalChatApprovalDecisionSchema,

@@ -1,3 +1,6 @@
+import { createPiInputControl } from "./pi-input-control.js";
+import { createPiOwnedExtension } from "./pi-owned-extension.js";
+import { createPiRunCollector, type PiCollectedRun } from "./pi-run-collector.js";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
@@ -9,6 +12,7 @@ import {
   SafeSetupActionSchema,
   type AgentAttachment,
   type AgentThreadEvent,
+  type UserInputAnswerRequest,
   type SafeSetupAction,
 } from "@matrix-os/contracts";
 import { createProjectManager } from "../project-manager.js";
@@ -31,26 +35,8 @@ import type {
   CodingAgentProviderEventPublisher,
 } from "./provider-adapter.js";
 
-/**
- * Direct-spawn provider adapter for the pi coding-agent CLI
- * (`@earendil-works/pi-coding-agent`, verified against v0.81.0).
- *
- * Each thread turn runs `pi --mode json --print --no-approve --session-id
- * <uuid> <prompt>` (execFile arg array, never a shell string) and parses
- * the NDJSON event stream on stdout into normalized AgentThreadEvents.
- *
- * Verified pi behavior the adapter relies on:
- * - `--mode json` emits only JSON lines on stdout; warnings go to stderr.
- * - `--session-id <uuid>` creates that exact session when missing and resumes
- *   it (with full history) when present. Sessions are scoped to the process
- *   cwd, so the resume state packs both the session id and the cwd.
- * - `-p/--print` runs non-interactively: tools execute without approval
- *   prompts, so approval.* events are unsupported by design.
- * - Startup failures exit 1 with `Error: ...` on stderr; SIGTERM exits 143.
- *
- * Mid-turn steering interrupts the current print process and immediately
- * continues the same Pi session with the accepted steering prompt. Interactive
- * approvals and user-input requests remain unsupported in print mode.
+/** Pi v0.81.0 RPC: stdin prompts and dialog answers preserve the native session.
+ * Only the OS-owned ask_user extension is loaded; owner extensions stay disabled.
  */
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
@@ -58,11 +44,8 @@ const DEFAULT_KILL_GRACE_MS = 2_000;
 const PROBE_TIMEOUT_MS = 1_500;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS_PER_RUN = 480;
-const MAX_DELTA_CHARS = 3_500;
-const MAX_TEXT_CHARS = 24_000;
 const MAX_STDERR_CHARS = 8_192;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
-const MAX_SESSION_ID_CHARS = 64;
 const MAX_PI_PROMPT_BYTES = 128 * 1024;
 const SESSION_ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
 
@@ -77,6 +60,7 @@ export interface PiSpawnOptions {
 }
 
 export interface PiChildProcess {
+  stdin?: { write(line: string): boolean; on?(event: "error", listener: (error: Error) => void): void };
   stdout: { on(event: "data", listener: (chunk: Buffer) => void): void };
   stderr: { on(event: "data", listener: (chunk: Buffer) => void): void };
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
@@ -124,7 +108,7 @@ const defaultSpawnFn: PiSpawnFn = (command, args, options) =>
   spawnIsolatedProviderProcess(command, args, {
     cwd: options.cwd,
     env: options.env,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
 
 function boundedTimeout(value: number | undefined, fallback: number): number {
@@ -211,346 +195,10 @@ function piPromptWithReferences(
   return prompt;
 }
 
-// SAFE_REFERENCE in the contracts allows [A-Za-z0-9_.:-]; pi tool-call ids
-// contain "|", so normalize defensively and fall back to a synthetic id.
-function safeReferenceId(raw: unknown, fallback: string): string {
-  if (typeof raw !== "string") return fallback;
-  const cleaned = raw.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 128);
-  if (!/^[A-Za-z0-9]/.test(cleaned) || cleaned.includes("..")) return fallback;
-  return cleaned;
-}
-
-// tool.started displayName/kind must satisfy SafeDisplayStringSchema, which
-// rejects path/secret-shaped text. Tool names are provider identifiers, so
-// restrict to a conservative charset and drop anything risky.
-function safeToolName(raw: unknown): string {
-  if (typeof raw !== "string") return "tool";
-  const cleaned = raw.trim().replace(/[^A-Za-z0-9 _-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
-  if (cleaned.length === 0) return "tool";
-  if (/stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s|sk-/i.test(cleaned)) return "tool";
-  return cleaned;
-}
-
-// Contracts require non-blank text per event. Chunk long text preserving
-// order; fold whitespace-only chunks into the previous one so every emitted
-// chunk parses, keeping each chunk <= 4000 chars / 16KB.
-function chunkDisplayText(text: string): string[] {
-  const out: string[] = [];
-  for (let index = 0; index < text.length; index += MAX_DELTA_CHARS) {
-    const chunk = text.slice(index, index + MAX_DELTA_CHARS);
-    if (chunk.trim().length === 0) {
-      const last = out.at(-1);
-      if (last !== undefined && last.length + chunk.length <= 4_000) {
-        out[out.length - 1] = last + chunk;
-      }
-      continue;
-    }
-    out.push(chunk);
-  }
-  return out;
-}
-
-function truncateText(text: string, maxChars: number): { text: string; truncated: boolean } {
-  if (text.length <= maxChars) return { text, truncated: false };
-  return { text: text.slice(0, maxChars), truncated: true };
-}
-
-interface PiRunCollectorOptions {
-  threadId: string;
-  scope: string;
-  messageIdentity: { next: number };
-  homePath: string;
-  executionRoot: string;
-  now: () => Date;
-  nextEventId: () => string;
-  maxEvents: number;
-  streaming: boolean;
-}
-
-interface PiCollectedRun {
-  events: AgentThreadEvent[];
-  sessionId: string | null;
-}
-
-// Aggregating reducer: pi streams fine-grained deltas, but the provider
-// contract delivers events as one batch at turn end, so deltas are
-// accumulated per message and re-chunked within contract bounds. This also
-// keeps chatty runs under the 500-event provider cap.
-function createPiRunCollector(options: PiRunCollectorOptions) {
-  const events: AgentThreadEvent[] = [];
-  let sessionId: string | null = null;
-  let dropped = 0;
-  let assistantText = "";
-  let assistantMessageId: string | null = null;
-  let assistantEmittedChars = 0;
-  let fallbackToolCounter = 0;
-  // Each tracked tool needs at least a started + completed event. Reserving
-  // half the run budget keeps both the event stream and the in-memory tool
-  // registries bounded even if a provider emits starts without matching ends.
-  const maxTrackedTools = Math.max(1, Math.floor(options.maxEvents / 2));
-  const toolOutputs = new Map<string, string>();
-  const toolTruncated = new Set<string>();
-
-  function emit(event: AgentThreadEvent): void {
-    if (events.length >= options.maxEvents) {
-      dropped += 1;
-      return;
-    }
-    events.push(AgentThreadEventSchema.parse(event));
-  }
-
-  function baseEvent() {
-    return {
-      eventId: options.nextEventId(),
-      threadId: options.threadId,
-      occurredAt: options.now().toISOString(),
-    };
-  }
-
-  function emitPendingAssistantText(): void {
-    if (!assistantMessageId || assistantEmittedChars >= assistantText.length) return;
-    const pending = assistantText.slice(assistantEmittedChars);
-    for (const chunk of chunkDisplayText(pending)) {
-      emit({ ...baseEvent(), type: "assistant.text.delta", messageId: assistantMessageId, delta: chunk });
-    }
-    assistantEmittedChars = assistantText.length;
-  }
-
-  function flushAssistantText(): void {
-    const text = assistantText;
-    const messageId = assistantMessageId;
-    if (!messageId) return;
-    const bounded = truncateText(text, MAX_TEXT_CHARS);
-    assistantText = bounded.text;
-    if (options.streaming) {
-      emitPendingAssistantText();
-    } else {
-      for (const chunk of chunkDisplayText(bounded.text)) {
-        emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: chunk });
-      }
-    }
-    if (bounded.truncated) {
-      emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: "…" });
-    }
-    if (bounded.text.trim().length > 0) {
-      emit({ ...baseEvent(), type: "assistant.text.completed", messageId });
-    }
-    assistantText = "";
-    assistantMessageId = null;
-    assistantEmittedChars = 0;
-  }
-
-  function flushTool(
-    toolCallId: string,
-    resultText: string | undefined,
-    outcome: "success" | "failed" | "cancelled",
-  ): void {
-    if (!toolOutputs.has(toolCallId)) return;
-    const accumulated = toolOutputs.get(toolCallId) ?? "";
-    toolOutputs.delete(toolCallId);
-    const truncatedByCap = toolTruncated.delete(toolCallId);
-    const raw = resultText !== undefined && resultText.length > 0 ? resultText : accumulated;
-    const bounded = truncateText(raw, MAX_TEXT_CHARS);
-    const chunks = chunkDisplayText(bounded.text);
-    chunks.forEach((chunk, index) => {
-      emit({
-        ...baseEvent(),
-        type: "tool.output",
-        toolCallId,
-        text: chunk,
-        ...(index === chunks.length - 1 && (bounded.truncated || truncatedByCap) ? { truncated: true } : {}),
-      });
-    });
-    if (chunks.length === 0 && truncatedByCap) {
-      emit({ ...baseEvent(), type: "tool.output", toolCallId, text: "…", truncated: true });
-    }
-    emit({
-      ...baseEvent(),
-      type: "tool.completed",
-      toolCallId,
-      outcome,
-    });
-  }
-
-  function contentText(content: unknown): string {
-    if (!Array.isArray(content)) return "";
-    return content
-      .map((part) =>
-        part && typeof part === "object" && "text" in part && typeof (part as { text?: unknown }).text === "string"
-          ? (part as { text: string }).text
-          : ""
-      )
-      .join("");
-  }
-
-  function feedEvent(event: Record<string, unknown>): void {
-    switch (event.type) {
-      case "session": {
-        if (typeof event.id === "string" && event.id.length > 0 && event.id.length <= MAX_SESSION_ID_CHARS) {
-          sessionId = event.id;
-        }
-        return;
-      }
-      case "message_update": {
-        const update = event.assistantMessageEvent;
-        if (!update || typeof update !== "object") return;
-        const kind = (update as Record<string, unknown>).type;
-        if (kind === "text_start") {
-          flushAssistantText();
-          assistantMessageId = `msg_${options.scope}_${++options.messageIdentity.next}`;
-          assistantText = "";
-          assistantEmittedChars = 0;
-          return;
-        }
-        if (kind === "text_delta") {
-          if (!assistantMessageId) {
-            assistantMessageId = `msg_${options.scope}_${++options.messageIdentity.next}`;
-          }
-          const delta = (update as Record<string, unknown>).delta;
-          if (typeof delta === "string" && assistantText.length < MAX_TEXT_CHARS) {
-            assistantText += delta.slice(0, MAX_TEXT_CHARS - assistantText.length);
-            if (options.streaming) emitPendingAssistantText();
-          }
-          return;
-        }
-        if (kind === "text_end") {
-          const content = (update as Record<string, unknown>).content;
-          if (typeof content === "string" && content.length > 0) {
-            assistantText = content;
-          }
-          flushAssistantText();
-          return;
-        }
-        // toolcall_start/delta/end and thinking_* carry no execution signal
-        // the normalized stream needs; tool_execution_* events drive tools.
-        return;
-      }
-      case "message_end": {
-        const message = event.message;
-        const role = message && typeof message === "object"
-          ? (message as Record<string, unknown>).role
-          : undefined;
-        if (role === "assistant") {
-          if (assistantText.trim().length === 0 && message && typeof message === "object") {
-            const text = contentText((message as Record<string, unknown>).content);
-            if (text.length > 0 && assistantMessageId) {
-              assistantText = text;
-            }
-          }
-          flushAssistantText();
-        }
-        return;
-      }
-      case "tool_execution_start": {
-        flushAssistantText();
-        const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${++fallbackToolCounter}`);
-        const toolName = safeToolName(event.toolName);
-        const normalizedToolName = toolName.toLowerCase();
-        const args = event.args && typeof event.args === "object" && !Array.isArray(event.args)
-          ? event.args as Record<string, unknown>
-          : {};
-        const readPath = normalizedToolName === "read"
-          ? safeDisplayPath(args.path, {
-              homePath: options.homePath,
-              executionRoot: options.executionRoot,
-            })
-          : undefined;
-        if (!toolOutputs.has(toolCallId) && toolOutputs.size >= maxTrackedTools) {
-          dropped += 1;
-          return;
-        }
-        toolOutputs.set(toolCallId, "");
-        emit({
-          ...baseEvent(),
-          type: "tool.started",
-          toolCallId,
-          displayName: normalizedToolName === "read" ? "Read file" : toolName,
-          kind: normalizedToolName === "read" ? "dynamic_tool" : toolName,
-          ...(readPath ? { preview: readPath, previewKind: "path" as const } : {}),
-        });
-        return;
-      }
-      case "tool_execution_update": {
-        const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${fallbackToolCounter}`);
-        if (!toolOutputs.has(toolCallId)) return;
-        const partial = event.partialResult;
-        const text = partial && typeof partial === "object"
-          ? contentText((partial as Record<string, unknown>).content)
-          : "";
-        if (text.length > 0) {
-          if (text.length <= MAX_TEXT_CHARS) {
-            toolOutputs.set(toolCallId, text);
-          } else {
-            toolOutputs.set(toolCallId, text.slice(0, MAX_TEXT_CHARS));
-            toolTruncated.add(toolCallId);
-          }
-        }
-        return;
-      }
-      case "tool_execution_end": {
-        const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${fallbackToolCounter}`);
-        const result = event.result;
-        const resultText = result && typeof result === "object"
-          ? contentText((result as Record<string, unknown>).content)
-          : "";
-        flushTool(toolCallId, resultText, event.isError === true ? "failed" : "success");
-        return;
-      }
-      default:
-        // agent_start/end, turn_start/end, agent_settled, queue_update,
-        // compaction_*, auto_retry_*: lifecycle is store-owned; ignore.
-        return;
-    }
-  }
-
-  return {
-    feedLine(line: string): void {
-      const trimmed = line.trim();
-      if (trimmed.length === 0) return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch (err: unknown) {
-        if (err instanceof SyntaxError) {
-          logCodingAgentWarning("pi provider skipped a non-JSON stdout line", err);
-          return;
-        }
-        throw err;
-      }
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
-      feedEvent(parsed as Record<string, unknown>);
-    },
-    drain(): AgentThreadEvent[] {
-      return events.splice(0, events.length);
-    },
-    finish(): PiCollectedRun {
-      flushAssistantText();
-      // Any tool still open at stream end (e.g. SIGTERM mid-execution) is
-      // completed as cancelled so chips never render as running forever.
-      for (const toolCallId of [...toolOutputs.keys()]) {
-        flushTool(toolCallId, undefined, "cancelled");
-      }
-      if (dropped > 0) {
-        logCodingAgentWarning("pi provider dropped events beyond the run cap", new Error(`dropped=${dropped}`));
-      }
-      return { events, sessionId };
-    },
-  };
-}
-
-// pi has no end-of-options marker (`--` is rejected as an unknown option,
-// verified against v0.81.0). A leading "- " or "@" would be parsed as an
-// option or an @file inclusion, so such prompts get a single leading space,
-// which pi passes through as a positional message (verified).
-function promptArg(prompt: string): string {
-  if (prompt.startsWith("-") || prompt.startsWith("@")) return ` ${prompt}`;
-  return prompt;
-}
-
 // Pi's built-in tools are `read`, `bash`, `edit`, and `write`. Only `read` is
 // non-mutating, and `bash` can write anywhere regardless of cwd, so read_only
 // is the sole sandbox mode this adapter can actually guarantee through the CLI.
-const PI_READ_ONLY_TOOLS = ["read"] as const;
+const PI_READ_ONLY_TOOLS = ["read", "ask_user"] as const;
 
 // The sandbox mode this adapter is able to enforce. Anything broader is refused
 // rather than silently run unconfined; see enforceablePiSandboxMode.
@@ -613,7 +261,8 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
   const runTimeoutMs = boundedTimeout(options.runTimeoutMs, DEFAULT_RUN_TIMEOUT_MS);
   const killGraceMs = Math.max(1, Math.min(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, 30_000));
   const maxEvents = Math.max(1, Math.min(options.maxEvents ?? MAX_EVENTS_PER_RUN, MAX_EVENTS_PER_RUN));
-  const activeProcesses = new Map<string, { abort: () => void; steer: (message: string) => void }>();
+  type ActiveProcess = { abort: () => void; steer: (message: string) => void; submitInput: (id: string, answer: UserInputAnswerRequest) => AgentThreadEvent[] };
+  const activeProcesses = new Map<string, ActiveProcess>();
 
   const resolveProjectPath = options.resolveProjectPath ?? (async (projectSlug: string) => {
     const projects = createProjectManager({ homePath });
@@ -631,7 +280,8 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     threadId: string,
     abort: () => void,
     steer: (message: string) => void,
-  ): { abort: () => void; steer: (message: string) => void } {
+    submitInput: ActiveProcess["submitInput"],
+  ): ActiveProcess {
     if (activeProcesses.size >= MAX_ACTIVE_PROCESSES) {
       const oldest = activeProcesses.keys().next().value as string | undefined;
       if (oldest) {
@@ -644,14 +294,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         }
       }
     }
-    const tracked = { abort, steer };
+    const tracked = { abort, steer, submitInput };
     activeProcesses.set(threadId, tracked);
     return tracked;
   }
 
   function untrackProcess(
     threadId: string,
-    tracked: { abort: () => void; steer: (message: string) => void },
+    tracked: ActiveProcess,
   ): void {
     if (activeProcesses.get(threadId) === tracked) activeProcesses.delete(threadId);
   }
@@ -695,8 +345,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       streaming: input.publishEvents !== undefined,
     });
     const args = [
-      "--mode", "json",
-      "--print",
+      "--mode", "rpc",
       // Keep canonical runs independent from owner extensions, skills, prompt
       // templates, context files, update checks, and telemetry. Native auth and
       // the explicitly selected model still come from the owner-local HOME.
@@ -716,7 +365,6 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       "--no-approve",
       ...piModelArguments(input.model),
       "--session-id", input.sessionId,
-      promptArg(input.prompt),
     ];
     const credentialResolution = await resolveCredentialsWithinRun({
       resolver: options.resolveCredentialLaunch,
@@ -751,6 +399,9 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       runDeadline - Date.now(),
     ));
 
+    const extension = await createPiOwnedExtension();
+    args.push("--extension", extension.path);
+    try {
     return await new Promise<PiRunResult>((resolve) => {
       let proc: PiChildProcess;
       try {
@@ -761,8 +412,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         return;
       }
       let settled = false;
-      let terminationReason: "user_abort" | "timeout" | "failure" | "steer" | undefined;
-      let steerPrompt: string | undefined;
+      let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
       let stdoutBuffer = "";
       let stdoutBytes = 0;
       let stderrText = "";
@@ -802,11 +452,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       const onAbort = () => {
         requestTermination("user_abort");
       };
-      const onSteer = (message: string) => {
-        steerPrompt = message;
-        requestTermination("steer");
-      };
-      const trackedProcess = trackProcess(input.threadId, onAbort, onSteer);
+      function write(frame: Record<string, unknown>): void {
+        if (settled || terminationReason || !proc.stdin) throw new Error("Pi input stream unavailable");
+        proc.stdin.write(`${JSON.stringify(frame)}\n`);
+      }
+      const inputControl = createPiInputControl({ threadId: input.threadId, now: input.now,
+        nextEventId: input.nextEventId, write, emit: queueEvents });
+      const onSteer = (message: string) => write({ type: "steer", message });
+      const trackedProcess = trackProcess(input.threadId, onAbort, onSteer, inputControl.submit);
       if (input.signal) {
         if (input.signal.aborted) onAbort();
         else input.signal.addEventListener("abort", onAbort, { once: true });
@@ -819,19 +472,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         if (killTimer.current) clearTimeout(killTimer.current);
         input.signal?.removeEventListener("abort", onAbort);
         untrackProcess(input.threadId, trackedProcess);
+        inputControl.dispose();
         void publishQueue.then(async () => {
           if (publishError) {
             resolve({ ...result, events: [], outcome: "failed" });
-            return;
-          }
-          if (terminationReason === "steer" && steerPrompt) {
-            const continued = await runPi({
-              ...input,
-              messageIdentity,
-              prompt: steerPrompt,
-              sessionId: result.sessionId,
-            });
-            resolve({ ...continued, events: [...result.events, ...continued.events] });
             return;
           }
           resolve(result);
@@ -854,13 +498,15 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
       function requestTermination(reason: NonNullable<typeof terminationReason>): void {
         if (terminationReason || settled) return;
+        try { write({ type: "abort" }); } catch (error: unknown) { logCodingAgentWarning("pi abort frame failed", error); }
         terminationReason = reason;
+        inputControl.dispose();
         clearTimeout(timeoutTimer);
         terminate(proc, killTimer, settleAfterForcedTermination);
       }
 
       proc.stdout.on("data", (chunk: Buffer) => {
-        if (settled) return;
+        if (settled || terminationReason) return;
         stdoutBytes += chunk.byteLength;
         if (stdoutBytes > MAX_STDOUT_BYTES) {
           logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout byte cap exceeded"));
@@ -879,8 +525,27 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         while (newlineIndex >= 0) {
           const line = stdoutBuffer.slice(0, newlineIndex).replace(/\r$/, "");
           stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+          let frame: unknown;
+          try { frame = JSON.parse(line); } catch (error: unknown) {
+            if (!(error instanceof SyntaxError)) throw error;
+          }
+          try {
+            if (inputControl.receive(frame)) { newlineIndex = stdoutBuffer.indexOf("\n"); continue; }
+          } catch (error: unknown) {
+            logCodingAgentWarning("pi input request failed", error);
+            requestTermination("failure");
+            return;
+          }
           collector.feedLine(line);
           drainCollector();
+          if (frame && typeof frame === "object" && "type" in frame) {
+            if (frame.type === "response" && "success" in frame && frame.success === false) requestTermination("failure");
+            if (frame.type === "agent_settled" && !terminationReason) {
+              const collected = finishCollector();
+              settle({ events: collected.events, outcome: "completed", sessionId: collected.sessionId ?? input.sessionId });
+              terminate(proc, killTimer, () => {});
+            }
+          }
           newlineIndex = stdoutBuffer.indexOf("\n");
         }
       });
@@ -895,6 +560,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         settle({ events: [], outcome: "failed", sessionId: input.sessionId });
       });
       proc.once("exit", (code: number | null) => {
+        if (killTimer.current) clearTimeout(killTimer.current);
         if (settled) return;
         const tail = stdoutBuffer.trim();
         if (tail.length > 0) {
@@ -916,10 +582,6 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
-        if (terminationReason === "steer") {
-          settle({ events: collected.events, outcome: "failed", sessionId });
-          return;
-        }
         if (code !== 0) {
           logCodingAgentWarning("pi provider run failed", new Error(`exit=${code} stderr=${stderrText.slice(0, 512)}`));
           settle({ events: collected.events, outcome: "failed", sessionId });
@@ -927,7 +589,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         }
         settle({ events: collected.events, outcome: "completed", sessionId });
       });
+      proc.stdin?.on?.("error", (error) => {
+        logCodingAgentWarning("pi input stream failed", error);
+        requestTermination("failure");
+      });
+      try { write({ type: "prompt", message: input.prompt }); }
+      catch (error: unknown) { logCodingAgentWarning("pi prompt failed", error); requestTermination("failure"); }
     });
+    } finally { await extension.dispose(); }
   }
 
   function statusEvent(input: {
@@ -1254,8 +923,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       return [];
     },
 
-    submitInput() {
-      return [];
+    submitInput({ thread, inputRequestId, request }) {
+      const active = activeProcesses.get(thread.id);
+      if (!active) throw new Error("Pi active Run unavailable");
+      return active.submitInput(inputRequestId, request);
     },
   };
 }

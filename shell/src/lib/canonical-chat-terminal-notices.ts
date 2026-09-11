@@ -1,4 +1,4 @@
-import { canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import type { ChatMessage } from "./chat";
 import { projectCanonicalMessages } from "./canonical-chat-client";
 
@@ -16,6 +16,14 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
       id: approval.id, role: "system", requestId: approval.runId,
       content: approval.title, timestamp: approval.timestamp,
       metadata: { canonicalApproval: approval },
+    });
+  }
+  for (const input of canonicalChatInputs(detail)) {
+    const index = input.beforeMessageId ? messages.findIndex(message => message.id === input.beforeMessageId) : -1;
+    messages.splice(index < 0 ? messages.length : index, 0, {
+      id: input.id, role: "system", requestId: input.runId,
+      content: input.title, timestamp: input.timestamp,
+      metadata: { canonicalInput: input },
     });
   }
   for (const notice of canonicalChatTerminalNotices(detail)) {
