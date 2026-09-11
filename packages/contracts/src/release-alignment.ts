@@ -11,15 +11,32 @@ export type BuildSource = z.infer<typeof BuildSourceSchema>;
 export type ReleaseAlignmentStatus =
   | "aligned" | "runtime-update-required" | "different-releases" | "unavailable";
 
+const Version = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const RunningBuild = z.object({
-  version: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  version: Version,
   build: z.object({ sha: Commit }),
 });
+const RunningHostRelease = z.object({
+  version: Version,
+  runningVersion: Version,
+  release: z.object({
+    schemaVersion: z.literal(1),
+    kind: z.literal("matrix-os-host-bundle"),
+    version: Version,
+    gitCommit: Commit,
+  }),
+}).refine(({ version, runningVersion, release }) =>
+  version === runningVersion && release.version === runningVersion);
 
-/** Uses the running gateway's process build identity, including older releases. */
+/** Image builds expose an env SHA; native host bundles expose release.json. */
 export function readRunningCommit(info: unknown): string | null {
   const parsed = RunningBuild.safeParse(info);
-  return parsed.success ? parsed.data.build.sha : null;
+  if (parsed.success) return parsed.data.build.sha;
+  // release.json may already describe the next installation. Its immutable
+  // version must match the process-start version before using its commit.
+  // installedVersion is template/package metadata, not process provenance.
+  const host = RunningHostRelease.safeParse(info);
+  return host.success ? host.data.release.gitCommit : null;
 }
 
 /** Release alignment is source identity, not a claim about every runtime feature. */

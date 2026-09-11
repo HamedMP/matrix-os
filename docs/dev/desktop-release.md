@@ -108,13 +108,25 @@ workflow's package-version stamping is exempt; dirty local builds report unknown
 provenance. This metadata is exposed through the bounded `app:get-version`
 IPC response; installed apps do not need Git or GitHub access to compare releases.
 
-The update reminder compares that source with the running gateway's
-`/api/system/info.build.sha`, which is already present in older host bundles.
+The update reminder first compares that source with the running gateway's
+`/api/system/info.build.sha`. Native host bundles may return `"unknown"` for
+this legacy image-environment field. In that case the shared contract reads
+`release.gitCommit` only from a schema-1 host bundle whose `release.version`,
+`version`, and explicit `runningVersion` all match. Missing running versions or
+an installation awaiting gateway restart cannot establish source identity.
+`installedVersion` is template/package metadata and is not used for this check.
 Different commits trigger an advisory reminder even when both releases advertise
 the same legacy protocol number. An ancestor identifies missing cloud changes;
 different branches or history beyond the bounded window remain different without
 inventing an ordering. Matching source proves release alignment, not that every
 configuration, external provider, or feature is operational.
+
+Regression coverage includes the captured public provenance fields from a native
+host response, the actual `getSystemInfo` producer without image build variables,
+and built-Electron replay through the preload IPC and update dialog. The producer
+test also replaces release metadata before simulating gateway restart, after its
+file cache expires. Verify against a real authenticated VPS before release; an
+idealized fixture with a populated `build.sha` cannot prove host compatibility.
 
 Checks run at startup, computer switches, and reconnect. Focus checks have a
 15-minute cooldown, and there is no periodic alignment poll. Network failures and
