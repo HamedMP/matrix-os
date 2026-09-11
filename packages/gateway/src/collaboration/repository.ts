@@ -348,6 +348,7 @@ export class CollaborationRepository {
         action: "invitation.created",
         recipients: [{ actorId: input.targetActorId, invitationId }],
         discoveryState: "invited",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
         now,
       });
       return result;
@@ -413,6 +414,7 @@ export class CollaborationRepository {
           action: "invitation.expired",
           recipients: [{ actorId: input.actorId, invitationId: input.invitationId }],
           discoveryState: "revoked",
+          publishDirectory: shouldPublishMembershipDirectory(scope),
           now,
           reasonCode: "expired",
         });
@@ -456,6 +458,7 @@ export class CollaborationRepository {
         action: "invitation.accepted",
         recipients: [{ actorId: input.actorId, invitationId: input.invitationId }],
         discoveryState: "accepted",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
         now,
       });
       return { kind: "accepted" as const, value };
@@ -518,6 +521,7 @@ export class CollaborationRepository {
         action: "invitation.revoked",
         recipients: [{ actorId: member.actor_id, invitationId: input.invitationId }],
         discoveryState: "revoked",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
         now,
       });
       return result;
@@ -677,6 +681,7 @@ export class CollaborationRepository {
           ...(member.invitation_id ? { invitationId: member.invitation_id } : {}),
         }],
         discoveryState: status === "revoked" ? "revoked" : "accepted",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
         now,
       });
       return result;
@@ -688,6 +693,10 @@ function requireInvitationMutationLifecycle(scope: ScopeRow): void {
   if (scope.lifecycle !== "private" && scope.lifecycle !== "shared") {
     throw new CollaborationRepositoryError("conflict", "Scope membership is not mutable");
   }
+}
+
+function shouldPublishMembershipDirectory(scope: ScopeRow): boolean {
+  return scope.kind !== "project" || scope.lifecycle === "shared" || scope.lifecycle === "archived";
 }
 
 function toScope(row: ScopeRow): CollaborationScopeRecord {

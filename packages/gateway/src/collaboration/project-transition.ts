@@ -580,7 +580,7 @@ export function createProjectTransitionJournal(options: {
             resource_id: scope.resource_id,
             revision: nextRevision,
             authority_generation: Number(updatedScope.authority_generation),
-            event_type: "project.invitations.republished",
+            event_type: "project.transition.invited",
             payload: {},
             created_at: now(),
           }).execute();

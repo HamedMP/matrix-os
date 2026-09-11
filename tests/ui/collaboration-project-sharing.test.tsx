@@ -5,6 +5,8 @@ import "@testing-library/jest-dom/vitest";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationProjectInventory, CollaborationScope } from "@matrix-os/contracts";
 import { ProjectSharingDialog } from "../../packages/ui/src/collaboration/ProjectSharingDialog";
+import { ProjectSharingButton } from "../../packages/ui/src/collaboration/ProjectSharingButton";
+import { ChatCollaboratorsDialog } from "../../packages/ui/src/collaboration/ChatCollaboratorsDialog";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
@@ -34,6 +36,40 @@ const scope: CollaborationScope = {
 };
 
 describe("whole-project sharing confirmation", () => {
+  it("keeps the share action disabled until runtime identity is ready", () => {
+    const api = apiFixture();
+    render(<ProjectSharingButton api={api} runtimeId={null} projectId="proj_launch" projectName="Launch" />);
+
+    expect(screen.getByRole("button", { name: "Share project" })).toBeDisabled();
+    expect(screen.getByText("Loading share…")).toBeVisible();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("creates one private project scope before showing the complete inventory", async () => {
+    const api = apiFixture();
+    api.post
+      .mockResolvedValueOnce({ eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) })
+      .mockResolvedValueOnce(scope);
+    api.get
+      .mockResolvedValueOnce(scope)
+      .mockResolvedValueOnce({ members: [] })
+      .mockResolvedValueOnce(completeInventory());
+    render(<ProjectSharingButton api={api} runtimeId="vps:runtime" projectId="proj_launch" projectName="Launch" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+    expect(await screen.findByRole("heading", { name: "Share the whole Launch project?" })).toBeVisible();
+    expect(api.post).toHaveBeenNthCalledWith(1, "/api/collaboration/runtimes/vps:runtime/scopes/preflight", {
+      kind: "project",
+      resourceId: "proj_launch",
+    });
+    expect(api.post).toHaveBeenNthCalledWith(2, "/api/collaboration/runtimes/vps:runtime/scopes", expect.objectContaining({
+      kind: "project",
+      resourceId: "proj_launch",
+      expectedRevision: "7",
+      confirmationToken: "p".repeat(64),
+    }));
+  });
+
   it("shows one complete no-exclusions inventory and separates external references", () => {
     renderDialog({ inventory: completeInventory() });
     expect(screen.getByRole("heading", { name: "Share the whole Launch project?" })).toBeVisible();
@@ -55,6 +91,15 @@ describe("whole-project sharing confirmation", () => {
     expect(screen.getByText(/Lin's standalone Chat access ends/i)).toBeVisible();
     expect(screen.getByText(/Maya keeps standalone access only to Personal notes/i)).toBeVisible();
     expect(screen.getByText(/Lin is not added to the project/i)).toBeVisible();
+  });
+
+  it("describes project invitations as whole-project access", () => {
+    render(<ChatCollaboratorsDialog api={apiFixture()} scope={scope} members={[]}
+      onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
+
+    expect(screen.getByText(/applies to this whole project and its future project-owned contents/i)).toBeVisible();
+    expect(screen.getByText(/External references and unrelated resources stay outside the share/i)).toBeVisible();
+    expect(screen.queryByText(/does not grant access to its project/i)).toBeNull();
   });
 
   it("blocks confirmation when any owned resource cannot cross the authority boundary", () => {
