@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { parseBillingRedirectUrl } from "@matrix-os/contracts";
 import {
   CreditCardIcon,
   Loader2Icon,
@@ -175,11 +176,12 @@ export function BillingCheckoutPanel({
         reportCheckoutError(`http_${response.status}`);
         return;
       }
-      if (typeof body?.url !== "string" || body.url.length === 0) {
+      const target = parseBillingRedirectUrl(body);
+      if (!target) {
         reportCheckoutError("invalid_response");
         return;
       }
-      (onCheckoutNavigate ?? ((target: string) => window.location.assign(target)))(body.url);
+      (onCheckoutNavigate ?? ((redirect: string) => window.location.assign(redirect)))(target);
     } catch (error: unknown) {
       reportCheckoutError(error instanceof Error ? error.name : typeof error);
     } finally {
