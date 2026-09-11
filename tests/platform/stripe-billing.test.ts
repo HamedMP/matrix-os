@@ -24,6 +24,14 @@ describe('platform/stripe-billing', () => {
       allowPromotionCodes: true,
       regionSlug: 'region_nbg1',
       runtimeSlot: 'studio',
+      redditAttributionExpiresAt: '2026-06-06T00:00:00.000Z',
+      attribution: {
+        rdt_cid: 'reddit-click',
+        utm_source: 'reddit',
+        utm_medium: 'cpc',
+        utm_campaign: 'launch',
+        landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
+      },
       successUrl: 'https://app.matrix-os.com/?checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
     } as const;
@@ -45,12 +53,26 @@ describe('platform/stripe-billing', () => {
         clerk_user_id: 'user_123',
         matrix_region_slug: 'region_nbg1',
         matrix_runtime_slot: 'studio',
+        matrix_attr_reddit_pending: '1',
+        matrix_attr_reddit_expires_at: '2026-06-06T00:00:00.000Z',
+        matrix_attr_rdt_cid: 'reddit-click',
+        matrix_attr_utm_source: 'reddit',
+        matrix_attr_utm_medium: 'cpc',
+        matrix_attr_utm_campaign: 'launch',
+        matrix_attr_landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
       },
       subscription_data: {
         metadata: {
           clerk_user_id: 'user_123',
           matrix_region_slug: 'region_nbg1',
           matrix_runtime_slot: 'studio',
+          matrix_attr_reddit_pending: '1',
+          matrix_attr_reddit_expires_at: '2026-06-06T00:00:00.000Z',
+          matrix_attr_rdt_cid: 'reddit-click',
+          matrix_attr_utm_source: 'reddit',
+          matrix_attr_utm_medium: 'cpc',
+          matrix_attr_utm_campaign: 'launch',
+          matrix_attr_landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
         },
       },
       tax_id_collection: { enabled: true },
@@ -293,6 +315,29 @@ describe('platform/stripe-billing', () => {
     expect(sessionsCreate.mock.calls[1]).toEqual(sessionsCreate.mock.calls[0]);
   });
 
+  it('consumes one-time Reddit attribution metadata without clearing identity metadata', async () => {
+    const subscriptionsUpdate = vi.fn().mockResolvedValue({ id: 'sub_123' });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ subscriptions: { update: subscriptionsUpdate } }),
+    });
+
+    await expect(client.clearSubscriptionAttribution('sub_123')).resolves.toBeUndefined();
+    expect(subscriptionsUpdate).toHaveBeenCalledWith('sub_123', {
+      metadata: {
+        matrix_attr_reddit_pending: '',
+        matrix_attr_reddit_expires_at: '',
+        matrix_attr_rdt_cid: '',
+        matrix_attr_utm_source: '',
+        matrix_attr_utm_medium: '',
+        matrix_attr_utm_campaign: '',
+        matrix_attr_utm_content: '',
+        matrix_attr_utm_term: '',
+        matrix_attr_landing_path: '',
+      },
+    });
+  });
+
   it('uses the newest mature Stripe API version allowed by package policy', () => {
     expect(MATRIX_STRIPE_API_VERSION).toBe('2026-07-29.dahlia');
   });
@@ -305,6 +350,7 @@ describe('platform/stripe-billing', () => {
 function fakeStripe(overrides: Record<string, unknown>) {
   return {
     checkout: { sessions: { create: vi.fn() } },
+    subscriptions: { update: vi.fn() },
     prices: { retrieve: vi.fn() },
     billingPortal: { sessions: { create: vi.fn() } },
     webhooks: { constructEvent: vi.fn() },

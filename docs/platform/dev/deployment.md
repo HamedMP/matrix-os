@@ -152,6 +152,16 @@ the extra-runtime choices matching that configuration's monthly or annual
 interval. The deployment rejects a partial pair, and the platform fails closed
 instead of falling back to a general portal when both are absent.
 
+Reddit purchase attribution uses pixel ID `a2_jo0odxapssmi` and a production-only
+conversion access token stored in GCP Secret Manager as
+`reddit-conversions-access-token`. Grant the Cloud Run runtime service account
+`roles/secretmanager.secretAccessor`; the deployment preflight rejects a missing,
+empty, or inaccessible token. The browser pixel intentionally has automatic
+email and phone matching disabled. Signed `checkout.session.completed` webhooks
+send only the Reddit click ID, landing URL, purchase amount/currency, and a
+one-way SHA-256 account identifier. The Stripe Checkout session ID produces a
+stable conversion ID so webhook retries do not create a second conversion.
+
 The `Platform Cloud Run` workflow preflights these secrets, mounts them into
 the deployed revision, smokes `/sign-in` for the pre-VPS billing shell, and
 keeps production at `min-instances=1`. Staging may still scale to zero.
