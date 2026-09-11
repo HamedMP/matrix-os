@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CollaborationProjectInventory, CollaborationScope } from "@matrix-os/contracts";
 import {
   deriveProjectPresentation,
+  projectMembershipEffectKey,
   projectMembershipEffectLabel,
 } from "../../packages/ui/src/collaboration/project-state.js";
 
@@ -35,13 +36,17 @@ describe("project collaboration presentation", () => {
   });
 
   it("names the exact standalone item without implying project access", () => {
-    expect(projectMembershipEffectLabel({
+    const effect = {
       actor: { actorId: "user_ada", displayName: "Ada" },
       role: "viewer",
       effect: "retain_item_only",
       resourceKind: "chat",
       resourceId: "Private notes",
-    })).toBe("Ada keeps standalone access only to Private notes.");
+    } as const;
+    expect(projectMembershipEffectLabel(effect)).toBe("Ada keeps standalone access only to Private notes.");
+    expect(projectMembershipEffectKey(effect)).toBe("user_ada:retain_item_only:chat:Private notes");
+    expect(projectMembershipEffectKey({ ...effect, resourceId: "Another chat" }))
+      .not.toBe(projectMembershipEffectKey(effect));
   });
 });
 

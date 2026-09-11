@@ -53,6 +53,15 @@ export function projectMembershipEffectLabel(effect: CollaborationProjectMembers
   }
 }
 
+export function projectMembershipEffectKey(effect: CollaborationProjectMembershipEffect): string {
+  return [
+    effect.actor.actorId,
+    effect.effect,
+    effect.resourceKind ?? "project",
+    effect.resourceId ?? "project",
+  ].join(":");
+}
+
 function projectLifecycleLabel(lifecycle: CollaborationScope["lifecycle"]): string {
   switch (lifecycle) {
     case "private": return "Private project";

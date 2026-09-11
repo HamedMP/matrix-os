@@ -9,6 +9,7 @@ import { Dialog } from "../Dialog.js";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import {
   deriveProjectPresentation,
+  projectMembershipEffectKey,
   projectMembershipEffectLabel,
 } from "./project-state.js";
 
@@ -121,7 +122,7 @@ export function ProjectSharingDialog({
     {currentInventory.membershipEffects.length > 0 ? <section aria-labelledby="membership-effects-heading">
       <h3 id="membership-effects-heading" className="font-medium">Membership changes</h3>
       <ul className="mt-2 grid gap-2">
-        {currentInventory.membershipEffects.map((effect) => <li key={`${effect.actor.actorId}:${effect.effect}`}
+        {currentInventory.membershipEffects.map((effect) => <li key={projectMembershipEffectKey(effect)}
           className="rounded-xl border px-3 py-2 text-sm">{projectMembershipEffectLabel(effect)}</li>)}
       </ul>
     </section> : null}
