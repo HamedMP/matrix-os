@@ -59,6 +59,7 @@ Registry, not a Matrix customer-runtime package.
 | --- | --- | --- | --- |
 | Customer runtime | VPS host bundle | R2 bundle storage plus platform release/channel metadata | `host-bundle-release.yml` |
 | Platform | Platform service image | Google Artifact Registry, then Cloud Run | `platform-cloud-run.yml` |
+| Funded AI relay | Dedicated relay service image | Google Artifact Registry, then Cloud Run | `ai-relay-cloud-run.yml` |
 | Mobile native | Mobile native builds | EAS Build, then App Store Connect/TestFlight or Google Play | EAS operator flow in `docs/dev/mobile-shell.md` |
 | Mobile OTA | Mobile OTA update | EAS Update branch/channel | EAS operator flow in `docs/dev/mobile-shell.md` |
 | Desktop | Desktop installers and OTA metadata | GitHub Releases | `desktop-release.yml` and `desktop-release-canary.yml` |
@@ -77,6 +78,7 @@ OTA payloads.
 | `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on `ready-for-ci`, ready PRs, and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
+| `ai-relay-cloud-run.yml` | Dedicated Matrix-funded AI relay deployment | Manual preview deployment | Required before funded AI can be enabled in a preview platform |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 

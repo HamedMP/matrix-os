@@ -17,7 +17,7 @@ import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 import { canonicalProviderAvailabilityLabel } from "@matrix-os/ui";
 
 const DRIVER_LABEL: Record<CanonicalProviderDriverKind, string> = {
-  kernel: "Matrix Agent",
+  kernel: "Claude SDK",
   hermes: "Hermes",
   openclaw: "OpenClaw",
   codex: "Codex",

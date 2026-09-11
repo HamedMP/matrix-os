@@ -7,6 +7,7 @@ import {
   AiProviderService,
   type AiProviderHealthProbe,
 } from "../../packages/gateway/src/ai-providers/service.js";
+import { initialProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 
 const NOW = new Date("2026-08-29T21:00:00.000Z");
@@ -76,7 +77,12 @@ describe("AiProviderService", () => {
       expect.objectContaining({ id: "owner_openrouter", state: "setup_required", authMethod: null }),
     ]));
     expect(snapshot.drivers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "kernel", kind: "agent_sdk", health: "ready" }),
+      expect.objectContaining({
+        id: "kernel",
+        displayName: "Claude SDK",
+        kind: "agent_sdk",
+        health: "ready",
+      }),
     ]));
     expect(snapshot.active).toEqual({
       providerInstanceId: "kernel_matrix_included",
@@ -99,6 +105,43 @@ describe("AiProviderService", () => {
       }],
     }).getSnapshot();
     expect(snapshot.drivers.map((driver) => driver.id)).toEqual(["kernel", "codex"]);
+    expect(snapshot.accessSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "owner_openai_profile",
+        vendor: "openai",
+        state: "ready",
+      }),
+    ]));
+    expect(snapshot.accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "owner_codex",
+        vendor: "openai",
+        authMethod: "provider_profile",
+        state: "ready",
+      }),
+    ]));
+    expect(snapshot.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "provider-default", vendor: "openai" }),
+    ]));
+    expect(snapshot.instances).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "codex_owner_openai_profile",
+        driverId: "codex",
+        vendor: "openai",
+        accountId: "owner_codex",
+        accessSourceId: "owner_openai_profile",
+        defaultModelId: "provider-default",
+      }),
+    ]));
+    expect(initialProviderSettingsConfiguration(snapshot).harnesses).toEqual([
+      expect.objectContaining({
+        id: "harness_codex",
+        harness: "codex",
+        displayName: "Codex",
+        enabled: true,
+        route: { kind: "fixed", providerId: "openai", modelId: "provider-default" },
+      }),
+    ]);
     expect(AiProviderSnapshotV3Schema.safeParse(snapshot).success).toBe(true);
   });
 

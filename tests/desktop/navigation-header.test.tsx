@@ -3,11 +3,12 @@
 import React from "react";
 import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render as renderUI, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render as renderUI, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NavigationHeader from "../../desktop/src/renderer/src/features/mission-control/NavigationHeader";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { useNativeDesktopMode } from "../../desktop/src/renderer/src/stores/native-desktop-mode";
 
 function render(ui: React.ReactElement) {
   return renderUI(<GettingStartedVisibilityProvider scope="header-test">{ui}</GettingStartedVisibilityProvider>);
@@ -18,6 +19,7 @@ describe("Desktop navigation header", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().ensureNavigationScope("runtime-a");
     useUi.setState(useUi.getInitialState(), true);
+    useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
     Object.defineProperty(window, "operator", {
       configurable: true,
       value: { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn() },
@@ -70,14 +72,26 @@ describe("Desktop navigation header", () => {
       .classList.contains("titlebar-drag")).toBe(true);
   });
 
-  it("uses Figma-style native top-bar controls without a mode switcher", () => {
+  it("uses compact native top-bar controls with an accessible mode switcher", async () => {
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 
     const desktopTab = screen.getByRole("tab", { name: "Desktop" });
     expect(desktopTab.textContent).toBe("");
     expect(screen.getByRole("tab", { name: "Sidebar" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
-    expect(screen.queryByLabelText("Workspace mode")).toBeNull();
+    expect(screen.getByRole("group", { name: "Workspace mode" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Desktop mode" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Canvas mode" }));
+
+    expect(useNativeDesktopMode.getState().mode).toBe("canvas");
+    expect(screen.getByRole("button", { name: "Canvas mode" }).getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
+        key: "desktopShell",
+        value: { mode: "canvas" },
+      });
+    });
   });
 
 });

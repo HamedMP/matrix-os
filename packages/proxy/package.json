@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "node --import=tsx src/main.ts",
+    "start:funded": "node --import=tsx src/funded-main.ts",
     "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc"
   },
   "devDependencies": {

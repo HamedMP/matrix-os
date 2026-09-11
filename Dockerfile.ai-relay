@@ -1,0 +1,54 @@
+FROM node:24-alpine AS base
+
+RUN apk add --no-cache ca-certificates g++ linux-headers make python3
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/observability/package.json packages/observability/package.json
+COPY packages/proxy/package.json packages/proxy/package.json
+
+FROM base AS deps
+
+RUN pnpm install --frozen-lockfile --ignore-scripts \
+    --config.enableGlobalVirtualStore=false \
+    --filter '@matrix-os/proxy...'
+
+FROM deps AS builder
+
+COPY packages/contracts packages/contracts
+COPY packages/observability packages/observability
+COPY packages/proxy packages/proxy
+RUN pnpm --filter '@matrix-os/proxy' build
+
+FROM base AS prod-deps
+
+RUN pnpm install --frozen-lockfile --ignore-scripts --prod \
+    --config.enableGlobalVirtualStore=false \
+    --filter '@matrix-os/proxy...'
+
+FROM node:24-alpine AS runtime
+
+RUN apk add --no-cache ca-certificates && \
+    adduser -D -u 1001 -h /home/matrix-relay -s /sbin/nologin matrix-relay
+
+WORKDIR /app
+
+COPY --from=prod-deps --chown=matrix-relay:matrix-relay /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=matrix-relay:matrix-relay /app/packages/contracts/package.json ./packages/contracts/package.json
+COPY --from=prod-deps --chown=matrix-relay:matrix-relay /app/packages/observability/package.json ./packages/observability/package.json
+COPY --from=prod-deps --chown=matrix-relay:matrix-relay /app/packages/proxy/package.json ./packages/proxy/package.json
+COPY --from=builder --chown=matrix-relay:matrix-relay /app/packages/contracts/src ./packages/contracts/src
+COPY --from=builder --chown=matrix-relay:matrix-relay /app/packages/observability/dist ./packages/observability/dist
+COPY --from=builder --chown=matrix-relay:matrix-relay /app/packages/proxy/dist ./packages/proxy/dist
+
+ENV NODE_ENV=production
+ENV PORT=8080
+
+EXPOSE 8080
+
+USER matrix-relay
+
+CMD ["node", "packages/proxy/dist/funded-main.js"]

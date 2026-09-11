@@ -22,7 +22,7 @@ describe("Settings canonical provider state", () => {
     expect(within(accounts).getAllByText("Not connected")).toHaveLength(2);
 
     const harnesses = screen.getByRole("region", { name: "AI harnesses" });
-    expect(within(harnesses).getByText("Matrix Agent")).toBeVisible();
+    expect(within(harnesses).getByText("Claude SDK")).toBeVisible();
     expect(within(harnesses).getByText("Installed")).toBeVisible();
 
     expect(screen.getByText("Claude Sonnet 5")).toBeVisible();

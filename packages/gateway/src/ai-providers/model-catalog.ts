@@ -15,6 +15,7 @@ export const OWNER_ANTHROPIC_MODEL_IDS = [
   "claude-haiku-4-5",
   ...LEGACY_KERNEL_MODEL_IDS,
 ] as const;
+export const OWNER_OPENAI_MODEL_IDS = ["provider-default"] as const;
 
 const CURRENT_STATUS = new Map<string, "current">(
   KERNEL_MODELS.map((model) => [model.id, "current"]),
@@ -28,7 +29,7 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
     ]),
   ];
 
-  return modelIds.map((id) => {
+  const anthropicModels: AiModelDescriptorView[] = modelIds.map((id) => {
     const option = resolveKernelModelOption(id);
     const eligibleAccessSourceIds = [
       ...(MATRIX_INCLUDED_MODEL_IDS.includes(id as (typeof MATRIX_INCLUDED_MODEL_IDS)[number])
@@ -43,7 +44,7 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
       vendor: "anthropic" as const,
       displayName: option.label,
       status: CURRENT_STATUS.get(id) ?? "legacy" as const,
-      capabilities: ["tools", "vision", "reasoning", "long_context"] as const,
+      capabilities: ["tools", "vision", "reasoning", "long_context"],
       effortControls: [...KERNEL_EFFORTS],
       eligibleAccessSourceIds,
       dataPolicies: eligibleAccessSourceIds.map((accessSourceId) => ({
@@ -59,6 +60,25 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
       catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     };
   });
+  return [
+    ...anthropicModels,
+    {
+      id: OWNER_OPENAI_MODEL_IDS[0],
+      vendor: "openai",
+      displayName: "Selected in Codex",
+      status: "current",
+      capabilities: ["tools", "vision", "reasoning", "long_context"],
+      effortControls: [...KERNEL_EFFORTS],
+      eligibleAccessSourceIds: ["owner_openai_profile"],
+      dataPolicies: [{
+        accessSourceId: "owner_openai_profile",
+        route: "owner_direct",
+        disclosureKey: "owner-direct-openai",
+      }],
+      aliases: [],
+      catalogVersion: AI_PROVIDER_CATALOG_VERSION,
+    },
+  ];
 }
 
 export function eligibleModelsForSource(
