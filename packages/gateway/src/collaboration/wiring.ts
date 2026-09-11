@@ -24,11 +24,13 @@ import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
 import { createProjectTransitionJournal } from "./project-transition.js";
 import { createProjectFence } from "./project-fence.js";
+import { createProjectInheritanceResolver } from "./project-inheritance.js";
 import {
   createProjectInventoryService,
   type ProjectInventoryResourceSource,
 } from "./project-inventory.js";
 import { createProjectSharingService, type ProjectSharingService } from "./project-sharing.js";
+import { createProjectTransitionCoordinator } from "./project-transition-coordinator.js";
 import {
   CollaborationProjectScopeService,
   type CollaborationProjectSource,
@@ -151,6 +153,7 @@ export async function createGatewayCollaboration(options: {
   let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
   let projectSharing: ProjectSharingService | undefined;
+  let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
 
   return {
     repository,
@@ -243,10 +246,10 @@ export async function createGatewayCollaboration(options: {
       });
       return { available: true };
     },
-    enableSharedProject(input: {
+    async enableSharedProject(input: {
       homePath: string;
       inventorySource: ProjectInventoryResourceSource;
-    }): { available: true } {
+    }): Promise<{ available: true }> {
       if (registered || closing || projectSharing) {
         throw new Error("Shared project must be initialized exactly once before route registration");
       }
@@ -255,10 +258,19 @@ export async function createGatewayCollaboration(options: {
         source: input.inventorySource,
         confirmationSecret: options.config.preflightSecret,
       });
+      projectTransitionCoordinator = createProjectTransitionCoordinator({
+        db: options.db,
+        transitions: projectTransitions,
+        fence: projectFence,
+        inheritance: createProjectInheritanceResolver({ db: options.db }),
+        inventory,
+      });
+      await projectTransitionCoordinator.recover();
       projectSharing = createProjectSharingService({
         db: options.db,
         inventory,
         transitions: projectTransitions,
+        onPrepared: (transition) => projectTransitionCoordinator!.schedule(transition.id),
         resolveDestination: async ({ scopeId, ownerId, projectId }) => {
           const scope = await options.db.selectFrom("collaboration_scopes")
             .select(["authority_runtime_id", "authority_generation"])
@@ -339,6 +351,8 @@ export async function createGatewayCollaboration(options: {
       terminalControl = undefined;
       terminalDispatcher = undefined;
       terminalAdapter = undefined;
+      await projectTransitionCoordinator?.shutdown();
+      projectTransitionCoordinator = undefined;
       projectSharing = undefined;
       await outbox.shutdown();
       participantResolver?.shutdown();

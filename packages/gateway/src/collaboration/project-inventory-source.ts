@@ -1,5 +1,6 @@
 import { relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
+import { TerminalRefSchema, TerminalWorkspaceSchema } from "@matrix-os/contracts";
 import type {
   ProjectInventoryResourceRecord,
   ProjectInventoryResourceSource,
@@ -22,11 +23,12 @@ const CanvasRecordSchema = z.object({
   revision: z.number().int().nonnegative(),
   nodes: z.array(z.object({
     type: z.string().min(1).max(80),
-    sourceRef: z.object({
-      kind: z.string().min(1).max(80),
-      id: ResourceIdSchema,
-      projectId: ResourceIdSchema.optional(),
-    }).passthrough().nullable(),
+  sourceRef: z.object({
+    kind: z.string().min(1).max(80),
+    id: ResourceIdSchema.optional(),
+    projectId: ResourceIdSchema.optional(),
+    terminalRef: TerminalRefSchema.optional(),
+  }).passthrough().nullable(),
   }).passthrough()).max(500),
 }).strict();
 const AppRecordSchema = z.object({
@@ -42,6 +44,10 @@ const SessionRecordSchema = z.object({
   incarnationVerified: z.boolean(),
   sharedControlMode: z.enum(["eligible", "shared"]).optional(),
 }).passthrough();
+
+type NormalizedSession = z.infer<typeof SessionRecordSchema> & {
+  workspaceProjectId?: string;
+};
 
 export class GatewayProjectInventorySourceError extends Error {
   constructor(public readonly code: "unavailable") {
@@ -85,6 +91,21 @@ function revision(value: string): string {
   const parsed = Date.parse(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new GatewayProjectInventorySourceError("unavailable");
   return String(parsed);
+}
+
+function normalizeSessions(values: unknown[]): NormalizedSession[] {
+  const workspaces = z.array(TerminalWorkspaceSchema).max(10_000).safeParse(values);
+  if (workspaces.success) {
+    return workspaces.data.flatMap((workspace) => workspace.tabs.map((tab) => ({
+      name: `${workspace.id}:${tab.id}`,
+      canonicalName: `${workspace.id}:${tab.id}`,
+      cwd: tab.cwd,
+      updatedAt: tab.updatedAt,
+      incarnationVerified: false,
+      ...(workspace.scope === "project" ? { workspaceProjectId: workspace.projectId } : {}),
+    })));
+  }
+  return z.array(SessionRecordSchema).max(10_000).parse(values);
 }
 
 export function createGatewayProjectInventorySource(
@@ -150,6 +171,7 @@ export function createGatewayProjectInventorySource(
         for (const node of record.nodes) {
           if (node.type !== "app_window" || node.sourceRef?.kind !== "app_window") continue;
           const id = node.sourceRef.id;
+          if (!id) continue;
           if (node.sourceRef.projectId !== projectId) {
             if (!resources.has(id)) resources.set(id, { id, revision: String(record.revision), ownership: "external" });
             continue;
@@ -186,7 +208,7 @@ export function createGatewayProjectInventorySource(
         const [projectRecord, canvasRecord, sessions] = await Promise.all([
           project(ownerId, projectId),
           canvas(ownerId, projectId),
-          options.sessions.list().then((values) => z.array(SessionRecordSchema).max(10_000).parse(values)),
+          options.sessions.list().then(normalizeSessions),
         ]);
         if (!projectRecord) throw new GatewayProjectInventorySourceError("unavailable");
         if (!canvasRecord) return [];
@@ -196,11 +218,22 @@ export function createGatewayProjectInventorySource(
         ]));
         const resources = new Map<string, ProjectInventoryResourceRecord>();
         for (const node of canvasRecord.nodes) {
-          if (node.sourceRef?.kind !== "terminal_session") continue;
-          const id = node.sourceRef.id;
+          if (!node.sourceRef || (node.sourceRef.kind !== "terminal_session"
+            && node.sourceRef.kind !== "terminal_tab")) continue;
+          const ref = node.sourceRef.kind === "terminal_tab"
+            ? TerminalRefSchema.safeParse(node.sourceRef.terminalRef)
+            : null;
+          if (node.sourceRef.kind === "terminal_tab" && !ref?.success) continue;
+          const id = ref?.success
+            ? `${ref.data.workspaceId}:${ref.data.tabId}`
+            : node.sourceRef.id;
+          if (!id) continue;
           const session = byName.get(id);
           const resourceRevision = session ? revision(session.updatedAt) : "0";
-          if (node.sourceRef.projectId !== projectId) {
+          const belongsToProject = ref?.success
+            ? session?.workspaceProjectId === projectId
+            : node.sourceRef.projectId === projectId;
+          if (!belongsToProject) {
             if (!resources.has(id)) resources.set(id, { id, revision: resourceRevision, ownership: "external" });
             continue;
           }
