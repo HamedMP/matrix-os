@@ -223,6 +223,8 @@ export function createGenericHarnessModelCatalogReader(options: {
       if (!input.refresh && cached && cached.expiresAt > currentTime.getTime()) return cached.value;
       const runtimeEnv = buildAgentRuntimeEnvironment(options.homePath);
       const env = buildPiChildEnvironment(runtimeEnv);
+      env.NO_COLOR = "1";
+      delete env.FORCE_COLOR;
       const results = await Promise.allSettled(enabled.map(async (harness) => {
         const command = harness === "pi" ? resolvePiCommand(undefined, env) : "opencode";
         const args = harness === "pi" ? [

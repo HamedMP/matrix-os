@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createGenericHarnessModelCatalogReader,
   parseOpenCodeModelCatalog,
@@ -6,6 +6,8 @@ import {
 } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 
 describe("generic harness model catalog", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("does not turn Pi diagnostic prose into ready providers", () => {
     expect(parsePiModelCatalog("No models available.\nRun pi to configure a provider.\nWarning: credentials unavailable\n")).toEqual([]);
   });
@@ -60,6 +62,7 @@ not a model
   });
 
   it("projects each live catalog as a harness-owned access route and degrades independently", async () => {
+    vi.stubEnv("NO_COLOR", "");
     const run = vi.fn(async (command: string) => {
       if (command === "pi") throw new Error("private command failure");
       return { stdout: "openai/gpt-5.6-sol\nbaseten/zai-org/GLM-5.3\n", stderr: "" };
