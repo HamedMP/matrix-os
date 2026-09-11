@@ -521,10 +521,11 @@ export function createProjectTransitionJournal(options: {
           .select("scope_seq").where("scope_id", "=", scope.id)
           .orderBy("scope_seq", "desc").limit(1).executeTakeFirst();
         const scopeSequence = Number(latestEvent?.scope_seq ?? 0) + 1;
+        const eventId = z.uuid().parse(createEventId());
         await trx.insertInto("collaboration_events").values({
           scope_id: scope.id,
           scope_seq: scopeSequence,
-        event_id: z.uuid().parse(createEventId()),
+          event_id: eventId,
           resource_kind: "project",
           resource_id: scope.resource_id,
           revision: nextRevision,
@@ -533,6 +534,73 @@ export function createProjectTransitionJournal(options: {
           payload: {},
           created_at: now(),
         }).execute();
+        const members = await trx.selectFrom("collaboration_members")
+          .select(["actor_id", "status", "invitation_id"])
+          .where("scope_id", "=", scope.id)
+          .where((expression) => expression.or([
+            expression("status", "=", "accepted"),
+            expression.and([
+              expression("status", "=", "pending"),
+              expression("expires_at", ">", now()),
+            ]),
+          ]))
+          .orderBy("actor_id", "asc")
+          .execute();
+        const acceptedMembers = members.filter((member) => member.status === "accepted");
+        acceptedMembers.sort((left, right) => {
+          if (left.actor_id === scope.owner_id) return -1;
+          if (right.actor_id === scope.owner_id) return 1;
+          return left.actor_id.localeCompare(right.actor_id);
+        });
+        if (acceptedMembers.length > 0) {
+          await trx.insertInto("collaboration_directory_outbox").values({
+            event_id: eventId,
+            scope_id: scope.id,
+            recipient_actor_ids: jsonb(acceptedMembers.map((member) => ({ actorId: member.actor_id }))),
+            authority_runtime_id: row.destination_authority_runtime_id,
+            authority_generation: Number(row.destination_authority_generation),
+            resource_kind: "project",
+            discovery_state: "accepted",
+            retry_after: now(),
+            attempts: 0,
+            delivered_at: null,
+            created_at: now(),
+          }).execute();
+        }
+        const pendingMembers = members.filter((member): member is typeof member & { invitation_id: string } =>
+          member.status === "pending" && member.invitation_id !== null,
+        );
+        if (pendingMembers.length > 0) {
+          const invitationEventId = z.uuid().parse(createEventId());
+          await trx.insertInto("collaboration_events").values({
+            scope_id: scope.id,
+            scope_seq: scopeSequence + 1,
+            event_id: invitationEventId,
+            resource_kind: "project",
+            resource_id: scope.resource_id,
+            revision: nextRevision,
+            authority_generation: Number(updatedScope.authority_generation),
+            event_type: "project.invitations.republished",
+            payload: {},
+            created_at: now(),
+          }).execute();
+          await trx.insertInto("collaboration_directory_outbox").values({
+            event_id: invitationEventId,
+            scope_id: scope.id,
+            recipient_actor_ids: jsonb(pendingMembers.map((member) => ({
+              actorId: member.actor_id,
+              invitationId: member.invitation_id,
+            }))),
+            authority_runtime_id: row.destination_authority_runtime_id,
+            authority_generation: Number(row.destination_authority_generation),
+            resource_kind: "project",
+            discovery_state: "invited",
+            retry_after: now(),
+            attempts: 0,
+            delivered_at: null,
+            created_at: now(),
+          }).execute();
+        }
         await trx.insertInto("collaboration_audit").values({
           scope_id: scope.id,
           actor_id: row.requested_by,
@@ -597,7 +665,7 @@ export function createProjectTransitionJournal(options: {
     });
   }
 
-  async function recover(input: {
+  type RecoveryCallbacks = {
     cleanupStaging(value: {
       transitionId: string;
       stagedManifestRef?: string;
@@ -610,7 +678,65 @@ export function createProjectTransitionJournal(options: {
       stagedManifestRef: string;
       signal: AbortSignal;
     }): Promise<void>;
+  };
+
+  async function recoverTransition(
+    rawTransitionId: string,
+    input: RecoveryCallbacks,
+  ): Promise<"activated" | "failed" | null> {
+    const transitionId = TransitionIdSchema.parse(rawTransitionId);
+    const existingAttempt = activeRecoveryAttempts.get(transitionId);
+    if (existingAttempt) return null;
+    if (activeRecoveryAttempts.size >= MAX_RECOVERY_BATCH) return null;
+    const value = await get(transitionId);
+    if (!value || value.status === "active" || value.status === "failed") return null;
+    const signal = AbortSignal.timeout(recoveryTimeoutMs);
+    let attempt: Promise<"activated" | "failed" | null>;
+    attempt = (async () => {
+      const current = await enterRecovery(value);
+      if (current.publicationMarker) {
+        if (!current.stagedManifestRef) throw new ProjectTransitionError("conflict");
+        await input.completePublication({
+          transitionId: current.id,
+          publicationMarker: current.publicationMarker,
+          stagedManifestRef: current.stagedManifestRef,
+          signal,
+        });
+        await activate(current.id);
+        return "activated" as const;
+      }
+      await input.cleanupStaging({
+        transitionId: current.id,
+        ...(current.stagedManifestRef ? { stagedManifestRef: current.stagedManifestRef } : {}),
+        ...(current.sourceFenceEpoch ? { sourceFenceEpoch: current.sourceFenceEpoch } : {}),
+        signal,
+      });
+      await failRecovered(current.id);
+      return "failed" as const;
+    })().catch((error: unknown) => {
+      console.warn(
+        "[collaboration-project] transition recovery deferred",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      return null;
+    }).finally(() => {
+      if (activeRecoveryAttempts.get(value.id) === attempt) activeRecoveryAttempts.delete(value.id);
+    });
+    activeRecoveryAttempts.set(value.id, attempt);
+    try {
+      return await waitForRecoveryAttempt(signal, attempt);
+    } catch (error: unknown) {
+      console.warn("[collaboration-project] transition recovery deferred", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
+  }
+
+  async function recover(input: RecoveryCallbacks & {
+    preservePrepared?: boolean;
   }): Promise<{ recovered: number; activated: number; failed: number }> {
+    const recoverableStatuses: ProjectTransitionStatus[] = input.preservePrepared
+      ? ["staging", "fenced", "committing", "recovering"]
+      : ["prepared", "staging", "fenced", "committing", "recovering"];
     let recovered = 0;
     let activated = 0;
     let failed = 0;
@@ -621,56 +747,17 @@ export function createProjectTransitionJournal(options: {
     if (availableSlots < 1) return { recovered, activated, failed };
     const activeTransitionIds = [...activeRecoveryAttempts.keys()];
     const rows = await options.db.selectFrom("collaboration_transitions").selectAll()
-      .where("status", "in", ["prepared", "staging", "fenced", "committing", "recovering"])
+      .where("status", "in", recoverableStatuses)
       .$if(activeTransitionIds.length > 0, (query) => query.where("id", "not in", activeTransitionIds))
       .orderBy("created_at", "asc").limit(availableSlots).execute();
     for (const value of rows.map(rowToTransition)) {
-      if (activeRecoveryAttempts.has(value.id)) continue;
-      if (activeRecoveryAttempts.size >= MAX_RECOVERY_BATCH) break;
-      const signal = AbortSignal.timeout(recoveryTimeoutMs);
-      let attempt: Promise<"activated" | "failed" | null>;
-      attempt = (async () => {
-        const current = await enterRecovery(value);
-        if (current.publicationMarker) {
-          if (!current.stagedManifestRef) throw new ProjectTransitionError("conflict");
-          await input.completePublication({
-            transitionId: current.id,
-            publicationMarker: current.publicationMarker,
-            stagedManifestRef: current.stagedManifestRef,
-            signal,
-          });
-          await activate(current.id);
-          return "activated" as const;
-        }
-        await input.cleanupStaging({
-          transitionId: current.id,
-          ...(current.stagedManifestRef ? { stagedManifestRef: current.stagedManifestRef } : {}),
-          ...(current.sourceFenceEpoch ? { sourceFenceEpoch: current.sourceFenceEpoch } : {}),
-          signal,
-        });
-        await failRecovered(current.id);
-        return "failed" as const;
-      })().catch((error: unknown) => {
-        console.warn(
-          "[collaboration-project] transition recovery deferred",
-          error instanceof Error ? error.name : "UnknownError",
-        );
-        return null;
-      }).finally(() => {
-        if (activeRecoveryAttempts.get(value.id) === attempt) activeRecoveryAttempts.delete(value.id);
-      });
-      activeRecoveryAttempts.set(value.id, attempt);
-      try {
-        const outcome = await waitForRecoveryAttempt(signal, attempt);
-        if (outcome === "activated") {
-          activated += 1;
-          recovered += 1;
-        } else if (outcome === "failed") {
-          failed += 1;
-          recovered += 1;
-        }
-      } catch (error: unknown) {
-        console.warn("[collaboration-project] transition recovery deferred", error instanceof Error ? error.name : "UnknownError");
+      const outcome = await recoverTransition(value.id, input);
+      if (outcome === "activated") {
+        activated += 1;
+        recovered += 1;
+      } else if (outcome === "failed") {
+        failed += 1;
+        recovered += 1;
       }
     }
     return { recovered, activated, failed };
@@ -686,6 +773,7 @@ export function createProjectTransitionJournal(options: {
     beginCommit,
     recordPublication,
     activate,
+    recoverTransition,
     recover,
   };
 }

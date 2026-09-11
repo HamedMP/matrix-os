@@ -79,10 +79,11 @@ export function createProjectSharingService(options: {
     runtimeId: string;
     authorityGeneration: number;
   }>;
+  onPrepared?(transition: ProjectTransitionRecord): boolean;
 }) {
   async function preparePreview(scopeId: string, actorId: string) {
     const scope = await loadPreparationScope(options.db, scopeId, actorId);
-    const membershipEffects = await deriveMembershipEffects(options.db, scope.id, scope.owner_id);
+    const membershipEffects = await deriveProjectMembershipEffects(options.db, scope.id, scope.owner_id);
     const inventory = await options.inventory.preview({
       ownerId: scope.owner_id,
       projectId: scope.resource_id,
@@ -164,7 +165,7 @@ export function createProjectSharingService(options: {
         }
         throw new ProjectSharingError("unavailable");
       }
-      return options.transitions.prepare({
+      const transition = await options.transitions.prepare({
         scopeId: scope.id,
         ownerId: scope.owner_id,
         requestedBy: parsed.actorId,
@@ -177,6 +178,10 @@ export function createProjectSharingService(options: {
         destinationAuthorityRuntimeId: destination.runtimeId,
         destinationAuthorityGeneration: destination.authorityGeneration,
       });
+      if (options.onPrepared && !options.onPrepared(transition)) {
+        throw new ProjectSharingError("capacity");
+      }
+      return transition;
     },
   };
 }
@@ -210,7 +215,7 @@ async function loadPreparationScope(
   }
 }
 
-async function deriveMembershipEffects(
+export async function deriveProjectMembershipEffects(
   db: Kysely<OwnerCollaborationDatabase>,
   projectScopeId: string,
   ownerId: string,

@@ -948,7 +948,7 @@ export async function createGateway(config: GatewayConfig) {
             },
           },
         });
-        gatewayCollaboration.enableSharedProject({
+        await gatewayCollaboration.enableSharedProject({
           homePath,
           inventorySource: createGatewayProjectInventorySource({
             homePath,
@@ -998,7 +998,7 @@ export async function createGateway(config: GatewayConfig) {
               },
             },
             sessions: {
-              list: () => zellijShellRegistry.list(),
+              list: () => terminalWorkspaceRuntime.listWorkspaces(),
             },
           }),
         });

@@ -297,6 +297,20 @@ describe("project collaboration transition journal", () => {
     })).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("preserves prepared transitions when the coordinator treats them as a durable queue", async () => {
+    const transitions = journal();
+    await prepare();
+    const cleanupStaging = vi.fn(async () => undefined);
+
+    await expect(transitions.recover({
+      cleanupStaging,
+      completePublication: async () => undefined,
+      preservePrepared: true,
+    })).resolves.toEqual({ recovered: 0, activated: 0, failed: 0 });
+    await expect(transitions.get(TRANSITION_ID)).resolves.toMatchObject({ status: "prepared" });
+    expect(cleanupStaging).not.toHaveBeenCalled();
+  });
+
   it("removes staged bindings and inherited scopes when recovery restores privacy", async () => {
     const transitions = journal();
     await prepare();
