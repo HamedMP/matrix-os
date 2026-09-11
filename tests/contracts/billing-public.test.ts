@@ -137,10 +137,9 @@ describe("billing redirect contract", () => {
   });
 
   // Native Mobile parses the portal response with this schema directly
-  // (apps/mobile/lib/requests/settings.ts), and fetchAuthenticatedJson turns a
-  // schema failure into the generic "Billing portal unavailable" message. The
-  // mobile Jest suite cannot import @matrix-os/contracts today, so this is the
-  // executable coverage for that client's rejection behavior.
+  // (apps/mobile/lib/requests/settings.ts). Client-level coverage, including the
+  // guarantee that a rejected redirect never reaches Linking.openURL, lives in
+  // apps/mobile/__tests__/billing-portal-redirect.test.ts.
   it("rejects the unsafe redirects Native Mobile previously accepted", () => {
     for (const url of ["http://billing.stripe.com/p/session", "billing.stripe.com/p"]) {
       expect(MatrixBillingRedirectSchema.safeParse({ url }).success).toBe(false);
