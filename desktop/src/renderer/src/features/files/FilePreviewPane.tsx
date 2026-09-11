@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Download,
   FileCode2,
   FileQuestion,
   FilePenLine,
@@ -329,10 +330,14 @@ export function PreviewPane({
   selection,
   onClose,
   onEdit,
+  onDownload,
+  downloadPending = false,
 }: {
   selection: PreviewSelection;
   onClose?: () => void;
   onEdit?: (path: string) => void;
+  onDownload?: (path: string, size?: number) => void;
+  downloadPending?: boolean;
 }) {
   const [history, setHistory] = useState<PreviewSelection[]>([selection]);
   const activeSelection = history.at(-1) ?? selection;
@@ -349,7 +354,7 @@ export function PreviewPane({
       className="flex min-h-0 min-w-0 flex-col border-t md:border-t-0 md:border-l"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
     >
-      <header className="flex min-h-16 shrink-0 items-center gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
+      <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
         {history.length > 1 ? (
           <button
             type="button"
@@ -368,6 +373,12 @@ export function PreviewPane({
           <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }} title={entry.name}>{entry.name}</h2>
           {metadata ? <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{metadata}</p> : null}
         </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+        {onDownload && entry.type === "file" ? (
+          <Button variant="subtle" disabled={downloadPending} onClick={() => onDownload(path, entry.sizeBytes)}>
+            <Download size={14} aria-hidden /> Download
+          </Button>
+        ) : null}
         {onEdit && entry.type === "file" && !isManagedBrowserPath(path) ? (
           <Button variant="subtle" className="ml-auto shrink-0" onClick={() => onEdit(path)}>
             <FilePenLine size={14} aria-hidden /> Open in Editor
@@ -378,6 +389,7 @@ export function PreviewPane({
             <X size={16} />
           </button>
         ) : null}
+        </div>
       </header>
       <FilePreview
         path={path}

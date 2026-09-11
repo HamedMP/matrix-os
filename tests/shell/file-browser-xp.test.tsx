@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ userId: "user-test", sessionId: "session-test" }) }));
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

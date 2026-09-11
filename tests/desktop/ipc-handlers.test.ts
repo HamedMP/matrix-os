@@ -62,6 +62,8 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     fetchFileSearch: vi.fn(),
     fetchFileContent: vi.fn(),
     saveFileContent: vi.fn(),
+    downloadFile: vi.fn(async () => ({ status: "saved" })),
+    cancelFileDownload: vi.fn(() => ({ ok: true })),
     prepareSourceCommit: vi.fn(),
     createSourcePullRequest: vi.fn(),
     fetchThreadSnapshot: vi.fn(),

@@ -10,6 +10,7 @@ import {
   FileCodeIcon,
   FileJsonIcon,
 } from "@/lib/hugeicons";
+import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { cn } from "@/lib/utils";
 
 interface FileIconProps {
@@ -43,10 +44,13 @@ export function FileIcon({
   onContextMenu,
   renaming,
 }: FileIconProps) {
+  const currentPath = useFileBrowser((s) => s.currentPath);
   const Icon = getFileIcon(name, type);
 
   return (
     <div
+      data-web-file-path={currentPath ? `${currentPath}/${name}` : name}
+      data-web-file-type={type}
       className={cn(
         "flex flex-col items-center gap-1 p-2 rounded-lg cursor-default select-none w-24",
         "hover:bg-accent/50 transition-colors",
