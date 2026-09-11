@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import {
   assertFixturePortsAvailable,
+  completeLocalSpeechFixtureCleanup,
   createLocalSpeechFixturePlan,
+  LocalFixtureSignalController,
   parseLocalPostgresAdminUrl,
 } from "../../scripts/lib/platform-speech-local-fixture.js";
 
@@ -72,5 +78,73 @@ describe("local speech fixture planning", () => {
 
   it("rejects invalid fixture ports before attempting to bind", async () => {
     await expect(assertFixturePortsAvailable([1_023])).rejects.toThrow("must be unprivileged TCP ports");
+  });
+
+  it("returns failure and attempts every cleanup step when cleanup is incomplete", async () => {
+    const completed: string[] = [];
+    const report = vi.fn();
+    const result = await completeLocalSpeechFixtureCleanup(0, [
+      { label: "runtime", run: async () => { completed.push("runtime"); } },
+      { label: "platform database", run: async () => { throw new Error("disposable failure"); } },
+      { label: "role", run: async () => { completed.push("role"); } },
+    ], report);
+
+    expect(result).toBe(1);
+    expect(completed).toEqual(["runtime", "role"]);
+    expect(report).toHaveBeenCalledWith("Local speech fixture cleanup failed safely: platform database");
+  });
+
+  it("terminates an owned pre-stack subprocess group and preserves the signal exit code", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "matrix-speech-fixture-signal-"));
+    const script = join(directory, "child.mjs");
+    const pidsPath = join(directory, "pids.json");
+    await writeFile(script, `
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+writeFileSync(process.argv[2], JSON.stringify([process.pid, descendant.pid]));
+setInterval(() => {}, 1000);
+`);
+    const child = spawn(process.execPath, [script, pidsPath], { detached: true, stdio: "ignore" });
+    const controller = new LocalFixtureSignalController();
+    controller.attach(child);
+    try {
+      const deadline = Date.now() + 5_000;
+      let pids: number[] | undefined;
+      while (!pids && Date.now() < deadline) {
+        try {
+          pids = JSON.parse(await readFile(pidsPath, "utf8")) as number[];
+        } catch (error: unknown) {
+          if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (!pids) await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+      }
+      expect(pids).toHaveLength(2);
+      controller.receive("SIGTERM");
+      expect(controller.exitCode).toBe(143);
+      await new Promise<void>((resolveClose) => child.once("close", () => resolveClose()));
+      const isAlive = (pid: number) => {
+        try { process.kill(pid, 0); return true; }
+        catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+          throw error;
+        }
+      };
+      let stillAlive = pids!.filter(isAlive);
+      const exitDeadline = Date.now() + 5_000;
+      while (stillAlive.length > 0 && Date.now() < exitDeadline) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+        stillAlive = pids!.filter(isAlive);
+      }
+      expect(stillAlive).toEqual([]);
+    } finally {
+      if (child.pid) {
+        try { process.kill(-child.pid, "SIGKILL"); }
+        catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

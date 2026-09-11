@@ -54,21 +54,32 @@ async function setupFakePnpm(options: { failRole?: string; failCode?: number } =
   await mkdir(binDirectory);
   const logPath = join(directory, "invocations.jsonl");
   const dotenvPath = join(directory, ".env");
+  const nextEnvDirectory = join(directory, "next-env");
+  await mkdir(nextEnvDirectory);
   const providerKey = `provider-${randomBytes(24).toString("hex")}`;
   const speechSecret = `speech-${randomBytes(24).toString("hex")}`;
-  await writeFile(dotenvPath, [
+  const dotenvContents = [
     `PLATFORM_SPEECH_OPENAI_API_KEY=${providerKey}`,
     `PLATFORM_SPEECH_SECRET=${speechSecret}`,
     "",
-  ].join("\n"));
+  ].join("\n");
+  await writeFile(dotenvPath, dotenvContents);
+  await writeFile(join(nextEnvDirectory, ".env.local"), dotenvContents);
   const fakePnpm = join(binDirectory, "pnpm");
   await writeFile(fakePnpm, `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-try { process.loadEnvFile(process.env.FAKE_DOTENV_PATH); } catch {}
+import { createRequire } from "node:module";
 const args = process.argv.slice(2);
 const filterAt = args.indexOf("--filter");
 const role = filterAt >= 0 ? args[filterAt + 1] : "unknown";
+if (role === "./shell") {
+  const shellRequire = createRequire(process.env.FAKE_SHELL_PACKAGE_JSON);
+  shellRequire("@next/env").loadEnvConfig(process.env.FAKE_NEXT_ENV_DIR, true);
+} else {
+  try { process.loadEnvFile(process.env.FAKE_DOTENV_PATH); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+}
 if (args.at(-1) === "build") {
   appendFileSync(process.env.FAKE_INVOCATION_LOG, JSON.stringify({
     args, pid: process.pid,
@@ -101,6 +112,8 @@ if (role === process.env.FAKE_FAIL_ROLE) {
       PLATFORM_SPEECH_OPENAI_API_KEY: providerKey,
       PLATFORM_SPEECH_SECRET: speechSecret,
       FAKE_DOTENV_PATH: dotenvPath,
+      FAKE_NEXT_ENV_DIR: nextEnvDirectory,
+      FAKE_SHELL_PACKAGE_JSON: resolve("shell/package.json"),
       FAKE_INVOCATION_LOG: logPath,
       FAKE_FAIL_ROLE: options.failRole ?? "",
       FAKE_FAIL_CODE: String(options.failCode ?? 1),
