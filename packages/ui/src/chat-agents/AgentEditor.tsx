@@ -2,6 +2,7 @@ import { useId } from "react";
 import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { AgentRecipeEditor } from "./AgentRecipeEditor.js";
+import { recipeSkillsFit } from "./recipe-skills.js";
 import type { ChatAgentIntegrationConnection } from "./client.js";
 import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "./theme.js";
 const button = chatAgentButtonClass;
@@ -50,7 +51,8 @@ export function AgentEditor({ draft, editing, pending, models, recipeCatalog, co
 }) {
   const ids = useId();
   const modelAvailable = models.some((choice) => choice.instanceId === draft.selection?.instanceId && choice.modelId === draft.selection?.model);
-  const recipeValid = draft.recipe === undefined || draft.recipe === null || ChatAgentRecipeSchema.safeParse(draft.recipe).success;
+  const recipeValid = draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
+    && recipeSkillsFit(draft.recipe.skills, recipeCatalog?.skills ?? []));
   const saveDisabled = pending || !draft.name.trim() || !draft.instructions.trim() || !recipeValid || (editing === "new" && !modelAvailable);
   return <form className="mt-5 grid gap-4" onSubmit={(event) => { event.preventDefault(); void onSave(); }}>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-name`}>Name<input id={`${ids}-name`} className={input} value={draft.name} maxLength={80} required disabled={pending} onChange={(event) => change({ name: event.target.value })} /></label>

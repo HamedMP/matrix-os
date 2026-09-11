@@ -18,6 +18,7 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
 }) {
   const recipes = createChatAgentRecipeResolver({
     skillsRoot: await discoverChatAgentRecipeSkillsRoot({ skillsRoot: options.recipeSkillsRoot }),
+    homePath: options.homePath,
     services: listServices().map(({ id, name }) => ({ id, name })),
   });
   const agents = new ChatAgentStore({ homePath: options.homePath, db: options.repository.kysely });

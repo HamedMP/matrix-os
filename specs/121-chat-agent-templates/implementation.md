@@ -28,7 +28,7 @@ Queued work keeps references and resolved snapshots durable. Current-Chat histor
 | Route / operation | Authentication and authorization | Validation / limits |
 | --- | --- | --- |
 | GET `/api/chat-agents` | Existing request principal; personal owner only | Server flag; bounded Agent list; coarse readiness |
-| GET `/api/chat-agents/recipe-catalog` | Existing request principal; personal owner only | Server flag; bounded bundled skill and integration service metadata; no credentials |
+| GET `/api/chat-agents/recipe-catalog` | Existing request principal; personal owner only | Server flag; bounded installed/bundled skill and integration service metadata; no credentials or absolute paths |
 | POST `/api/chat-agents` | Same owner | Body limit; bounded strict schema; idempotency key |
 | PATCH `/api/chat-agents/:agentId` | Same owner | Body limit; safe ID; revision compare; explicit fields |
 | GET `/api/chat-mentions` | Same owner | Bounded query; current Chat exclusion; max results |
@@ -59,10 +59,10 @@ original request remains intact. Existing titles retain their canonical
 labels use bounded ellipsis in each applicable presentation, including existing
 Electron Recents entries; full text remains available when inspecting the title.
 
-A saved Agent may also declare a recipe: selected bundled skills, integration
+A saved Agent may also declare a recipe: selected installed or bundled skills, integration
 dependencies with optional account labels, and the expected output. Existing
-Agents without a recipe remain valid. Skills are resolved from the server's
-fixed catalogue; clients cannot supply file paths or resolved instruction bodies.
+Agents without a recipe remain valid. Skills are resolved from the current
+computer's server catalogue; clients cannot supply file paths or resolved instruction bodies.
 Admission pins the skill content and hashes together with the dependency and
 output configuration in the canonical Run snapshot. Edits affect future
 admissions; queued work and retries retain their accepted recipe.
@@ -73,6 +73,38 @@ references and distinguishes a failed lookup from an empty connection list.
 Multiple accounts require an explicit selection or an explicit choice to ask
 when running. Saving an Agent does not run it or start an OAuth flow. Recipe
 selections guide the workflow within the existing Hermes Full access mode.
+
+### Installed skill discovery (2026-09-11)
+
+Recipe discovery shares the kernel/Plugins source ordering: owner-home
+`.agents/skills/*/SKILL.md`, then `.claude/skills/*/SKILL.md`, then legacy
+`agents/skills/*.md`. All valid Matrix bundle skills are fallbacks. Names are
+deduplicated in that order, including the normal Matrix and SDK symlink mirrors.
+The existing Daily Brief and integrations identifiers remain valid. Names that
+cannot be safe reference identifiers receive a deterministic hash identifier;
+only bounded names, descriptions and instruction byte counts reach the picker.
+
+Discovery is asynchronous and refreshed when opening Agents or choosing Refresh
+skills. A request scans at most 2,048 entries per root and returns at most 256
+skills; exceeding a cap fails explicitly rather than publishing an arbitrary
+partial list. Skill files are regular UTF-8 files bounded to 28 KiB, with an
+admissible instruction body at most 24 KiB. Invalid individual entries are logged
+and omitted. Long descriptions are summarized to 400 characters. Owner-controlled
+root/parent symlinks cannot redefine discovery roots; skill-directory mirrors may
+resolve only inside the approved skill roots or bundle, and final-file symlinks
+and special files are rejected. External skill links must be installed inside
+an approved root to participate in Recipes.
+
+The shared picker searches names and descriptions, keeps selections across
+searches, shows results incrementally in the existing page scroll area, and
+keeps missing selections visible and removable. Selection is limited to eight
+skills and a combined 24 KiB instruction budget. Fresh byte counts prevent
+oversized combinations; if refresh reveals a saved combination is now too large,
+the editor keeps it visible and requires removing a skill before saving.
+Admission independently checks the same aggregate budget against the freshly
+read bodies. Queue/retry revalidation checks installed identity while retaining
+the admitted instructions and hashes; later file edits never rewrite an
+accepted snapshot. Removing a required skill prevents new dispatch.
 
 Personal Daily Brief is the first editable recipe template. It uses the native
 Matrix integrations tools, with the bundled command as a fallback, to read the

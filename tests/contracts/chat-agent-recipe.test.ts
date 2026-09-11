@@ -43,8 +43,12 @@ describe("Chat Agent recipe contract", () => {
     expect(ChatAgentRecipeSchema.safeParse({ ...recipe, credentials: { token: "forged" } }).success).toBe(false);
   });
 
-  it("rejects unknown skills and duplicate skill or integration references", () => {
-    expect(ChatAgentRecipeSchema.safeParse({ ...recipe, skills: ["matrix-unknown"] }).success).toBe(false);
+  it("accepts installed skill identifiers while rejecting paths and duplicate references", () => {
+    expect(ChatAgentRecipeSchema.parse({ ...recipe, skills: ["code-review", "team:meeting-notes"] }).skills)
+      .toEqual(["code-review", "team:meeting-notes"]);
+    for (const id of ["../private", "/etc/passwd", "foo\\bar", "foo..bar", "", "x".repeat(161)]) {
+      expect(ChatAgentRecipeSchema.safeParse({ ...recipe, skills: [id] }).success).toBe(false);
+    }
     expect(ChatAgentRecipeSchema.safeParse({ ...recipe, skills: ["matrix-integrations", "matrix-integrations"] }).success).toBe(false);
     expect(ChatAgentRecipeSchema.safeParse({
       ...recipe,
@@ -74,6 +78,10 @@ describe("Chat Agent recipe contract", () => {
   });
 
   it("exposes a bounded public catalogue with metadata only", () => {
+    const installed = Array.from({ length: 20 }, (_, index) => ({
+      id: `installed-${index}`, name: `Installed skill ${index}`, description: "Owner-installed workflow.",
+    }));
+    expect(ChatAgentRecipeCatalogSchema.parse({ enabled: true, skills: installed, services: [] }).skills).toHaveLength(20);
     expect(ChatAgentRecipeCatalogSchema.parse({
       enabled: true,
       skills: [{ id: "matrix-personal-daily-brief", name: "Personal Daily Brief", description: "Prepare a daily brief." }],

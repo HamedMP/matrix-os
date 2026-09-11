@@ -89,8 +89,8 @@ describe("Chat Agent HTTP boundary", () => {
     expect(result).toEqual({
       enabled: true,
       skills: [
-        { id: "matrix-integrations", name: "Matrix Integrations", description: "Use Matrix integrations safely." },
-        { id: "matrix-personal-daily-brief", name: "Personal Daily Brief", description: "Prepare a personal daily brief." },
+        { id: "matrix-integrations", name: "Matrix Integrations", description: "Use Matrix integrations safely.", instructionBytes: 37 },
+        { id: "matrix-personal-daily-brief", name: "Personal Daily Brief", description: "Prepare a personal daily brief.", instructionBytes: 45 },
       ],
       services: [{ id: "gmail", name: "Gmail" }, { id: "google_calendar", name: "Google Calendar" }],
     });

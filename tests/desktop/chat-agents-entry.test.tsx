@@ -113,6 +113,25 @@ describe("shared Agents entry", () => {
     expect(client.update.mock.calls[0]![1]).not.toHaveProperty("selection");
     expect(client.update.mock.calls[0]![1]).toMatchObject({ recipe: { output: "Edited brief" } });
   });
+
+  it("preserves selections when refreshed skills become too large and requires reducing the combination before saving", async () => {
+    const client = clientFixture();
+    client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipe: {
+      skills: ["matrix-integrations", "matrix-personal-daily-brief"], integrations: [], output: "Daily report",
+    } }] });
+    client.recipeCatalog.mockResolvedValue({ ...recipeCatalog, skills: recipeCatalog.skills.map((skill) => ({ ...skill, instructionBytes: 8_000 })) });
+    render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(false);
+    client.recipeCatalog.mockResolvedValue({ ...recipeCatalog, skills: recipeCatalog.skills.map((skill) => ({ ...skill, instructionBytes: 16_000 })) });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh skills" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByText("These skills are too large to use together. Remove a selected skill.")).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: "Matrix integrations" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Personal Daily Brief" }));
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(false);
+  });
   it("explains duplicate account rows and allows correcting the pair", async () => {
     const client = clientFixture();
     render(<ChatAgentsEntry client={client} />);

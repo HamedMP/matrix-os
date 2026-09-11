@@ -1,12 +1,11 @@
 import { z } from "zod/v4";
-import { canonicalBoundedText, canonicalSafeLabel } from "#canonical-chat-primitives";
+import { canonicalBoundedText, canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 
-export const CHAT_AGENT_RECIPE_SKILL_IDS = [
-  "matrix-integrations",
-  "matrix-personal-daily-brief",
-] as const;
-
-export const ChatAgentRecipeSkillIdSchema = z.enum(CHAT_AGENT_RECIPE_SKILL_IDS);
+// Membership belongs to the current computer's catalogue, not a client enum.
+export const ChatAgentRecipeSkillIdSchema = canonicalReferenceId(160);
+export const CHAT_AGENT_RECIPE_MAX_SKILLS = 8;
+export const CHAT_AGENT_RECIPE_MAX_CATALOG_SKILLS = 256;
+export const CHAT_AGENT_RECIPE_MAX_INSTRUCTION_BYTES = 24 * 1024;
 const ServiceIdSchema = z.string().min(1).max(80).regex(/^[a-z][a-z0-9_]{0,79}$/);
 const AccountLabelSchema = z.string().trim().min(1).max(100)
   .refine((value) => new TextEncoder().encode(value).byteLength <= 400, { message: "Account label exceeds byte limit" });
@@ -26,7 +25,7 @@ function hasUniqueIntegrations(value: { integrations: readonly { service: string
 }
 
 export const ChatAgentRecipeSchema = z.object({
-  skills: z.array(ChatAgentRecipeSkillIdSchema).max(8),
+  skills: z.array(ChatAgentRecipeSkillIdSchema).max(CHAT_AGENT_RECIPE_MAX_SKILLS),
   integrations: z.array(RecipeIntegrationSchema).max(8),
   output: RecipeOutputSchema,
 }).strict()
@@ -36,7 +35,8 @@ export const ChatAgentRecipeSchema = z.object({
 const CatalogSkillSchema = z.object({
   id: ChatAgentRecipeSkillIdSchema,
   name: canonicalSafeLabel(120, 480),
-  description: canonicalBoundedText(400, 1_600),
+  description: canonicalSafeLabel(400, 1_600),
+  instructionBytes: z.number().int().min(1).max(CHAT_AGENT_RECIPE_MAX_INSTRUCTION_BYTES).optional(),
 }).strict();
 const CatalogServiceSchema = z.object({
   id: ServiceIdSchema,
@@ -45,7 +45,7 @@ const CatalogServiceSchema = z.object({
 
 export const ChatAgentRecipeCatalogSchema = z.object({
   enabled: z.boolean(),
-  skills: z.array(CatalogSkillSchema).max(CHAT_AGENT_RECIPE_SKILL_IDS.length),
+  skills: z.array(CatalogSkillSchema).max(CHAT_AGENT_RECIPE_MAX_CATALOG_SKILLS),
   services: z.array(CatalogServiceSchema).max(128),
 }).strict();
 
@@ -55,7 +55,7 @@ export const ResolvedChatAgentRecipeSchema = z.object({
     name: canonicalSafeLabel(120, 480),
     instructions: canonicalBoundedText(24 * 1024, 24 * 1024),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
-  }).strict()).max(8),
+  }).strict()).max(CHAT_AGENT_RECIPE_MAX_SKILLS),
   integrations: z.array(RecipeIntegrationSchema).max(8),
   output: RecipeOutputSchema,
 }).strict()
@@ -67,7 +67,7 @@ export const ResolvedChatAgentRecipeSchema = z.object({
   .refine((value) => value.skills.reduce(
     (bytes, skill) => bytes + new TextEncoder().encode(skill.instructions).byteLength,
     0,
-  ) <= 24 * 1024, { message: "Resolved recipe instructions exceed their byte limit", path: ["skills"] });
+  ) <= CHAT_AGENT_RECIPE_MAX_INSTRUCTION_BYTES, { message: "Resolved recipe instructions exceed their byte limit", path: ["skills"] });
 
 export type ChatAgentRecipe = z.infer<typeof ChatAgentRecipeSchema>;
 export type ChatAgentRecipeCatalog = z.infer<typeof ChatAgentRecipeCatalogSchema>;

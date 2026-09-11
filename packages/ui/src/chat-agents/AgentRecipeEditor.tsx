@@ -1,6 +1,7 @@
 import { useId } from "react";
 import type { ChatAgentRecipe, ChatAgentRecipeCatalog } from "@matrix-os/contracts";
 import { AgentRecipeIntegrations } from "./AgentRecipeIntegrations.js";
+import { AgentRecipeSkills } from "./AgentRecipeSkills.js";
 import type { ChatAgentIntegrationConnection } from "./client.js";
 import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "./theme.js";
 
@@ -52,9 +53,6 @@ export function AgentRecipeEditor({ recipe, hadRecipe, catalog, connections, loa
   if (!configured) return <EmptyRecipe ids={ids} removing={recipe === null && hadRecipe} catalog={catalog} pending={pending}
     loading={loading} error={error} connectionError={connectionError} onChange={onChange} onRetry={onRetry} />;
 
-  const catalogSkills = catalog?.skills ?? [];
-  const missingSkillIds = recipe.skills.filter((id) => !catalogSkills.some((skill) => skill.id === id));
-
   return <section className="grid min-w-0 gap-4 rounded-xl border p-3" aria-labelledby={`${ids}-title`}>
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
@@ -71,23 +69,8 @@ export function AgentRecipeEditor({ recipe, hadRecipe, catalog, connections, loa
       <button type="button" className={button} disabled={pending || loading} onClick={onRetry}>Retry recipe options</button>
     </div> : null}
 
-    <fieldset className="grid gap-2">
-      <legend className="text-sm font-medium">Skills</legend>
-      {catalogSkills.map((skill) => <label key={skill.id} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-sm">
-        <input type="checkbox" aria-label={skill.name} className="mt-0.5" checked={recipe.skills.includes(skill.id)} disabled={pending}
-          onChange={(event) => onChange({ ...recipe, skills: event.target.checked
-            ? [...recipe.skills, skill.id]
-            : recipe.skills.filter((id) => id !== skill.id) })} />
-        <span className="min-w-0 truncate" title={skill.name}>{skill.name}</span>
-        <span className="col-start-2 text-xs" style={muted}>{skill.description}</span>
-      </label>)}
-      {missingSkillIds.map((skillId) => <label key={skillId} className="flex min-w-0 items-center gap-2 text-sm">
-        <input type="checkbox" checked disabled={pending}
-          onChange={() => onChange({ ...recipe, skills: recipe.skills.filter((id) => id !== skillId) })} />
-        <span className="min-w-0 truncate" title={skillId}>{skillId} · unavailable</span>
-      </label>)}
-      {!catalogSkills.length && !missingSkillIds.length ? <p className="text-xs" style={muted}>No skills selected.</p> : null}
-    </fieldset>
+    <AgentRecipeSkills skills={catalog?.skills ?? []} selected={recipe.skills} pending={pending} loading={loading}
+      unavailable={Boolean(error)} onChange={(skills) => onChange({ ...recipe, skills })} onRefresh={onRetry} />
 
     <AgentRecipeIntegrations recipe={recipe} catalog={catalog} connections={connections} connectionError={connectionError}
       pending={pending} onChange={onChange} />

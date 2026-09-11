@@ -110,6 +110,24 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     return result;
   }
 
+  it("discovers an owner-installed recipe skill at runtime and persists its instructions before dispatch", async () => {
+    const directory = join(home, ".agents/skills/team-review");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "SKILL.md"), "---\nname: team-review\ndescription: Review the supplied team plan.\n---\nAlways include a short evidence table.");
+    await agents.update(owner, agentId, { baseRevision: 1, recipe: {
+      skills: ["team-review"], integrations: [], output: "Team plan review",
+    } });
+    await send("req_installed_recipe", [mention("agent", agentId), { type: "text", text: "Review this plan." }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.driver).toBe("hermes");
+    expect(calls[0]?.input.prompt).toContain("Always include a short evidence table.");
+    const detail = await repository.getDetailPage(owner, "chat_parent", { limit: 100 });
+    expect(detail?.runs[0]?.context?.agent?.recipe?.skills).toMatchObject([
+      { id: "team-review", instructions: "Always include a short evidence table." },
+    ]);
+    expect(detail?.record.chat.currentSelection).toEqual(selection);
+  });
+
 
   it.each(["failed", "aborted"] as const)("keeps Agent history through an ordinary %s before its checkpoint", async (outcome) => {
     await send("req_first", [{ type: "text", text: "First ordinary" }]);

@@ -3,6 +3,7 @@ import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipeCatalog, typ
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { accountForNewIntegration } from "./recipe-integrations.js";
+import { recipeSkillsFit } from "./recipe-skills.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import type { ChatAgentClient, ChatAgentIntegrationConnection } from "./client.js";
 import { chatAgentButtonClass, chatAgentLauncherClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "./theme.js";
@@ -134,7 +135,8 @@ export function ChatAgentsPanel({ client, onClose, onSetup }: { client: ChatAgen
   const save = async () => {
     const draft = state.draft;
     if (state.pending || !draft?.selection || !draft.name.trim() || !draft.instructions.trim()
-      || (draft.recipe !== undefined && draft.recipe !== null && !ChatAgentRecipeSchema.safeParse(draft.recipe).success)) return;
+      || (draft.recipe !== undefined && draft.recipe !== null && (!ChatAgentRecipeSchema.safeParse(draft.recipe).success
+        || !recipeSkillsFit(draft.recipe.skills, state.recipeCatalog?.skills ?? [])))) return;
     patch({ pending: true, error: "" });
     try {
       const fields = { name: draft.name, description: draft.description, instructions: draft.instructions };
