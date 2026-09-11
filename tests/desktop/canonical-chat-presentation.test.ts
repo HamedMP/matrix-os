@@ -595,6 +595,45 @@ describe("canonical Chat presentation adapter", () => {
     expect(presented?.final).toBeUndefined();
   });
 
+  it("marks a completed final message when its content arrived through assistant deltas", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const run = snapshot.runs[0]!;
+    const finalMessage = {
+      id: "msg_streamed_result",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text: "The streamed result is complete." }],
+      createdAt: "2026-08-26T00:00:02.000Z",
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, finalMessage],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      streamedMessageIds: [finalMessage.id],
+      activities: [{
+        id: "activity_streamed_result",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "assistant.delta",
+        messageId: finalMessage.id,
+        delta: "The streamed result is complete.",
+        occurredAt: finalMessage.createdAt,
+      }],
+    });
+
+    expect(presented?.final).toMatchObject({
+      id: finalMessage.id,
+      markdown: "The streamed result is complete.",
+      wasStreamed: true,
+    });
+  });
+
   it("shows the model first and removes generic Thinking when visible work arrives", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;

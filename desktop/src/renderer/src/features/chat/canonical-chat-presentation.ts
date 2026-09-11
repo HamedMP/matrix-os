@@ -19,6 +19,7 @@ import type {
 
 const MAX_MESSAGE_PART_PROJECTIONS = 64;
 const MAX_RUN_ACTIVITY_PROJECTIONS = 500;
+const MAX_STREAMED_MESSAGE_PROJECTIONS = 200;
 
 function setBounded<K, V>(map: Map<K, V>, key: K, value: V, limit: number): boolean {
   if (!map.has(key) && map.size >= limit) return false;
@@ -560,7 +561,11 @@ export function canonicalChatPresentation(input: {
   turns: CanonicalChatTurn[];
   runs: CanonicalChatRun[];
   activities: CanonicalChatRunActivity[];
+  streamedMessageIds?: readonly string[];
 }): ConversationTurnPresentation[] {
+  const streamedMessageIds = new Set(
+    input.streamedMessageIds?.slice(-MAX_STREAMED_MESSAGE_PROJECTIONS) ?? [],
+  ); // Per-detail projection, explicitly capped with the message window.
   const approvalViews = canonicalChatApprovals(input);
   const latestTurnId = input.turns.reduce<CanonicalChatTurn | undefined>((latest, turn) => (
     latest === undefined
@@ -671,7 +676,12 @@ export function canonicalChatPresentation(input: {
       ...(timeline.length > 0 ? { timeline } : {}),
       ...(userFollowups.length > 0 ? { expandedByDefault: true } : {}),
       ...(finalMessage && messageText(finalMessage)
-        ? { final: messagePresentation(finalMessage, "final") }
+        ? {
+            final: {
+              ...messagePresentation(finalMessage, "final"),
+              ...(streamedMessageIds.has(finalMessage.id) ? { wasStreamed: true } : {}),
+            },
+          }
         : live.streamingFinal
           ? { final: live.streamingFinal }
           : live.failure ? { final: live.failure } : {}),

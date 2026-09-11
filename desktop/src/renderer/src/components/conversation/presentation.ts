@@ -19,6 +19,8 @@ export interface ConversationMessagePresentation {
   markdown: string;
   copyText: string;
   timestamp: number;
+  /** The live event stream already delivered content for this message. */
+  wasStreamed?: boolean;
   content?: ConversationMessageContentPresentation[];
   /** @deprecated Use references for new provider-neutral projections. */
   attachments?: ConversationAttachmentPresentation[];

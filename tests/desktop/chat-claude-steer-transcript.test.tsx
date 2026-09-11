@@ -7,8 +7,14 @@ import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { createCanonicalChatEventSource } from "../../packages/ui/src/canonical-chat-event-source";
 import { createCanonicalChatWorkspaceClient } from "./canonical-chat-workspace-test-utils";
-import { AFTER_STEER, BEFORE_STEER, FINAL_TEXT, STEER_REQUEST,
-  createClaudeSteerStreamHarness } from "../helpers/claude-steer-stream-harness";
+import {
+  AFTER_STEER,
+  BEFORE_STEER,
+  FINAL_TEXT,
+  STEER_REQUEST,
+  contentFrames,
+  createClaudeSteerStreamHarness,
+} from "../helpers/claude-steer-stream-harness";
 
 beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -72,6 +78,13 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
     // Completed intermediate work is intentionally collapsed into its receipt.
     await waitFor(() => expect(screen.getByRole("log").textContent).toContain(FINAL_TEXT));
     expect(screen.getByRole("log").textContent!.split(FINAL_TEXT)).toHaveLength(2);
+    const persisted = await h.getDetail();
+    expect(persisted.messages.flatMap((message) => message.parts)
+      .some((part) => part.type === "text" && part.text === FINAL_TEXT)).toBe(true);
+    expect(contentFrames(h.frames).some((frame) => (
+      frame.content.messages?.some((message) => message.parts
+        .some((part) => part.type === "text" && part.text === FINAL_TEXT))
+    ))).toBe(true);
     expect(client.getDetail).toHaveBeenCalledTimes(1);
   } finally {
     cleanup(); source.dispose(); await h.close();
