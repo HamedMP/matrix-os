@@ -73,3 +73,53 @@ export const MatrixBillingStatusSchema = z.object({
 
 export type MatrixBillingPublicEntitlement = z.infer<typeof MatrixBillingPublicEntitlementSchema>;
 export type MatrixBillingStatus = z.infer<typeof MatrixBillingStatusSchema>;
+
+/**
+ * Maximum accepted length of a billing redirect target.
+ *
+ * Stripe-hosted portal and checkout URLs are far shorter than this; the bound
+ * exists so a regressed or hostile upstream response cannot hand a client an
+ * unbounded string to navigate to.
+ */
+export const MATRIX_BILLING_REDIRECT_MAX_LENGTH = 2048;
+
+/**
+ * Shared contract for billing portal and checkout redirect responses.
+ *
+ * Every client (Web, Electron Desktop, Native Mobile) must validate through
+ * this schema before navigating or opening a browser. The platform normally
+ * returns a trusted Stripe HTTPS URL, so this is defense in depth: a relative,
+ * HTTP, or executable-scheme URL must never reach a navigation call.
+ */
+export const MatrixBillingRedirectSchema = z.strictObject({
+  url: z
+    .string()
+    .max(MATRIX_BILLING_REDIRECT_MAX_LENGTH)
+    .refine((value) => {
+      // `URL.parse` would avoid the catch, but it is not available on the
+      // ES2022 target or React Native's Hermes engine, and this schema ships
+      // to Native Mobile.
+      try {
+        return new URL(value).protocol === "https:";
+      } catch (err: unknown) {
+        // A relative path or malformed value is not a navigable target.
+        // Anything other than the expected parse failure is a real fault.
+        if (err instanceof TypeError) return false;
+        throw err;
+      }
+    }, "Billing redirects must be absolute HTTPS URLs"),
+});
+
+export type MatrixBillingRedirect = z.infer<typeof MatrixBillingRedirectSchema>;
+
+/**
+ * Parse an untrusted billing redirect response body.
+ *
+ * Returns the safe HTTPS URL, or `null` for any response that is missing,
+ * malformed, or unsafe to navigate to. Callers should surface a generic,
+ * retryable error on `null` and must not echo the upstream response.
+ */
+export function parseBillingRedirectUrl(body: unknown): string | null {
+  const result = MatrixBillingRedirectSchema.safeParse(body);
+  return result.success ? result.data.url : null;
+}

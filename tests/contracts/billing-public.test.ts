@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { MatrixBillingStatusSchema } from "@matrix-os/contracts";
+import {
+  MatrixBillingRedirectSchema,
+  MatrixBillingStatusSchema,
+  parseBillingRedirectUrl,
+} from "@matrix-os/contracts";
 
 describe("public billing status contract", () => {
   it("accepts provider-neutral entitlement metadata", () => {
@@ -91,5 +95,62 @@ describe("public billing status contract", () => {
         trialOffer: { eligible: false, durationDays: 3 },
       })).toThrow();
     }
+  });
+});
+
+describe("billing redirect contract", () => {
+  const httpsUrl = "https://billing.stripe.com/p/session/live_abc123";
+
+  it("accepts a normal Stripe HTTPS redirect", () => {
+    expect(MatrixBillingRedirectSchema.parse({ url: httpsUrl })).toEqual({ url: httpsUrl });
+    expect(parseBillingRedirectUrl({ url: httpsUrl })).toBe(httpsUrl);
+  });
+
+  it("rejects redirects that could navigate a client somewhere unsafe", () => {
+    for (const url of [
+      "/billing/portal",
+      "billing.stripe.com/p/session",
+      "http://billing.stripe.com/p/session",
+      // eslint-disable-next-line no-script-url
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "file:///etc/passwd",
+      "",
+      `https://billing.stripe.com/p/${"a".repeat(2048)}`,
+    ]) {
+      expect(MatrixBillingRedirectSchema.safeParse({ url }).success, url).toBe(false);
+      expect(parseBillingRedirectUrl({ url }), url).toBeNull();
+    }
+  });
+
+  it("rejects malformed or missing redirect bodies without throwing", () => {
+    for (const body of [null, undefined, {}, { url: 42 }, { url: null }, "https://ok.example"]) {
+      expect(parseBillingRedirectUrl(body)).toBeNull();
+    }
+  });
+
+  it("rejects unexpected fields so a regressed response cannot smuggle data", () => {
+    expect(
+      MatrixBillingRedirectSchema.safeParse({ url: httpsUrl, redirect: "https://evil.example" })
+        .success,
+    ).toBe(false);
+  });
+
+  // Native Mobile parses the portal response with this schema directly
+  // (apps/mobile/lib/requests/settings.ts), and fetchAuthenticatedJson turns a
+  // schema failure into the generic "Billing portal unavailable" message. The
+  // mobile Jest suite cannot import @matrix-os/contracts today, so this is the
+  // executable coverage for that client's rejection behavior.
+  it("rejects the unsafe redirects Native Mobile previously accepted", () => {
+    for (const url of ["http://billing.stripe.com/p/session", "billing.stripe.com/p"]) {
+      expect(MatrixBillingRedirectSchema.safeParse({ url }).success).toBe(false);
+    }
+  });
+
+  it("allows a redirect exactly at the length bound", () => {
+    const prefix = "https://billing.stripe.com/p/";
+    const maxUrl = prefix + "a".repeat(2048 - prefix.length);
+    expect(maxUrl).toHaveLength(2048);
+    expect(parseBillingRedirectUrl({ url: maxUrl })).toBe(maxUrl);
   });
 });

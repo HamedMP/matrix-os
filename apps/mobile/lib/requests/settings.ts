@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import {
+  MatrixBillingRedirectSchema,
   MatrixBillingStatusSchema,
   type MatrixBillingStatus,
 } from "@matrix-os/contracts";
@@ -16,7 +17,7 @@ const SystemInfoSchema = z.object({
 }).passthrough();
 
 const OkResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
-const BillingPortalSchema = z.object({ url: z.url() }).strict();
+const BillingPortalSchema = MatrixBillingRedirectSchema;
 
 export type MobileSystemInfo = z.infer<typeof SystemInfoSchema>;
 export type MobileBillingStatus = MatrixBillingStatus;

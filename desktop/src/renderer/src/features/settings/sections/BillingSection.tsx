@@ -2,22 +2,15 @@ import { CreditCard, ExternalLink } from "@renderer/lib/hugeicons";
 import {
   MatrixBillingStatusSchema,
   closestMatrixRegionSlug,
+  parseBillingRedirectUrl,
   type MatrixBillingPublicEntitlement,
   type MatrixBillingStatus,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import { z } from "zod/v4";
 import { Button } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
 import { Card, Row, SettingsSectionHeader } from "./section-kit";
-
-const BillingRedirectSchema = z.strictObject({
-  url: z
-    .url()
-    .max(2048)
-    .refine((url) => new URL(url).protocol === "https:", "Billing redirects must use HTTPS"),
-});
 
 type BillingEntitlement = MatrixBillingPublicEntitlement;
 type BillingInterval = "monthly";
@@ -171,8 +164,9 @@ export default function BillingSection() {
         interval: ui.interval,
         regionSlug: ui.region,
       });
-      const parsed = BillingRedirectSchema.parse(raw);
-      await openBillingUrl(parsed.url);
+      const target = parseBillingRedirectUrl(raw);
+      if (!target) throw new Error("checkout_unavailable");
+      await openBillingUrl(target);
       dispatchUi({ type: "finish-action" });
     } catch (err: unknown) {
       console.warn("[billing] checkout unavailable:", err instanceof Error ? err.message : String(err));
@@ -185,8 +179,9 @@ export default function BillingSection() {
     dispatchUi({ type: "start-action", action: "portal" });
     try {
       const raw = await api.post<unknown>("/billing/portal", {});
-      const parsed = BillingRedirectSchema.parse(raw);
-      await openBillingUrl(parsed.url);
+      const target = parseBillingRedirectUrl(raw);
+      if (!target) throw new Error("portal_unavailable");
+      await openBillingUrl(target);
       dispatchUi({ type: "finish-action" });
     } catch (err: unknown) {
       console.warn("[billing] portal unavailable:", err instanceof Error ? err.message : String(err));
