@@ -72,18 +72,22 @@ describe('Reddit Stripe attribution', () => {
   it('maps collected subscription invoice revenue into Purchase', async () => {
     const sendPurchase = vi.fn().mockResolvedValue('sent');
     const sendSignUp = vi.fn().mockResolvedValue('sent');
+    const clearSubscriptionAttribution = vi.fn().mockResolvedValue(undefined);
     const result = await deliverRedditAttribution({
       type: 'invoice.paid',
       created: 1_779_753_600,
       data: {
         object: {
           id: 'in_reddit_purchase',
+          billing_reason: 'subscription_cycle',
           amount_paid: 2000,
           currency: 'usd',
           parent: {
             subscription_details: {
+              subscription: 'sub_reddit_purchase',
               metadata: {
                 clerk_user_id: 'user_123',
+                matrix_attr_reddit_pending: '1',
                 matrix_attr_rdt_cid: 'reddit-click',
                 matrix_attr_landing_path: '/pricing?utm_source=reddit',
               },
@@ -91,7 +95,7 @@ describe('Reddit Stripe attribution', () => {
           },
         },
       },
-    }, { sendPurchase, sendSignUp });
+    }, { sendPurchase, sendSignUp }, { clearSubscriptionAttribution });
 
     expect(result).toBe('sent');
     expect(sendPurchase).toHaveBeenCalledWith({
@@ -104,6 +108,39 @@ describe('Reddit Stripe attribution', () => {
       value: 20,
     });
     expect(sendSignUp).not.toHaveBeenCalled();
+    expect(clearSubscriptionAttribution).toHaveBeenCalledWith('sub_reddit_purchase');
+  });
+
+  it('does not attribute recurring renewal invoices after first-payment attribution is consumed', async () => {
+    const sendPurchase = vi.fn().mockResolvedValue('sent');
+    const sendSignUp = vi.fn().mockResolvedValue('sent');
+    const clearSubscriptionAttribution = vi.fn().mockResolvedValue(undefined);
+
+    await expect(deliverRedditAttribution({
+      type: 'invoice.paid',
+      created: 1_782_345_600,
+      data: {
+        object: {
+          id: 'in_reddit_renewal',
+          billing_reason: 'subscription_cycle',
+          amount_paid: 2000,
+          currency: 'usd',
+          parent: {
+            subscription_details: {
+              subscription: 'sub_reddit_purchase',
+              metadata: {
+                clerk_user_id: 'user_123',
+                matrix_attr_rdt_cid: 'reddit-click',
+              },
+            },
+          },
+        },
+      },
+    }, { sendPurchase, sendSignUp }, { clearSubscriptionAttribution })).resolves.toBe('ignored');
+
+    expect(sendPurchase).not.toHaveBeenCalled();
+    expect(sendSignUp).not.toHaveBeenCalled();
+    expect(clearSubscriptionAttribution).not.toHaveBeenCalled();
   });
 
   it('does not double-count an immediate subscription charge at Checkout', async () => {

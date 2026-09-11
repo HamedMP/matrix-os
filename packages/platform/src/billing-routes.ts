@@ -232,6 +232,7 @@ export interface StripeBillingClient {
     id: string;
     expiresAt?: string;
   }>;
+  clearSubscriptionAttribution?(subscriptionId: string): Promise<void>;
   createAiCreditCheckoutSession(input: StripeAiCreditCheckoutSessionInput): Promise<{
     url: string;
     id: string;
@@ -1127,7 +1128,12 @@ export function createBillingRoutes(options: {
           );
         });
       }
-      await deliverRedditAttribution(event, options.redditConversions);
+      const clearSubscriptionAttribution = options.stripe.clearSubscriptionAttribution?.bind(options.stripe);
+      await deliverRedditAttribution(
+        event,
+        options.redditConversions,
+        clearSubscriptionAttribution ? { clearSubscriptionAttribution } : undefined,
+      );
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));

@@ -10,9 +10,14 @@ interface StripeEventForRedditAttribution {
   data: { object: unknown };
 }
 
+export interface RedditSubscriptionAttributionLifecycle {
+  clearSubscriptionAttribution(subscriptionId: string): Promise<void>;
+}
+
 export async function deliverRedditAttribution(
   event: StripeEventForRedditAttribution,
   client: RedditConversionsClient | undefined,
+  lifecycle?: RedditSubscriptionAttributionLifecycle,
 ): Promise<'sent' | 'disabled' | 'ignored'> {
   if (!client) return 'ignored';
   if (event.type === 'checkout.session.completed') {
@@ -23,8 +28,12 @@ export async function deliverRedditAttribution(
   }
   if (event.type === 'invoice.paid') {
     const purchase = readRedditInvoicePurchase(event);
-    if (!purchase) return 'ignored';
-    return client.sendPurchase(purchase);
+    if (!purchase || !lifecycle) return 'ignored';
+    const result = await client.sendPurchase(purchase.input);
+    if (result === 'sent') {
+      await lifecycle.clearSubscriptionAttribution(purchase.subscriptionId);
+    }
+    return result;
   }
   return 'ignored';
 }
@@ -90,19 +99,28 @@ function readRedditCheckout(event: StripeEventForRedditAttribution):
 
 function readRedditInvoicePurchase(
   event: StripeEventForRedditAttribution,
-): RedditPurchaseInput | null {
+): { input: RedditPurchaseInput; subscriptionId: string } | null {
   if (!event.data.object || typeof event.data.object !== 'object') return null;
   const invoice = event.data.object as {
     id?: unknown;
+    billing_reason?: unknown;
     amount_paid?: unknown;
     currency?: unknown;
-    parent?: { subscription_details?: { metadata?: unknown } };
+    parent?: { subscription_details?: { subscription?: unknown; metadata?: unknown } };
   };
   const conversionId = readStripeObjectId(invoice.id, 'in');
+  const subscriptionId = readStripeObjectId(
+    invoice.parent?.subscription_details?.subscription,
+    'sub',
+  );
   const metadata = readMetadata(invoice.parent?.subscription_details?.metadata);
   const clerkUserId = readClerkUserId(undefined, metadata);
   if (
     !conversionId
+    || !subscriptionId
+    || metadata.matrix_attr_reddit_pending !== '1'
+    || (invoice.billing_reason !== 'subscription_create'
+      && invoice.billing_reason !== 'subscription_cycle')
     || !clerkUserId
     || !Number.isSafeInteger(invoice.amount_paid)
     || (invoice.amount_paid as number) <= 0
@@ -112,12 +130,15 @@ function readRedditInvoicePurchase(
     || event.created <= 0
   ) return null;
   return {
-    eventAt: event.created * 1_000,
-    conversionId,
-    clerkUserId,
-    ...readAttribution(metadata),
-    currency: invoice.currency,
-    value: (invoice.amount_paid as number) / 100,
+    subscriptionId,
+    input: {
+      eventAt: event.created * 1_000,
+      conversionId,
+      clerkUserId,
+      ...readAttribution(metadata),
+      currency: invoice.currency,
+      value: (invoice.amount_paid as number) / 100,
+    },
   };
 }
 
@@ -140,7 +161,7 @@ function readAttribution(metadata: Record<string, unknown>): {
   };
 }
 
-function readStripeObjectId(value: unknown, prefix: 'cs' | 'in'): string | null {
+function readStripeObjectId(value: unknown, prefix: 'cs' | 'in' | 'sub'): string | null {
   return typeof value === 'string' && new RegExp(`^${prefix}_[A-Za-z0-9_]{1,252}$`).test(value)
     ? value
     : null;

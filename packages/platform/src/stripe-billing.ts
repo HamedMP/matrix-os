@@ -58,6 +58,7 @@ export function createStripeBillingClient(options: {
     async createCheckoutSession(input: StripeCheckoutSessionInput) {
       const metadata = {
         clerk_user_id: input.clerkUserId,
+        matrix_attr_reddit_pending: '1',
         matrix_region_slug: input.regionSlug,
         matrix_runtime_slot: input.runtimeSlot,
         ...(input.prebillingIntentId
@@ -111,6 +112,21 @@ export function createStripeBillingClient(options: {
           ? { expiresAt: new Date(session.expires_at * 1_000).toISOString() }
           : {}),
       };
+    },
+
+    async clearSubscriptionAttribution(subscriptionId) {
+      await stripe.subscriptions.update(subscriptionId, {
+        metadata: {
+          matrix_attr_reddit_pending: '',
+          matrix_attr_rdt_cid: '',
+          matrix_attr_utm_source: '',
+          matrix_attr_utm_medium: '',
+          matrix_attr_utm_campaign: '',
+          matrix_attr_utm_content: '',
+          matrix_attr_utm_term: '',
+          matrix_attr_landing_path: '',
+        },
+      });
     },
 
     async createAiCreditCheckoutSession(input: StripeAiCreditCheckoutSessionInput) {
@@ -205,6 +221,7 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
   return {
     apiTimeoutMs: MATRIX_STRIPE_API_TIMEOUT_MS,
     createCheckoutSession: unavailable,
+    clearSubscriptionAttribution: unavailable,
     createAiCreditCheckoutSession: unavailable,
     retrieveCheckoutSession: unavailable,
     retrieveRecurringPrice: unavailable,
