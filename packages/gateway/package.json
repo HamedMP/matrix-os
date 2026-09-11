@@ -12,7 +12,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc && cp src/coding-agents/*.mjs dist/coding-agents/"
+    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && pnpm --dir ../.. --filter '@matrix-os/terminal-runtime' build && tsc && cp src/coding-agents/*.mjs dist/coding-agents/"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.0",
