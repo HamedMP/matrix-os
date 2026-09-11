@@ -604,8 +604,8 @@ describe("provider-neutral conversation transcript", () => {
       id: "message-streamed-work",
       role: "assistant" as const,
       phase: "commentary" as const,
-      markdown: "Earlier streamed work",
-      copyText: "Earlier streamed work",
+      markdown: text,
+      copyText: text,
       timestamp: 1_000,
     };
     const activeTurn: ConversationTurnPresentation = {
@@ -620,7 +620,7 @@ describe("provider-neutral conversation transcript", () => {
       const { container, rerender } = render(
         <ConversationTranscript turns={[activeTurn]} callbacks={{ copyText: vi.fn() }} />,
       );
-      expect(container.querySelector('[data-selectable]')?.textContent).toBe("Earlier streamed work");
+      expect(container.querySelector('[data-selectable]')?.textContent).toBe(text);
 
       rerender(
         <ConversationTranscript
@@ -635,6 +635,7 @@ describe("provider-neutral conversation transcript", () => {
               phase: "final",
               markdown: text,
               copyText: text,
+              wasStreamed: true,
             },
           }]}
           callbacks={{ copyText: vi.fn() }}
@@ -642,6 +643,57 @@ describe("provider-neutral conversation transcript", () => {
       );
 
       expect(container.querySelector('[data-selectable]')?.textContent).toBe(text);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves mount animation for a distinct final after streamed commentary", () => {
+    vi.useFakeTimers();
+    const finalText = `${"distinct_final_output_".repeat(100)}done`;
+    const activeTurn: ConversationTurnPresentation = {
+      id: "turn-distinct-final",
+      startedAt: 1_000,
+      endedAt: 1_000,
+      active: true,
+      work: [{
+        kind: "message",
+        id: "message-streamed-commentary",
+        role: "assistant",
+        phase: "commentary",
+        markdown: "Earlier streamed commentary",
+        copyText: "Earlier streamed commentary",
+        timestamp: 1_000,
+      }],
+    };
+
+    try {
+      const { container, rerender } = render(
+        <ConversationTranscript turns={[activeTurn]} callbacks={{ copyText: vi.fn() }} />,
+      );
+
+      rerender(
+        <ConversationTranscript
+          turns={[{
+            ...activeTurn,
+            active: false,
+            endedAt: 2_000,
+            work: [],
+            final: {
+              kind: "message",
+              id: "message-distinct-final",
+              role: "assistant",
+              phase: "final",
+              markdown: finalText,
+              copyText: finalText,
+              timestamp: 2_000,
+            },
+          }]}
+          callbacks={{ copyText: vi.fn() }}
+        />,
+      );
+
+      expect(container.querySelector('[data-selectable]')?.textContent).not.toBe(finalText);
     } finally {
       vi.useRealTimers();
     }
