@@ -59,6 +59,7 @@ bun run dev:speech:fixture -- --verify
 ```
 
 The administrative role must be allowed to create and drop the generated role/databases. The fixture rejects non-loopback admin URLs before connecting. Do not point it at a hosted or customer database.
+Direct local PostgreSQL administration uses a 5-second connection timeout and 10-second query/statement timeout. SIGINT or SIGTERM closes an in-flight administrative connection before cleanup reconnects with the same bounds.
 
 ## Deterministic verification
 
