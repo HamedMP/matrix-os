@@ -13,8 +13,8 @@ const UNRELATED_SCOPE_ID = "10000000-0000-4000-8000-000000000303";
 const OWNER_ID = "user_project_owner";
 const SUCCESSOR_ID = "user_project_successor";
 const VIEWER_ID = "user_project_viewer";
-const SOURCE_RUNTIME = "runtime_project_owner";
-const DESTINATION_RUNTIME = "runtime_project_successor";
+const SOURCE_RUNTIME = "vps:runtime_project_owner";
+const DESTINATION_RUNTIME = "vps:runtime_project_successor";
 const NOW = new Date("2026-08-21T12:00:00.000Z");
 
 describe("collaboration project lifecycle", () => {

@@ -265,7 +265,7 @@ export async function bootstrapCollaborationDatabase(
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       deleted_at TIMESTAMPTZ,
-      CHECK (
+      CONSTRAINT collaboration_transitions_distinct_authority_check CHECK (
         (membership_mode = 'direct' AND parent_scope_id IS NULL)
         OR (membership_mode = 'inherited' AND parent_scope_id IS NOT NULL)
       )
@@ -390,10 +390,41 @@ export async function bootstrapCollaborationDatabase(
       error_code TEXT CHECK (error_code IS NULL OR error_code ~ '^[a-z][a-z0-9_]{0,79}$'),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      CHECK (source_authority_runtime_id <> destination_authority_runtime_id),
+      CHECK (
+        source_authority_runtime_id <> destination_authority_runtime_id
+        OR source_authority_generation <> destination_authority_generation
+      ),
       CHECK (status NOT IN ('fenced', 'committing', 'active') OR source_fence_epoch IS NOT NULL),
       CHECK (status <> 'active' OR publication_marker IS NOT NULL)
     )
+  `.execute(db);
+  await sql`
+    DO $$
+    DECLARE old_constraint TEXT;
+    BEGIN
+      SELECT conname INTO old_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'collaboration_transitions'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) LIKE '%source_authority_runtime_id <> destination_authority_runtime_id%'
+        AND pg_get_constraintdef(oid) NOT LIKE '%source_authority_generation <> destination_authority_generation%'
+      LIMIT 1;
+      IF old_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collaboration_transitions DROP CONSTRAINT %I', old_constraint);
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'collaboration_transitions'::regclass
+          AND conname = 'collaboration_transitions_distinct_authority_check'
+      ) THEN
+        ALTER TABLE collaboration_transitions
+        ADD CONSTRAINT collaboration_transitions_distinct_authority_check
+        CHECK (
+          source_authority_runtime_id <> destination_authority_runtime_id
+          OR source_authority_generation <> destination_authority_generation
+        );
+      END IF;
+    END $$
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_resource_bindings (
@@ -530,6 +561,11 @@ export async function bootstrapCollaborationDatabase(
   await sql`
     INSERT INTO collaboration_schema_migrations (version)
     VALUES (4)
+    ON CONFLICT (version) DO NOTHING
+  `.execute(db);
+  await sql`
+    INSERT INTO collaboration_schema_migrations (version)
+    VALUES (5)
     ON CONFLICT (version) DO NOTHING
   `.execute(db);
 }

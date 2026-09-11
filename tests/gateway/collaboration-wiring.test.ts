@@ -87,7 +87,7 @@ describe("gateway collaboration wiring", () => {
     runtime.register({ app, upgradeWebSocket });
     expect(registeredSocket).toBe(true);
     expect(await fixture.db.selectFrom("collaboration_schema_migrations").select("version").execute())
-      .toEqual([{ version: 1 }]);
+      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
     await runtime.shutdown();
     await expect(runtime.outbox.runOnce()).resolves.toBe(0);
   });

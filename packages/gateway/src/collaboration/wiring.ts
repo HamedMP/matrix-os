@@ -25,6 +25,11 @@ import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocke
 import { createProjectTransitionJournal } from "./project-transition.js";
 import { createProjectFence } from "./project-fence.js";
 import {
+  createProjectInventoryService,
+  type ProjectInventoryResourceSource,
+} from "./project-inventory.js";
+import { createProjectSharingService, type ProjectSharingService } from "./project-sharing.js";
+import {
   CollaborationProjectScopeService,
   type CollaborationProjectSource,
 } from "./project-scope.js";
@@ -145,6 +150,7 @@ export async function createGatewayCollaboration(options: {
   let terminalControl: TerminalControlCoordinator | undefined;
   let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
+  let projectSharing: ProjectSharingService | undefined;
 
   return {
     repository,
@@ -237,6 +243,42 @@ export async function createGatewayCollaboration(options: {
       });
       return { available: true };
     },
+    enableSharedProject(input: {
+      homePath: string;
+      inventorySource: ProjectInventoryResourceSource;
+    }): { available: true } {
+      if (registered || closing || projectSharing) {
+        throw new Error("Shared project must be initialized exactly once before route registration");
+      }
+      const inventory = createProjectInventoryService({
+        homePath: input.homePath,
+        source: input.inventorySource,
+        confirmationSecret: options.config.preflightSecret,
+      });
+      projectSharing = createProjectSharingService({
+        db: options.db,
+        inventory,
+        transitions: projectTransitions,
+        resolveDestination: async ({ scopeId, ownerId, projectId }) => {
+          const scope = await options.db.selectFrom("collaboration_scopes")
+            .select(["authority_runtime_id", "authority_generation"])
+            .where("id", "=", scopeId)
+            .where("owner_id", "=", ownerId)
+            .where("kind", "=", "project")
+            .where("resource_id", "=", projectId)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst();
+          if (!scope || scope.authority_runtime_id !== options.config.runtimeId) {
+            throw new Error("ProjectAuthorityUnavailable");
+          }
+          return {
+            runtimeId: options.config.runtimeId,
+            authorityGeneration: Number(scope.authority_generation) + 1,
+          };
+        },
+      });
+      return { available: true };
+    },
     register(input: { app: Hono; upgradeWebSocket: UpgradeWebSocket }): void {
       if (registered || closing) throw new Error("Collaboration routes are already registered or shutting down");
       registered = true;
@@ -251,6 +293,7 @@ export async function createGatewayCollaboration(options: {
         ...(terminalAdapter ? { terminalAdapter } : {}),
         ...(terminalDispatcher ? { terminalDispatcher } : {}),
         ...(projectScope ? { projectScope } : {}),
+        ...(projectSharing ? { projectSharing } : {}),
         resolveParticipant,
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
@@ -296,6 +339,7 @@ export async function createGatewayCollaboration(options: {
       terminalControl = undefined;
       terminalDispatcher = undefined;
       terminalAdapter = undefined;
+      projectSharing = undefined;
       await outbox.shutdown();
       participantResolver?.shutdown();
       verifier.shutdown();

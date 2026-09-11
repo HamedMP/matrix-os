@@ -257,9 +257,11 @@ export function createProjectTransitionJournal(options: {
           if (!existing) throw new ProjectTransitionError("unavailable");
           return rowToTransition(existing);
         }
+        const sameRuntime = scope.authority_runtime_id === parsed.destinationAuthorityRuntimeId;
         if (scope.membership_mode !== "direct"
           || scope.lifecycle !== "private" || Number(scope.revision) !== parsed.expectedScopeRevision
-          || scope.authority_runtime_id === parsed.destinationAuthorityRuntimeId) {
+          || (sameRuntime
+            && parsed.destinationAuthorityGeneration !== Number(scope.authority_generation) + 1)) {
           throw new ProjectTransitionError("conflict");
         }
         const updatedScope = await trx.updateTable("collaboration_scopes").set({
