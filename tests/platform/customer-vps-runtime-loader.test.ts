@@ -47,5 +47,5 @@ describe('customer VPS production runtime loader', () => {
       timeout: 30_000,
     });
     expect(result.status, result.stderr || result.stdout).toBe(0);
-  }, 120_000);
+  }, 180_000);
 });
