@@ -45,6 +45,8 @@ describe("Desktop mode controls", () => {
       button.getAttribute("aria-label") ?? button.textContent
     ));
     expect(labels).toEqual([
+      "Desktop mode",
+      "Canvas mode",
       "Search",
       "Support",
       "Join Discord",
