@@ -1227,19 +1227,25 @@ function wrapDb(
   executor: Executor,
   ready: Promise<void>,
   destroyFn: () => Promise<void>,
+  transactionScoped = false,
 ): PlatformDB {
-  return {
+  const wrapped: PlatformDB = {
     kysely,
     executor,
     ready,
     async transaction(fn) {
       await ready;
+      if (transactionScoped) return fn(wrapped);
       return kysely.transaction().execute((trx) =>
-        fn(wrapDb(kysely, trx, Promise.resolve(), destroyFn)),
+        fn(wrapDb(kysely, trx, Promise.resolve(), destroyFn, true)),
       );
     },
-    destroy: destroyFn,
+    // The root PlatformDB owns Kysely/the pool. A transaction-scoped wrapper
+    // may be passed through several repository layers, but must never close
+    // that shared resource.
+    destroy: transactionScoped ? async () => undefined : destroyFn,
   };
+  return wrapped;
 }
 
 async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
