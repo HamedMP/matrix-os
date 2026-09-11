@@ -61,6 +61,7 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("CLOUDFLARE_WORKERS_AI_TOKEN=cloudflare-workers-ai-token-preview:latest");
     for (const beta of [
       "claude-code-20250219",
+      "structured-outputs-2025-11-13",
       "interleaved-thinking-2025-05-14",
       "fine-grained-tool-streaming-2025-05-14",
       "thinking-token-count-2026-05-13",
