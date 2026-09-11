@@ -1,4 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
+import type { ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { join } from "node:path";
 
@@ -20,6 +21,72 @@ export interface LocalSpeechFixturePlan {
   ownerDatabaseUrl: string;
   homePath: string;
   env: Record<string, string>;
+}
+
+export class LocalFixtureInterruptedError extends Error {
+  constructor(readonly exitCode: 130 | 143) {
+    super("Local speech fixture interrupted");
+    this.name = "LocalFixtureInterruptedError";
+  }
+}
+
+export class LocalFixtureSignalController {
+  #activeChild: ChildProcess | undefined;
+  #receivedSignal: "SIGINT" | "SIGTERM" | undefined;
+
+  get exitCode(): 130 | 143 | undefined {
+    if (this.#receivedSignal === "SIGINT") return 130;
+    if (this.#receivedSignal === "SIGTERM") return 143;
+    return undefined;
+  }
+
+  attach(child: ChildProcess): void {
+    this.#activeChild = child;
+    if (this.#receivedSignal) this.#signalActive(this.#receivedSignal);
+  }
+
+  detach(child: ChildProcess): void {
+    if (this.#activeChild === child) this.#activeChild = undefined;
+  }
+
+  receive(signal: "SIGINT" | "SIGTERM"): void {
+    if (this.#receivedSignal) return;
+    this.#receivedSignal = signal;
+    this.#signalActive(signal);
+  }
+
+  throwIfReceived(): void {
+    const exitCode = this.exitCode;
+    if (exitCode !== undefined) throw new LocalFixtureInterruptedError(exitCode);
+  }
+
+  #signalActive(signal: "SIGINT" | "SIGTERM"): void {
+    const pid = this.#activeChild?.pid;
+    if (pid === undefined) return;
+    try {
+      process.kill(-pid, signal);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+}
+
+export async function completeLocalSpeechFixtureCleanup(
+  exitCode: number,
+  steps: Array<{ label: string; run: () => Promise<void> }>,
+  report: (message: string) => void = (message) => console.error(message),
+): Promise<number> {
+  if (steps.length > 8) throw new Error("Local speech fixture cleanup has too many steps");
+  let cleanupFailed = false;
+  for (const step of steps) {
+    try {
+      await step.run();
+    } catch (_error: unknown) {
+      cleanupFailed = true;
+      report(`Local speech fixture cleanup failed safely: ${step.label}`);
+    }
+  }
+  return cleanupFailed ? 1 : exitCode;
 }
 
 export function parseLocalPostgresAdminUrl(value: string): URL {

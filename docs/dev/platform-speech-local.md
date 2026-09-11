@@ -80,6 +80,8 @@ The command performs these bounded checks:
 8. Requires the deterministic transcript in the editable Web Mobile draft and a succeeded `dictation` operation in PostgreSQL.
 9. Terminates all task-owned process groups and deletes the generated databases, role, and temporary home.
 
+Any cleanup failure changes the command result to nonzero and reports only the failed cleanup stage; it does not print a database error or credential.
+
 Success includes both lines:
 
 ```text
