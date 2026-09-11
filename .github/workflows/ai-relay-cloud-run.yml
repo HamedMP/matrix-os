@@ -155,7 +155,7 @@ jobs:
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
-            --set-env-vars "^|^MATRIX_FUNDED_AI_ENABLED=true|MATRIX_FUNDED_AI_RESERVATION_MODE=usage|MATRIX_FUNDED_AI_BETAS=interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14|PLATFORM_INTERNAL_URL=${PLATFORM_INTERNAL_URL}|CLOUDFLARE_AI_GATEWAY_URL=${CLOUDFLARE_AI_GATEWAY_URL}|MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=16|MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=2|MATRIX_FUNDED_AI_GLOBAL_RATE_LIMIT=60|MATRIX_FUNDED_AI_RATE_LIMIT=20" \
+            --set-env-vars "^|^MATRIX_FUNDED_AI_ENABLED=true|MATRIX_FUNDED_AI_RESERVATION_MODE=usage|MATRIX_FUNDED_AI_BETAS=claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24|PLATFORM_INTERNAL_URL=${PLATFORM_INTERNAL_URL}|CLOUDFLARE_AI_GATEWAY_URL=${CLOUDFLARE_AI_GATEWAY_URL}|MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=16|MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=2|MATRIX_FUNDED_AI_GLOBAL_RATE_LIMIT=60|MATRIX_FUNDED_AI_RATE_LIMIT=20" \
             --set-secrets "CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest,CLOUDFLARE_WORKERS_AI_TOKEN=cloudflare-workers-ai-token-preview:latest,AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest" \
             --format=json)"
           candidate_url="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)"

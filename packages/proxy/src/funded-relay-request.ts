@@ -96,6 +96,18 @@ const ThinkingSchema = z.union([
   z.object({ type: z.literal("adaptive") }).strict(),
 ]);
 
+const ThinkingTurnsSchema = z.object({
+  type: z.literal("thinking_turns"),
+  value: z.number().int().positive().max(1_024),
+}).strict();
+
+const ContextManagementSchema = z.object({
+  edits: z.array(z.object({
+    type: z.literal("clear_thinking_20251015"),
+    keep: z.union([z.literal("all"), ThinkingTurnsSchema]).optional(),
+  }).strict()).min(1).max(1),
+}).strict();
+
 export const FundedRequestSchema = z.object({
   model: z.string().regex(MODEL_ID),
   max_tokens: z.number().int().positive().max(128_000).optional(),
@@ -113,6 +125,7 @@ export const FundedRequestSchema = z.object({
   top_k: z.number().int().min(0).max(500).optional(),
   top_p: z.number().min(0).max(1).optional(),
   thinking: ThinkingSchema.optional(),
+  context_management: ContextManagementSchema.optional(),
   output_config: z.object({
     effort: z.enum(["low", "medium", "high", "max"]).optional(),
     format: BoundedJsonSchema.optional(),
@@ -135,6 +148,7 @@ export function serializeCountTokensRequest(request: FundedRequest): string {
     ...(request.tools === undefined ? {} : { tools: request.tools }),
     ...(request.tool_choice === undefined ? {} : { tool_choice: request.tool_choice }),
     ...(request.thinking === undefined ? {} : { thinking: request.thinking }),
+    ...(request.context_management === undefined ? {} : { context_management: request.context_management }),
   });
 }
 

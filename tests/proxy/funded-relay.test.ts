@@ -14,6 +14,16 @@ const GATEWAY_URL =
 const PLATFORM_URL = "https://platform.internal.example";
 const NATIVE_MODEL = "claude-sonnet-5";
 const CANONICAL_MODEL = "anthropic/claude-sonnet-5";
+const CLAUDE_CODE_BETAS = [
+  "claude-code-20250219",
+  "interleaved-thinking-2025-05-14",
+  "fine-grained-tool-streaming-2025-05-14",
+  "thinking-token-count-2026-05-13",
+  "context-management-2025-06-27",
+  "prompt-caching-scope-2026-01-05",
+  "mid-conversation-system-2026-04-07",
+  "effort-2025-11-24",
+] as const;
 const RESERVED_MICROUSD = 6_000;
 const CREDENTIAL = `sk-matrix-funded-credential_123.${"s".repeat(43)}`;
 const NOW = new Date("2026-08-30T20:00:00.000Z");
@@ -248,21 +258,35 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         return json({ input_tokens: 1_000 });
       }
       expect(forwarded.max_tokens).toBe(100);
+      expect(forwarded.context_management).toEqual({
+        edits: [{ type: "clear_thinking_20251015", keep: "all" }],
+      });
+      expect(headers.get("anthropic-beta")).toBe(CLAUDE_CODE_BETAS.join(","));
+      expect(url).toBe(`${GATEWAY_URL}/v1/messages?beta=true`);
       events.push("cloudflare_generate");
       return json({
         id: "msg_1", type: "message", model: NATIVE_MODEL,
         usage: { input_tokens: 1_000, output_tokens: 10 },
       });
     });
-    const relay = configuredRelay(fetchMock as typeof fetch, { reservationMode });
+    const relay = configuredRelay(fetchMock as typeof fetch, {
+      reservationMode,
+      allowedBetas: new Set(CLAUDE_CODE_BETAS),
+    });
     const app = new Hono();
     relay.register(app);
     const bodyWithCallerMetadata = JSON.stringify({
       ...JSON.parse(requestBody()),
       metadata: { user_id: "raw-caller-id" },
+      thinking: { type: "adaptive" },
+      context_management: {
+        edits: [{ type: "clear_thinking_20251015", keep: "all" }],
+      },
+      output_config: { effort: "low" },
     });
-    const response = await app.request("/v1/messages", fundedRequest(bodyWithCallerMetadata, {
+    const response = await app.request("/v1/messages?beta=true", fundedRequest(bodyWithCallerMetadata, {
       authorization: "Bearer caller-secret",
+      "anthropic-beta": CLAUDE_CODE_BETAS.join(","),
       "cf-aig-authorization": "Bearer caller-cloudflare",
       "cf-aig-api-token": "caller-token",
       "cf-aig-metadata": JSON.stringify({ prompt: "secret" }),

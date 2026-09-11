@@ -27,6 +27,7 @@ import { createFundedUsageTracker, type FundedFinalization } from "./funded-rela
 const MESSAGES_PATH = "/v1/messages";
 const COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
 const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
+const CLAUDE_CODE_BETA_QUERY = "?beta=true";
 const CountTokensResponseSchema = z.object({
   input_tokens: z.number().int().nonnegative().max(10_000_000),
 }).strict();
@@ -253,6 +254,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let anthropicBeta: string | null;
     let model: ReturnType<typeof mapFundedModel>;
     const isOpenAi = c.req.path === CHAT_COMPLETIONS_PATH;
+    const requestSearch = new URL(c.req.url).search;
     try {
       const body: unknown = JSON.parse(await c.req.text());
       const serialized = isOpenAi ? serializeFundedOpenAiRequest(body) : serializeFundedRequest(body);
@@ -405,7 +407,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       firstResponseController.abort(new DOMException("AI first response timed out", "TimeoutError"));
     }, config.firstResponseTimeoutMs);
     const generationSignal = AbortSignal.any([state.lifetimeSignal, firstResponseController.signal]);
-    const generationUrl = isOpenAi ? workersAiTarget(config.gatewayBaseUrl).url : `${config.gatewayBaseUrl}${MESSAGES_PATH}`;
+    const generationUrl = isOpenAi
+      ? workersAiTarget(config.gatewayBaseUrl).url
+      : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
     const generationInit: RequestInit = {
       method: "POST",
       headers: upstreamHeaders,
@@ -495,7 +499,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         if (c.req.path !== MESSAGES_PATH && c.req.path !== COUNT_TOKENS_PATH && c.req.path !== CHAT_COMPLETIONS_PATH) {
           return errorResponse(c, 404, "not_found_error", "AI route not found");
         }
-        if (new URL(c.req.url).search !== "") return errorResponse(c, 404, "not_found_error", "AI route not found");
+        const search = new URL(c.req.url).search;
+        if (search !== "" && !(c.req.path === MESSAGES_PATH && search === CLAUDE_CODE_BETA_QUERY)) {
+          return errorResponse(c, 404, "not_found_error", "AI route not found");
+        }
         if (!c.req.header("content-type")?.toLowerCase().startsWith("application/json")) {
           return errorResponse(c, 415, "invalid_request_error", "Content-Type must be application/json");
         }

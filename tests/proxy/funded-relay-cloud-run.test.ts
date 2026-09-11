@@ -58,7 +58,16 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("MATRIX_FUNDED_AI_ENABLED=true");
     expect(workflow).toContain("MATRIX_FUNDED_AI_RESERVATION_MODE=usage");
     expect(workflow).toContain("CLOUDFLARE_WORKERS_AI_TOKEN=cloudflare-workers-ai-token-preview:latest");
-    expect(workflow).toContain("interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14");
+    for (const beta of [
+      "claude-code-20250219",
+      "interleaved-thinking-2025-05-14",
+      "fine-grained-tool-streaming-2025-05-14",
+      "thinking-token-count-2026-05-13",
+      "context-management-2025-06-27",
+      "prompt-caching-scope-2026-01-05",
+      "mid-conversation-system-2026-04-07",
+      "effort-2025-11-24",
+    ]) expect(workflow).toContain(beta);
     expect(workflow).toContain("CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest");
     expect(workflow).toContain("AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest");
     expect(workflow).toContain("AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest");
