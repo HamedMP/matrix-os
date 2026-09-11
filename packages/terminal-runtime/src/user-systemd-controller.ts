@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { createTerminalCapacityAdmission } from "./user-systemd-capacity.js";
 import { probeKeeperReadiness } from "./user-systemd-readiness.js";
+import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 
 const execFileAsync = promisify(execFile);
 const RuntimeIdSchema = z.string().regex(/^rt_[0-9a-f]{32}$/);
@@ -322,6 +323,7 @@ function delay(ms: number): Promise<void> {
 export function createUserSystemdTerminalRuntime(options: {
   homePath: string;
   uid?: number;
+  env?: NodeJS.ProcessEnv;
   generation: string;
   terminalRuntimeRoot?: string;
   runCommand?: UserSystemdCommandRunner;
@@ -348,15 +350,11 @@ export function createUserSystemdTerminalRuntime(options: {
   const readinessStabilityMs = options.readinessStabilityMs
     ?? (options.readinessProbe ? 0 : READINESS_STABILITY_MS);
   let mutationTail = Promise.resolve();
-  const systemdEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    HOME: homePath,
-    MATRIX_HOME: homePath,
-    ...(uid == null ? {} : {
-      XDG_RUNTIME_DIR: `/run/user/${uid}`,
-      DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus`,
-    }),
-  };
+  if (uid == null) throw new TerminalRuntimeUnavailableError();
+  const systemdEnv: NodeJS.ProcessEnv = options.env ?? createTerminalRuntimeEnvironment({
+    homePath,
+    uid,
+  });
 
   async function withCrossProcessGenerationLock<T>(operation: () => Promise<T>): Promise<T> {
     if (!generationLockHelperPath) return operation();
