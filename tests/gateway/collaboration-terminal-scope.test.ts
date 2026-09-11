@@ -103,6 +103,32 @@ describe("CollaborationTerminalAdapter scope binding", () => {
     });
   });
 
+  it("reopens the same shared terminal scope with a new actor-scoped request", async () => {
+    const firstPreflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    const first = await adapter.shareTerminal({
+      ownerId: collaborationActors.owner,
+      terminalId,
+      clientRequestId: "50000000-0000-4000-8000-000000000020",
+      payloadHash: "a".repeat(64),
+      expectedResourceRevision: 4,
+      confirmationToken: firstPreflight.confirmationToken!,
+    });
+    const nextPreflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    expect(nextPreflight).toMatchObject({ eligible: true, resourceRevision: 4 });
+    const reopened = await adapter.shareTerminal({
+      ownerId: collaborationActors.owner,
+      terminalId,
+      clientRequestId: "50000000-0000-4000-8000-000000000021",
+      payloadHash: "b".repeat(64),
+      expectedResourceRevision: 4,
+      confirmationToken: nextPreflight.confirmationToken!,
+    });
+    expect(reopened.id).toBe(first.id);
+    expect(registry.bindCollaboration).toHaveBeenCalledTimes(1);
+    expect(await fixture.db.selectFrom("collaboration_operations")
+      .select("client_request_id").where("scope_id", "=", first.id).execute()).toHaveLength(2);
+  });
+
   it("rejects an incarnation change after confirmation without replacing the process", async () => {
     const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
     session = { ...session, sessionIncarnation: `terminal-${"b".repeat(32)}` };

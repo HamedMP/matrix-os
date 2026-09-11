@@ -225,7 +225,11 @@ describe("collaboration gateway routes", () => {
       },
     });
     expect(created.status).toBe(201);
-    expect(await created.json()).toMatchObject({ kind: "terminal", resourceId: terminalId });
+    expect(await created.json()).toMatchObject({
+      kind: "terminal",
+      resourceId: terminalId,
+      capabilities: { observeTerminal: true, controlTerminal: true, stopTerminal: true },
+    });
 
     const terminalPath = `/api/collaboration/scopes/${collaborationIds.scope}/terminal`;
     expect((await signedJson({

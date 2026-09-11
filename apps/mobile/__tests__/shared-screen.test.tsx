@@ -31,6 +31,12 @@ jest.mock("@/lib/requests/collaboration", () => ({
   collaborationEventsUrl: jest.fn(() => "wss://app.matrix-os.com/ws/collaboration/events?ticket=test"),
   updateSharedChatReadState: jest.fn(async () => undefined),
 }));
+jest.mock("@/components/collaboration/SharedTerminalScreen", () => ({
+  SharedTerminalScreen: ({ scopeId }: { scopeId: string }) => {
+    const { Text } = jest.requireActual("react-native") as typeof import("react-native");
+    return <Text>Terminal surface {scopeId}</Text>;
+  },
+}));
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
@@ -134,6 +140,51 @@ describe("native shared Chat screen", () => {
     await waitFor(() => expect(mockPostDiscussion).toHaveBeenCalledWith(
       "clerk-token", scopeId, "1", "Ready", expect.any(String),
     ));
+  });
+
+  it("accepts a terminal invitation and opens the scoped terminal surface", async () => {
+    const terminalInvitation = { ...invitation, scopeKind: "terminal" as const };
+    mockFetchInbox.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "terminal", authorityGeneration: 1,
+      status: "invited", invitationId, resource: terminalInvitation,
+    }] });
+    mockFetchInvitation.mockResolvedValue(terminalInvitation);
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Review invitation from Nima"));
+    expect(await screen.findByText("Join this shared terminal?")).toBeTruthy();
+    expect(screen.getByText(/project, sibling terminals, files, apps, Chats/)).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Accept invitation"));
+    expect(await screen.findByText(`Terminal surface ${scopeId}`)).toBeTruthy();
+    expect(mockFetchChat).not.toHaveBeenCalled();
+  });
+
+  it("discovers an accepted terminal without treating it as a Chat", async () => {
+    const terminalScope = {
+      ...(await mockFetchScope()),
+      kind: "terminal",
+      resourceId: "terminal_release",
+      capabilities: {
+        read: true, discuss: false, manageMembers: false, requestAi: false,
+        observeTerminal: true, controlTerminal: true, stopTerminal: false,
+      },
+    };
+    const terminal = {
+      id: "terminal_release", scopeId, incarnation: `terminal-${"a".repeat(32)}`,
+      executionGeneration: "4", status: "active",
+      createdBy: { actorId: "user_owner", displayName: "Nima" },
+      createdAt: "2026-09-11T12:00:00.000Z",
+    };
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "terminal", authorityGeneration: 1,
+      status: "accepted", resource: { scope: terminalScope, terminal },
+    }] });
+
+    render(<SharedScreen />);
+    expect(await screen.findByText("Shared terminal")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Open shared terminal terminal_release"));
+    expect(await screen.findByText(`Terminal surface ${scopeId}`)).toBeTruthy();
   });
 
   it("keeps a failed AI draft and shows the accepted ordered queue", async () => {

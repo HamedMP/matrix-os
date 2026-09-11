@@ -7,13 +7,17 @@ import {
   CollaborationConnectionTicketResponseSchema,
   CollaborationEventFrameSchema,
   CollaborationIdSchema,
+  CollaborationTerminalFrameSchema,
 } from "@matrix-os/contracts";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-const MAX_SOCKET_FRAME_CHARS = 64 * 1024;
+// A valid 64 KiB terminal payload can expand substantially when JSON escapes
+// control characters. The contract still enforces the decoded 64 KiB bound.
+const MAX_SOCKET_FRAME_CHARS = 512 * 1024;
 const MAX_RECONNECT_DELAY_MS = 10_000;
+const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
 
 export function createCollaborationBrowserApi(options: {
   baseUrl: string;
@@ -159,8 +163,107 @@ export function createCollaborationBrowserApi(options: {
         socket = null;
       };
     };
+    api.subscribeTerminal = (scopeId, handlers) => {
+      const parsedScopeId = CollaborationIdSchema.parse(scopeId);
+      let closed = false;
+      let socket: WebSocket | null = null;
+      let retryTimer: ReturnType<typeof setTimeout> | undefined;
+      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+      let attempt = 0;
+      let sequence = BigInt(0);
+      const clearHeartbeat = () => {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
+      };
+      const connect = async () => {
+        if (closed) return;
+        try {
+          const ticket = CollaborationConnectionTicketResponseSchema.parse(await api.post(
+            `/api/collaboration/scopes/${parsedScopeId}/connection-tickets`,
+            { clientRequestId: crypto.randomUUID(), purpose: "terminal" },
+          ));
+          if (closed) return;
+          const wsUrl = new URL(`/ws/collaboration/scopes/${parsedScopeId}/terminal`, baseUrl);
+          wsUrl.protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
+          wsUrl.searchParams.set("ticket", ticket.ticket);
+          const next = (options.webSocketFactory ?? ((url: string) => new WebSocket(url)))(wsUrl.href);
+          socket = next;
+          next.onopen = () => {
+            attempt = 0;
+            clearHeartbeat();
+            heartbeatTimer = setInterval(() => {
+              if (!closed && socket === next) next.send(JSON.stringify({ version: 1, type: "heartbeat" }));
+            }, TERMINAL_HEARTBEAT_INTERVAL_MS);
+          };
+          next.onmessage = (event) => {
+            if (typeof event.data !== "string" || event.data.length > MAX_SOCKET_FRAME_CHARS) {
+              next.close(1008, "Invalid frame");
+              return;
+            }
+            try {
+              const frame = CollaborationTerminalFrameSchema.parse(JSON.parse(event.data) as unknown);
+              if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
+              if (frame.type === "terminal.ready") {
+                sequence = maxSequence(sequence, frame.sequence);
+                handlers.onReady(frame);
+              } else if (frame.type === "terminal.output") {
+                const nextSequence = BigInt(frame.sequence);
+                if (nextSequence > sequence) {
+                  sequence = nextSequence;
+                  handlers.onOutput(frame);
+                }
+              } else if (frame.type === "terminal.state") {
+                sequence = maxSequence(sequence, frame.sequence);
+                handlers.onState(frame);
+              } else if (frame.type === "terminal.refresh_required") {
+                sequence = maxSequence(sequence, frame.sequence);
+                void Promise.resolve(handlers.onRefreshRequired()).catch((error: unknown) => {
+                  console.warn("[terminal-collaboration] canonical refresh failed", error instanceof Error ? error.name : "UnknownError");
+                  next.close(1011, "Refresh failed");
+                });
+              } else {
+                closed = true;
+                clearHeartbeat();
+                handlers.onUnavailable();
+                next.close(1008, "Unavailable");
+              }
+            } catch (error: unknown) {
+              console.warn("[terminal-collaboration] event frame rejected", error instanceof Error ? error.name : "UnknownError");
+              next.close(1008, "Invalid frame");
+            }
+          };
+          next.onerror = () => next.close();
+          next.onclose = () => {
+            clearHeartbeat();
+            if (socket === next) socket = null;
+            if (closed) return;
+            const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
+            retryTimer = setTimeout(() => { void connect(); }, delay);
+          };
+        } catch (error: unknown) {
+          console.warn("[terminal-collaboration] event connection failed", error instanceof Error ? error.name : "UnknownError");
+          if (closed) return;
+          const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
+          retryTimer = setTimeout(() => { void connect(); }, delay);
+        }
+      };
+      void connect();
+      return () => {
+        closed = true;
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = undefined;
+        clearHeartbeat();
+        socket?.close(1000, "Closed");
+        socket = null;
+      };
+    };
   }
   return api;
+}
+
+function maxSequence(current: bigint, next: string): bigint {
+  const parsed = BigInt(next);
+  return parsed > current ? parsed : current;
 }
 
 function requireBaseUrl(value: string): URL {

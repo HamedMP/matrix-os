@@ -67,6 +67,8 @@ export { ChatAttachments, type ChatMessageAttachment } from "./chat/ChatAttachme
 export { ChatCollaboratorsDialog, type CollaborationApi } from "./collaboration/ChatCollaboratorsDialog.js";
 export { ChatCollaboration, type ChatCollaborationView } from "./collaboration/ChatCollaboration.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
+export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
+export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
