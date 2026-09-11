@@ -311,6 +311,7 @@ export function registerPlatformWebSocketUpgradeHandler(
             incomingHeaders: req.headers,
             externalHost: host,
             signedProof: collaborationUpgrade.signedProof,
+            signedPolicy: collaborationUpgrade.signedPolicy,
           })
         : buildPlatformWebSocketUpgradeHeaders({
         incomingHeaders: req.headers,

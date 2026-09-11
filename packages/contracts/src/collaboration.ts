@@ -550,6 +550,7 @@ const CollaborationTerminalFrameBaseSchema = z.object({
 export const CollaborationTerminalFrameSchema = z.discriminatedUnion("type", [
   CollaborationTerminalFrameBaseSchema.extend({
     type: z.literal("terminal.ready"),
+    connectionId: CollaborationTerminalConnectionIdSchema,
     sequence: CollaborationRevisionSchema,
     terminal: CollaborationTerminalSchema,
   }).strict(),

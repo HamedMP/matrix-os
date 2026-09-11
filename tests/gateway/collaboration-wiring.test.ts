@@ -92,6 +92,56 @@ describe("gateway collaboration wiring", () => {
     await expect(runtime.outbox.runOnce()).resolves.toBe(0);
   });
 
+  it("registers M3 routes only after terminal dependencies are resolved and drains them on shutdown", async () => {
+    const runtime = await createGatewayCollaboration({
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    runtime.enableSharedTerminal({
+      registry: {
+        get: async () => { throw Object.assign(new Error("missing"), { code: "session_not_found" }); },
+        bindCollaboration: async () => { throw new Error("not called"); },
+        unbindCollaboration: async () => undefined,
+      },
+      runtime: {
+        input: async () => undefined,
+        paste: async () => undefined,
+        resize: async () => undefined,
+        stop: async () => undefined,
+      },
+      executionEligibility: {
+        profileId: "scope-runtime-terminal-v1",
+        profileVersion: 1,
+        profileDigest: "d".repeat(64),
+        adapterId: "terminal",
+        harnessVersion: "1.0.0",
+      },
+    });
+    const app = new Hono();
+    let registeredSockets = 0;
+    const upgradeWebSocket = ((factory: (context: Context) => WSEvents<unknown>) => {
+      if (typeof factory === "function") registeredSockets += 1;
+      return (context: Context) => context.text("upgrade");
+    }) as unknown as UpgradeWebSocket;
+    runtime.register({ app, upgradeWebSocket });
+    expect(registeredSockets).toBe(2);
+    await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/terminal`))
+      .resolves.toMatchObject({ status: 401 });
+    expect(() => runtime.enableSharedTerminal({} as never)).toThrow(/exactly once/);
+    await runtime.shutdown();
+  });
+
   it("removes expired owner-local export artifacts during startup recovery", async () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await fixture.db.insertInto("collaboration_scopes").values({
