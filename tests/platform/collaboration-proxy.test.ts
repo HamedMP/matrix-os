@@ -197,6 +197,10 @@ describe("CollaborationProxy", () => {
       "POST",
       `/api/collaboration/scopes/${scopeId}/chat/approvals/${approvalId}/decision`,
     )).toBe("m2");
+    expect(collaborationMilestoneForRoute("GET", `/api/collaboration/scopes/${scopeId}/terminal`))
+      .toBe("m3");
+    expect(collaborationMilestoneForRoute("POST", `/api/collaboration/scopes/${scopeId}/terminal/actions`))
+      .toBe("m3");
   });
 
   it("keeps M2 AI routes disabled independently from M1 discussion", async () => {
