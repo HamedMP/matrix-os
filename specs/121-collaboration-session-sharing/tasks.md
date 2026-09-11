@@ -74,7 +74,7 @@
 - [x] T031 [P] [US2] (PR1) Write red boundary tests denying parent/sibling access and unsafe attachment destinations from a standalone Chat in `tests/gateway/collaboration-chat-scope.test.ts` and `tests/gateway/collaboration-chat-discussion.test.ts`
 - [x] T032 [P] [US2] (PR1) Write red snapshot-token/live-proof substitution and independent snapshot/member revocation tests in `tests/gateway/chat-sharing-routes.test.ts` and `tests/gateway/collaboration-lifecycle.test.ts`
 - [x] T033 [P] [US2] (PR4) Write red standalone terminal scope, same-incarnation, and sibling/session-creation denial tests in `tests/gateway/collaboration-terminal-scope.test.ts`
-- [ ] T034 [P] [US2] (PR6) Write red direct-item-to-project inheritance transition tests that never promote item-only participants in `tests/gateway/collaboration-membership-transition.test.ts`
+- [x] T034 [P] [US2] (PR6) Write red direct-item-to-project inheritance transition tests that never promote item-only participants in `tests/gateway/collaboration-membership-transition.test.ts`
 
 ### Implementation
 
@@ -82,7 +82,7 @@
 - [x] T036 [US2] (PR1) Implement canonical Chat-only read/history projection with inert unauthorized references in `packages/gateway/src/collaboration/chat-adapter.ts`
 - [x] T037 [US2] (PR1) Register validated/body-limited standalone Chat scope and member routes in `packages/gateway/src/collaboration/routes.ts`
 - [x] T038 [US2] (PR4) Implement eligible terminal scope binding without replacement or sibling authority in `packages/gateway/src/collaboration/terminal-adapter.ts`
-- [ ] T039 [US2] (PR6) Reconcile direct Chat/terminal grants into sole project inheritance at the publication point in `packages/gateway/src/collaboration/project-membership-transition.ts`
+- [x] T039 [US2] (PR6) Reconcile direct Chat/terminal grants into sole project inheritance at the publication point in `packages/gateway/src/collaboration/project-membership-transition.ts`
 
 **Checkpoint**: At M1, a standalone Chat is independently shareable. Terminal and project conversion paths remain unavailable until their later PRs.
 
