@@ -230,6 +230,19 @@ describe("CollaborationAuthority", () => {
       action: "discuss",
     })).resolves.toMatchObject({ scopeId: childId, membershipScopeId: projectId });
 
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "archived" })
+      .where("id", "in", [projectId, childId]).execute();
+    await expect(authority.authorize({
+      scopeId: childId,
+      actorId: collaborationActors.editor,
+      action: "read",
+    })).resolves.toMatchObject({ scopeId: childId, membershipScopeId: projectId });
+    await expect(authority.authorize({
+      scopeId: childId,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    })).rejects.toMatchObject({ code: "unavailable" });
+
     await fixture.db.updateTable("collaboration_scopes").set({ kind: "chat" })
       .where("id", "=", projectId).execute();
     await expect(authority.authorize({

@@ -306,6 +306,7 @@ async function cleanupExpiredArtifacts(
       SELECT scope_id, actor_id, client_request_id, operation_kind
       FROM collaboration_operations
       WHERE expires_at <= ${cutoff}
+        AND status IN ('completed', 'failed')
       ORDER BY expires_at ASC
       LIMIT ${ARTIFACT_CLEANUP_BATCH_SIZE}
     )
