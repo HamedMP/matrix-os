@@ -9,17 +9,30 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-function download({ existing = false, broken = false, empty = false } = {}) {
+function download({
+  existing = false,
+  broken = false,
+  empty = false,
+  chunks,
+}: {
+  existing?: boolean;
+  broken?: boolean;
+  empty?: boolean;
+  chunks?: string[];
+} = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-broker-download-'));
   directories.push(directory);
   const destination = join(directory, 'latest');
   if (existing) writeFileSync(destination, 'old snapshot');
   // Exercise the shipped CLI in a real subprocess with real file handles. No network/credentials.
+  const downloadBody = broken
+    ? "new ReadableStream({start(c){c.error(new Error('private storage failure'));}})"
+    : chunks
+      ? `new ReadableStream({start(c){for(const chunk of ${JSON.stringify(chunks)}) c.enqueue(new TextEncoder().encode(chunk));c.close();}})`
+      : JSON.stringify(empty ? '' : 'system/runtime-slots/pr-1502/db/snapshots/2026-09-09T1200Z.dump\n');
   const stub = `globalThis.fetch = async (url) => {
     if (String(url).endsWith('/presign/get')) return Response.json({url:'https://download.test/snapshot'});
-    return new Response(${broken
-      ? "new ReadableStream({start(c){c.error(new Error('private storage failure'));}})"
-      : JSON.stringify(empty ? '' : 'system/runtime-slots/pr-1502/db/snapshots/2026-09-09T1200Z.dump\n')});
+    return new Response(${downloadBody});
   };`;
   const result = spawnSync(process.execPath, [
     '--import', `data:text/javascript,${encodeURIComponent(stub)}`,
@@ -49,6 +62,19 @@ describe('host R2 download completion', () => {
     const { directory, destination, result } = download({ empty: true });
     expect(result.status).toBe(0);
     expect(readFileSync(destination).length).toBe(0);
+    expect(readdirSync(directory)).toEqual(['latest']);
+  });
+
+  it('preserves ordering across multiple successful response chunks', () => {
+    const chunks = [
+      'system/runtime-slots/pr-1502/',
+      'db/snapshots/',
+      '2026-09-09T1200Z.dump\n',
+    ];
+    const { directory, destination, result } = download({ chunks });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(readFileSync(destination, 'utf8')).toBe(chunks.join(''));
     expect(readdirSync(directory)).toEqual(['latest']);
   });
 
