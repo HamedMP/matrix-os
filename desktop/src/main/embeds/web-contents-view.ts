@@ -1,6 +1,6 @@
 // Electron WebContentsView adapter implementing EmbedViewLike. Each embed runs
 // in its own isolated partition. Hosted-shell views have no preload/IPC
-// exposure; app views may receive the narrow database-only preload. Navigation
+// exposure; app views may receive the narrow app-scoped preload. Navigation
 // is gated by an origin allowlist; external links open in the system browser.
 import { WebContentsView, shell, type BaseWindow, type NativeImage } from "electron";
 import { isNavigationAllowed } from "./origin-policy";
