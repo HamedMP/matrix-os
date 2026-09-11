@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { PostgresDialect } from "kysely";
 import { createPlatformDb, insertUserMachine, type PlatformDB } from "../packages/platform/src/db.js";
 import {
   LocalFixtureVerificationError,
@@ -12,8 +13,10 @@ import {
 import {
   assertFixturePortsAvailable,
   cancelBoundedLocalPostgresAdminClient,
+  cancelBoundedLocalPostgresPool,
   completeLocalSpeechFixtureCleanup,
   createBoundedLocalPostgresAdminClient,
+  createBoundedLocalPostgresPool,
   createLocalSpeechFixturePlan,
   LocalFixtureSignalController,
   LOCAL_SPEECH_FIXTURE_PORTS,
@@ -129,6 +132,33 @@ async function runPostgresConcurrencyTests(
   if (result.code !== 0) throw new Error("Disposable PostgreSQL speech concurrency tests failed");
 }
 
+async function verifyAuthenticatedPostgresCancellation(plan: LocalSpeechFixturePlan): Promise<void> {
+  const pool = createBoundedLocalPostgresPool(plan.databaseUrl);
+  const signals = new LocalFixtureSignalController();
+  let cancellation: Promise<void> | undefined;
+  const cancel = () => {
+    cancellation ??= cancelBoundedLocalPostgresPool(pool);
+  };
+  try {
+    await pool.query("SELECT 1");
+    const query = pool.query("SELECT pg_sleep(30)").then(
+      () => "resolved" as const,
+      () => "rejected" as const,
+    );
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    signals.attachCancellation(cancel);
+    const startedAt = Date.now();
+    signals.receive("SIGTERM");
+    await cancellation;
+    if (await query !== "rejected" || Date.now() - startedAt >= 2_000) {
+      throw new Error("Bounded fixture PostgreSQL cancellation did not complete promptly");
+    }
+  } finally {
+    signals.detachCancellation(cancel);
+    await cancelBoundedLocalPostgresPool(pool);
+  }
+}
+
 async function waitForHttp(url: string, stackCompletion: Promise<unknown>): Promise<void> {
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
@@ -181,6 +211,8 @@ async function run(): Promise<number> {
   let adminCancelled = false;
   let adminEnd: Promise<void> | undefined;
   let db: PlatformDB | undefined;
+  let fixturePool: ReturnType<typeof createBoundedLocalPostgresPool> | undefined;
+  let databaseEnd: Promise<void> | undefined;
   let stack: ChildProcess | undefined;
   let plannedStop = false;
   let resultCode = 1;
@@ -189,6 +221,17 @@ async function run(): Promise<number> {
     if (!admin) return;
     adminCancelled = true;
     adminEnd ??= cancelBoundedLocalPostgresAdminClient(admin);
+  };
+  const cancelDatabase = () => {
+    if (!db || !fixturePool || databaseEnd) return;
+    const createdDb = db;
+    databaseEnd = cancelBoundedLocalPostgresPool(fixturePool).then(async () => {
+      try {
+        await createdDb.destroy();
+      } catch (error: unknown) {
+        if (!(error instanceof Error && error.message === "Called end on pool more than once")) throw error;
+      }
+    });
   };
   const forwardSignal = (signal: "SIGINT" | "SIGTERM") => {
     signals.receive(signal);
@@ -231,8 +274,15 @@ async function run(): Promise<number> {
     signals.detachCancellation(cancelAdmin);
     stage = "fixture database migration";
     await mkdir(plan.homePath, { recursive: false });
-    db = createPlatformDb(plan.databaseUrl);
-    await db.ready;
+    fixturePool = createBoundedLocalPostgresPool(plan.databaseUrl);
+    db = createPlatformDb({ dialect: new PostgresDialect({ pool: fixturePool }) });
+    signals.attachCancellation(cancelDatabase);
+    try {
+      await db.ready;
+    } catch (error: unknown) {
+      signals.throwIfReceived();
+      throw error;
+    }
     signals.throwIfReceived();
     await insertUserMachine(db, {
       machineId: plan.env.MATRIX_MACHINE_ID,
@@ -245,7 +295,11 @@ async function run(): Promise<number> {
       activationState: "authorized",
     });
     signals.throwIfReceived();
+    signals.detachCancellation(cancelDatabase);
     if (verify) {
+      stage = "authenticated PostgreSQL cancellation preflight";
+      await verifyAuthenticatedPostgresCancellation(plan);
+      console.log("Verified bounded cancellation of an authenticated PostgreSQL query.");
       stage = "real PostgreSQL concurrency tests";
       await runPostgresConcurrencyTests(plan, signals);
     }
@@ -295,10 +349,17 @@ async function run(): Promise<number> {
     resultCode = signalExitCode ?? 1;
   } finally {
     signals.detachCancellation(cancelAdmin);
+    signals.detachCancellation(cancelDatabase);
     const cleanupSteps: Array<{ label: string; run: () => Promise<void> }> = [];
     if (db) {
       const createdDb = db;
-      cleanupSteps.push({ label: "platform database connection", run: () => createdDb.destroy() });
+      cleanupSteps.push({
+        label: "platform database connection",
+        run: async () => {
+          databaseEnd ??= createdDb.destroy();
+          await databaseEnd;
+        },
+      });
     }
     let cleanupAdmin: PostgresAdminClient | undefined;
     if (admin) {
