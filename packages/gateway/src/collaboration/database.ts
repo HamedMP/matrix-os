@@ -142,6 +142,23 @@ export interface CollaborationResourceBindingsTable {
   updated_at: Timestamp;
 }
 
+export interface CollaborationLayoutNodeRevisionsTable {
+  scope_id: string;
+  canvas_id: string;
+  node_id: string;
+  revision: ColumnType<number, number | undefined, number>;
+  updated_at: Timestamp;
+}
+
+export interface CollaborationProjectViewStatesTable {
+  scope_id: string;
+  canvas_id: string;
+  actor_id: string;
+  state: JsonValue;
+  revision: ColumnType<number, number | undefined, number>;
+  updated_at: Timestamp;
+}
+
 export interface ChatCollaborationCommandsTable {
   id: string;
   scope_id: string;
@@ -173,6 +190,8 @@ export interface CollaborationDatabase {
   collaboration_schema_migrations: CollaborationSchemaMigrationsTable;
   collaboration_transitions: CollaborationTransitionsTable;
   collaboration_resource_bindings: CollaborationResourceBindingsTable;
+  collaboration_layout_node_revisions: CollaborationLayoutNodeRevisionsTable;
+  collaboration_project_view_states: CollaborationProjectViewStatesTable;
   chat_collaboration_commands: ChatCollaborationCommandsTable;
 }
 
@@ -399,6 +418,27 @@ export async function bootstrapCollaborationDatabase(
       CHECK (resource_kind <> 'terminal' OR incarnation IS NOT NULL)
     )
   `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_layout_node_revisions (
+      scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+      canvas_id TEXT NOT NULL CHECK (char_length(canvas_id) BETWEEN 1 AND 256),
+      node_id TEXT NOT NULL CHECK (char_length(node_id) BETWEEN 1 AND 128),
+      revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (scope_id, canvas_id, node_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_project_view_states (
+      scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+      canvas_id TEXT NOT NULL CHECK (char_length(canvas_id) BETWEEN 1 AND 256),
+      actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+      state JSONB NOT NULL CHECK (jsonb_typeof(state) = 'object'),
+      revision BIGINT NOT NULL CHECK (revision > 0),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (scope_id, canvas_id, actor_id)
+    )
+  `.execute(db);
 
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS actor_id TEXT`.execute(db);
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS purpose TEXT`.execute(db);
@@ -465,6 +505,14 @@ export async function bootstrapCollaborationDatabase(
     ON collaboration_resource_bindings(project_scope_id, readiness)
   `.execute(db);
   await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_layout_nodes
+    ON collaboration_layout_node_revisions(scope_id, canvas_id)
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_project_view_actor
+    ON collaboration_project_view_states(actor_id, updated_at DESC)
+  `.execute(db);
+  await sql`
     INSERT INTO collaboration_schema_migrations (version)
     VALUES (1)
     ON CONFLICT (version) DO NOTHING
@@ -477,6 +525,11 @@ export async function bootstrapCollaborationDatabase(
   await sql`
     INSERT INTO collaboration_schema_migrations (version)
     VALUES (3)
+    ON CONFLICT (version) DO NOTHING
+  `.execute(db);
+  await sql`
+    INSERT INTO collaboration_schema_migrations (version)
+    VALUES (4)
     ON CONFLICT (version) DO NOTHING
   `.execute(db);
 }

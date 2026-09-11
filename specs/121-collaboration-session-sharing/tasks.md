@@ -253,12 +253,12 @@
 ### Tests first
 
 - [x] T101 [P] [US6] (PR5) Write red scoped app-bridge, credential isolation, unsafe-app unavailable, and shared app-data tests in `tests/gateway/collaboration-project-apps.test.ts`
-- [ ] T102 [P] [US6] (PR5) Write red targeted layout revision and member-private viewport/focus/selection tests in `tests/gateway/collaboration-project-layout.test.ts`
+- [x] T102 [P] [US6] (PR5) Write red targeted layout revision and member-private viewport/focus/selection tests in `tests/gateway/collaboration-project-layout.test.ts`
 
 ### Implementation
 
 - [x] T103 [US6] (PR5) Implement role-aware project app/data actions through the scoped MatrixOS bridge without personal credentials in `packages/gateway/src/collaboration/project-app-adapter.ts`
-- [ ] T104 [US6] (PR5) Implement targeted shared layout updates and separate member-private presentation state in `packages/gateway/src/collaboration/project-layout-adapter.ts`
+- [x] T104 [US6] (PR5) Implement targeted shared layout updates and separate member-private presentation state in `packages/gateway/src/collaboration/project-layout-adapter.ts`
 - [ ] T105 [US6] (PR6) Expose shared app/layout capability and safe unavailable states through common project presentation derivation in `packages/ui/src/collaboration/project-state.ts`
 
 **Checkpoint**: M4 preserves the accepted shared-layout model and personal presentation separation.
