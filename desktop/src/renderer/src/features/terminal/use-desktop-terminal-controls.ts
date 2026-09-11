@@ -15,7 +15,6 @@ interface DesktopTerminalControlsOptions {
   chatId?: string;
   active: boolean;
   socketState: ShellSocketState;
-  leaseRevoked: boolean;
   isMac: boolean;
   attachmentRef: RefObject<ActiveAttachment | null>;
   termRef: RefObject<{ focus(): void } | null>;
@@ -28,7 +27,6 @@ export function useDesktopTerminalControls({
   chatId,
   active,
   socketState,
-  leaseRevoked,
   isMac,
   attachmentRef,
   termRef,
@@ -55,8 +53,7 @@ export function useDesktopTerminalControls({
         : null,
     [api, chatId],
   );
-  const enabled =
-    active && socketState === "attached" && !leaseRevoked && api !== null;
+  const enabled = active && socketState === "attached" && api !== null;
   const sendInput = useCallback(
     (data: string) => {
       const attachment = attachmentRef.current;

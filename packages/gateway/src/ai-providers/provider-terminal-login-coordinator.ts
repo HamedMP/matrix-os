@@ -3,7 +3,8 @@ import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ProviderConnectionAttemptSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import type { ShellRegistry } from "../shell/registry.js";
+import type { AgentKind } from "../shell/agent-session-state.js";
+import type { ShellAgentLiveness } from "../shell/registry.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import { writeProviderJsonAtomic } from "./provider-settings-persistence.js";
 import type { ProviderLoginCoordinator } from "./provider-settings-coordinators.js";
@@ -30,8 +31,19 @@ const ReceiptDocumentSchema = z.object({
 
 type LoginHarness = Parameters<ProviderLoginCoordinator["supportedMethods"]>[0];
 type LoginInput = Parameters<ProviderLoginCoordinator["startLogin"]>[0];
-type LoginRegistry = Pick<ShellRegistry,
-  "create" | "get" | "delete" | "rename" | "observeAgentLiveness">;
+interface LoginRegistry {
+  create(input: {
+    name: string;
+    cwd?: string;
+    cmd?: string;
+    agent?: AgentKind;
+    exclusive?: boolean;
+  }): Promise<{ name: string }>;
+  get(name: string): Promise<{ name: string }>;
+  delete(name: string, options?: { force?: boolean }): Promise<void>;
+  rename(name: string, nextName: string): Promise<{ name: string }>;
+  observeAgentLiveness(name: string, agent: AgentKind): Promise<ShellAgentLiveness>;
+}
 type ReceiptDocument = z.infer<typeof ReceiptDocumentSchema>;
 type ReceiptWriter = (path: string, value: ReceiptDocument) => Promise<void>;
 

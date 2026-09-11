@@ -4,9 +4,8 @@ import { link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile 
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { resolveWithinHome } from "../path-security.js";
-import { createTerminalCapacityAdmission } from "./terminal-runtime-capacity.js";
-import { probeKeeperReadiness } from "./terminal-runtime-readiness.js";
+import { createTerminalCapacityAdmission } from "./user-systemd-capacity.js";
+import { probeKeeperReadiness } from "./user-systemd-readiness.js";
 
 const execFileAsync = promisify(execFile);
 const RuntimeIdSchema = z.string().regex(/^rt_[0-9a-f]{32}$/);
@@ -67,6 +66,15 @@ const MAX_ORPHAN_SWEEP_CANDIDATES = 32;
 const MAX_ORPHAN_SWEEP_CONCURRENCY = 8;
 const MAX_TERMINAL_RUNTIME_ASSET_BYTES = 256 * 1024 * 1024;
 const MAX_USER_UNIT_BYTES = 64 * 1024;
+
+function resolveWithinHome(homePath: string, requestedPath: string): string | null {
+  const base = resolve(homePath);
+  const target = resolve(base, requestedPath);
+  const rel = relative(base, target);
+  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel))
+    ? target
+    : null;
+}
 
 async function requireInstalledDirectory(path: string): Promise<void> {
   const stats = await lstat(path);

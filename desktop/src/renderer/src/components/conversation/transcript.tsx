@@ -434,7 +434,10 @@ function ConversationTurn({
           callbacks={callbacks}
           showMetadata={!turn.active}
           streaming={turn.active}
-          animateOnMount={!initialFinalIds.has(turn.final.id)}
+          animateOnMount={
+            !initialFinalIds.has(turn.final.id)
+            && !(turn.final.kind === "message" && turn.final.wasStreamed)
+          }
         />
       ) : null}
     </>

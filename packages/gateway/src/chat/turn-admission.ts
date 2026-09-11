@@ -9,7 +9,8 @@ import {
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
-import { ChatNotFoundError } from "./errors.js";
+import { ChatBusyError, ChatNotFoundError } from "./errors.js";
+import { dispatchAdmissionKey } from "./dispatch-ownership.js";
 import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
 import type { CanonicalChatProviderRegistry, CanonicalChatProviderAdapter } from "./provider-adapter.js";
 import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./execution-root.js";
@@ -29,8 +30,10 @@ export interface TurnAdmissionOptions {
   reservePendingDispatch(runId: string): void;
   releasePendingDispatch(runId: string): void;
   atCapacity(owner: ChatOwner): boolean;
+  hasStoppingExecution(owner: ChatOwner, chatId: string, admissionKey?: string): boolean;
   startDispatch(owner: ChatOwner, message: CanonicalChatMessage, run: CanonicalChatRun,
-    adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown): void;
+    adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown,
+    promptOverride?: string, admissionKey?: string): void;
 }
 
 const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
@@ -43,6 +46,10 @@ export async function admitCanonicalTurn(
     await deps.assertPersonalExecutionAllowed(owner, chatId);
     await deps.reconcileActiveRuns(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
+    const admissionKey = dispatchAdmissionKey("turn", input.clientRequestId);
+    if (deps.hasStoppingExecution(owner, chatId, admissionKey)) {
+      return mapRepositoryError(new ChatBusyError(chatId));
+    }
     const record = await deps.repository.get(owner, chatId);
     if (!record) return mapRepositoryError(new ChatNotFoundError(chatId));
     let prepared;
@@ -190,13 +197,15 @@ export async function admitCanonicalTurn(
 
     try {
       if (!admitted.alreadyAccepted) {
-        if (deps.atCapacity(owner)) {
+        const stopping = deps.hasStoppingExecution(owner, chatId);
+        if (stopping || deps.atCapacity(owner)) {
           await deps.repository.finishRun(owner, {
             chatId,
             runId: admitted.run.id,
             outcome: "failed",
             completedAt: timestamp,
           });
+          if (stopping) return mapRepositoryError(new ChatBusyError(chatId));
           throw new CanonicalChatOrchestrationError(
             safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
             503,
@@ -209,6 +218,8 @@ export async function admitCanonicalTurn(
           adapter,
           resolvedRoot,
           resumeState,
+          undefined,
+          admissionKey,
         );
       }
       return CanonicalChatTurnAdmissionResponseSchema.parse({

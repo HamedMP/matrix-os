@@ -14,6 +14,7 @@ const pngBytes = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
   0x00, 0x00, 0x00, 0x0d,
 ]);
+const TERMINAL_REF_KEY = `tws_${"6".repeat(32)}:tt_${"7".repeat(32)}`;
 
 describe("cli/rich-paste", () => {
   let tempDir: string;
@@ -39,12 +40,14 @@ describe("cli/rich-paste", () => {
     };
   }
 
-  it("sanitizes non-ASCII upload filenames before sending headers", async () => {
+  it("sanitizes non-ASCII upload filenames in the workspace-tab JSON request", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.png",
-      path: "projects/.matrix-terminal-pastes/2026-07-10/paste.png",
-      mimeType: "image/png",
-      size: pngBytes.byteLength,
+      assets: [{
+        terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+        path: "projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+        mimeType: "image/png",
+        size: pngBytes.byteLength,
+      }],
     }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
@@ -55,7 +58,7 @@ describe("cli/rich-paste", () => {
     });
 
     await expect(client.uploadPasteAssets({
-      sessionName: "codex-c",
+      sessionName: TERMINAL_REF_KEY,
       transactionId: "tx-1",
       assets: [{
         name: "Screenshot 2026-07-09 at 5.13.48\u202fPM.png",
@@ -64,17 +67,22 @@ describe("cli/rich-paste", () => {
       }],
     })).resolves.toHaveLength(1);
 
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
-    expect(headers["X-Matrix-Filename"]).toBe("Screenshot-2026-07-09-at-5.13.48-PM.png");
-    expect(() => new Headers({ "X-Matrix-Filename": headers["X-Matrix-Filename"] })).not.toThrow();
+    const request = fetchMock.mock.calls[0];
+    expect(request?.[0]).toContain("/api/terminal/workspaces/tws_");
+    expect(request?.[0]).toContain("/tabs/tt_");
+    const payload = JSON.parse(String(request?.[1]?.body));
+    expect(payload.assets[0].name).toBe("Screenshot-2026-07-09-at-5.13.48-PM.png");
+    expect(() => new Headers({ "X-Matrix-Filename": payload.assets[0].name })).not.toThrow();
   });
 
   it("uses MIME-specific fallback upload filenames when sanitizing removes the basename", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.webp",
-      path: "projects/.matrix-terminal-pastes/2026-07-10/paste.webp",
-      mimeType: "image/webp",
-      size: 12,
+      assets: [{
+        terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.webp",
+        path: "projects/.matrix-terminal-pastes/2026-07-10/paste.webp",
+        mimeType: "image/webp",
+        size: 12,
+      }],
     }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
@@ -85,7 +93,7 @@ describe("cli/rich-paste", () => {
     });
 
     await client.uploadPasteAssets({
-      sessionName: "codex-c",
+      sessionName: TERMINAL_REF_KEY,
       transactionId: "tx-1",
       assets: [{
         name: "\u202f.webp",
@@ -94,16 +102,18 @@ describe("cli/rich-paste", () => {
       }],
     });
 
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
-    expect(headers["X-Matrix-Filename"]).toBe("paste.webp");
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(payload.assets[0].name).toBe("paste.webp");
   });
 
   it("trims separators after truncating long upload filenames", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.png",
-      path: "projects/.matrix-terminal-pastes/2026-07-10/paste.png",
-      mimeType: "image/png",
-      size: pngBytes.byteLength,
+      assets: [{
+        terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+        path: "projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+        mimeType: "image/png",
+        size: pngBytes.byteLength,
+      }],
     }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
@@ -114,7 +124,7 @@ describe("cli/rich-paste", () => {
     });
 
     await client.uploadPasteAssets({
-      sessionName: "codex-c",
+      sessionName: TERMINAL_REF_KEY,
       transactionId: "tx-1",
       assets: [{
         name: `${"a".repeat(250)} ${"b".repeat(10)}.png`,
@@ -123,8 +133,8 @@ describe("cli/rich-paste", () => {
       }],
     });
 
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
-    expect(headers["X-Matrix-Filename"]).toBe(`${"a".repeat(250)}.png`);
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(payload.assets[0].name).toBe(`${"a".repeat(250)}.png`);
   });
 
   it("rewrites quoted image paths with spaces while preserving surrounding prompt text", async () => {

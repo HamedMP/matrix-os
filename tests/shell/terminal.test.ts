@@ -31,73 +31,74 @@ class MockTerminalWebSocket {
 }
 
 describe("Terminal WebSocket protocol", () => {
+  const terminalRef = {
+    workspaceId: `tws_${"a".repeat(32)}`,
+    tabId: `tt_${"b".repeat(32)}`,
+  };
+  const refKey = `${terminalRef.workspaceId}:${terminalRef.tabId}`;
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("sends input messages with correct shape", () => {
-    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal");
-    ws.send(JSON.stringify({ type: "input", data: "ls\r" }));
+    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal/tab");
+    ws.send(JSON.stringify({ type: "input", terminalRef, data: "ls\r" }));
 
     const sent = JSON.parse(ws.sent[0]);
     expect(sent.type).toBe("input");
     expect(sent.data).toBe("ls\r");
+    expect(sent.terminalRef).toEqual(terminalRef);
   });
 
   it("sends resize messages with cols and rows", () => {
-    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal");
-    ws.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
+    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal/tab");
+    ws.send(JSON.stringify({ type: "resize", terminalRef, mode: "soft", size: { cols: 80, rows: 24 } }));
 
     const sent = JSON.parse(ws.sent[0]);
     expect(sent.type).toBe("resize");
-    expect(sent.cols).toBe(80);
-    expect(sent.rows).toBe(24);
+    expect(sent.mode).toBe("soft");
+    expect(sent.size).toEqual({ cols: 80, rows: 24 });
   });
 
   it("receives output messages from server", () => {
-    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal");
+    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal/tab");
     const received: unknown[] = [];
 
     ws.onmessage = (evt) => {
       received.push(JSON.parse(evt.data));
     };
 
-    ws.simulateMessage({ type: "output", data: "hello world\r\n" });
+    ws.simulateMessage({ type: "output", terminalRef, revision: 3, seq: 8, data: "hello world\r\n" });
 
     expect(received).toHaveLength(1);
-    expect(received[0]).toEqual({ type: "output", data: "hello world\r\n" });
+    expect(received[0]).toEqual({ type: "output", terminalRef, revision: 3, seq: 8, data: "hello world\r\n" });
   });
 
   it("receives exit messages from server", () => {
-    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal");
+    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal/tab");
     const received: unknown[] = [];
 
     ws.onmessage = (evt) => {
       received.push(JSON.parse(evt.data));
     };
 
-    ws.simulateMessage({ type: "exit", code: 0 });
+    ws.simulateMessage({ type: "exit", terminalRef, revision: 4, exitCode: 0 });
 
     expect(received).toHaveLength(1);
-    expect(received[0]).toEqual({ type: "exit", code: 0 });
+    expect(received[0]).toEqual({ type: "exit", terminalRef, revision: 4, exitCode: 0 });
   });
 
   it("connects to the terminal WebSocket endpoint", () => {
-    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal");
-    expect(ws.url).toBe("ws://localhost:4000/ws/terminal");
+    const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal/tab");
+    expect(ws.url).toBe("ws://localhost:4000/ws/terminal/tab");
   });
 
-  it("uses canonical zellij websocket paths only for shell session names", () => {
-    expect(isCanonicalShellSessionId("main")).toBe(true);
-    expect(isCanonicalShellSessionId("setup-1")).toBe(true);
-    expect(isCanonicalShellSessionId("1test")).toBe(true);
+  it("recognizes only stable workspace/tab refs and always uses the tab route", () => {
+    expect(isCanonicalShellSessionId(refKey)).toBe(true);
+    expect(isCanonicalShellSessionId("main")).toBe(false);
     expect(isCanonicalShellSessionId("term_observe_abc123")).toBe(false);
-    expect(isCanonicalShellSessionId("550e8400-e29b-41d4-a716-446655440000")).toBe(false);
-    expect(terminalWebSocketPathForSession("main")).toBe("/ws/terminal/session");
-    expect(terminalWebSocketPathForSession("1test")).toBe("/ws/terminal/session");
-    expect(terminalWebSocketPathForSession("term_observe_abc123")).toBe("/ws/terminal");
-    expect(terminalWebSocketPathForSession("550e8400-e29b-41d4-a716-446655440000")).toBe("/ws/terminal");
-    expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal");
+    expect(terminalWebSocketPathForSession(refKey)).toBe("/ws/terminal/tab");
+    expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal/tab");
   });
 
   it("uses two-word friendly terminal session names by default", () => {

@@ -30,7 +30,8 @@ if timeout --kill-after=5 60 /opt/matrix/bin/matrix-aws-cli-smoke; then
 fi
 
 healthy=false
-if systemctl is-active --quiet matrix-gateway.service \
+if systemctl is-active --quiet matrix-terminal-runtime.service \
+  && systemctl is-active --quiet matrix-gateway.service \
   && systemctl is-active --quiet matrix-shell.service \
   && systemctl is-active --quiet matrix-sync-agent.service; then
   healthy=true

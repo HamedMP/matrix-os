@@ -10,7 +10,11 @@ import {
   installSupportMessageAnalytics,
 } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
-import { NativeAppBridge, createNativeAppQueryRequester } from "./embeds/native-app-bridge";
+import {
+  NativeAppBridge,
+  createNativeAppQueryRequester,
+  createNativeAppGatewayRequester,
+} from "./embeds/native-app-bridge";
 import {
   abortCodingAgentThread,
   createCodingAgentSourcePullRequest,
@@ -243,6 +247,10 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        gatewayRequest: createNativeAppGatewayRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
         gatewayOrigin: () => auth.getGatewayOrigin(),
         request: createNativeAppQueryRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),

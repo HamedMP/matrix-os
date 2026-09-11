@@ -114,7 +114,7 @@ describe("TerminalView keyboard control wiring", () => {
     expect(terminals).toHaveLength(1);
   });
 
-  it("dispatches a split through Zellij and stops actions as soon as the lease is revoked", async () => {
+  it("dispatches repeated splits through Zellij without remounting the shared attachment", async () => {
     render(<TerminalView sessionName="session-one" chatId="chat-one" />);
     act(() => events.onState("attached"));
     await waitFor(() => expect(api.get).toHaveBeenCalled());
@@ -124,9 +124,9 @@ describe("TerminalView keyboard control wiring", () => {
       { type: "split", direction: "right" },
     );
     expect(attach).toHaveBeenCalledTimes(1);
-    act(() => events.onLeaseRevoked?.());
     await act(async () => { terminals[0].key!(new KeyboardEvent("keydown", { key: "d", metaKey: true })); });
-    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(api.post).toHaveBeenCalledTimes(2);
+    expect(attach).toHaveBeenCalledTimes(1);
     expect(terminals).toHaveLength(1);
   });
 });

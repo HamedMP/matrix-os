@@ -13,6 +13,10 @@ import {
   createNativeAppDatabase,
   type NativeAppQuery,
 } from "../shared/native-app-bridge";
+import {
+  NATIVE_APP_GATEWAY_CHANNEL,
+  createNativeAppGatewayFetch,
+} from "../shared/native-app-gateway";
 
 const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge";
 
@@ -44,7 +48,10 @@ export type OperatorBridge = typeof api;
 if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
   const database = createNativeAppDatabase((query: NativeAppQuery) =>
     ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
-  contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({ db: database }));
+  contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({
+    db: database,
+    gatewayFetch: createNativeAppGatewayFetch((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
+  }));
 } else {
   contextBridge.exposeInMainWorld("operator", api);
 }

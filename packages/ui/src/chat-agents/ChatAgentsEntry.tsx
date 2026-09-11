@@ -5,6 +5,7 @@ import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js"
 import { accountForNewIntegration } from "./recipe-integrations.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
+import { AgentAvatar } from "./AgentAvatar.js";
 import type { ChatAgentClient, ChatAgentIntegrationConnection } from "./client.js";
 import { chatAgentButtonClass, chatAgentLauncherClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "./theme.js";
 
@@ -45,21 +46,48 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
     recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
     connectionError={state.connectionError}
     change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} />;
-  return <div className="mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
-      <div className="grid gap-2 sm:grid-cols-2">
-        <button type="button" className={`${button} text-left`} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>New Agent</button>
-        {state.recipeCatalog?.enabled ? <button type="button" aria-label="Personal Daily Brief" className={`${button} min-w-0 text-left`} disabled={!state.catalog || state.agents.length >= 100}
-          onClick={() => edit("daily-brief")}><span className="block truncate" title="Personal Daily Brief">Personal Daily Brief</span><span className="mt-1 block truncate text-xs" style={muted}>Email and calendar template</span></button> : null}
-      </div>
+  return <div className="mt-6 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
+      <section aria-labelledby="agent-starters-heading" className="grid gap-2">
+        <div className="flex items-end justify-between gap-3">
+          <div><h3 id="agent-starters-heading" className="text-sm font-semibold">Add a collaborator</h3>
+            <p className="mt-0.5 text-xs" style={muted}>Start from scratch or use a working recipe.</p></div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+        <button type="button" aria-label="New Agent" className={`${button} flex min-h-20 items-center gap-3 text-left`} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-dashed text-xl" aria-hidden="true">+</span>
+          <span><span className="block font-medium">New Agent</span><span className="mt-1 block text-xs" style={muted}>Define a role and its working style</span></span>
+        </button>
+        {state.recipeCatalog?.enabled ? <button type="button" aria-label="Personal Daily Brief" className={`${button} flex min-h-20 min-w-0 items-center gap-3 text-left`} disabled={!state.catalog || state.agents.length >= 100}
+          onClick={() => edit("daily-brief")}><AgentAvatar id="template_daily_brief" name="Personal Daily Brief" size="small" /><span className="min-w-0"><span className="block truncate font-medium" title="Personal Daily Brief">Personal Daily Brief</span><span className="mt-1 block truncate text-xs" style={muted}>Email and calendar recipe</span></span></button> : null}
+        </div>
+      </section>
       {state.recipeLoading ? <p role="status" className="text-xs" style={muted}>Loading recipe templates…</p> : null}
       {state.recipeError || state.connectionError ? <div className="flex flex-wrap items-center gap-2"><p className="text-xs">{state.recipeError
         ? "Recipe templates are unavailable." : "Connection status is unavailable. Recipe account choices will ask when run."}</p>
         <button type="button" className={button} onClick={retryRecipes}>Retry recipe options</button></div> : null}
-      {!state.agents.length && !state.error ? <div className="rounded-xl border px-4 py-6 text-sm" style={muted}>No Agents yet. Create a reusable role for meeting briefs, reviews, or other work you repeat.</div> : null}
-      {state.agents.map((agent) => <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} className={`${button} flex min-w-0 max-w-full flex-col gap-1 overflow-hidden text-left`} onClick={() => edit(agent)}>
-        <span className="w-full min-w-0 truncate font-medium" title={agent.name}>{agent.name}</span>
-        <span className="w-full min-w-0 truncate text-xs" title={agent.description} style={muted}>{agent.description || "Saved Hermes role"}</span>
-      </button>)}
+      <section aria-labelledby="agent-roster-heading" className="grid gap-2">
+        <div><h3 id="agent-roster-heading" className="text-sm font-semibold">Your collaborators</h3>
+          <p className="mt-0.5 text-xs" style={muted}>Mention one in Chat when you want to hand off work.</p></div>
+        {!state.agents.length && !state.error ? <div className="rounded-xl border px-4 py-6 text-sm" style={muted}>No Agents yet. Create a reusable role for meeting briefs, reviews, or other work you repeat.</div> : null}
+        <div className="grid gap-2 sm:grid-cols-2">
+        {state.agents.map((agent) => {
+          const skills = agent.recipe?.skills.length ?? 0;
+          const integrations = agent.recipe?.integrations.length ?? 0;
+          const capabilitySummary = agent.recipe
+            ? `${skills} ${skills === 1 ? "skill" : "skills"} · ${integrations} ${integrations === 1 ? "integration" : "integrations"}`
+            : "Custom instructions";
+          return <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} className={`${button} group flex min-h-24 min-w-0 max-w-full items-center gap-3 overflow-hidden text-left`} onClick={() => edit(agent)}>
+            <AgentAvatar id={agent.id} name={agent.name} />
+            <span className="min-w-0 flex-1">
+              <span className="flex min-w-0 items-center gap-2"><span className="min-w-0 flex-1 truncate font-medium" title={agent.name}>{agent.name}</span>
+                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="Ready to mention" aria-hidden="true" /></span>
+              <span className="mt-1 block w-full min-w-0 truncate text-xs" title={agent.description} style={muted}>{agent.description || "Saved Hermes role"}</span>
+              <span className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px]" style={muted}><span>Ready to mention</span><span aria-hidden="true">·</span><span className="truncate">{capabilitySummary}</span></span>
+            </span>
+          </button>;
+        })}
+        </div>
+      </section>
     </div>;
 }
 
@@ -175,7 +203,7 @@ export function ChatAgentsPanel({ client, onClose, onSetup }: { client: ChatAgen
     </header>
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     <div className="mx-auto w-full max-w-3xl">
-    <p className="mt-2 text-sm" style={muted}>Save a role and call it with @ in any Chat. Each request runs through Hermes on this computer.</p>
+    <p className="mt-2 max-w-2xl text-sm" style={muted}>Save a role as a reusable collaborator with its own instructions, skills, and connected tools. Mention one with @ to hand off a request through Hermes on this computer.</p>
     <AgentLibraryBody state={state} models={models} edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
       setup={onSetup ? () => { onClose(); onSetup(); } : undefined} />

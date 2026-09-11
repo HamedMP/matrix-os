@@ -24,6 +24,7 @@ const INITIAL_DETAIL_MAX_RETRY_MS = 2_000;
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const ACTIVE_RUN_FALLBACK_MAX_RETRY_MS = 10_000;
 const STREAM_MESSAGE_REFRESH_COALESCE_MS = 200;
+const MAX_STREAMED_MESSAGE_IDS = 200;
 
 function detailWithRecord(
   detail: CanonicalChatDetailResponse,
@@ -74,6 +75,10 @@ export function useCanonicalChatRouteController({
   const [error, setError] = useState<string | null>(null);
   const activeChatIdRef = useRef<string | null>(initialChatId);
   const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
+  const streamedMessagesRef = useRef<{ chatId: string | null; ids: string[] }>({
+    chatId: initialChatId,
+    ids: [],
+  });
   const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
@@ -206,6 +211,17 @@ export function useCanonicalChatRouteController({
         setItems((current) => current.map((item) => item.chat.id === record.chat.id
           && item.chat.revision < record.chat.revision ? record : item));
         if (event.chatId === activeChatIdRef.current) {
+          const streamedMessageId = event.content.content.messageDelta?.message.id;
+          if (streamedMessageId) {
+            const currentStream = streamedMessagesRef.current;
+            const ids = currentStream.chatId === event.chatId
+              ? currentStream.ids.filter((id) => id !== streamedMessageId)
+              : [];
+            streamedMessagesRef.current = {
+              chatId: event.chatId,
+              ids: [...ids, streamedMessageId].slice(-MAX_STREAMED_MESSAGE_IDS),
+            };
+          }
           const current = detailRef.current;
           const next = current ? applyCanonicalChatContent(current, event.content) : null;
           if (next) {
@@ -828,6 +844,9 @@ export function useCanonicalChatRouteController({
     items,
     activeChatId,
     detail,
+    streamedMessageIds: streamedMessagesRef.current.chatId === activeChatId
+      ? streamedMessagesRef.current.ids
+      : [],
     status,
     error,
     selectChat,

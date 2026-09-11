@@ -98,6 +98,22 @@ describe("shared Agents entry", () => {
     expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe(name);
   });
 
+  it("presents saved Agents as recognizable collaborators with capability context", async () => {
+    const client = clientFixture();
+    client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipe: {
+      skills: ["matrix-integrations", "matrix-personal-daily-brief"],
+      integrations: [{ service: "gmail", accountLabel: "Work" }, { service: "google_calendar", accountLabel: "Calendar" }],
+      output: "A concise daily brief.",
+    } }] });
+    render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+
+    const row = await screen.findByRole("button", { name: "Edit Meeting helper" });
+    expect(row.querySelector('[data-agent-avatar="bot_meeting01"]')).toBeTruthy();
+    expect(row.textContent).toContain("Ready to mention");
+    expect(row.textContent).toContain("2 skills · 2 integrations");
+  });
+
 
   it("omits an unchanged unavailable model for a recipe-only edit", async () => {
     const client = clientFixture();

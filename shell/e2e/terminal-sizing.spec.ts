@@ -6,6 +6,10 @@ interface TerminalSizingState {
   confirmations: Array<{ cols: number; rows: number }>;
 }
 
+const WORKSPACE_ID = "tws_00000000000000000000000000000001";
+const TAB_ID = "tt_00000000000000000000000000000001";
+const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
+
 async function installTerminalGateway(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const state: TerminalSizingState = { declarations: [], confirmations: [] };
@@ -45,26 +49,31 @@ async function installTerminalGateway(page: Page): Promise<void> {
           state.confirmations.push(canonical);
           this.receive({
             type: "attached",
-            session: parsed.searchParams.get("session") ?? "main",
-            state: "running",
-            fromSeq: 0,
+            terminalRef: TERMINAL_REF,
             canonicalSize: canonical,
+            revision: 1,
+            nextSeq: 0,
           });
-          this.receive({ type: "replay-start", fromSeq: 0 });
-          this.receive({ type: "output", seq: 0, data: "matrix@web:~$ real rows fill this pane" });
-          this.receive({ type: "replay-end", toSeq: 0 });
+          this.receive({ type: "replay-start", terminalRef: TERMINAL_REF, revision: 1, fromSeq: 0 });
+          this.receive({ type: "output", terminalRef: TERMINAL_REF, revision: 1, seq: 0, data: "matrix@web:~$ real rows fill this pane" });
+          this.receive({ type: "replay-end", terminalRef: TERMINAL_REF, revision: 1, nextSeq: 1, toSeq: 0 });
         }, 0);
       }
 
       send(raw: string): void {
-        const frame = JSON.parse(raw) as { type?: string; cols?: number; rows?: number };
-        if (frame.type === "resize" && frame.cols && frame.rows) {
-          const canonical = { cols: frame.cols, rows: frame.rows };
+        const frame = JSON.parse(raw) as { type?: string; size?: { cols?: number; rows?: number } };
+        if (frame.type === "resize" && frame.size?.cols && frame.size.rows) {
+          const canonical = { cols: frame.size.cols, rows: frame.size.rows };
           state.declarations.push({ source: "resize", ...canonical });
           state.confirmations.push(canonical);
-          window.setTimeout(() => this.receive({ type: "canonical-size", ...canonical }), 0);
+          window.setTimeout(() => this.receive({
+            type: "canonical-size",
+            terminalRef: TERMINAL_REF,
+            revision: 2,
+            canonicalSize: canonical,
+          }), 0);
         } else if (frame.type === "ping") {
-          window.setTimeout(() => this.receive({ type: "pong" }), 0);
+          window.setTimeout(() => this.receive({ type: "pong", terminalRef: TERMINAL_REF, revision: 2 }), 0);
         }
       }
 
@@ -124,10 +133,20 @@ async function mockShellApis(page: Page): Promise<void> {
     contentType: "application/json",
     body: JSON.stringify({ token: "terminal-e2e-token", expiresAt: Date.now() + 300_000 }),
   }));
-  await page.route("**/api/terminal/sessions", (route) => route.fulfill({
+  await page.route("**/api/terminal/workspaces", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
-    body: JSON.stringify({ sessions: [{ name: "main", status: "active" }] }),
+    body: JSON.stringify({ workspaces: [{
+      id: WORKSPACE_ID,
+      scope: "main",
+      internalName: "zw_00000000000000000000000000000001",
+      canonicalSize: { cols: 120, rows: 40 },
+      status: "running",
+      revision: 1,
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:00.000Z",
+      tabs: [{ id: TAB_ID, internalName: "mt_00000000000000000000000000000001", name: "Main", cwd: "projects", status: "running", revision: 1, createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z" }],
+    }] }),
   }));
   await page.route("**/api/terminal/layout", (route) => {
     if (route.request().method() !== "GET") {
@@ -140,7 +159,7 @@ async function mockShellApis(page: Page): Promise<void> {
         tabs: [{
           id: "tab-main",
           label: "Main",
-          paneTree: { type: "pane", id: "pane-main", cwd: "projects", sessionId: "main" },
+          paneTree: { type: "pane", id: "pane-main", cwd: "projects", sessionId: `${WORKSPACE_ID}:${TAB_ID}` },
         }],
         activeTabId: "tab-main",
         sidebarOpen: false,

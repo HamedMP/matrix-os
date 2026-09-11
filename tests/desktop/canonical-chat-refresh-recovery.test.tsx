@@ -79,6 +79,7 @@ describe("Desktop event refresh recovery", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
       expect(hook.result.current.detail?.messages[0]?.parts).toEqual([{ type: "text", text: "hello" }]);
       expect(hook.result.current.detail?.record.activeRun).toBeUndefined();
+      expect(hook.result.current.streamedMessageIds).toEqual([message.id]);
       expect(getDetail).toHaveBeenCalledOnce();
     } finally { hook.unmount(); vi.useRealTimers(); }
   });

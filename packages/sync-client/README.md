@@ -37,10 +37,11 @@ curl -sL get.matrix-os.com | sh
 matrix login              # device-code flow against app.matrix-os.com
 matrix sync ~/matrixos    # start the sync daemon against the logged-in instance
 matrix run -it -- claude  # attach local TTY to Claude on your Matrix VPS
-matrix run -it -- codex   # same shared zellij session primitive for Codex
-matrix run -it --session setup -- gh auth login
+matrix run -it -- codex   # creates a tab in the current project's workspace
+matrix run -it --project main -- gh auth login
+matrix shell list         # list tabs grouped by project
+matrix shell connect --project main --tab <tab-id>
 matrix forward 5173       # forward a Matrix computer dev server to local loopback
-mos shell attach setup    # reattach the same session from local CLI or web terminal
 matrix mcp serve          # expose Matrix computers to a coding agent over stdio
 matrix peers              # list connected peers
 matrix logout             # clear local credentials
@@ -48,9 +49,10 @@ matrix logout             # clear local credentials
 
 All three bin entries are installed: `matrix`, `matrixos`, `mos`.
 
-Use `mos shell attach <session>` rather than running `zellij attach` directly
-when handing a live session between Matrix surfaces. The CLI command
-participates in gateway ownership, size coordination, and renderer revocation.
+Use `matrix shell connect --project <project> --tab <tab-id>` rather than
+running `zellij attach` directly when handing a live tab between Matrix OS
+views. The CLI command participates in gateway ownership, size coordination,
+and renderer attachment lifecycle.
 See [Terminal session ownership](../../docs/dev/terminal-session-ownership.md)
 for supported clients and the single-gateway deployment constraint.
 

@@ -55,6 +55,50 @@ vi.mock("@/stores/terminal-settings", () => {
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
 
+const WORKSPACE_ID = `tws_${"3".repeat(32)}`;
+const TAB_ID = `tt_${"4".repeat(32)}`;
+const CREATED_TAB_ID = `tt_${"5".repeat(32)}`;
+
+function terminalWorkspaceResponse() {
+  return {
+    id: WORKSPACE_ID,
+    scope: "main",
+    projectId: null,
+    canonicalSize: { cols: 120, rows: 32 },
+    status: "running",
+    tabs: [{
+      id: TAB_ID,
+      workspaceId: WORKSPACE_ID,
+      zellijTabId: 1,
+      zellijPaneId: 2,
+      name: "Terminal",
+      cwd: "",
+      status: "running",
+      revision: 1,
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:00.000Z",
+    }],
+    createdAt: "2026-08-11T00:00:00.000Z",
+    updatedAt: "2026-08-11T00:00:00.000Z",
+  };
+}
+
+function terminalRouteResponse(url: string, init?: RequestInit): Response | null {
+  if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
+    return new Response(JSON.stringify({ tabs: [] }));
+  }
+  if (url.endsWith("/api/terminal/workspaces") && init?.method !== "POST") {
+    return new Response(JSON.stringify({ workspaces: [terminalWorkspaceResponse()] }));
+  }
+  if (url.endsWith("/api/terminal/workspaces/ensure") && init?.method === "POST") {
+    return new Response(JSON.stringify({ workspace: terminalWorkspaceResponse() }));
+  }
+  if (url.endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST") {
+    return new Response(JSON.stringify({ tab: { id: CREATED_TAB_ID } }), { status: 201 });
+  }
+  return null;
+}
+
 describe("TerminalApp mobile actions", () => {
   beforeEach(() => {
     class ResizeObserverMock {
@@ -76,20 +120,8 @@ describe("TerminalApp mobile actions", () => {
           }),
         });
       }
-      if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
-        return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
-      }
-      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            sessions: [{ name: "main", status: "active" }],
-          }),
-        });
-      }
-      if (url.endsWith("/api/terminal/sessions")) {
-        return Promise.resolve({ ok: true, status: 201, json: async () => ({}) });
-      }
+      const terminalResponse = terminalRouteResponse(url, init);
+      if (terminalResponse) return Promise.resolve(terminalResponse);
       return Promise.resolve({ ok: true, json: async () => ({}) });
     }));
   });
@@ -134,7 +166,7 @@ describe("TerminalApp mobile actions", () => {
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input, init]) => (
-        String(input).endsWith("/api/terminal/sessions") &&
+        String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) &&
         init?.method === "POST" &&
         typeof init.body === "string"
       ))).toBe(true);
@@ -196,19 +228,8 @@ describe("TerminalApp mobile actions", () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/agents")) return pendingAgentStatus;
-      if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
-        return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
-      }
-      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({ sessions: [{ name: "main", status: "active" }] }),
-        });
-      }
-      if (url.endsWith("/api/terminal/sessions")) {
-        const body = typeof init?.body === "string" ? JSON.parse(init.body) as { name?: string } : {};
-        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name }) });
-      }
+      const terminalResponse = terminalRouteResponse(url, init);
+      if (terminalResponse) return Promise.resolve(terminalResponse);
       return Promise.resolve({ ok: true, json: async () => ({}) });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -223,10 +244,12 @@ describe("TerminalApp mobile actions", () => {
 
     await waitFor(() => {
       const payloads = fetchMock.mock.calls
-        .filter(([input, init]) => String(input).endsWith("/api/terminal/sessions") && init?.method === "POST")
-        .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as { cmd?: string });
-      expect(payloads).toEqual(expect.arrayContaining([expect.objectContaining({ cmd: "claude" })]));
-      expect(payloads.some((payload) => payload.cmd?.includes("npm install"))).toBe(false);
+        .filter(([input, init]) => String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST")
+        .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as { command?: string[] });
+      expect(payloads).toEqual(expect.arrayContaining([
+        expect.objectContaining({ command: ["sh", "-lc", "claude"] }),
+      ]));
+      expect(payloads.some((payload) => payload.command?.some((part) => part.includes("npm install")))).toBe(false);
     });
   });
 
@@ -246,15 +269,8 @@ describe("TerminalApp mobile actions", () => {
           }),
         });
       }
-      if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
-        return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
-      }
-      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({ sessions: [{ name: "main", status: "active" }] }),
-        });
-      }
+      const terminalResponse = terminalRouteResponse(url, init);
+      if (terminalResponse) return Promise.resolve(terminalResponse);
       return Promise.resolve({ ok: true, status: 201, json: async () => ({}) });
     }));
 

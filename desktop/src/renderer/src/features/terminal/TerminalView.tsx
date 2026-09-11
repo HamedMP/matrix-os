@@ -17,6 +17,7 @@ import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
+import { parseTerminalRefKey } from "../../lib/terminal-workspaces";
 import { getAttachManager } from "./terminal-runtime";
 import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./TerminalLinkContextMenu";
 import {
@@ -130,6 +131,15 @@ function clipboardSuccessFeedback(
   return current && current.sequence > sequence ? current : null;
 }
 
+async function terminalPasteFileBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+  }
+  return btoa(binary);
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component -- This component owns one xterm instance and its coupled attach, resize, link, paste, and teardown lifecycle. Splitting those effects across child components would obscure single-resource ownership; visual theme helpers and menus remain extracted.
 export default function TerminalView({
   sessionName,
@@ -164,8 +174,6 @@ export default function TerminalView({
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
-  const [leaseRevoked, setLeaseRevoked] = useState(false);
-  const [leaseAttempt, setLeaseAttempt] = useState(0);
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
   const closeTerminalContextMenu = useCallback(() => {
     setTerminalContextMenu(null);
@@ -204,11 +212,10 @@ export default function TerminalView({
     endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
-    setLeaseRevoked(false);
   }
 
   const controls = useDesktopTerminalControls({
-    api, sessionName, chatId, active, socketState, leaseRevoked,
+    api, sessionName, chatId, active, socketState,
     isMac: navigator.platform.startsWith("Mac"),
     attachmentRef, termRef,
   });
@@ -509,14 +516,6 @@ export default function TerminalView({
           terminal.resize(size.cols, size.rows);
         }
       },
-      onLeaseRevoked: () => {
-        endedRef.current = true;
-        setLeaseRevoked(true);
-        setSocketState("ended");
-      },
-      onPresentationReset: () => {
-        terminal.reset();
-      },
       onGap: () => {
         terminal.clear();
         terminal.write(GAP_MARKER);
@@ -544,7 +543,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, leaseAttempt]);
+  }, [sessionName, chatId, active]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -591,24 +590,27 @@ export default function TerminalView({
         return;
       }
       try {
+        const terminalRef = parseTerminalRefKey(sessionName);
+        if (!terminalRef) throw new Error("invalid terminal reference");
         const paths = await Promise.all(files.map(async ({ file, mimeType }) => {
-          const response = await api.postBytes<{ terminalPath?: unknown }>(
-            `/api/terminal/sessions/${encodeURIComponent(sessionName)}/paste-assets`,
-            file,
-            {
-              "Content-Type": mimeType,
-              "X-Matrix-Filename": safeTerminalUploadFilename(file.name),
-            },
+          const response = await api.post<{ assets?: Array<{ terminalPath?: unknown }> }>(
+            `/api/terminal/workspaces/${encodeURIComponent(terminalRef.workspaceId)}/tabs/${encodeURIComponent(terminalRef.tabId)}/paste-assets`,
+            { assets: [{
+              name: safeTerminalUploadFilename(file.name),
+              mimeType,
+              dataBase64: await terminalPasteFileBase64(file),
+            }] },
             { timeoutMs: 30_000 },
           );
+          const terminalPath = response.assets?.[0]?.terminalPath;
           if (
-            typeof response.terminalPath !== "string"
-            || !response.terminalPath.startsWith("/home/matrix/home/")
-            || /[\u0000\r\n]/.test(response.terminalPath)
+            typeof terminalPath !== "string"
+            || !terminalPath.startsWith("/home/matrix/home/")
+            || /[\u0000\r\n]/.test(terminalPath)
           ) {
             throw new Error("invalid terminal paste response");
           }
-          return response.terminalPath;
+          return terminalPath;
         }));
         if (paths.length === 0 || !isCurrentOperation(operation, initiatingAttachment)) return;
         const payload = bracketTerminalPaths(paths);
@@ -708,17 +710,6 @@ export default function TerminalView({
   }, [active, api, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
-    if (leaseRevoked) {
-      return {
-        text: "Live on another device.",
-        action: <Button variant="primary" onClick={() => {
-          endedRef.current = false;
-          setLeaseRevoked(false);
-          setSocketState("connecting");
-          setLeaseAttempt((attempt) => attempt + 1);
-        }}>Resume here</Button>,
-      };
-    }
     if (socketState === "fatal") {
       return { text: "This session has ended on your computer.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }

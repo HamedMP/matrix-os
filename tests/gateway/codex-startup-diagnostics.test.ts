@@ -7,11 +7,8 @@ import { createAgentSandbox } from "../../packages/gateway/src/agent-sandbox.js"
 import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
-import { SessionRegistry } from "../../packages/gateway/src/session-registry.js";
 import { createSessionRuntimeBridge } from "../../packages/gateway/src/session-runtime-bridge.js";
 import { createWorkspaceSessionOrchestrator } from "../../packages/gateway/src/workspace-session-orchestrator.js";
-import { createUserSystemdTerminalRuntime } from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
-import { createUserSystemdZellijRuntime } from "../../packages/gateway/src/user-systemd-zellij-runtime.js";
 import { createWorkspaceEventPublisher } from "../../packages/gateway/src/workspace-event-publisher.js";
 import { createWorkspaceEventStore } from "../../packages/gateway/src/workspace-events.js";
 import { createCodingAgentSessionStopReconciler } from "../../packages/gateway/src/coding-agents/session-stop-reconciler.js";
@@ -24,35 +21,55 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { KyselyPGlite } from "kysely-pglite";
 import { catalog, owner, principal } from "./helpers/canonical-codex-catalog.js";
 
+const WORKSPACE_ID = "tws_00000000000000000000000000000001";
+
+function createTestTerminalRuntime(options: {
+  operations?: string[];
+  startError?: Error;
+  stopFails?: boolean;
+} = {}) {
+  const tabs = new Map<string, { id: string; workspaceId: string; status: "running" }>();
+  let nextTabId = 1;
+  return {
+    ensureWorkspace: async () => {
+      options.operations?.push("ensure");
+      if (options.startError) throw options.startError;
+      return { id: WORKSPACE_ID };
+    },
+    createTab: async () => {
+      options.operations?.push("create");
+      const id = `tt_${nextTabId.toString(16).padStart(32, "0")}`;
+      nextTabId += 1;
+      const tab = { id, workspaceId: WORKSPACE_ID, status: "running" as const };
+      tabs.set(id, tab);
+      return tab;
+    },
+    terminateTab: async ({ tabId }: { tabId: string }) => {
+      options.operations?.push("terminate");
+      if (options.stopFails) throw new Error("Stop failed");
+      tabs.delete(tabId);
+    },
+    writeInput: async () => undefined,
+    listWorkspaces: async () => [{ id: WORKSPACE_ID, tabs: [...tabs.values()] }],
+  };
+}
+
 describe("Codex startup failure evidence", () => {
-  it.each([false, true])("requires the actual runtime stop, not an interrupt ACK (stop fails=%s)", async (stopFails) => {
+  it.each([false, true])("requires actual terminal tab termination, not an interrupt ACK (stop fails=%s)", async (stopFails) => {
     const homePath = await realpath(await mkdtemp(join(tmpdir(), "codex-stop-")));
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const commands: string[][] = [];
-    const generation = `gen_${"b".repeat(64)}`;
-    let active = false;
-    const controller = createUserSystemdTerminalRuntime({ homePath, generation,
-      async runCommand(_command, args) {
-        commands.push([...args]);
-        if (args.includes("start")) active = true;
-        if (args.includes("stop")) {
-          if (stopFails) throw new Error("Stop failed");
-          active = false;
-        }
-        return { stdout: active ? "active\n" : "inactive\n", stderr: "" };
-      }, readinessProbe: async () => true });
-    const runtime = createUserSystemdZellijRuntime({ homePath, generation, controller });
+    const operations: string[] = [];
+    const terminalRuntime = createTestTerminalRuntime({ operations, stopFails });
     const worktreeManager = createWorktreeManager({ homePath });
     const manager = createAgentSessionManager({ homePath, worktreeManager,
-      agentLauncher: createAgentLauncher(), zellijRuntime: runtime });
-    const registry = new SessionRegistry(homePath, { autoRestore: false });
+      agentLauncher: createAgentLauncher(), terminalRuntime });
     const reconciler = createCodingAgentSessionStopReconciler();
     const publisher = createWorkspaceEventPublisher({ eventStore: createWorkspaceEventStore({ homePath }),
       onSessionStopped: (session) => reconciler.handleSessionStopped(session) });
     const workspace = createWorkspaceSessionOrchestrator({ homePath,
       projectManager: createProjectManager({ homePath }), worktreeManager,
       agentSessionManager: manager, agentSandbox: createAgentSandbox({ homePath, getUid: () => 1000 }),
-      sessionRuntimeBridge: createSessionRuntimeBridge({ homePath, registry, zellijRuntime: runtime }), eventPublisher: publisher });
+      sessionRuntimeBridge: createSessionRuntimeBridge(), eventPublisher: publisher });
     const interruptTurn = vi.fn(async () => undefined);
     const provider = createWorkspaceCodingAgentProvider({ providerId: "codex", agent: "codex", runtime: workspace,
       codexControl: { interruptTurn, submitTurn: async () => undefined, steerTurn: async () => undefined,
@@ -75,8 +92,8 @@ describe("Codex startup failure evidence", () => {
       };
       if (stopFails) await expect(consume()).rejects.toThrow();
       else await consume();
-      expect(commands.some((args) => args.includes("start"))).toBe(true);
-      expect(commands.some((args) => args.includes("stop"))).toBe(true);
+      expect(operations).toContain("create");
+      expect(operations).toContain("terminate");
       expect(interruptTurn).not.toHaveBeenCalled();
       expect(cleanupUnconfirmed).toBe(stopFails);
       expect((await threads.getThread(principal, conversationId)).thread.status).toBe(stopFails ? "running" : "aborted");
@@ -92,21 +109,16 @@ describe("Codex startup failure evidence", () => {
   it("retains the failed system launch cause correlated to the thread without leaking it to Chat", async () => {
     const homePath = await realpath(await mkdtemp(join(tmpdir(), "codex-startup-")));
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const generation = `gen_${"a".repeat(64)}`;
-    const controller = createUserSystemdTerminalRuntime({ homePath, generation,
-      async runCommand(_command, args) {
-        if (args.includes("start")) throw Object.assign(new Error("spawn denied token=private-token /opt/private"), { code: "EAGAIN" });
-        return { stdout: "inactive\n", stderr: "" };
-      }, readinessProbe: async () => true });
-    const runtime = createUserSystemdZellijRuntime({ homePath, generation, controller });
+    const terminalRuntime = createTestTerminalRuntime({
+      startError: Object.assign(new Error("spawn denied token=private-token /opt/private"), { code: "EAGAIN" }),
+    });
     const worktreeManager = createWorktreeManager({ homePath });
     const manager = createAgentSessionManager({ homePath, worktreeManager,
-      agentLauncher: createAgentLauncher(), zellijRuntime: runtime });
-    const registry = new SessionRegistry(homePath, { autoRestore: false });
+      agentLauncher: createAgentLauncher(), terminalRuntime });
     const workspace = createWorkspaceSessionOrchestrator({ homePath,
       projectManager: createProjectManager({ homePath }), worktreeManager,
       agentSessionManager: manager, agentSandbox: createAgentSandbox({ homePath, getUid: () => 1000 }),
-      sessionRuntimeBridge: createSessionRuntimeBridge({ homePath, registry, zellijRuntime: runtime }) });
+      sessionRuntimeBridge: createSessionRuntimeBridge() });
     const provider = createWorkspaceCodingAgentProvider({ providerId: "codex", agent: "codex", runtime: workspace });
     const threads = createCodingAgentThreadStore({ homePath, providers: [provider] });
     const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads });

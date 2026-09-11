@@ -275,7 +275,10 @@ export function CanonicalChatWorkspace({
   const composerHasInput = Boolean(
     draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
   );
-  const transcript = controller.detail ? canonicalChatPresentation(controller.detail) : [];
+  const transcript = controller.detail ? canonicalChatPresentation({
+    ...controller.detail,
+    streamedMessageIds: controller.streamedMessageIds,
+  }) : [];
 
   useEffect(() => {
     if (!editingQueuedTurn || !controller.detail) return;

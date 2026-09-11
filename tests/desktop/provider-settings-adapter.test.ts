@@ -13,6 +13,25 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 const checkedAt = "2026-08-30T10:00:00.000Z";
+const providerWorkspaceId = "tws_11111111111111111111111111111111";
+const providerTabId = "tt_22222222222222222222222222222222";
+const providerTerminalRef = `${providerWorkspaceId}:${providerTabId}`;
+
+function providerTerminalWorkspaces(status: "running" | "exited" = "running") {
+  return {
+    workspaces: [{
+      id: providerWorkspaceId,
+      revision: 1,
+      tabs: [{
+        id: providerTabId,
+        revision: 1,
+        name: "provider-login",
+        cwd: "projects",
+        status,
+      }],
+    }],
+  };
+}
 
 function snapshot(revision = 1): ProviderSettingsSnapshot {
   return {
@@ -195,36 +214,32 @@ describe("desktop provider connection actions", () => {
     })).toBe("signed-in|alice|https://app.matrix-os.com|vm-2|7");
   });
 
-  it("opens and requests only the exact existing canonical Terminal session without creating one", async () => {
-    const get = vi.fn().mockResolvedValue({
-      sessions: [{ name: "provider-login", status: "active", cwd: "projects" }],
-    });
+  it("opens and requests only the exact existing canonical Terminal tab without creating one", async () => {
+    const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces());
     const post = vi.fn();
-    const opened = await openExistingProviderTerminalSession(api({ get, post }), "provider-login");
+    const opened = await openExistingProviderTerminalSession(api({ get, post }), providerTerminalRef);
 
     expect(opened).toBe(true);
-    expect(get).toHaveBeenCalledWith("/api/terminal/sessions");
+    expect(get).toHaveBeenCalledWith("/api/terminal/workspaces");
     expect(post).not.toHaveBeenCalled();
     expect(useTabs.getState().tabs).toEqual([expect.objectContaining({ kind: "terminals", title: "Terminal" })]);
-    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("provider-login");
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
   });
 
-  it("rejects invalid, missing, or exited sessions without opening Terminal", async () => {
-    const get = vi.fn().mockResolvedValue({ sessions: [{ name: "provider-login", status: "exited" }] });
+  it("rejects invalid, missing, or exited terminal refs without opening Terminal", async () => {
+    const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces("exited"));
     const client = api({ get });
     await expect(openExistingProviderTerminalSession(client, "../../secret")).resolves.toBe(false);
-    await expect(openExistingProviderTerminalSession(client, "provider-login")).resolves.toBe(false);
+    await expect(openExistingProviderTerminalSession(client, providerTerminalRef)).resolves.toBe(false);
     expect(useTabs.getState().tabs).toEqual([]);
     expect(get).toHaveBeenCalledTimes(1);
   });
 
-  it("does not open a provider login session after the desktop identity changes", async () => {
-    const get = vi.fn().mockResolvedValue({
-      sessions: [{ name: "provider-login", status: "active", cwd: "projects" }],
-    });
+  it("does not open a provider login tab after the desktop identity changes", async () => {
+    const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces());
     await expect(openExistingProviderTerminalSession(
       api({ get }),
-      "provider-login",
+      providerTerminalRef,
       () => false,
     )).resolves.toBe(false);
     expect(useTabs.getState().tabs).toEqual([]);

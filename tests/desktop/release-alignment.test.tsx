@@ -6,6 +6,7 @@ import RuntimeCompatibilityGate from "@renderer/features/updates/RuntimeCompatib
 import { useConnection } from "@renderer/stores/connection";
 import { useUi } from "@renderer/stores/ui";
 import type { ApiClient } from "@renderer/lib/api";
+import hostInfo from "../fixtures/host-release-system-info.json";
 
 const desktopCommit = "5a33ceb47fcdd035c95d8dfedf0cd02a5209106b";
 const cloudCommit = "df546d9ee2f371ac3755550fcaed0bdd53897970";
@@ -29,6 +30,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("released Desktop and cloud content alignment", () => {
+  it("opens the real gate for a VPS response whose build sha is unknown", async () => {
+    vi.stubGlobal("operator", { invoke: vi.fn(async (channel: string) => {
+      if (channel === "app:get-version") return { version: "0.1.0",
+        source: { commit: "b".repeat(40), ancestors: [hostInfo.release.gitCommit] } };
+      if (channel === "update:check") return { status: "up-to-date", channel: "canary" };
+      return { ok: true };
+    }) });
+    const api = { get: vi.fn(async (path: string) => path === "/api/system/update"
+      ? { channel: "dev", updateAvailable: true, latest: { version: "v2026.09.10-1209" } }
+      : hostInfo), forRuntime() { return this; } } as unknown as ApiClient;
+    useConnection.setState({ api });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
+  });
   it("keeps explicit protocol recovery visible when local provenance is unavailable", async () => {
     vi.stubGlobal("operator", { invoke: vi.fn(async (channel: string) => {
       if (channel === "app:get-version") return { version: "0.1.0", source: null };

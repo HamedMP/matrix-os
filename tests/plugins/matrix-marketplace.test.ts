@@ -106,14 +106,14 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(combined).toMatch(/claude --version/);
     expect(combined).toMatch(/claude auth status/);
     expect(readSkill("matrix-github-project")).toMatch(/gh auth status/);
-    expect(combined).toMatch(/auth-codex-<suffix>/);
-    expect(combined).toMatch(/auth-github-<suffix>/);
+    expect(combined).toMatch(/matrix run -it --project main -- codex login/);
+    expect(combined).toMatch(/matrix run -it --project main -- gh auth login/);
     expect(combined).toMatch(/browser\/device/i);
     expect(combined).toMatch(/Never (?:scan|read|upload)[^\n]*credential files/i);
     expect(combined).toMatch(/ask before installing/i);
   });
 
-  it("requires observable sessions, scopes tabs by transport, and sandboxes coding agents", () => {
+  it("requires observable project tabs, scopes hosted tools, and sandboxes coding agents", () => {
     const skill = readSkill("matrix-cloud-run");
     const hostedWorkflows = [
       readSkill("matrix-onboarding"),
@@ -128,16 +128,17 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(skill).toMatch(/mkdir[^\n]*apps\/<slug>/);
     expect(skill).toMatch(/-C[^\n]*existing directory/i);
     for (const workflow of workflows) {
-      expect(workflow).toMatch(/matrix run -it --session/);
+      expect(workflow).toMatch(/matrix run -it --project/);
+      expect(workflow).not.toMatch(/matrix run[^\n]*--session/);
       expect(workflow).not.toMatch(/matrix run --json/);
-      expect(workflow).toMatch(/separate[^\n]*session/i);
-      expect(workflow).toMatch(/matrix shell connect/);
+      expect(workflow).toMatch(/(?:separate|another|new)[^\n]*tab/i);
+      expect(workflow).toContain("matrix shell connect --project <project> --tab <tab-id>");
     }
     for (const workflow of hostedWorkflows) {
       expect(workflow).toMatch(/create_terminal_tab/);
-      expect(workflow).toMatch(/CLI workflow does not address tabs directly/i);
+      expect(workflow).toContain("runtimeSlot");
     }
-    expect(standaloneWorkflow).toMatch(/never (?:create or use|use)[^\n]*tabs/i);
+    expect(standaloneWorkflow).toMatch(/Each project owns one Zellij workspace/);
     expect(skill).toMatch(/prompt[^\n]*argument/i);
     expect(skill).toMatch(/--sandbox workspace-write/);
     expect(skill).toMatch(/--sandbox read-only/);
@@ -173,7 +174,7 @@ describe("Matrix OS Codex marketplace plugin", () => {
 
     expect(standalone).toContain("# Matrix OS");
     expect(standalone).toMatch(/^author: Matrix OS$/m);
-    expect(standalone).toMatch(/matrix run -it --session/);
+    expect(standalone).toMatch(/matrix run -it --project/);
     expect(standalone).toMatch(/gh repo clone/);
     expect(standalone).toMatch(/--sandbox workspace-write/);
     expect(standalone).toMatch(/claude[^\n]*--permission-mode auto/i);

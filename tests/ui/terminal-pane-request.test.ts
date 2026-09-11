@@ -13,6 +13,20 @@ describe("pane endpoint compatibility", () => {
       .mockResolvedValue({ ok: true }),
     isMissingRoute: (error: unknown) => error === missing,
   });
+  it("targets canonical workspace tabs without treating their ref as a legacy session name", async () => {
+    const post = vi.fn().mockResolvedValue({ ok: true });
+    await dispatchTerminalPaneRequest({
+      post,
+      isMissingRoute: () => false,
+      sessionName: "tws_0123456789abcdef0123456789abcdef:tt_0123456789abcdef0123456789abcdef",
+      chatId: "chat_one",
+      action: { type: "focus", direction: "right" },
+    });
+    expect(post).toHaveBeenCalledWith(
+      "/api/terminal/workspaces/tws_0123456789abcdef0123456789abcdef/tabs/tt_0123456789abcdef0123456789abcdef/pane-actions?chatId=chat_one",
+      { type: "focus", direction: "right" },
+    );
+  });
   it.each(["right", "down"] as const)(
     "splits %s on a host that predates pane actions",
     async (direction) => {

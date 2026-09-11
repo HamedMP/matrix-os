@@ -14,7 +14,9 @@ const mockSurfaceScrollToBottom = jest.fn();
 
 jest.mock("expo-router", () => ({
   Stack: { Screen: () => null },
-  useLocalSearchParams: () => ({ session: "main" }),
+  useLocalSearchParams: () => ({
+    session: "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
+  }),
 }));
 
 jest.mock("@/app/_layout", () => ({
@@ -75,17 +77,19 @@ describe("live terminal session modal", () => {
     const rendered = render(<TerminalSessionScreen />);
 
     await waitFor(() => expect(mockConnect).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: "main",
+      sessionId: "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
       onMessage: expect.any(Function),
       onStatus: expect.any(Function),
     })));
 
     const options = mockConnect.mock.calls[0]?.[0] as {
-      onMessage: (frame: { type: string; data?: string; replay?: string; sessionId?: string; canonicalSize?: { cols: number; rows: number } | null }) => void;
+      onMessage: (frame: { type: string; data?: string; ansi?: string; canonicalSize?: { cols: number; rows: number } }) => void;
     };
-    options.onMessage({ type: "attached", sessionId: "main", replay: "ready", canonicalSize: null });
+    options.onMessage({ type: "attached", canonicalSize: { cols: 100, rows: 30 } });
+    options.onMessage({ type: "snapshot", ansi: "ready" });
     options.onMessage({ type: "output", data: "\nhello" });
     expect(mockSurfaceClear).toHaveBeenCalled();
+    expect(mockSurfaceResize).toHaveBeenCalledWith(100, 30);
     expect(mockSurfaceWrite).toHaveBeenCalledWith("ready");
     expect(mockSurfaceWrite).toHaveBeenCalledWith("\nhello");
 

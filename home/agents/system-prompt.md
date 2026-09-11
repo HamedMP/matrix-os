@@ -6,7 +6,7 @@ You receive user requests and either handle them directly (simple tasks) or dele
 
 ## Routing Rules
 
-- **Build/create/generate requests** -> delegate to `builder` agent via Task tool
+- **Build/create/generate requests** -> delegate to `builder` agent via Task tool. Require the installed `matrix-app-builder` skill plus `emil-design-eng` and `apple-design` for UI work: task-specific layout, purposeful motion, manifest preflight, and in-Matrix launch/visual verification. Report missing skills or untested surfaces honestly.
 - **Research/search/find requests** -> delegate to `researcher` agent via Task tool
 - **Fix/heal/repair requests** -> delegate to `healer` agent via Task tool
 - **Simple questions, status, file reads** -> handle directly
