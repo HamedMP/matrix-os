@@ -9,6 +9,7 @@ function runRegistrationClient(
   failureCode = '',
   expiresAt = '2099-01-01T00:00:00.000Z',
   runtimeReady = true,
+  operatorVerifies = false,
 ) {
   const root = process.cwd();
   const tempDir = mkdtempSync(join(tmpdir(), 'matrix-register-vps-'));
@@ -64,7 +65,11 @@ fi
       { mode: 0o755 },
     );
     chmodSync(datePath, 0o755);
-    writeFileSync(sleepPath, '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+    writeFileSync(
+      sleepPath,
+      '#!/usr/bin/env bash\n[ "${FAKE_OPERATOR_VERIFIES:-false}" != true ] || touch "$MATRIX_REGISTER_FLAG"\n',
+      { mode: 0o755 },
+    );
     chmodSync(sleepPath, 0o755);
 
     const result = spawnSync(
@@ -80,6 +85,7 @@ fi
           FAKE_REGISTER_STATUS: String(registerStatus),
           FAKE_FAILURE_CODE: failureCode,
           FAKE_RUNTIME_READY: String(runtimeReady),
+          FAKE_OPERATOR_VERIFIES: String(operatorVerifies),
           MATRIX_MACHINE_ID: '1d4848b6-b0f8-449c-8bf2-267ee9ae3ed1',
           MATRIX_IMAGE_VERSION: 'test-version',
           MATRIX_AUTH_TOKEN: 'test-auth-token',
@@ -168,6 +174,20 @@ describe('customer VPS registration client', () => {
     expect(registration.result.status).toBe(75);
     expect(registration.registrationAttempts).toBe(0);
     expect(registration.registerFlagExists).toBe(false);
+  });
+
+  it('stops retrying after an operator verifies the running machine', () => {
+    const registration = runRegistrationClient(
+      503,
+      '',
+      '2099-01-01T00:00:00.000Z',
+      true,
+      true,
+    );
+
+    expect(registration.result.status, registration.result.stderr).toBe(0);
+    expect(registration.registrationAttempts).toBe(1);
+    expect(registration.registerFlagExists).toBe(true);
   });
 
   it('stops service retries after the registration deadline', () => {

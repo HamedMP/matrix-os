@@ -121,6 +121,8 @@ else
 fi
 
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+  # An authenticated operator may reconcile a lost receipt while retries run.
+  [ ! -f "$REGISTER_FLAG" ] || exit 0
   if registration_expired; then
     echo "matrix-register-vps: registration deadline expired; stopping retries" >&2
     exit 64
