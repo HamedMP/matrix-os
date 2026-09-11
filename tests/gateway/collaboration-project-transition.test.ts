@@ -13,11 +13,13 @@ import {
 
 const SCOPE_ID = "10000000-0000-4000-8000-000000000051";
 const TRANSITION_ID = "20000000-0000-4000-8000-000000000051";
+const CLIENT_REQUEST_ID = "50000000-0000-4000-8000-000000000051";
 const OWNER_ID = "user_project_owner";
 const SOURCE_RUNTIME = "runtime_project_owner";
-const DESTINATION_RUNTIME = "runtime_project_shared";
+const DESTINATION_RUNTIME = "vps:runtime_project_shared";
 const INVENTORY_HASH = "a".repeat(64);
 const MEMBERSHIP_HASH = "b".repeat(64);
+const PAYLOAD_HASH = "c".repeat(64);
 const NOW = new Date("2026-08-11T12:00:00.000Z");
 
 async function seedProjectScope(fixture: CollaborationTestDatabase): Promise<void> {
@@ -69,6 +71,8 @@ describe("project collaboration transition journal", () => {
       scopeId: SCOPE_ID,
       ownerId: OWNER_ID,
       requestedBy: OWNER_ID,
+      clientRequestId: CLIENT_REQUEST_ID,
+      payloadHash: PAYLOAD_HASH,
       expectedScopeRevision: 4,
       inventoryRevision: 7,
       inventoryHash: INVENTORY_HASH,
@@ -83,6 +87,8 @@ describe("project collaboration transition journal", () => {
       scopeId: SCOPE_ID,
       ownerId: OWNER_ID,
       requestedBy: "user_not_owner",
+      clientRequestId: CLIENT_REQUEST_ID,
+      payloadHash: PAYLOAD_HASH,
       expectedScopeRevision: 4,
       inventoryRevision: 7,
       inventoryHash: INVENTORY_HASH,
@@ -98,7 +104,31 @@ describe("project collaboration transition journal", () => {
       sourceAuthorityGeneration: 3,
       destinationAuthorityRuntimeId: DESTINATION_RUNTIME,
     });
-    await expect(prepare()).rejects.toBeInstanceOf(ProjectTransitionError);
+    await expect(prepare()).resolves.toMatchObject({ id: TRANSITION_ID, status: "prepared" });
+    await expect(journal().prepare({
+      scopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      requestedBy: OWNER_ID,
+      clientRequestId: CLIENT_REQUEST_ID,
+      payloadHash: "d".repeat(64),
+      expectedScopeRevision: 4,
+      inventoryRevision: 7,
+      inventoryHash: INVENTORY_HASH,
+      membershipHash: MEMBERSHIP_HASH,
+      destinationAuthorityRuntimeId: DESTINATION_RUNTIME,
+      destinationAuthorityGeneration: 1,
+    })).rejects.toBeInstanceOf(ProjectTransitionError);
+    await expect(fixture.db.selectFrom("collaboration_operations")
+      .select(["operation_kind", "payload_hash", "status", "result_ref"])
+      .where("scope_id", "=", SCOPE_ID)
+      .where("actor_id", "=", OWNER_ID)
+      .where("client_request_id", "=", CLIENT_REQUEST_ID)
+      .executeTakeFirstOrThrow()).resolves.toMatchObject({
+      operation_kind: "project.confirm",
+      payload_hash: PAYLOAD_HASH,
+      status: "completed",
+      result_ref: { transitionId: TRANSITION_ID },
+    });
 
     await expect(fixture.db.selectFrom("collaboration_scopes")
       .select(["lifecycle", "authority_runtime_id", "authority_generation"])

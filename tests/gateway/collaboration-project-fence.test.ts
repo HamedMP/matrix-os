@@ -72,6 +72,8 @@ describe("project collaboration writer fence", () => {
       scopeId: SCOPE_ID,
       ownerId: OWNER_ID,
       requestedBy: OWNER_ID,
+      clientRequestId: "50000000-0000-4000-8000-000000000052",
+      payloadHash: "c".repeat(64),
       expectedScopeRevision: 4,
       inventoryRevision: 7,
       inventoryHash: INVENTORY_HASH,
