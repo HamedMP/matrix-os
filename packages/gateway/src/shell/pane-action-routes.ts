@@ -43,6 +43,11 @@ export function registerTerminalPaneActionRoutes(app: Hono, deps: ShellRouteDeps
         || ("status" in session && session.status !== "active")) {
         throw shellError("session_not_found", "Session not found", 404);
       }
+      if ("sharedControlMode" in session && session.sharedControlMode === "shared") {
+        return c.json({
+          error: { code: "terminal_shared", message: "Use the shared terminal route" },
+        }, 409);
+      }
       // Registry reads reconcile renames and verify the currently running generation.
       const name = NameSchema.parse(session.name);
       if (deps.listChatBoundSessionIds) {

@@ -92,6 +92,37 @@ describe("terminal pane action route", () => {
     expect(response.status).toBe(500);
     expect(await response.text()).not.toMatch(/secret|provider|private/);
   });
+
+  it("blocks standalone pane actions on a collaboration-bound terminal", async () => {
+    const paneAction = vi.fn();
+    const app = new Hono();
+    app.route("/api/terminal", createShellRoutes({
+      registry: {
+        get: vi.fn(async () => ({
+          name: "main",
+          status: "active",
+          sharedControlMode: "shared",
+          collaborationScopeId: "10000000-0000-4000-8000-000000000099",
+        })),
+        list: vi.fn(),
+        create: vi.fn(),
+        delete: vi.fn(),
+      },
+      workspace: { paneAction } as never,
+    }));
+
+    const response = await app.request("/api/terminal/sessions/main/pane-actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "split", direction: "right" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: { code: "terminal_shared", message: "Use the shared terminal route" },
+    });
+    expect(paneAction).not.toHaveBeenCalled();
+  });
 });
 
 describe("Zellij pane commands", () => {

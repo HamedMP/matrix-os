@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerAppRuntimeRoutes } from "../../packages/gateway/src/server/app-runtime-routes.js";
 import { registerFileRoutes } from "../../packages/gateway/src/server/file-routes.js";
 import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
+import { createLegacyProjectPathAdmission } from "../../packages/gateway/src/collaboration/project-path-admission.js";
 
 describe("gateway server route registrars", () => {
   const cleanupPaths: string[] = [];
@@ -59,11 +60,15 @@ describe("gateway server route registrars", () => {
       }),
     };
     const app = new Hono();
+    const projectPathAdmission = createLegacyProjectPathAdmission({
+      homePath,
+      listOwnerProjects: async () => [{ id: "proj_repo", localPath: projectRoot }],
+      projectOperationAdmission,
+    });
     registerFileRoutes(app, {
       homePath,
       getOwnerId: () => "user_owner",
-      listOwnerProjects: async () => [{ id: "proj_repo", localPath: projectRoot }],
-      projectOperationAdmission,
+      projectPathAdmission,
     });
 
     const response = await app.request("/api/files/touch", {
