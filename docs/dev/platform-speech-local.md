@@ -73,7 +73,7 @@ The command performs these bounded checks:
 
 1. Confirms ports 3117, 4117, and 9117 are unused.
 2. Creates new generated fixture databases, role, runtime registration, credentials, and home.
-3. Runs exactly the five cases in `tests/platform/speech-postgres-concurrency.test.ts`, with one Vitest worker, against real PostgreSQL.
+3. Proves that SIGTERM cancels an authenticated, in-flight local PostgreSQL query promptly, then runs exactly the five cases in `tests/platform/speech-postgres-concurrency.test.ts`, with one Vitest worker, against real PostgreSQL.
 4. Builds shared prerequisites without speech credentials, then boots the real platform, gateway, and Web shell.
 5. Requires an unauthenticated direct gateway request to fail and an authenticated same-origin shell request to succeed.
 6. Blocks every non-loopback browser request before navigating the fixture UI.
@@ -86,6 +86,7 @@ Any cleanup failure changes the command result to nonzero and reports only the f
 Success includes both lines:
 
 ```text
+Verified bounded cancellation of an authenticated PostgreSQL query.
 tests/platform/speech-postgres-concurrency.test.ts (5 tests)
 Verified authenticated browser record -> stop -> fixture transcribe -> editable draft.
 ```

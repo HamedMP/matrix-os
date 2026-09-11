@@ -141,16 +141,53 @@ export function createBoundedLocalPostgresAdminClient(
   });
 }
 
-export function cancelBoundedLocalPostgresAdminClient(client: pg.Client): Promise<void> {
-  // node-postgres end() waits for its connect timeout during an incomplete startup
-  // handshake, so close this task-owned loopback socket before ending the client.
+export function createBoundedLocalPostgresPool(
+  value: string,
+  overrides: { connectionTimeoutMillis?: number } = {},
+): pg.Pool {
+  const url = parseLocalPostgresAdminUrl(value);
+  const connectionTimeoutMillis = overrides.connectionTimeoutMillis ?? 5_000;
+  if (!Number.isSafeInteger(connectionTimeoutMillis)
+    || connectionTimeoutMillis < 100
+    || connectionTimeoutMillis > 30_000) {
+    throw new Error("Local PostgreSQL connection timeout is out of bounds");
+  }
+  const pool = new pg.Pool({
+    connectionString: url.toString(),
+    max: 2,
+    connectionTimeoutMillis,
+    query_timeout: 10_000,
+    statement_timeout: 10_000,
+    lock_timeout: 5_000,
+  });
+  pool.on("error", () => {
+    console.error("Local speech fixture PostgreSQL pool reported an idle-client error");
+  });
+  return pool;
+}
+
+function destroyLocalPostgresClientStream(client: pg.Client): void {
   const connection = client as pg.Client & {
     connection?: { stream?: { destroy: (error?: Error) => void; destroyed?: boolean } };
   };
   const stream = connection.connection?.stream;
   if (stream && !stream.destroyed) {
-    stream.destroy(new Error("Local speech fixture PostgreSQL administration interrupted"));
+    stream.destroy(new Error("Local speech fixture PostgreSQL operation interrupted"));
   }
+}
+
+export function cancelBoundedLocalPostgresPool(pool: pg.Pool): Promise<void> {
+  const clients = (pool as pg.Pool & { _clients?: pg.Client[] })._clients ?? [];
+  for (const client of clients) destroyLocalPostgresClientStream(client);
+  return pool.end().catch((error: unknown) => {
+    if (!(error instanceof Error && error.message === "Called end on pool more than once")) throw error;
+  });
+}
+
+export function cancelBoundedLocalPostgresAdminClient(client: pg.Client): Promise<void> {
+  // node-postgres end() waits for its connect timeout during an incomplete startup
+  // handshake, so close this task-owned loopback socket before ending the client.
+  destroyLocalPostgresClientStream(client);
   return client.end().catch(() => undefined);
 }
 
