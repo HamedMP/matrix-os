@@ -6,18 +6,22 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
+      "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./user-systemd-capacity": {
       "types": "./src/user-systemd-capacity.ts",
+      "development": "./src/user-systemd-capacity.ts",
       "default": "./dist/user-systemd-capacity.js"
     },
     "./user-systemd-readiness": {
       "types": "./src/user-systemd-readiness.ts",
+      "development": "./src/user-systemd-readiness.ts",
       "default": "./dist/user-systemd-readiness.js"
     },
     "./user-systemd-controller": {
       "types": "./src/user-systemd-controller.ts",
+      "development": "./src/user-systemd-controller.ts",
       "default": "./dist/user-systemd-controller.js"
     }
   },
