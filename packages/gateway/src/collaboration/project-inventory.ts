@@ -97,6 +97,12 @@ interface FileSnapshot {
   identity: FileIdentity;
 }
 
+interface DirectorySnapshot {
+  path: string;
+  realPath: string;
+  identity: FileIdentity;
+}
+
 interface FileIdentity {
   dev: bigint;
   ino: bigint;
@@ -178,6 +184,7 @@ async function hashFile(path: string): Promise<{ digest: string; identity: FileI
 async function collectFiles(rootPath: string): Promise<{
   items: ProjectInventoryItem[];
   snapshots: FileSnapshot[];
+  directories: DirectorySnapshot[];
   rootIdentity: FileIdentity;
   rootRealPath: string;
 }> {
@@ -190,6 +197,7 @@ async function collectFiles(rootPath: string): Promise<{
   const pending = [{ absolutePath: rootRealPath, relativePath: "" }];
   const items: ProjectInventoryItem[] = [];
   const snapshots: FileSnapshot[] = [];
+  const directories: DirectorySnapshot[] = [];
   let totalBytes = 0;
   let entries = 0;
 
@@ -216,6 +224,11 @@ async function collectFiles(rootPath: string): Promise<{
       if (stats.isDirectory()) {
         const directoryRealPath = await realpath(absolutePath);
         if (!within(rootRealPath, directoryRealPath)) throw new ProjectInventoryError("project_changed");
+        directories.push({
+          path: absolutePath,
+          realPath: directoryRealPath,
+          identity: fileIdentity(stats),
+        });
         pending.push({ absolutePath: directoryRealPath, relativePath });
         continue;
       }
@@ -244,7 +257,7 @@ async function collectFiles(rootPath: string): Promise<{
       snapshots.push({ path: absolutePath, item, identity: hashed.identity });
     }
   }
-  return { items, snapshots, rootIdentity, rootRealPath };
+  return { items, snapshots, directories, rootIdentity, rootRealPath };
 }
 
 async function assertUnchangedFiles(
@@ -252,6 +265,7 @@ async function assertUnchangedFiles(
   rootRealPath: string,
   rootIdentity: FileIdentity,
   snapshots: readonly FileSnapshot[],
+  directories: readonly DirectorySnapshot[],
 ): Promise<void> {
   let currentRoot;
   try {
@@ -279,6 +293,22 @@ async function assertUnchangedFiles(
     }
     if (!current.isFile() || current.isSymbolicLink()
       || !sameIdentity(snapshot.identity, fileIdentity(current))) {
+      throw new ProjectInventoryError("project_changed");
+    }
+  }
+  for (const directory of directories) {
+    let current;
+    try {
+      current = await lstat(directory.path, { bigint: true });
+    } catch (error: unknown) {
+      if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new ProjectInventoryError("project_changed");
+      }
+      throw error;
+    }
+    if (!current.isDirectory() || current.isSymbolicLink()
+      || !sameIdentity(directory.identity, fileIdentity(current))
+      || await realpath(directory.path) !== directory.realPath) {
       throw new ProjectInventoryError("project_changed");
     }
   }
@@ -417,7 +447,13 @@ export function createProjectInventoryService(options: {
           throw new ProjectInventoryError("project_unavailable");
         }
         assertUniqueResources(ownedItems, externalReferences);
-        await assertUnchangedFiles(rootPath, files.rootRealPath, files.rootIdentity, files.snapshots);
+        await assertUnchangedFiles(
+          rootPath,
+          files.rootRealPath,
+          files.rootIdentity,
+          files.snapshots,
+          files.directories,
+        );
         const currentConfiguredRoot = await lstat(configuredRoot, { bigint: true });
         if (!currentConfiguredRoot.isDirectory() || currentConfiguredRoot.isSymbolicLink()
           || !sameIdentity(configuredRootIdentity, fileIdentity(currentConfiguredRoot))

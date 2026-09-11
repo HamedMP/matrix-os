@@ -250,4 +250,20 @@ describe("project collaboration inventory", () => {
 
     await expect(pending).rejects.toMatchObject({ code: "project_changed" });
   });
+
+  it("rejects a nested file added after its directory was enumerated", async () => {
+    const test = await fixture();
+    const changingSource = source(test.projectRoot, {
+      async listChats() {
+        await writeFile(join(test.projectRoot, "src", "late.ts"), "export const late = true;\n");
+        return [];
+      },
+    });
+
+    await expect(service({ ...test, source: changingSource }).preview({
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      membershipEffects,
+    })).rejects.toMatchObject({ code: "project_changed" });
+  });
 });

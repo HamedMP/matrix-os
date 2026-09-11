@@ -223,13 +223,13 @@
 
 - [x] T089 [P] [US1] (PR5) Write red complete inventory/fingerprint tests for owned versus external files, Chats, apps, layout, and terminal incarnations in `tests/gateway/collaboration-project-inventory.test.ts`
 - [x] T090 [P] [US1] (PR5) Write red traversal/symlink/moved-root/dirty-write/incompatible-resource preflight tests in `tests/gateway/collaboration-project-boundary.test.ts`
-- [ ] T091 [P] [US1] (PR5) Write red journal crash/recovery, source-write/cutover race, inventory reconfirmation, and one-authority publication tests in `tests/gateway/collaboration-project-transition.test.ts`
+- [x] T091 [P] [US1] (PR5) Write red journal crash/recovery, source-write/cutover race, inventory reconfirmation, and one-authority publication tests in `tests/gateway/collaboration-project-transition.test.ts`
 - [ ] T092 [P] [US1] (PR5) Write red inherited existing/new file/Chat/app/layout/terminal creation tests in `tests/gateway/collaboration-project-inheritance.test.ts`
 
 ### Implementation — PR5
 
 - [x] T093 [US1] (PR5) Implement complete owner-derived project inventory, blockers, fingerprint, and expiring confirmation tokens in `packages/gateway/src/collaboration/project-inventory.ts`
-- [ ] T094 [US1] (PR5) Implement durable prepared/staging/fenced/committing/active transition journal and recovery in `packages/gateway/src/collaboration/project-transition.ts`
+- [x] T094 [US1] (PR5) Implement durable prepared/staging/fenced/committing/active transition journal and recovery in `packages/gateway/src/collaboration/project-transition.ts`
 - [ ] T095 [US1] (PR5) Fence every legacy project writer/run admission and publish one authority after final inventory/version checks in `packages/gateway/src/collaboration/project-fence.ts`
 - [ ] T096 [US1] (PR5) Implement atomic inherited child bindings and future-content membership resolution in `packages/gateway/src/collaboration/project-inheritance.ts`
 
