@@ -62,6 +62,12 @@ and bundle changes must not stop `matrix-zellij@*`, `matrix-terminal.slice`, or
 run `systemctl --user daemon-reload`; they must not stop or restart live
 workspace instances.
 
+Before crossing that interruption boundary, the migration must create and
+verify all replacement workspaces and tabs. Failure while preparing a
+replacement leaves every legacy session running. Only a confirmed
+missing-session error is idempotent during the stop phase; permission, socket,
+and command failures abort the cutover.
+
 ## Immutable updates and rollback
 
 Each host bundle carries a content-addressed generation:
@@ -80,6 +86,17 @@ install and verify the new generation before switching `current`; rollback
 switches it back to the generation referenced by the restored app. Reference-
 aware garbage collection retains the current generation, rollback generation,
 and every generation named by a valid descriptor.
+
+Host update rollback is one recoverable transaction over the application,
+host helpers, system and user unit definitions, unit enablement, attach helper,
+generation pointer, and migration journal. Rollback across the legacy boundary
+runs the candidate migration rollback before deleting the candidate code.
+Interrupted updates resume compensation from a durable, root-owned transaction
+marker. Restores use atomic file replacement, stop candidate-touched units, and
+reinstate the previous unit enablement and activity state. Candidate health
+requires both the exact gateway version and a working
+terminal-control socket, while the gateway itself only wants the terminal unit
+so unrelated product surfaces remain available during terminal degradation.
 
 Generation IDs hash the three ordered content digests for Zellij, the keeper,
 and the attach helper, rather than hashing path-bearing command output. This
