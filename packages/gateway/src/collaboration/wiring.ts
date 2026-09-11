@@ -24,6 +24,10 @@ import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
 import { createProjectTransitionJournal } from "./project-transition.js";
 import { createProjectFence } from "./project-fence.js";
+import {
+  CollaborationProjectScopeService,
+  type CollaborationProjectSource,
+} from "./project-scope.js";
 
 const MAX_PROOF_KEYS = 8;
 const ARTIFACT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
@@ -79,6 +83,7 @@ export async function createGatewayCollaboration(options: {
   resolveParticipant?(actorId: string): Promise<{ actorId: string; displayName: string }>;
   outboxFetch?: typeof fetch;
   startTimers?: boolean;
+  projectSource?: CollaborationProjectSource;
 }) {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
@@ -102,6 +107,11 @@ export async function createGatewayCollaboration(options: {
   });
   const projectTransitions = createProjectTransitionJournal({ db: options.db });
   const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
+  const projectScope = options.projectSource ? new CollaborationProjectScopeService(options.db, {
+    runtimeId: options.config.runtimeId,
+    preflightSecret: options.config.preflightSecret,
+    source: options.projectSource,
+  }) : undefined;
   const outbox = new CollaborationDirectoryOutbox({
     db: options.db,
     platformBaseUrl: options.config.platformBaseUrl,
@@ -147,6 +157,7 @@ export async function createGatewayCollaboration(options: {
     collaborationGuard: chatScope,
     projectTransitions,
     projectFence,
+    projectScope,
     projectOperationAdmission: {
       withLegacyAdmission<T>(input: {
         ownerType: "personal" | "organization";
@@ -239,6 +250,7 @@ export async function createGatewayCollaboration(options: {
         ...(chatExecutionAdapter ? { chatExecutionAdapter } : {}),
         ...(terminalAdapter ? { terminalAdapter } : {}),
         ...(terminalDispatcher ? { terminalDispatcher } : {}),
+        ...(projectScope ? { projectScope } : {}),
         resolveParticipant,
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
