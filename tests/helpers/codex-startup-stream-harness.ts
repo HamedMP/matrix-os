@@ -29,6 +29,7 @@ export async function createCodexStartupStreamHarness() {
     workspaceId: "tws_00000000000000000000000000000001",
     tabId: "tt_00000000000000000000000000000001",
   } as const;
+  const terminalSessionId = `${terminalRef.workspaceId}:${terminalRef.tabId}`;
   const fixture = createCanonicalProviderCatalogFixture();
   const catalog = CanonicalProviderCatalogSchema.parse({ ...fixture,
     drivers: [{ ...fixture.drivers[0], kind: "codex", displayName: "Codex" }],
@@ -46,7 +47,7 @@ export async function createCodexStartupStreamHarness() {
     runtime: { type: "zellij" as const, status: "running" as const, zellijSession: id,
       createdAt: new Date().toISOString() },
     terminalRef,
-    terminalSessionId: id, transcriptPath: codexProviderEventPath(homePath, id),
+    terminalSessionId, transcriptPath: codexProviderEventPath(homePath, id),
     attachedClients: 0, writeMode: "owner" as const,
     startedAt: new Date().toISOString(), lastActivityAt: new Date().toISOString(),
   });
