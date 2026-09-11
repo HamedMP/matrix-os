@@ -643,7 +643,7 @@ describe("ChatTab", () => {
     ));
   });
 
-  it("keeps non-Hermes harnesses visible but unavailable on the legacy Global route", async () => {
+  it("keeps non-Hermes Global routes inspectable but unavailable", async () => {
     const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
     const availableCatalog = {
       ...catalog,
