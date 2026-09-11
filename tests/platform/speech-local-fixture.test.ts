@@ -7,8 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertFixturePortsAvailable,
   cancelBoundedLocalPostgresAdminClient,
+  cancelBoundedLocalPostgresPool,
   completeLocalSpeechFixtureCleanup,
   createBoundedLocalPostgresAdminClient,
+  createBoundedLocalPostgresPool,
   createLocalSpeechFixturePlan,
   LocalFixtureSignalController,
   parseLocalPostgresAdminUrl,
@@ -187,6 +189,49 @@ setInterval(() => {}, 1000);
     } finally {
       controller.detachCancellation(cancellation);
       await cancelBoundedLocalPostgresAdminClient(admin);
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => error ? rejectClose(error) : resolveClose());
+      });
+    }
+  });
+
+  it("cancels an in-flight fixture migration pool operation when interrupted", async () => {
+    const sockets = new Set<import("node:net").Socket>();
+    let resolveAccepted!: () => void;
+    const accepted = new Promise<void>((resolve) => {
+      resolveAccepted = resolve;
+    });
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      resolveAccepted();
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once("error", rejectListen);
+      server.listen(0, "127.0.0.1", resolveListen);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test port");
+
+    const pool = createBoundedLocalPostgresPool(
+      `postgresql://fixture@127.0.0.1:${address.port}/postgres`,
+      { connectionTimeoutMillis: 5_000 },
+    );
+    const controller = new LocalFixtureSignalController();
+    const cancellation = () => { void cancelBoundedLocalPostgresPool(pool); };
+    controller.attachCancellation(cancellation);
+    const querying = pool.query("SELECT 1");
+    try {
+      await accepted;
+      const startedAt = Date.now();
+      controller.receive("SIGINT");
+      await expect(querying).rejects.toBeInstanceOf(Error);
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(controller.exitCode).toBe(130);
+    } finally {
+      controller.detachCancellation(cancellation);
+      await cancelBoundedLocalPostgresPool(pool);
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolveClose, rejectClose) => {
         server.close((error) => error ? rejectClose(error) : resolveClose());
