@@ -12,7 +12,9 @@ import {
 } from "./lib/platform-speech-local-browser.js";
 import {
   assertFixturePortsAvailable,
+  completeLocalSpeechFixtureCleanup,
   createLocalSpeechFixturePlan,
+  LocalFixtureSignalController,
   LOCAL_SPEECH_FIXTURE_PORTS,
   type LocalSpeechFixturePlan,
 } from "./lib/platform-speech-local-fixture.js";
@@ -62,7 +64,7 @@ async function runDockerPsql(options: {
   container: string;
   adminUser: string;
   sql: string;
-}): Promise<void> {
+}, signals?: LocalFixtureSignalController): Promise<void> {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(options.container)
     || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(options.adminUser)) {
     throw new Error("Local PostgreSQL container configuration is invalid");
@@ -71,9 +73,10 @@ async function runDockerPsql(options: {
     "exec", "-i", options.container,
     "psql", "--no-psqlrc", "--quiet", "--set", "ON_ERROR_STOP=1",
     "--username", options.adminUser, "--dbname", "postgres",
-  ], { stdio: ["pipe", "ignore", "ignore"] });
+  ], { detached: true, stdio: ["pipe", "ignore", "ignore"] });
+  signals?.attach(child);
   child.stdin?.end(options.sql);
-  const result = await childCompletion(child);
+  const result = await childCompletion(child).finally(() => signals?.detach(child));
   if (result.code !== 0) throw new Error("Local PostgreSQL container administration failed");
 }
 
@@ -98,7 +101,10 @@ async function readDockerPostgresUser(container: string): Promise<string> {
   return user;
 }
 
-async function runPostgresConcurrencyTests(plan: LocalSpeechFixturePlan): Promise<void> {
+async function runPostgresConcurrencyTests(
+  plan: LocalSpeechFixturePlan,
+  signals: LocalFixtureSignalController,
+): Promise<void> {
   console.log("Running five speech concurrency tests against the disposable PostgreSQL database...");
   const child = spawn(resolve("node_modules/.bin/vitest"), [
     "run",
@@ -107,6 +113,7 @@ async function runPostgresConcurrencyTests(plan: LocalSpeechFixturePlan): Promis
     "--no-file-parallelism",
   ], {
     cwd: resolve("."),
+    detached: true,
     env: {
       ...process.env,
       MATRIX_TEST_POSTGRES_URL: plan.databaseUrl,
@@ -115,7 +122,8 @@ async function runPostgresConcurrencyTests(plan: LocalSpeechFixturePlan): Promis
     },
     stdio: "inherit",
   });
-  const result = await childCompletion(child);
+  signals.attach(child);
+  const result = await childCompletion(child).finally(() => signals.detach(child));
   if (result.code !== 0) throw new Error("Disposable PostgreSQL speech concurrency tests failed");
 }
 
@@ -167,16 +175,14 @@ async function run(): Promise<number> {
     adminUser: process.env.MATRIX_SPEECH_FIXTURE_POSTGRES_ADMIN_USER
       ?? await readDockerPostgresUser(dockerContainer),
   };
-  let databaseCreated = false;
-  let ownerDatabaseCreated = false;
-  let roleCreated = false;
+  let adminConnected = false;
   let db: PlatformDB | undefined;
   let stack: ChildProcess | undefined;
   let plannedStop = false;
-  let receivedSignal: "SIGINT" | "SIGTERM" | undefined;
+  let resultCode = 1;
+  const signals = new LocalFixtureSignalController();
   const forwardSignal = (signal: "SIGINT" | "SIGTERM") => {
-    if (receivedSignal) return;
-    receivedSignal = signal;
+    signals.receive(signal);
     stack?.kill(signal);
   };
   process.once("SIGINT", () => forwardSignal("SIGINT"));
@@ -184,29 +190,34 @@ async function run(): Promise<number> {
 
   let stage = "local PostgreSQL preflight";
   try {
-    if (admin) await admin.connect();
+    if (admin) {
+      await admin.connect();
+      adminConnected = true;
+    }
+    signals.throwIfReceived();
     if (admin) await createFixtureRole(admin, plan);
     else await runDockerPsql({
       ...dockerAdmin!,
       sql: `CREATE ROLE ${quoteIdentifier(plan.databaseRole)} LOGIN PASSWORD '${plan.databasePassword}';\n`,
-    });
-    roleCreated = true;
+    }, signals);
+    signals.throwIfReceived();
     if (admin) await createFixtureDatabase(admin, plan, plan.databaseName);
     else await runDockerPsql({
       ...dockerAdmin!,
       sql: `CREATE DATABASE ${quoteIdentifier(plan.databaseName)} OWNER ${quoteIdentifier(plan.databaseRole)} TEMPLATE template0 ENCODING 'UTF8';\n`,
-    });
-    databaseCreated = true;
+    }, signals);
+    signals.throwIfReceived();
     if (admin) await createFixtureDatabase(admin, plan, plan.ownerDatabaseName);
     else await runDockerPsql({
       ...dockerAdmin!,
       sql: `CREATE DATABASE ${quoteIdentifier(plan.ownerDatabaseName)} OWNER ${quoteIdentifier(plan.databaseRole)} TEMPLATE template0 ENCODING 'UTF8';\n`,
-    });
-    ownerDatabaseCreated = true;
+    }, signals);
+    signals.throwIfReceived();
     stage = "fixture database migration";
     await mkdir(plan.homePath, { recursive: false });
     db = createPlatformDb(plan.databaseUrl);
     await db.ready;
+    signals.throwIfReceived();
     await insertUserMachine(db, {
       machineId: plan.env.MATRIX_MACHINE_ID,
       clerkUserId: plan.env.MATRIX_CLERK_USER_ID,
@@ -217,10 +228,12 @@ async function run(): Promise<number> {
       provisionedAt: new Date().toISOString(),
       activationState: "authorized",
     });
+    signals.throwIfReceived();
     if (verify) {
       stage = "real PostgreSQL concurrency tests";
-      await runPostgresConcurrencyTests(plan);
+      await runPostgresConcurrencyTests(plan, signals);
     }
+    signals.throwIfReceived();
 
     console.log(`Disposable speech fixture databases: ${plan.databaseName}, ${plan.ownerDatabaseName}`);
     console.log(`Platform: http://127.0.0.1:${LOCAL_SPEECH_FIXTURE_PORTS.platform}`);
@@ -248,48 +261,70 @@ async function run(): Promise<number> {
       stack.kill("SIGTERM");
     }
     const result = await completed;
-    if (receivedSignal) return receivedSignal === "SIGINT" ? 130 : 143;
-    if (plannedStop && result.code === 143) return 0;
-    return result.code ?? 1;
+    resultCode = signals.exitCode
+      ?? (plannedStop && result.code === 143 ? 0 : result.code ?? 1);
   } catch (error: unknown) {
-    const diagnostic = error instanceof Error
-      ? `${error.name}${"code" in error && typeof error.code === "string" ? ` (${error.code})` : ""}`
-      : "UnknownError";
-    const safeCode = error instanceof LocalFixtureVerificationError ? ` [${error.code}]` : "";
-    console.error(`Local speech fixture failed safely during ${stage}: ${diagnostic}${safeCode}`);
+    const signalExitCode = signals.exitCode;
+    if (signalExitCode === undefined) {
+      const diagnostic = error instanceof Error
+        ? `${error.name}${"code" in error && typeof error.code === "string" ? ` (${error.code})` : ""}`
+        : "UnknownError";
+      const safeCode = error instanceof LocalFixtureVerificationError ? ` [${error.code}]` : "";
+      console.error(`Local speech fixture failed safely during ${stage}: ${diagnostic}${safeCode}`);
+    }
     if (stack && stack.exitCode === null && stack.signalCode === null) {
       stack.kill("SIGTERM");
       await childCompletion(stack).catch(() => undefined);
     }
-    return 1;
+    resultCode = signalExitCode ?? 1;
   } finally {
-    await db?.destroy().catch(() => undefined);
-    if (ownerDatabaseCreated) {
-      if (admin) await dropFixtureDatabase(admin, plan.ownerDatabaseName).catch(() => undefined);
-      else await runDockerPsql({
-        ...dockerAdmin!,
-        sql: `DROP DATABASE IF EXISTS ${quoteIdentifier(plan.ownerDatabaseName)} WITH (FORCE);\n`,
-      }).catch(() => undefined);
+    const cleanupSteps: Array<{ label: string; run: () => Promise<void> }> = [];
+    if (db) {
+      const createdDb = db;
+      cleanupSteps.push({ label: "platform database connection", run: () => createdDb.destroy() });
     }
-    if (databaseCreated) {
-      if (admin) await dropFixtureDatabase(admin, plan.databaseName).catch(() => undefined);
-      else await runDockerPsql({
-        ...dockerAdmin!,
-        sql: `DROP DATABASE IF EXISTS ${quoteIdentifier(plan.databaseName)} WITH (FORCE);\n`,
-      }).catch(() => undefined);
+    const canAdministerCleanup = admin ? adminConnected : dockerAdmin !== undefined;
+    if (canAdministerCleanup) {
+      cleanupSteps.push({
+        label: "owner database",
+        run: () => admin
+          ? dropFixtureDatabase(admin, plan.ownerDatabaseName)
+          : runDockerPsql({
+              ...dockerAdmin!,
+              sql: `DROP DATABASE IF EXISTS ${quoteIdentifier(plan.ownerDatabaseName)} WITH (FORCE);\n`,
+            }),
+      });
+      cleanupSteps.push({
+        label: "platform database",
+        run: () => admin
+          ? dropFixtureDatabase(admin, plan.databaseName)
+          : runDockerPsql({
+              ...dockerAdmin!,
+              sql: `DROP DATABASE IF EXISTS ${quoteIdentifier(plan.databaseName)} WITH (FORCE);\n`,
+            }),
+      });
+      cleanupSteps.push({
+        label: "database role",
+        run: () => admin
+          ? dropFixtureRole(admin, plan)
+          : runDockerPsql({
+              ...dockerAdmin!,
+              sql: `DROP ROLE IF EXISTS ${quoteIdentifier(plan.databaseRole)};\n`,
+            }),
+      });
     }
-    if (roleCreated) {
-      if (admin) await dropFixtureRole(admin, plan).catch(() => undefined);
-      else await runDockerPsql({
-        ...dockerAdmin!,
-        sql: `DROP ROLE IF EXISTS ${quoteIdentifier(plan.databaseRole)};\n`,
-      }).catch(() => undefined);
+    if (admin) {
+      cleanupSteps.push({ label: "administrative database connection", run: () => admin.end() });
     }
-    await admin?.end().catch(() => undefined);
     if (plan.homePath.startsWith(`${tmpdir()}/matrixos_speech_fixture_test_`) && plan.homePath.endsWith("-home")) {
-      await rm(plan.homePath, { recursive: true, force: true });
+      cleanupSteps.push({
+        label: "temporary Matrix home",
+        run: () => rm(plan.homePath, { recursive: true, force: true }),
+      });
     }
+    resultCode = await completeLocalSpeechFixtureCleanup(resultCode, cleanupSteps);
   }
+  return resultCode;
 }
 
 process.exitCode = await run();
