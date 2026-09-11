@@ -23,10 +23,22 @@ describe('customer VPS production runtime loader', () => {
       'await import("@matrix-os/terminal-runtime/user-systemd-capacity")',
     );
 
+    const build = spawnSync(
+      'pnpm',
+      ['--filter', '@matrix-os/gateway', 'build'],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 120_000,
+      },
+    );
+    expect(build.status, build.stderr || build.stdout).toBe(0);
+
     const result = spawnSync('node', ['--import=tsx', smokePath], {
       cwd: root,
       encoding: 'utf8',
+      timeout: 30_000,
     });
     expect(result.status, result.stderr || result.stdout).toBe(0);
-  });
+  }, 120_000);
 });
