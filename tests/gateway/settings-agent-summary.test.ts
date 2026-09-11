@@ -291,6 +291,21 @@ describe("current and legacy Anthropic models", () => {
         MATRIX_FUNDED_AI_ENABLED: "1",
       },
       fundedCredentialProvider: fundedProvider(),
+      fundedReadinessReader: {
+        read: async () => {
+          const checkedAt = new Date();
+          return {
+            readiness: {
+              state: "ready" as const,
+              checkedAt: checkedAt.toISOString(),
+              staleAfter: new Date(checkedAt.getTime() + 30_000).toISOString(),
+              action: "none" as const,
+              safeReason: null,
+            },
+            allowedModelIds: ["claude-sonnet-5"],
+          };
+        },
+      },
     });
     try {
       const providerSnapshot = await providerService.getSnapshot();
@@ -317,7 +332,7 @@ describe("current and legacy Anthropic models", () => {
     }
   });
 
-  it("represents a saved model with no canonical runnable route as inactive", async () => {
+  it("does not advertise models for a saved route without authoritative funded readiness", async () => {
     const providerHome = resolve(mkdtempSync(join(tmpdir(), "settings-provider-inactive-")));
     mkdirSync(join(providerHome, "system"), { recursive: true });
     writeFileSync(
@@ -352,12 +367,9 @@ describe("current and legacy Anthropic models", () => {
       expect(view.currentSelection.chat).toBeNull();
       expect(view.providers.find((provider) => provider.runtime === null)).toMatchObject({
         id: "matrix_ai",
-        models: [expect.objectContaining({ id: "claude-sonnet-5", available: true })],
+        models: [],
+        authStatus: { state: "unknown", authenticated: false },
       });
-      expect(view.providers.find((provider) => provider.runtime === null)?.models)
-        .not.toEqual(expect.arrayContaining([
-          expect.objectContaining({ id: "claude-fable-5", available: true }),
-        ]));
     } finally {
       providerService.close();
       rmSync(providerHome, { recursive: true, force: true });
