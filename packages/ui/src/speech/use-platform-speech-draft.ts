@@ -216,7 +216,8 @@ export function usePlatformSpeechDraft(options: {
   };
 
   async function start(): Promise<void> {
-    if (!capabilities || !["idle", "error"].includes(phase)) return;
+    if (!capabilities || !["idle", "error"].includes(phase)
+      || captureStartRef.current || recordingRef.current || requestRef.current) return;
     const mediaType = supportedMediaType(capabilities, options.captureAdapter);
     if (!mediaType || capabilities.fileTranscription.status !== "ready") return;
     const generation = ++generationRef.current;

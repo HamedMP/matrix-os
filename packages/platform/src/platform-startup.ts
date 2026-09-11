@@ -64,9 +64,10 @@ import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
 import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
 import { createSpeechRuntimeRoutes } from './speech/routes.js';
 import {
-  createUnavailablePlatformSpeechService,
-  type PlatformSpeechService,
-} from './speech/service.js';
+  PlatformSpeechConfigError,
+  loadPlatformSpeechConfig,
+} from './speech/config.js';
+import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -288,10 +289,13 @@ async function startPlatformServerWithCleanup(
   }
   const backgroundWorkersEnabled = process.env.PLATFORM_BACKGROUND_WORKERS_ENABLED !== 'false';
   let runtimeConfig;
+  let speechConfig;
   try {
     runtimeConfig = loadPlatformRuntimeConfig();
+    speechConfig = loadPlatformSpeechConfig(process.env);
+    if (speechConfig.enabled && platformSecret.length < 32) throw new PlatformSpeechConfigError();
   } catch (err: unknown) {
-    if (err instanceof PlatformStartupConfigError) {
+    if (err instanceof PlatformStartupConfigError || err instanceof PlatformSpeechConfigError) {
       console.error(`[platform] ${err.message}`);
       process.exit(1);
     }
@@ -313,17 +317,7 @@ async function startPlatformServerWithCleanup(
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
-  const speechService: PlatformSpeechService = createUnavailablePlatformSpeechService({
-    dictation: {
-      enabled: true,
-      maxBytes: 10 * 1024 * 1024,
-      maxDurationMs: 120_000,
-      maxTranscriptChars: 32_000,
-      supportedMediaTypes: ['audio/wav'],
-      languageHints: false,
-    },
-    ownerAudio: { enabled: false },
-  });
+  const speechService = createConfiguredPlatformSpeechService({ db, config: speechConfig });
   const internalSpeechRuntimeRoutes = platformSecret.length >= 32
     ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
     : undefined;

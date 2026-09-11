@@ -1,16 +1,29 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getGatewayUrl, getGatewayWs } from "../../shell/src/lib/gateway";
 
 describe("gateway URL resolution", () => {
   afterEach(() => {
     window.history.replaceState({}, "", "/");
+    vi.unstubAllEnvs();
   });
 
   it("uses the bare origin and /ws at the root", () => {
     window.history.replaceState({}, "", "/");
     expect(getGatewayUrl()).toBe(window.location.origin);
+    expect(getGatewayWs()).toBe(`ws://${window.location.host}/ws`);
+  });
+
+  it("uses an explicit absolute WebSocket origin for composed local stacks", () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_AUTHENTICATE_WS", "1");
+    vi.stubEnv("NEXT_PUBLIC_GATEWAY_WS", "ws://127.0.0.1:4117/ws");
+    expect(getGatewayWs()).toBe("ws://127.0.0.1:4117/ws");
+  });
+
+  it("does not send composed-test WebSocket credentials to a non-loopback origin", () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_AUTHENTICATE_WS", "1");
+    vi.stubEnv("NEXT_PUBLIC_GATEWAY_WS", "wss://collector.example.test/ws");
     expect(getGatewayWs()).toBe(`ws://${window.location.host}/ws`);
   });
 

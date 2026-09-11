@@ -5,8 +5,8 @@ This package is the only managed speech admission boundary. Runtime callers auth
 ## Source-of-truth invariants
 
 - `speech_operations` is the durable source of truth for execution and cancellation metadata. It deliberately contains no audio, transcript, provider response, or chat context.
-- The existing machine/runtime funded-AI balance and ledger remain the only monetary source of truth. `SpeechFundingPort` is a transaction-scoped extension point for that wallet, not a second balance. The production adapter is deferred until speech-eligible funding sources and pricing have been validated.
-- Source audio remains owner data. Dictation audio is held only for the bounded request. `owner_audio` admission remains disabled until callers can prove owner storage and retention without copying content into platform persistence.
+- The existing machine/runtime funded-AI balance and ledger remain the only monetary source of truth. The production `SpeechFundingPort` reserves and settles that wallet with an explicit operator allowlist of promotional and/or add-on sources; it is not a second balance.
+- Source audio remains owner data. Dictation audio is held only for the bounded request. `owner_audio` can be enabled by platform policy for callers that preserve the owner source before invoking the same service; platform persistence never receives a path or retains the bytes.
 - A funding start receipt is replayable bookkeeping. Only the conditional `reserved -> dispatching` update is the durable provider-dispatch claim.
 
 ## Transaction and orphan rules
@@ -19,19 +19,18 @@ This package is the only managed speech admission boundary. Runtime callers auth
 ## Resource and privacy rules
 
 - The route body and decoded WAV duration are independently bounded. Initial media support is PCM WAV only; compressed formats require a bounded decoder spike before policy expansion.
-- The service admits at most four active media/provider operations per process and holds no unbounded registry. Deployment-wide leases, one-active-per-owner, and admission-rate enforcement are required before the capability can be enabled.
+- The service admits at most four active media/provider operations per process and holds no unbounded registry. A transaction-scoped Postgres advisory lock serializes deployment-wide active, per-owner active, and rolling owner-rate checks before wallet reservation.
 - External adapter calls use a fixed URL, reject redirects, have a hard timeout, bound response bytes, and perform no hidden retry.
 - Logs contain only coarse error classes. Never log keys, bearer credentials, owner/machine identifiers, audio, transcript text, request bodies, or raw provider errors.
 
 ## Operational gates
 
-Startup currently mounts an authenticated, disabled capability response. Enabling production dispatch is deferred until all of these are complete and tested together:
+Startup mounts the configured service only when the operator explicitly supplies provider, policy revision, price, eligible funding sources, and platform-only secrets. Otherwise it exposes an authenticated, disabled capability response. Production rollout still requires the external evidence gates below:
 
-1. a speech-specific policy independent of text-model allowlists;
-2. a transaction-scoped adapter over the existing machine wallet with explicit speech-eligible funding sources;
-3. account-specific OpenAI model, file, usage, timeout, and billing-unit validation using non-private fixtures;
-4. deployment-wide concurrency and owner rate limits;
-5. media memory/load validation and supported browser/device recording evidence;
-6. owner-audio retention compatibility tests.
+1. account-specific OpenAI model, file, usage, timeout, and billing-unit validation using non-private fixtures;
+2. media memory/load validation and supported browser/device recording evidence;
+3. owner-audio retention compatibility tests for every migrated caller;
+4. packaged Electron microphone validation and the multilingual evaluation set.
 
-No default provider price is encoded in this foundation, and no live provider or private-audio validation is claimed.
+No default provider price is encoded, and no live provider or private-audio validation is claimed. The explicitly labeled local fixture is rejected in production and records no wallet debit.
+The lifecycle CHECK is enforced for new writes but added `NOT VALID` on upgrades so legacy metadata cannot block platform startup. Reconciliation and constraint validation remain an enablement task if pre-foundation rows exist.

@@ -78,6 +78,19 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__add_app_to_desktop");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__list_placeable_apps");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__add_app_to_desktop");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined);
+  });
+
+  it("registers owner audio transcription only from an injected managed dependency", async () => {
+    const ownerAudioTranscriber = {
+      transcribe: vi.fn(async () => ({ text: "managed", durationMs: 1_000 })),
+    };
+    await kernelOptions({ db, homePath: "/home/matrix/home", ownerAudioTranscriber });
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(
+      db,
+      "/home/matrix/home",
+      undefined,
+      ownerAudioTranscriber,
+    );
   });
 });

@@ -1,10 +1,9 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { writeFile, rename } from "node:fs/promises";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SttProvider } from "./stt/base.js";
 
-const MAX_VOICE_SIZE = 10 * 1024 * 1024; // 10MB
+export const MAX_CHANNEL_VOICE_BYTES = 10 * 1024 * 1024;
 
 const ALLOWED_AUDIO_HOSTS = new Set([
   "api.telegram.org",
@@ -32,6 +31,87 @@ export interface VoiceNoteResult {
   error?: string;
 }
 
+function diagnosticErrorKind(error: unknown): string {
+  if (!(error instanceof Error)) return "UnknownError";
+  switch (error.name) {
+    case "AbortError":
+    case "Error":
+    case "RangeError":
+    case "SyntaxError":
+    case "TimeoutError":
+    case "TypeError":
+      return error.name;
+    default:
+      return "UnknownError";
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error
+    && "code" in error
+    && (error as Error & { code?: unknown }).code === "ENOENT";
+}
+
+async function readBoundedResponse(response: Response): Promise<Buffer | undefined> {
+  const contentLength = Number(response.headers?.get?.("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_CHANNEL_VOICE_BYTES) {
+    await response.body?.cancel();
+    return undefined;
+  }
+  if (!response.body) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return buffer.byteLength <= MAX_CHANNEL_VOICE_BYTES ? buffer : undefined;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > MAX_CHANNEL_VOICE_BYTES) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total);
+}
+
+async function preserveOwnerAudio(filePath: string, buffer: Buffer): Promise<boolean> {
+  const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+  let file;
+  try {
+    file = await open(temporaryPath, "wx");
+    await file.writeFile(buffer);
+    await file.close();
+    file = undefined;
+    await rename(temporaryPath, filePath);
+    return true;
+  } catch (error: unknown) {
+    console.warn("[voice] owner audio persistence failed", diagnosticErrorKind(error));
+    if (file) {
+      try {
+        await file.close();
+      } catch (closeError: unknown) {
+        console.warn("[voice] owner audio handle cleanup failed", diagnosticErrorKind(closeError));
+      }
+    }
+    try {
+      await unlink(temporaryPath);
+    } catch (unlinkError: unknown) {
+      if (!isMissingFileError(unlinkError)) {
+        console.warn("[voice] owner audio temp cleanup failed", diagnosticErrorKind(unlinkError));
+      }
+    }
+    return false;
+  }
+}
+
 export async function handleVoiceNote(params: {
   audioUrl?: string;
   audioBuffer?: Buffer;
@@ -42,7 +122,7 @@ export async function handleVoiceNote(params: {
 }): Promise<VoiceNoteResult> {
   const { audioUrl, audioBuffer: preloadedBuffer, channel, homePath, stt, extension = "ogg" } = params;
   const audioDir = join(homePath, "data", "audio");
-  if (!existsSync(audioDir)) mkdirSync(audioDir, { recursive: true });
+  await mkdir(audioDir, { recursive: true });
 
   const safeChannel = channel.replace(/[^a-z0-9-]/gi, "").toLowerCase();
   const safeExt = (extension || "ogg").replace(/[^a-z0-9]/gi, "").toLowerCase();
@@ -65,13 +145,17 @@ export async function handleVoiceNote(params: {
 
     let response: Response;
     try {
-      response = await fetch(audioUrl, { signal: AbortSignal.timeout(30_000) });
-    } catch (e) {
+      response = await fetch(audioUrl, {
+        redirect: "error",
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (error: unknown) {
+      console.warn("[voice] audio download failed", diagnosticErrorKind(error));
       return {
         filePath,
         transcript: null,
         durationMs: 0,
-        error: `Download failed: ${e instanceof Error ? e.message : String(e)}`,
+        error: "Audio download unavailable",
       };
     }
     if (!response.ok) {
@@ -79,38 +163,28 @@ export async function handleVoiceNote(params: {
         filePath,
         transcript: null,
         durationMs: 0,
-        error: `Download failed: ${response.status}`,
+        error: "Audio download unavailable",
       };
     }
-
-    const contentLength = response.headers?.get?.("content-length");
-    if (contentLength) {
-      const declaredSize = parseInt(contentLength, 10);
-      if (!Number.isNaN(declaredSize) && declaredSize > MAX_VOICE_SIZE) {
-        return {
-          filePath,
-          transcript: null,
-          durationMs: 0,
-          error: `File too large: ${(declaredSize / 1024 / 1024).toFixed(1)}MB exceeds 10MB limit`,
-        };
-      }
+    const downloaded = await readBoundedResponse(response);
+    if (!downloaded) {
+      return { filePath, transcript: null, durationMs: 0, error: "Audio exceeds the 10MB limit" };
     }
-
-    buffer = Buffer.from(await response.arrayBuffer());
+    buffer = downloaded;
   }
 
-  if (buffer.length > MAX_VOICE_SIZE) {
+  if (buffer.length > MAX_CHANNEL_VOICE_BYTES) {
     return {
       filePath,
       transcript: null,
       durationMs: 0,
-      error: `File too large: ${(buffer.length / 1024 / 1024).toFixed(1)}MB exceeds 10MB limit`,
+      error: "Audio exceeds the 10MB limit",
     };
   }
 
-  const tmpPath = filePath + ".tmp";
-  await writeFile(tmpPath, buffer);
-  await rename(tmpPath, filePath);
+  if (!await preserveOwnerAudio(filePath, buffer)) {
+    return { filePath, transcript: null, durationMs: 0, error: "Voice note could not be saved" };
+  }
 
   if (!stt || !stt.isAvailable()) {
     return {
@@ -124,8 +198,8 @@ export async function handleVoiceNote(params: {
   try {
     const result = await stt.transcribe(buffer);
     return { filePath, transcript: result.text, durationMs: result.durationMs };
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    return { filePath, transcript: null, durationMs: 0, error };
+  } catch (error: unknown) {
+    console.warn("[voice] transcription failed", diagnosticErrorKind(error));
+    return { filePath, transcript: null, durationMs: 0, error: "Transcription unavailable" };
   }
 }

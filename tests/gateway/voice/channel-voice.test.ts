@@ -36,6 +36,7 @@ describe("handleVoiceNote", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
     rmSync(homePath, { recursive: true, force: true });
   });
 
@@ -56,8 +57,36 @@ describe("handleVoiceNote", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "https://api.telegram.org/file/bot123/audio.ogg",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.objectContaining({ redirect: "error", signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("cancels a chunked download that crosses the byte ceiling before saving or transcribing", async () => {
+    const reader = {
+      read: vi.fn()
+        .mockResolvedValueOnce({ done: false, value: new Uint8Array(6 * 1024 * 1024) })
+        .mockResolvedValueOnce({ done: false, value: new Uint8Array(5 * 1024 * 1024) }),
+      cancel: vi.fn(async () => undefined),
+      releaseLock: vi.fn(),
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      body: { getReader: () => reader },
+    } as unknown as Response);
+    const stt = createMockStt();
+
+    const result = await handleVoiceNote({
+      audioUrl: "https://api.telegram.org/file/bot123/chunked.ogg",
+      channel: "telegram",
+      homePath,
+      stt,
+    });
+
+    expect(result).toMatchObject({ transcript: null, error: "Audio exceeds the 10MB limit" });
+    expect(reader.cancel).toHaveBeenCalledTimes(1);
+    expect(stt.transcribe).not.toHaveBeenCalled();
+    expect(existsSync(result.filePath)).toBe(false);
   });
 
   it("saves to ~/data/audio/{channel}-{uuid}.{ext}", async () => {
@@ -136,7 +165,7 @@ describe("handleVoiceNote", () => {
     });
 
     expect(result.transcript).toBeNull();
-    expect(result.error).toMatch(/exceeds 10MB limit/);
+    expect(result.error).toMatch(/exceeds the 10MB limit/);
     expect(result.durationMs).toBe(0);
     expect(stt.transcribe).not.toHaveBeenCalled();
   });
@@ -156,8 +185,29 @@ describe("handleVoiceNote", () => {
     });
 
     expect(result.transcript).toBeNull();
-    expect(result.error).toMatch(/Download failed: 404/);
+    expect(result.error).toBe("Audio download unavailable");
     expect(result.durationMs).toBe(0);
+  });
+
+  it("bounds provider-specific download diagnostics to an allowlisted error kind", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const providerError = new Error("private provider detail");
+    providerError.name = "ProviderSpecificFailure";
+    globalThis.fetch = vi.fn().mockRejectedValue(providerError);
+
+    const result = await handleVoiceNote({
+      audioUrl: "https://api.telegram.org/file/bot123/missing.ogg",
+      channel: "telegram",
+      homePath,
+      stt: createMockStt(),
+    });
+
+    expect(result.error).toBe("Audio download unavailable");
+    expect(warning).toHaveBeenCalledWith("[voice] audio download failed", "UnknownError");
+    expect(warning).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("ProviderSpecificFailure"),
+    );
   });
 
   it("STT failure returns { filePath, transcript: null, error }", async () => {
@@ -181,7 +231,7 @@ describe("handleVoiceNote", () => {
     expect(result.filePath).toBeDefined();
     expect(existsSync(result.filePath)).toBe(true);
     expect(result.transcript).toBeNull();
-    expect(result.error).toBe("Whisper API down");
+    expect(result.error).toBe("Transcription unavailable");
     expect(result.durationMs).toBe(0);
   });
 

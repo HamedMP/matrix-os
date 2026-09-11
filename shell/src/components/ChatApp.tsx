@@ -834,7 +834,7 @@ export function ChatInput({
               size="icon"
               variant="ghost"
               className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-              disabled={!connected && !speechIsActive}
+              disabled={!connected && !speechIsActive && !speech.isSupported}
               onClick={handleMicClick}
             >
               {speech.phase === "requesting_permission" ? (

@@ -279,6 +279,13 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
           placeholder={placeholder}
           ariaLabel={placeholder}
           leadingControls={projectContextControl}
+          speech={{
+            scopeKey: sessionId ?? "new-chat",
+            onDraft: (text) => setDraft((current) => {
+              const trimmed = current.trimEnd();
+              return trimmed.length > 0 ? `${trimmed} ${text}` : text;
+            }),
+          }}
         />
         <ConversationContextFeedback
           context={conversationContext}

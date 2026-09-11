@@ -3,6 +3,7 @@ import type { Transaction } from "kysely";
 import type { PlatformDatabase } from "../../packages/platform/src/db.js";
 import {
   SpeechOperationConflictError,
+  SpeechOperationRateLimitError,
   createSpeechOperationsRepository,
 } from "../../packages/platform/src/speech/operations.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
@@ -59,8 +60,82 @@ describe("speech operation repository", () => {
     expect(first).toMatchObject({ executionState: "reserved", fundingReservationId: "funding_1" });
     expect(replay).toEqual(first);
     expect(reserveCalls).toBe(1);
-    await expect(repo.admit({ ...admission, contentFingerprint: "b".repeat(64) }, reserve))
-      .rejects.toBeInstanceOf(SpeechOperationConflictError);
+    const conflicts = [
+      { contentFingerprint: "b".repeat(64) },
+      { sourceKind: "owner_audio" as const },
+      { policyRevision: "speech-policy-2" },
+      { adapterId: "alternate-file" },
+      { modelId: "alternate-transcribe" },
+      { audioDurationMs: 1_001 },
+    ];
+    for (const changed of conflicts) {
+      await expect(repo.admit({ ...admission, ...changed }, reserve))
+        .rejects.toBeInstanceOf(SpeechOperationConflictError);
+    }
+    expect(reserveCalls).toBe(1);
+  });
+
+  it("enforces a deployment-wide active-operation cap before reserving funding", async () => {
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => now,
+      maximumActiveOperations: 1,
+    });
+    let reserveCalls = 0;
+    await repo.admit(admission, async () => {
+      reserveCalls += 1;
+      return { reservationId: "funding_1", reservedMicrousd: 20 };
+    });
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${now.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => {
+      reserveCalls += 1;
+      return { reservationId: "funding_2", reservedMicrousd: 20 };
+    })).rejects.toBeInstanceOf(SpeechOperationRateLimitError);
+    expect(reserveCalls).toBe(1);
+  });
+
+  it("enforces an owner admission window after earlier work becomes terminal", async () => {
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => now,
+      maximumAdmissionsPerOwner: 1,
+      admissionWindowMs: 60_000,
+    });
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    await repo.claimDispatch(identity, requestId);
+    await repo.complete(identity, requestId, {
+      executionState: "succeeded",
+      outcomeCode: "transcript",
+      actualCostMicrousd: 1,
+    }, async () => undefined);
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${now.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_2", reservedMicrousd: 20 })))
+      .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
+  });
+
+  it("evicts crashed active work from admission capacity before metadata expires", async () => {
+    let checked = now;
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => checked,
+      maximumActiveOperations: 1,
+      activeOperationTtlMs: 60_000,
+    });
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    checked = new Date(now.getTime() + 60_001);
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${checked.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_2", reservedMicrousd: 20 })))
+      .resolves.toMatchObject({ executionState: "reserved" });
+    expect(await db.executor.selectFrom("speech_operations").select("operation_id").execute()).toHaveLength(2);
   });
 
   it("grants one durable dispatch claim rather than replaying a start receipt", async () => {
@@ -118,5 +193,19 @@ describe("speech operation repository", () => {
     expect(cancelled).toMatchObject({ executionStarted: true, cancellationRequested: true });
     expect(releases).toBe(0);
     expect((await repo.get(identity, requestId))?.executionState).toBe("dispatching");
+  });
+
+  it("rejects persisted lifecycle shapes that status contracts cannot represent", async () => {
+    const repo = repository();
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    const row = await db.executor.selectFrom("speech_operations").selectAll()
+      .where("operation_id", "=", requestId).executeTakeFirstOrThrow();
+    await db.executor.deleteFrom("speech_operations").where("operation_id", "=", requestId).execute();
+    await expect(db.executor.insertInto("speech_operations").values({
+      ...row,
+      execution_state: "succeeded",
+      safe_outcome_code: null,
+      dispatch_claimed_at: null,
+    }).execute()).rejects.toThrow();
   });
 });

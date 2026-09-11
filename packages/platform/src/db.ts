@@ -1227,19 +1227,25 @@ function wrapDb(
   executor: Executor,
   ready: Promise<void>,
   destroyFn: () => Promise<void>,
+  transactionScoped = false,
 ): PlatformDB {
-  return {
+  const wrapped: PlatformDB = {
     kysely,
     executor,
     ready,
     async transaction(fn) {
       await ready;
+      if (transactionScoped) return fn(wrapped);
       return kysely.transaction().execute((trx) =>
-        fn(wrapDb(kysely, trx, Promise.resolve(), destroyFn)),
+        fn(wrapDb(kysely, trx, Promise.resolve(), destroyFn, true)),
       );
     },
-    destroy: destroyFn,
+    // The root PlatformDB owns Kysely/the pool. A transaction-scoped wrapper
+    // may be passed through several repository layers, but must never close
+    // that shared resource.
+    destroy: transactionScoped ? async () => undefined : destroyFn,
   };
+  return wrapped;
 }
 
 async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
@@ -1411,12 +1417,31 @@ async function migrateSchema(db: Executor): Promise<void> {
       owner_id TEXT NOT NULL,
       machine_id TEXT NOT NULL REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
       runtime_slot TEXT NOT NULL,
-      audience TEXT NOT NULL CHECK (audience = 'matrix-funded-relay'),
-      scope TEXT NOT NULL CHECK (scope = 'ai:invoke'),
+      audience TEXT NOT NULL CHECK (audience IN ('matrix-funded-relay', 'matrix-platform-speech')),
+      scope TEXT NOT NULL CHECK (scope IN ('ai:invoke', 'speech:transcribe')),
       issued_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       revoked_at TEXT
     )
+  `.execute(db);
+  await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_audience_check`.execute(db);
+  await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_scope_check`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE ai_runtime_credentials
+          ADD CONSTRAINT ai_runtime_credentials_audience_v2_check
+          CHECK (audience IN ('matrix-funded-relay', 'matrix-platform-speech'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE ai_runtime_credentials
+          ADD CONSTRAINT ai_runtime_credentials_scope_v2_check
+          CHECK (scope IN ('ai:invoke', 'speech:transcribe'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+    END $$
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_runtime_credentials_machine_issued ON ai_runtime_credentials(machine_id, issued_at DESC)`.execute(db);
   await sql`
@@ -1454,8 +1479,95 @@ async function migrateSchema(db: Executor): Promise<void> {
           AND content_fingerprint IS NULL
           AND funding_reservation_id IS NULL
         )
+      ),
+      CONSTRAINT speech_operation_lifecycle_shape CHECK (
+        (
+          execution_state IN ('received', 'reserved')
+          AND cancellation_requested = FALSE
+          AND dispatch_claimed_at IS NULL
+          AND safe_outcome_code IS NULL
+        )
+        OR (
+          execution_state = 'dispatching'
+          AND dispatch_claimed_at IS NOT NULL
+          AND safe_outcome_code IS NULL
+        )
+        OR (
+          execution_state = 'succeeded'
+          AND dispatch_claimed_at IS NOT NULL
+          AND safe_outcome_code IS NOT NULL
+          AND safe_outcome_code IN ('transcript', 'no_speech')
+        )
+        OR (
+          execution_state = 'failed'
+          AND dispatch_claimed_at IS NOT NULL
+          AND safe_outcome_code IS NOT NULL
+          AND safe_outcome_code IN ('invalid_media', 'timeout', 'provider_failure')
+        )
+        OR (
+          execution_state = 'uncertain'
+          AND dispatch_claimed_at IS NOT NULL
+          AND safe_outcome_code IS NOT NULL
+          AND safe_outcome_code IN ('timeout', 'provider_failure', 'cancelled')
+          AND (safe_outcome_code <> 'cancelled' OR cancellation_requested = TRUE)
+        )
+        OR (
+          execution_state = 'cancelled'
+          AND cancellation_requested = TRUE
+          AND dispatch_claimed_at IS NULL
+          AND safe_outcome_code IS NOT NULL
+          AND safe_outcome_code = 'cancelled'
+        )
       )
     )
+  `.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE speech_operations
+          ADD CONSTRAINT speech_operation_lifecycle_shape CHECK (
+            (
+              execution_state IN ('received', 'reserved')
+              AND cancellation_requested = FALSE
+              AND dispatch_claimed_at IS NULL
+              AND safe_outcome_code IS NULL
+            )
+            OR (
+              execution_state = 'dispatching'
+              AND dispatch_claimed_at IS NOT NULL
+              AND safe_outcome_code IS NULL
+            )
+            OR (
+              execution_state = 'succeeded'
+              AND dispatch_claimed_at IS NOT NULL
+              AND safe_outcome_code IS NOT NULL
+              AND safe_outcome_code IN ('transcript', 'no_speech')
+            )
+            OR (
+              execution_state = 'failed'
+              AND dispatch_claimed_at IS NOT NULL
+              AND safe_outcome_code IS NOT NULL
+              AND safe_outcome_code IN ('invalid_media', 'timeout', 'provider_failure')
+            )
+            OR (
+              execution_state = 'uncertain'
+              AND dispatch_claimed_at IS NOT NULL
+              AND safe_outcome_code IS NOT NULL
+              AND safe_outcome_code IN ('timeout', 'provider_failure', 'cancelled')
+              AND (safe_outcome_code <> 'cancelled' OR cancellation_requested = TRUE)
+            )
+            OR (
+              execution_state = 'cancelled'
+              AND cancellation_requested = TRUE
+              AND dispatch_claimed_at IS NULL
+              AND safe_outcome_code IS NOT NULL
+              AND safe_outcome_code = 'cancelled'
+            )
+          ) NOT VALID;
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+    END $$
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_speech_operations_active
