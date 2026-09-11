@@ -764,6 +764,7 @@ exit 99
 
     expect(gateway).not.toContain('MATRIX_REGISTER_CLIENT');
     expect(registration).toContain('After=network-online.target matrix-gateway.service');
+    expect(registration).not.toContain('Requires=matrix-gateway.service');
     expect(registration).toContain('ExecStart=/opt/matrix/bin/matrix-register-vps');
     expect(registration).toContain('Restart=on-failure');
     expect(registration).toContain('SuccessExitStatus=64');
