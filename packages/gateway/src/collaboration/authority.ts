@@ -10,6 +10,7 @@ export type CollaborationAction =
   | "manage_members"
   | "publish_snapshot"
   | "mutate_project"
+  | "export_project"
   | "request_ai"
   | "control_execution"
   | "recover";
@@ -170,7 +171,7 @@ function requireRoleCapability(role: CollaborationRole, action: CollaborationAct
     return;
   }
   const allowed = role === "owner"
-    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "recover"]
+    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "export_project", "recover"]
     : role === "editor"
       ? ["read", "discuss", "mutate_project"]
       : ["read"];

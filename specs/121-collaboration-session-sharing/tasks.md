@@ -139,14 +139,14 @@
 
 - [x] T059 [P] [US5] (PR1) Write red viewer/pending/revoked/outsider route-matrix tests for Chat discussion, state ownership, publishing, and direct legacy calls in `tests/gateway/collaboration-routes.test.ts`, `tests/gateway/collaboration-authority.test.ts`, and `tests/gateway/collaboration-m1-ai-gate.test.ts`
 - [x] T060 [P] [US5] (PR4) Write red viewer terminal input/paste/resize/takeover/stop/create denial tests in `tests/gateway/collaboration-terminal-authorization.test.ts`
-- [ ] T061 [P] [US5] (PR5) Write red viewer indirect-write denial tests for files, Git, apps, agents, layout, search, stale links, and exports in `tests/gateway/collaboration-project-viewer.test.ts`
+- [x] T061 [P] [US5] (PR5) Write red viewer indirect-write denial tests for files, Git, apps, agents, layout, search, stale links, and exports in `tests/gateway/collaboration-project-viewer.test.ts`
 
 ### Implementation
 
 - [x] T062 [US5] (PR1) Enforce Chat viewer/pending/revoked/outsider permissions and owner-only snapshot publishing in `packages/gateway/src/collaboration/chat-adapter.ts`
 - [x] T063 [US5] (PR1) Derive stable viewer controls, disabled explanations, and safe error presentation once for all clients in `packages/ui/src/collaboration/permissions.ts`
 - [x] T064 [US5] (PR4) Enforce observation-only terminal access in the shared terminal dispatcher in `packages/gateway/src/collaboration/terminal-dispatcher.ts`
-- [ ] T065 [US5] (PR5) Enforce viewer-safe project resource adapters and unavailable unsafe apps in `packages/gateway/src/collaboration/project-adapters.ts`
+- [x] T065 [US5] (PR5) Enforce viewer-safe project resource adapters and unavailable unsafe apps in `packages/gateway/src/collaboration/project-adapters.ts`
 
 **Checkpoint**: Every enabled resource has server-enforced viewer semantics; later resources remain unavailable until their adapter passes this phase.
 
