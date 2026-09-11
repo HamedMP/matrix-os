@@ -41,6 +41,18 @@ describe("websocket auth", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("uses a short-lived ws token when composed e2e verification requires real gateway auth", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    vi.stubEnv("NEXT_PUBLIC_E2E_AUTHENTICATE_WS", "1");
+    vi.mocked(fetch).mockResolvedValue(tokenResponse("composed-token"));
+    const { buildAuthenticatedWebSocketUrl } = await import("../../shell/src/lib/websocket-auth.js");
+
+    await expect(buildAuthenticatedWebSocketUrl("/ws", undefined, { requireToken: true }))
+      .resolves
+      .toBe("ws://gateway.test/ws?token=composed-token");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it("requires a fresh token for shell live socket URLs when requested", async () => {
     vi.mocked(fetch).mockResolvedValue(tokenResponse(null));
     const { buildAuthenticatedWebSocketUrl } = await import("../../shell/src/lib/websocket-auth.js");

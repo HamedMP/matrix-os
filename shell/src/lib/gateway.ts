@@ -24,6 +24,18 @@ export function getGatewayUrl(): string {
  */
 export function getGatewayWs(): string {
   if (typeof window !== "undefined") {
+    const configured = process.env.NEXT_PUBLIC_GATEWAY_WS;
+    if (configured) {
+      try {
+        const explicitUrl = new URL(configured);
+        if (["ws:", "wss:"].includes(explicitUrl.protocol)
+          && !explicitUrl.username && !explicitUrl.password) {
+          return explicitUrl.toString();
+        }
+      } catch (error: unknown) {
+        if (!(error instanceof TypeError)) throw error;
+      }
+    }
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${window.location.host}${getExplicitVmPrefix()}/ws`;
   }

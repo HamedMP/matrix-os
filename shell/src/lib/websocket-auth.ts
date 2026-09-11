@@ -91,7 +91,8 @@ export async function buildAuthenticatedWebSocketUrl(
 
   if (
     isSelfHostedDocument()
-    || process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1"
+    || (process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1"
+      && process.env.NEXT_PUBLIC_E2E_AUTHENTICATE_WS !== "1")
   ) {
     return gatewayUrl.toString();
   }
