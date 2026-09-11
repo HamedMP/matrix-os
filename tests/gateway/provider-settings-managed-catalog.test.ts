@@ -30,13 +30,13 @@ function projectionInput(harness: "pi" | "opencode") {
 }
 
 describe("Matrix routes during native model catalog failure", () => {
-  it.each(["pi", "opencode"] as const)("retains the enabled %s Matrix route using authoritative policy", async (harness) => {
+  it.each(["pi", "opencode"] as const)("preserves but disables the %s Matrix route until its catalog recovers", async (harness) => {
     const input = projectionInput(harness);
     const snapshot = await projectProviderSettings(input);
     expect(snapshot.harnesses.find((agent) => agent.harness === harness)).toMatchObject({
-      enabled: true, accessSourceId: "matrix_included", selectedAccountId: null,
+      enabled: false, accessSourceId: null, selectedAccountId: null,
       route: input.config.harnesses[0]!.route,
-      routeAvailability: "available", authState: "authenticated", connectivity: "online",
+      routeAvailability: "catalog_unavailable", authState: "unknown", connectivity: "offline",
     });
   });
 
