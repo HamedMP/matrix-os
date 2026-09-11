@@ -149,12 +149,14 @@ restore_rollback_release_metadata() {
   sudo mv -Tf "$RELEASE_ROLLBACK_FILE" "$RELEASE_FILE" || return 1
 }
 
-rollback_release_metadata_is_ready() {
-  local rollback_app="$1" expected_version actual_version
-  [ -d "$rollback_app" ] && [ ! -L "$rollback_app" ] || return 1
-  [ -f "$rollback_app/BUNDLE_VERSION" ] && [ ! -L "$rollback_app/BUNDLE_VERSION" ] || return 1
-  IFS= read -r expected_version <"$rollback_app/BUNDLE_VERSION" || return 1
-  actual_version="$(python3 - "$RELEASE_ROLLBACK_FILE" <<'PY'
+release_metadata_matches_app() {
+  local app_dir="$1" release_file="$2" expected_version actual_version
+  [ -d "$app_dir" ] && [ ! -L "$app_dir" ] || return 1
+  [ -f "$app_dir/BUNDLE_VERSION" ] && [ ! -L "$app_dir/BUNDLE_VERSION" ] || return 1
+  [ -f "$release_file" ] && [ ! -L "$release_file" ] || return 1
+  IFS= read -r expected_version <"$app_dir/BUNDLE_VERSION" || return 1
+  [[ "$expected_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 1
+  actual_version="$(python3 - "$release_file" <<'PY'
 import json
 import os
 import stat
@@ -177,6 +179,10 @@ finally:
 PY
   )" || return 1
   [ "$actual_version" = "$expected_version" ]
+}
+
+rollback_release_metadata_is_ready() {
+  release_metadata_matches_app "$1" "$RELEASE_ROLLBACK_FILE"
 }
 
 # Echo the lines of an existing symphony.env that this agent does not manage so
@@ -849,6 +855,11 @@ consume_update_trigger() {
 recover_interrupted_update() {
   local phase version="" transaction_state=""
   [ -f "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 0
+  phase="$(cat "$UPDATE_PHASE_MARKER" 2>/dev/null || true)"
+  case "$phase" in
+    prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
+    *) phase=unknown ;;
+  esac
   if [ -f "$UPDATE_TRANSACTION_STATE" ] && [ ! -L "$UPDATE_TRANSACTION_STATE" ]; then
     transaction_state="$(cat "$UPDATE_TRANSACTION_STATE" 2>/dev/null || true)"
     case "$transaction_state" in
@@ -879,15 +890,30 @@ recover_interrupted_update() {
     esac
   fi
   [ -f "$UPDATE_MARKER" ] && [ ! -L "$UPDATE_MARKER" ] || {
+    case "$phase" in
+      host-bin|health)
+        version="$(current_version)"
+        [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || version=""
+        if [ -d "$APP_DIR.rollback" ] && [ ! -L "$APP_DIR.rollback" ]; then
+          if release_metadata_matches_app "$APP_DIR.rollback" "$RELEASE_FILE"; then
+            log "Recovering update interrupted after a legacy updater replaced the app"
+            if do_rollback false; then
+              write_update_error "apply_interrupted" "The interrupted update was rolled back to the previous runtime." "$version"
+            else
+              write_update_error "post_install_rollback_failed" "The interrupted update could not be rolled back completely." "$version"
+            fi
+          else
+            log "ERROR: interrupted legacy update metadata does not identify the rollback app"
+            write_update_error "post_install_rollback_failed" "The interrupted update could not be rolled back completely." "$version"
+          fi
+          return 0
+        fi
+        ;;
+    esac
     rm -f -- "$UPDATE_PHASE_MARKER"
     return 0
   }
   [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 0
-  phase="$(cat "$UPDATE_PHASE_MARKER" 2>/dev/null || true)"
-  case "$phase" in
-    prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
-    *) phase=unknown ;;
-  esac
   version="$(json_field "$(cat "$UPDATE_MARKER")" version 2>/dev/null || true)"
   log "ERROR: interrupted update recovered at bounded phase $phase"
   write_update_error "apply_interrupted" "The update process was interrupted before completion." "$version"
@@ -1441,10 +1467,21 @@ do_rollback() {
   elif [ ! -f "$UPDATE_TRANSACTION_STATE" ] || [ -L "$UPDATE_TRANSACTION_STATE" ]; then
     log "ERROR: no rollback app or update transaction is available"; return 1
   fi
-  if [ "$restore_release_metadata" = true ] && [ "$has_app_rollback" = true ] \
-    && ! rollback_release_metadata_is_ready "$APP_DIR.rollback"; then
-    log "ERROR: rollback release metadata is unavailable or inconsistent"
-    return 1
+  if [ "$has_app_rollback" = true ]; then
+    if [ "$restore_release_metadata" = true ]; then
+      if rollback_release_metadata_is_ready "$APP_DIR.rollback"; then
+        :
+      elif release_metadata_matches_app "$APP_DIR.rollback" "$RELEASE_FILE"; then
+        log "Installed release metadata already identifies the rollback app"
+        restore_release_metadata=false
+      else
+        log "ERROR: rollback release metadata is unavailable or inconsistent"
+        return 1
+      fi
+    elif ! release_metadata_matches_app "$APP_DIR.rollback" "$RELEASE_FILE"; then
+      log "ERROR: installed release metadata does not identify the rollback app"
+      return 1
+    fi
   fi
   log "Rolling back..."
   if ! stop_runtime_services; then

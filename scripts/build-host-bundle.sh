@@ -45,6 +45,7 @@ pnpm --filter '@matrix-os/scope-runtime' build
 pnpm --filter '@matrix-os/gateway' build
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
+node --import=tsx "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs"
 : "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle}"
 # In-app auth routes; defaults keep Clerk cross-links off the hosted Account
 # Portal (accounts.matrix-os.com) on every VPS shell.
