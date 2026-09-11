@@ -53,6 +53,7 @@ describe("funded relay Cloud Run service", () => {
     );
 
     expect(dockerfile).toContain('CMD ["node", "packages/proxy/dist/funded-main.js"]');
+    expect(dockerfile).toContain("COPY patches patches");
     expect(dockerfile).not.toContain("packages/platform");
     expect(cloudbuild).toContain("Dockerfile.ai-relay");
     expect(workflow).toContain("MATRIX_FUNDED_AI_ENABLED=true");
