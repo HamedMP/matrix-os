@@ -126,6 +126,22 @@ export interface CollaborationTransitionsTable {
   updated_at: Timestamp;
 }
 
+export interface CollaborationResourceBindingsTable {
+  id: string;
+  project_scope_id: string;
+  resource_scope_id: string | null;
+  resource_kind: "file" | "chat" | "app" | "layout" | "terminal";
+  resource_id: string;
+  authority_runtime_id: string;
+  authority_generation: number;
+  revision: ColumnType<number, number | undefined, number>;
+  readiness: "ready" | "blocked";
+  blocker: string | null;
+  incarnation: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface ChatCollaborationCommandsTable {
   id: string;
   scope_id: string;
@@ -156,6 +172,7 @@ export interface CollaborationDatabase {
   collaboration_directory_outbox: CollaborationDirectoryOutboxTable;
   collaboration_schema_migrations: CollaborationSchemaMigrationsTable;
   collaboration_transitions: CollaborationTransitionsTable;
+  collaboration_resource_bindings: CollaborationResourceBindingsTable;
   chat_collaboration_commands: ChatCollaborationCommandsTable;
 }
 
@@ -359,6 +376,29 @@ export async function bootstrapCollaborationDatabase(
       CHECK (status <> 'active' OR publication_marker IS NOT NULL)
     )
   `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_resource_bindings (
+      id UUID PRIMARY KEY,
+      project_scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+      resource_scope_id UUID UNIQUE REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+      resource_kind TEXT NOT NULL CHECK (resource_kind IN ('file', 'chat', 'app', 'layout', 'terminal')),
+      resource_id TEXT NOT NULL CHECK (char_length(resource_id) BETWEEN 1 AND 4096),
+      authority_runtime_id TEXT NOT NULL CHECK (char_length(authority_runtime_id) BETWEEN 1 AND 128),
+      authority_generation BIGINT NOT NULL CHECK (authority_generation > 0),
+      revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
+      readiness TEXT NOT NULL CHECK (readiness IN ('ready', 'blocked')),
+      blocker TEXT CHECK (blocker IS NULL OR blocker ~ '^[a-z][a-z0-9_]{0,79}$'),
+      incarnation TEXT CHECK (
+        incarnation IS NULL OR (incarnation ~ '^[A-Za-z0-9_-]+$' AND char_length(incarnation) <= 256)
+      ),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (project_scope_id, resource_kind, resource_id),
+      CHECK ((readiness = 'ready' AND blocker IS NULL) OR (readiness = 'blocked' AND blocker IS NOT NULL)),
+      CHECK ((resource_kind IN ('chat', 'terminal')) = (resource_scope_id IS NOT NULL)),
+      CHECK (resource_kind <> 'terminal' OR incarnation IS NOT NULL)
+    )
+  `.execute(db);
 
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS actor_id TEXT`.execute(db);
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS purpose TEXT`.execute(db);
@@ -417,6 +457,14 @@ export async function bootstrapCollaborationDatabase(
     WHERE status IN ('prepared', 'staging', 'fenced', 'committing', 'recovering')
   `.execute(db);
   await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_resource_lookup
+    ON collaboration_resource_bindings(project_scope_id, resource_kind, resource_id)
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_resource_readiness
+    ON collaboration_resource_bindings(project_scope_id, readiness)
+  `.execute(db);
+  await sql`
     INSERT INTO collaboration_schema_migrations (version)
     VALUES (1)
     ON CONFLICT (version) DO NOTHING
@@ -424,6 +472,11 @@ export async function bootstrapCollaborationDatabase(
   await sql`
     INSERT INTO collaboration_schema_migrations (version)
     VALUES (2)
+    ON CONFLICT (version) DO NOTHING
+  `.execute(db);
+  await sql`
+    INSERT INTO collaboration_schema_migrations (version)
+    VALUES (3)
     ON CONFLICT (version) DO NOTHING
   `.execute(db);
 }
