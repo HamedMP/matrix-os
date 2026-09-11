@@ -31,6 +31,8 @@ const CLAUDE_CODE_BETA_QUERY = "?beta=true";
 const CountTokensResponseSchema = z.object({
   input_tokens: z.number().int().nonnegative().max(10_000_000),
 }).strict();
+const SAFE_DIAGNOSTIC_KEY = /^[a-zA-Z0-9_-]{1,64}$/;
+const SENSITIVE_DIAGNOSTIC_KEY = /(authorization|cookie|password|secret|token|api.?key)/i;
 
 interface FundedRelayDependencies extends FundedRelayConfig {
   fetch?: typeof fetch;
@@ -57,6 +59,30 @@ interface ActiveRequestState {
 export interface FundedRelay {
   register(app: Hono): void;
   close(): Promise<void>;
+}
+
+function safeDiagnosticKey(key: string): string {
+  return SAFE_DIAGNOSTIC_KEY.test(key) && !SENSITIVE_DIAGNOSTIC_KEY.test(key)
+    ? key
+    : "<redacted>";
+}
+
+function requestRejectionDiagnostic(error: unknown): {
+  errorName: string;
+  issues?: Array<{ code: string; path: string; keys?: string[] }>;
+} {
+  const errorName = error instanceof Error ? error.name : "UnknownError";
+  if (!(error instanceof z.ZodError)) return { errorName };
+  return {
+    errorName,
+    issues: error.issues.slice(0, 16).map((issue) => ({
+      code: issue.code,
+      path: issue.path.map(String).join(".") || "<root>",
+      ...(issue.code === "unrecognized_keys"
+        ? { keys: issue.keys.slice(0, 16).map(safeDiagnosticKey) }
+        : {}),
+    })),
+  };
 }
 
 function opaqueRef(secret: string, domain: string, value: string): string {
@@ -268,6 +294,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (error instanceof Error && error.message === "Unsupported funded AI model") {
         return errorResponse(c, 403, "permission_error", "This model is not enabled");
       }
+      console.warn("[proxy] Funded AI request rejected", requestRejectionDiagnostic(error));
       return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
     }
     if (c.req.path === MESSAGES_PATH && parsedBody.max_tokens === undefined) {
