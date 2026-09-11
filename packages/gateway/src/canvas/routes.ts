@@ -15,6 +15,10 @@ import {
 } from "./contracts.js";
 import { mapCanvasError } from "./service.js";
 import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
+import {
+  ProjectFenceError,
+  type LegacyProjectOperationAdmission,
+} from "../collaboration/project-fence.js";
 
 const CANVAS_WRITE_BODY_LIMIT = 256 * 1024;
 const CANVAS_ACTION_BODY_LIMIT = 64 * 1024;
@@ -34,6 +38,7 @@ export interface CanvasRouteDeps {
   service: CanvasRouteService;
   getUserId: (c: Context) => string;
   broadcastCanvasUpdate?: (canvasId: string, message: { type: "canvas:updated"; revision: number; updatedAt: string } | { type: "canvas:deleted" }) => void | Promise<void>;
+  projectOperationAdmission?: LegacyProjectOperationAdmission;
 }
 
 class CanvasUnauthorizedError extends Error {
@@ -90,6 +95,12 @@ function handleError(c: any, err: unknown) {
   if (err instanceof CanvasUnauthorizedError) {
     return c.json({ error: "Unauthorized" }, 401);
   }
+  if (err instanceof ProjectFenceError) {
+    if (["fenced", "scope_required", "conflict", "not_found"].includes(err.code)) {
+      return c.json({ error: "Use the shared project route" }, 409);
+    }
+    return c.json({ error: "Canvas service unavailable" }, 503);
+  }
   if (typeof err === "object" && err !== null && "issues" in err) {
     return validationError(c);
   }
@@ -97,6 +108,34 @@ function handleError(c: any, err: unknown) {
   const body: Record<string, unknown> = { error: mapped.error };
   if (mapped.latestRevision !== undefined) body.latestRevision = mapped.latestRevision;
   return c.json(body, mapped.status as 400 | 401 | 403 | 404 | 409 | 500);
+}
+
+function projectIdFromCanvasSnapshot(snapshot: unknown): string | null {
+  const parsed = z.object({
+    document: z.object({
+      scopeRef: z.object({
+        projectId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
+      }).passthrough().nullable(),
+    }).passthrough(),
+  }).passthrough().safeParse(snapshot);
+  return parsed.success ? parsed.data.document.scopeRef?.projectId ?? null : null;
+}
+
+async function withLegacyCanvasAdmission<T>(
+  deps: CanvasRouteDeps,
+  userId: string,
+  canvasId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!deps.projectOperationAdmission) return operation();
+  const projectId = projectIdFromCanvasSnapshot(await deps.service.getCanvas(userId, canvasId));
+  if (!projectId) return operation();
+  return deps.projectOperationAdmission.withLegacyAdmission({
+    ownerType: "personal",
+    ownerId: userId,
+    projectId,
+    kind: "write",
+  }, operation);
 }
 
 async function broadcastCanvasUpdate(deps: CanvasRouteDeps, canvasId: string, result: unknown): Promise<void> {
@@ -169,8 +208,11 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
       const canvasId = parseCanvasId(c);
       const parsed = ReplaceCanvasRequestSchema.safeParse(await parseJson(c));
       if (!parsed.success) return validationError(c);
-      const result = await deps.service.replaceCanvas(userId, canvasId, parsed.data);
-      await broadcastCanvasUpdate(deps, canvasId, result);
+      const result = await withLegacyCanvasAdmission(deps, userId, canvasId, async () => {
+        const updated = await deps.service.replaceCanvas(userId, canvasId, parsed.data);
+        await broadcastCanvasUpdate(deps, canvasId, updated);
+        return updated;
+      });
       return c.json(result);
     } catch (err: unknown) {
       return handleError(c, err);
@@ -187,12 +229,15 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
       if (!deps.service.patchCanvasNode) {
         return c.json({ error: "Canvas request failed" }, 500);
       }
-      const result = await deps.service.patchCanvasNode(userId, canvasId, {
-        baseRevision: parsed.data.baseRevision,
-        nodeId,
-        updates: parsed.data.updates,
+      const result = await withLegacyCanvasAdmission(deps, userId, canvasId, async () => {
+        const updated = await deps.service.patchCanvasNode!(userId, canvasId, {
+          baseRevision: parsed.data.baseRevision,
+          nodeId,
+          updates: parsed.data.updates,
+        });
+        await broadcastCanvasUpdate(deps, canvasId, updated);
+        return updated;
       });
-      await broadcastCanvasUpdate(deps, canvasId, result);
       return c.json(result);
     } catch (err: unknown) {
       return handleError(c, err);
@@ -204,7 +249,13 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
       const userId = getUserIdOrThrow(deps, c);
       const parsed = CanvasActionSchema.safeParse(await parseJson(c));
       if (!parsed.success) return validationError(c);
-      return c.json(await deps.service.executeAction(userId, parseCanvasId(c), parsed.data));
+      const canvasId = parseCanvasId(c);
+      return c.json(await withLegacyCanvasAdmission(
+        deps,
+        userId,
+        canvasId,
+        () => deps.service.executeAction(userId, canvasId, parsed.data),
+      ));
     } catch (err: unknown) {
       return handleError(c, err);
     }
@@ -214,10 +265,13 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
     try {
       const userId = getUserIdOrThrow(deps, c);
       const canvasId = parseCanvasId(c);
-      const result = await deps.service.deleteCanvas(userId, canvasId);
-      if (deps.broadcastCanvasUpdate) {
-        await deps.broadcastCanvasUpdate(canvasId, { type: "canvas:deleted" });
-      }
+      const result = await withLegacyCanvasAdmission(deps, userId, canvasId, async () => {
+        const deleted = await deps.service.deleteCanvas(userId, canvasId);
+        if (deps.broadcastCanvasUpdate) {
+          await deps.broadcastCanvasUpdate(canvasId, { type: "canvas:deleted" });
+        }
+        return deleted;
+      });
       return c.json(result);
     } catch (err: unknown) {
       return handleError(c, err);

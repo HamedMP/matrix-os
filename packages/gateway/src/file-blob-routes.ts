@@ -59,6 +59,11 @@ const BlobQuerySchema = z.object({
 
 export interface FileBlobRouteDeps {
   homePath: string;
+  withProjectFileAdmission?: (
+    c: Context,
+    paths: readonly string[],
+    operation: () => Promise<Response>,
+  ) => Promise<Response>;
 }
 
 function invalidPath(c: Context) {
@@ -201,28 +206,33 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
       }
     }
 
-    const body = Buffer.from(await c.req.arrayBuffer());
-    const parent = dirname(uploadPath);
-    const tmpPath = `${uploadPath}.matrix-upload-${randomUUID()}.tmp`;
-    const mode = parsed.secret ? 0o600 : 0o644;
+    const operation = async (): Promise<Response> => {
+      const body = Buffer.from(await c.req.arrayBuffer());
+      const parent = dirname(uploadPath);
+      const tmpPath = `${uploadPath}.matrix-upload-${randomUUID()}.tmp`;
+      const mode = parsed.secret ? 0o600 : 0o644;
 
-    try {
-      await mkdir(parent, { recursive: true, mode: 0o700 });
-      await writeFile(tmpPath, body, { flag: "wx", mode });
-      await rename(tmpPath, uploadPath);
-      return c.json({ ok: true, path: destinationPath, size: body.byteLength });
-    } catch (err: unknown) {
-      await safeUnlink(tmpPath);
-      if (
-        err instanceof Error &&
-        "code" in err &&
-        (err as NodeJS.ErrnoException).code === "ENOENT"
-      ) {
-        return invalidPath(c);
+      try {
+        await mkdir(parent, { recursive: true, mode: 0o700 });
+        await writeFile(tmpPath, body, { flag: "wx", mode });
+        await rename(tmpPath, uploadPath);
+        return c.json({ ok: true, path: destinationPath, size: body.byteLength });
+      } catch (err: unknown) {
+        await safeUnlink(tmpPath);
+        if (
+          err instanceof Error &&
+          "code" in err &&
+          (err as NodeJS.ErrnoException).code === "ENOENT"
+        ) {
+          return invalidPath(c);
+        }
+        console.error("[file-blob] upload failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: "write_failed" }, 500);
       }
-      console.error("[file-blob] upload failed:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: "write_failed" }, 500);
-    }
+    };
+    return deps.withProjectFileAdmission
+      ? deps.withProjectFileAdmission(c, [destinationPath], operation)
+      : operation();
   });
 
   app.delete("/blob", deleteBodyLimit, async (c) => {
@@ -234,20 +244,25 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
     const lexicalPath = resolveWritableFileApiPath(deps.homePath, parsed.path);
     if (!lexicalPath) return invalidPath(c);
 
-    try {
-      const info = await lstat(lexicalPath);
-      if (!info.isFile() || info.isSymbolicLink()) return invalidPath(c);
-      const resolved = resolveExistingFileApiPath(deps.homePath, parsed.path);
-      if (!resolved) return invalidPath(c);
-      await unlink(resolved);
-      return c.json({ ok: true, path: parsed.path, deleted: true });
-    } catch (err: unknown) {
-      if (isMissingFileError(err)) {
-        return c.json({ ok: true, path: parsed.path, deleted: false });
+    const operation = async (): Promise<Response> => {
+      try {
+        const info = await lstat(lexicalPath);
+        if (!info.isFile() || info.isSymbolicLink()) return invalidPath(c);
+        const resolved = resolveExistingFileApiPath(deps.homePath, parsed.path);
+        if (!resolved) return invalidPath(c);
+        await unlink(resolved);
+        return c.json({ ok: true, path: parsed.path, deleted: true });
+      } catch (err: unknown) {
+        if (isMissingFileError(err)) {
+          return c.json({ ok: true, path: parsed.path, deleted: false });
+        }
+        console.error("[file-blob] temporary attachment deletion failed");
+        return c.json({ error: "delete_failed" }, 500);
       }
-      console.error("[file-blob] temporary attachment deletion failed");
-      return c.json({ error: "delete_failed" }, 500);
-    }
+    };
+    return deps.withProjectFileAdmission
+      ? deps.withProjectFileAdmission(c, [parsed.path], operation)
+      : operation();
   });
 
   return app;

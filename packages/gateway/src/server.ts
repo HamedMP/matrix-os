@@ -1905,6 +1905,16 @@ export async function createGateway(config: GatewayConfig) {
     files: codingAgentFileStore,
     sourceControl: codingAgentSourceControlStore,
     notificationPreferences: codingAgentNotificationPreferenceStore,
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+      resolveProjectId: async (principal, projectSlug) => {
+        const project = await codingAgentProjectManager.getProject(
+          projectSlug,
+          { type: "user", id: principal.userId },
+        );
+        return project.ok ? project.project.id : null;
+      },
+    } : {}),
   }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
@@ -3014,7 +3024,20 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  registerFileRoutes(app, { homePath });
+  registerFileRoutes(app, {
+    homePath,
+    ...(gatewayCollaboration ? {
+      getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      listOwnerProjects: async (ownerId) => {
+        const result = await codingAgentProjectManager.listManagedProjects({
+          visibility: "all",
+          ownerScope: { type: "user", id: ownerId },
+        });
+        return result.projects.map((project) => ({ id: project.id, localPath: project.localPath }));
+      },
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
+  });
 
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -4252,6 +4275,9 @@ export async function createGateway(config: GatewayConfig) {
       service: canvasService,
       getUserId: (c) => requireRequestPrincipal(c).userId,
       broadcastCanvasUpdate: (canvasId, message) => canvasSubscriptionHub?.broadcast(canvasId, message),
+      ...(gatewayCollaboration ? {
+        projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+      } : {}),
     }));
 
     app.get(

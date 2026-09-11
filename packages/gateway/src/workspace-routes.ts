@@ -25,7 +25,10 @@ import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator }
 import { requestHasBody } from "./http-body.js";
 import { createProjectLifecycleService, ProjectLifecycleActionSchema } from "./project-lifecycle.js";
 import type { CodingAgentThreadStore } from "./coding-agents/thread-store.js";
-import { ProjectFenceError } from "./collaboration/project-fence.js";
+import {
+  ProjectFenceError,
+  type LegacyProjectOperationAdmission,
+} from "./collaboration/project-fence.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type ProjectFolders = ReturnType<typeof createProjectFolders>;
@@ -40,15 +43,6 @@ type TaskManager = ReturnType<typeof createTaskManager>;
 type PreviewManager = ReturnType<typeof createPreviewManager>;
 type WorkspaceEventStore = ReturnType<typeof createWorkspaceEventStore>;
 type ProjectLifecycleService = ReturnType<typeof createProjectLifecycleService>;
-
-export interface LegacyProjectOperationAdmission {
-  withLegacyAdmission<T>(input: {
-    ownerType: "personal" | "organization";
-    ownerId: string;
-    projectId: string;
-    kind: "write" | "run";
-  }, operation: () => Promise<T>): Promise<T>;
-}
 
 const WORKSPACE_BODY_LIMIT = 64 * 1024;
 

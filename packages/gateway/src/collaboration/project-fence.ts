@@ -38,6 +38,15 @@ export interface ProjectAdmission {
   authorityGeneration: number;
 }
 
+export interface LegacyProjectOperationAdmission {
+  withLegacyAdmission<T>(input: {
+    ownerType: "personal" | "organization";
+    ownerId: string;
+    projectId: string;
+    kind: "write" | "run";
+  }, operation: () => Promise<T>): Promise<T>;
+}
+
 export class ProjectFenceError extends Error {
   constructor(public readonly code:
     | "invalid"

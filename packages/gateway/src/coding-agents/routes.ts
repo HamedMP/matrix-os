@@ -76,6 +76,10 @@ import {
   CodingAgentProjectMutationError,
   type CodingAgentProjectMutationService,
 } from "./project-mutations.js";
+import {
+  ProjectFenceError,
+  type LegacyProjectOperationAdmission,
+} from "../collaboration/project-fence.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
@@ -94,6 +98,8 @@ export interface CodingAgentRouteDeps {
   sourceControl?: CodingAgentSourceControlStore;
   notificationPreferences?: CodingAgentNotificationPreferenceStore;
   getPrincipal?: (c: Context) => RequestPrincipal;
+  projectOperationAdmission?: LegacyProjectOperationAdmission;
+  resolveProjectId?: (principal: RequestPrincipal, projectSlug: string) => Promise<string | null>;
 }
 
 const THREAD_MUTATION_BODY_LIMIT = 128 * 1024;
@@ -302,6 +308,8 @@ function mapThreadRouteError(c: Context, err: unknown) {
     const mapped = mapRequestPrincipalError(err);
     return c.json(mapped.body, mapped.status as ContentfulStatusCode);
   }
+  const projectFenceResponse = mapProjectFenceRouteError(c, err);
+  if (projectFenceResponse) return projectFenceResponse;
   if (err instanceof CodingAgentThreadError) {
     const status = err.code === "thread_not_found" ? 404 : err.code === "provider_unavailable" ? 400 : 503;
     return c.json({ error: safeThreadError(err.code) }, status);
@@ -324,6 +332,41 @@ function mapThreadRouteError(c: Context, err: unknown) {
   }
   logCodingAgentWarning("thread route failed", err);
   return c.json({ error: threadsUnavailable() }, 503);
+}
+
+function projectSharedError() {
+  return SafeClientErrorSchema.parse({
+    code: "project_shared",
+    safeMessage: "Use the shared project to run AI.",
+    retryable: false,
+  });
+}
+
+function mapProjectFenceRouteError(c: Context, err: unknown): Response | null {
+  if (!(err instanceof ProjectFenceError)) return null;
+  if (["fenced", "scope_required", "conflict", "not_found"].includes(err.code)) {
+    return c.json({ error: projectSharedError() }, 409);
+  }
+  return c.json({ error: threadsUnavailable() }, 503);
+}
+
+async function withLegacyProjectOperation<T>(
+  deps: CodingAgentRouteDeps,
+  principal: RequestPrincipal,
+  projectSlug: string | undefined,
+  kind: "write" | "run",
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!projectSlug || !deps.projectOperationAdmission) return operation();
+  if (!deps.resolveProjectId) throw new ProjectFenceError("unavailable");
+  const projectId = await deps.resolveProjectId(principal, projectSlug);
+  if (!projectId) throw new ProjectFenceError("not_found");
+  return deps.projectOperationAdmission.withLegacyAdmission({
+    ownerType: "personal",
+    ownerId: principal.userId,
+    projectId,
+    kind,
+  }, operation);
 }
 
 function turnError(code: "thread_busy" | "thread_not_found" | "turn_unavailable") {
@@ -468,12 +511,21 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const principal = principalFor(c);
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
         const request = CreateAgentTurnRequestSchema.parse(await c.req.json());
-        const response = await deps.turns!.acceptTurn(principal, threadId, request);
+        const snapshot = await deps.threads?.getThread(principal, threadId);
+        const response = await withLegacyProjectOperation(
+          deps,
+          principal,
+          snapshot?.thread.projectId,
+          "run",
+          () => deps.turns!.acceptTurn(principal, threadId, request),
+        );
         return c.json(
           CreateAgentTurnResponseSchema.parse(response),
           response.status === "already_accepted" ? 200 : 202,
         );
       } catch (err: unknown) {
+        const projectFenceResponse = mapProjectFenceRouteError(c, err);
+        if (projectFenceResponse) return projectFenceResponse;
         if (isRequestPrincipalError(err)) {
           const mapped = mapRequestPrincipalError(err);
           return c.json(mapped.body, mapped.status as ContentfulStatusCode);
@@ -503,7 +555,13 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
       try {
         const principal = principalFor(c);
         const request = CreateAgentThreadRequestSchema.parse(await c.req.json());
-        const result = await deps.threads!.createShellThread(principal, request);
+        const result = await withLegacyProjectOperation(
+          deps,
+          principal,
+          request.projectId,
+          "run",
+          () => deps.threads!.createShellThread(principal, request),
+        );
         return c.json(result.snapshot, result.existing ? 200 : 202);
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
@@ -515,7 +573,13 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const principal = principalFor(c);
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
         const request = AdoptAgentThreadRequestSchema.parse(await c.req.json());
-        const response = await deps.threads!.adoptLegacyThread(principal, threadId, request);
+        const response = await withLegacyProjectOperation(
+          deps,
+          principal,
+          request.projectId,
+          "run",
+          () => deps.threads!.adoptLegacyThread(principal, threadId, request),
+        );
         return c.json(
           AdoptAgentThreadResponseSchema.parse(response),
           response.status === "already_adopted" ? 200 : 202,
@@ -561,7 +625,14 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const principal = principalFor(c);
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
         const body = AbortThreadBodySchema.parse(await c.req.json());
-        return c.json(await deps.threads!.abortThread(principal, threadId, body.clientRequestId));
+        const snapshot = await deps.threads!.getThread(principal, threadId);
+        return c.json(await withLegacyProjectOperation(
+          deps,
+          principal,
+          snapshot.thread.projectId,
+          "run",
+          () => deps.threads!.abortThread(principal, threadId, body.clientRequestId),
+        ));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -573,7 +644,14 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
         const approvalId = ApprovalIdSchema.parse(c.req.param("approvalId"));
         const body = ApprovalDecisionRequestSchema.parse(await c.req.json());
-        return c.json(await deps.threads!.submitApproval(principal, threadId, approvalId, body));
+        const snapshot = await deps.threads!.getThread(principal, threadId);
+        return c.json(await withLegacyProjectOperation(
+          deps,
+          principal,
+          snapshot.thread.projectId,
+          "run",
+          () => deps.threads!.submitApproval(principal, threadId, approvalId, body),
+        ));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -585,7 +663,14 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
         const inputRequestId = RequestIdSchema.parse(c.req.param("inputRequestId"));
         const body = UserInputAnswerRequestSchema.parse(await c.req.json());
-        return c.json(await deps.threads!.submitInput(principal, threadId, inputRequestId, body));
+        const snapshot = await deps.threads!.getThread(principal, threadId);
+        return c.json(await withLegacyProjectOperation(
+          deps,
+          principal,
+          snapshot.thread.projectId,
+          "run",
+          () => deps.threads!.submitInput(principal, threadId, inputRequestId, body),
+        ));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -728,9 +813,17 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
       try {
         const principal = principalFor(c);
         const request = FileWriteRequestSchema.parse(await c.req.json());
-        const response = FileWriteResponseSchema.parse(await deps.files!.writeFile(principal, request));
+        const response = FileWriteResponseSchema.parse(await withLegacyProjectOperation(
+          deps,
+          principal,
+          request.projectId,
+          "write",
+          () => deps.files!.writeFile(principal, request),
+        ));
         return c.json(response, request.baseEtag === null ? 201 : 200);
       } catch (err: unknown) {
+        const projectFenceResponse = mapProjectFenceRouteError(c, err);
+        if (projectFenceResponse) return projectFenceResponse;
         if (isBodyLimitError(err)) {
           return c.json({ error: bodyTooLarge() }, 413);
         }
@@ -759,10 +852,18 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const principal = principalFor(c);
         const request = SourceControlPrepareCommitRequestSchema.parse(await c.req.json());
         const response = SourceControlPrepareCommitResponseSchema.parse(
-          await deps.sourceControl!.prepareCommit(principal, request),
+          await withLegacyProjectOperation(
+            deps,
+            principal,
+            request.projectId,
+            "write",
+            () => deps.sourceControl!.prepareCommit(principal, request),
+          ),
         );
         return c.json(response, 201);
       } catch (err: unknown) {
+        const projectFenceResponse = mapProjectFenceRouteError(c, err);
+        if (projectFenceResponse) return projectFenceResponse;
         if (isBodyLimitError(err)) {
           return c.json({ error: bodyTooLarge() }, 413);
         }
@@ -789,10 +890,18 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const principal = principalFor(c);
         const request = SourceControlCreatePullRequestRequestSchema.parse(await c.req.json());
         const response = SourceControlCreatePullRequestResponseSchema.parse(
-          await deps.sourceControl!.createPullRequest(principal, request),
+          await withLegacyProjectOperation(
+            deps,
+            principal,
+            request.projectId,
+            "write",
+            () => deps.sourceControl!.createPullRequest(principal, request),
+          ),
         );
         return c.json(response, response.status === "created" ? 201 : 200);
       } catch (err: unknown) {
+        const projectFenceResponse = mapProjectFenceRouteError(c, err);
+        if (projectFenceResponse) return projectFenceResponse;
         if (isBodyLimitError(err)) {
           return c.json({ error: bodyTooLarge() }, 413);
         }

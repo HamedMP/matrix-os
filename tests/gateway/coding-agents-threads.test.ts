@@ -17,6 +17,7 @@ import {
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };
@@ -34,7 +35,10 @@ function jsonRequest(path: string, body: unknown): Request {
   });
 }
 
-async function createHarness() {
+async function createHarness(options: Pick<
+  Parameters<typeof createCodingAgentRoutes>[0],
+  "projectOperationAdmission" | "resolveProjectId"
+> = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
   let currentPrincipal = ownerPrincipal;
   let tick = 0;
@@ -58,6 +62,7 @@ async function createHarness() {
     service: summary,
     threads,
     getPrincipal: () => currentPrincipal,
+    ...options,
   }));
   return {
     app,
@@ -85,6 +90,36 @@ function workspaceSessionIdForThread(threadId: string): string {
 }
 
 describe("coding agent thread lifecycle", () => {
+  it("blocks owner agent starts through the legacy project route after sharing", async () => {
+    const projectOperationAdmission = {
+      withLegacyAdmission: vi.fn(async () => {
+        throw new ProjectFenceError("scope_required");
+      }),
+    };
+    const resolveProjectId = vi.fn(async () => "proj_repo_main");
+    const harness = await createHarness({ projectOperationAdmission, resolveProjectId });
+
+    try {
+      const response = await harness.app.request(jsonRequest("/api/coding-agents/threads", createBody));
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "project_shared", safeMessage: "Use the shared project to run AI." },
+      });
+      expect(resolveProjectId).toHaveBeenCalledWith(ownerPrincipal, "repo-main");
+      expect(projectOperationAdmission.withLegacyAdmission).toHaveBeenCalledWith({
+        ownerType: "personal",
+        ownerId: ownerPrincipal.userId,
+        projectId: "proj_repo_main",
+        kind: "run",
+      }, expect.any(Function));
+      await expect(harness.threads.listThreads(ownerPrincipal)).resolves.toMatchObject({ items: [] });
+    } finally {
+      await harness.threads.shutdownTurns();
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("keeps an early background Provider resume state after cancellation", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-background-resume-state-"));
     const resumeTurn = vi.fn(async ({ resumeState }) => ({
