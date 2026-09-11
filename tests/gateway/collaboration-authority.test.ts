@@ -141,6 +141,46 @@ describe("CollaborationAuthority", () => {
     })).rejects.toMatchObject({ code: "unavailable" });
   });
 
+  it("requires the resource-specific milestone for terminal control", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({
+      kind: "terminal",
+      resource_id: "terminal_shared",
+      execution_generation: 2,
+      execution_eligibility: JSON.stringify({ profileId: "scope-runtime-terminal-v1" }),
+    }).where("id", "=", collaborationIds.scope).execute();
+    const policy = {
+      milestone: "m3" as const,
+      revision: "1",
+      mode: "internal" as const,
+      cohort: [collaborationActors.owner, collaborationActors.editor],
+      issuedAt: "2026-09-07T11:59:50.000Z",
+      expiresAt: "2026-09-07T12:00:20.000Z",
+    };
+
+    await expect(authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "control_execution",
+      executionPolicy: { ...policy, milestone: "m2" },
+    })).rejects.toMatchObject({ code: "unavailable" });
+    await expect(authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "control_execution",
+      executionPolicy: policy,
+    })).resolves.toMatchObject({
+      resourceKind: "terminal",
+      resourceId: "terminal_shared",
+      capability: "control_execution",
+    });
+    await expect(authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.viewer,
+      action: "control_execution",
+      executionPolicy: policy,
+    })).rejects.toMatchObject({ code: "unavailable" });
+  });
+
   it("resolves inherited membership only through an active project parent", async () => {
     const projectId = "10000000-0000-4000-8000-000000000010";
     const childId = "10000000-0000-4000-8000-000000000011";
