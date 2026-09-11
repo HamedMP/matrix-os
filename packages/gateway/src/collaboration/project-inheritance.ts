@@ -117,7 +117,16 @@ async function inheritedResourceScope(
     .where("lifecycle", "!=", "deleted")
     .executeTakeFirst();
   if (existing) {
-    if (existing.membership_mode !== "inherited" || existing.parent_scope_id !== input.projectScopeId
+    if (existing.membership_mode === "direct") {
+      if (input.lifecycle !== "preparing" || existing.parent_scope_id !== null
+        || (existing.lifecycle !== "private" && existing.lifecycle !== "shared")) {
+        throw new ProjectInheritanceError("conflict");
+      }
+      // Publication reconciles this direct scope and its grants atomically.
+      // Reserving the stable scope here must not widen or end membership early.
+      return existing.id;
+    }
+    if (existing.parent_scope_id !== input.projectScopeId
       || existing.authority_runtime_id !== input.authorityRuntimeId
       || Number(existing.authority_generation) !== input.authorityGeneration) {
       throw new ProjectInheritanceError("conflict");
