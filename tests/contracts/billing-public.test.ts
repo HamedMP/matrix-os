@@ -117,6 +117,10 @@ describe("billing redirect contract", () => {
       "file:///etc/passwd",
       "",
       `https://billing.stripe.com/p/${"a".repeat(2048)}`,
+      // Embedded credentials render an attacker-controlled authority while
+      // still parsing as https.
+      "https://evil.example@billing.stripe.com/p/session",
+      "https://billing.stripe.com:pass@evil.example/p/session",
     ]) {
       expect(MatrixBillingRedirectSchema.safeParse({ url }).success, url).toBe(false);
       expect(parseBillingRedirectUrl({ url }), url).toBeNull();
@@ -146,10 +150,16 @@ describe("billing redirect contract", () => {
     }
   });
 
-  it("allows a redirect exactly at the length bound", () => {
+  it("pins the length bound at exactly 2048 characters", () => {
     const prefix = "https://billing.stripe.com/p/";
     const maxUrl = prefix + "a".repeat(2048 - prefix.length);
     expect(maxUrl).toHaveLength(2048);
     expect(parseBillingRedirectUrl({ url: maxUrl })).toBe(maxUrl);
+
+    // One character over must be rejected, so the bound is pinned rather than
+    // merely "long strings fail".
+    const overUrl = `${maxUrl}a`;
+    expect(overUrl).toHaveLength(2049);
+    expect(parseBillingRedirectUrl({ url: overUrl })).toBeNull();
   });
 });

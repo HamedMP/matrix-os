@@ -71,8 +71,10 @@ describe("Native Mobile billing portal redirect", () => {
       portalResponse({ url: "javascript:alert(1)" }),
     );
 
-    await expect(createMobileBillingPortal("clerk-token")).rejects.not.toThrow(
-      /javascript:|stripe|billing\.stripe/i,
+    // Assert the exact generic message rather than the absence of a pattern:
+    // a "does not match" assertion also passes for an unrelated rejection.
+    await expect(createMobileBillingPortal("clerk-token")).rejects.toThrow(
+      "Billing portal unavailable. Try again.",
     );
   });
 });

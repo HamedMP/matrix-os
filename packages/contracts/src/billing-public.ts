@@ -91,22 +91,43 @@ export const MATRIX_BILLING_REDIRECT_MAX_LENGTH = 2048;
  * returns a trusted Stripe HTTPS URL, so this is defense in depth: a relative,
  * HTTP, or executable-scheme URL must never reach a navigation call.
  */
+/**
+ * Parse a redirect candidate, returning `null` instead of throwing.
+ *
+ * Any parse failure is a rejection rather than a rethrow: a relative path or
+ * malformed value simply is not a navigable target, React Native's URL polyfill
+ * does not reliably throw `TypeError`, and `parseBillingRedirectUrl` is
+ * documented never to throw. The failure is deliberately neither logged nor
+ * surfaced, because it can embed the untrusted redirect value and every caller
+ * already reports a generic error.
+ *
+ * (`URL.parse` would express this directly, but it is unavailable on the ES2022
+ * target and on Hermes, and this module ships to Native Mobile.)
+ */
+function parseAbsoluteUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch (err: unknown) {
+    // Every URL implementation in play (V8, JSC, Hermes and its polyfill)
+    // reports a bad URL as an `Error`. Anything else is not a parse failure
+    // this function can interpret, so it propagates rather than being silently
+    // reported as "not a valid URL".
+    if (err instanceof Error) return null;
+    throw err;
+  }
+}
+
 export const MatrixBillingRedirectSchema = z.strictObject({
   url: z
     .string()
     .max(MATRIX_BILLING_REDIRECT_MAX_LENGTH)
     .refine((value) => {
-      // `URL.parse` would avoid the catch, but it is not available on the
-      // ES2022 target or React Native's Hermes engine, and this schema ships
-      // to Native Mobile.
-      try {
-        return new URL(value).protocol === "https:";
-      } catch (err: unknown) {
-        // A relative path or malformed value is not a navigable target.
-        // Anything other than the expected parse failure is a real fault.
-        if (err instanceof TypeError) return false;
-        throw err;
-      }
+      const parsed = parseAbsoluteUrl(value);
+      if (parsed === null) return false;
+      // Reject embedded credentials: `https://evil.example@billing.stripe.com`
+      // parses as https but renders an attacker-controlled authority.
+      if (parsed.username !== "" || parsed.password !== "") return false;
+      return parsed.protocol === "https:";
     }, "Billing redirects must be absolute HTTPS URLs"),
 });
 
