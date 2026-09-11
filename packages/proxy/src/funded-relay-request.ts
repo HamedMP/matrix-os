@@ -68,6 +68,7 @@ const ToolSchema = z.object({
   description: z.string().max(32_768).optional(),
   input_schema: BoundedJsonSchema,
   cache_control: BoundedJsonSchema.optional(),
+  eager_input_streaming: z.boolean().optional(),
 }).strict();
 
 const ToolChoiceSchema = z.union([

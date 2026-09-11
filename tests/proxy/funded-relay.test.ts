@@ -261,6 +261,10 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       expect(forwarded.context_management).toEqual({
         edits: [{ type: "clear_thinking_20251015", keep: "all" }],
       });
+      expect(forwarded.tools).toEqual([expect.objectContaining({
+        name: "read",
+        eager_input_streaming: true,
+      })]);
       expect(headers.get("anthropic-beta")).toBe(CLAUDE_CODE_BETAS.join(","));
       expect(url).toBe(`${GATEWAY_URL}/v1/messages?beta=true`);
       events.push("cloudflare_generate");
@@ -278,6 +282,12 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     const bodyWithCallerMetadata = JSON.stringify({
       ...JSON.parse(requestBody()),
       metadata: { user_id: "raw-caller-id" },
+      tools: [{
+        name: "read",
+        description: "Read a file",
+        input_schema: { type: "object", properties: { path: { type: "string" } } },
+        eager_input_streaming: true,
+      }],
       thinking: { type: "adaptive" },
       context_management: {
         edits: [{ type: "clear_thinking_20251015", keep: "all" }],
