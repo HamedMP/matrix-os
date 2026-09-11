@@ -446,7 +446,7 @@ describe("AgentConversationView transcript", () => {
     expect(input.getAttribute("data-max-length")).toBe("24000");
   });
 
-  it("uploads dropped files and sends a follow-up with existing structured refs", async () => {
+  it("uploads dropped files and sends a follow-up with typed file attachments", async () => {
     const sendThreadMessage = vi.fn().mockResolvedValue(true);
     const putBytes = vi.fn(async (path: string, file: File) => ({
       ok: true,
@@ -477,7 +477,7 @@ describe("AgentConversationView transcript", () => {
       message: "Continue with this context",
       attachments: [expect.objectContaining({
         id: expect.stringMatching(/^desktop_upload_[A-Za-z0-9]+$/),
-        kind: "structured_ref",
+        kind: "file",
         label: "context.txt",
         path: expect.stringMatching(/^temporary\/desktop-chat\/[A-Za-z0-9]+-context\.txt$/),
       })],
@@ -557,7 +557,7 @@ describe("AgentConversationView transcript", () => {
             eventId: "evt_terminal_1",
             threadId: "thread_alpha",
             occurredAt: "2026-07-15T00:00:10.000Z",
-            terminalSessionId: "term_1",
+            terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
           } as AgentThreadEvent,
           {
             type: "thread.completed",

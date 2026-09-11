@@ -1,20 +1,25 @@
-import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import { defineConfig, externalizeDepsPlugin, type UserConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
+import { DESKTOP_DEV_RENDERER_HOST } from "./src/main/renderer-url";
+import { readBuildSource } from "../scripts/release/build-source.mjs";
 
 const desktopUpdateChannel =
   process.env.MATRIX_DESKTOP_UPDATE_CHANNEL || process.env.OPERATOR_UPDATE_CHANNEL || "";
 const codingAgentsDesktopWorkspace =
   process.env.VITE_CODING_AGENTS_DESKTOP_WORKSPACE !== "0";
 
-export default defineConfig({
+// Evaluate after electron-vite removes its temporary bundled config file, so
+// that generated file cannot make the source checkout appear uncommitted.
+export default defineConfig((): UserConfig => ({
   main: {
     // Workspace contracts export TypeScript source for package consumers.
     // Bundle the schemas and Zod so the built Electron main process never
     // depends on source-only `.js` specifiers at runtime.
     plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@finnaai/matrix"] })],
     define: {
+      __MATRIX_DESKTOP_BUILD_SOURCE__: JSON.stringify(readBuildSource(resolve(__dirname, ".."), process.env.GITHUB_SHA)),
       __MATRIX_DESKTOP_UPDATE_CHANNEL__: JSON.stringify(desktopUpdateChannel),
       __CODING_AGENTS_DESKTOP_WORKSPACE__: JSON.stringify(codingAgentsDesktopWorkspace),
     },
@@ -44,12 +49,19 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react(), tailwindcss()],
+    // Reuse the web terminal's canonical agent logos so Desktop and web never
+    // drift to different provider artwork.
+    publicDir: resolve(__dirname, "../shell/public"),
     server: {
       host: "127.0.0.1",
       port: 5173,
       strictPort: true,
+      allowedHosts: [DESKTOP_DEV_RENDERER_HOST],
     },
     resolve: {
+      // Workspace UI peers may resolve another React patch version. Hooks must
+      // share the renderer's React instance in development and packaged builds.
+      dedupe: ["react", "react-dom"],
       alias: {
         "@renderer": resolve(__dirname, "src/renderer/src"),
       },
@@ -60,4 +72,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

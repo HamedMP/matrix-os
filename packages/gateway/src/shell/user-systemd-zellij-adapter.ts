@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { MatrixZellijShellThemeId } from "./zellij-config.js";
 import { matrixZellijConfigPaths } from "./zellij-config.js";
 import { shellError } from "./errors.js";
-import type { createUserSystemdTerminalRuntime, UserSystemdTerminalDescriptor } from "./user-systemd-terminal-runtime.js";
+import type { createUserSystemdTerminalRuntime, UserSystemdTerminalDescriptor } from "@matrix-os/terminal-runtime/user-systemd-controller";
 import { createZellijAdapter, type AttachOptions, type ZellijAdapter } from "./zellij.js";
 
 type RuntimeController = Pick<
@@ -166,6 +166,56 @@ export function createUserSystemdZellijAdapter(options: {
     return operation(adapterFor(descriptor), descriptor.sessionName);
   }
 
+  async function createTerminalSession(input: {
+    name: string;
+    cwd?: string;
+    layout?: string;
+    cmd?: string;
+  }): Promise<void> {
+    const existing = await options.controller.findByDisplayName("terminal", input.name);
+    if (existing) {
+      throw shellError("session_interrupted", "Session requires explicit recovery", 409);
+    }
+    const health = await baseAdapter.health();
+    if (!health.ok) throw shellError("zellij_failed", "Shell operation failed", 500);
+    const nextRuntimeId = generateRuntimeId();
+    const cwd = input.cwd ?? homePath;
+    const layoutPath = join(homePath, "system", "zellij", "runtime-layouts", `${nextRuntimeId}.kdl`);
+    let layoutContent: string;
+    if (input.cmd) {
+      layoutContent = commandLayout(input.cmd, input.cwd, configPaths.shellFile);
+    } else if (input.layout) {
+      layoutContent = await readFile(join(homePath, "system", "layouts", `${input.layout}.kdl`), "utf8");
+    } else {
+      layoutContent = await readFile(configPaths.layoutFile, "utf8");
+    }
+    if (Buffer.byteLength(layoutContent) > 100_000) throw shellError("invalid_layout", "Invalid layout", 400);
+    await writeTextExclusive(layoutPath, layoutContent);
+    let created;
+    try {
+      created = await options.controller.create({
+        runtimeId: nextRuntimeId,
+        scope: "terminal",
+        kind: "shell",
+        displayName: input.name,
+        cwd,
+        layoutPath,
+      });
+    } catch (err: unknown) {
+      let persisted: UserSystemdTerminalDescriptor | null;
+      try {
+        persisted = await options.controller.get(nextRuntimeId);
+      } catch (lookupErr: unknown) {
+        if (!(lookupErr instanceof Error)) throw lookupErr;
+        console.warn("[terminal-runtime] failed to reconcile shell runtime after create failure");
+        throw err;
+      }
+      if (persisted?.layoutPath !== layoutPath) await rm(layoutPath, { force: true });
+      throw err;
+    }
+    cacheDescriptor(created);
+  }
+
   return {
     health: () => baseAdapter.health(),
 
@@ -185,49 +235,16 @@ export function createUserSystemdZellijAdapter(options: {
       return delegate(name, (adapter, sessionName) => adapter.focusedPaneRuntime(sessionName));
     },
 
-    async createSession(input) {
+    createSession: createTerminalSession,
+
+    async recoverSession(input) {
       const existing = await options.controller.findByDisplayName("terminal", input.name);
-      if (existing) {
-        throw shellError("session_interrupted", "Session requires explicit recovery", 409);
+      if (!existing) {
+        await createTerminalSession(input);
+        return;
       }
-      const health = await baseAdapter.health();
-      if (!health.ok) throw shellError("zellij_failed", "Shell operation failed", 500);
-      const nextRuntimeId = generateRuntimeId();
-      const cwd = input.cwd ?? homePath;
-      const layoutPath = join(homePath, "system", "zellij", "runtime-layouts", `${nextRuntimeId}.kdl`);
-      let layoutContent: string;
-      if (input.cmd) {
-        layoutContent = commandLayout(input.cmd, input.cwd, configPaths.shellFile);
-      } else if (input.layout) {
-        layoutContent = await readFile(join(homePath, "system", "layouts", `${input.layout}.kdl`), "utf8");
-      } else {
-        layoutContent = await readFile(configPaths.layoutFile, "utf8");
-      }
-      if (Buffer.byteLength(layoutContent) > 100_000) throw shellError("invalid_layout", "Invalid layout", 400);
-      await writeTextExclusive(layoutPath, layoutContent);
-      let created;
-      try {
-        created = await options.controller.create({
-          runtimeId: nextRuntimeId,
-          scope: "terminal",
-          kind: "shell",
-          displayName: input.name,
-          cwd,
-          layoutPath,
-        });
-      } catch (err: unknown) {
-        let persisted: UserSystemdTerminalDescriptor | null;
-        try {
-          persisted = await options.controller.get(nextRuntimeId);
-        } catch (lookupErr: unknown) {
-          if (!(lookupErr instanceof Error)) throw lookupErr;
-          console.warn("[terminal-runtime] failed to reconcile shell runtime after create failure");
-          throw err;
-        }
-        if (persisted?.layoutPath !== layoutPath) await rm(layoutPath, { force: true });
-        throw err;
-      }
-      cacheDescriptor(created);
+      const recovered = await options.controller.start(existing.runtimeId);
+      cacheDescriptor(recovered);
     },
 
     async deleteSession(name, deleteOptions = {}) {
@@ -256,10 +273,21 @@ export function createUserSystemdZellijAdapter(options: {
       return adapterFor(descriptor).attachSession(descriptor.sessionName, attachOptions);
     },
 
+    async paneAction(name, action, actionOptions) {
+      const descriptor = await descriptorFor(name);
+      if (actionOptions && descriptor.createdAt !== actionOptions.expectedCreatedAt) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      // Capture the checked generation and immutable runtime name. A later
+      // cache refresh or display-name replacement cannot redirect this action.
+      const { sessionName } = descriptor;
+      return adapterFor(descriptor).paneAction(sessionName, action);
+    },
     sendInput: (name, data) => delegate(name, (adapter, sessionName) => adapter.sendInput(sessionName, data)),
     listTabs: (name) => delegate(name, (adapter, sessionName) => adapter.listTabs(sessionName)),
     createTab: (name, input) => delegate(name, (adapter, sessionName) => adapter.createTab(sessionName, input)),
     switchTab: (name, tab) => delegate(name, (adapter, sessionName) => adapter.switchTab(sessionName, tab)),
+    switchTabById: (name, tabId) => delegate(name, (adapter, sessionName) => adapter.switchTabById(sessionName, tabId)),
     closeTab: (name, tab) => delegate(name, (adapter, sessionName) => adapter.closeTab(sessionName, tab)),
     splitPane: (name, input) => delegate(name, (adapter, sessionName) => adapter.splitPane(sessionName, input)),
     closePane: (name, pane) => delegate(name, (adapter, sessionName) => adapter.closePane(sessionName, pane)),

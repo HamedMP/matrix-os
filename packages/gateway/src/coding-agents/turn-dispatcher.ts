@@ -4,11 +4,12 @@ import type { RequestPrincipal } from "../request-principal.js";
 import {
   parseCodingAgentProviderRunResult,
   type CodingAgentProviderAdapter,
+  type CodingAgentProviderEventBatch,
   type CodingAgentProviderResumeState,
 } from "./provider-adapter.js";
 
 const DEFAULT_MAX_DISPATCHES = 100;
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 interface DispatchEntry {
   controller: AbortController;
@@ -25,6 +26,12 @@ export interface CodingAgentTurnDispatchReservation {
 export interface CodingAgentTurnDispatcherOptions {
   getProvider(providerId: string): CodingAgentProviderAdapter;
   markRunning(ownerId: string, threadId: string, turnId: string): Promise<void>;
+  publishEvents?(input: {
+    ownerId: string;
+    threadId: string;
+    turnId: string;
+    batch: CodingAgentProviderEventBatch;
+  }): Promise<void>;
   finish(input: {
     ownerId: string;
     threadId: string;
@@ -48,6 +55,10 @@ export interface CodingAgentTurnDispatchInput {
     turnId: string;
     message: string;
     attachments?: CreateAgentTurnRequest["attachments"];
+    model?: CreateAgentTurnRequest["model"];
+    modelOptions?: CreateAgentTurnRequest["modelOptions"];
+    approvalPolicy?: CreateAgentTurnRequest["approvalPolicy"];
+    sandboxMode?: CreateAgentTurnRequest["sandboxMode"];
   };
 }
 
@@ -85,6 +96,14 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
         signal: combinedSignal,
         now: options.now,
         nextEventId: options.nextEventId,
+        ...(options.publishEvents ? {
+          publishEvents: (batch) => options.publishEvents!({
+            ownerId: input.principal.userId,
+            threadId: input.thread.id,
+            turnId: input.turn.turnId,
+            batch,
+          }),
+        } : {}),
       }));
       const providerResult = await new Promise<Awaited<typeof providerPromise>>((resolve, reject) => {
         const rejectAborted = () => reject(new Error("Turn dispatch aborted"));

@@ -172,6 +172,25 @@ describe("desktop integrations settings section", () => {
     ]);
   });
 
+  it("keeps connected status, add-account, and disconnect as separate controls", async () => {
+    const api = makeApi({
+      available: [
+        { id: "slack", name: "Slack", category: "communication", logoUrl: "https://cdn.test/slack.png", actions: {} },
+      ],
+      connections: [{ ...GMAIL_CONNECTION, service: "slack", account_label: "Slack" }],
+    });
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection />);
+
+    const connectedStatus = await screen.findByTestId("integration-status-slack");
+    const addAccount = screen.getByRole("button", { name: "Add another Slack account" });
+    const disconnect = screen.getByRole("button", { name: "Disconnect Slack" });
+
+    expect(connectedStatus.contains(addAccount)).toBe(false);
+    expect(connectedStatus.contains(disconnect)).toBe(false);
+    expect(disconnect.className).not.toContain("absolute");
+  });
+
   it("capitalizes service ids in the connected section when no catalog name exists", async () => {
     useConnection.setState({
       api: makeApi({ available: [], connections: [{ ...GMAIL_CONNECTION, service: "google_calendar" }] }) as never,
@@ -372,6 +391,7 @@ describe("desktop integrations settings section", () => {
     useConnection.setState({ api: api as never });
     render(<IntegrationsSettingsSection />);
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add another Gmail account" })).not.toBeNull());
     await waitFor(() => expect(screen.getByRole("button", { name: "Disconnect Personal" })).not.toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Disconnect Personal" }));
     await waitFor(() => expect(screen.getByText(/Disconnect Personal\?/)).not.toBeNull());
@@ -380,13 +400,13 @@ describe("desktop integrations settings section", () => {
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/integrations/${NEW_CONN_ID}`));
   });
 
-  it("does not expose a first-account hover disconnect for multi-account services", async () => {
+  it("uses the visible per-account disconnect instead of a hover overlay", async () => {
     const api = makeApi({ connections: [GMAIL_CONNECTION, NEW_GMAIL_CONNECTION] });
     useConnection.setState({ api: api as never });
     render(<IntegrationsSettingsSection />);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Disconnect Personal" })).not.toBeNull());
-    expect(screen.queryByTestId(`integration-disconnect-${CONN_ID}`)).toBeNull();
+    expect(screen.getByTestId(`integration-disconnect-${CONN_ID}`).textContent).toBe("Disconnect");
   });
 
   it("keeps the account and shows generic copy when disconnect fails", async () => {

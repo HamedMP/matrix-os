@@ -1,3 +1,4 @@
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { X } from "@renderer/lib/hugeicons";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -82,6 +83,7 @@ export default function DesktopAppDrawer({
   onActivate: (tabId: string) => void;
   onCloseTab: (tab: Tab) => void;
 }) {
+  useGettingStartedBlocker(open);
   const openTabs = tabs.filter((tab) => surfaces[tab.id]?.mode !== "closed" && surfaces[tab.id] !== undefined);
 
   useEffect(() => {

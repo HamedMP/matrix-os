@@ -121,6 +121,43 @@ describe("EmbedService", () => {
     service.closeAll();
   });
 
+  it("opens public websites directly without starting a runtime tunnel", async () => {
+    const startPortForward = vi.fn();
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+    const internals = service as unknown as {
+      manager: { open: (...args: unknown[]) => string };
+    };
+    const open = vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+
+    const result = await service.open({
+      kind: "browser",
+      url: "https://matrix-os.com/docs",
+      bounds: BOUNDS,
+    });
+
+    expect(result.state).toBe("loading");
+    expect(startPortForward).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(
+      "browser",
+      null,
+      BOUNDS,
+      "https://matrix-os.com/docs",
+      expect.objectContaining({
+        id: result.embedId,
+        allowedOrigins: ["https://matrix-os.com"],
+        allowPublicNavigation: true,
+      }),
+    );
+  });
+
   it("tunnels runtime loopback pages through Matrix and closes the tunnel with the embed", async () => {
     const closeForward = vi.fn(async () => {});
     const startPortForward = vi.fn(async () => ({
@@ -227,6 +264,50 @@ describe("EmbedService", () => {
 
     await expect(opening).resolves.toMatchObject({ embedId: pendingId, state: "failed" });
     await vi.waitFor(() => expect(closeForward).toHaveBeenCalledOnce());
+  });
+
+  it("keeps a pending Browser tunnel inactive when it finishes opening in the background", async () => {
+    let resolveForward!: (value: PortForwardHandle) => void;
+    const startPortForward = vi.fn(() => new Promise<PortForwardHandle>((resolve) => {
+      resolveForward = resolve;
+    }));
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+      startPortForward,
+    });
+    const internals = service as unknown as {
+      pendingBrowsers: Set<string>;
+      manager: { open: (...args: unknown[]) => string };
+    };
+    const open = vi.spyOn(internals.manager, "open").mockImplementation((...args) => (
+      (args[4] as { id: string }).id
+    ));
+
+    const opening = service.open({ kind: "browser", url: "127.0.0.1:3000", bounds: BOUNDS });
+    await vi.waitFor(() => expect(startPortForward).toHaveBeenCalledOnce());
+    const pendingId = Array.from(internals.pendingBrowsers)[0]!;
+    expect(service.setActive(pendingId, false)).toBe(true);
+    resolveForward({
+      localHost: "127.0.0.1",
+      localPort: 49152,
+      remoteHost: "127.0.0.1",
+      remotePort: 3000,
+      ready: Promise.resolve(),
+      closed: new Promise<void>(() => {}),
+      close: vi.fn(async () => {}),
+    });
+
+    await expect(opening).resolves.toMatchObject({ embedId: pendingId, state: "loading" });
+    expect(open).toHaveBeenCalledWith(
+      "browser",
+      null,
+      BOUNDS,
+      "http://127.0.0.1:49152/",
+      expect.objectContaining({ id: pendingId, active: false }),
+    );
   });
 
   it("caps pending Browser tunnels", async () => {
@@ -571,19 +652,23 @@ describe("EmbedService", () => {
     const internals = service as unknown as {
       pendingHostedShells: Map<string, Bounds>;
       pendingApps: Map<string, { slug: string; appIdentity: string; bounds: Bounds }>;
+      pendingBrowsers: Set<string>;
       pendingActive: Map<string, boolean>;
       manager: { suspendAll: () => boolean };
     };
     const suspendAll = vi.spyOn(internals.manager, "suspendAll").mockReturnValue(true);
     internals.pendingHostedShells.set("embed-shell", BOUNDS);
     internals.pendingApps.set("embed-app", { slug: "notes", appIdentity: "notes", bounds: BOUNDS });
+    internals.pendingBrowsers.add("embed-browser");
     internals.pendingActive.set("embed-shell", true);
     internals.pendingActive.set("embed-app", true);
+    internals.pendingActive.set("embed-browser", true);
 
     expect(service.suspendAll()).toBe(true);
     expect(suspendAll).toHaveBeenCalledOnce();
     expect(internals.pendingActive.get("embed-shell")).toBe(false);
     expect(internals.pendingActive.get("embed-app")).toBe(false);
+    expect(internals.pendingActive.get("embed-browser")).toBe(false);
   });
 
   it("schedules hosted-shell session refresh from the app-session cookie expiry", async () => {
@@ -745,7 +830,7 @@ describe("EmbedService", () => {
 
     await expect(service.retryAuth("embed-app")).resolves.toBe(false);
     expect(open).not.toHaveBeenCalled();
-    expect(emitState).toHaveBeenCalledWith("embed-app", "auth-required");
+    expect(emitState).toHaveBeenCalledWith("embed-app", "failed");
 
     await expect(service.retryAuth("embed-app")).resolves.toBe(true);
     expect(fetchLaunchToken).toHaveBeenCalledTimes(2);

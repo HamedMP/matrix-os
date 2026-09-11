@@ -1,12 +1,25 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { useEffect, useMemo, useState } from "react";
+import {
+  MatrixBillingPublicEntitlementSchema,
+  type MatrixBillingPublicEntitlement,
+} from "@matrix-os/contracts";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { hasMatrixBillingAccess } from "@/lib/billing";
 
 const BILLING_STATUS_TIMEOUT_MS = 10_000;
 const BILLING_STATUS_CACHE_TTL_MS = 30_000;
 const BILLING_STATUS_RETRY_MS = 3_000;
+const BILLING_STATUS_MAX_AUTO_RETRIES = 1;
+const BILLING_STATUS_MAX_SESSION_RETRIES = 4;
 const PLATFORM_SESSION_BILLING_CACHE_KEY = "platform-session";
 const APP_SESSION_STALE_AUTH_FAILURE = "app-session-stale";
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
@@ -27,36 +40,17 @@ type BillingAccessState = {
   trialOffer: BillingTrialOffer | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
+  retry: () => void;
 };
 
-export type BillingAccessIssue = "auth" | null;
+export type BillingAccessIssue = "auth" | "status" | null;
 
 export type BillingTrialOffer = {
   eligible: boolean;
   durationDays: number;
 };
 
-export type BillingEntitlementSummary = {
-  source: "stripe" | "override";
-  planSlug: "matrix_starter" | "matrix_builder" | "matrix_max" | "internal";
-  status: string;
-  maxRuntimeSlots: number;
-  includedRuntimeSlots: number;
-  addonRuntimeSlots: number;
-  defaultServerType: string;
-  allowedServerTypes: string[];
-  stripeSubscriptionId: string | null;
-  stripePriceId: string | null;
-  billingInterval?: "monthly" | "annual" | null;
-  gracePeriodEndsAt: string | null;
-  trialStartedAt?: string | null;
-  trialEndsAt?: string | null;
-  trialConvertedAt?: string | null;
-  firstTrialPaymentFailedAt?: string | null;
-  effectiveFrom: string;
-  effectiveUntil: string | null;
-  updatedAt: string;
-};
+export type BillingEntitlementSummary = MatrixBillingPublicEntitlement;
 
 type BillingAccessRemoteState = {
   active: boolean | null;
@@ -66,16 +60,157 @@ type BillingAccessRemoteState = {
   accessIssue: BillingAccessIssue;
 };
 
+const BILLING_STATUS_UNAVAILABLE_STATE: BillingAccessRemoteState = {
+  active: null,
+  entitlement: null,
+  trialOffer: null,
+  accessReason: "billing_status_unavailable",
+  accessIssue: "status",
+};
+
+function subscribeToE2eBillingScenario(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener("popstate", onStoreChange);
+  return () => window.removeEventListener("popstate", onStoreChange);
+}
+
+function readE2eBillingScenario(): string | null {
+  if (!e2eBillingBypass || typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("e2e_billing_state");
+}
+
+function getServerE2eBillingScenario(): null {
+  return null;
+}
+
 export function useMatrixBillingAccess(): BillingAccessState {
   const state = useManagedMatrixBillingAccess();
+  const e2eBillingScenario = useSyncExternalStore(
+    subscribeToE2eBillingScenario,
+    readE2eBillingScenario,
+    getServerE2eBillingScenario,
+  );
   if (!e2eBillingBypass) return state;
+  if (e2eBillingScenario === "legacy-trial") {
+    return {
+      active: true,
+      checking: false,
+      entitlement: {
+        source: "stripe",
+        planSlug: "matrix_builder",
+        status: "trialing",
+        maxRuntimeSlots: 1,
+        includedRuntimeSlots: 1,
+        addonRuntimeSlots: 0,
+        allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+        allowedSelections: [
+          { planSlug: "matrix_starter", regionSlug: "region_ash" },
+          { planSlug: "matrix_builder", regionSlug: "region_ash" },
+        ],
+        portalAvailable: true,
+        billingInterval: "monthly",
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: "usd",
+          interval: "monthly",
+          intervalCount: 1,
+          quantity: 1,
+        },
+        runtimePlacement: {
+          regionSlug: "region_ash",
+          label: "Ashburn, Virginia",
+          countryLabel: "United States",
+          networkZone: "us-east",
+        },
+        gracePeriodEndsAt: null,
+        trialStartedAt: "2026-08-29T00:00:00.000Z",
+        trialEndsAt: "2026-09-01T00:00:00.000Z",
+        trialConvertedAt: null,
+        firstTrialPaymentFailedAt: null,
+        effectiveFrom: "2026-08-29T00:00:00.000Z",
+        effectiveUntil: null,
+        updatedAt: "2026-08-29T00:00:00.000Z",
+      },
+      trialOffer: { eligible: false, durationDays: 3 },
+      accessReason: "e2e_legacy_trial",
+      accessIssue: null,
+      retry: state.retry,
+    };
+  }
+  if (e2eBillingScenario === "active") {
+    return {
+      active: true,
+      checking: false,
+      entitlement: {
+        source: "stripe",
+        planSlug: "matrix_builder",
+        status: "active",
+        maxRuntimeSlots: 1,
+        includedRuntimeSlots: 1,
+        addonRuntimeSlots: 0,
+        allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+        allowedSelections: [
+          { planSlug: "matrix_starter", regionSlug: "region_fsn1" },
+          { planSlug: "matrix_starter", regionSlug: "region_nbg1" },
+          { planSlug: "matrix_starter", regionSlug: "region_ash" },
+          { planSlug: "matrix_starter", regionSlug: "region_hil" },
+          { planSlug: "matrix_builder", regionSlug: "region_fsn1" },
+          { planSlug: "matrix_builder", regionSlug: "region_nbg1" },
+          { planSlug: "matrix_builder", regionSlug: "region_ash" },
+          { planSlug: "matrix_builder", regionSlug: "region_hil" },
+        ],
+        portalAvailable: true,
+        billingInterval: "monthly",
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: "usd",
+          interval: "monthly",
+          intervalCount: 1,
+          quantity: 1,
+        },
+        runtimePlacement: {
+          regionSlug: "region_ash",
+          label: "Ashburn, Virginia",
+          countryLabel: "United States",
+          networkZone: "us-east",
+        },
+        gracePeriodEndsAt: null,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialConvertedAt: null,
+        firstTrialPaymentFailedAt: null,
+        effectiveFrom: "2026-08-31T00:00:00.000Z",
+        effectiveUntil: null,
+        updatedAt: "2026-08-31T00:00:00.000Z",
+      },
+      trialOffer: null,
+      accessReason: "e2e_test_bypass",
+      accessIssue: null,
+      retry: state.retry,
+    };
+  }
+  if (e2eBillingScenario === "unavailable") {
+    return {
+      ...BILLING_STATUS_UNAVAILABLE_STATE,
+      checking: false,
+      retry: () => {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set("e2e_billing_state", "active");
+        window.history.replaceState({}, "", nextUrl);
+        window.dispatchEvent(new Event("popstate"));
+      },
+    };
+  }
   return {
     active: false,
     checking: false,
     entitlement: null,
-    trialOffer: null,
+    // Keep browser screenshots deterministic while exercising the same
+    // three-day offer shown to eligible first-time hosted customers.
+    trialOffer: { eligible: true, durationDays: 3 },
     accessReason: "e2e_test_bypass",
     accessIssue: null,
+    retry: state.retry,
   };
 }
 
@@ -89,8 +224,16 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
   const [remoteState, setRemoteState] = useState<BillingAccessRemoteState | null>(null);
   const [remoteChecked, setRemoteChecked] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
+  const failedAttemptsRef = useRef(0);
+  const previousCacheKeyRef = useRef<string | null>(null);
+  const retryBillingStatus = useCallback(() => {
+    failedAttemptsRef.current = 0;
+    setRemoteState(null);
+    setRemoteChecked(false);
+    setRetryTick((current) => current + 1);
+  }, []);
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setRemoteState/setRemoteChecked pairs live in mutually-exclusive branches (auth-gate, missing-userId, cache-hit, async fetch then/catch) representing a single load's loading -> result transition; they are not a synchronous render cascade and combining them across branches would obscure the distinct cases
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- this Clerk-dependent status hook is the billing cache/retry coordinator: requests are bounded by AbortSignal.timeout, stale results are gated by `disposed`, retry timers are cleared in cleanup, and no shell-wide query dependency exists. The state pairs are mutually-exclusive loading/result transitions, not a synchronous render cascade.
   useEffect(() => {
     if (!isLoaded || legacyActive) {
       // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async billing-status load hook: it reads Clerk auth + a module-level cache and otherwise fetches /billing/status, setting remoteState/remoteChecked from the (async) result; the value cannot be derived in render
@@ -104,6 +247,10 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       return;
     }
     const billingCacheKey = isSignedIn ? userId : PLATFORM_SESSION_BILLING_CACHE_KEY;
+    if (previousCacheKeyRef.current !== billingCacheKey) {
+      previousCacheKeyRef.current = billingCacheKey;
+      failedAttemptsRef.current = 0;
+    }
     const shouldUseSnapshotCache = isSignedIn;
     const checkoutReturnRequested = isCheckoutSuccessReturn();
     const cached = checkoutReturnRequested || !shouldUseSnapshotCache
@@ -123,17 +270,33 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
     })
       .then((state) => {
         if (disposed) return;
+        const shouldRetrySession = state.accessIssue === "auth"
+          || (checkoutReturnRequested && state.active === false);
+        if (shouldRetrySession && failedAttemptsRef.current >= BILLING_STATUS_MAX_SESSION_RETRIES) {
+          setRemoteState(BILLING_STATUS_UNAVAILABLE_STATE);
+          setRemoteChecked(true);
+          return;
+        }
         setRemoteState(state);
         setRemoteChecked(true);
-        if (state.accessIssue === "auth" || (checkoutReturnRequested && state.active === false)) {
+        if (shouldRetrySession) {
+          failedAttemptsRef.current += 1;
           retryTimeoutId = window.setTimeout(() => {
             setRetryTick((current) => current + 1);
           }, BILLING_STATUS_RETRY_MS);
+        } else {
+          failedAttemptsRef.current = 0;
         }
       })
       .catch((error: unknown) => {
         if (disposed) return;
         console.warn("[billing] unable to read Stripe billing status", error);
+        if (failedAttemptsRef.current >= BILLING_STATUS_MAX_AUTO_RETRIES) {
+          setRemoteState(BILLING_STATUS_UNAVAILABLE_STATE);
+          setRemoteChecked(true);
+          return;
+        }
+        failedAttemptsRef.current += 1;
         setRemoteState(null);
         setRemoteChecked(false);
         retryTimeoutId = window.setTimeout(() => {
@@ -146,7 +309,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
     };
   }, [isLoaded, isSignedIn, legacyActive, retryTick, userId]);
 
-  if (!isLoaded) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null };
+  if (!isLoaded) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null, retry: retryBillingStatus };
   if (legacyActive) {
     return {
       active: true,
@@ -155,6 +318,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       trialOffer: null,
       accessReason: "legacy_clerk_plan",
       accessIssue: null,
+      retry: retryBillingStatus,
     };
   }
   if (remoteState?.accessIssue === "auth") {
@@ -165,9 +329,21 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       trialOffer: null,
       accessReason: remoteState.accessReason,
       accessIssue: "auth",
+      retry: retryBillingStatus,
     };
   }
-  if (!remoteChecked) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null };
+  if (remoteState?.accessIssue === "status") {
+    return {
+      active: null,
+      checking: false,
+      entitlement: null,
+      trialOffer: null,
+      accessReason: remoteState.accessReason,
+      accessIssue: "status",
+      retry: retryBillingStatus,
+    };
+  }
+  if (!remoteChecked) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null, retry: retryBillingStatus };
   return {
     active: remoteState?.active === true,
     checking: false,
@@ -175,6 +351,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
     trialOffer: remoteState?.trialOffer ?? null,
     accessReason: remoteState?.accessReason ?? null,
     accessIssue: null,
+    retry: retryBillingStatus,
   };
 }
 
@@ -230,12 +407,16 @@ function readRemoteBillingStatus(
       }
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
-        entitlement?: BillingEntitlementSummary | null;
+        entitlement?: unknown;
         trialOffer?: { eligible?: unknown; durationDays?: unknown };
       };
+      const parsedEntitlement = body.entitlement === null || body.entitlement === undefined
+        ? null
+        : MatrixBillingPublicEntitlementSchema.safeParse(body.entitlement);
+      if (parsedEntitlement && !parsedEntitlement.success) throw new Error("billing_status_invalid");
       return {
         active: body.access?.runtimeProxyAllowed === true,
-        entitlement: body.entitlement ?? null,
+        entitlement: parsedEntitlement?.data ?? null,
         trialOffer: parseBillingTrialOffer(body.trialOffer),
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
         accessIssue: null,

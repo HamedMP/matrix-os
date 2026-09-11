@@ -15,6 +15,9 @@ const PLATFORM_SHELL_PUBLIC_ASSET_PATHS = [
   '/matrix-logo.svg',
   '/og.png',
   '/runtime-shell-backdrop.webp',
+  '/wallpapers/matrix-dawn.webp',
+  '/wallpapers/matrix-dusk.webp',
+  '/wallpapers/matrix-night.webp',
   '/wallpapers/moraine-lake.jpg',
 ] as const;
 

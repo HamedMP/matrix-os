@@ -1,4 +1,10 @@
 import { CreditCard, ExternalLink } from "@renderer/lib/hugeicons";
+import {
+  MatrixBillingStatusSchema,
+  closestMatrixRegionSlug,
+  type MatrixBillingPublicEntitlement,
+  type MatrixBillingStatus,
+} from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { z } from "zod/v4";
 import { Button } from "../../../design/primitives";
@@ -6,53 +12,17 @@ import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
 import { Card, Row, SettingsSectionHeader } from "./section-kit";
 
-const BillingEntitlementSchema = z
-  .object({
-    source: z.enum(["stripe", "override"]),
-    clerkUserId: z.string().min(1).max(128),
-    planSlug: z.string().min(1).max(64),
-    status: z.string().min(1).max(64),
-    maxRuntimeSlots: z.number().int().nonnegative(),
-    includedRuntimeSlots: z.number().int().nonnegative(),
-    addonRuntimeSlots: z.number().int().nonnegative(),
-    defaultServerType: z.string().min(1).max(64),
-    allowedServerTypes: z.array(z.string().min(1).max(64)).max(16),
-    stripeSubscriptionId: z.string().max(256).nullable(),
-    stripePriceId: z.string().max(256).nullable(),
-    gracePeriodEndsAt: z.string().max(64).nullable(),
-    effectiveFrom: z.string().max(64),
-    effectiveUntil: z.string().max(64).nullable(),
-    updatedAt: z.string().max(64),
-  })
-  .strict();
+const BillingRedirectSchema = z.strictObject({
+  url: z
+    .url()
+    .max(2048)
+    .refine((url) => new URL(url).protocol === "https:", "Billing redirects must use HTTPS"),
+});
 
-const BillingStatusSchema = z
-  .object({
-    entitlement: BillingEntitlementSchema.nullable(),
-    access: z
-      .object({
-        runtimeProxyAllowed: z.boolean(),
-        reason: z.string().max(128).optional(),
-      })
-      .passthrough(),
-  })
-  .passthrough();
-
-const BillingRedirectSchema = z
-  .object({
-    url: z
-      .string()
-      .url()
-      .max(2048)
-      .refine((url) => new URL(url).protocol === "https:", "Billing redirects must use HTTPS"),
-  })
-  .strict();
-
-type BillingEntitlement = z.infer<typeof BillingEntitlementSchema>;
-type BillingStatus = z.infer<typeof BillingStatusSchema>;
-type BillingInterval = "monthly" | "annual";
+type BillingEntitlement = MatrixBillingPublicEntitlement;
+type BillingInterval = "monthly";
 type BillingPlan = "matrix_starter" | "matrix_builder" | "matrix_max";
-type BillingRegion = "region_fsn1" | "region_nbg1";
+type BillingRegion = "region_fsn1" | "region_nbg1" | "region_ash" | "region_hil";
 type BillingAction = "checkout" | "portal";
 
 interface BillingUiState {
@@ -65,7 +35,6 @@ interface BillingUiState {
 
 type BillingUiAction =
   | { type: "set-plan"; plan: BillingPlan }
-  | { type: "set-interval"; interval: BillingInterval }
   | { type: "set-region"; region: BillingRegion }
   | { type: "start-action"; action: BillingAction }
   | { type: "finish-action" }
@@ -87,15 +56,26 @@ const PLAN_LABELS: Record<string, string> = {
 };
 
 const PLANS: Array<{ slug: BillingPlan; label: string }> = [
-  { slug: "matrix_starter", label: "Starter" },
-  { slug: "matrix_builder", label: "Builder" },
-  { slug: "matrix_max", label: "Max" },
+  { slug: "matrix_starter", label: "Starter · $20/month" },
+  { slug: "matrix_builder", label: "Builder · $100/month" },
+  { slug: "matrix_max", label: "Max · $200/month" },
 ];
 
 const REGIONS: Array<{ slug: BillingRegion; label: string }> = [
-  { slug: "region_fsn1", label: "EU Falkenstein" },
-  { slug: "region_nbg1", label: "EU Nuremberg" },
+  { slug: "region_fsn1", label: "🇩🇪 Falkenstein, Germany" },
+  { slug: "region_nbg1", label: "🇩🇪 Nuremberg, Germany" },
+  { slug: "region_ash", label: "🇺🇸 Ashburn, Virginia" },
+  { slug: "region_hil", label: "🇺🇸 Hillsboro, Oregon" },
 ];
+
+function closestBillingRegion(): BillingRegion {
+  try {
+    return closestMatrixRegionSlug(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  } catch (error: unknown) {
+    console.warn("[billing] unable to detect closest server location:", error instanceof Error ? error.name : typeof error);
+    return "region_fsn1";
+  }
+}
 
 function planLabel(slug: string): string {
   return PLAN_LABELS[slug] ?? slug.replace(/^matrix_/, "").replaceAll("_", " ");
@@ -114,8 +94,6 @@ function billingUiReducer(state: BillingUiState, action: BillingUiAction): Billi
   switch (action.type) {
     case "set-plan":
       return { ...state, plan: action.plan };
-    case "set-interval":
-      return { ...state, interval: action.interval };
     case "set-region":
       return { ...state, region: action.region };
     case "start-action":
@@ -133,7 +111,7 @@ async function openBillingUrl(url: string): Promise<void> {
 
 function useBillingStatus() {
   const api = useConnection((s) => s.api);
-  const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [status, setStatus] = useState<MatrixBillingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -148,7 +126,7 @@ function useBillingStatus() {
     setError(false);
     try {
       const raw = await api.get<unknown>("/billing/status");
-      const parsed = BillingStatusSchema.parse(raw);
+      const parsed = MatrixBillingStatusSchema.parse(raw);
       setStatus(parsed);
     } catch (err: unknown) {
       console.warn("[billing] status unavailable:", err instanceof Error ? err.message : String(err));
@@ -170,11 +148,15 @@ export default function BillingSection() {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
   const { status, loading, error, refresh } = useBillingStatus();
-  const [ui, dispatchUi] = useReducer(billingUiReducer, INITIAL_BILLING_UI_STATE);
+  const [ui, dispatchUi] = useReducer(
+    billingUiReducer,
+    INITIAL_BILLING_UI_STATE,
+    (initialState) => ({ ...initialState, region: closestBillingRegion() }),
+  );
 
   const active = status?.access.runtimeProxyAllowed === true;
   const entitlement = status?.entitlement ?? null;
-  const portalAvailable = entitlement?.source === "stripe" && Boolean(entitlement.stripeSubscriptionId);
+  const portalAvailable = entitlement?.portalAvailable === true;
   const settingsUrl = useMemo(() => {
     const base = platformHost.startsWith("https://") ? platformHost : "https://app.matrix-os.com";
     return `${base.replace(/\/$/, "")}/?billing=setup`;
@@ -199,7 +181,7 @@ export default function BillingSection() {
   }
 
   async function openPortal(): Promise<void> {
-    if (!api || !portalAvailable || ui.actionLoading) return;
+    if (!api || loading || error || !portalAvailable || ui.actionLoading) return;
     dispatchUi({ type: "start-action", action: "portal" });
     try {
       const raw = await api.post<unknown>("/billing/portal", {});
@@ -216,7 +198,7 @@ export default function BillingSection() {
     <>
       <SettingsSectionHeader
         title="Billing"
-        description="Manage hosted runtime billing through the native Matrix session."
+        description="View your plan and manage your subscription, invoices, and payment methods."
       />
       <Card>
         <div className="flex items-center gap-3">
@@ -254,25 +236,39 @@ export default function BillingSection() {
               label="Runtime slots"
               value={`${entitlement.includedRuntimeSlots + entitlement.addonRuntimeSlots} of ${entitlement.maxRuntimeSlots}`}
             />
-            <Row label="Default machine" value={entitlement.defaultServerType} />
           </>
         ) : null}
 
-        {portalAvailable ? (
-          <div className="flex items-center justify-between border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
-            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-              Invoices, payment methods, coupons, and cancellation live in Stripe.
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
+          <div className="min-w-0 flex-1 basis-64">
+            <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+              Billing management
             </p>
-            <Button onClick={() => void openPortal()} disabled={!portalAvailable || ui.actionLoading !== null}>
-              {ui.actionLoading === "portal" ? "Opening..." : "Open portal"}
-              <ExternalLink size={14} />
-            </Button>
+            <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
+              {loading
+                ? "Checking billing management availability."
+                : error || !api
+                  ? "Refresh your billing status to check whether billing management is available."
+                  : portalAvailable
+                    ? "Manage your subscription, invoices, and payment methods in your browser."
+                    : entitlement?.source === "override"
+                      ? "This account has no linked billing customer. Contact the Matrix team for billing help."
+                      : "Billing management is not available for this account yet."}
+            </p>
           </div>
-        ) : null}
+          <Button
+            variant="primary"
+            onClick={() => void openPortal()}
+            disabled={!api || loading || error || !portalAvailable || ui.actionLoading !== null}
+          >
+            {ui.actionLoading === "portal" ? "Opening..." : "Manage billing"}
+            <ExternalLink size={14} />
+          </Button>
+        </div>
 
         {!active ? (
           <div className="flex flex-col gap-3 border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3">
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
                 Plan
                 <select
@@ -286,31 +282,24 @@ export default function BillingSection() {
                   ))}
                 </select>
               </label>
-              <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
-                Interval
-                <select
-                  value={ui.interval}
-                  onChange={(event) => dispatchUi({ type: "set-interval", interval: event.currentTarget.value as BillingInterval })}
-                  className="h-9 rounded-md border px-2 text-sm"
-                  style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="annual">Annual</option>
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
-                Region
-                <select
-                  value={ui.region}
-                  onChange={(event) => dispatchUi({ type: "set-region", region: event.currentTarget.value as BillingRegion })}
-                  className="h-9 rounded-md border px-2 text-sm"
-                  style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
-                >
-                  {REGIONS.map((option) => (
-                    <option key={option.slug} value={option.slug}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
+              <details className="rounded-md border px-3 py-2" style={{ borderColor: "var(--border-default)" }}>
+                <summary className="cursor-pointer text-xs" style={{ color: "var(--text-secondary)" }}>
+                  Server location · {REGIONS.find((region) => region.slug === ui.region)?.label}
+                </summary>
+                <label className="mt-2 flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                  Change server location
+                  <select
+                    value={ui.region}
+                    onChange={(event) => dispatchUi({ type: "set-region", region: event.currentTarget.value as BillingRegion })}
+                    className="h-9 rounded-md border px-2 text-sm"
+                    style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
+                  >
+                    {REGIONS.map((option) => (
+                      <option key={option.slug} value={option.slug}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </details>
             </div>
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
@@ -328,7 +317,7 @@ export default function BillingSection() {
         ) : null}
 
         {ui.actionError ? (
-          <p className="text-sm" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>
             {ui.actionError}
           </p>
         ) : null}

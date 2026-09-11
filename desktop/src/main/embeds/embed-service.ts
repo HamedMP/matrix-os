@@ -17,6 +17,7 @@ import {
 } from "../../shared/runtime-browser-url";
 import { EmbedManager, type Bounds } from "./embed-manager";
 import { LaunchTokenCache } from "./launch-token-cache";
+import { AppLaunchError, requestAppLaunchToken } from "./app-launch";
 import {
   HOSTED_SHELL_SESSION_REFRESH_RETRY_MS,
   computeHostedShellSessionRefreshDelay,
@@ -101,6 +102,7 @@ export class EmbedService {
         routeSlug,
         allowedOrigins,
         resolveNavigation,
+        allowPublicNavigation,
         onState,
       }) => {
         const window = this.deps.getWindow();
@@ -120,8 +122,9 @@ export class EmbedService {
           partition,
           allowedOrigins,
           resolveNavigation,
+          allowPublicNavigation,
           onState,
-          denyPermissions: kind === "code-editor",
+          denyPermissions: kind === "code-editor" || kind === "browser",
           ...(bridge ? { appBridge: bridge } : {}),
         });
       },
@@ -137,7 +140,7 @@ export class EmbedService {
       return this.openCodeEditor(gatewayOrigin, request.bounds, request.active ?? true);
     }
     if (request.kind === "browser") {
-      return this.openRuntimeBrowser(
+      return this.openBrowser(
         gatewayOrigin,
         request.url ?? "",
         request.bounds,
@@ -162,9 +165,7 @@ export class EmbedService {
   }
 
   setActive(embedId: string, active: boolean): boolean {
-    const pending = this.pendingHostedShells.has(embedId)
-      || this.pendingCodeEditors.has(embedId)
-      || this.pendingApps.has(embedId);
+    const pending = this.isPending(embedId);
     if (pending) {
       this.pendingActive.set(embedId, active);
     }
@@ -172,6 +173,15 @@ export class EmbedService {
       this.scheduleHostedShellSessionRefresh(this.deps.getGatewayOrigin());
     }
     return this.manager.setActive(embedId, active) || pending;
+  }
+
+  async deactivate(embedId: string): Promise<{ ok: boolean; snapshotDataUrl: string | null }> {
+    const pending = this.isPending(embedId);
+    if (pending) {
+      this.pendingActive.set(embedId, false);
+      return { ok: true, snapshotDataUrl: null };
+    }
+    return this.manager.deactivate(embedId);
   }
 
   suspendAll(): boolean {
@@ -182,6 +192,9 @@ export class EmbedService {
       this.pendingActive.set(embedId, false);
     }
     for (const embedId of this.pendingCodeEditors.keys()) {
+      this.pendingActive.set(embedId, false);
+    }
+    for (const embedId of this.pendingBrowsers) {
       this.pendingActive.set(embedId, false);
     }
     return this.manager.suspendAll();
@@ -330,6 +343,7 @@ export class EmbedService {
 
     const generation = this.browserGeneration;
     this.pendingBrowsers.add(embedId);
+    this.pendingActive.set(embedId, active);
     const startPortForward = this.deps.startPortForward ?? startMatrixPortForward;
     let forward: PortForwardHandle;
     try {
@@ -343,6 +357,7 @@ export class EmbedService {
       });
     } catch (err: unknown) {
       this.pendingBrowsers.delete(embedId);
+      this.pendingActive.delete(embedId);
       console.warn(
         "[embed-service] runtime browser tunnel failed:",
         err instanceof Error ? err.message : String(err),
@@ -351,6 +366,8 @@ export class EmbedService {
     }
 
     const stillPending = this.pendingBrowsers.delete(embedId);
+    const resolvedActive = this.pendingActive.get(embedId) ?? active;
+    this.pendingActive.delete(embedId);
     if (generation !== this.browserGeneration || !stillPending) {
       void forward.close().catch((err: unknown) => {
         console.warn(
@@ -374,7 +391,7 @@ export class EmbedService {
     try {
       this.manager.open("browser", null, bounds, localUrl.toString(), {
         id: embedId,
-        active,
+        active: resolvedActive,
         allowedOrigins,
         resolveNavigation: (url) => resolveRuntimeBrowserNavigation(
           url,
@@ -393,6 +410,45 @@ export class EmbedService {
       return { embedId, state: "failed" };
     }
     return { embedId, state: "loading" };
+  }
+
+  private isPending(embedId: string): boolean {
+    return this.pendingHostedShells.has(embedId)
+      || this.pendingCodeEditors.has(embedId)
+      || this.pendingApps.has(embedId)
+      || this.pendingBrowsers.has(embedId);
+  }
+
+  private async openBrowser(
+    gatewayOrigin: string,
+    rawUrl: string,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
+    const resolved = resolveBrowserAddress(rawUrl);
+    if (!resolved) return { embedId: randomUUID(), state: "failed" };
+    if (resolved.disposition === "runtime") {
+      return this.openRuntimeBrowser(gatewayOrigin, resolved.url, bounds, active);
+    }
+
+    const embedId = randomUUID();
+    const origin = new URL(resolved.url).origin;
+    try {
+      this.manager.open("browser", null, bounds, resolved.url, {
+        id: embedId,
+        active,
+        allowedOrigins: [origin],
+        allowPublicNavigation: true,
+        onState: (state) => this.deps.emitState(embedId, state),
+      });
+      return { embedId, state: "loading" };
+    } catch (err: unknown) {
+      console.warn(
+        "[embed-service] public browser open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { embedId, state: "failed" };
+    }
   }
 
   private disposeBrowserForward(embedId: string, forward: PortForwardHandle): void {
@@ -492,8 +548,8 @@ export class EmbedService {
         this.pendingActive.get(embedId) ?? true,
         () => this.pendingApps.has(embedId),
       );
-      if (!opened) {
-        if (this.pendingApps.has(embedId)) this.deps.emitState(embedId, "auth-required");
+      if (opened !== "loading") {
+        if (this.pendingApps.has(embedId)) this.deps.emitState(embedId, opened);
         return false;
       }
       this.pendingApps.delete(embedId);
@@ -765,9 +821,9 @@ export class EmbedService {
   ): Promise<OpenResult> {
     const embedId = randomUUID();
     const opened = await this.createAppEmbed(gatewayOrigin, slug, appIdentity, bounds, embedId, active);
-    if (!opened) {
+    if (opened !== "loading") {
       this.rememberPendingApp(embedId, { slug, appIdentity, bounds }, active);
-      return { embedId, state: "auth-required" };
+      return { embedId, state: opened };
     }
     return { embedId, state: "loading" };
   }
@@ -791,22 +847,28 @@ export class EmbedService {
     embedId: string,
     active = true,
     shouldAttach: () => boolean = () => true,
-  ): Promise<boolean> {
+  ): Promise<"loading" | "auth-required" | "failed"> {
     let cached = this.tokenCache.get(slug);
     if (!cached) {
-      const token = await this.fetchLaunchToken(gatewayOrigin, slug);
+      let token;
+      try {
+        token = await this.fetchLaunchToken(gatewayOrigin, slug);
+      } catch (err: unknown) {
+        console.warn("[embed-service] app launch failed:", err instanceof Error ? err.name : "UnknownError");
+        return err instanceof AppLaunchError ? err.state : "failed";
+      }
       if (token) {
         this.tokenCache.set(slug, token);
         cached = token;
       }
     }
-    if (!cached) return false;
-    if (!shouldAttach()) return false;
+    if (!cached) return "failed";
+    if (!shouldAttach()) return "failed";
     const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
     if (!resolved) {
-      console.warn("[embed-service] app launch url failed origin check:", cached.launchUrl);
+      console.warn("[embed-service] app launch url failed origin check");
       this.tokenCache.delete(slug);
-      return false;
+      return "failed";
     }
     this.manager.open("app", appIdentity, bounds, resolved, {
       id: embedId,
@@ -814,37 +876,17 @@ export class EmbedService {
       routeSlug: slug,
       onState: (state) => this.deps.emitState(embedId, state),
     });
-    return true;
+    return "loading";
   }
 
   private async fetchLaunchToken(
     gatewayOrigin: string,
     slug: string,
   ): Promise<{ launchUrl: string; expiresAt: number } | null> {
-    try {
-      const response = await this.gatewayRequest(
-        `${gatewayOrigin}/api/apps/${encodeURIComponent(slug)}/session-token`,
-        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
-      );
-      if (response.status < 200 || response.status >= 300) return null;
-      const parsed: unknown = JSON.parse(response.body);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        typeof (parsed as { launchUrl?: unknown }).launchUrl === "string" &&
-        typeof (parsed as { expiresAt?: unknown }).expiresAt === "number"
-      ) {
-        const { launchUrl, expiresAt } = parsed as { launchUrl: string; expiresAt: number };
-        return { launchUrl, expiresAt };
-      }
-      return null;
-    } catch (err: unknown) {
-      console.warn(
-        "[embed-service] launch token fetch failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-      return null;
-    }
+    return requestAppLaunchToken(() => this.gatewayRequest(
+      `${gatewayOrigin}/api/apps/${encodeURIComponent(slug)}/session-token`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    ));
   }
 
   private gatewayRequest(

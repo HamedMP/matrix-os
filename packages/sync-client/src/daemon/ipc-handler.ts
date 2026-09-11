@@ -33,20 +33,10 @@ export interface IpcHandlerDeps {
   loadAuth?: () => Promise<AuthData | null>;
   refreshAuth?: () => Promise<AuthData | null>;
   shell?: {
-    listSessions?: () => Promise<unknown[]>;
-    createSession?: (input: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    deleteSession?: (name: string) => Promise<void>;
-    listTabs?: (session: string) => Promise<unknown[]>;
-    createTab?: (session: string, input: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    switchTab?: (session: string, tab: number) => Promise<Record<string, unknown>>;
-    closeTab?: (session: string, tab: number) => Promise<Record<string, unknown>>;
-    splitPane?: (session: string, input: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    closePane?: (session: string, pane: string) => Promise<Record<string, unknown>>;
-    listLayouts?: () => Promise<unknown[]>;
-    showLayout?: (name: string) => Promise<Record<string, unknown>>;
-    saveLayout?: (name: string, kdl: string) => Promise<Record<string, unknown>>;
-    applyLayout?: (session: string, name: string) => Promise<Record<string, unknown>>;
-    deleteLayout?: (name: string) => Promise<Record<string, unknown>>;
+    listWorkspaces?: () => Promise<unknown[]>;
+    ensureWorkspace?: (input: { projectId?: string }) => Promise<Record<string, unknown>>;
+    createTab?: (workspaceId: string, input: { name: string; cwd?: string; command?: string[] }) => Promise<Record<string, unknown>>;
+    terminateTab?: (ref: { workspaceId: string; tabId: string }) => Promise<void>;
   };
   exit: (code: number) => void;
   ensureDir?: (path: string) => Promise<void>;
@@ -59,50 +49,19 @@ export type IpcHandler = (
 ) => Promise<Record<string, unknown>>;
 
 const DEFAULT_EXIT_DELAY_MS = 50;
-const ShellSessionNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,30}$/);
-const ShellLayoutNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+const TerminalWorkspaceIdSchema = z.string().regex(/^tws_[0-9a-f]{32}$/);
+const TerminalTabIdSchema = z.string().regex(/^tt_[0-9a-f]{32}$/);
 const ShellCwdSchema = z.string().min(1).max(1024)
   .refine((value) => !value.startsWith("/"))
   .refine((value) => !value.split(/[\\/]+/).includes(".."));
-const ShellCommandSchema = z.string().min(1).max(4096);
-const ShellTabNameSchema = z.string().min(1).max(64);
-const ShellCreateArgsSchema = z.object({
-  name: ShellSessionNameSchema,
+const TerminalEnsureArgsSchema = z.object({ projectId: z.string().regex(/^proj_[0-9a-f]{16,64}$/).optional() }).strict();
+const TerminalTabCreateArgsSchema = z.object({
+  workspaceId: TerminalWorkspaceIdSchema,
+  name: z.string().min(1).max(120),
   cwd: ShellCwdSchema.optional(),
-  layout: ShellLayoutNameSchema.optional(),
-  cmd: ShellCommandSchema.optional(),
+  command: z.array(z.string().min(1).max(4096)).min(1).max(128).optional(),
 }).strict();
-const ShellSessionArgsSchema = z.object({ session: ShellSessionNameSchema }).strict();
-const ShellDestroyArgsSchema = z.object({ name: ShellSessionNameSchema }).strict();
-const ShellTabCreateArgsSchema = z.object({
-  session: ShellSessionNameSchema,
-  name: ShellTabNameSchema.optional(),
-  cwd: ShellCwdSchema.optional(),
-  cmd: ShellCommandSchema.optional(),
-}).strict();
-const ShellPaneSplitArgsSchema = z.object({
-  session: ShellSessionNameSchema,
-  direction: z.enum(["right", "down"]).optional().default("right"),
-  cwd: ShellCwdSchema.optional(),
-  cmd: ShellCommandSchema.optional(),
-}).strict();
-const ShellTabArgsSchema = z.object({
-  session: ShellSessionNameSchema,
-  tab: z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/).transform(Number)]),
-}).strict();
-const ShellPaneArgsSchema = z.object({
-  session: ShellSessionNameSchema,
-  pane: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/),
-}).strict();
-const LayoutNameArgsSchema = z.object({ name: ShellLayoutNameSchema }).strict();
-const LayoutSaveArgsSchema = z.object({
-  name: ShellLayoutNameSchema,
-  kdl: z.string().min(1).max(100_000),
-}).strict();
-const LayoutApplyArgsSchema = z.object({
-  session: ShellSessionNameSchema,
-  name: ShellLayoutNameSchema,
-}).strict();
+const TerminalTabRefArgsSchema = z.object({ workspaceId: TerminalWorkspaceIdSchema, tabId: TerminalTabIdSchema }).strict();
 
 export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
   const ensureDir =
@@ -150,54 +109,19 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
         if (!auth) return { authenticated: false };
         return { accessToken: auth.accessToken, expiresAt: auth.expiresAt };
       }
-      case "shell.list":
-        return { sessions: await requireShell(deps).listSessions!() };
-      case "shell.create": {
-        const input = parseIpcArgs(ShellCreateArgsSchema, args);
-        return await requireShell(deps).createSession!(input);
+      case "terminal.workspaces.list":
+        return { workspaces: await requireShell(deps).listWorkspaces!() };
+      case "terminal.workspace.ensure":
+        return await requireShell(deps).ensureWorkspace!(parseIpcArgs(TerminalEnsureArgsSchema, args));
+      case "terminal.tab.create": {
+        const { workspaceId, ...input } = parseIpcArgs(TerminalTabCreateArgsSchema, args);
+        return await requireShell(deps).createTab!(workspaceId, input);
       }
-      case "shell.destroy":
-        await requireShell(deps).deleteSession!(parseIpcArgs(ShellDestroyArgsSchema, args).name);
+      case "terminal.tab.terminate": {
+        const ref = parseIpcArgs(TerminalTabRefArgsSchema, args);
+        await requireShell(deps).terminateTab!(ref);
         return { ok: true };
-      case "tab.list":
-        return { tabs: await requireShell(deps).listTabs!(parseIpcArgs(ShellSessionArgsSchema, args).session) };
-      case "tab.create": {
-        const { session, ...input } = parseIpcArgs(ShellTabCreateArgsSchema, args);
-        return await requireShell(deps).createTab!(session, input);
       }
-      case "tab.go": {
-        const input = parseIpcArgs(ShellTabArgsSchema, args);
-        return await requireShell(deps).switchTab!(input.session, input.tab);
-      }
-      case "tab.close": {
-        const input = parseIpcArgs(ShellTabArgsSchema, args);
-        return await requireShell(deps).closeTab!(input.session, input.tab);
-      }
-      case "pane.split": {
-        const { session, ...input } = parseIpcArgs(ShellPaneSplitArgsSchema, args);
-        return await requireShell(deps).splitPane!(session, input);
-      }
-      case "pane.close": {
-        const input = parseIpcArgs(ShellPaneArgsSchema, args);
-        return await requireShell(deps).closePane!(input.session, input.pane);
-      }
-      case "layout.list":
-        return { layouts: await requireShell(deps).listLayouts!() };
-      case "layout.show":
-        return await requireShell(deps).showLayout!(parseIpcArgs(LayoutNameArgsSchema, args).name);
-      case "layout.save": {
-        const input = parseIpcArgs(LayoutSaveArgsSchema, args);
-        return await requireShell(deps).saveLayout!(
-          input.name,
-          input.kdl,
-        );
-      }
-      case "layout.apply": {
-        const input = parseIpcArgs(LayoutApplyArgsSchema, args);
-        return await requireShell(deps).applyLayout!(input.session, input.name);
-      }
-      case "layout.delete":
-        return await requireShell(deps).deleteLayout!(parseIpcArgs(LayoutNameArgsSchema, args).name);
       case "getConfig":
         // Token-free projection of the daemon's persisted config. The menu
         // bar app calls this to render a Settings view; auth.json is read

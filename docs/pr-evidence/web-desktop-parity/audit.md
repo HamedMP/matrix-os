@@ -1,16 +1,16 @@
-# Web/Desktop shell parity audit
+# Web Desktop and Electron Desktop parity audit
 
 Date: 2026-08-27  
-Ground truth: Electron native Desktop shell
+Ground truth: Electron Desktop
 
 ## Outcome
 
-The browser OS view now uses Desktop as its canonical renderer. The deprecated
+This audit records the implementation baseline before the OS-view parity stack.
+Web Desktop is the default browser renderer and Electron Desktop is the ongoing
+visual and interaction reference for shared desktop surfaces. The deprecated
 menu bar and Developer-first presentation are removed from the primary path.
-The browser keeps its existing app implementations and window state while
-adopting the native Desktop composition: desktop destinations, compact OS
-window controls, a centered glass taskbar, running/minimized app affordances,
-and a searchable full-screen launchpad.
+Web Canvas remains implemented but is not yet exposed; restoring its launcher
+entry and state-preserving switch is governed by `specs/119-os-view-parity/spec.md`.
 
 Terminal remains an app surface inside the OS window. Its `appThemeId` controls
 Terminal chrome while the persisted terminal `themeId` controls shell content;
@@ -20,7 +20,7 @@ the Matrix OS theme continues to control the surrounding Desktop surface.
 
 | Area | Before | Current result |
 | --- | --- | --- |
-| Primary renderer | Developer, with Canvas exposed beside it | Desktop only; legacy renderer values migrate to Desktop |
+| Primary renderer | Developer, with Canvas exposed beside it | Web Desktop default; Web Canvas restoration is the next governed implementation slice |
 | Top chrome | macOS-like menu bar and app menus | Removed from the canonical browser Desktop |
 | Desktop plane | Terminal-first blank workspace | Native-style desktop destinations over the configured wallpaper |
 | Window chrome | OS-theme-specific traffic lights/caption buttons | Native compact close/minimize/maximize controls with shared 38px gesture bar |
@@ -38,14 +38,14 @@ the Matrix OS theme continues to control the surrounding Desktop surface.
 
 ## Follow-up parity work
 
-- Browser, Plugins, and Projects desktop destinations need browser-shell routes
+- Browser, Plugins, and Projects desktop destinations need Web Desktop routes
   before they can match the complete native fixed destination set.
-- Settings still opens through the browser modal host rather than a normal
+- Settings still opens through the Web modal host rather than a normal Web
   Desktop window surface.
-- The native show-desktop background animation is not yet wired to the browser
-  workspace plane.
-- Canvas remains implemented internally but is intentionally not exposed while
-  Desktop is the canonical browser renderer.
+- The Electron Desktop show-desktop background animation is not yet wired to the
+  Web Desktop plane.
+- Web Canvas launcher access, independent presentation preference, and
+  state-preserving switching are deferred to the OS-view parity stack.
 
 ## Verification
 
@@ -53,5 +53,5 @@ the Matrix OS theme continues to control the surrounding Desktop surface.
 - Desktop structure, launcher/taskbar behavior, and minimized restore tests.
 - Browser interaction checks for launcher open/dismiss, Files launch, Terminal
   minimize, and Terminal restore.
-- Shell TypeScript check.
-- Production shell build.
+- Web renderer TypeScript check.
+- Production Web OS-view build (`build:shell:production` retains its compatibility name).

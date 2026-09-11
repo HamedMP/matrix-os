@@ -1,27 +1,30 @@
-import { useEffect, useEffectEvent } from "react";
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import AppLauncher from "../embeds/AppLauncher";
+import type { DesktopAppConfig } from "./desktop-apps";
+import type { OsViewMode } from "@matrix-os/contracts";
+import type { OsViewDesktopAddResult, OsViewDesktopBounds } from "@matrix-os/contracts";
 
 export default function DesktopLaunchpad({
   open,
   onClose,
   onLaunchTab,
+  onCreateApp,
+  onOpenDesktopApp,
+  onAddToDesktop,
+  osViewMode,
+  onSwitchOsView,
 }: {
   open: boolean;
   onClose: () => void;
   onLaunchTab?: (tabId: string) => void;
+  onCreateApp?: () => void;
+  onOpenDesktopApp?: (app: DesktopAppConfig) => void;
+  onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
+  osViewMode: OsViewMode;
+  onSwitchOsView: (mode: OsViewMode) => void;
 }) {
-  const closeLauncher = useEffectEvent(onClose);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeLauncher();
-    };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [open]);
-
+  useGettingStartedBlocker(open);
   return (
     <dialog
       open={open}
@@ -43,6 +46,15 @@ export default function DesktopLaunchpad({
       <AppLauncher
         presentation="launchpad"
         launcherActive={open}
+        onCloseLauncher={onClose}
+        onCreateApp={onCreateApp}
+        onOpenDesktopApp={onOpenDesktopApp}
+        onAddToDesktop={onAddToDesktop}
+        osViewMode={osViewMode}
+        onSwitchOsView={(mode) => {
+          onSwitchOsView(mode);
+          onClose();
+        }}
         onLaunch={(tabId) => {
           onLaunchTab?.(tabId);
           onClose();

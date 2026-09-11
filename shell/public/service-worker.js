@@ -1,13 +1,13 @@
 // Matrix OS PWA service worker.
 // Strategy:
 //   - HTML navigation: network-first with 3s timeout, falls back to cache.
-//   - Static shell assets (/_next/static/*, /icons/*, manifest, app icons,
-//     wallpapers, textures, fonts): cache-first.
+//   - Safe media and font assets: cache-first. Executable JS/CSS stays on the
+//     browser/CDN HTTP cache so releases cannot mix application generations.
 //   - Skip everything authenticated/dynamic: /api/*, /v1/*, Clerk, gateway
 //     WebSocket upgrades, anything cross-origin we don't serve.
 // On version bump, old caches are pruned during activate.
 
-const VERSION = "v2";
+const VERSION = "v3";
 const CACHE_STATIC = `matrix-os-static-${VERSION}`;
 const CACHE_HTML = `matrix-os-html-${VERSION}`;
 const PRECACHE = [
@@ -69,13 +69,12 @@ function isBypassed(url) {
 function isStaticAsset(url) {
   const p = url.pathname;
   return (
-    p.startsWith("/_next/static/") ||
     p.startsWith("/icons/") ||
     p.startsWith("/wallpapers/") ||
     p.startsWith("/files/system/wallpapers/") ||
     p.startsWith("/textures/") ||
     p.startsWith("/fonts/") ||
-    /\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|css|js|wav|mp3)$/.test(p)
+    /\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|wav|mp3)$/.test(p)
   );
 }
 

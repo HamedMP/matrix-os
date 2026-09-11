@@ -80,7 +80,7 @@
 - [x] Remove `"vocal"` from `DesktopMode` union; rehydrate coerces stale persisted value → `"canvas"`
 - [x] `Desktop.tsx`: mount `VocalPanel` from `useVocalStore.active`; drop `desktopMode === "vocal"` from `CanvasRenderer`/`CanvasToolbar`/windows gating; cascade on `canvas` exits only
 - [x] Dock button (mic icon) toggles overlay — desktop + mobile; command-palette entry `action:toggle-vocal`
-- [x] `ChatPopover.tsx`: suppress rising-edge auto-open when `vocalActive` — delegation banner in overlay replaces the popup
+- [x] Historical: suppress the former `ChatPopover` while Aoede is active. The duplicate popup was later retired in favor of the canonical Chat app.
 
 ---
 
@@ -106,6 +106,6 @@
 5. **Simplify audio decode** — collapse per-sample ternary to single division.
 6. **`useManagedTimers()`** hook to replace duplicated `useRef`+`setTimeout`+cleanup blocks in `VocalPanel.tsx` (also applicable to `useVocalSession.ts` and `useOnboarding.ts`).
 7. **Template helper for "System note" strings** in `ws-handler.ts:447-448`.
-8. **Stable `onAction` reference in `ChatPopover`** — current `useCallback` identity defeats `MessageItem` memo on every `busy` flip (from efficiency review).
+8. ~~**Stable `onAction` reference in `ChatPopover`**~~ — obsolete because the duplicate shell popup was retired.
 9. **Don't invoke `send()` from inside a `setQueue(updater)`** — move side effects out of the pure updater to avoid StrictMode double-send (`useChatState.ts:122-134`).
 10. **Debounce `reorderDockSection` fetch** — currently fires per drag event (`stores/desktop-config.ts:58-69`).

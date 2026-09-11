@@ -7,7 +7,10 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
+import type { TerminalPaneAction } from "@matrix-os/contracts";
+import { terminalPaneActionArgs } from "./pane-actions.js";
 import { shellError, type ShellSafeError } from "./errors.js";
+import { resolveShellCwd } from "./names.js";
 import {
   MATRIX_TERMINAL_BASHRC,
   MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT,
@@ -100,14 +103,17 @@ export interface ZellijAdapter {
   getSessionCreatedAt?(name: string): Promise<string | null>;
   focusedPaneRuntime(name: string): Promise<FocusedPaneRuntimeObservation>;
   createSession(options: CreateSessionOptions): Promise<void>;
+  recoverSession?(options: Pick<CreateSessionOptions, "name" | "cwd">): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession(name: string, nextName: string): Promise<void>;
   validateLayout(path: string): Promise<void>;
   attachSession(name: string, options?: AttachOptions): ShellAttachProcess;
   sendInput(name: string, data: string): Promise<void>;
+  paneAction(name: string, action: TerminalPaneAction, options?: { expectedCreatedAt: string }): Promise<void>;
   listTabs(name: string): Promise<unknown[]>;
   createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<unknown>;
   switchTab(name: string, tab: number): Promise<unknown>;
+  switchTabById(name: string, tabId: number): Promise<unknown>;
   closeTab(name: string, tab: number): Promise<unknown>;
   splitPane(name: string, input: { direction: "right" | "down"; cwd?: string; cmd?: string }): Promise<unknown>;
   closePane(name: string, pane: string): Promise<unknown>;
@@ -119,12 +125,19 @@ export interface ZellijAdapter {
 const ZellijTabInfoSchema = z.object({
   tab_id: z.number().int().nonnegative(),
 }).passthrough();
+const ZellijTabListSchema = z.array(z.object({
+  tab_id: z.number().int().nonnegative(),
+  position: z.number().int().nonnegative(),
+  name: z.string().min(1).max(64),
+  active: z.boolean(),
+}).passthrough()).max(1024);
 const ZellijPaneListSchema = z.array(z.object({
   is_plugin: z.boolean(),
   is_focused: z.boolean(),
   tab_id: z.number().int().nonnegative(),
   pane_cwd: z.string().min(1).max(4096).nullable().optional(),
   pane_command: z.string().trim().min(1).max(4096).nullable().optional(),
+  pane_title: z.string().trim().min(1).max(4096).nullable().optional(),
 }).passthrough()).max(256);
 
 const SAFE_ATTACH_ENV_KEYS = new Set([
@@ -411,7 +424,12 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   }
 
   function attachProcess(name: string, options: AttachOptions = {}): ShellAttachProcess {
-    const pty = spawnPty(binaryPath, ["attach", name], {
+    // Zellij 0.44 attaches in the server's saved mode, but interprets unbound
+    // keys against the new client's default. Old Normal servers + a Locked
+    // client silently discard typing. Normal is the compatible fallback for
+    // both generations: Locked always writes keys, regardless of the default.
+    // Keep new sessions starting Locked; override only the attach fallback.
+    const pty = spawnPty(binaryPath, ["attach", name, "options", "--default-mode", "normal"], {
       name: "xterm-256color",
       cols: options.size?.cols ?? 120,
       rows: options.size?.rows ?? 40,
@@ -458,6 +476,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       }
       return stdout
         .split(/\r?\n/)
+        .filter((line) => !/\bEXITED\b/i.test(line))
         .map((line) => line.trim().split(/\s+/)[0])
         .filter(Boolean);
     },
@@ -492,6 +511,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         const value: FocusedPaneRuntimeObservation = {
           cwd: focusedPane.pane_cwd ?? null,
           command: focusedPane.pane_command,
+          ...(focusedPane.pane_title ? { title: focusedPane.pane_title } : {}),
           observed: true,
         };
         return cacheFocusedPaneRuntime(name, value);
@@ -571,7 +591,23 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       releaseRetainedCreatePty(name, { kill: true });
       const args = ["delete-session", name];
       if (options.force) args.push("--force");
-      await run(args);
+      try {
+        await run(args);
+      } catch (error: unknown) {
+        if (!options.force) throw error;
+        let sessions: string;
+        try {
+          sessions = await run(["list-sessions", "--no-formatting"]);
+        } catch (listError: unknown) {
+          if (isNoActiveSessionsFailure(listError)) return;
+          throw error;
+        }
+        const runtimeStillExists = sessions
+          .split(/\r?\n/)
+          .map((line) => line.trim().split(/\s+/)[0])
+          .some((sessionName) => sessionName === name);
+        if (runtimeStillExists) throw error;
+      }
     },
     async renameSession(name, nextName) {
       await run(["--session", name, "action", "rename-session", nextName]);
@@ -587,27 +623,55 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     attachSession(name, options = {}) {
       return attachProcess(name, options);
     },
+    async paneAction(name, action, options) {
+      // Only the managed adapter can turn an authorized incarnation into an
+      // immutable runtime name. A legacy display name can be reused at any time.
+      if (options?.expectedCreatedAt !== undefined) {
+        throw shellError("pane_actions_unavailable", "Request failed", 503);
+      }
+      await run(terminalPaneActionArgs(name, action));
+      focusedPaneRuntimeCache.delete(name);
+    },
     async sendInput(name, data) {
       await run(["--session", name, "action", "write-chars", "--", data]);
     },
     async listTabs(name) {
-      const stdout = await run(["--session", name, "action", "query-tab-names"]);
-      return stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((tab, idx) => ({ idx, name: tab }));
+      const stdout = await run(["--session", name, "action", "list-tabs", "--json"]);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(stdout);
+      } catch (err: unknown) {
+        if (!(err instanceof SyntaxError)) throw err;
+        throw shellError("zellij_failed", "Shell operation failed", 500);
+      }
+      const parsed = ZellijTabListSchema.safeParse(raw);
+      if (!parsed.success) throw shellError("zellij_failed", "Shell operation failed", 500);
+      return parsed.data.map((tab) => ({
+        id: tab.tab_id,
+        idx: tab.position,
+        name: tab.name,
+        focused: tab.active,
+      }));
     },
     async createTab(name, input) {
+      const tabCwd = deps.homePath ? await resolveShellCwd(input.cwd, deps.homePath) : input.cwd;
       const args = ["--session", name, "action", "new-tab"];
       if (input.name) args.push("--name", input.name);
-      if (input.cwd) args.push("--cwd", input.cwd);
+      if (tabCwd) args.push("--cwd", tabCwd);
       if (input.cmd) args.push("--", ...splitCommand(input.cmd));
-      await run(args);
-      return { ok: true };
+      const stdout = await run(args);
+      const rawId = stdout.trim();
+      if (!/^\d+$/.test(rawId)) throw shellError("zellij_failed", "Shell operation failed", 500);
+      const id = Number(rawId);
+      if (!Number.isSafeInteger(id)) throw shellError("zellij_failed", "Shell operation failed", 500);
+      return { id, ...(input.name ? { name: input.name } : {}) };
     },
     async switchTab(name, tab) {
       await run(["--session", name, "action", "go-to-tab", String(tab)]);
+      return { ok: true };
+    },
+    async switchTabById(name, tabId) {
+      await run(["--session", name, "action", "go-to-tab-by-id", String(tabId)]);
       return { ok: true };
     },
     async closeTab(name, tab) {

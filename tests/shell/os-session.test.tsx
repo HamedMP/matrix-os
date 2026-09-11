@@ -6,7 +6,6 @@ import type { AppEntry, AppWindow } from "../../shell/src/hooks/useWindowManager
 import { DEFAULT_THEME } from "../../shell/src/hooks/useTheme.js";
 import { saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { WindowsTaskbar } from "../../shell/src/components/taskbar/WindowsTaskbar.js";
-import { MenuBar } from "../../shell/src/components/MenuBar.js";
 import { OsBootScreen } from "../../shell/src/components/os-session/OsBootScreen.js";
 import { OsSessionHost } from "../../shell/src/components/os-session/OsSessionHost.js";
 import {
@@ -323,48 +322,6 @@ describe("Windows 11 session flows", () => {
     fireEvent.keyDown(document, { key: "Enter" });
     fireEvent.click(screen.getByRole("button", { name: "Test User" }));
     expect(document.body.style.overflow).toBe("");
-  });
-});
-
-describe("macOS session flows", () => {
-  async function renderMacShell() {
-    setDesign("macos-glass");
-    await act(async () => {
-      render(
-        <>
-          <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}} onOpenSettings={() => {}} />
-          <OsSessionHost />
-        </>,
-      );
-      await Promise.resolve();
-    });
-  }
-
-  it("the Apple menu lists Lock Screen and Log Out…, and Lock Screen opens the macOS lock screen; Enter returns", async () => {
-    await renderMacShell();
-
-    fireEvent.click(screen.getByRole("button", { name: "Apple menu" }));
-    expect(screen.getByRole("button", { name: "Lock Screen" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Log Out/ })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Lock Screen" }));
-    const lock = screen.getByRole("dialog", { name: "macOS lock screen" });
-    expect(lock).toBeTruthy();
-    expect(within(lock).getByText("Test User")).toBeTruthy();
-
-    const password = screen.getByLabelText("Password");
-    fireEvent.change(password, { target: { value: "anything" } });
-    fireEvent.keyDown(password, { key: "Enter" });
-    expect(screen.queryByRole("dialog", { name: "macOS lock screen" })).toBeNull();
-  });
-
-  it("Log Out… opens the same lock screen", async () => {
-    await renderMacShell();
-    fireEvent.click(screen.getByRole("button", { name: "Apple menu" }));
-    fireEvent.click(screen.getByRole("button", { name: /Log Out/ }));
-    expect(screen.getByRole("dialog", { name: "macOS lock screen" })).toBeTruthy();
-    // The simulation never calls a real sign-out.
-    expect(useOsSessionStore.getState().view).toBe("macos-lock");
   });
 });
 

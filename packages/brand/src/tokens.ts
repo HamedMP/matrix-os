@@ -1,4 +1,5 @@
 export const palette = {
+  surfaceInverse: "#0D0C0C",
   forest: "#434E3F",
   forestDeep: "#2E3A2A",
   deep: "#32352E",
@@ -15,6 +16,9 @@ export const palette = {
   brandCoral: "#D06E53",
   brandMuted: "#7A786B",
 } as const;
+
+/** Loading motion palette from Desktop-app Figma 518:16718. */
+export const bootGradientColors = ["#647141", "#BED77B", "#F1C377", "#EAB6A7", "#C6D8E3", "#6D777D", "#647141"] as const;
 
 export const fonts = {
   display: "var(--font-serif-display), 'Instrument Serif', Georgia, serif",
@@ -45,6 +49,21 @@ export const desktopFonts = {
   display: '"Bricolage Grotesque", Geist, ui-sans-serif, system-ui, sans-serif',
   sans: 'Geist, ui-sans-serif, system-ui, sans-serif',
   mono: '"Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace',
+} as const;
+
+/** Compact onboarding checklist tokens shared by landing-adjacent shells. */
+export const onboardingChecklist = {
+  colors: {
+    surface: "#FFFFFF",
+    border: "#EBEAE6",
+    text: "#141413",
+    subtleText: "#96968F",
+    progressTrack: "#E1E1D8",
+    progressFill: "#2E3A2A",
+    completed: "#434E3F",
+  },
+  fontFamily: '"Inter", sans-serif',
+  shadow: "0 10px 24px -4px rgba(0, 0, 0, 0.04)",
 } as const;
 
 export const cardShadow = "0 0 7.5rem 0 rgba(50, 53, 46, 0.09)";

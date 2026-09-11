@@ -19,10 +19,6 @@ function signatureForHandle(handle: string, secret: string): string {
   return createHmac("sha256", secret).update(`proxy:${handle}`).digest("base64url");
 }
 
-function fundedSignatureForHandle(handle: string, secret: string): string {
-  return createHmac("sha256", secret).update(`funded-proxy:${handle}`).digest("base64url");
-}
-
 export function buildProxyApiKey(handle: string, secret: string): string {
   return `${PROXY_API_KEY_PREFIX}${handle}.${signatureForHandle(handle, secret)}`;
 }
@@ -42,27 +38,8 @@ export function parseProxyApiKey(
   return timingSafeCompare(signature, expected) ? { handle } : null;
 }
 
-export function buildFundedProxyApiKey(handle: string, secret: string): string {
-  return `${FUNDED_PROXY_API_KEY_PREFIX}${handle}.${fundedSignatureForHandle(handle, secret)}`;
-}
-
 export function isFundedProxyApiKey(key: string): boolean {
   return key.startsWith(FUNDED_PROXY_API_KEY_PREFIX);
-}
-
-export function parseFundedProxyApiKey(
-  key: string,
-  secret: string | undefined,
-): { handle: string } | null {
-  if (!secret || !isFundedProxyApiKey(key)) return null;
-  const rest = key.slice(FUNDED_PROXY_API_KEY_PREFIX.length);
-  const separator = rest.lastIndexOf(".");
-  if (separator <= 0 || separator === rest.length - 1) return null;
-  const handle = rest.slice(0, separator);
-  const signature = rest.slice(separator + 1);
-  if (!/^[a-z][a-z0-9-]{2,30}$/.test(handle)) return null;
-  const expected = fundedSignatureForHandle(handle, secret);
-  return timingSafeCompare(signature, expected) ? { handle } : null;
 }
 
 export function isAuthorizedProxyAdminRequest(

@@ -1,3 +1,4 @@
+import { WindowResizeControls } from "@matrix-os/ui";
 import {
   useCallback,
   useEffect,
@@ -24,6 +25,23 @@ import {
   TopBar,
 } from "./OSWindow";
 import { SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
+import { HostedWorkSidebar, HOSTED_WORK_SIDEBAR_WIDTH } from "../work/HostedWorkSidebar";
+import { WorkSurfaceRuntimeProvider } from "../work/WorkSurfaceRuntime";
+
+export function shouldActivateDesktopPane(input: {
+  active: boolean;
+  visible: boolean;
+  overlayOpen: boolean;
+  isNativeEmbed: boolean;
+  isDesktopHidden: boolean;
+  isDesktopTransition: boolean;
+}): boolean {
+  if (!input.active || !input.visible) return false;
+  if (input.isNativeEmbed && (input.overlayOpen || input.isDesktopHidden || input.isDesktopTransition)) {
+    return false;
+  }
+  return true;
+}
 
 function desktopWindowMotion(tabId: string, bounds: DesktopSurfaceBounds): CSSProperties {
   let hash = 0;
@@ -94,7 +112,20 @@ export default function DesktopSurfaceFrame({
     : isDesktopHidden || isDesktopTransition || (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app" || tab.kind === "browser" || tab.kind === "vscode";
-  const sidebarOwnsChrome = tab.kind === "chat" || tab.kind === "settings" || tab.kind === "notes";
+  const isWorkSurface = tab.kind === "work"
+    || tab.kind === "chat"
+    || tab.kind === "projects"
+    || tab.kind === "project";
+  const sidebarOwnsChrome = isWorkSurface
+    || tab.kind === "terminal"
+    || tab.kind === "terminals"
+    || tab.kind === "settings"
+    || tab.kind === "notes";
+  const sidebarHidesTitle = isWorkSurface
+    || tab.kind === "terminal"
+    || tab.kind === "terminals"
+    || tab.kind === "settings"
+    || tab.kind === "notes";
   const requestedSettingsSection = useUi((state) => state.requestedSettingsSection);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("account");
   useEffect(() => {
@@ -102,7 +133,14 @@ export default function DesktopSurfaceFrame({
     if (isSettingsSectionId(requestedSettingsSection)) setSettingsSection(requestedSettingsSection);
     useUi.getState().clearRequestedSettingsSection();
   }, [requestedSettingsSection, tab.kind]);
-  const paneActive = interactive && !(isNativeEmbed && overlayOpen);
+  const paneActive = shouldActivateDesktopPane({
+    active,
+    visible,
+    overlayOpen,
+    isNativeEmbed,
+    isDesktopHidden,
+    isDesktopTransition,
+  });
   const interactionCleanupRef = useRef<(() => void) | null>(null);
   const [surfaceChrome, setSurfaceChrome] = useState<SurfaceChromeSpec | null>(null);
   const surfaceChromeHost = useMemo(() => ({ setChrome: setSurfaceChrome }), []);
@@ -111,7 +149,6 @@ export default function DesktopSurfaceFrame({
 
   const startPointerInteraction = useCallback((
     event: ReactPointerEvent,
-    kind: "move" | "resize",
   ) => {
     if (!isWindow || event.button !== 0) return;
     const target = event.target;
@@ -126,9 +163,7 @@ export default function DesktopSurfaceFrame({
       const scale = Math.max(0.01, interactionScale);
       const deltaX = (pointerEvent.clientX - startX) / scale;
       const deltaY = (pointerEvent.clientY - startY) / scale;
-      onBoundsChange(kind === "move"
-        ? { ...initial, x: initial.x + deltaX, y: initial.y + deltaY }
-        : { ...initial, width: initial.width + deltaX, height: initial.height + deltaY });
+      onBoundsChange({ ...initial, x: initial.x + deltaX, y: initial.y + deltaY });
     };
     const captureTarget = event.currentTarget as HTMLElement;
     const pointerId = event.pointerId;
@@ -197,36 +232,54 @@ export default function DesktopSurfaceFrame({
     border: 0,
     boxShadow: "none",
   };
+  const workChatTitle = isWorkSurface && tab.chatId
+    ? surfaceChrome?.title ?? tab.chatTitle ?? "Chat"
+    : undefined;
+  const showsSurfaceTopBar = isWindow
+    || isWorkSurface
+    || Boolean(workChatTitle)
+    || Boolean(surfaceChrome && (!isWorkSurface || surfaceChrome.rightActions));
 
-  return (
+  const frame = (
     <SurfaceChromeContext.Provider value={surfaceChromeHost}>
     <OSWindow
       surfaceId={tab.id}
-      sidebarWidth={tab.kind === "settings" ? 208 : undefined}
+      sidebarWidth={tab.kind === "settings" ? 208 : isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined}
       sidebar={tab.kind === "settings" ? (
         <SettingsSidebar section={settingsSection} onSectionChange={setSettingsSection} />
+      ) : isWorkSurface ? (
+        <HostedWorkSidebar tab={tab} active={visible} />
       ) : undefined}
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
-      topBar={isWindow || surfaceChrome ? (
+      topBarReservesSafeArea={isWindow || !isWorkSurface}
+      topBar={showsSurfaceTopBar ? (
         <TopBar
-          title={tab.kind === "settings" || tab.kind === "notes" ? undefined : surfaceChrome ? surfaceChrome.title : tab.title}
+          title={workChatTitle ?? (sidebarHidesTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
           leftActions={surfaceChrome?.leftActions}
           rightActions={surfaceChrome?.rightActions}
-          leftPaneWidth={surfaceChrome?.leftPaneWidth}
+          leftPaneWidth={surfaceChrome?.leftPaneWidth ?? (isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined)}
           rightPaneWidth={surfaceChrome?.rightPaneWidth}
+          showSidebarTrigger={isWorkSurface}
+          sidebarTriggerLabel="Toggle Chat sidebar"
           showWindowControls={isWindow}
           chromePlacement={sidebarOwnsChrome ? "sidebar" : "full-width"}
           sidebarWidth={sidebarOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
           onClose={onClose}
           onMinimize={onMinimize}
           onMaximize={onMaximize}
-          onDragStart={isWindow ? (event) => startPointerInteraction(event, "move") : undefined}
+          onDragStart={isWindow ? (event) => startPointerInteraction(event) : undefined}
         />
       ) : null}
       role={isWindow && visible ? "dialog" : undefined}
       aria-label={isWindow && visible ? `${tab.title} window` : undefined}
       aria-hidden={!visible}
       onContextMenu={(event) => event.stopPropagation()}
+      frameControls={isWindow && visible ? (
+        <WindowResizeControls bounds={surface.bounds} scale={interactionScale}
+          minimum={{ width: Math.min(440, surface.bounds.width), height: Math.min(300, surface.bounds.height) }}
+          onFocus={onFocus} onBoundsChange={onBoundsChange} />
+      ) : undefined}
+      data-window-click-buffer={isWindow && visible && !isDesktopHidden && !isDesktopTransition || undefined}
       data-surface-mode={surface.mode}
       data-active={active || undefined}
       className="pointer-events-auto absolute min-h-0 min-w-0 flex-col overflow-hidden transition-[box-shadow,border-color] duration-150"
@@ -239,8 +292,9 @@ export default function DesktopSurfaceFrame({
         className="relative flex min-h-0 flex-1 flex-col"
         inert={!interactive ? true : undefined}
         style={isNativeEmbed && isWindow ? {
-          paddingRight: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
-          paddingBottom: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
+          paddingLeft: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
+          paddingRight: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
+          paddingBottom: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
         } : undefined}
       >
         <TabErrorBoundary tabTitle={tab.title} onClose={onClose}>
@@ -255,21 +309,10 @@ export default function DesktopSurfaceFrame({
           />
         </TabErrorBoundary>
       </div>
-      {isWindow ? (
-        <div
-          role="separator"
-          aria-label={`Resize ${tab.title}`}
-          className="no-drag absolute bottom-0 right-0 cursor-nwse-resize"
-          style={{
-            width: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
-            height: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
-          }}
-          onPointerDown={(event) => startPointerInteraction(event, "resize")}
-        >
-          <span className="absolute bottom-1 right-1 block size-2 border-b border-r" style={{ borderColor: "var(--border-strong)" }} />
-        </div>
-      ) : null}
     </OSWindow>
     </SurfaceChromeContext.Provider>
   );
+  return isWorkSurface ? (
+    <WorkSurfaceRuntimeProvider active={visible}>{frame}</WorkSurfaceRuntimeProvider>
+  ) : frame;
 }

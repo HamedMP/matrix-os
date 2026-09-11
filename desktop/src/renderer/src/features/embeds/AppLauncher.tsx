@@ -1,9 +1,27 @@
-import { LayoutGrid, Search } from "@renderer/lib/hugeicons";
+import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
-import { appIconUrl, useApps, type MatrixApp } from "../../stores/apps";
+import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { trackDesktopEvent } from "../../lib/desktop-analytics";
+import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
+import {
+  OS_VIEW_DESTINATION_PATHS,
+  OS_VIEW_CREATE_APP_APPEARANCE,
+  OS_VIEW_LABELS,
+  clampOsViewContextMenuPoint,
+  osViewFixedAppAppearanceForPath,
+  otherOsViewMode,
+  type OsViewMode,
+  type OsViewDesktopAddResult,
+  type OsViewDesktopBounds,
+} from "@matrix-os/contracts";
+type LauncherEntry =
+  | { type: "create"; key: "__create-app__"; name: "Create app" }
+  | { type: "os-view"; key: string; name: string; mode: OsViewMode }
+  | { type: "fixed"; key: string; name: string; app: DesktopAppConfig }
+  | { type: "installed"; key: string; name: string; app: MatrixApp };
 
 function AppIcon({ url, name, large = false }: { url: string | null; name: string; large?: boolean }) {
   const [failed, setFailed] = useState(false);
@@ -33,46 +51,132 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
   );
 }
 
+function OsViewDestinationIcon({ path }: { path: string }) {
+  const appearance = osViewFixedAppAppearanceForPath(path);
+  const Icon = appearance?.icon === "monitor" ? Monitor : LayoutGrid;
+  return (
+    <span
+      data-launchpad-built-in-icon
+      className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
+      style={{
+        background: appearance?.background ?? "#0E3422",
+        color: appearance?.foreground ?? "#BED77B",
+      }}
+    >
+      <Icon size={32} aria-hidden="true" />
+    </span>
+  );
+}
+
 export default function AppLauncher({
   presentation = "surface",
   launcherActive = true,
   onLaunch,
+  onCreateApp,
+  onOpenDesktopApp,
+  onAddToDesktop,
+  onCloseLauncher,
+  osViewMode,
+  onSwitchOsView,
 }: {
   presentation?: "surface" | "launchpad";
   launcherActive?: boolean;
   onLaunch?: (tabId: string) => void;
+  onCreateApp?: () => void;
+  onOpenDesktopApp?: (app: DesktopAppConfig) => void;
+  onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
+  onCloseLauncher?: () => void;
+  osViewMode?: OsViewMode;
+  onSwitchOsView?: (mode: OsViewMode) => void;
 } = {}) {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const openTab = useTabs((s) => s.openTab);
-  const apps = useApps((s) => s.apps);
-  const loaded = useApps((s) => s.loaded);
-  const loading = useApps((s) => s.loading);
-  const error = useApps((s) => s.error);
-  const load = useApps((s) => s.load);
+  const {
+    data: apps = [],
+    isPending,
+    isFetching,
+    error,
+    refetch,
+  } = useAppsQuery();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [contextMenu, setContextMenu] = useState<{ entry: LauncherEntry; x: number; y: number } | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [placementPending, setPlacementPending] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (api) void load(api);
-  }, [api, load]);
 
   // Launcher behavior: focus the search immediately like a desktop launcher.
   useEffect(() => {
     if (launcherActive) inputRef.current?.focus();
+    else {
+      setContextMenu(null);
+      setContextError(null);
+      setPlacementPending(false);
+    }
   }, [launcherActive]);
+
+  useEffect(() => {
+    if (presentation !== "launchpad" || !launcherActive) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (contextMenu) {
+        setContextMenu(null);
+        setContextError(null);
+      } else {
+        onCloseLauncher?.();
+      }
+    };
+    document.addEventListener("keydown", dismiss, true);
+    return () => document.removeEventListener("keydown", dismiss, true);
+  }, [contextMenu, launcherActive, onCloseLauncher, presentation]);
+
+  const entries = useMemo<LauncherEntry[]>(() => {
+    if (presentation !== "launchpad") {
+      return apps.map((app) => ({ type: "installed", key: `installed:${app.slug}`, name: app.name, app }));
+    }
+    const fixedNames = new Set(FIXED_DESKTOP_APPS.map((app) => app.name.toLowerCase()));
+    const destinationMode = osViewMode ? otherOsViewMode(osViewMode) : null;
+    return [
+      { type: "create", key: "__create-app__", name: "Create app" },
+      ...(destinationMode ? [{
+        type: "os-view" as const,
+        key: OS_VIEW_DESTINATION_PATHS[destinationMode],
+        name: OS_VIEW_LABELS[destinationMode],
+        mode: destinationMode,
+      }] : []),
+      ...FIXED_DESKTOP_APPS.map((app) => {
+        const installed = apps.find((candidate) => candidate.name.toLowerCase() === app.name.toLowerCase());
+        const appearance = osViewFixedAppAppearanceForPath(app.path);
+        return {
+          type: "fixed" as const,
+          key: app.path,
+          name: app.name,
+          app: installed && appearance?.iconSource === "app"
+            ? { ...app, iconUrl: appIconUrl(platformHost, installed.slug, runtimeSlot) ?? app.iconUrl }
+            : app,
+        };
+      }),
+      ...apps
+        .filter((app) => !fixedNames.has(app.name.toLowerCase()))
+        .map((app) => ({ type: "installed" as const, key: `installed:${app.slug}`, name: app.name, app })),
+    ];
+  }, [apps, osViewMode, platformHost, presentation, runtimeSlot]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return apps;
-    return apps.filter((a) => a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q));
-  }, [apps, query]);
+    if (!q) return entries;
+    return entries.filter((entry) => entry.name.toLowerCase().includes(q)
+      || (entry.type === "installed" && entry.app.slug.toLowerCase().includes(q)));
+  }, [entries, query]);
 
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
-  const open = (app: MatrixApp) => {
+  const openInstalled = (app: MatrixApp) => {
+    trackDesktopEvent({ name: "desktop_app_opened", appKind: "installed_app" });
     const tabId = openTab({
       kind: "app",
       slug: app.slug,
@@ -81,6 +185,22 @@ export default function AppLauncher({
       ...(appIconUrl(platformHost, app.slug, runtimeSlot) ? { icon: appIconUrl(platformHost, app.slug, runtimeSlot)! } : {}),
     });
     onLaunch?.(tabId);
+  };
+
+  const open = (entry: LauncherEntry) => {
+    if (entry.type === "create") {
+      onCreateApp?.();
+      return;
+    }
+    if (entry.type === "os-view") {
+      onSwitchOsView?.(entry.mode);
+      return;
+    }
+    if (entry.type === "fixed") {
+      onOpenDesktopApp?.(entry.app);
+      return;
+    }
+    openInstalled(entry.app);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -93,12 +213,12 @@ export default function AppLauncher({
       setActive((i) => (i - 1 + filtered.length) % filtered.length);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const app = filtered[activeIndex];
-      if (app) open(app);
+      const entry = filtered[activeIndex];
+      if (entry) open(entry);
     }
   };
 
-  if (error) {
+  if (presentation !== "launchpad" && error) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
@@ -106,8 +226,8 @@ export default function AppLauncher({
         description="The app catalog could not be loaded. Try again once your computer is reachable."
         action={
           api ? (
-            <Button variant="primary" disabled={loading} onClick={() => void load(api, true)}>
-              {loading ? "Loading..." : "Retry"}
+            <Button variant="primary" disabled={isFetching} onClick={() => void refetch()}>
+              {isFetching ? "Loading..." : "Retry"}
             </Button>
           ) : null
         }
@@ -115,7 +235,7 @@ export default function AppLauncher({
     );
   }
 
-  if (loaded && !loading && apps.length === 0) {
+  if (presentation !== "launchpad" && !isPending && !isFetching && apps.length === 0) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
@@ -125,7 +245,7 @@ export default function AppLauncher({
     );
   }
 
-  if (!loaded && apps.length === 0) {
+  if (presentation !== "launchpad" && isPending && apps.length === 0) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
@@ -139,6 +259,14 @@ export default function AppLauncher({
     <div
       data-app-launcher-presentation={presentation}
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      onPointerDownCapture={(event) => {
+        if (!contextMenu) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest("[data-launchpad-context-menu]")) return;
+        event.stopPropagation();
+        setContextMenu(null);
+        setContextError(null);
+      }}
     >
       <div className={`shrink-0 px-6 pb-3 ${presentation === "launchpad" ? "mx-auto w-full max-w-2xl pt-10" : "pt-6"}`}>
         <div
@@ -170,13 +298,14 @@ export default function AppLauncher({
         {filtered.length === 0 ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (
-          <div className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>
-            {filtered.map((app, i) => {
+          <div data-testid="desktop-launcher-grid" className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>
+            {filtered.map((entry, i) => {
               const highlighted = i === activeIndex;
               return (
                 <button
-                  key={app.slug}
+                  key={entry.key}
                   type="button"
+                  aria-label={entry.name}
                   data-launchpad-interactive={presentation === "launchpad" || undefined}
                   className={`flex flex-col items-center gap-2 rounded-xl transition-colors duration-100 ${presentation === "launchpad" ? "border border-transparent p-3" : "border p-4"}`}
                   style={{
@@ -186,20 +315,101 @@ export default function AppLauncher({
                     borderColor: highlighted ? "var(--accent)" : presentation === "launchpad" ? "transparent" : "var(--border-subtle)",
                   }}
                   onMouseEnter={() => setActive(i)}
-                onClick={() => open(app)}
+                  onContextMenu={(event) => {
+                    if (entry.type === "create" || entry.type === "os-view") return;
+                    if (placementPending) return;
+                    event.preventDefault();
+                    const point = clampOsViewContextMenuPoint(
+                      { x: event.clientX, y: event.clientY },
+                      { width: window.innerWidth, height: window.innerHeight },
+                    );
+                    setContextMenu({ entry, ...point });
+                    setContextError(null);
+                  }}
+                  onClick={() => open(entry)}
                 >
-                  <AppIcon url={appIconUrl(platformHost, app.slug, runtimeSlot)} name={app.name} large={presentation === "launchpad"} />
+                  {entry.type === "create" ? (
+                    <span
+                      className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
+                      style={{
+                        background: OS_VIEW_CREATE_APP_APPEARANCE.background,
+                        color: OS_VIEW_CREATE_APP_APPEARANCE.foreground,
+                      }}
+                    >
+                      <Plus size={40} aria-hidden="true" />
+                    </span>
+                  ) : entry.type === "os-view" ? (
+                    <OsViewDestinationIcon path={entry.key} />
+                  ) : entry.type === "fixed" ? (
+                    <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
+                      {entry.app.iconUrl
+                        ? <img src={entry.app.iconUrl} alt="" className="size-full rounded-[18px] object-cover" draggable={false} />
+                        : <entry.app.icon size={32} aria-hidden="true" />}
+                    </span>
+                  ) : (
+                    <AppIcon url={appIconUrl(platformHost, entry.app.slug, runtimeSlot)} name={entry.name} large={presentation === "launchpad"} />
+                  )}
                   <span
                     className="w-full truncate text-center text-sm font-medium"
                     style={{ color: "var(--text-primary)", textShadow: presentation === "launchpad" ? "0 1px 2px var(--bg-app)" : undefined }}
                   >
-                    {app.name}
+                    {entry.name}
                   </span>
                 </button>
               );
             })}
           </div>
         )}
+        {contextMenu && contextMenu.entry.type !== "os-view" && onAddToDesktop ? (
+          <div
+            role="menu"
+            data-launchpad-interactive
+            data-launchpad-context-menu
+            className="fixed z-50 min-w-48 max-w-64 rounded-xl border bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-3)]"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              disabled={placementPending}
+              aria-busy={placementPending}
+              className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--bg-hover)]"
+              onClick={async () => {
+                if (placementPending) return;
+                const entry = contextMenu.entry;
+                if (entry.type === "create" || entry.type === "os-view") return;
+                const path = entry.app.path;
+                if (!path) {
+                  setContextError("Could not add the app. Please try again.");
+                  return;
+                }
+                let result: OsViewDesktopAddResult = "failed";
+                setPlacementPending(true);
+                try {
+                  result = await onAddToDesktop(path, {
+                    width: Math.max(1, window.innerWidth),
+                    height: Math.max(1, window.innerHeight - 126),
+                  });
+                } catch (error: unknown) {
+                  console.warn("[app-launcher] Desktop placement failed:", error instanceof Error ? error.name : "UnknownError");
+                }
+                setPlacementPending(false);
+                if (result === "added" || result === "already-present") {
+                  setContextMenu(null);
+                  setContextError(null);
+                  onCloseLauncher?.();
+                  return;
+                }
+                setContextError(result === "desktop-full"
+                  ? "Desktop is full. Remove an icon and try again."
+                  : "Could not add the app. Please try again.");
+              }}
+            >
+              Add {contextMenu.entry.name} to Desktop
+            </button>
+            {contextError ? <p role="alert" className="max-w-60 px-3 pb-2 text-xs">{contextError}</p> : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

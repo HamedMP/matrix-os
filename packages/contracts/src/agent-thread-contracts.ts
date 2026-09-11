@@ -19,7 +19,12 @@ const EventIdSchema = prefixedId("evt_");
 const ApprovalIdSchema = prefixedId("appr_");
 const RequestIdSchema = prefixedId("req_");
 const CorrelationIdSchema = prefixedId("corr_");
-const TerminalSessionIdSchema = referenceId(128);
+const TerminalWorkspaceIdSchema = z.string().regex(/^tws_[0-9a-f]{32}$/, "Invalid terminal workspace id");
+const TerminalTabIdSchema = z.string().regex(/^tt_[0-9a-f]{32}$/, "Invalid terminal tab id");
+const TerminalRefSchema = z.object({
+  workspaceId: TerminalWorkspaceIdSchema,
+  tabId: TerminalTabIdSchema,
+}).strict();
 const ReviewIdSchema = referenceId(128);
 const CursorSchema = referenceId(160);
 const SafeDisplayStringSchema = boundedDisplayText(120, 512);
@@ -27,6 +32,8 @@ const AssistantTextDeltaSchema = z.string()
   .min(1)
   .max(4_000)
   .refine((value) => byteLength(value) <= 16 * 1024, { message: "Text exceeds byte limit" });
+
+export const MAX_AGENT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 export const AgentThreadStatusSchema = z.enum([
   "queued", "starting", "running", "waiting_for_approval", "waiting_for_input",
@@ -43,7 +50,7 @@ export const AgentAttachmentSchema = z.object({
   label: SafeDisplayStringSchema,
   path: safeRelativePath().optional(),
   mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
-  sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
+  sizeBytes: z.number().int().min(0).max(MAX_AGENT_ATTACHMENT_BYTES).optional(),
 }).strict();
 
 export const AgentThreadSummarySchema = z.object({
@@ -54,7 +61,8 @@ export const AgentThreadSummarySchema = z.object({
   attention: AgentAttentionSchema.default("none"),
   projectId: ProjectIdSchema.optional(),
   taskId: TaskIdSchema.optional(),
-  terminalSessionId: TerminalSessionIdSchema.optional(),
+  terminalSessionId: referenceId(128).optional(),
+  terminalRef: TerminalRefSchema.optional(),
   eventCursor: CursorSchema.optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
@@ -165,7 +173,19 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("assistant.text.delta"), messageId: referenceId(128), delta: AssistantTextDeltaSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("assistant.text.completed"), messageId: referenceId(128) }).strict(),
-  BaseThreadEventSchema.extend({ type: z.literal("tool.started"), toolCallId: referenceId(128), displayName: SafeDisplayStringSchema, kind: SafeDisplayStringSchema }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("tool.started"),
+    toolCallId: referenceId(128),
+    displayName: SafeDisplayStringSchema,
+    kind: SafeDisplayStringSchema,
+    preview: boundedDisplayText(1_000, 4_000).optional(),
+    previewKind: z.enum(["command", "path", "text"]).optional(),
+    detail: boundedDisplayText(2_000, 8_000).optional(),
+  }).strict().superRefine((activity, context) => {
+    if ((activity.preview === undefined) !== (activity.previewKind === undefined)) {
+      context.addIssue({ code: "custom", message: "Tool preview and kind must be provided together" });
+    }
+  }),
   BaseThreadEventSchema.extend({ type: z.literal("tool.output"), toolCallId: referenceId(128), text: boundedText(4_000, 16 * 1024), truncated: z.boolean().optional() }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("tool.completed"), toolCallId: referenceId(128), outcome: z.enum(["success", "failed", "cancelled"]) }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("approval.requested"), approval: AgentApprovalRequestSchema }).strict(),
@@ -185,7 +205,8 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("terminal.bound"),
-    terminalSessionId: TerminalSessionIdSchema,
+    terminalRef: TerminalRefSchema.optional(),
+    terminalSessionId: referenceId(128),
     terminalSessionCreatedAt: IsoTimestampSchema.optional(),
   }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("thread.error"), error: SafeClientErrorSchema }).strict(),

@@ -38,6 +38,13 @@ function selectedOptionValue(
   return selection.options.find((option) => option.id === optionId)?.value;
 }
 
+function permissionModeLabel(mode: string): string {
+  return mode
+    .split("_")
+    .map((word) => `${word.charAt(0).toLocaleUpperCase()}${word.slice(1)}`)
+    .join(" ");
+}
+
 function CompactSelect({
   label,
   value,
@@ -62,7 +69,7 @@ function CompactSelect({
           aria-label={label}
           aria-haspopup="menu"
           aria-expanded={open}
-          className="flex h-8 max-w-[9rem] items-center gap-1.5 truncate rounded-lg px-2 text-sm capitalize outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="flex h-8 max-w-[9rem] items-center gap-1.5 truncate rounded-lg px-2 text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           style={{ color: "var(--text-secondary)" }}
           onKeyDown={(event) => {
             if (event.key === "Escape") setOpen(false);
@@ -166,7 +173,7 @@ function ResourceRows({
           onClick={onAttach}
         >
           <Paperclip size={15} aria-hidden style={{ color: "var(--text-secondary)" }} />
-          <span>Files and folders</span>
+          <span>Attach files</span>
         </button>
       ) : null}
       {resources.map((resource, index) => (
@@ -197,6 +204,7 @@ export function SharedChatComposer({
   onSubmit,
   onAbort,
   busy,
+  submitWhileBusy = false,
   disabled = false,
   placeholder = "How can I help you today?",
   ariaLabel = "Message chat",
@@ -212,6 +220,7 @@ export function SharedChatComposer({
   attachments,
   leadingControls,
   footer,
+  runActions,
   canSubmit,
   autoFocus,
   focusRequestId,
@@ -227,6 +236,7 @@ export function SharedChatComposer({
   onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
+  submitWhileBusy?: boolean;
   disabled?: boolean;
   placeholder?: string;
   ariaLabel?: string;
@@ -245,6 +255,7 @@ export function SharedChatComposer({
   attachments?: ReactNode;
   leadingControls?: ReactNode;
   footer?: ReactNode;
+  runActions?: ReactNode;
   canSubmit?: boolean;
   autoFocus?: boolean;
   focusRequestId?: number;
@@ -253,11 +264,9 @@ export function SharedChatComposer({
   menuSide?: "top" | "bottom";
   layout?: "default" | "narrow";
 }) {
-  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const suggestionMenuRef = useRef<HTMLDivElement>(null);
-  const attachmentTriggerRef = useRef<HTMLButtonElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
   const lastEditorValueRef = useRef(value);
@@ -289,7 +298,7 @@ export function SharedChatComposer({
   const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const query = resourceMenuOpen ? resourceQuery : attachmentMenuOpen ? "" : null;
+    const query = resourceMenuOpen ? resourceQuery : null;
     if (query === null || !resourceSearch) {
       setRemoteResources([]);
       return () => { cancelled = true; };
@@ -303,7 +312,7 @@ export function SharedChatComposer({
       if (!cancelled) setRemoteResources([]);
     });
     return () => { cancelled = true; };
-  }, [attachmentMenuOpen, resourceMenuOpen, resourceQuery, resourceSearch]);
+  }, [resourceMenuOpen, resourceQuery, resourceSearch]);
   const filteredSlashEntries = slashQuery === null ? [] : slashEntries.filter((entry) => (
     entry.invocation.slice(1).toLocaleLowerCase().includes(slashQuery)
     || entry.displayName.toLocaleLowerCase().includes(slashQuery)
@@ -349,7 +358,7 @@ export function SharedChatComposer({
       return;
     }
     if (resourceQuery !== null && canAttach && index === 0) {
-      setAttachmentMenuOpen(false);
+      setDismissedSuggestionKey(suggestionKey);
       onAttach?.();
       return;
     }
@@ -364,9 +373,8 @@ export function SharedChatComposer({
   const onSuggestionKeyDown = (
     event: Pick<globalThis.KeyboardEvent, "key" | "shiftKey" | "preventDefault">,
   ): boolean => {
-    if (event.key === "Escape" && (slashMenuOpen || resourceMenuOpen || attachmentMenuOpen)) {
+    if (event.key === "Escape" && (slashMenuOpen || resourceMenuOpen)) {
       event.preventDefault();
-      setAttachmentMenuOpen(false);
       setDismissedSuggestionKey(suggestionKey);
       return true;
     }
@@ -405,27 +413,26 @@ export function SharedChatComposer({
       resourceQuery !== null ? `@${resourceMatch?.[1] ?? ""}` : "",
       cursor,
     );
-    setAttachmentMenuOpen(false);
   };
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
+  const permissionModeOptions = (instance?.supports.permissionModes ?? []).map((mode) => ({
+    value: mode,
+    label: permissionModeLabel(mode),
+  }));
   const hasSecondaryControls = composerOptions.some((option) => option.kind === "enum" && (option.values?.length ?? 0) > 1)
     || (instance?.supports.permissionModes.length ?? 0) > 1;
   useEffect(() => {
-    if (!slashMenuOpen && !resourceMenuOpen && !attachmentMenuOpen) return;
+    if (!slashMenuOpen && !resourceMenuOpen) return;
     const dismissOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Node && (
-        suggestionMenuRef.current?.contains(target)
-        || attachmentTriggerRef.current?.contains(target)
-      )) return;
-      setAttachmentMenuOpen(false);
+      if (target instanceof Node && suggestionMenuRef.current?.contains(target)) return;
       setDismissedSuggestionKey(suggestionKey);
     };
     document.addEventListener("pointerdown", dismissOutside);
     return () => document.removeEventListener("pointerdown", dismissOutside);
-  }, [attachmentMenuOpen, resourceMenuOpen, slashMenuOpen, suggestionKey]);
+  }, [resourceMenuOpen, slashMenuOpen, suggestionKey]);
   return (
     <div className="relative @container/chat-composer" data-slot="shared-chat-composer">
       {slashMenuOpen && filteredSlashEntries.length > 0 ? (
@@ -462,20 +469,6 @@ export function SharedChatComposer({
             onResource={insertResource}
           />
         </SuggestionMenu>
-      ) : attachmentMenuOpen ? (
-        <SuggestionMenu label="Add" menuSide={menuSide} menuRef={suggestionMenuRef}>
-          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
-          <ResourceRows
-            role="option"
-            canAttach={canAttach}
-            resources={availableResources}
-            onAttach={() => {
-              setAttachmentMenuOpen(false);
-              onAttach?.();
-            }}
-            onResource={insertResource}
-          />
-        </SuggestionMenu>
       ) : null}
       <PromptInput
         value={value}
@@ -483,6 +476,7 @@ export function SharedChatComposer({
         onSubmit={() => onSubmit(currentSubmission())}
         onAbort={onAbort}
         busy={busy}
+        submitWhileBusy={submitWhileBusy}
         disabled={disabled}
         canSubmit={canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0))}
         autoFocus={autoFocus}
@@ -522,23 +516,15 @@ export function SharedChatComposer({
           <>
             {canAttach ? (
               <button
-                ref={attachmentTriggerRef}
                 type="button"
-                aria-label="Add files and more"
-                aria-haspopup="listbox"
-                aria-expanded={attachmentMenuOpen}
+                aria-label="Attach files"
+                title="Attach files"
+                disabled={disabled}
                 className="flex h-8 w-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 style={{ color: "var(--text-secondary)" }}
-                onClick={() => {
-                  if (slashMenuOpen || resourceMenuOpen) {
-                    setDismissedSuggestionKey(suggestionKey);
-                    setAttachmentMenuOpen(true);
-                    return;
-                  }
-                  setAttachmentMenuOpen((open) => !open);
-                }}
+                onClick={onAttach}
               >
-                <Paperclip size={15} aria-hidden />
+                <Paperclip data-slot="attachment-paperclip-icon" size={15} aria-hidden />
               </button>
             ) : null}
             {leadingControls}
@@ -546,10 +532,12 @@ export function SharedChatComposer({
         )}
         trailingControls={(
           <>
+            {runActions}
             <ProviderModelPicker
               catalog={catalog}
               selection={selection}
               instanceLocked={instanceLocked}
+              disabled={disabled}
               unavailableProviderLabel={unavailableProviderLabel}
               menuSide={menuSide}
               onSetupAction={onProviderSetup}
@@ -571,7 +559,7 @@ export function SharedChatComposer({
                 <CompactSelect
                   label="Permission mode"
                   value={selection.permissionMode}
-                  options={(instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: mode.replace(/_/g, " ") }))}
+                  options={permissionModeOptions}
                   menuSide={menuSide}
                   onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
                 />
@@ -620,7 +608,7 @@ export function SharedChatComposer({
                         <CompactSelect
                           label="Permission mode"
                           value={selection.permissionMode}
-                          options={(instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: mode.replace(/_/g, " ") }))}
+                          options={permissionModeOptions}
                           menuSide={menuSide}
                           onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
                         />

@@ -119,6 +119,8 @@ describe("onboarding acquisition source", () => {
     fireEvent.keyDown(window, { key: "1" });
     fireEvent.keyDown(window, { key: "Enter" });
     const agentList = screen.getByRole("list", { name: "Coding agents" });
+    expect(agentList.className).toContain("flex-col");
+    expect(agentList.className).not.toContain("grid-cols-2");
     expect(agentList.querySelectorAll("li")).toHaveLength(4);
     expect(Array.from(agentList.querySelectorAll("kbd"), (key) => key.textContent)).toEqual([
       "1", "2", "3", "4",

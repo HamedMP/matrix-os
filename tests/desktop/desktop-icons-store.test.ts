@@ -1,0 +1,334 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  captureDesktopIconsHydrationRevision,
+  resetDesktopIconsRuntime,
+  useDesktopIcons,
+} from "@desktop/renderer/src/stores/desktop-icons";
+import { OsViewStateConflictExhaustedError } from "@desktop/renderer/src/lib/os-view-state-client";
+
+const CHAT = { path: "__chat__", x: 20, y: 20 };
+const FILES = { path: "__file-browser__", x: 108, y: 20 };
+
+describe("native Desktop icon layout", () => {
+  beforeEach(() => {
+    resetDesktopIconsRuntime();
+    useDesktopIcons.setState(useDesktopIcons.getInitialState(), true);
+  });
+
+  it("loads the owner-controlled layout from desktop settings", async () => {
+    const api = { get: vi.fn(async () => ({ desktopIcons: [FILES] })) };
+
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    expect(useDesktopIcons.getState().icons).toEqual([FILES]);
+  });
+
+  it("persists moving, removing, and adding icons through the bounded desktop patch", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(async () => ({ ok: true })),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await useDesktopIcons.getState().remove("__file-browser__", api as never);
+    expect(await useDesktopIcons.getState().add(
+      "apps/notes/index.html",
+      api as never,
+      { width: 400, height: 300 },
+    )).toBe("added");
+
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+    expect(useDesktopIcons.getState().icons.some((icon) => icon.path === "__file-browser__")).toBe(false);
+    expect(useDesktopIcons.getState().icons.some((icon) => icon.path === "apps/notes/index.html")).toBe(true);
+    expect(api.patch).toHaveBeenLastCalledWith("/api/os-view-state", expect.objectContaining({
+      patch: { desktop: { icons: useDesktopIcons.getState().icons } },
+    }));
+  });
+
+  it("reports duplicate and full Desktop placement outcomes without writing", async () => {
+    const api = { patch: vi.fn(async () => ({ ok: true })) };
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+    expect(await useDesktopIcons.getState().add("__chat__", api as never, { width: 200, height: 100 }))
+      .toBe("already-present");
+    expect(await useDesktopIcons.getState().add("apps/notes/index.html", api as never, { width: 80, height: 80 }))
+      .toBe("desktop-full");
+    expect(api.patch).not.toHaveBeenCalled();
+  });
+
+  it("reports failed and rolls back when adding cannot be committed", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT] })),
+      patch: vi.fn(async () => { throw new OsViewStateConflictExhaustedError(); }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT]);
+
+    expect(await useDesktopIcons.getState().add(
+      "apps/sushi-counter/index.html",
+      api as never,
+      { width: 400, height: 300 },
+    )).toBe("failed");
+    expect(useDesktopIcons.getState().icons).toEqual([CHAT]);
+  });
+
+  it("coalesces repeated adds until the authoritative write settles", async () => {
+    let rejectPatch!: (error: Error) => void;
+    const patch = new Promise((_, reject) => { rejectPatch = reject; });
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT] })),
+      patch: vi.fn(() => patch),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT]);
+
+    const first = useDesktopIcons.getState().add("apps/sushi-counter/index.html", api as never);
+    const repeated = useDesktopIcons.getState().add("apps/sushi-counter/index.html", api as never);
+    rejectPatch(new Error("offline"));
+
+    await expect(first).resolves.toBe("failed");
+    await expect(repeated).resolves.toBe("failed");
+    expect(api.patch).toHaveBeenCalledOnce();
+    expect(useDesktopIcons.getState().icons).toEqual([CHAT]);
+  });
+
+  it("does not let a stale runtime add release a newer coalesced add", async () => {
+    let rejectOldPatch!: (error: Error) => void;
+    let rejectNewPatch!: (error: Error) => void;
+    const oldApi = {
+      patch: vi.fn(() => new Promise((_, reject) => { rejectOldPatch = reject; })),
+    };
+    const newApi = {
+      patch: vi.fn(() => new Promise((_, reject) => { rejectNewPatch = reject; })),
+    };
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+
+    const stale = useDesktopIcons.getState().add("apps/sushi-counter/index.html", oldApi as never);
+    await vi.waitFor(() => expect(oldApi.patch).toHaveBeenCalledOnce());
+    resetDesktopIconsRuntime();
+    useDesktopIcons.setState({ icons: [CHAT], loaded: true });
+    const current = useDesktopIcons.getState().add("apps/sushi-counter/index.html", newApi as never);
+
+    rejectOldPatch(new Error("old runtime stopped"));
+    await expect(stale).resolves.toBe("failed");
+    const repeated = useDesktopIcons.getState().add("apps/sushi-counter/index.html", newApi as never);
+    expect(repeated).toBe(current);
+
+    rejectNewPatch(new Error("offline"));
+    await expect(current).resolves.toBe("failed");
+    await expect(repeated).resolves.toBe("failed");
+    expect(newApi.patch).toHaveBeenCalledOnce();
+  });
+
+  it("rolls the optimistic layout back when persistence fails", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(async () => { throw new Error("offline"); }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+
+    expect(useDesktopIcons.getState().icons).toEqual([CHAT, FILES]);
+  });
+
+  it("retains and retries the current layout after conflict retries are exhausted", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn()
+        .mockRejectedValueOnce(new OsViewStateConflictExhaustedError())
+        .mockResolvedValueOnce({ ok: true }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+
+    expect(api.patch).toHaveBeenCalledTimes(2);
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+    expect(api.patch).toHaveBeenLastCalledWith("/api/os-view-state", expect.objectContaining({
+      patch: { desktop: { icons: useDesktopIcons.getState().icons } },
+    }));
+  });
+
+  it("allows pending settings hydration after an initial icon write fails", async () => {
+    const api = {
+      patch: vi.fn(async () => { throw new Error("offline"); }),
+    };
+    const pendingHydrationRevision = captureDesktopIconsHydrationRevision();
+    useDesktopIcons.getState().prime([CHAT, FILES]);
+
+    await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    useDesktopIcons.getState().hydrate([FILES], [CHAT, FILES], pendingHydrationRevision);
+
+    expect(api.patch).toHaveBeenCalledWith("/api/os-view-state", expect.objectContaining({
+      patch: { desktop: { icons: [
+        { path: "__chat__", x: 240, y: 180 },
+        FILES,
+      ] } },
+    }));
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
+  });
+
+  it("replays settings hydration that resolves before an initial icon write fails", async () => {
+    let rejectPatch: ((error: Error) => void) | undefined;
+    const api = {
+      patch: vi.fn(() => new Promise<never>((_resolve, reject) => {
+        rejectPatch = reject;
+      })),
+    };
+    const pendingHydrationRevision = captureDesktopIconsHydrationRevision();
+    useDesktopIcons.getState().prime([CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    useDesktopIcons.getState().hydrate([FILES], [CHAT, FILES], pendingHydrationRevision);
+    rejectPatch?.(new Error("offline"));
+    await move;
+
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
+  });
+
+  it("replays hydration captured between two failed initial icon writes", async () => {
+    const rejectPatch: Array<(error: Error) => void> = [];
+    const api = {
+      patch: vi.fn(() => new Promise<never>((_resolve, reject) => {
+        rejectPatch.push(reject);
+      })),
+    };
+    useDesktopIcons.getState().prime([CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const intermediateHydrationRevision = captureDesktopIconsHydrationRevision();
+    const remove = useDesktopIcons.getState().remove("__file-browser__", api as never);
+    useDesktopIcons.getState().hydrate([FILES], [CHAT, FILES], intermediateHydrationRevision);
+    rejectPatch[0]?.(new Error("first offline"));
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2));
+    rejectPatch[1]?.(new Error("second offline"));
+    await Promise.all([move, remove]);
+
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
+  });
+
+  it("accepts intermediate hydration after both initial icon writes already failed", async () => {
+    const rejectPatch: Array<(error: Error) => void> = [];
+    const api = {
+      patch: vi.fn(() => new Promise<never>((_resolve, reject) => {
+        rejectPatch.push(reject);
+      })),
+    };
+    useDesktopIcons.getState().prime([CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const intermediateHydrationRevision = captureDesktopIconsHydrationRevision();
+    const remove = useDesktopIcons.getState().remove("__file-browser__", api as never);
+    rejectPatch[0]?.(new Error("first offline"));
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2));
+    rejectPatch[1]?.(new Error("second offline"));
+    await Promise.all([move, remove]);
+    useDesktopIcons.getState().hydrate([FILES], [CHAT, FILES], intermediateHydrationRevision);
+
+    expect(useDesktopIcons.getState()).toMatchObject({ icons: [FILES], loaded: true });
+  });
+
+  it("keeps a later successful queued layout when an earlier write fails", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn()
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce({ ok: true }),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    const remove = useDesktopIcons.getState().remove("__file-browser__", api as never);
+    await Promise.all([move, remove]);
+
+    expect(useDesktopIcons.getState().icons).toEqual([{ path: "__chat__", x: 240, y: 180 }]);
+  });
+
+  it("ignores settings hydration that started before a successful icon write", async () => {
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(async () => ({ ok: true })),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+    const staleHydrationRevision = captureDesktopIconsHydrationRevision();
+
+    await useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    useDesktopIcons.getState().hydrate([CHAT, FILES], [CHAT, FILES], staleHydrationRevision);
+
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+  });
+
+  it("ignores settings hydration that overlaps an in-flight icon write", async () => {
+    let finishPatch: (() => void) | undefined;
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(() => new Promise<{ ok: true }>((resolve) => {
+        finishPatch = () => resolve({ ok: true });
+      })),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const staleHydrationRevision = captureDesktopIconsHydrationRevision();
+    finishPatch?.();
+    await move;
+    useDesktopIcons.getState().hydrate([CHAT, FILES], [CHAT, FILES], staleHydrationRevision);
+
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+  });
+
+  it("defers focus hydration until an in-flight icon write succeeds", async () => {
+    let finishPatch: (() => void) | undefined;
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(() => new Promise<{ ok: true }>((resolve) => {
+        finishPatch = () => resolve({ ok: true });
+      })),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const overlappingHydrationRevision = captureDesktopIconsHydrationRevision();
+    useDesktopIcons.getState().hydrate([CHAT, FILES], [CHAT, FILES], overlappingHydrationRevision);
+
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+
+    finishPatch?.();
+    await move;
+
+    expect(useDesktopIcons.getState().icons).toContainEqual({ path: "__chat__", x: 240, y: 180 });
+  });
+
+  it("restores newer deferred hydration when an in-flight icon write fails", async () => {
+    let rejectPatch: ((error: Error) => void) | undefined;
+    const newerOwnerLayout = [{ path: "__file-browser__", x: 196, y: 112 }];
+    const api = {
+      get: vi.fn(async () => ({ desktopIcons: [CHAT, FILES] })),
+      patch: vi.fn(() => new Promise<never>((_resolve, reject) => {
+        rejectPatch = reject;
+      })),
+    };
+    await useDesktopIcons.getState().load(api as never, [CHAT, FILES]);
+
+    const move = useDesktopIcons.getState().move("__chat__", 240, 180, api as never);
+    await vi.waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    const overlappingHydrationRevision = captureDesktopIconsHydrationRevision();
+    useDesktopIcons.getState().hydrate(
+      newerOwnerLayout,
+      [CHAT, FILES],
+      overlappingHydrationRevision,
+    );
+
+    rejectPatch?.(new Error("offline"));
+    await move;
+
+    expect(useDesktopIcons.getState()).toMatchObject({
+      icons: newerOwnerLayout,
+      loaded: true,
+    });
+  });
+});

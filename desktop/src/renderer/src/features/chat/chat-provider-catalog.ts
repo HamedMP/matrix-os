@@ -30,22 +30,25 @@ export async function fetchCanonicalProviderCatalog(
 
 export function useChatProviderCatalog(
   fallback: CanonicalProviderCatalog,
-  apiOverride?: Pick<ApiClient, "get"> | null,
-  refreshKey?: unknown,
+  options: {
+    api?: Pick<ApiClient, "get"> | null;
+    active?: boolean;
+  } = {},
 ): {
   catalog: CanonicalProviderCatalog;
   status: "fallback" | "loading" | "ready" | "error";
 } {
   const connectionApi = useConnection((state) => state.api);
+  const { api: apiOverride, active = true } = options;
   const api = apiOverride === undefined ? connectionApi : apiOverride;
   const [state, setState] = useState<{
     catalog: CanonicalProviderCatalog;
     status: "fallback" | "loading" | "ready" | "error";
-  }>(() => ({ catalog: fallback, status: api ? "loading" : "fallback" }));
+  }>(() => ({ catalog: fallback, status: api && active ? "loading" : "fallback" }));
 
   useEffect(() => {
     let cancelled = false;
-    if (!api || typeof api.get !== "function") {
+    if (!active || !api || typeof api.get !== "function") {
       setState({ catalog: fallback, status: "fallback" });
       return () => {
         cancelled = true;
@@ -61,7 +64,7 @@ export function useChatProviderCatalog(
       );
       if (!cancelled) setState({ catalog: fallback, status: "error" });
     });
-    update(refreshKey !== undefined);
+    update(true);
     const refresh = () => update(true);
     window.addEventListener("focus", refresh);
     const visibility = () => {
@@ -73,7 +76,7 @@ export function useChatProviderCatalog(
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [api, fallback, refreshKey]);
+  }, [active, api, fallback]);
 
   return state;
 }

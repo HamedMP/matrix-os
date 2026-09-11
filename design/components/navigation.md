@@ -3,10 +3,10 @@ title: Navigation
 description: Dock, tabs, and navigation patterns.
 status: stable
 tokens:
-  - colors.primary
-  - colors.card
-  - colors.border
-  - colors.muted
+  - semanticColors.primary
+  - semanticColors.surface
+  - semanticColors.border
+  - semanticColors.muted
   - rounded.xl
   - rounded.full
 ---
@@ -23,8 +23,8 @@ The dock is the primary launcher and task indicator.
 |-------------|------------------------------------------|
 | Position    | Left side (desktop), bottom (mobile)     |
 | Width       | 56px (desktop), full width (mobile)      |
-| Background  | `--card` @ 40% with backdrop blur        |
-| Border      | 1px `--border` @ 40% on the right edge   |
+| Background  | Paper at 40% with backdrop blur          |
+| Border      | 1px `semanticColors.border` at 40%       |
 | Icon size   | 40×40px with `xl` radius                 |
 | Gap         | `sm` (8px) between icons                 |
 
@@ -32,10 +32,10 @@ The dock is the primary launcher and task indicator.
 
 | State    | Visual                                         |
 |----------|-------------------------------------------------|
-| Default  | `--card` background, `--border` border, `shadow-sm` |
+| Default  | Surface background, semantic border, `shadow-sm`    |
 | Hover    | `shadow-md`, scale 1.05                          |
-| Active   | Running indicator dot below (6px, `--primary`)   |
-| Selected | `--primary` background, white icon               |
+| Active   | Running indicator dot below (6px, Green 300)      |
+| Selected | Teal 800 background, Paper icon                   |
 
 ### Behavior
 
@@ -54,9 +54,9 @@ Used in bottom panel and within apps.
 |------------|-----------------------------------|
 | Height     | 36px                              |
 | Font       | Body small (0.875rem), weight 500 |
-| Radius     | `lg` (14px) for tab container     |
-| Active bg  | `--card` with `shadow-sm`         |
-| Inactive   | transparent, `--muted-foreground` |
+| Radius     | `rounded.lg` (12px) for tab container |
+| Active bg  | `semanticColors.surface` with `shadow-sm` |
+| Inactive   | transparent, `semanticColors.mutedForeground` |
 | Gap        | `xs` (4px) between tabs           |
 
 ### Toggle Behavior
@@ -76,7 +76,7 @@ Home  /  Settings  /  Appearance
  link     link         current (not linked)
 ```
 
-- Separator: `/` in `--muted-foreground`
-- Links: `--foreground`, underline on hover
-- Current: `--muted-foreground`, no underline
+- Separator: `/` in `semanticColors.mutedForeground`
+- Links: `semanticColors.foreground`, underline on hover
+- Current: `semanticColors.mutedForeground`, no underline
 - Font: Body small

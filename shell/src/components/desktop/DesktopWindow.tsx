@@ -1,3 +1,4 @@
+import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import type { CSSProperties, PointerEvent } from "react";
 import type { ChatState } from "@/hooks/useChatState";
 import type { AppWindow } from "@/hooks/useWindowManager";
@@ -16,7 +17,6 @@ import { ChatApp } from "@/components/ChatApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
-import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { TrafficLights } from "./DesktopDockControls";
 
 export function hasActiveWindowInteraction(
@@ -62,9 +62,7 @@ interface DesktopWindowProps {
   onDragStart: (id: string, event: PointerEvent) => void;
   onFocusWindow: (id: string) => void;
   onOpenWindow: (name: string, path: string) => void;
-  onResizeEnd: () => void;
-  onResizeMove: (event: PointerEvent) => void;
-  onResizeStart: (id: string, event: PointerEvent) => void;
+  onResizeInteractionChange: (active: boolean) => void;
   onToggleFullscreen: (id: string) => void;
   topInset?: number;
 }
@@ -83,9 +81,7 @@ export function DesktopWindow({
   onDragStart,
   onFocusWindow,
   onOpenWindow,
-  onResizeEnd,
-  onResizeMove,
-  onResizeStart,
+  onResizeInteractionChange,
   onToggleFullscreen,
   topInset = 0,
 }: DesktopWindowProps) {
@@ -185,6 +181,8 @@ export function DesktopWindow({
         {win.path.startsWith("__terminal__") ? (
           <TerminalApp
             launchTargetId={win.id}
+            layoutId={win.terminalLayoutId}
+            persistence={win.terminalPersistence ?? "durable"}
             embeddedChrome
             desktopParity={desktopParity}
             windowControls={{
@@ -200,8 +198,6 @@ export function DesktopWindow({
               },
             }}
           />
-        ) : win.path === "__workspace__" ? (
-          <WorkspaceApp />
         ) : win.path === "__file-browser__" ? (
           <FileBrowser windowId={win.id} />
         ) : win.path === "__preview-window__" ? (
@@ -217,7 +213,13 @@ export function DesktopWindow({
                 conversations={chat.conversations}
                 onNewChat={chat.newChat}
                 onSwitchConversation={chat.switchConversation}
+                activeConversationTitle={chat.activeConversationTitle}
+                onRenameConversation={chat.renameConversation}
                 onSubmit={chat.submitMessage}
+                onSubmitApproval={chat.submitApproval}
+                providerSelection={chat.providerSelection}
+                composerDraftRequest={chat.composerDraftRequest}
+                onComposerDraftConsumed={chat.consumeComposerDraft}
               />
             )}
           </div>
@@ -232,31 +234,8 @@ export function DesktopWindow({
       </CardContent>
 
       {!isFullscreen && (
-        <div
-          className="hidden md:block absolute bottom-0 right-0 size-4 cursor-se-resize touch-none z-20"
-          onPointerDown={(e) => onResizeStart(win.id, e)}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeEnd}
-          onPointerCancel={onResizeEnd}
-        >
-          <svg
-            viewBox="0 0 16 16"
-            className="size-4 text-muted-foreground/40"
-          >
-            <path
-              d="M14 2v12H2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-            <path
-              d="M14 7v7H7"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-          </svg>
-        </div>
+        <AppWindowResizeControls win={win} className="hidden md:block"
+          onInteractionChange={onResizeInteractionChange} />
       )}
     </Card>
   );

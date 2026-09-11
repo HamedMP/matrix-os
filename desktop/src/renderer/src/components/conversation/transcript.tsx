@@ -1,4 +1,11 @@
-import { ChevronRight, CircleAlert, FileText } from "@renderer/lib/hugeicons";
+import { UserMessage } from "./user-message";
+import {
+  CheckCircle2,
+  ChevronRight,
+  CircleAlert,
+  MessageCircle,
+  ShieldAlert,
+} from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import {
   Conversation,
@@ -13,6 +20,7 @@ import type {
   ConversationMessagePresentation,
   ConversationNoticePresentation,
   ConversationPresentationCallbacks,
+  ConversationRequestPresentation,
   ConversationTurnPresentation,
   ConversationWorkPresentation,
 } from "./presentation";
@@ -49,8 +57,8 @@ function TurnReceipt({
   const elapsed = active ? now - startedAt : endedAt - startedAt;
   const label = `${active ? "Working" : "Worked"} for ${formatTurnDuration(elapsed)}`;
   return (
-    <ConversationItem messageId={`receipt:${startedAt}`}>
-      <Marker variant="border" className="min-h-10 pb-2">
+    <ConversationItem messageId={`receipt:${startedAt}`} className="-mb-1">
+      <Marker variant="border" className="min-h-10 pb-1">
         {canToggle ? (
           <button
             type="button"
@@ -70,48 +78,6 @@ function TurnReceipt({
           <MarkerContent className="font-medium">{label}</MarkerContent>
         )}
       </Marker>
-    </ConversationItem>
-  );
-}
-
-function UserMessage({
-  message,
-  callbacks,
-}: {
-  message: ConversationMessagePresentation;
-  callbacks: ConversationPresentationCallbacks;
-}) {
-  return (
-    <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
-      <Message align="end">
-        <MessageContent>
-          <Bubble variant="secondary" align="end">
-            <BubbleContent className="max-w-[580px] whitespace-pre-wrap" data-selectable>
-              {message.markdown}
-              {message.attachments?.length ? (
-                <span className="mt-2 flex flex-wrap justify-end gap-1.5">
-                  {message.attachments.map((attachment) => (
-                    <span
-                      key={attachment.id}
-                      className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
-                      style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-                    >
-                      <FileText size={12} aria-hidden className="shrink-0" />
-                      <span className="truncate">{attachment.label}</span>
-                    </span>
-                  ))}
-                </span>
-              ) : null}
-            </BubbleContent>
-          </Bubble>
-          <MessageMetadata
-            content={message.copyText}
-            timestamp={message.timestamp}
-            role="User"
-            copyText={callbacks.copyText}
-          />
-        </MessageContent>
-      </Message>
     </ConversationItem>
   );
 }
@@ -167,12 +133,12 @@ function ResponseMessage({
   }, [message.markdown, visibleMarkdown]);
 
   return (
-    <ConversationItem messageId={`${message.role}:${message.id}`}>
+    <ConversationItem messageId={`${message.role}:${message.id}`} className="mt-4">
       <Message>
-        <MessageContent>
+        <MessageContent className="gap-0">
           <Bubble variant="ghost">
-            <BubbleContent className="max-w-[620px] overflow-visible">
-              <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
+            <BubbleContent className="w-full max-w-full overflow-visible">
+              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (
@@ -197,18 +163,34 @@ function Notice({
   callbacks: ConversationPresentationCallbacks;
 }) {
   const failed = notice.tone === "failed";
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [actionFailed, setActionFailed] = useState(false);
+  const availableActions = (notice.actions ?? []).filter((action) => (
+    callbacks.performAction && (!callbacks.canPerformAction || callbacks.canPerformAction(action))
+  ));
+  const perform = async (action: typeof availableActions[number]) => {
+    if (!callbacks.performAction || pendingAction) return;
+    setPendingAction(action.kind);
+    setActionFailed(false);
+    try {
+      await callbacks.performAction(action, undefined);
+    } catch (error) {
+      console.warn("[conversation] action failed:", error instanceof Error ? error.name : "UnknownError");
+      setActionFailed(true);
+    } finally {
+      setPendingAction(null);
+    }
+  };
   return (
     <ConversationItem messageId={`notice:${notice.id}`}>
       <Message>
         <MessageContent>
-          <Bubble variant="ghost">
-            <BubbleContent
-              {...(failed ? { role: "status", "aria-label": notice.label } : {})}
-              className={`max-w-[620px] rounded-xl px-3.5 py-3 text-sm ${failed ? "flex items-start gap-2.5" : ""}`}
+          <div
+              role="status"
+              aria-label={notice.label}
+              className={`w-fit min-w-[20rem] max-w-full rounded-xl border px-3 py-2.5 text-sm sm:max-w-[42rem] ${failed ? "flex items-start gap-2.5" : ""}`}
               style={{
-                background: failed
-                  ? "color-mix(in srgb, var(--danger) 8%, transparent)"
-                  : "var(--bg-sunken)",
+                borderColor: failed ? "var(--danger)" : "var(--border-default)",
                 color: "var(--text-primary)",
               }}
             >
@@ -223,13 +205,137 @@ function Notice({
               <div className="min-w-0">
                 <p className="font-medium leading-5">{notice.label}</p>
                 <div className="mt-0.5 leading-5" style={{ color: "var(--text-secondary)" }}>
-                  <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile}>{notice.markdown}</MessageResponse>
+                  <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{notice.markdown}</MessageResponse>
                 </div>
+                {availableActions.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {availableActions.map((action) => (
+                      <button
+                        key={`${action.kind}:${action.label}`}
+                        type="button"
+                        aria-label={`${action.label} ${notice.label}`}
+                        disabled={pendingAction !== null}
+                        className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50"
+                        style={{ borderColor: "var(--border-default)" }}
+                        onClick={() => void perform(action)}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {actionFailed ? <p role="alert" className="mt-1 text-xs">The action failed. Try again.</p> : null}
               </div>
-            </BubbleContent>
-          </Bubble>
+          </div>
         </MessageContent>
       </Message>
+    </ConversationItem>
+  );
+}
+
+function Request({
+  request,
+  callbacks,
+}: {
+  request: ConversationRequestPresentation;
+  callbacks: ConversationPresentationCallbacks;
+}) {
+  const [answer, setAnswer] = useState("");
+  const [pending, setPending] = useState(false);
+  const [actionFailed, setActionFailed] = useState(false);
+  const activeAction = useRef<symbol | null>(null);
+  const availableActions = (request.actions ?? []).filter((action) => (
+    callbacks.performAction && (!callbacks.canPerformAction || callbacks.canPerformAction(action))
+  ));
+  const inputAction = availableActions.find((action) => action.kind === "input");
+  const label = `${request.requestKind === "approval" ? "Approval" : "Input"} ${request.state === "waiting" ? "required" : "resolved"}: ${request.label}`;
+  const perform = async (action: typeof availableActions[number], input?: string) => {
+    if (!callbacks.performAction || activeAction.current) return;
+    const actionToken = Symbol("conversation-request-action");
+    activeAction.current = actionToken;
+    setPending(true);
+    setActionFailed(false);
+    try {
+      await callbacks.performAction(action, input);
+    } catch (error) {
+      console.warn("[conversation] request action failed:", error instanceof Error ? error.name : "UnknownError");
+      setActionFailed(true);
+    } finally {
+      if (activeAction.current === actionToken) {
+        activeAction.current = null;
+        setPending(false);
+      }
+    }
+  };
+  const Icon = request.requestKind === "approval" ? ShieldAlert : MessageCircle;
+  return (
+    <ConversationItem messageId={`request:${request.id}`}>
+      <div
+        role="group"
+        aria-label={label}
+        className="max-w-[620px] rounded-xl border p-3"
+        style={{ borderColor: "var(--border-default)", background: "var(--bg-sunken)" }}
+      >
+        <div className="flex min-w-0 items-start gap-2.5">
+          {request.state === "resolved"
+            ? <CheckCircle2 aria-hidden className="mt-0.5 size-4 shrink-0" style={{ color: "var(--success)" }} />
+            : <Icon aria-hidden className="mt-0.5 size-4 shrink-0" style={{ color: "var(--text-secondary)" }} />}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-medium">{request.label}</p>
+              {request.risk ? (
+                <span className="rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide" style={{ borderColor: "var(--border-default)", color: "var(--text-tertiary)" }}>
+                  {request.risk} risk
+                </span>
+              ) : null}
+            </div>
+            {request.detail ? <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{request.detail}</p> : null}
+            {request.state === "waiting" && inputAction ? (
+              <form
+                className="mt-2 flex min-w-0 gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (answer.trim()) void perform(inputAction, answer.trim());
+                }}
+              >
+                <input
+                  aria-label={`Answer ${request.label}`}
+                  value={answer}
+                  disabled={pending}
+                  className="h-8 min-w-0 flex-1 rounded-md border bg-transparent px-2 text-sm outline-none focus:border-[var(--accent)]"
+                  style={{ borderColor: "var(--border-default)" }}
+                  onChange={(event) => setAnswer(event.currentTarget.value)}
+                />
+                <button
+                  type="submit"
+                  disabled={pending || answer.trim().length === 0}
+                  className="rounded-md bg-[var(--accent)] px-2.5 text-xs font-medium text-[var(--text-on-accent)] disabled:opacity-50"
+                >
+                  {inputAction.label}
+                </button>
+              </form>
+            ) : null}
+            {request.state === "waiting" && request.requestKind === "approval" && availableActions.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {availableActions.map((action) => (
+                  <button
+                    key={action.kind === "approval" ? action.decision : action.label}
+                    type="button"
+                    aria-label={`${action.label} ${request.label}`}
+                    disabled={pending}
+                    className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50"
+                    style={{ borderColor: "var(--border-default)" }}
+                    onClick={() => void perform(action, undefined)}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {actionFailed ? <p role="alert" className="mt-1 text-xs">The action failed. Try again.</p> : null}
+          </div>
+        </div>
+      </div>
     </ConversationItem>
   );
 }
@@ -255,6 +361,7 @@ function PresentationItem({
     );
   }
   if (item.kind === "notice") return <Notice notice={item} callbacks={callbacks} />;
+  if (item.kind === "request") return <Request request={item} callbacks={callbacks} />;
   return (
     <ResponseMessage
       message={item}
@@ -275,7 +382,7 @@ function ConversationTurn({
   callbacks: ConversationPresentationCallbacks;
   initialFinalIds: ReadonlySet<string>;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
   const showWork = turn.active || expanded;
   const hasWork = turn.work.length > 0;
   const terminalPartial = !turn.active
@@ -284,6 +391,10 @@ function ConversationTurn({
     ? [...turn.work].reverse().find((item) => item.kind === "message")
     : undefined;
   const visibleWork = showWork ? turn.work : terminalPartial ? [terminalPartial] : [];
+  const timeline = turn.timeline;
+  const visibleTimeline = timeline?.filter((entry) => (
+    entry.kind === "user-followup" || showWork || (terminalPartial !== undefined && entry.item.id === terminalPartial.id)
+  ));
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={callbacks} /> : null}
@@ -297,16 +408,34 @@ function ConversationTurn({
           onToggle={() => setExpanded((value) => !value)}
         />
       ) : null}
-      {visibleWork.map((item) => (
-        <PresentationItem key={item.id} item={item} callbacks={callbacks} />
-      ))}
+      {timeline ? (
+        visibleTimeline && visibleTimeline.length > 0 ? (
+          <div data-turn-timeline className="flex min-w-0 flex-col gap-0.5">
+            {visibleTimeline.map((entry) => entry.kind === "user-followup"
+              ? <UserMessage key={entry.message.id} message={entry.message} callbacks={callbacks} />
+              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={callbacks} />)}
+          </div>
+        ) : null
+      ) : visibleWork.length > 0 ? (
+        <div data-work-items className="flex min-w-0 flex-col gap-0.5">
+          {visibleWork.map((item) => (
+            <PresentationItem key={item.id} item={item} callbacks={callbacks} />
+          ))}
+        </div>
+      ) : null}
+      {!timeline ? turn.userFollowups?.map((message) => (
+        <UserMessage key={message.id} message={message} callbacks={callbacks} />
+      )) : null}
       {turn.final ? (
         <PresentationItem
           item={turn.final}
           callbacks={callbacks}
           showMetadata={!turn.active}
           streaming={turn.active}
-          animateOnMount={!initialFinalIds.has(turn.final.id)}
+          animateOnMount={
+            !initialFinalIds.has(turn.final.id)
+            && !(turn.final.kind === "message" && turn.final.wasStreamed)
+          }
         />
       ) : null}
     </>
@@ -320,7 +449,7 @@ export function ConversationTranscript({
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
 }) {
-  const initialFinalIds = useRef(new Set(
+  const [initialFinalIds] = useState(() => new Set(
     turns.flatMap((turn) => turn.final ? [turn.final.id] : []),
   ));
   return (
@@ -331,7 +460,7 @@ export function ConversationTranscript({
             key={turn.id}
             turn={turn}
             callbacks={callbacks}
-            initialFinalIds={initialFinalIds.current}
+            initialFinalIds={initialFinalIds}
           />
         ))}
       </ConversationContent>

@@ -1,10 +1,11 @@
 "use client";
 
+import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
-import { useChatState } from "@/hooks/useChatState";
+import { useCanonicalChatState } from "@/hooks/useCanonicalChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
@@ -22,7 +23,6 @@ const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
   "__chat__",
   "__file-browser__",
-  "__workspace__",
   "__preview-window__",
   "__activity-monitor__",
 ]);
@@ -40,15 +40,20 @@ function readLaunchPathFromLocation(): string | null {
 const subscribeLaunchPathNoop = () => () => {};
 const getLaunchPathServerSnapshot = (): string | null => null;
 
+function readRuntimeSlotFromLocation(): string | null {
+  return new URLSearchParams(window.location.search).get("runtime");
+}
+
 export function ShellHome() {
   const isMobile = useMobileViewport();
-  const { userId } = useAuth();
+  const { userId, sessionId } = useAuth();
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
   const cacheScope = createShellSnapshotScope({ userId, pathname: cachePathname });
   useTheme({ cacheScope });
   useDesktopConfig({ cacheScope });
 
-  const chat = useChatState();
+  const runtimeSlot = useSyncExternalStore(subscribeLaunchPathNoop, readRuntimeSlotFromLocation, getLaunchPathServerSnapshot);
+  const chat = useCanonicalChatState();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const launchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,
@@ -88,6 +93,7 @@ export function ShellHome() {
   }, [isMobile]);
 
   return (
+    <GettingStartedVisibilityProvider scope={JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot])}>
     <ChatProvider value={chat}>
       <div className="flex h-screen w-screen flex-col overflow-hidden md:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -113,5 +119,6 @@ export function ShellHome() {
         <ApprovalDialog />
       </div>
     </ChatProvider>
+    </GettingStartedVisibilityProvider>
   );
 }

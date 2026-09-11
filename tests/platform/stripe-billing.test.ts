@@ -14,7 +14,7 @@ describe('platform/stripe-billing', () => {
     const client = createStripeBillingClient({ secretKey: 'sk_test_123', stripe });
 
     expect(client.apiTimeoutMs).toBe(MATRIX_STRIPE_API_TIMEOUT_MS);
-    await expect(client.createCheckoutSession({
+    const subscriptionInput = {
       clerkUserId: 'user_123',
       idempotencyKey: 'attempt_123',
       customerId: 'cus_123',
@@ -26,7 +26,10 @@ describe('platform/stripe-billing', () => {
       runtimeSlot: 'studio',
       successUrl: 'https://app.matrix-os.com/?checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
-    })).resolves.toEqual({ url: 'https://checkout.stripe.test/session', id: 'cs_123' });
+    } as const;
+    await expect(client.createCheckoutSession(subscriptionInput))
+      .resolves.toEqual({ url: 'https://checkout.stripe.test/session', id: 'cs_123' });
+    await client.createCheckoutSession(subscriptionInput);
 
     expect(sessionsCreate).toHaveBeenCalledWith({
       mode: 'subscription',
@@ -37,6 +40,7 @@ describe('platform/stripe-billing', () => {
       cancel_url: 'https://app.matrix-os.com/?billing=canceled',
       allow_promotion_codes: true,
       automatic_tax: { enabled: true },
+      integration_identifier: expect.stringMatching(/^matrix_checkout_[a-z]{8}$/),
       metadata: {
         clerk_user_id: 'user_123',
         matrix_region_slug: 'region_nbg1',
@@ -56,6 +60,7 @@ describe('platform/stripe-billing', () => {
       },
     }, { idempotencyKey: 'attempt_123' });
     expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
+    expect(sessionsCreate.mock.calls[1]).toEqual(sessionsCreate.mock.calls[0]);
   });
 
   it('creates checkout sessions without customer-write permission when no customer exists yet', async () => {
@@ -86,7 +91,7 @@ describe('platform/stripe-billing', () => {
     });
   });
 
-  it('creates a card-required native Stripe trial when trial days are present', async () => {
+  it('collects a trial payment method without restricting Stripe dynamic payment methods', async () => {
     const sessionsCreate = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/trial', id: 'cs_trial' });
     const client = createStripeBillingClient({
       secretKey: 'sk_test_123',
@@ -109,7 +114,6 @@ describe('platform/stripe-billing', () => {
     });
 
     expect(sessionsCreate).toHaveBeenCalledWith(expect.objectContaining({
-      payment_method_types: ['card'],
       payment_method_collection: 'always',
       subscription_data: expect.objectContaining({
         trial_period_days: 7,
@@ -118,6 +122,7 @@ describe('platform/stripe-billing', () => {
         },
       }),
     }), { idempotencyKey: 'attempt_trial' });
+    expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
   });
 
   it('binds an eligible preparation intent to an explicitly expiring checkout and subscription', async () => {
@@ -188,6 +193,28 @@ describe('platform/stripe-billing', () => {
     });
   });
 
+  it('retrieves the authoritative recurring amount for legacy subscriptions', async () => {
+    const pricesRetrieve = vi.fn().mockResolvedValue({
+      id: 'price_legacy_builder_monthly',
+      unit_amount: 2000,
+      currency: 'usd',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ prices: { retrieve: pricesRetrieve } }),
+    });
+
+    await expect(client.retrieveRecurringPrice('price_legacy_builder_monthly')).resolves.toEqual({
+      priceId: 'price_legacy_builder_monthly',
+      unitAmountMinor: 2000,
+      currency: 'usd',
+      interval: 'monthly',
+      intervalCount: 1,
+    });
+    expect(pricesRetrieve).toHaveBeenCalledWith('price_legacy_builder_monthly');
+  });
+
   it('creates portal sessions with a platform return URL', async () => {
     const portalCreate = vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' });
     const client = createStripeBillingClient({
@@ -205,8 +232,69 @@ describe('platform/stripe-billing', () => {
     });
   });
 
+  it('creates one-time AI credit checkout with only server-written identity and package metadata', async () => {
+    const sessionsCreate = vi.fn().mockResolvedValue({
+      url: 'https://checkout.stripe.com/c/pay/cs_ai_5',
+      id: 'cs_ai_5',
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { create: sessionsCreate } } }),
+    });
+
+    const checkoutInput = {
+      clerkUserId: 'user_123',
+      requestId: '77f105df-6e24-4e13-a881-af9ce20d6a63',
+      machineId: 'machine_123',
+      runtimeSlot: 'primary',
+      packageId: 'usd_5',
+      priceId: 'price_ai_5',
+      amountMicrousd: 5_000_000,
+      automaticTax: false,
+      idempotencyKey: '77f105df-6e24-4e13-a881-af9ce20d6a63',
+      successUrl: 'https://app.matrix-os.com/?billing=success',
+      cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
+    } as const;
+    await expect(client.createAiCreditCheckoutSession(checkoutInput))
+      .resolves.toEqual({ url: 'https://checkout.stripe.com/c/pay/cs_ai_5', id: 'cs_ai_5' });
+    await client.createAiCreditCheckoutSession(checkoutInput);
+    expect(sessionsCreate).toHaveBeenCalledWith({
+      mode: 'payment',
+      integration_identifier: expect.stringMatching(/^matrix-ai-credit-[a-z]{8}$/),
+      client_reference_id: 'user_123',
+      line_items: [{ price: 'price_ai_5', quantity: 1 }],
+      success_url: 'https://app.matrix-os.com/?billing=success',
+      cancel_url: 'https://app.matrix-os.com/?billing=canceled',
+      automatic_tax: { enabled: false },
+      metadata: {
+        matrix_checkout_kind: 'ai_credit_addon',
+        matrix_owner_id: 'user_123',
+        matrix_machine_id: 'machine_123',
+        matrix_runtime_slot: 'primary',
+        matrix_ai_credit_package_id: 'usd_5',
+        matrix_ai_credit_request_id: '77f105df-6e24-4e13-a881-af9ce20d6a63',
+        matrix_ai_credit_price_id: 'price_ai_5',
+        matrix_ai_credit_microusd: '5000000',
+      },
+      payment_intent_data: {
+        metadata: {
+          matrix_checkout_kind: 'ai_credit_addon',
+          matrix_owner_id: 'user_123',
+          matrix_machine_id: 'machine_123',
+          matrix_runtime_slot: 'primary',
+          matrix_ai_credit_package_id: 'usd_5',
+          matrix_ai_credit_request_id: '77f105df-6e24-4e13-a881-af9ce20d6a63',
+          matrix_ai_credit_price_id: 'price_ai_5',
+          matrix_ai_credit_microusd: '5000000',
+        },
+      },
+    }, { idempotencyKey: '77f105df-6e24-4e13-a881-af9ce20d6a63' });
+    expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
+    expect(sessionsCreate.mock.calls[1]).toEqual(sessionsCreate.mock.calls[0]);
+  });
+
   it('uses the newest mature Stripe API version allowed by package policy', () => {
-    expect(MATRIX_STRIPE_API_VERSION).toBe('2026-04-22.dahlia');
+    expect(MATRIX_STRIPE_API_VERSION).toBe('2026-07-29.dahlia');
   });
 
   it('bounds Stripe API calls to the platform API timeout budget', () => {
@@ -217,6 +305,7 @@ describe('platform/stripe-billing', () => {
 function fakeStripe(overrides: Record<string, unknown>) {
   return {
     checkout: { sessions: { create: vi.fn() } },
+    prices: { retrieve: vi.fn() },
     billingPortal: { sessions: { create: vi.fn() } },
     webhooks: { constructEvent: vi.fn() },
     ...overrides,

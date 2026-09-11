@@ -110,21 +110,22 @@ Discoverability comes in layers, each reaching a different user type:
 
 ---
 
-## Part 2: Desktop Shell Patterns
+## Part 2: OS View Patterns
 
-### Shell Modes
+### Surfaces and Presentations
 
-Matrix OS has multiple shell renderers over the same window/app model.
+OS view is the umbrella term for Matrix OS visual navigation. Requirements and evidence name the concrete surface: Web Canvas, Web Desktop, Electron Desktop, Web Mobile, or Native Mobile.
 
-**Canvas mode is primary.** It is the main user-facing shell surface and may be the only visible mode for some users. New shell features, built-in apps, launch flows, window restore behavior, and settings panels must be designed and verified in Canvas first.
+**Desktop is the default presentation.** Web Desktop and Electron Desktop open by default. They share the same logical desktop icon/window placement and app/session model, even when viewport and native chrome require safe clamping.
 
-**Desktop mode is compatibility.** The classic floating-window renderer must keep working, but it is secondary to Canvas for product behavior.
+**Canvas is first-class and spatial.** Web Canvas is the free-form, pannable and zoomable presentation. It is available from the app launcher in Web Desktop and Electron Desktop, and keeps Canvas-specific geometry, pan, and zoom without replacing shared app state. Canvas now refers only to this OS view; Workspace Canvas is retired.
 
-**Renderer parity rule:** Any built-in app path handled in one renderer must be handled in all window renderers. This includes `__workspace__`, `__terminal__`, `__file-browser__`, `__preview-window__`, and `__chat__`. Built-in `__...` paths must never fall through to generic app/file viewers; otherwise the shell will request invalid URLs such as `/files/__workspace__`.
+**Renderer parity rule:** Any canonical built-in path handled in one applicable renderer must be handled in the others. This includes `__terminal__`, `__file-browser__`, `__preview-window__`, and `__chat__`. Built-in `__...` paths must never fall through to generic app/file viewers. `__workspace__` is retired rather than reassigned.
 
-**Verification checklist for shell changes:**
-- Open the feature in Canvas mode first.
-- Confirm Desktop mode still renders the same built-in path or app path.
+**Verification checklist for OS-view changes:**
+- Open the feature in Web Desktop and Electron Desktop.
+- Confirm Web Canvas renders the same app identity and state with Canvas-appropriate spatial composition.
+- When the capability exists on Native Mobile, confirm Web Mobile follows the same information architecture and behavior.
 - Check network logs for accidental `/files/__...` requests.
 - Confirm layout restore, icon rendering, focus/bring-to-front, minimize/close, and reload behavior.
 

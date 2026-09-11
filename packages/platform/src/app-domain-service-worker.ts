@@ -1,5 +1,5 @@
 const APP_DOMAIN_SAFE_SERVICE_WORKER = `
-const VERSION = "app-v2";
+const VERSION = "app-v3";
 const CACHE_STATIC = "matrix-os-static-" + VERSION;
 
 self.addEventListener("install", () => {
@@ -38,13 +38,12 @@ function isBypassed(url) {
 function isStaticAsset(url) {
   const p = url.pathname;
   return (
-    p.startsWith("/_next/static/") ||
     p.startsWith("/icons/") ||
     p.startsWith("/wallpapers/") ||
     p.startsWith("/files/system/wallpapers/") ||
     p.startsWith("/textures/") ||
     p.startsWith("/fonts/") ||
-    /\\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|css|js|wav|mp3)$/.test(p)
+    /\\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|wav|mp3)$/.test(p)
   );
 }
 

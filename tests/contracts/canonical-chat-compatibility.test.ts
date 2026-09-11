@@ -192,6 +192,22 @@ describe("canonical Chat compatibility mappers", () => {
             truncated: false,
           },
           {
+            eventId: "evt_approval",
+            threadId: "thread_legacy",
+            occurredAt: now,
+            type: "approval.requested",
+            approval: {
+              approvalId: "appr_legacy",
+              threadId: "thread_legacy",
+              title: "Run command",
+              safeDescription: "The agent wants to run a workspace command.",
+              risk: "medium",
+              actionKind: "command",
+              allowedDecisions: ["approve", "decline"],
+              correlationId: "corr_legacy",
+            },
+          },
+          {
             eventId: "evt_review",
             threadId: "thread_legacy",
             occurredAt: now,
@@ -254,10 +270,15 @@ describe("canonical Chat compatibility mappers", () => {
       "turn.status",
       "tool.progress",
       "tool.output",
+      "approval.requested",
       "review.ready",
       "terminal.bound",
       "turn.status",
     ]);
+    expect(projection.activities.find((activity) => activity.type === "approval.requested")).toMatchObject({
+      approvalId: "appr_legacy",
+      allowedDecisions: ["approve", "decline"],
+    });
     expect(JSON.stringify(projection)).not.toContain("providerState");
 
     const unsafeSnapshot = JSON.parse(JSON.stringify(thread));

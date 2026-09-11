@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerIpcHandlers, type HandlerContext } from "../../desktop/src/main/ipc/handlers";
+import { AppError } from "../../desktop/src/shared/app-error";
 
 type IpcListener = (event: unknown, payload: unknown) => Promise<unknown> | unknown;
 
@@ -28,6 +29,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
       open: vi.fn(),
       setBounds: vi.fn(),
       setActive: vi.fn(),
+      deactivate: vi.fn(),
       suspendAll: vi.fn(),
       reload: vi.fn(),
       close: vi.fn(),
@@ -43,6 +45,10 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     toggleWindowMaximize: vi.fn(),
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
     acknowledgeWhatsNew: vi.fn(async () => undefined),
+    getAppVersion: vi.fn(() => "1.4.0-canary.2"),
+    buildSource: null,
+    completeAnalyticsFlush: vi.fn(),
+    fetchSupportIdentity: vi.fn(async () => ({ status: "unavailable" })),
     fetchRuntimeSummary: vi.fn(),
     fetchHermesConfiguration: vi.fn(),
     fetchHermesEnvironment: vi.fn(),
@@ -105,6 +111,53 @@ describe("registerIpcHandlers", () => {
     await expect(harness.invoke("shell:open-external", { url: "file:///tmp/secret" })).rejects.toThrow(
       "invalid request",
     );
+  });
+
+  it("returns the trusted native app version", async () => {
+    const getAppVersion = vi.fn(() => "1.4.0-canary.2");
+    const harness = makeHarness({ getAppVersion });
+
+    await expect(harness.invoke("app:get-version")).resolves.toEqual({
+      version: "1.4.0-canary.2",
+      source: null,
+    });
+    expect(getAppVersion).toHaveBeenCalledOnce();
+  });
+
+  it("captures and validates build provenance when handlers register", async () => {
+    const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
+    const harness = makeHarness({ buildSource: source });
+    source.commit = "c".repeat(40);
+    await expect(harness.invoke("app:get-version")).resolves.toEqual({
+      version: "1.4.0-canary.2", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] },
+    });
+    expect(() => makeHarness({ buildSource: { commit: "unknown", ancestors: [] } })).toThrow();
+  });
+
+  it("resolves Support identity through the trusted main-process client", async () => {
+    const fetchSupportIdentity = vi.fn(async () => ({
+      status: "verified" as const,
+      distinctId: "user_alice",
+      identityHash: "ab".repeat(32),
+    }));
+    const harness = makeHarness({ fetchSupportIdentity });
+
+    await expect(harness.invoke("support:get-identity")).resolves.toEqual({
+      status: "verified",
+      distinctId: "user_alice",
+      identityHash: "ab".repeat(32),
+    });
+    expect(fetchSupportIdentity).toHaveBeenCalledOnce();
+  });
+
+  it("acknowledges renderer analytics flush without accepting payload data", async () => {
+    const completeAnalyticsFlush = vi.fn();
+    const harness = makeHarness({ completeAnalyticsFlush });
+
+    await expect(harness.invoke("analytics:flush-complete")).resolves.toEqual({ ok: true });
+    expect(completeAnalyticsFlush).toHaveBeenCalledOnce();
+    await expect(harness.invoke("analytics:flush-complete", { event: "private" }))
+      .rejects.toThrow("invalid request");
   });
 
   it("returns the public embed unavailable error when embed open fails", async () => {
@@ -174,6 +227,20 @@ describe("registerIpcHandlers", () => {
       bounds: { x: 360, y: 57, width: 920, height: 764 },
       active: true,
     });
+  });
+
+  it("captures and detaches an embed through one validated IPC operation", async () => {
+    const harness = makeHarness();
+    vi.mocked(harness.ctx.embeds.deactivate).mockResolvedValue({
+      ok: true,
+      snapshotDataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+    });
+
+    await expect(harness.invoke("embed:deactivate", { embedId: "embed-1" })).resolves.toEqual({
+      ok: true,
+      snapshotDataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+    });
+    expect(harness.ctx.embeds.deactivate).toHaveBeenCalledWith("embed-1");
   });
 
   it("routes Browser embeds with only the validated tunnel URL fields", async () => {
@@ -309,7 +376,7 @@ describe("registerIpcHandlers", () => {
         hasMore: false,
         limit: 20,
       },
-      terminalSessions: {
+      terminalWorkspaces: {
         items: [],
         limit: 20,
         hasMore: false,
@@ -1081,30 +1148,56 @@ describe("registerIpcHandlers", () => {
       clientRequestId: "req_desktop_1",
     };
 
-    await expect(harness.invoke("runtime:create-thread", request)).resolves.toEqual(snapshot);
+    await expect(harness.invoke("runtime:create-thread", request)).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
     expect(createAgentThread).toHaveBeenCalledWith(request);
   });
 
-  it("maps agent thread create failures to a generic IPC error", async () => {
+  it("maps agent thread create failures to a safe typed IPC result", async () => {
     const createAgentThread = vi
       .fn()
       .mockRejectedValue(new Error("provider failed on /home/matrix/workspace with token secret"));
     const harness = makeHarness({ createAgentThread } as Partial<HandlerContext>);
 
-    await expect(
-      harness.invoke("runtime:create-thread", {
-        providerId: "codex",
-        prompt: "Summarize the failing checks",
-        clientRequestId: "req_desktop_1",
-      }),
-    ).rejects.toThrow("internal error");
-    await expect(
-      harness.invoke("runtime:create-thread", {
-        providerId: "codex",
-        prompt: "Summarize the failing checks",
-        clientRequestId: "req_desktop_1",
-      }),
-    ).rejects.not.toThrow("/home/matrix");
+    await expect(harness.invoke("runtime:create-thread", {
+      providerId: "codex",
+      prompt: "Summarize the failing checks",
+      clientRequestId: "req_desktop_1",
+    })).resolves.toEqual({
+      ok: false,
+      error: {
+        code: "thread_create_server",
+        safeMessage: "Something went wrong. Please try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+  });
+
+  it("preserves a safe offline reason across the agent thread IPC boundary", async () => {
+    const createAgentThread = vi.fn().mockRejectedValue(new AppError("offline", {
+      cause: new TypeError("fetch failed for https://private-runtime.test"),
+    }));
+    const harness = makeHarness({ createAgentThread } as Partial<HandlerContext>);
+
+    const result = await harness.invoke("runtime:create-thread", {
+      providerId: "codex",
+      prompt: "Summarize the failing checks",
+      clientRequestId: "req_desktop_1",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "thread_create_offline",
+        safeMessage: "Can't reach Matrix OS. Check your connection.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/private-runtime|provider/i);
   });
 
   it("creates same-thread turns through trusted-core IPC without exposing credentials", async () => {

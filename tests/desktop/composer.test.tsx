@@ -21,7 +21,6 @@ describe("Composer", () => {
     useThreads.setState({ threads: [], activeThreadId: null });
     useUi.setState({
       view: { kind: "board" },
-      createTaskOpen: false,
       composerOpen: true,
       paletteOpen: false,
       quickOpenOpen: false,

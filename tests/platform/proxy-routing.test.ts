@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
+import { runInNewContext } from "node:vm";
 import { fonts, lightFg, palette, radii } from "@matrix-os/brand/tokens";
 import {
   type PlatformDB,
@@ -20,7 +21,6 @@ import {
 } from "../../packages/platform/src/main.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { buildBillingSetupTarget } from "../../packages/platform/src/auth-pages.js";
-import { DEFAULT_DEVELOPER_TOOLS } from "../../packages/platform/src/developer-tools.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 import { shouldServePlatformRuntimeShell } from "../../packages/platform/src/session-routing-middleware.js";
@@ -929,6 +929,57 @@ describe("platform proxy routing", () => {
     expect(await res.text()).toBe("shell");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.31:443/");
     expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice-staging");
+  });
+
+  it("preserves completed-signup recovery from a provisioned user's VPS shell", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff154",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123498,
+      publicIPv4: "203.0.113.68",
+      imageVersion: "matrix-os-host-2026.09.07-1",
+      provisionedAt: "2026-09-07T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 303,
+        headers: { location: "https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/sign-up/verify-email-address?redirect_url=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          authorization: "Bearer clerk-session",
+        },
+      },
+    );
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(
+      "https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK",
+    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://203.0.113.68:443/sign-up/verify-email-address?redirect_url=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    const forwardedHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers as HeadersInit);
+    expect(forwardedHeaders.get("x-platform-user-id")).toBe("user_alice");
+    expect(forwardedHeaders.get("x-platform-verified")).toMatch(/^[0-9a-f]{64}$/);
+    expect(forwardedHeaders.get("authorization")).not.toBe("Bearer clerk-session");
   });
 
   it("does not persist a selected runtime slot through the Clerk sign-in handoff", async () => {
@@ -1930,7 +1981,6 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.clerk.com/v1/users/user_new",
@@ -1952,7 +2002,7 @@ describe("platform proxy routing", () => {
     });
   });
 
-  it("passes a directly selected empty developer tool list to hosted runtime provisioning", async () => {
+  it("resolves a public US Builder selection to the provider machine server-side", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -1992,8 +2042,8 @@ describe("platform proxy routing", () => {
       body: JSON.stringify({
         runtime: "research-lab",
         developerTools: [],
-        serverType: "cpx22",
-        location: "hil",
+        planSlug: "matrix_builder",
+        regionSlug: "region_ash",
       }),
     });
 
@@ -2003,8 +2053,8 @@ describe("platform proxy routing", () => {
       clerkUserId: "user_new_tools",
       runtimeSlot: "research-lab",
       developerTools: [],
-      serverType: "cpx22",
-      location: "hil",
+      serverType: "cpx31",
+      location: "ash",
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2073,6 +2123,73 @@ describe("platform proxy routing", () => {
     }, DETACHED_PROVISION_OPTIONS);
   });
 
+  it("uses the paid checkout machine, region, and agents as the provisioning source of truth", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertCheckoutAttempt(db, {
+      id: "attempt_authoritative_configuration",
+      clerkUserId: "user_paid_configuration",
+      stripeSessionId: "cs_paid_configuration",
+      runtimeSlot: "research-lab",
+      planSlug: "matrix_builder",
+      billingInterval: "monthly",
+      regionSlug: "region_ash",
+      serverType: "cpx31",
+      status: "paid",
+      createdAt: "2026-08-30T12:00:00.000Z",
+      developerTools: ["claude-code"],
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      username: "newuser",
+      first_name: "New",
+      last_name: "User",
+      primary_email_address_id: "email_1",
+      email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+    }));
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff160",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_paid_configuration" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        runtime: "research-lab",
+        developerTools: ["codex"],
+        planSlug: "matrix_starter",
+        regionSlug: "region_fsn1",
+      }),
+    });
+
+    expect(provision.status).toBe(202);
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "newuser",
+      clerkUserId: "user_paid_configuration",
+      runtimeSlot: "research-lab",
+      developerTools: ["claude-code"],
+      serverType: "cpx31",
+      location: "ash",
+    }, DETACHED_PROVISION_OPTIONS);
+  });
+
   it("converges an old post-payment provision request onto the checkout-bound intent", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
@@ -2106,9 +2223,7 @@ describe("platform proxy routing", () => {
       intentId: "intent_prebilling",
       stripeSessionId: "cs_prebilling",
       stripeSessionExpiresAt: "2026-08-28T12:30:00.000Z",
-      reservedHourlyCostMicros: 50_000,
       maxActive: 1,
-      maxHourlyCostMicros: 50_000,
       now: "2026-08-28T11:56:00.000Z",
     });
     await db.transaction((trx) => authorizePrebillingIntent(trx, {
@@ -2160,8 +2275,6 @@ describe("platform proxy routing", () => {
         MATRIX_PREBILLING_PROVISIONING_ENABLED: "true",
         MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: "100",
         MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: "1",
-        MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: "50000",
-        MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
       },
     });
     expect(customerVpsService.setPrebillingFallbackReconciler).toHaveBeenCalledOnce();
@@ -2230,7 +2343,6 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new_avatar",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new_avatar")).resolves.toMatchObject({
       clerkId: "user_new_avatar",
@@ -2292,7 +2404,6 @@ describe("platform proxy routing", () => {
       handle: "new",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new")).resolves.toMatchObject({
       clerkId: "user_new",
@@ -2345,7 +2456,6 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new")).resolves.toMatchObject({
       handle: "newuser",
@@ -2398,7 +2508,6 @@ describe("platform proxy routing", () => {
       handle: "very-long-username-with-hyphen",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2503,7 +2612,6 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2566,7 +2674,6 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2627,7 +2734,6 @@ describe("platform proxy routing", () => {
       handle: "alice",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2689,7 +2795,6 @@ describe("platform proxy routing", () => {
       handle: "alice",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2739,7 +2844,6 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-      developerTools: DEFAULT_DEVELOPER_TOOLS,
     }, DETACHED_PROVISION_OPTIONS);
   });
 
@@ -2820,6 +2924,15 @@ describe("platform proxy routing", () => {
     expect(html).toContain("method: 'DELETE'");
     expect(html).not.toContain("Loading your Matrix computer");
     expect(html).not.toContain("function pollProvisioningSession()");
+    expect(html).toContain("showLoadingState('Finishing your Matrix computer...');");
+    expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
+    expect(html).toContain("var passiveRuntimeContinuation = passiveCheckoutContinuation || Boolean(deviceReturnTarget);");
+    expect(html).toContain("function normalizeRuntimeSlot(value) {");
+    expect(html).toContain("var requestedRuntime = normalizeRuntimeSlot(");
+    expect(html).toContain("function isRetryableAppSessionStatus(status) {");
+    expect(html).toContain("passiveRuntimeContinuation && isRetryableAppSessionStatus(res.status)");
+    expect(html).toContain("waitForAppSession(provisioningAccepted);");
+    expect(html).not.toContain("if (checkoutJustCompleted) {\n              showDefaultInstallsState();");
     expect(html).toContain("continueWithClerkSession(true);");
     expect(html).toContain("if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {");
     expect(html).toContain("billingConfirmationPolls = 0;\n            continueWithClerkSession(true);\n            return;");
@@ -2846,7 +2959,8 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("if (res.status === 402) {\n            if (afterProvision) showProvisionRetryError();\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("if (res.status === 402) {\n            if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
@@ -3020,6 +3134,53 @@ describe("platform proxy routing", () => {
     expect(proxiedHeaders?.get("host")).toBe("auth-shell.test:3200");
     expect(proxiedHeaders?.get("x-forwarded-host")).toBe("app.matrix-os.com");
     expect(proxiedHeaders?.get("x-forwarded-proto")).toBe("http");
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
+  });
+
+  it("preserves the auth-shell completed-signup redirect before a VPS exists", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    await deleteContainer(db, "alice");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 303,
+        headers: { location: "https://app.matrix-os.com/" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/sign-up/verify-email-address?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          cookie: "__session=clerk-new",
+        },
+      },
+    );
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("https://app.matrix-os.com/");
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://auth-shell.test:3200/sign-up/verify-email-address?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: "GET",
+        redirect: "manual",
+        signal: expect.any(AbortSignal),
+      }),
+    );
     delete process.env.AUTH_SHELL_HOST;
     delete process.env.AUTH_SHELL_PORT;
   });
@@ -3307,7 +3468,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var billingSetupTarget = ");
     expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
-    expect(html).toContain("window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
+    expect(html).toContain("window.location.replace(provisioningAccepted ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toBe("auth shell");
@@ -5212,10 +5373,56 @@ describe("platform proxy routing", () => {
       expect(res.headers.get("cdn-cache-control")).toBe("no-store");
       expect(res.headers.get("service-worker-allowed")).toBe("/");
       const body = await res.text();
-      expect(body).not.toContain("registration.unregister()");
-      expect(body).toContain('p.startsWith("/api/")');
-      expect(body).toContain('p.startsWith("/files/apps/")');
-      expect(body).toContain('p.startsWith("/_next/static/")');
+      type FetchHandler = (event: {
+        request: Request;
+        respondWith(response: Promise<Response>): void;
+      }) => void;
+      let fetchHandler: FetchHandler | undefined;
+      const cachedResponse = new Response("cached asset");
+      const cache = {
+        match: vi.fn(async () => cachedResponse),
+        put: vi.fn(async () => undefined),
+      };
+      const cacheStorage = {
+        delete: vi.fn(async () => true),
+        keys: vi.fn(async () => []),
+        open: vi.fn(async () => cache),
+      };
+
+      runInNewContext(body, {
+        AbortSignal,
+        Response,
+        URL,
+        caches: cacheStorage,
+        console,
+        fetch: vi.fn(),
+        self: {
+          clients: { claim: vi.fn(async () => undefined) },
+          location: new URL("https://app.matrix-os.com/"),
+          skipWaiting: vi.fn(),
+          addEventListener: (type: string, handler: FetchHandler) => {
+            if (type === "fetch") fetchHandler = handler;
+          },
+        },
+      });
+
+      expect(fetchHandler).toBeTypeOf("function");
+      const dispatchFetch = (path: string) => {
+        const respondWith = vi.fn();
+        fetchHandler!({
+          request: new Request(`https://app.matrix-os.com${path}`),
+          respondWith,
+        });
+        return respondWith;
+      };
+
+      expect(dispatchFetch("/api/session")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/files/apps/notes/index.js")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/_next/static/chunks/app.js")).not.toHaveBeenCalled();
+      expect(dispatchFetch("/_next/static/css/app.css")).not.toHaveBeenCalled();
+      const safeImageFetch = dispatchFetch("/icons/notes.png");
+      expect(safeImageFetch).toHaveBeenCalledOnce();
+      await expect(safeImageFetch.mock.calls[0]?.[0]).resolves.toBe(cachedResponse);
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {

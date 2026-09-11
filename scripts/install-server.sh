@@ -121,6 +121,20 @@ wait_http_ok() {
   fail "${description} did not become reachable. ${log_hint}"
 }
 
+wait_terminal_runtime_ready() {
+  local attempt
+  for attempt in $(seq 1 30); do
+    if timeout 10 /opt/matrix/bin/matrix-terminal-runtime --health-check >>"$MATRIX_INSTALL_LOG" 2>&1; then
+      ok "matrix-terminal-runtime socket is ready"
+      return 0
+    fi
+    systemctl is-active --quiet matrix-terminal-runtime \
+      || fail "matrix-terminal-runtime stopped before its socket became ready. Check: journalctl -u matrix-terminal-runtime -n 200 --no-pager"
+    sleep 2
+  done
+  fail "matrix-terminal-runtime socket did not become ready. Check: journalctl -u matrix-terminal-runtime -n 200 --no-pager"
+}
+
 wait_http_ok_auth() {
   local description url password log_hint attempt code
   description="$1"
@@ -410,10 +424,14 @@ read_env_value() {
 }
 
 write_env() {
-  local auth_token code_token postgres_password
+  local auth_token code_token postgres_password funded_ai_enabled funded_ai_relay_url funded_ai_runtime_token platform_internal_url
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret)"
   code_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret)"
   postgres_password="$(read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret | tr '/+' 'ab')"
+  funded_ai_enabled="$(read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_ENABLED || printf 'false')"
+  funded_ai_relay_url="$(read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RELAY_URL || true)"
+  funded_ai_runtime_token="$(read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RUNTIME_TOKEN || true)"
+  platform_internal_url="$(read_env_value /opt/matrix/env/host.env PLATFORM_INTERNAL_URL || true)"
 
   cat >/opt/matrix/env/postgres.env <<EOF
 POSTGRES_DB=matrix
@@ -435,6 +453,10 @@ MATRIX_IMAGE_VERSION=${DEFAULT_CHANNEL}
 MATRIX_UPDATE_CHANNEL=${DEFAULT_CHANNEL}
 MATRIX_AUTH_TOKEN=${auth_token}
 MATRIX_CODE_PROXY_TOKEN=${code_token}
+MATRIX_FUNDED_AI_ENABLED=${funded_ai_enabled}
+MATRIX_FUNDED_AI_RELAY_URL=${funded_ai_relay_url}
+MATRIX_FUNDED_AI_RUNTIME_TOKEN=${funded_ai_runtime_token}
+PLATFORM_INTERNAL_URL=${platform_internal_url}
 MATRIX_HOST_BUNDLE_URL=${MATRIX_HOST_BUNDLE_URL}
 MATRIX_HOME=${MATRIX_HOME_DIR}
 DATABASE_URL=postgresql://matrix:${postgres_password}@127.0.0.1:5432/matrix
@@ -518,18 +540,35 @@ WantedBy=multi-user.target
 EOF
 }
 
+install_terminal_user_units() {
+  local matrix_uid
+  matrix_uid="$(id -u matrix)"
+  install -d -o root -g root -m 0755 /etc/systemd/user
+  install -m 0644 /opt/matrix/user-systemd/matrix-zellij@.service /etc/systemd/user/matrix-zellij@.service
+  install -m 0644 /opt/matrix/user-systemd/matrix-terminal.slice /etc/systemd/user/matrix-terminal.slice
+  run_required "enabling matrix user manager persistence" loginctl enable-linger matrix
+  run_required "starting matrix user manager" systemctl start "user@${matrix_uid}.service"
+  run_required "reloading matrix user systemd" runuser -u matrix -- env \
+    HOME="$MATRIX_HOME_DIR" \
+    XDG_RUNTIME_DIR="/run/user/${matrix_uid}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" \
+    systemctl --user daemon-reload
+}
+
 install_systemd_units() {
   section "Installing systemd units"
   install -m 0644 /opt/matrix/systemd/matrix-gateway.service /etc/systemd/system/matrix-gateway.service
+  install -m 0644 /opt/matrix/systemd/matrix-terminal-runtime.service /etc/systemd/system/matrix-terminal-runtime.service
   install -m 0644 /opt/matrix/systemd/matrix-shell.service /etc/systemd/system/matrix-shell.service
   install -m 0644 /opt/matrix/systemd/matrix-code.service /etc/systemd/system/matrix-code.service
   install -m 0644 /opt/matrix/systemd/matrix-code-server.service /etc/systemd/system/matrix-code-server.service
   if [ -f /opt/matrix/systemd/matrix-developer-tools.service ]; then
     install -m 0644 /opt/matrix/systemd/matrix-developer-tools.service /etc/systemd/system/matrix-developer-tools.service
   fi
+  install_terminal_user_units
   write_self_host_restore_service
   run_required "reloading systemd" systemctl daemon-reload
-  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server
+  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-terminal-runtime matrix-gateway matrix-shell matrix-code matrix-code-server
   if [ -f /etc/systemd/system/matrix-developer-tools.service ] && [ -n "$MATRIX_DEVELOPER_TOOLS" ]; then
     run_required "enabling optional developer tools service" systemctl enable matrix-developer-tools
   fi
@@ -665,6 +704,7 @@ start_services() {
   section "Starting Matrix OS services"
   run_required "starting docker" systemctl enable --now docker
   restart_required_service matrix-restore
+  restart_required_service matrix-terminal-runtime
   restart_required_service matrix-gateway
   restart_required_service matrix-shell
   restart_optional_service matrix-code-server "code-server proxy"
@@ -678,6 +718,9 @@ start_services() {
 verify_services() {
   local password status
   section "Verifying Matrix OS"
+  run_required "verifying matrix-terminal-runtime" systemctl is-active --quiet matrix-terminal-runtime
+  ok "matrix-terminal-runtime is active"
+  wait_terminal_runtime_ready
   wait_http_ok "Matrix gateway" "http://127.0.0.1:4000/health" "Check: journalctl -u matrix-gateway -n 200 --no-pager"
   wait_http_ok "Matrix shell" "http://127.0.0.1:3000/" "Check: journalctl -u matrix-shell -n 200 --no-pager"
   if [ -f /opt/matrix/env/initial-ui-password ]; then
@@ -722,8 +765,8 @@ CLI gateway: ${ui_url%/}/cli
 Home: ${MATRIX_HOME_DIR}
 
 Useful commands:
-  systemctl status matrix-gateway matrix-shell matrix-code nginx --no-pager
-  journalctl -u matrix-gateway -u matrix-shell -u matrix-code -n 200 --no-pager
+  systemctl status matrix-terminal-runtime matrix-gateway matrix-shell matrix-code nginx --no-pager
+  journalctl -u matrix-terminal-runtime -u matrix-gateway -u matrix-shell -u matrix-code -n 200 --no-pager
   sudo -iu matrix
   MATRIX_TOKEN=\$(sudo sed -n 's/^MATRIX_AUTH_TOKEN=//p' /opt/matrix/env/host.env)
   matrix shell ls --gateway ${ui_url%/}/cli --token "\$MATRIX_TOKEN"

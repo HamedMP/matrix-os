@@ -68,6 +68,15 @@ describe("gateway main WebSocket message helpers", () => {
       type: "kernel:aborted",
       requestId: "r1",
     });
+    expect(kernelEventToServerMessage({
+      type: "refusal",
+      reason: "model_refusal_no_fallback",
+      stopReason: "refusal",
+    }, "r1")).toEqual({
+      type: "kernel:error",
+      message: "The selected model could not complete this request",
+      requestId: "r1",
+    });
   });
 
   it("derives stable ack ids for client actions", () => {

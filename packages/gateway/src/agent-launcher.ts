@@ -50,6 +50,7 @@ export interface AgentLaunchInput {
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
   runtimeHome?: string;
   providerEventPath?: string;
+  providerThreadId?: string;
   codexExecutable?: string;
   claudePermissionMode?: "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
   claudeOutputFormat?: "stream-json";
@@ -83,6 +84,7 @@ const CODEX_APP_SERVER_RUNNER_PATH = fileURLToPath(
 );
 const CodexAppServerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
+  providerThreadId: z.string().trim().min(1).max(512).optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
@@ -147,9 +149,17 @@ function pathWithMatrixAgentBins(runtimeHome: string, nodePrefix = matrixNodePre
 }
 
 export function buildAgentRuntimeEnvironment(runtimeHome?: string): Record<string, string> {
-  if (!runtimeHome) return {};
+  const executionEnv: Record<string, string> = {};
+  for (const key of ["MATRIX_CODEX_TOOL_DEADLINE_MS", "MATRIX_CODEX_COMMAND_DEADLINE_MS", "MATRIX_CODEX_NO_PROGRESS_MS", "MATRIX_CODEX_TURN_DEADLINE_MS"]) {
+    const value = Number(process.env[key]);
+    if (Number.isSafeInteger(value) && value > 0 && value <= 86_400_000) {
+      executionEnv[key] = String(value);
+    }
+  }
+  if (!runtimeHome) return executionEnv;
   const nodePrefix = matrixNodePrefix();
   return {
+    ...executionEnv,
     HOME: runtimeHome,
     MATRIX_HOME: runtimeHome,
     MATRIX_NODE_PREFIX: nodePrefix,
@@ -360,6 +370,7 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
     : sandbox?.mode ?? "workspace-write";
   return CodexAppServerConfigSchema.parse({
     prompt: codexPrompt(input.prompt, input.mode),
+    ...(input.providerThreadId ? { providerThreadId: input.providerThreadId } : {}),
     approvalPolicy: input.approvalPolicy === "on-failure"
       ? "on-request"
       : input.approvalPolicy ?? "never",
@@ -433,6 +444,7 @@ export function createAgentLauncher(options: {
   let installationScanCache: { result: DetectionResult; expiresAt: number } | null = null;
   let credentialScanInFlight: Promise<DetectionResult> | null = null;
   let credentialScanCache: { result: DetectionResult; expiresAt: number } | null = null;
+  let credentialScanGeneration = 0;
 
   function commandFor(id: SupportedAgent): string {
     return id === "codex" && options.codexExecutable
@@ -517,6 +529,7 @@ export function createAgentLauncher(options: {
     if (cached && now() < cached.expiresAt) return cached.result;
     if (credentialScanInFlight) return credentialScanInFlight;
 
+    const generation = credentialScanGeneration;
     const scan = Promise.all([
       probeCredentials("claude"),
       probeCredentials("codex"),
@@ -524,16 +537,25 @@ export function createAgentLauncher(options: {
     credentialScanInFlight = scan;
     try {
       const result = await scan;
-      credentialScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
+      if (generation === credentialScanGeneration) {
+        credentialScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
+      }
       return result;
     } finally {
       if (credentialScanInFlight === scan) credentialScanInFlight = null;
     }
   }
 
+  function invalidateCredentialDetection(): void {
+    credentialScanGeneration += 1;
+    credentialScanCache = null;
+    credentialScanInFlight = null;
+  }
+
   return {
     detectAgentInstallations,
     detectAgentCredentials,
+    invalidateCredentialDetection,
     /** @deprecated Use detectAgentInstallations for executable availability. */
     detectAgents: detectAgentInstallations,
 

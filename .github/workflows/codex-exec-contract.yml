@@ -65,8 +65,16 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify latest Codex provider contracts
-    runs-on: ubuntu-latest
+    name: Verify latest Codex provider contracts (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux-x64
+          - runner: macos-15
+            target: darwin-arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -76,6 +84,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      - name: Verify runner target
+        env:
+          EXPECTED_RUNTIME_TARGET: ${{ matrix.target }}
+        run: test "$(node -p '`${process.platform}-${process.arch}`')" = "$EXPECTED_RUNTIME_TARGET"
 
       - name: Resolve latest published version
         id: latest
@@ -100,12 +113,27 @@ jobs:
           CODEX_VERSION: ${{ steps.latest.outputs.version }}
         run: |
           set -euo pipefail
-          installed_version="$(pnpm dlx "@openai/codex@${CODEX_VERSION}" --version | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' | head -1)"
+          installed_output="$(pnpm dlx "@openai/codex@${CODEX_VERSION}" --version)"
+          installed_version="${installed_output##* }"
           test "$installed_version" = "$CODEX_VERSION"
           pnpm dlx "@openai/codex@${CODEX_VERSION}" app-server generate-json-schema \
             --experimental \
             --out /tmp/codex-app-server-schema
           test -s /tmp/codex-app-server-schema/codex_app_server_protocol.schemas.json
+
+      - name: Report generated protocol digests
+        run: |
+          node --input-type=module -e '
+            import { createHash } from "node:crypto";
+            import { readFileSync } from "node:fs";
+            import { codexProtocolMethodDigest } from "./scripts/lib/codex-provider-contract-check.mjs";
+            const contract = JSON.parse(readFileSync("./packages/gateway/src/coding-agents/codex-app-server-contract.json", "utf8"));
+            const schemaBytes = readFileSync("/tmp/codex-app-server-schema/codex_app_server_protocol.schemas.json");
+            const schema = JSON.parse(schemaBytes.toString("utf8"));
+            console.log(`schema ${createHash("sha256").update(schemaBytes).digest("hex")}`);
+            for (const method of contract.requiredServerMethods) console.log(`${method} ${codexProtocolMethodDigest(schema, "ServerRequest", method)}`);
+            for (const method of contract.requiredServerNotifications) console.log(`${method} ${codexProtocolMethodDigest(schema, "ServerNotification", method)}`);
+          '
 
       - name: Verify published version and protocol digests
         env:

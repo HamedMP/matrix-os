@@ -10,12 +10,6 @@ export default defineConfig({
         if (!importer) return null;
         const normalized = importer.split(path.sep).join("/");
         if (
-          source === "@tldraw/tldraw" &&
-          normalized.endsWith("/shell/src/components/canvas/WorkspaceCanvas.tsx")
-        ) {
-          return path.resolve(__dirname, "tests/shell/mocks/tldraw.tsx");
-        }
-        if (
           source === "@tiptap/react" &&
           normalized.endsWith("/home/apps/notes/src/RichEditor.tsx")
         ) {
@@ -43,6 +37,8 @@ export default defineConfig({
   resolve: {
     conditions: ["node"],
     alias: {
+      "@matrix-os/brand/boot-screen": path.resolve(__dirname, "packages/brand/src/boot-screen.ts"),
+      "vitest-environment-gateway-renderer": path.resolve(__dirname, "tests/helpers/gateway-renderer-environment.ts"),
       "@": path.resolve(__dirname, "shell/src"),
       "@desktop": path.resolve(__dirname, "desktop/src"),
       "@renderer": path.resolve(__dirname, "desktop/src/renderer/src"),

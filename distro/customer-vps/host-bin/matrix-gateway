@@ -85,5 +85,4 @@ else
   "$NODE_BIN" --import=tsx "$APP_DIR/packages/gateway/src/main.ts" &
 fi
 gateway_pid="$!"
-
 wait "$gateway_pid"

@@ -53,9 +53,8 @@ describe("win11 design: opaque Mica content surfaces", () => {
     // Flyouts keep acrylic (correct Win11 behavior for menus/popovers).
     expect(globalsCss).toContain('[data-theme-style="win11"] [data-slot="popover-content"]');
     expect(globalsCss).toContain("background: var(--win11-acrylic-strong) !important");
-    // Dock and menu bar keep acrylic chrome.
+    // The dock keeps acrylic chrome.
     expect(win11Rule("[data-dock]")).toContain("background: var(--win11-acrylic) !important");
-    expect(win11Rule("[data-menu-bar]")).toContain("background: var(--win11-acrylic) !important");
   });
 
   it("styles file-browser rows with the #0067C0 accent tint and 4px pills", () => {

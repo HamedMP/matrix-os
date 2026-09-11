@@ -1,23 +1,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { TerminalIcon, LayoutGridIcon, MonitorIcon, AudioWaveformIcon, type LucideIcon } from "@/lib/hugeicons";
+import { LayoutGridIcon, MonitorIcon, type LucideIcon } from "@/lib/hugeicons";
+import { normalizeOsViewMode, type OsViewMode } from "@matrix-os/contracts";
 
-export type DesktopMode = "desktop" | "canvas" | "ambient" | "dev";
+export type DesktopMode = OsViewMode;
 
 export interface ModeConfig {
   id: DesktopMode;
   label: string;
   description: string;
   icon: LucideIcon;
-  showDock: boolean;
-  showWindows: boolean;
-  showBottomPanel: boolean;
-  showLauncher: boolean;
-  chatPosition: "sidebar" | "center";
-  terminalProminent?: boolean;
-  // Hidden modes still work if set programmatically, but are filtered out of
-  // the switcher, cycle, and command palette.
-  hidden?: boolean;
 }
 
 const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
@@ -26,62 +18,24 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     label: "Canvas",
     description: "Spatial canvas with zoom, pan, and app grouping",
     icon: LayoutGridIcon,
-    showDock: true,
-    showWindows: true,
-    showBottomPanel: false,
-    showLauncher: true,
-    chatPosition: "sidebar",
   },
   desktop: {
     id: "desktop",
     label: "Desktop",
     description: "Full desktop with dock, windows, and sidebar chat",
     icon: MonitorIcon,
-    showDock: true,
-    showWindows: true,
-    showBottomPanel: false,
-    showLauncher: true,
-    chatPosition: "sidebar",
-    hidden: false,
-  },
-  ambient: {
-    id: "ambient",
-    label: "Ambient",
-    description: "Minimal mode with clock and centered chat",
-    icon: AudioWaveformIcon,
-    showDock: false,
-    showWindows: false,
-    showBottomPanel: false,
-    showLauncher: false,
-    chatPosition: "center",
-    hidden: true,
-  },
-  dev: {
-    id: "dev",
-    label: "Developer",
-    description: "Terminal-first setup with Symphony and Canvas one click away",
-    icon: TerminalIcon,
-    showDock: true,
-    showWindows: true,
-    showBottomPanel: true,
-    showLauncher: true,
-    chatPosition: "sidebar",
-    terminalProminent: true,
-    hidden: true,
   },
 };
 
 const DEFAULT_MODE: DesktopMode = "desktop";
 
 /**
- * The native Desktop renderer is the canonical OS view. Keep the legacy mode
- * identifiers readable so old snapshots do not break. Canvas remains a
- * supported user preference; removed Developer and Ambient selections migrate
- * to Desktop.
+ * The native Desktop renderer is the canonical OS view. Keep legacy mode
+ * values readable so old snapshots migrate safely; only Desktop and Canvas
+ * remain live user preferences.
  */
 export function normalizeDesktopMode(value: unknown): DesktopMode {
-  if (value === "canvas") return "canvas";
-  return DEFAULT_MODE;
+  return normalizeOsViewMode(value);
 }
 
 interface DesktopModeStore {
@@ -89,7 +43,6 @@ interface DesktopModeStore {
   previousMode: DesktopMode | null;
   _hydrated: boolean;
   setMode: (mode: DesktopMode) => void;
-  getModeConfig: (mode: DesktopMode) => ModeConfig;
   allModes: () => ModeConfig[];
   visibleModes: () => ModeConfig[];
 }
@@ -98,19 +51,15 @@ export const useDesktopMode = create<DesktopModeStore>()(
   persist(
     (set, get) => ({
       mode: DEFAULT_MODE,
-      previousMode: null as DesktopMode | null,
+      previousMode: null,
       _hydrated: false,
       setMode: (mode: DesktopMode) => set({ previousMode: get().mode, mode }),
-      getModeConfig: (mode: DesktopMode) => MODE_CONFIGS[mode],
       allModes: () => Object.values(MODE_CONFIGS),
       visibleModes: () => [MODE_CONFIGS.canvas, MODE_CONFIGS.desktop],
     }),
     {
       name: "matrix-os-desktop-mode",
       onRehydrateStorage: () => (state) => {
-        // The web OS defaults to the native Desktop renderer while preserving
-        // an explicit Canvas preference. Removed Developer/Ambient selections
-        // migrate to the canonical Desktop surface during hydration.
         if (state) {
           state.mode = normalizeDesktopMode(state.mode);
           state.previousMode = null;

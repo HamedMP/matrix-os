@@ -6,15 +6,3 @@ export function parseDesktopFirstRunStatus(value: unknown): DesktopFirstRunStatu
   if (typeof complete !== "boolean") throw new Error("invalid onboarding status");
   return complete ? "ready" : "first-run";
 }
-
-export function shouldApplyInitialDesktopDefaults(status: DesktopFirstRunStatus): boolean {
-  return status === "first-run";
-}
-
-export function shouldShowDeveloperDashboard(
-  status: DesktopFirstRunStatus,
-  desktopMode: string,
-  visibleWindowCount: number,
-): boolean {
-  return status !== "checking" && desktopMode === "dev" && visibleWindowCount === 0;
-}

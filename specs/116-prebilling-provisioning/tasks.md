@@ -24,8 +24,8 @@
 
 **Critical**: This phase blocks all user stories.
 
-- [x] T004 Write failing public-store tests for intent uniqueness, canonical selections, activation defaults, capacity reservation, and release-once semantics in `tests/platform/prebilling-provisioning.test.ts`
-- [x] T005 Implement strict off-by-default rollout, lease, count, and cost configuration in `packages/platform/src/prebilling-provisioning-config.ts`
+- [x] T004 Write failing public-store tests for intent uniqueness, canonical selections, activation defaults, and global capacity semantics in `tests/platform/prebilling-provisioning.test.ts`
+- [x] T005 Implement strict off-by-default rollout, lease, and count-only configuration in `packages/platform/src/prebilling-provisioning-config.ts`
 - [x] T006 Add additive Kysely schema/types for preparation intents, machine activation, provisioning authorization basis, cleanup state, and durable capacity accounting in `packages/platform/src/db.ts`
 - [x] T007 Implement revision-checked, transaction-aware intent/admission/promotion operations in `packages/platform/src/prebilling-provisioning-store.ts`
 - [x] T008 Refactor the shared machine/job creation seam to accept only the discriminated billing-entitlement or validated-prebilling authorization basis in `packages/platform/src/customer-vps.ts` and `packages/platform/src/customer-vps-provisioning-jobs.ts`
@@ -56,7 +56,7 @@
 
 **Goal**: Reclaim only authoritatively expired unauthorized machines and make signed authorization win every cleanup race.
 
-**Independent Test**: Race authorization against each cleanup phase; an authorized machine always survives, while an expired unpaid machine is reconciled absent and releases its cost once.
+**Independent Test**: Race authorization against each cleanup phase; an authorized machine always survives, while an expired unpaid machine is reconciled absent exactly once.
 
 - [x] T016 [US2] Write failing authoritative-expiry and authorization-fence tests in `tests/platform/prebilling-provisioning.test.ts`
 - [x] T017 [US2] Implement signed-expiry cleanup under the intent row lock and hand provider absence to the existing durable deletion queue in `packages/platform/src/prebilling-provisioning-store.ts`

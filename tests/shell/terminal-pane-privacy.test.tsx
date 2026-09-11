@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
+
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TAB_ID = `tt_${"b".repeat(32)}`;
+const TERMINAL_REF_KEY = `${WORKSPACE_ID}:${TAB_ID}`;
+const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
 
 const stubTerminal = vi.hoisted(() => ({
   element: null as HTMLElement | null,
@@ -15,6 +23,7 @@ const stubTerminal = vi.hoisted(() => ({
   onData: vi.fn(() => ({ dispose: vi.fn() })),
   onResize: vi.fn(() => ({ dispose: vi.fn() })),
   attachCustomKeyEventHandler: vi.fn(),
+  customKeyEventHandler: null as ((event: KeyboardEvent) => boolean) | null,
   clearSelection: vi.fn(),
   getSelection: vi.fn(() => ""),
 }));
@@ -29,7 +38,7 @@ const stubWs = vi.hoisted(() => ({
   onerror: null as (() => void) | null,
 }));
 const wsAuth = vi.hoisted(() => ({
-  buildAuthenticatedWebSocketUrl: vi.fn(async () => "ws://gateway.test/ws/terminal/session?session=main&token=ws-token"),
+  buildAuthenticatedWebSocketUrl: vi.fn(async () => "ws://gateway.test/ws/terminal/tab?workspaceId=tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&tabId=tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&client=browser&token=ws-token"),
   getWebSocketAuthToken: vi.fn(async () => "ws-token"),
 }));
 const BRACKETED_PASTE_OPEN = "\u001b[200~";
@@ -53,11 +62,11 @@ vi.mock("../../shell/src/components/terminal/terminal-restore.js", () => ({
       ws: stubWs,
       lastSeq: 0,
       hasReplayCursor: false,
-      sessionId: "main",
+      sessionId: "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     },
     reuseTerminal: true,
     reuseSocket: true,
-    sessionId: "main",
+    sessionId: "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     lastSeq: 0,
     hasReplayCursor: false,
   })),
@@ -102,6 +111,10 @@ class ResizeObserverMock {
 
 describe("TerminalPane session replay privacy", () => {
   beforeEach(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
     stubTerminal.element = document.createElement("div");
     stubWs.readyState = 1;
     stubWs.send.mockClear();
@@ -109,17 +122,85 @@ describe("TerminalPane session replay privacy", () => {
     wsAuth.buildAuthenticatedWebSocketUrl.mockClear();
     wsAuth.getWebSocketAuthToken.mockClear();
     wsAuth.getWebSocketAuthToken.mockResolvedValue("ws-token");
+    stubTerminal.customKeyEventHandler = null;
+    stubTerminal.attachCustomKeyEventHandler.mockImplementation((handler) => {
+      stubTerminal.customKeyEventHandler = handler;
+    });
+    stubTerminal.getSelection.mockReturnValue("");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      path: "projects/.matrix-terminal-pastes/2026-07-07/upload.png",
-      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png",
-      size: 12,
-      mimeType: "image/png",
+      assets: [{
+        path: "projects/.matrix-terminal-pastes/2026-07-07/upload.png",
+        terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png",
+        size: 12,
+        mimeType: "image/png",
+      }],
     }))));
     globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
     if (typeof globalThis.requestAnimationFrame !== "function") {
       globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
         setTimeout(() => cb(0), 0)) as typeof requestAnimationFrame;
     }
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    if (originalClipboardDescriptor) {
+      Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(navigator, "platform", originalPlatformDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "platform");
+    }
+  });
+
+  it("shows only generic clipboard failures and keeps private values out of diagnostics", async () => {
+    const selection = "token=clipboard-secret /Users/operator/private.txt session-main";
+    const rawFailure = "OpenAI provider rejected private.txt";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error(rawFailure)) },
+    });
+    stubTerminal.getSelection.mockReturnValue(selection);
+    render(
+      <TerminalPane
+        paneId="pane-private-copy"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(stubTerminal.customKeyEventHandler).toBeTypeOf("function"));
+
+    stubTerminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    expect(await screen.findByText("Clipboard copy failed. Try again.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain(selection);
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(selection);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("OpenAI");
+    expect(diagnostics).not.toContain("private.txt");
+    expect(diagnostics).not.toContain("session-main");
   });
 
   it("marks the xterm container with ph-no-capture so recordings never include terminal output", () => {
@@ -129,7 +210,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd=""
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -156,7 +237,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd="projects"
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -165,7 +246,7 @@ describe("TerminalPane session replay privacy", () => {
       { container: host },
     );
     await Promise.resolve();
-    const root = container.firstElementChild as HTMLElement;
+    const root = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const event = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "clipboardData", {
       value: {
@@ -183,12 +264,12 @@ describe("TerminalPane session replay privacy", () => {
     expect(bubbleSpy).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/terminal/sessions/main/paste-assets"),
+        expect.stringContaining("/api/terminal/workspaces/tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/tabs/tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/paste-assets"),
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
             Authorization: "Bearer ws-token",
-            "Content-Type": "image/png",
+            "Content-Type": "application/json",
             "X-Matrix-Filename": "screen shot.png",
           }),
           credentials: "same-origin",
@@ -200,6 +281,7 @@ describe("TerminalPane session replay privacy", () => {
     await waitFor(() => {
       expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
         type: "input",
+        terminalRef: TERMINAL_REF,
         data: `${BRACKETED_PASTE_OPEN}/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png${BRACKETED_PASTE_CLOSE}`,
       }));
     });
@@ -214,7 +296,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd="projects"
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -222,7 +304,7 @@ describe("TerminalPane session replay privacy", () => {
       />,
     );
     await Promise.resolve();
-    const root = container.firstElementChild as HTMLElement;
+    const root = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const event = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "clipboardData", {
       value: {
@@ -244,18 +326,18 @@ describe("TerminalPane session replay privacy", () => {
     const longA = `/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/${"a".repeat(40_000)}.png`;
     const longB = `/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/${"b".repeat(40_000)}.png`;
     vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+      .mockResolvedValueOnce(new Response(JSON.stringify({ assets: [{
         path: "projects/.matrix-terminal-pastes/2026-07-07/a.png",
         terminalPath: longA,
         size: 12,
         mimeType: "image/png",
-      })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+      }] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ assets: [{
         path: "projects/.matrix-terminal-pastes/2026-07-07/b.png",
         terminalPath: longB,
         size: 12,
         mimeType: "image/png",
-      }))));
+      }] }))));
     const files = [
       new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47])], "a.png", { type: "image/png" }),
       new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47])], "b.png", { type: "image/png" }),
@@ -266,7 +348,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd="projects"
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -274,7 +356,7 @@ describe("TerminalPane session replay privacy", () => {
       />,
     );
     await Promise.resolve();
-    const root = container.firstElementChild as HTMLElement;
+    const root = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const event = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "clipboardData", {
       value: {
@@ -304,10 +386,9 @@ describe("TerminalPane session replay privacy", () => {
   });
 
   it("captures dropped image files and does not close or reconnect the terminal socket on upload failure", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(
-      JSON.stringify({ error: { code: "upload_failed", message: "Request failed" } }),
-      { status: 500 },
-    )));
+    const rawFailure = "OpenAI /home/matrix/home/private/photo.jpg session-main";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(rawFailure)));
     const file = new File([Uint8Array.from([0xff, 0xd8, 0xff])], "photo.jpg", {
       type: "image/jpeg",
     });
@@ -317,7 +398,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd="projects"
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -325,7 +406,7 @@ describe("TerminalPane session replay privacy", () => {
       />,
     );
     await Promise.resolve();
-    const root = container.firstElementChild as HTMLElement;
+    const root = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const event = new Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "dataTransfer", {
       value: {
@@ -342,5 +423,11 @@ describe("TerminalPane session replay privacy", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     expect(stubWs.close).not.toHaveBeenCalled();
     expect(stubWs.send).not.toHaveBeenCalledWith(expect.stringContaining("photo.jpg"));
+    expect(await screen.findByText("Image paste failed. Try again.")).toBeTruthy();
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("OpenAI");
+    expect(diagnostics).not.toContain("photo.jpg");
+    expect(diagnostics).not.toContain("session-main");
   });
 });

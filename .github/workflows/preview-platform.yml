@@ -42,6 +42,11 @@ on:
         required: true
         type: string
 
+      connect_share_preview:
+        description: "Connect an existing PR platform tag to its share-only VPS route in staging"
+        type: boolean
+        default: false
+
 permissions:
   contents: read
   id-token: write
@@ -55,7 +60,7 @@ jobs:
   preview:
     name: Deploy preview revision
     if: >-
-      (github.event_name == 'workflow_dispatch' ||
+      ((github.event_name == 'workflow_dispatch' && !inputs.connect_share_preview) ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         github.event.action != 'closed' &&
         ((github.event.action == 'labeled' && github.event.label.name == 'preview-platform') ||
@@ -69,6 +74,8 @@ jobs:
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}
       MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
       MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
@@ -115,12 +122,20 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ]; then
+            echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required." >&2
+            exit 1
+          fi
+          if [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "Refusing to build a platform preview with the example Clerk key." >&2
+            exit 1
+          fi
           head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
             --config cloudbuild.platform.yaml \
-            --substitutions "_IMAGE=$image" \
+            --substitutions "_IMAGE=$image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,_NEXT_PUBLIC_MATRIX_APP_URL=$PREVIEW_PUBLIC_URL" \
             --quiet
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
@@ -178,7 +193,7 @@ jobs:
               --no-traffic \
               --allow-unauthenticated \
               --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_API_ORIGIN=${api_origin},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN}" \
-              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest" \
+              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
           }
@@ -311,3 +326,76 @@ jobs:
               --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
             echo "Deleted revision $rev"
           done
+
+  select-share-preview:
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PR_NUMBER: ${{ inputs.pr }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Read the one existing preview route
+        run: node scripts/chat-share-preview-fixture.mjs --select
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-share-route
+          path: preview-share-route.json
+          retention-days: 1
+
+  connect-share-preview:
+    needs: select-share-preview
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Preview
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      PR_NUMBER: ${{ inputs.pr }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-share-route
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --filter . --ignore-scripts
+      - name: Register only the PR preview route in staging
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          test "$CLOUD_RUN_PREVIEW_SERVICE" = matrix-platform-preview
+          gcloud help secrets versions access >/dev/null
+          preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_db"
+          PREVIEW_DATABASE_URL="$preview_db" node scripts/chat-share-preview-fixture.mjs
+      - name: Enable the existing tagged host without moving traffic
+        run: |
+          set -euo pipefail
+          gcloud help run services describe >/dev/null
+          gcloud help run revisions describe >/dev/null
+          gcloud help run deploy >/dev/null
+          service="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json --quiet)"
+          revision="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<< "$service")"
+          url="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .url' <<< "$service")"
+          image="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)' --quiet)"
+          # Match the existing platform VPS-origin TLS policy (tracked in #410).
+          # This applies only to the dedicated Preview service and registered VPS addresses.
+          gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
+            --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}@CUSTOMER_VPS_TLS_VERIFY=false" --quiet
+          echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"

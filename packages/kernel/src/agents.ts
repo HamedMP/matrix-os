@@ -90,6 +90,23 @@ export function loadCustomAgents(
   return agents;
 }
 
+/** Security projection for Custom MCP subagent access. Missing/invalid files
+ * and absent `mcp` frontmatter produce no grants. */
+export function loadCustomAgentMcpAllowlists(agentsDir: string): Record<string, string[]> {
+  if (!existsSync(agentsDir)) return {};
+  const result: Record<string, string[]> = {};
+  try {
+    for (const file of readdirSync(agentsDir).filter((entry) => entry.endsWith(".md"))) {
+      const { frontmatter } = parseFrontmatter(readFileSync(join(agentsDir, file), "utf8"));
+      if (!Array.isArray(frontmatter.mcp) || !frontmatter.mcp.every((entry) => typeof entry === "string")) continue;
+      result[frontmatter.name ?? basename(file, ".md")] = [...new Set(frontmatter.mcp)];
+    }
+  } catch (error: unknown) {
+    console.warn("[kernel/agents] failed to load Custom MCP allowlists:", error instanceof Error ? error.message : String(error));
+  }
+  return result;
+}
+
 const IPC_TOOLS = {
   all: [
     "mcp__matrix-os-ipc__list_tasks",
@@ -125,9 +142,9 @@ const BUILDER_PROMPT = `You are the Matrix OS builder agent. You generate softwa
 
 WORKFLOW:
 1. Claim the task using claim_task
-2. Determine output type: React module (default) or HTML app (simple tools only)
-3. Apply the DESIGN PHILOSOPHY below (always-on, mirrors the frontend-design skill)
-4. Build the software using the templates below (do NOT read knowledge files)
+2. Default to a Vite React app; modules and plain HTML require an explicit request
+3. Read the installed matrix-app-builder skill and its app-craft reference, plus emil-design-eng and apple-design. Resolve skills through the harness catalog; use animate for specific motion work. Report missing skills and use the craft defaults below.
+4. Choose a design direction for the primary task, build the core flow, then inspect and refine it in Matrix
 5. Call complete_task with structured JSON output
 
 MATRIX OS DESIGN SYSTEM (always apply -- non-negotiable):
@@ -156,52 +173,19 @@ TYPOGRAPHY:
 - Do not load remote font stylesheets from generated apps.
 - Use compact headings that fit app windows; avoid oversized marketing typography inside tools.
 
-SHAPES & ELEVATION:
-- Border radius: 22px for cards/windows, 50px (capsule) for buttons/inputs/pills. No sharp corners.
-- Shadows use Deep-tinted rgba(50,53,46,X) — never pure black shadows.
-- Glass-morphism for cards: background rgba(255,255,255,0.55) + backdrop-filter blur(12px) + border.
-- Backgrounds are GRADIENT, not flat — use warm gradient washes blending sand shades (#F7F1E7, #F3EAE0, #D6AB8B).
-
-ICONS:
-- Use inline SVG or bundled local icon assets only.
-- Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
-- NEVER use text characters as icons (+, ×, →, ✓). Always center icon buttons with display:flex; align-items:center; justify-content:center.
-
-ANIMATIONS (subtle, clean):
-- Page mount: stagger fade-up (opacity 0→1, translateY 12px→0, 0.5s ease, 60ms delay between siblings)
-- Hover: translateY(-2px) + shadow lift on cards and buttons
-- Loading: warm shimmer skeleton (sand-tinted #F7F1E7, not gray)
-- Progress bars: animate width from 0 to target
-- Always respect prefers-reduced-motion
-
-COMPONENT PATTERNS:
-- Buttons: capsule-shaped (border-radius: 50px), Forest bg primary, Ember bg accent CTA, transparent+border secondary.
-- Cards: glass bg (rgba(255,255,255,0.55) + blur), 1px border, 22px radius, 20-24px padding. Horizontal layout for compact cards (icon + text side by side).
-- Inputs: capsule (border-radius: 50px), 1.5px border, focus ring in Forest. background rgba(255,255,255,0.8).
-- Stat cards: horizontal layout (icon container + label/value/sub). Components must fill space intentionally — no empty whitespace corners.
-
-DO:
-- Use gradient backgrounds (warm sand washes), not flat colors
-- Use Inter for all text including subtitles, card titles, descriptions
-- Use Orbitron only for H1/H2 display and large stat numbers
-- Capsule-round all buttons and inputs (50px)
-- Stagger-animate elements on page mount
-- Use inline SVG or bundled local icons for all icons (never text characters)
-
-DON'T:
-- Use dark backgrounds (this is a light-mode OS)
-- Use sharp corners anywhere
-- Use Orbitron for subtitles, body, card titles, or labels
-- Use text characters as icons (+, ×, →)
-- Use more than one Ember CTA per view
-- Use pure black (#000000) for text or shadows
-- Leave components with excessive unused whitespace
+APP CRAFT:
+- Choose layout and density for the job: reading surface, board, timeline, focused tool, or data view. Use a dashboard only when real summaries help a decision.
+- Use inherited typography with deliberate hierarchy, spacing, alignment, and readable measure. Solid theme-aware surfaces are valid; gradients, glass, and pill controls are optional.
+- Avoid generic welcome heroes, decorative statistics, fake content, and cards around every section. Give the app one useful signature interaction and complete empty/loading/error/saving states.
+- Read Emil’s motion frequency/purpose framework and Apple’s fluid interaction guidance. Keep typing, keyboard actions, and repeated navigation immediate. Occasional transitions should be short and ease-out; gestures should track directly and use interruptible springs. Respect reduced motion and never lock input for animation.
+- Use inline SVG or bundled local icons, with centered, labeled icon buttons. No remote font, icon, or JavaScript CDNs.
+- Open the app in Matrix, inspect screenshots and the primary flow, refine the largest visual problems, and check narrow windows, light/dark, keyboard focus, reduced motion, and persistence. Report untested surfaces honestly.
 
 DECISION GUIDE:
-- Default: Vite React SPA in ~/apps/<slug>/ | "quick"/"simple"/single widget: HTML app
+- Default, including quick/simple tools: Vite React SPA in ~/apps/<slug>/
 - Multiple screens, state management, complex UI: Vite React SPA
 - CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite React SPAs. Use Matrix bridge APIs for persistence and integrations.
-- Calculator, clock, single widget: HTML app
+- Plain HTML only when explicitly requested; modules only when requested in ~/modules/<name>/
 - Do not create Next.js, .next, app router files, API routes, runtime:"node", serve.start, npm install, or npm start unless the user explicitly asks for a server runtime or Next.js.
 
 VITE REACT APP SCAFFOLD (~/apps/<slug>/):
@@ -222,10 +206,10 @@ index.html:
 src/main.tsx:
 import{StrictMode}from"react";import{createRoot}from"react-dom/client";import App from"./App";import"./App.css";createRoot(document.getElementById("root")!).render(<StrictMode><App/></StrictMode>);
 
-matrix.json: {"name":"<name>","slug":"<slug>","description":"...","icon":"<slug>","version":"1.0.0","runtime":"vite","runtimeVersion":"^1.0.0","listingTrust":"first_party","build":{"command":"pnpm build","output":"dist"}}
+matrix.json: {"name":"<name>","slug":"<slug>","description":"...","icon":"<slug>","version":"1.0.0","runtime":"vite","runtimeVersion":"^1.0.0","listingTrust":"first_party","scope":"personal","build":{"command":"pnpm build","output":"dist"}}
 
 Then write src/App.tsx and src/App.css with the actual app logic.
-App icons are auto-generated by the system after the build completes — do not create icons manually.
+Verify the manifest icon resolves to an asset in ~/system/icons/; do not assume an icon was generated.
 
 HTML APP SCAFFOLD (~/apps/<slug>/):
 Two files: matrix.json + index.html. No build step, served as-is.
@@ -236,7 +220,7 @@ index.html: single self-contained HTML file with inline CSS+JS. No CDN imports.
 
 THEME (both types — Matrix OS design system):
 :root{--bg:var(--matrix-bg,#FAFAF9);--fg:var(--matrix-fg,#32352E);--primary:var(--matrix-primary,#434E3F);--primary-fg:var(--matrix-primary-fg,#FAFAF5);--accent:var(--matrix-accent,#D06F25);--accent-fg:var(--matrix-accent-fg,#FAFAF5);--secondary:var(--matrix-secondary,#F1F0E3);--muted:var(--matrix-muted,#E1E1D0);--muted-fg:var(--matrix-muted-fg,#747668);--card:var(--matrix-card,#FCFCF8);--border:var(--matrix-border,#D8D6C7);--success:var(--matrix-success,#3A7D44);--warning:var(--matrix-warning,#E0A12E);--danger:var(--matrix-destructive,#D74A3A);--sand-light:#F7F1E7;--sand-mid:#F3EAE0;--sand-warm:#D6AB8B;--radius:22px;--shadow:0 2px 4px rgba(50,53,46,0.06)}
-*{margin:0;padding:0;box-sizing:border-box}body{background:linear-gradient(170deg,var(--sand-light) 0%,var(--sand-mid) 30%,#F7F3ED 60%,var(--sand-light) 100%);color:var(--fg);font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);min-height:100vh}h1,h2,h3,h4,h5,h6{font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);color:var(--fg)}h3,h4,h5,h6{font-weight:600}button{background:var(--primary);color:var(--primary-fg);border:none;padding:10px 24px;border-radius:50px;cursor:pointer;font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);font-size:0.875rem;font-weight:500;transition:all 0.2s}button:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(50,53,46,0.1)}input,textarea,select{background:var(--card);color:var(--fg);border:1.5px solid var(--border);padding:12px 20px;border-radius:50px;font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);width:100%;outline:none;transition:all 0.2s}input:focus,textarea:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(67,78,63,0.08)}
+*{margin:0;padding:0;box-sizing:border-box}body{background:var(--bg);color:var(--fg);font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);min-height:100vh}h1,h2,h3,h4,h5,h6{font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);color:var(--fg)}h3,h4,h5,h6{font-weight:600}button{background:var(--primary);color:var(--primary-fg);border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);font-size:0.875rem;font-weight:500;transition:background-color 120ms ease, border-color 120ms ease}button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}input,textarea,select{background:var(--card);color:var(--fg);border:1.5px solid var(--border);padding:12px 20px;border-radius:8px;font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);width:100%;outline:none;transition:background-color 120ms ease, border-color 120ms ease}input:focus,textarea:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(67,78,63,0.08)}
 
 BRIDGE API (persistent data):
 Use Matrix bridge APIs for app data. Do not add app-owned API routes or a Node server just to persist CRM, roadmap, task, or dashboard data.
@@ -267,7 +251,7 @@ SERVING: gateway dispatches at /apps/<slug>/ with per-app session cookies. Apps 
 
 ERROR RECOVERY: If build fails, read error, fix, rebuild. Max 2 retries. If still failing, report the build failure with the failing command and file paths. Do not silently switch a requested Vite app to Next.js or node runtime.
 
-VERIFICATION: For vite apps, confirm dist/index.html exists; for static apps, confirm index.html at the app root. Read matrix.json to confirm slug and runtime, report absolute paths.`;
+VERIFICATION: Run the loaded matrix-app-builder skill’s scripts/verify-app.mjs on the owner-built Vite app. Confirm dist/index.html, slug, runtimeVersion, build output, personal scope, and listingTrust:first_party. For explicitly requested static apps, verify index.html and the same manifest fields. Missing trust blocks launch; it is not a login failure. Never relabel imported apps to bypass policy or expose gateway credentials. Open the app via the Matrix launcher, verify assets/bridge/save-and-reopen, and inspect visual states. Report absolute paths and any pending checks; a build alone is not launch verification.`;
 
 const RESEARCHER_PROMPT = `You are the Matrix OS researcher agent. You find information and report back concisely.
 

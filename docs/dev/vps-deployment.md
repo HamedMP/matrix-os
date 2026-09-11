@@ -49,9 +49,12 @@ Internet
 New VPS provisions download the host bundle from R2:
 
 ```text
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production resolves the `stable` channel to that immutable version when each
+provisioning job starts.
 
 The per-user Docker image path is legacy/local-development only. It is not used for production customer VPSes.
 
@@ -599,12 +602,18 @@ Customer VPS host services are not affected by a platform control-plane restart.
 
 ### Update Customer VPS Host Bundle
 
-Customer VPSes boot from a host bundle downloaded from R2 at:
+Customer VPSes boot from an immutable host bundle downloaded from R2 at:
 
 ```text
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production provisioning is bound to the `stable` channel. Each create or
+recovery resolves `stable` once, persists the exact version and SHA, and uses
+that same immutable target for either a golden snapshot or clean-image
+fallback. Promote a reviewed prior release back to `stable` for rollback;
+never repoint production through a separate image-version environment value.
 
 Use this path whenever shell, gateway, bundled apps, host scripts, Postgres env wiring, or agent CLI versions change for VPS-hosted users. The normal path is the GitHub Actions release workflow on `main`; local builds are for break-glass verification or emergency release preparation.
 
@@ -635,6 +644,13 @@ curl --fail --silent --show-error \
 
 Do not SSH-copy bundles except for break-glass recovery. The sync agent downloads the registered bundle through platform, verifies the SHA-256, stages extraction, keeps `/opt/matrix/app.rollback`, swaps `/opt/matrix/app`, writes `/opt/matrix/release.json`, and restarts services.
 
+Project terminal workloads are deliberately outside those replaceable service
+cgroups. The updater may restart `matrix-gateway` and the
+`matrix-terminal-runtime` control plane, but it must never stop or restart
+`matrix-zellij@*`, `matrix-terminal.slice`, or the matrix user manager. Each
+project's tabs share one user unit and remain pinned to that unit's immutable
+terminal generation across ordinary update and rollback.
+
 Operational rules:
 
 - Keep release provenance and update subscription separate. `/opt/matrix/release.json`
@@ -650,6 +666,9 @@ Operational rules:
 - During in-place refreshes, wrapper scripts in `/opt/matrix/bin` must be executable by the `matrix` service user. Either keep bundle wrapper mode `0755`, or set group to `matrix` and mode `0750` after extraction.
 - Global agent CLI packages under `/opt/matrix/runtime/node/lib/node_modules` and their shims under `/opt/matrix/runtime/node/bin` must be writable by the `matrix` group. Codex, Claude, opencode, pi, and uv update themselves through the Matrix runtime prefix; root-owned, non-writable global packages cause `EACCES: permission denied, rename ...`. Hermes installs for the `matrix` user through `/opt/matrix/bin/matrix-install-hermes`.
 - Preserve `/opt/matrix/env`, `/home/matrix/home`, and the local Postgres data directory during in-place refreshes.
+- Installing updated terminal user-unit files requires only
+  `systemctl --user daemon-reload`; never restart active `matrix-zellij@*`
+  instances as part of a bundle refresh.
 - Host bundle sync may replace `/opt/matrix/app` only. It must not overwrite owner files under `/home/matrix/home`; protected template paths such as `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, configs, layouts, sessions, logs, conversations, memory, and state are user data.
 - Record the checksum/release version after publishing and mention which customer VPSes were refreshed.
 
@@ -658,7 +677,7 @@ Verification after deploying a host bundle:
 ```bash
 cat /opt/matrix/app/BUNDLE_VERSION
 cat /opt/matrix/release.json
-systemctl is-active matrix-gateway matrix-shell matrix-sync-agent
+systemctl is-active matrix-terminal-runtime matrix-gateway matrix-shell matrix-sync-agent
 curl -fsS http://127.0.0.1:4000/health
 
 source /opt/matrix/env/host.env
@@ -1045,12 +1064,13 @@ ls /etc/cloudflared/credentials.json
 
 Split the incident by layer before changing runtime code: direct customer VPS
 health, local platform websocket upgrade, then public `app.matrix-os.com`
-websocket upgrade. Public `/ws` or `/ws/terminal/session` failures while direct
+websocket upgrade. Public `/ws` or `/ws/terminal/tab` failures while direct
 origin probes succeed usually mean the Cloudflare tunnel is wedged.
 
 The production platform compose runs `cloudflared-watchdog`, which polls
 `/vps/fleet`, selects a healthy running customer VPS, mints a short-lived
-websocket token, and probes public `/ws` plus `/ws/terminal/session`. After
+websocket token, resolves a real tab from `/api/terminal/workspaces`, and probes
+public `/ws` plus `/ws/terminal/tab`. After
 three consecutive public websocket failures it restarts only the Cloudflared
 container through the Docker socket, then resumes probing. Tune it with:
 

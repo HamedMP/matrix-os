@@ -5,7 +5,7 @@ export type BrowserAddressResolution =
       remoteHost: "127.0.0.1" | "::1" | "localhost";
       remotePort: number;
     }
-  | { disposition: "external"; url: string };
+  | { disposition: "public"; url: string };
 
 export type RuntimeBrowserNavigationDecision =
   | { disposition: "rewrite"; url: string }
@@ -53,7 +53,7 @@ export function resolveBrowserAddress(value: string): BrowserAddressResolution |
 
   if (!urlInput) {
     const params = new URLSearchParams({ q: input });
-    return { disposition: "external", url: `https://www.google.com/search?${params.toString()}` };
+    return { disposition: "public", url: `https://www.google.com/search?${params.toString()}` };
   }
 
   const parsed = parseHttpUrl(urlInput);
@@ -73,7 +73,7 @@ export function resolveBrowserAddress(value: string): BrowserAddressResolution |
       remotePort,
     };
   }
-  return { disposition: "external", url: parsed.toString() };
+  return { disposition: "public", url: parsed.toString() };
 }
 
 export function resolveRuntimeBrowserNavigation(
@@ -94,7 +94,7 @@ export function resolveRuntimeBrowserNavigation(
   // to the user's browser: a DNS alias or rebinding response could otherwise
   // reach loopback/private services outside the authenticated tunnel. Public
   // URLs entered directly in BrowserTab still use resolveBrowserAddress().
-  if (resolved.disposition === "external") return { disposition: "block" };
+  if (resolved.disposition === "public") return { disposition: "block" };
   if (resolved.remotePort !== remotePort) return { disposition: "block" };
 
   local.pathname = target.pathname;

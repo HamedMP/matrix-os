@@ -69,7 +69,7 @@ describe("AgentConversationView composer card presentation", () => {
 
     const content = document.querySelector('[data-slot="message-scroller-content"]');
     expect(content).not.toBeNull();
-    expect(content!.className).toContain("max-w-[46rem]");
+    expect(content!.className).toContain("max-w-[868px]");
     expect(content!.className).toContain("mx-auto");
   });
 
@@ -78,7 +78,7 @@ describe("AgentConversationView composer card presentation", () => {
 
     const composer = screen.getByLabelText("Message conversation").closest('[data-slot="conversation-composer"]');
     expect(composer).not.toBeNull();
-    expect(composer!.className).toContain("max-w-[46rem]");
+    expect(composer!.className).toContain("max-w-[868px]");
     expect(composer!.className).toContain("mx-auto");
 
     const card = composer!.querySelector(".prompt-card");

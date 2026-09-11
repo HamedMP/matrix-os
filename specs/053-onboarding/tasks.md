@@ -112,7 +112,7 @@
 - [x] Remove contextual content display from conversation screen (commit `b9c22aa`)
 
 ### T0548: Post-onboarding landing
-- [x] Desktop loads on `moraine-lake` wallpaper preset (commit `e082829`)
+- [x] Desktop loads on the `matrix-dusk` wallpaper (original onboarding work in commit `e082829`)
 
 ---
 

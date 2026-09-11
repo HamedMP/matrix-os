@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -12,11 +12,13 @@ import {
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
+import type { AiTokenUsage } from "../ai-analytics.js";
 import { parseCodexExecJsonLine } from "./codex-events.js";
 import { codexExecContractStatus } from "./codex-version.js";
 import { codexAppServerContractStatus } from "./codex-app-server-version.js";
 import { CodexExecutableSchema, codexExecutableFromEnv } from "./codex-executable.js";
 import type { CodingAgentProviderEventBatch } from "./provider-adapter.js";
+import { runtimeUnavailable, type RuntimeSupervision } from "./codex-runtime-supervision.js";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const WatchInputSchema = z.object({
@@ -48,6 +50,8 @@ type ProviderEventStore = {
   ): Promise<unknown>;
 };
 type WatchEntry = {
+  supervision: RuntimeSupervision;
+  failureEvents?: AgentThreadEvent[];
   principal: RequestPrincipal;
   threadId: string;
   sessionId: string;
@@ -85,7 +89,7 @@ function eventId(sessionId: string, byteOffset: number, index: number): string {
 
 function completionEvents(input: {
   threadId: string;
-  outcome: "completed" | "failed";
+  outcome: "completed" | "failed" | "aborted";
   occurredAt: string;
   nextEventId: () => string;
 }): AgentThreadEvent[] {
@@ -121,6 +125,7 @@ export function createCodexEventBridge(options: {
   pollIntervalMs?: number;
   now?: () => Date;
   nowMs?: () => number;
+  isRuntimeAlive?: (sessionId: string) => Promise<boolean>;
 }) {
   const homePath = resolve(options.homePath);
   const eventDir = join(homePath, "system", "coding-agents", "provider-events");
@@ -216,11 +221,13 @@ export function createCodexEventBridge(options: {
     }
   }
 
-  async function ingest(entry: WatchEntry, bytes: Buffer, consumedBytes: number): Promise<boolean> {
+  async function ingest(entry: WatchEntry, bytes: Buffer, consumedBytes: number): Promise<{ terminal: boolean; ready: boolean }> {
     if (!store) throw new Error("Codex event store is unavailable");
     const events: AgentThreadEvent[] = [];
     let providerThreadId: string | undefined;
+    let tokenUsage: AiTokenUsage | undefined;
     let terminal = false;
+    let ready = false;
     let lineStart = 0;
     let absoluteOffset = entry.offset;
     const occurredAt = entry.pendingOccurredAt ?? now().toISOString();
@@ -236,12 +243,14 @@ export function createCodexEventBridge(options: {
         nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++),
       });
       events.push(...parsed.events);
+      ready ||= parsed.events.length > 0 || !!parsed.providerThreadId || !!parsed.outcome;
       if (parsed.providerThreadId) {
         if (providerThreadId && providerThreadId !== parsed.providerThreadId) {
           throw new Error("Codex provider conversation changed");
         }
         providerThreadId = parsed.providerThreadId;
       }
+      if (parsed.tokenUsage) tokenUsage = parsed.tokenUsage;
       if (parsed.outcome) {
         terminal = true;
         events.push(...completionEvents({
@@ -262,12 +271,14 @@ export function createCodexEventBridge(options: {
       await store.ingestProviderEvents(entry.principal, entry.threadId, {
         events: chunk,
         ...(index === 0 && providerThreadId ? { providerThreadId } : {}),
+        ...(index === chunks.length - 1 && terminal && tokenUsage ? { tokenUsage } : {}),
       });
     }
-    return terminal;
+    return { terminal, ready };
   }
 
-  async function drainEntry(entry: WatchEntry): Promise<void> {
+  // True means all complete records were consumed; an incomplete final line is not a durable event.
+  async function drainEntry(entry: WatchEntry): Promise<boolean> {
     const stoppedDrainExpired = () =>
       entry.stopRequestedAt !== undefined && nowMs() - entry.stopRequestedAt >= STOP_DRAIN_GRACE_MS;
     let handle;
@@ -275,11 +286,11 @@ export function createCodexEventBridge(options: {
       const info = await lstat(entry.path);
       if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_TRANSCRIPT_BYTES) {
         watchers.delete(entry.sessionId);
-        return;
+        return false;
       }
       if (info.size <= entry.offset) {
         if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
-        return;
+        return true;
       }
       const length = Math.min(info.size - entry.offset, MAX_DRAIN_BYTES);
       const bytes = Buffer.alloc(length);
@@ -289,20 +300,25 @@ export function createCodexEventBridge(options: {
       const lastNewline = data.lastIndexOf(0x0a);
       if (lastNewline < 0) {
         if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
-        return;
+        return true;
       }
       const consumedBytes = lastNewline + 1;
-      const terminal = await ingest(entry, data, consumedBytes);
+      if (closed || watchers.get(entry.sessionId) !== entry) return false;
+      const { terminal, ready } = await ingest(entry, data, consumedBytes);
       entry.offset += consumedBytes;
+      entry.supervision.ready ||= ready;
+      entry.supervision.terminal ||= terminal;
       entry.lastTouchedAt = nowMs();
       entry.pendingOccurredAt = undefined;
       if (terminal && entry.stopRequestedAt !== undefined) watchers.delete(entry.sessionId);
+      return info.size - entry.offset <= data.length - consumedBytes;
     } catch (error: unknown) {
       if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
         if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
-        return;
+        return true;
       }
       console.warn("[coding-agents] Codex event ingestion will retry");
+      return false;
     } finally {
       await handle?.close();
     }
@@ -311,11 +327,41 @@ export function createCodexEventBridge(options: {
   async function drainAll(): Promise<void> {
     if (closed) return;
     await cleanupOrphans();
-    for (const entry of watchers.values()) await drainEntry(entry);
+    const entries = [...watchers.values()];
+    for (let start = 0; start < entries.length; start += 10) {
+      await Promise.all(entries.slice(start, start + 10).map(async (entry) => {
+        await drainEntry(entry);
+        if (!store || !options.isRuntimeAlive || watchers.get(entry.sessionId) !== entry) return;
+        if (!entry.failureEvents && !await runtimeUnavailable(entry.supervision,
+          () => options.isRuntimeAlive!(entry.sessionId), nowMs())) return;
+        if (closed || watchers.get(entry.sessionId) !== entry || entry.supervision.terminal) return;
+        // A final batch may have arrived during the probe; give persisted output priority.
+        if (!await drainEntry(entry)) return;
+        if (entry.supervision.terminal || watchers.get(entry.sessionId) !== entry) return;
+        entry.failureEvents ??= completionEvents({ threadId: entry.threadId, outcome: "failed",
+          occurredAt: now().toISOString(), nextEventId: (() => {
+            let index = 0;
+            const epoch = randomUUID();
+            return () => eventId(`${entry.sessionId}:${epoch}`, entry.offset, 10_000 + index++);
+          })(),
+        });
+        try {
+          await store.ingestProviderEvents(entry.principal, entry.threadId, { events: entry.failureEvents });
+          if (watchers.get(entry.sessionId) === entry) watchers.delete(entry.sessionId);
+        } catch (error: unknown) {
+          console.warn("[coding-agents] Runtime failure persistence will retry", {
+            errorType: error instanceof Error ? error.name : "UnknownError",
+          });
+        }
+      }));
+    }
   }
 
+  let drainScheduled = false;
   const timer = setInterval(() => {
-    queue = queue.then(drainAll, drainAll);
+    if (drainScheduled) return;
+    drainScheduled = true;
+    queue = queue.then(drainAll, drainAll).finally(() => { drainScheduled = false; });
   }, pollIntervalMs);
   timer.unref();
 
@@ -347,12 +393,12 @@ export function createCodexEventBridge(options: {
         if (existing.threadId !== parsed.threadId || existing.principal.userId !== input.principal.userId) {
           throw new Error("Codex event watcher identity mismatch");
         }
-        existing.lastTouchedAt = nowMs();
-        return { path };
+        if (!parsed.startAtEnd) { existing.lastTouchedAt = nowMs(); return { path }; }
       }
-      evictIfNeeded();
-      let offset = 0;
-      if (parsed.startAtEnd) {
+      if (!existing) evictIfNeeded();
+      // Renew supervision without dropping bytes already owned by an active watcher.
+      let offset = existing?.offset ?? 0;
+      if (parsed.startAtEnd && !existing) {
         try {
           const info = await lstat(path);
           if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_TRANSCRIPT_BYTES) {
@@ -366,6 +412,8 @@ export function createCodexEventBridge(options: {
         }
       }
       watchers.set(parsed.sessionId, {
+        supervision: { startedAt: nowMs(), nextProbeAt: nowMs() + 10_000, failures: 0,
+          ready: false, terminal: false },
         principal: input.principal,
         threadId: parsed.threadId,
         sessionId: parsed.sessionId,

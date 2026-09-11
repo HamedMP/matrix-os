@@ -101,6 +101,17 @@ describe("desktop release workflows", () => {
     );
   });
 
+  it("builds shared brand assets before clean Desktop bundles", () => {
+    const desktopPackage = JSON.parse(
+      readFileSync(join(root, "desktop/package.json"), "utf8"),
+    ) as { scripts: Record<string, string> };
+    const brandBuild = "pnpm --dir .. --filter '@matrix-os/brand' build";
+
+    expect(desktopPackage.scripts.dev).toBe(`${brandBuild} && electron-vite dev`);
+    expect(desktopPackage.scripts.build).toBe(`${brandBuild} && electron-vite build`);
+    expect(desktopPackage.scripts.package).toBe("pnpm run build && electron-builder --mac --publish never");
+  });
+
   it("lets the mac matrix arch control electron-builder outputs", () => {
     const config = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
 
@@ -162,6 +173,13 @@ describe("desktop release workflows", () => {
 
     expect(bundledMainDependencies).toHaveLength(1);
     expect(bundledPreloadDependencies).toHaveLength(1);
+  });
+
+  it("keeps native macOS window controls in the reserved titlebar region", () => {
+    const main = readFileSync(join(root, "desktop/src/main/index.ts"), "utf8");
+
+    expect(main).not.toContain("win.setWindowButtonVisibility(false)");
+    expect(main).toContain("trafficLightPosition: { x: 14, y: 13 }");
   });
 
   it("emits one self-contained sandbox preload for the shell and native apps", () => {

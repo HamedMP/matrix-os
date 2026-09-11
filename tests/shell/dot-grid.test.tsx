@@ -41,19 +41,19 @@ describe("DotGrid OS-design gating", () => {
     expect(container.querySelector("canvas")).not.toBeNull();
   });
 
-  it("preserves the enabled Canvas grid across a Developer mode round trip", async () => {
+  it("preserves the enabled Canvas grid across a Desktop mode round trip", async () => {
     const { container } = render(<DotGrid />);
 
     expect(container.querySelector("canvas")).not.toBeNull();
 
     await act(async () => {
-      useDesktopMode.setState({ mode: "dev", previousMode: "canvas" });
+      useDesktopMode.setState({ mode: "desktop", previousMode: "canvas" });
     });
     expect(container.querySelector("canvas")).toBeNull();
     expect(useDotGrid.getState().enabled).toBe(true);
 
     await act(async () => {
-      useDesktopMode.setState({ mode: "canvas", previousMode: "dev" });
+      useDesktopMode.setState({ mode: "canvas", previousMode: "desktop" });
     });
     expect(container.querySelector("canvas")).not.toBeNull();
     expect(useDotGrid.getState().enabled).toBe(true);

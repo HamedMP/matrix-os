@@ -14,7 +14,14 @@ The central relay is the only holder of the funded upstream credential. A custom
 
 ## Implementation checkpoint
 
-The first PR implements the fixed Cloudflare transport, a distinct funded-only HMAC audience, explicit model/path/field/header policy, bounded request/response streaming, global and per-runtime admission, and shutdown cancellation behind a startup feature flag. Owner identity, expiry, per-runtime revocation, recurring eligibility refresh, request correlation, token-aware reservation, and production VPS issuance described below are target requirements for the subsequent activation slices; funded access remains disabled until they land.
+The control plane now issues short-lived, opaque, runtime-scoped credentials
+from an authenticated handle route while retaining only token hashes centrally.
+The owner gateway validates the returned owner/machine/runtime identity, keeps
+the credential in memory, refreshes with singleflight and bounded jitter/backoff,
+and refuses credentials too close to expiry. Customer hosts receive no relay
+service token or Cloudflare credential. The Cloudflare forwarder and production
+activation remain disabled until reservation/start/settlement and relay policy
+enforcement are wired end to end.
 
 ## Accepted Anthropic surface
 

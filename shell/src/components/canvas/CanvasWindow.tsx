@@ -1,5 +1,6 @@
 "use client";
 
+import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
@@ -10,7 +11,6 @@ import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
-import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { useChatContext } from "@/stores/chat-context";
@@ -25,8 +25,6 @@ import {
   WinXpTitleBarChrome,
 } from "../window/DesignTitleBarChrome";
 
-const MIN_WIDTH = 320;
-const MIN_HEIGHT = 200;
 const CANVAS_WINDOW_MOTION_MS = 280;
 const CANVAS_WINDOW_MOTION_CSS = `
 @keyframes canvas-window-restore-from-dock {
@@ -56,6 +54,7 @@ function ensureCanvasWindowMotionStyles() {
 
 interface CanvasWindowProps {
   win: AppWindow;
+  iconUrl?: string;
   /** When true, the window stays mounted but is visually hidden so iframe
       state, terminal sockets, and React state survive minimize -> restore. */
   hidden?: boolean;
@@ -64,7 +63,7 @@ interface CanvasWindowProps {
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- cohesive single-window renderer: the bulk is theme-specific title-bar selection plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
-export function CanvasWindow({ win, hidden = false, deferAppContent = false }: CanvasWindowProps) {
+export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const panX = useCanvasTransform((s) => s.panX);
@@ -73,10 +72,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const minimizeWindow = useWindowManager((s) => s.minimizeWindow);
   const focusWindow = useWindowManager((s) => s.focusWindow);
   const moveWindow = useWindowManager((s) => s.moveWindow);
-  const resizeWindow = useWindowManager((s) => s.resizeWindow);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
-  const iconUrl = useWindowManager((s) => s.apps.find((a) => a.path === win.path)?.iconUrl);
   // react-doctor-disable-next-line react-doctor/no-event-handler -- false positive: `isFocused` is a derived store value, not a DOM event handler. It is read by the reset effect below (already justified for set-state-in-effect / no-adjust-state-on-prop-change), which must remain an effect because it fires on programmatic canvas scroll / focus loss where no event exists to move the logic into.
   const isFocused = focusedWindowId === win.id;
   const isFullscreen = fullscreenWindowId === win.id;
@@ -190,13 +187,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   } | null>(null);
   const mouseDragCleanupRef = useRef<(() => void) | null>(null);
 
-  const resizeRef = useRef<{
-    startX: number;
-    startY: number;
-    origW: number;
-    origH: number;
-  } | null>(null);
-
   const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearMouseDragListeners = () => {
@@ -298,45 +288,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       cRect?.width ?? window.innerWidth,
       cRect?.height ?? window.innerHeight,
     );
-  };
-
-  const onResizeStart = (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    resizeRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      origW: win.width,
-      origH: win.height,
-    };
-    setInteracting(true);
-    focusWindow(win.id);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-
-    // Safety: auto-clear if pointer up never fires
-    if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
-    safetyTimerRef.current = setTimeout(() => {
-      resizeRef.current = null;
-      setInteracting(false);
-    }, 5000);
-  };
-
-  const onResizeMove = (e: React.PointerEvent) => {
-    if (!resizeRef.current) return;
-    const { startX, startY, origW, origH } = resizeRef.current;
-    const dw = (e.clientX - startX) / zoom;
-    const dh = (e.clientY - startY) / zoom;
-    resizeWindow(
-      win.id,
-      Math.max(MIN_WIDTH, origW + dw),
-      Math.max(MIN_HEIGHT, origH + dh),
-    );
-  };
-
-  const onResizeEnd = () => {
-    resizeRef.current = null;
-    setInteracting(false);
-    if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
   };
 
   const titleBarHeight = 36;
@@ -495,9 +446,11 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         <TerminalApp
           mobile={isMobile}
           launchTargetId={win.id}
+          layoutId={win.terminalLayoutId}
+          persistence={win.terminalPersistence ?? "durable"}
           embeddedChrome
           canvasZoom={isFullscreen ? 1 : zoom}
-          suspended={hidden}
+          suspended={hidden || isPreview}
           windowControls={{
             close: () => closeWindow(win.id),
             minimize: animateMinimize,
@@ -512,8 +465,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
             },
           }}
         />
-      ) : win.path === "__workspace__" ? (
-        <WorkspaceApp />
       ) : win.path === "__file-browser__" ? (
         <FileBrowser windowId={win.id} mobile={isMobile} />
       ) : win.path === "__preview-window__" ? (
@@ -529,7 +480,13 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
               conversations={chatState.conversations}
               onNewChat={chatState.newChat}
               onSwitchConversation={chatState.switchConversation}
+              activeConversationTitle={chatState.activeConversationTitle}
+              onRenameConversation={chatState.renameConversation}
               onSubmit={chatState.submitMessage}
+              onSubmitApproval={chatState.submitApproval}
+              providerSelection={chatState.providerSelection}
+              composerDraftRequest={chatState.composerDraftRequest}
+              onComposerDraftConsumed={chatState.consumeComposerDraft}
               mobile={isMobile}
             />
           )}
@@ -597,6 +554,24 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         {isFullscreen && fullscreenTitleBar}
         {isFullscreen ? (
           <div className="relative flex-1 min-h-0 overflow-hidden">{appContent}</div>
+        ) : terminalOwnsChrome ? (
+          <>
+            <div className={isPreview ? "hidden" : "contents"} aria-hidden={isPreview || undefined}>
+              {appContent}
+            </div>
+            {isPreview ? (
+              iconUrl ? (
+                // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
+                <img src={iconUrl} alt={win.title} className="size-16 object-contain opacity-50" draggable={false} />
+              ) : (
+                <span className="text-3xl font-semibold text-muted-foreground/20">
+                  {win.title.charAt(0).toUpperCase()}
+                </span>
+              )
+            ) : (
+              interacting && <div className="absolute inset-0 z-10" />
+            )}
+          </>
         ) : isPreview ? (
           <>
             {iconUrl ? (
@@ -626,20 +601,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
           </>
         )}
       </div>
-      {/* Resize handle — hidden in fullscreen and preview */}
       {!isFullscreen && !isPreview && (
-        <div
-          className="absolute bottom-0 right-0 size-3 cursor-se-resize touch-none z-20"
-          onPointerDown={onResizeStart}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeEnd}
-          onPointerCancel={onResizeEnd}
-        >
-          <svg viewBox="0 0 12 12" className="size-3 text-muted-foreground/30">
-            <path d="M11 1v10H1" fill="none" stroke="currentColor" strokeWidth="1" />
-            <path d="M11 5v6H5" fill="none" stroke="currentColor" strokeWidth="1" />
-          </svg>
-        </div>
+        <AppWindowResizeControls win={win} scale={zoom} onInteractionChange={setInteracting} />
       )}
     </div>
   );

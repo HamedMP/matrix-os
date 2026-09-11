@@ -86,4 +86,47 @@ describe("Desktop TerminalLinkContextMenu", () => {
 
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("copies the immutable selection snapshot and restores origin focus on close", () => {
+    const onCopySelection = vi.fn();
+    const focusOrigin = vi.fn();
+    let liveSelection = "first row\nλ second row 👩🏽‍💻";
+    render(
+      <TerminalLinkContextMenu
+        menu={{ x: 120, y: 140, link: null, selection: liveSelection }}
+        onClose={() => focusOrigin()}
+        onOpen={vi.fn()}
+        onCopy={vi.fn()}
+        onCopySelection={onCopySelection}
+        onSelectAll={vi.fn()}
+      />,
+    );
+    liveSelection = "hovered";
+
+    const copy = screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(false);
+    fireEvent.click(copy);
+
+    expect(onCopySelection).toHaveBeenCalledWith("first row\nλ second row 👩🏽‍💻");
+    expect(focusOrigin).toHaveBeenCalledOnce();
+  });
+
+  it("light-dismisses outside without changing Copy availability", () => {
+    const onClose = vi.fn();
+    render(
+      <TerminalLinkContextMenu
+        menu={{ x: 120, y: 140, link: null, selection: "all selected rows" }}
+        onClose={onClose}
+        onOpen={vi.fn()}
+        onCopy={vi.fn()}
+        onCopySelection={vi.fn()}
+        onSelectAll={vi.fn()}
+      />,
+    );
+
+    expect((screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.pointerDown(document.body);
+
+    expect(onClose).toHaveBeenCalledOnce();
+  });
 });

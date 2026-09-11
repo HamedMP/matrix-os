@@ -13,6 +13,8 @@ describe("IPC contract", () => {
       "auth:poll",
       "auth:status",
       "auth:sign-out",
+      "analytics:flush-complete",
+      "support:get-identity",
       "runtime:create-thread",
       "runtime:create-turn",
       "runtime:subscribe-thread-events",
@@ -42,6 +44,7 @@ describe("IPC contract", () => {
       "state:set",
       "embed:open",
       "embed:set-bounds",
+      "embed:deactivate",
       "embed:suspend-all",
       "embed:reload",
       "embed:close",
@@ -54,6 +57,7 @@ describe("IPC contract", () => {
       "update:install",
       "update:get-whats-new",
       "update:acknowledge-whats-new",
+      "app:get-version",
       "app:get-zoom",
       "app:set-zoom",
       "window:toggle-maximize",
@@ -61,6 +65,104 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("bounds the trusted native app version response", () => {
+    const channel = INVOKE_CHANNELS["app:get-version"];
+
+    expect(channel.request.safeParse({}).success).toBe(true);
+    expect(channel.response.safeParse({ version: "1.4.0-canary.2", source: null }).success).toBe(true);
+    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "a".repeat(40), ancestors: [] } }).success).toBe(true);
+    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "unknown", ancestors: [] } }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "x".repeat(129), source: null }).success).toBe(false);
+  });
+
+  it("exposes bounded authenticated identity fields without credentials", () => {
+    const response = INVOKE_CHANNELS["auth:status"].response;
+
+    expect(response.safeParse({
+      signedIn: true,
+      handle: "neo",
+      userId: "user_2abcDEF",
+      email: "neo@example.com",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+    }).success).toBe(true);
+    expect(response.safeParse({
+      signedIn: true,
+      handle: "neo",
+      userId: "user_2abcDEF",
+      email: "neo@example.com",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+      accessToken: "must-not-cross-ipc",
+    }).success).toBe(false);
+    expect(response.safeParse({
+      signedIn: true,
+      handle: "neo",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+    }).success).toBe(false);
+    expect(response.safeParse({
+      signedIn: false,
+      userId: "user_2abcDEF",
+      email: "neo@example.com",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 2,
+    }).success).toBe(false);
+    expect(response.safeParse({
+      signedIn: true,
+      handle: "neo",
+      userId: "user_2abcDEF",
+      email: "not-an-email",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+    }).success).toBe(false);
+  });
+
+  it("returns only a verified Support identity proof over IPC", () => {
+    const response = INVOKE_CHANNELS["support:get-identity"].response;
+
+    expect(response.safeParse({
+      status: "verified",
+      distinctId: "user_2abcDEF",
+      identityHash: "ab".repeat(32),
+    }).success).toBe(true);
+    expect(response.safeParse({ status: "unavailable" }).success).toBe(true);
+    expect(response.safeParse({
+      status: "verified",
+      distinctId: "user_2abcDEF",
+      identityHash: "ab".repeat(32),
+      signingSecret: "must-not-cross-ipc",
+    }).success).toBe(false);
+  });
+
+  it("allows only privacy-safe Desktop analytics on main-to-renderer IPC", () => {
+    const schema = EVENT_CHANNELS["analytics:capture"];
+    expect(schema.safeParse({ name: "desktop_support_send_attempted" }).success).toBe(true);
+    expect(schema.safeParse({
+      name: "desktop_support_send_failed",
+      failureKind: "network",
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      name: "desktop_support_send_failed",
+      failureKind: "network",
+      error: "private upstream error",
+    }).success).toBe(false);
+  });
+
+  it("keeps the quit flush handshake payload-free", () => {
+    expect(INVOKE_CHANNELS["analytics:flush-complete"].request.safeParse({}).success).toBe(true);
+    expect(INVOKE_CHANNELS["analytics:flush-complete"].request.safeParse({ event: "private" }).success)
+      .toBe(false);
+    expect(EVENT_CHANNELS["analytics:flush-requested"].safeParse({}).success).toBe(true);
+    expect(EVENT_CHANNELS["analytics:flush-requested"].safeParse({ reason: "quit" }).success)
+      .toBe(false);
   });
 
   it("keeps Hermes setup IPC typed and credentials write-only", () => {
@@ -177,19 +279,33 @@ describe("IPC contract", () => {
     ).toBe(false);
     expect(
       INVOKE_CHANNELS["runtime:create-thread"].response.safeParse({
-        thread: {
-          id: "thread_desktop_1",
-          providerId: "codex",
-          title: "Summarize the failing checks",
-          status: "queued",
-          attention: "none",
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
+        ok: true,
+        snapshot: {
+          thread: {
+            id: "thread_desktop_1",
+            providerId: "codex",
+            title: "Summarize the failing checks",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
         },
-        events: {
-          items: [],
-          hasMore: false,
-          limit: 200,
+      }).success,
+    ).toBe(true);
+    expect(
+      INVOKE_CHANNELS["runtime:create-thread"].response.safeParse({
+        ok: false,
+        error: {
+          code: "thread_create_offline",
+          safeMessage: "Can't reach Matrix OS. Check your connection.",
+          retryable: true,
+          recoveryActions: ["retry"],
         },
       }).success,
     ).toBe(true);
@@ -411,7 +527,7 @@ describe("IPC contract", () => {
         hasMore: false,
         limit: 20,
       },
-      terminalSessions: {
+      terminalWorkspaces: {
         items: [],
         limit: 20,
         hasMore: false,
@@ -877,6 +993,16 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ embedId: "e1", state: "loading" }).success).toBe(true);
     expect(schema.safeParse({ embedId: "e1" }).success).toBe(false);
     expect(schema.safeParse({ embedId: "e1", state: "auth-required", token: "secret" }).success).toBe(false);
+  });
+
+  it("bounds retained embed frames to local JPEG data URLs", () => {
+    const schema = INVOKE_CHANNELS["embed:deactivate"].response;
+    expect(schema.safeParse({
+      ok: true,
+      snapshotDataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+    }).success).toBe(true);
+    expect(schema.safeParse({ ok: true, snapshotDataUrl: "https://example.com/private.png" }).success).toBe(false);
+    expect(schema.safeParse({ ok: false, snapshotDataUrl: null }).success).toBe(true);
   });
 
   it("requires kind-specific embed:open payloads", () => {

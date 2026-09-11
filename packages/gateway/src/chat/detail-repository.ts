@@ -4,10 +4,12 @@ import {
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
+  type CanonicalChatQueuedTurn,
   type CanonicalChatTurn,
 } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import type { ChatDatabase } from "./database.js";
+import { toQueuedTurn } from "./queue-repository.js";
 import {
   toActivities,
   toMessage,
@@ -23,6 +25,7 @@ export interface ChatDetailPage {
   turns: CanonicalChatTurn[];
   runs: CanonicalChatRun[];
   activities: CanonicalChatRunActivity[];
+  queuedTurns: CanonicalChatQueuedTurn[];
   terminalSessionIds: string[];
   nextBeforeSeq?: number;
 }
@@ -92,12 +95,19 @@ export class ChatDetailRepository {
       .orderBy("bound_at", "desc")
       .limit(100)
       .execute();
+    const queuedTurnRows = await this.kysely.selectFrom("chat_queued_turns").selectAll()
+      .where("chat_id", "=", parsedChatId)
+      .where("status", "=", "queued")
+      .orderBy("position")
+      .limit(20)
+      .execute();
     return {
       record,
       messages: selectedMessageRows.map(toMessage),
       turns: turnRows.map(toTurn),
       runs: runRows.map(toRun),
       activities: toActivities(activityRows),
+      queuedTurns: queuedTurnRows.map(toQueuedTurn),
       terminalSessionIds: terminalBindings.reverse().map((binding) => binding.session_id),
       ...(hasOlder && selectedMessageRows[0]
         ? { nextBeforeSeq: Number(selectedMessageRows[0].seq) }

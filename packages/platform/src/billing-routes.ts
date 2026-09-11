@@ -1,7 +1,13 @@
 import { Hono, type Context } from 'hono';
+import { createBillingStatusHandler } from './billing-status-route.js';
 import { bodyLimit } from 'hono/body-limit';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
+import {
+  MATRIX_HOSTED_BILLING_REGIONS,
+  type MatrixBillingPublicEntitlement,
+  type MatrixHostedBillingRegionSlug,
+} from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import { appOrigin, resolveReturnPath } from './origins.js';
 import {
@@ -15,7 +21,6 @@ import {
   getBillingCustomerByStripeCustomerId,
   consumeCardTrial,
   getBillingEntitlement,
-  getBillingEntitlementState,
   getBillingSubscription,
   getBillingSubscriptionByStripeId,
   getActiveUserMachineByClerkId,
@@ -27,20 +32,22 @@ import {
   resolveCheckoutAttempt,
   runBillingWebhookTransaction,
   listCurrentBillingSubscriptions,
+  persistBillingSubscriptionPriceSnapshot,
   upsertBillingCustomer,
   upsertBillingEntitlement,
   upsertBillingSubscription,
   type PlatformDB,
+  type BillingSubscriptionRecord,
+  type UserMachineRecord,
 } from './db.js';
 import {
   DEFAULT_BILLING_PLAN_DEFINITIONS,
-  computeEffectiveEntitlement,
   deriveStripeEntitlement,
   getRuntimeAccessDecision,
   loadRuntimeCatalog,
   loadStripePriceCatalog,
   parseBillingEntitlementRecord,
-  parseBillingOverrideRecord,
+  resolveServerType,
   type BillingEntitlementStatus,
   type BillingEntitlement,
   type MatrixBillingPlanSlug,
@@ -48,8 +55,25 @@ import {
   type StripePriceCatalog,
   type StripeSubscriptionProjection,
 } from './billing.js';
-import { DeveloperToolsWithDefaultSchema, type DeveloperToolId } from './developer-tools.js';
+import {
+  DeveloperToolsWithDefaultSchema,
+  defaultDeveloperToolsForServerType,
+  developerToolsAllowedForServerType,
+  type DeveloperToolId,
+} from './developer-tools.js';
 import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
+import {
+  AiCreditCheckoutRequestSchema,
+  findAiCreditPackage,
+  loadAiCreditCheckoutConfig,
+} from './ai-credit-checkout.js';
+import {
+  AiCreditCheckoutStoreError,
+  finalizeAiCreditCheckoutClaim,
+  getClaimByRequestId,
+  prepareAiCreditCheckoutClaim,
+} from './ai-credit-checkout-store.js';
+import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -64,6 +88,7 @@ const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
   code: 'billing_unavailable',
 } as const;
+
 const BILLING_CHECKOUT_STARTED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_STARTED ?? 'matrix_billing_checkout_started';
 const BILLING_CHECKOUT_CREATED_EVENT =
@@ -76,6 +101,10 @@ const BILLING_CHECKOUT_EXPIRED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_EXPIRED ?? 'matrix_billing_checkout_expired';
 const BILLING_SUBSCRIPTION_UPDATED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED ?? 'matrix_billing_subscription_updated';
+const BILLING_INVOICE_PAID_EVENT =
+  MATRIX_TELEMETRY_EVENTS.BILLING_INVOICE_PAID ?? 'matrix_billing_invoice_paid';
+const BILLING_INVOICE_PAYMENT_FAILED_EVENT =
+  MATRIX_TELEMETRY_EVENTS.BILLING_INVOICE_PAYMENT_FAILED ?? 'matrix_billing_invoice_payment_failed';
 const BILLING_TRIAL_STARTED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_STARTED;
 const BILLING_TRIAL_WILL_END_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_WILL_END;
 const BILLING_TRIAL_CONVERTED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_CONVERTED;
@@ -84,6 +113,8 @@ const TRIAL_PAYMENT_SUSPEND_DELAY_MS = 24 * 60 * 60 * 1000;
 const CheckoutBillingRegionSlugSchema = z.enum([
   'region_fsn1',
   'region_nbg1',
+  'region_ash',
+  'region_hil',
 ]);
 const HistoricalBillingRegionSlugSchema = z.enum([
   'region_fsn1',
@@ -94,7 +125,7 @@ const HistoricalBillingRegionSlugSchema = z.enum([
 
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
-  interval: z.enum(['monthly', 'annual']).default('monthly'),
+  interval: z.literal('monthly').default('monthly'),
   regionSlug: CheckoutBillingRegionSlugSchema.default('region_fsn1'),
   serverType: HetznerServerTypeSchema.optional(),
   developerTools: DeveloperToolsWithDefaultSchema,
@@ -114,10 +145,6 @@ const PortalRequestSchema = z.object({
     (value) => value === undefined || resolveReturnPath(value) === value,
     { message: 'Invalid return path' },
   ),
-}).strict();
-
-const BillingStatusQuerySchema = z.object({
-  runtimeSlot: RuntimeSlotSchema.optional(),
 }).strict();
 
 const CheckoutPreparationStatusQuerySchema = z.object({
@@ -150,6 +177,28 @@ export interface StripeCheckoutSessionProjection {
   regionSlug: string | null;
 }
 
+export interface StripeAiCreditCheckoutSessionInput {
+  idempotencyKey: string;
+  requestId: string;
+  clerkUserId: string;
+  machineId: string;
+  runtimeSlot: string;
+  packageId: string;
+  priceId: string;
+  amountMicrousd: number;
+  automaticTax: boolean;
+  successUrl: string;
+  cancelUrl: string;
+}
+
+export interface StripeRecurringPriceProjection {
+  priceId: string;
+  unitAmountMinor: number;
+  currency: string;
+  interval: MatrixBillingInterval;
+  intervalCount: number;
+}
+
 export interface StripeBillingClient {
   apiTimeoutMs: number;
   /**
@@ -162,7 +211,12 @@ export interface StripeBillingClient {
     id: string;
     expiresAt?: string;
   }>;
+  createAiCreditCheckoutSession(input: StripeAiCreditCheckoutSessionInput): Promise<{
+    url: string;
+    id: string;
+  }>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;
+  retrieveRecurringPrice(id: string): Promise<StripeRecurringPriceProjection>;
   createPortalSession(input: {
     customerId: string;
     returnUrl: string;
@@ -225,10 +279,12 @@ export function createBillingRoutes(options: {
   now?: () => Date;
   upsertEntitlement?: typeof upsertBillingEntitlement;
   prebilling?: PrebillingCheckoutCoordinator;
+  fundedAiRepository?: Pick<import('./ai-funded-policy-repository.js').AiFundedPolicyRepository, 'grantCreditInTransaction'>;
   /**
    * Optional product telemetry sink. Fire-and-forget: implementations must
-   * never throw into the request path, and callers only pass low-cardinality,
-   * PII-free properties (reason codes and Stripe event types).
+   * never throw into the request path. Properties are PII-free product facts
+   * such as plan, price amounts, runtime placement, and internal machine shape;
+   * Stripe object IDs, provider server IDs, and IP addresses stay excluded.
    */
   captureEvent?: (
     event: string,
@@ -242,6 +298,7 @@ export function createBillingRoutes(options: {
     && env.MATRIX_BILLING_PROVIDER === 'stripe';
   const now = options.now ?? (() => new Date());
   const persistEntitlement = options.upsertEntitlement ?? upsertBillingEntitlement;
+  const aiCreditCheckout = loadAiCreditCheckoutConfig(env);
 
   function emitTelemetry(
     event: string,
@@ -319,7 +376,19 @@ export function createBillingRoutes(options: {
     const parsed = CheckoutRequestSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
 
-    const checkoutProperties = buildCheckoutTelemetryProperties(parsed.data);
+    const selectedPlan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((plan) => plan.slug === parsed.data.planSlug);
+    const serverType = selectedPlan
+      ? resolveServerType(loadRuntimeCatalog(env), selectedPlan.defaultCatalogSku, parsed.data.regionSlug)
+        ?? undefined
+      : undefined;
+    const developerToolsWereOmitted = typeof body === 'object'
+      && body !== null
+      && !Object.hasOwn(body, 'developerTools');
+    const developerTools = developerToolsWereOmitted && serverType
+      ? defaultDeveloperToolsForServerType(serverType)
+      : parsed.data.developerTools;
+
+    const checkoutProperties = buildCheckoutTelemetryProperties({ ...parsed.data, developerTools });
     emitTelemetry(BILLING_CHECKOUT_STARTED_EVENT, {
       distinctId: clerkUserId,
       properties: checkoutProperties,
@@ -387,11 +456,10 @@ export function createBillingRoutes(options: {
       ) {
         return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
       }
-      const selectedPlan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((plan) => plan.slug === parsed.data.planSlug);
-      const serverType = selectedPlan
-        ? loadRuntimeCatalog(env).profiles.find((profile) => profile.sku === selectedPlan.defaultCatalogSku)?.serverType
-        : undefined;
       if (parsed.data.serverType && parsed.data.serverType !== serverType) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      if (serverType && !developerToolsAllowedForServerType(serverType, developerTools)) {
         return c.json({ error: 'Invalid request' }, 400);
       }
       if (primaryPrebillingRequired && parsed.data.runtimeSlot === 'primary' && !options.prebilling) {
@@ -400,7 +468,7 @@ export function createBillingRoutes(options: {
       const checkoutClaim = {
         clerkUserId,
         createdAt: currentTime.toISOString(),
-        developerTools: parsed.data.developerTools,
+        developerTools,
         runtimeSlot: parsed.data.runtimeSlot,
         planSlug: parsed.data.planSlug,
         billingInterval: parsed.data.interval,
@@ -516,7 +584,7 @@ export function createBillingRoutes(options: {
             billingInterval: parsed.data.interval,
             serverType,
             regionSlug: parsed.data.regionSlug,
-            developerTools: parsed.data.developerTools,
+            developerTools,
             now: currentTime.toISOString(),
           });
         } catch (err: unknown) {
@@ -582,6 +650,75 @@ export function createBillingRoutes(options: {
     }
   });
 
+  app.post('/ai-credit/checkout', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), async (c) => {
+    const clerkUserId = await resolveRouteClerkUserId(c, 'ai-credit checkout');
+    if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
+    if (!options.fundedAiRepository) {
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) return c.json({ error: 'Invalid request' }, 400);
+      throw err;
+    }
+    const parsed = AiCreditCheckoutRequestSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+    try {
+      if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
+        throw new Error('stripe_timeout_exceeds_budget');
+      }
+      const machine = await getActiveUserMachineByClerkId(options.db, clerkUserId, parsed.data.runtimeSlot);
+      if (!machine || machine.status !== 'running' || machine.activationState !== 'authorized') {
+        return c.json({ error: 'Computer is unavailable', code: 'runtime_unavailable' }, 409);
+      }
+      const idempotencyKey = `matrix-ai-credit:${createHash('sha256')
+        .update(`${clerkUserId}\0${machine.machineId}\0${parsed.data.requestId}`)
+        .digest('hex')}`;
+      const persisted = await getClaimByRequestId(options.db, parsed.data.requestId);
+      if (persisted && (persisted.owner_id !== clerkUserId || persisted.machine_id !== machine.machineId
+        || persisted.runtime_slot !== machine.runtimeSlot || persisted.package_id !== parsed.data.packageId
+        || persisted.idempotency_key !== idempotencyKey)) {
+        throw new AiCreditCheckoutStoreError('conflict');
+      }
+      const selectedPackage = findAiCreditPackage(aiCreditCheckout, parsed.data.packageId);
+      if (!persisted && !selectedPackage) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      const claim = persisted ?? await prepareAiCreditCheckoutClaim(options.db, {
+        idempotencyKey, requestId: parsed.data.requestId, ownerId: clerkUserId,
+        machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
+        packageId: selectedPackage!.id, priceId: selectedPackage!.priceId,
+        amountMicrousd: selectedPackage!.amountMicrousd, amountCents: selectedPackage!.amountCents,
+        currency: selectedPackage!.currency, automaticTax: aiCreditCheckout.enabled && aiCreditCheckout.automaticTax,
+      }, now());
+      if (claim.checkout_url) return c.json({ url: claim.checkout_url }, 200);
+      const session = await options.stripe.createAiCreditCheckoutSession({
+        idempotencyKey: claim.idempotency_key,
+        requestId: claim.request_id,
+        clerkUserId: claim.owner_id,
+        machineId: claim.machine_id,
+        runtimeSlot: claim.runtime_slot,
+        packageId: claim.package_id,
+        priceId: claim.stripe_price_id,
+        amountMicrousd: Number(claim.amount_microusd),
+        automaticTax: claim.automatic_tax,
+        successUrl: resolveBillingReturnUrl(env, 'success'),
+        cancelUrl: resolveBillingReturnUrl(env, 'canceled'),
+      });
+      const finalized = await finalizeAiCreditCheckoutClaim(
+        options.db, claim.request_id, session, now().toISOString(),
+      );
+      return c.json({ url: finalized.checkout_url }, 200);
+    } catch (err: unknown) {
+      if (err instanceof AiCreditCheckoutStoreError) {
+        if (err.code === 'rate_limited') return c.json({ error: 'Too many requests' }, 429);
+        if (err.code === 'conflict') return c.json({ error: 'Checkout already active' }, 409);
+      }
+      console.error('[billing] AI credit checkout failed:', err instanceof Error ? err.name : typeof err);
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
+  });
+
   app.get('/checkout/status', async (c) => {
     const clerkUserId = await resolveRouteClerkUserId(c, 'checkout status');
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
@@ -633,67 +770,16 @@ export function createBillingRoutes(options: {
     }
   });
 
-  app.get('/status', async (c) => {
-    const clerkUserId = await resolveRouteClerkUserId(c, 'status');
-    if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
-    try {
-      const currentTime = now();
-      const query = BillingStatusQuerySchema.safeParse(c.req.query());
-      if (!query.success) return c.json({ error: 'Invalid request' }, 400);
-      const runtimeSlot = query.data.runtimeSlot ?? 'primary';
-      const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
-      let stripeEntitlement = parseBillingEntitlementRecord(state.entitlement);
-      if (query.data.runtimeSlot) {
-        const subscription = await getBillingSubscription(
-          options.db,
-          clerkUserId,
-          query.data.runtimeSlot,
-          currentTime.toISOString(),
-        );
-        stripeEntitlement = subscription
-          ? deriveStripeEntitlement({
-            clerkUserId: subscription.clerkUserId,
-            stripeCustomerId: subscription.stripeCustomerId,
-            stripeSubscriptionId: subscription.stripeSubscriptionId,
-            status: subscription.status,
-            currentPeriodEnd: subscription.currentPeriodEnd,
-            trialStartedAt: subscription.trialStartedAt,
-            trialEndsAt: subscription.trialEndsAt,
-            trialConvertedAt: subscription.trialConvertedAt,
-            firstTrialPaymentFailedAt: subscription.firstTrialPaymentFailedAt,
-            items: [{ priceId: subscription.stripePriceId, quantity: 1 }],
-          }, {
-            priceCatalog: loadStripePriceCatalog(env),
-            runtimeCatalog: loadRuntimeCatalog(env),
-            now: currentTime,
-          })
-          : null;
-      }
-      const entitlement = computeEffectiveEntitlement({
-        stripeEntitlement,
-        override: parseBillingOverrideRecord(state.override),
-        now: currentTime,
-      });
-      const access = getRuntimeAccessDecision(entitlement, currentTime);
-      const trialsEnabledForSlot = env.MATRIX_CARD_TRIALS_ENABLED === 'true'
-        && runtimeSlot === 'primary';
-      const activeAttempt = await getActiveCheckoutAttempt(options.db, clerkUserId, runtimeSlot);
-      const offerEligible = trialsEnabledForSlot
-        ? await isCardTrialOfferEligible(options.db, clerkUserId)
-        : false;
-      const reservedTrialDays = runtimeSlot === 'primary'
-        ? activeAttempt?.trialPeriodDays ?? null
-        : null;
-      const trialOffer = {
-        eligible: reservedTrialDays !== null || (offerEligible && !activeAttempt),
-        durationDays: reservedTrialDays ?? cardTrialDays,
-      };
-      return c.json({ entitlement, access, trialOffer }, 200);
-    } catch (err: unknown) {
-      console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
-      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-    }
-  });
+  app.get('/status', createBillingStatusHandler({
+    db: options.db,
+    stripe: options.stripe,
+    env,
+    now,
+    cardTrialDays,
+    resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'status'),
+    resolvePublicRecurringPrice,
+    resolveRuntimePlacement,
+  }));
 
   app.post('/webhooks/stripe', bodyLimit({ maxSize: STRIPE_WEBHOOK_BODY_LIMIT }), async (c) => {
     const signature = c.req.header('stripe-signature');
@@ -727,6 +813,11 @@ export function createBillingRoutes(options: {
         if (!inserted.inserted) {
           return { received: true, duplicate: true };
         }
+
+        const aiCreditResult = await processAiCreditWebhookEvent({
+          event, trx, repository: options.fundedAiRepository, at: webhookProcessedAt.toISOString(),
+        });
+        if (aiCreditResult) return aiCreditResult;
 
         // Checkout session lifecycle drives the settling-attempt status: a
         // confirmed payment marks the attempt `paid` (sticky), an expiry marks
@@ -774,7 +865,23 @@ export function createBillingRoutes(options: {
           const invoice = readInvoiceProjection(event.data.object);
           if (!invoice) return { received: true, ignored: true };
           const subscription = await getBillingSubscriptionByStripeId(trx, invoice.stripeSubscriptionId);
-          if (!subscription || !isFirstPostTrialInvoice(invoice, subscription.trialEndsAt, subscription.trialConvertedAt)) {
+          if (!subscription) return { received: true, ignored: true };
+          emitTelemetry(
+            event.type === 'invoice.paid'
+              ? BILLING_INVOICE_PAID_EVENT
+              : BILLING_INVOICE_PAYMENT_FAILED_EVENT,
+            {
+              distinctId: subscription.clerkUserId,
+              properties: {
+                amount_due_minor: invoice.amountDueMinor,
+                amount_paid_minor: invoice.amountPaidMinor,
+                currency: invoice.currency,
+                plan_slug: subscription.planSlug,
+                runtime_slot: subscription.runtimeSlot,
+              },
+            },
+          );
+          if (!isFirstPostTrialInvoice(invoice, subscription.trialEndsAt, subscription.trialConvertedAt)) {
             return { received: true, ignored: true };
           }
           const paymentIsRecoveringFailedTrial = Boolean(subscription.firstTrialPaymentFailedAt);
@@ -864,6 +971,9 @@ export function createBillingRoutes(options: {
         if (!priceEntry || !entitlement.stripePriceId) {
           return { received: true, ignored: true };
         }
+        const recurringItem = projection.items.find(
+          (item) => item.priceId === entitlement.stripePriceId,
+        );
         const projectionApplied = await upsertBillingSubscription(trx, {
           stripeSubscriptionId: projection.stripeSubscriptionId,
           stripeCustomerId: projection.stripeCustomerId,
@@ -871,7 +981,11 @@ export function createBillingRoutes(options: {
           runtimeSlot: projection.runtimeSlot,
           planSlug: priceEntry.planSlug,
           stripePriceId: entitlement.stripePriceId,
-          billingInterval: priceEntry.interval,
+          billingInterval: recurringItem?.interval ?? priceEntry.interval,
+          priceUnitAmountMinor: recurringItem?.unitAmountMinor ?? null,
+          priceCurrency: recurringItem?.currency ?? null,
+          priceIntervalCount: recurringItem?.intervalCount ?? null,
+          priceQuantity: recurringItem?.quantity ?? 1,
           status: entitlement.status,
           currentPeriodEnd: projection.currentPeriodEnd ?? null,
           gracePeriodEndsAt: entitlement.gracePeriodEndsAt,
@@ -933,9 +1047,20 @@ export function createBillingRoutes(options: {
             };
           }
         }
+        const telemetryMachine = await getActiveUserMachineByClerkId(
+          trx,
+          projection.clerkUserId,
+          projection.runtimeSlot,
+        );
         emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
           distinctId: entitlement.clerkUserId,
-          properties: buildSubscriptionTelemetryProperties(entitlement, priceCatalog),
+          properties: buildSubscriptionTelemetryProperties({
+            entitlement,
+            recurringItem,
+            runtimeSlot: projection.runtimeSlot,
+            regionSlug: projection.regionSlug,
+            machine: telemetryMachine,
+          }),
         });
         if (event.type === 'customer.subscription.created' && projection.status === 'trialing') {
           await consumeCardTrial(trx, projection.clerkUserId, webhookProcessedAt.toISOString());
@@ -1022,33 +1147,139 @@ function buildCheckoutTelemetryProperties(data: CheckoutRequest): Record<string,
     region_slug: data.regionSlug,
     return_path_present: Boolean(data.returnPath),
     developer_tools_count: data.developerTools.length,
-    price_usd: planPriceUsd(data.planSlug, data.interval),
+    selected_catalog_price_usd: planPriceUsd(data.planSlug, data.interval),
   };
 }
 
-function buildSubscriptionTelemetryProperties(
-  entitlement: BillingEntitlement,
-  priceCatalog: StripePriceCatalog,
-): Record<string, string | number | boolean | undefined> {
-  const interval = entitlement.stripePriceId
-    ? priceCatalog.priceToPlan.get(entitlement.stripePriceId)?.interval
-    : undefined;
+function storedRecurringPrice(
+  subscription: BillingSubscriptionRecord,
+): MatrixBillingPublicEntitlement['recurringPrice'] {
+  if (
+    subscription.priceUnitAmountMinor === null
+    || !Number.isSafeInteger(subscription.priceUnitAmountMinor)
+    || subscription.priceUnitAmountMinor < 0
+    || subscription.priceCurrency === null
+    || !/^[a-z]{3}$/.test(subscription.priceCurrency)
+    || subscription.billingInterval === null
+    || subscription.priceIntervalCount === null
+    || !Number.isSafeInteger(subscription.priceIntervalCount)
+    || subscription.priceIntervalCount < 1
+    || subscription.priceQuantity === null
+    || !Number.isSafeInteger(subscription.priceQuantity)
+    || subscription.priceQuantity < 1
+  ) {
+    return null;
+  }
+  return {
+    unitAmountMinor: subscription.priceUnitAmountMinor,
+    currency: subscription.priceCurrency,
+    interval: subscription.billingInterval,
+    intervalCount: subscription.priceIntervalCount,
+    quantity: subscription.priceQuantity,
+  };
+}
+
+async function resolvePublicRecurringPrice(
+  db: PlatformDB,
+  stripe: StripeBillingClient,
+  subscription: BillingSubscriptionRecord,
+  currentTime: Date,
+): Promise<MatrixBillingPublicEntitlement['recurringPrice']> {
+  const stored = storedRecurringPrice(subscription);
+  if (stored) return stored;
+  if (stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) return null;
+
+  try {
+    const price = await stripe.retrieveRecurringPrice(subscription.stripePriceId);
+    if (price.priceId !== subscription.stripePriceId) return null;
+    const quantity = subscription.priceQuantity ?? 1;
+    const persisted = await persistBillingSubscriptionPriceSnapshot(db, {
+      stripeSubscriptionId: subscription.stripeSubscriptionId,
+      expectedStripePriceId: subscription.stripePriceId,
+      unitAmountMinor: price.unitAmountMinor,
+      currency: price.currency,
+      interval: price.interval,
+      intervalCount: price.intervalCount,
+      quantity,
+      updatedAt: currentTime.toISOString(),
+    });
+    if (!persisted) return null;
+    return {
+      unitAmountMinor: price.unitAmountMinor,
+      currency: price.currency,
+      interval: price.interval,
+      intervalCount: price.intervalCount,
+      quantity,
+    };
+  } catch (err: unknown) {
+    console.warn(
+      '[billing] recurring price snapshot unavailable:',
+      err instanceof Error ? err.name : typeof err,
+    );
+    return null;
+  }
+}
+
+function buildSubscriptionTelemetryProperties(input: {
+  entitlement: BillingEntitlement;
+  recurringItem: StripeSubscriptionProjection['items'][number] | undefined;
+  runtimeSlot: string;
+  regionSlug: MatrixHostedBillingRegionSlug | null;
+  machine: Pick<UserMachineRecord, 'serverType' | 'location' | 'hetznerServerId'> | undefined;
+}): Record<string, string | number | boolean | undefined> {
+  const { entitlement, recurringItem, runtimeSlot, machine } = input;
   const planSlug = entitlement.planSlug === 'internal' ? undefined : entitlement.planSlug;
+  const placement = resolveRuntimePlacement(machine?.location, input.regionSlug);
+  const hasRecurringPrice = recurringItem?.unitAmountMinor !== null
+    && recurringItem?.unitAmountMinor !== undefined
+    && recurringItem.currency !== null
+    && recurringItem.currency !== undefined
+    && recurringItem.interval !== null
+    && recurringItem.interval !== undefined
+    && recurringItem.intervalCount !== null
+    && recurringItem.intervalCount !== undefined
+    && recurringItem.quantity !== null
+    && recurringItem.quantity !== undefined;
   return {
     plan_slug: planSlug,
     subscription_status: entitlement.status,
-    billing_interval: interval,
-    price_usd: planSlug && interval ? planPriceUsd(planSlug, interval) : undefined,
+    billing_interval: recurringItem?.interval ?? entitlement.billingInterval ?? undefined,
+    ...(hasRecurringPrice ? {
+      recurring_unit_amount_minor: recurringItem.unitAmountMinor!,
+      recurring_total_amount_minor: recurringItem.unitAmountMinor! * recurringItem.quantity!,
+      currency: recurringItem.currency!,
+      price_interval_count: recurringItem.intervalCount!,
+      price_quantity: recurringItem.quantity!,
+    } : {}),
+    runtime_slot: runtimeSlot,
+    ...(placement ? {
+      region_slug: placement.slug,
+      location_code: placement.location,
+      location_label: placement.label,
+      country: placement.countryLabel,
+      network_zone: placement.networkZone,
+    } : {}),
+    ...(machine?.serverType ? { server_type: machine.serverType } : {}),
+    ...(machine ? { provider: 'hetzner' } : {}),
     included_runtime_slots: entitlement.includedRuntimeSlots,
     addon_runtime_slots: entitlement.addonRuntimeSlots,
     max_runtime_slots: entitlement.maxRuntimeSlots,
   };
 }
 
+function resolveRuntimePlacement(
+  machineLocation: string | null | undefined,
+  fallbackRegionSlug: MatrixHostedBillingRegionSlug | null = null,
+) {
+  return MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.location === machineLocation)
+    ?? MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === fallbackRegionSlug)
+    ?? null;
+}
+
 function planPriceUsd(planSlug: MatrixBillingPlanSlug, interval: MatrixBillingInterval): number | undefined {
   const plan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((candidate) => candidate.slug === planSlug);
   if (!plan) return undefined;
-  return interval === 'annual' ? plan.annualUsd : plan.monthlyUsd;
+  return interval === 'monthly' ? plan.monthlyUsd : undefined;
 }
 
 function resolveBillingReturnUrl(
@@ -1093,6 +1324,7 @@ async function projectSubscription(
   currentTime: Date,
 ): Promise<(StripeSubscriptionProjection & {
   runtimeSlot: string;
+  regionSlug: MatrixHostedBillingRegionSlug | null;
   prebillingIntentId: string | null;
 }) | null> {
   if (!value || typeof value !== 'object') return null;
@@ -1144,6 +1376,7 @@ async function projectSubscription(
     stripeCustomerId: customer.stripeCustomerId,
     stripeSubscriptionId: sub.id,
     runtimeSlot,
+    regionSlug: readRegionSlugFromStripeMetadata(sub.metadata),
     prebillingIntentId: readPrebillingIntentIdFromStripeMetadata(sub.metadata),
     status,
     currentPeriodEnd: typeof sub.current_period_end === 'number'
@@ -1159,11 +1392,40 @@ async function projectSubscription(
     firstTrialPaymentFailedAt: existing?.firstTrialPaymentFailedAt ?? null,
     items: data.flatMap((item) => {
       if (!item || typeof item !== 'object') return [];
-      const candidate = item as { price?: { id?: unknown }; quantity?: unknown };
+      const candidate = item as {
+        price?: {
+          id?: unknown;
+          unit_amount?: unknown;
+          currency?: unknown;
+          recurring?: { interval?: unknown; interval_count?: unknown };
+        };
+        quantity?: unknown;
+      };
       if (typeof candidate.price?.id !== 'string') return [];
+      const interval = candidate.price.recurring?.interval === 'month'
+        ? 'monthly'
+        : candidate.price.recurring?.interval === 'year'
+          ? 'annual'
+          : null;
       return [{
         priceId: candidate.price.id,
-        quantity: typeof candidate.quantity === 'number' ? candidate.quantity : 1,
+        quantity: typeof candidate.quantity === 'number' && Number.isInteger(candidate.quantity) && candidate.quantity > 0
+          ? candidate.quantity
+          : 1,
+        unitAmountMinor: typeof candidate.price.unit_amount === 'number'
+          && Number.isInteger(candidate.price.unit_amount)
+          && candidate.price.unit_amount >= 0
+          ? candidate.price.unit_amount
+          : null,
+        currency: typeof candidate.price.currency === 'string' && /^[a-z]{3}$/.test(candidate.price.currency)
+          ? candidate.price.currency
+          : null,
+        interval,
+        intervalCount: typeof candidate.price.recurring?.interval_count === 'number'
+          && Number.isInteger(candidate.price.recurring.interval_count)
+          && candidate.price.recurring.interval_count > 0
+          ? candidate.price.recurring.interval_count
+          : null,
       }];
     }),
   };
@@ -1172,6 +1434,14 @@ async function projectSubscription(
 function readRuntimeSlotFromStripeMetadata(metadata: unknown): string | null {
   if (!metadata || typeof metadata !== 'object') return null;
   const parsed = RuntimeSlotSchema.safeParse((metadata as { matrix_runtime_slot?: unknown }).matrix_runtime_slot);
+  return parsed.success ? parsed.data : null;
+}
+
+function readRegionSlugFromStripeMetadata(metadata: unknown): MatrixHostedBillingRegionSlug | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const parsed = HistoricalBillingRegionSlugSchema.safeParse(
+    (metadata as { matrix_region_slug?: unknown }).matrix_region_slug,
+  );
   return parsed.success ? parsed.data : null;
 }
 
@@ -1227,6 +1497,9 @@ interface StripeInvoiceProjection {
   stripeSubscriptionId: string;
   billingReason: string;
   createdAt: string;
+  amountDueMinor: number;
+  amountPaidMinor: number;
+  currency: string;
 }
 
 function readInvoiceProjection(value: unknown): StripeInvoiceProjection | null {
@@ -1234,6 +1507,9 @@ function readInvoiceProjection(value: unknown): StripeInvoiceProjection | null {
   const invoice = value as {
     created?: unknown;
     billing_reason?: unknown;
+    amount_due?: unknown;
+    amount_paid?: unknown;
+    currency?: unknown;
     subscription?: unknown;
     parent?: { subscription_details?: { subscription?: unknown } };
   };
@@ -1244,6 +1520,14 @@ function readInvoiceProjection(value: unknown): StripeInvoiceProjection | null {
     !subscription
     || typeof invoice.created !== 'number'
     || typeof invoice.billing_reason !== 'string'
+    || typeof invoice.amount_due !== 'number'
+    || !Number.isSafeInteger(invoice.amount_due)
+    || invoice.amount_due < 0
+    || typeof invoice.amount_paid !== 'number'
+    || !Number.isSafeInteger(invoice.amount_paid)
+    || invoice.amount_paid < 0
+    || typeof invoice.currency !== 'string'
+    || !/^[a-z]{3}$/.test(invoice.currency)
   ) {
     return null;
   }
@@ -1251,6 +1535,9 @@ function readInvoiceProjection(value: unknown): StripeInvoiceProjection | null {
     stripeSubscriptionId: subscription,
     billingReason: invoice.billing_reason,
     createdAt: epochSecondsToIso(invoice.created),
+    amountDueMinor: invoice.amount_due,
+    amountPaidMinor: invoice.amount_paid,
+    currency: invoice.currency,
   };
 }
 
@@ -1316,7 +1603,6 @@ export function getPublicBillingPlans() {
     slug: plan.slug,
     marketingName: plan.marketingName,
     monthlyUsd: plan.monthlyUsd,
-    annualUsd: plan.annualUsd,
     includedRuntimeSlots: plan.includedRuntimeSlots,
   }));
 }

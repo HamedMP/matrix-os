@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ChevronDownIcon, PlusIcon, XIcon } from "@/lib/hugeicons";
 
 import { useTerminalAppContext } from "./TerminalAppContext";
+import { TerminalAgentLogo } from "./TerminalAgentLogo";
 import { DEFAULT_CWD } from "./terminal-layout";
 import type { TerminalDesignId } from "./terminal-design";
 import "./terminal-designs.css";
@@ -71,6 +72,13 @@ export function TerminalDesignTabStrip({ design, instanceId }: { design: Termina
                 className="terminal-design-tab-activate"
                 onClick={() => ctx.setActiveTab(tab.id)}
               >
+                {tab.agent ? (
+                  <TerminalAgentLogo
+                    agent={tab.agent}
+                    compact
+                    testIdPrefix="terminal-design-tab-agent-logo"
+                  />
+                ) : null}
                 <span className="terminal-design-tab-label">{tab.label}</span>
               </button>
               <button

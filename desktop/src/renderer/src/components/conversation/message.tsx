@@ -1,3 +1,4 @@
+import { resolveChatMessageLink } from "@matrix-os/contracts";
 import { Check, Copy, FileText, Folder, WrapText } from "@renderer/lib/hugeicons";
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
@@ -210,7 +211,7 @@ function CodeBlock({
   const [wrapped, setWrapped] = React.useState(false);
   return (
     <div
-      className="my-3 overflow-hidden rounded-lg border"
+      className="my-3 w-full max-w-full min-w-0 overflow-hidden rounded-lg border"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
     >
       <div
@@ -233,7 +234,7 @@ function CodeBlock({
           <CopyAction text={code} target="code block" copyText={copyText} />
         </span>
       </div>
-      <pre className={cn("max-h-80 overflow-x-auto p-3", wrapped && "whitespace-pre-wrap wrap-break-word")}>
+      <pre className={cn("max-h-80 max-w-full overflow-x-auto p-3", wrapped && "whitespace-pre-wrap wrap-break-word")}>
         <code className="font-mono text-xs" style={{ background: "transparent", border: 0, padding: 0 }}>{code}</code>
       </pre>
     </div>
@@ -288,79 +289,99 @@ export function MessageResponse({
   children,
   copyText,
   openFile,
+  openWebLink,
+  className,
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
   openFile?: ConversationPresentationCallbacks["openFile"];
+  openWebLink?: ConversationPresentationCallbacks["openWebLink"];
+  className?: string;
 }) {
+  const callbacks = React.useRef({ copyText, openFile, openWebLink });
+  React.useLayoutEffect(() => {
+    callbacks.current = { copyText, openFile, openWebLink };
+  }, [copyText, openFile, openWebLink]);
+  const copy = React.useCallback((text: string) => callbacks.current.copyText(text), []);
+  const hasFileNavigation = Boolean(openFile);
+  const hasWebNavigation = Boolean(openWebLink);
+  // Keep Markdown element types stable across focus and controller updates.
+  const markdownComponents = React.useMemo(() => ({
+    a: ({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => {
+      const target = typeof href === "string" ? resolveChatMessageLink(href) : null;
+      const external = target?.kind === "web";
+      const editorPath = target?.kind === "file" ? target.path : null;
+      return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        callbacks.current.openFile?.(href!);
+      } } : {})} {...(external && hasWebNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        callbacks.current.openWebLink?.(href!);
+      } } : {})} />;
+    },
+    code: ({ node: _node, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
+      const value = String(codeChildren).replace(/\n$/, "");
+      const blockLanguage = className?.match(/(?:^|\s)language-([^\s]+)/)?.[1];
+      if (blockLanguage || String(codeChildren).endsWith("\n")) {
+        return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copy} />;
+      }
+      const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
+      const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
+      if (path && editorPath && hasFileNavigation) {
+        return (
+          <button
+            type="button"
+            aria-label={`Open ${path.label}`}
+            title={value}
+            onClick={() => callbacks.current.openFile?.(value)}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
+          >
+            <FileText size={13} aria-hidden className="shrink-0" />
+            <span className="truncate">{path.label}</span>
+          </button>
+        );
+      }
+      if (path) {
+        const Icon = path.kind === "file" ? FileText : Folder;
+        return (
+          <code
+            {...props}
+            aria-label={`${path.kind === "file" ? "File" : "Folder"} path: ${path.label}`}
+            title={value}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs"
+          >
+            <Icon size={13} aria-hidden className="shrink-0" />
+            <span className="truncate">{path.label}</span>
+          </code>
+        );
+      }
+      return <code {...props} className={cn(className, "border border-[var(--border-subtle)]")}>{codeChildren}</code>;
+    },
+    input: ({ node: _node, checked, ...props }: React.ComponentProps<"input"> & { node?: unknown }) => (
+      <input
+        {...props}
+        type="checkbox"
+        checked={Boolean(checked)}
+        disabled
+        readOnly
+        aria-label={checked ? "Completed task" : "Incomplete task"}
+      />
+    ),
+    pre: ({ children: preChildren }: React.ComponentProps<"pre">) => <>{preChildren}</>,
+    table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
+      <MarkdownTable {...props} copyText={copy} />
+    ),
+  }), [copy, hasFileNavigation, hasWebNavigation]);
+
   return (
     <div
-      className="prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded-md [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-[var(--border-subtle)] [&_li]:my-1 [&_li]:marker:text-[var(--text-tertiary)] [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
+      className={cn("prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded-md [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-[var(--border-subtle)] [&_li]:my-1 [&_li]:marker:text-[var(--text-tertiary)] [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5", className)}
       style={{ color: "var(--text-primary)" }}
       data-selectable
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ node: _node, href, ...props }) => {
-            const external = typeof href === "string" && /^https?:\/\//i.test(href);
-            const editorPath = typeof href === "string" ? normalizeDesktopEditorPath(href) : null;
-            return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && openFile ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
-              event.preventDefault();
-              openFile(editorPath);
-            } } : {})} />;
-          },
-          code: ({ node: _node, children: codeChildren, className, ...props }) => {
-            const value = String(codeChildren).replace(/\n$/, "");
-            const blockLanguage = className?.match(/(?:^|\s)language-([^\s]+)/)?.[1];
-            if (blockLanguage || String(codeChildren).endsWith("\n")) {
-              return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copyText} />;
-            }
-            const path = className ? null : pathPresentation(value);
-            const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
-            if (path && editorPath && openFile) {
-              return (
-                <button
-                  type="button"
-                  aria-label={`Open ${path.label} in Editor`}
-                  title={value}
-                  onClick={() => openFile(editorPath)}
-                  className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
-                >
-                  <FileText size={13} aria-hidden className="shrink-0" />
-                  <span className="truncate">{path.label}</span>
-                </button>
-              );
-            }
-            if (path) {
-              const Icon = path.kind === "file" ? FileText : Folder;
-              return (
-                <code
-                  {...props}
-                  aria-label={`${path.kind === "file" ? "File" : "Folder"} path: ${path.label}`}
-                  title={value}
-                  className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs"
-                >
-                  <Icon size={13} aria-hidden className="shrink-0" />
-                  <span className="truncate">{path.label}</span>
-                </code>
-              );
-            }
-            return <code {...props} className={cn(className, "border border-[var(--border-subtle)]")}>{codeChildren}</code>;
-          },
-          input: ({ node: _node, checked, ...props }) => (
-            <input
-              {...props}
-              type="checkbox"
-              checked={Boolean(checked)}
-              disabled
-              readOnly
-              aria-label={checked ? "Completed task" : "Incomplete task"}
-            />
-          ),
-          pre: ({ children: preChildren }) => <>{preChildren}</>,
-          table: ({ node: _node, ...props }) => <MarkdownTable {...props} copyText={copyText} />,
-        }}
+        components={markdownComponents}
       >
         {children}
       </ReactMarkdown>

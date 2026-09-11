@@ -249,6 +249,7 @@ function activityFromEvent(input: {
       approvalId: event.approval.approvalId,
       title: event.approval.title,
       risk: event.approval.risk,
+      allowedDecisions: event.approval.allowedDecisions,
     };
   }
   if (event.type === "approval.resolved") {
@@ -273,12 +274,15 @@ function activityFromEvent(input: {
     return { ...base, type: "review.ready", reviewId: event.reviewId, summary: event.summary };
   }
   if (event.type === "terminal.bound") {
-    if (!event.terminalSessionCreatedAt) return null;
+    const terminalSessionId = event.terminalRef
+      ? `${event.terminalRef.workspaceId}:${event.terminalRef.tabId}`
+      : event.terminalSessionId;
+    if (!terminalSessionId) return null;
     return {
       ...base,
       type: "terminal.bound",
-      terminalSessionId: event.terminalSessionId,
-      terminalSessionCreatedAt: event.terminalSessionCreatedAt,
+      terminalSessionId,
+      terminalSessionCreatedAt: event.terminalSessionCreatedAt ?? event.occurredAt,
     };
   }
   if (event.type === "thread.error") {

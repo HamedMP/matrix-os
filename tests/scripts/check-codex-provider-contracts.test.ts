@@ -3,14 +3,40 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import appServerContract from "../../packages/gateway/src/coding-agents/codex-app-server-contract.json" with { type: "json" };
 import contract from "../../packages/gateway/src/coding-agents/codex-exec-contract.json" with { type: "json" };
-import { verifyCodexProviderContracts } from "../../scripts/lib/codex-provider-contract-check.mjs";
+import {
+  codexProtocolMethodDigest,
+  verifyCodexProviderContracts,
+} from "../../scripts/lib/codex-provider-contract-check.mjs";
 
 const scriptPath = fileURLToPath(
   new URL("../../scripts/check-codex-exec-contract.mjs", import.meta.url),
 );
 
 describe("Codex provider contract checker", () => {
+  it("trusts the reviewed Codex 0.154.0 provider schemas", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.154.0");
+    expect(contract.verifiedVersions["0.154.0"]).toEqual({
+      schemaSha256: "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32",
+    });
+    expect(appServerContract.latestVerifiedVersion).toBe("0.154.0");
+    expect(appServerContract.verifiedVersions["0.154.0"]).toEqual({
+      schemaSha256ByTarget: {
+        "darwin-arm64": "24df528acec2952e6b96c1c2b061f98e60177d059e12c90cf318621380c9de9e",
+        "linux-x64": "24df528acec2952e6b96c1c2b061f98e60177d059e12c90cf318621380c9de9e",
+      },
+    });
+    expect(appServerContract.requiredServerProtocolSchemaDigests[
+      "item/commandExecution/requestApproval"
+    ]).toEqual({
+      schemaSha256ByTarget: {
+        "darwin-arm64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
+        "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
+      },
+    });
+  });
+
   it("requires exact-version digests and protocol semantics to evolve together", () => {
     const version = "1.2.3";
     const execSchema = Buffer.from("thread.started\nturn.completed\nitem.started", "utf8");
@@ -41,6 +67,45 @@ describe("Codex provider contract checker", () => {
       execSchemaBytes: execSchema,
       appServerSchemaBytes: appServerSchema,
     })).not.toThrow();
+
+    const targetSpecificAppServerContract = {
+      ...appServerContract,
+      verifiedVersions: {
+        [version]: {
+          schemaSha256ByTarget: {
+            "darwin-arm64": digest(appServerSchema),
+            "linux-x64": "0".repeat(64),
+          },
+        },
+      },
+    };
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: targetSpecificAppServerContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: appServerSchema,
+      runtimeTarget: "darwin-arm64",
+    })).not.toThrow();
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: targetSpecificAppServerContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: appServerSchema,
+      runtimeTarget: "linux-x64",
+    })).toThrow(`received ${digest(appServerSchema)}`);
+
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: {
+        ...appServerContract,
+        verifiedVersions: { [version]: { schemaSha256: "0".repeat(64) } },
+      },
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: appServerSchema,
+    })).toThrow(`received ${digest(appServerSchema)}`);
 
     expect(() => verifyCodexProviderContracts({
       version,
@@ -83,6 +148,104 @@ describe("Codex provider contract checker", () => {
     expect(result.stdout).not.toContain("matches the verified JSONL and app-server contracts");
   });
 
+  it("pins the transitive payload schema consumed for every required RPC method", () => {
+    const version = "1.2.3";
+    const method = "item/commandExecution/requestApproval";
+    const schema = {
+      definitions: {
+        ServerRequest: {
+          oneOf: [{
+            properties: {
+              id: { type: "string" },
+              method: { enum: [method], type: "string" },
+              params: { $ref: "#/definitions/ApprovalParams" },
+            },
+            required: ["id", "method", "params"],
+            type: "object",
+          }],
+        },
+        ApprovalParams: {
+          properties: { threadId: { type: "string" } },
+          required: ["threadId"],
+          type: "object",
+        },
+      },
+    };
+    const execSchema = Buffer.from("thread.started", "utf8");
+    const schemaBytes = Buffer.from(JSON.stringify(schema), "utf8");
+    const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+    const semanticDigest = codexProtocolMethodDigest(schema, "ServerRequest", method);
+    const execContract = {
+      latestVerifiedVersion: version,
+      verifiedVersions: { [version]: { schemaSha256: digest(execSchema) } },
+      requiredEventTypes: ["thread.started"],
+    };
+    const appServerContract = {
+      latestVerifiedVersion: version,
+      verifiedVersions: { [version]: { schemaSha256: digest(schemaBytes) } },
+      requiredServerMethods: [method],
+      requiredServerNotifications: [],
+      requiredServerProtocolSchemaDigests: { [method]: semanticDigest },
+    };
+
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: schemaBytes,
+    })).not.toThrow();
+
+    const targetSpecificSemanticContract = {
+      ...appServerContract,
+      requiredServerProtocolSchemaDigests: {
+        [method]: {
+          schemaSha256ByTarget: {
+            "darwin-arm64": semanticDigest,
+            "linux-x64": "0".repeat(64),
+          },
+        },
+      },
+    };
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: targetSpecificSemanticContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: schemaBytes,
+      runtimeTarget: "darwin-arm64",
+    })).not.toThrow();
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: targetSpecificSemanticContract,
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: schemaBytes,
+      runtimeTarget: "linux-x64",
+    })).toThrow(`Codex app-server payload schema changed for ${method}`);
+
+    const changedSchemaBytes = Buffer.from(JSON.stringify({
+      ...schema,
+      definitions: {
+        ...schema.definitions,
+        ApprovalParams: {
+          ...schema.definitions.ApprovalParams,
+          properties: { threadId: { type: "number" } },
+        },
+      },
+    }), "utf8");
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: {
+        ...appServerContract,
+        verifiedVersions: { [version]: { schemaSha256: digest(changedSchemaBytes) } },
+      },
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: changedSchemaBytes,
+    })).toThrow(`Codex app-server payload schema changed for ${method}`);
+  });
+
   it("monitors the published package and every runtime compatibility boundary", () => {
     const workflow = readFileSync(new URL(
       "../../.github/workflows/codex-exec-contract.yml",
@@ -90,10 +253,26 @@ describe("Codex provider contract checker", () => {
     ), "utf8");
 
     expect(workflow).toContain('cron: "41 5 * * *"');
+    expect(workflow).toContain("macos-15");
+    expect(workflow).toContain("Report generated protocol digests");
+    expect(workflow).toContain('installed_version="${installed_output##* }"');
+    expect(workflow).not.toContain("sed -n");
     expect(workflow).toContain("pnpm view @openai/codex version --json");
     expect(workflow).toContain('pnpm dlx "@openai/codex@${CODEX_VERSION}" --version');
     expect(workflow).toContain("codex-provider-version-check.mjs");
     expect(workflow).toContain("matrix-install-developer-tools");
     expect(workflow).toContain("terminal-agent-options.ts");
+  });
+
+  it("keeps malformed app-server spike output diagnosable without echoing its contents", () => {
+    const spike = readFileSync(new URL(
+      "../../scripts/spikes/codex-turn-steer.mjs",
+      import.meta.url,
+    ), "utf8");
+
+    expect(spike).toContain('catch (error)');
+    expect(spike).toContain('"[codex-turn-steer] Ignoring malformed output:"');
+    expect(spike).toContain('error instanceof Error ? error.name : "UnknownError"');
+    expect(spike).not.toContain("console.warn(line");
   });
 });

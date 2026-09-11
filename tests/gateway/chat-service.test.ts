@@ -37,6 +37,7 @@ function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | 
       turns: [],
       runs: [],
       activities: [],
+      queuedTurns: [],
     } satisfies ChatDetailPage)),
     update: vi.fn(async () => ({ ...record(), projectId: "project_1" })),
     hardDelete: vi.fn(async () => ({ chatId: "chat_service_test", deletedAt: "2026-08-26T12:00:00.000Z" })),
@@ -87,6 +88,24 @@ describe("canonical Chat service", () => {
     });
     expect(moved.chat.id).toBe("chat_service_test");
     expect(moved.projectId).toBe("project_1");
+  });
+
+  it("renames a Chat through the revision-guarded repository update", async () => {
+    const renamed = {
+      ...record(),
+      chat: { ...record().chat, title: "Release plan", revision: 1 },
+    };
+    const update = vi.fn(async () => renamed);
+    const service = createCanonicalChatService(repository({ update }));
+
+    await expect(service.updateTitle(owner, "chat_service_test", {
+      baseRevision: 0,
+      title: "  Release plan  ",
+    })).resolves.toEqual(renamed);
+    expect(update).toHaveBeenCalledWith(owner, "chat_service_test", {
+      baseRevision: 0,
+      title: "Release plan",
+    });
   });
 
   it("delegates canonical deletion to the existing atomic repository tombstone flow", async () => {
@@ -197,6 +216,7 @@ describe("canonical Chat service", () => {
         turns: [],
         runs: [],
         activities: [],
+        queuedTurns: [],
         nextBeforeSeq: 41,
       } satisfies ChatDetailPage)
       .mockResolvedValueOnce({
@@ -205,6 +225,7 @@ describe("canonical Chat service", () => {
         turns: [],
         runs: [],
         activities: [],
+        queuedTurns: [],
       } satisfies ChatDetailPage);
     const service = createCanonicalChatService(repository({ getDetailPage }));
 

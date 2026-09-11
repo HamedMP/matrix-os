@@ -13,7 +13,6 @@ function resetStores() {
     nextZ: 1,
     closedPaths: new Set(),
     closedLayouts: new Map(),
-    apps: [],
     focusedWindowId: null,
   });
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
@@ -23,14 +22,6 @@ function resetStores() {
 describe("Canvas Renderer Integration", () => {
   beforeEach(() => {
     resetStores();
-  });
-
-  it("canvas mode config has correct properties", () => {
-    const config = useDesktopMode.getState().getModeConfig("canvas");
-    expect(config.showDock).toBe(true);
-    expect(config.showWindows).toBe(true);
-    expect(config.showBottomPanel).toBe(false);
-    expect(config.chatPosition).toBe("sidebar");
   });
 
   it("switching to canvas mode updates store", () => {

@@ -50,7 +50,7 @@ function stateLabel(
   state: ConversationActivityState,
   labels: { running: string; completed: string; stopped: string; failed: string },
 ): string {
-  return labels[state];
+  return state === "partial" ? labels.completed : labels[state];
 }
 
 function persistedActivity(

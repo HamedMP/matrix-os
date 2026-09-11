@@ -1,212 +1,289 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import TabContent, { TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
-import { SURFACE_BASE_BACKGROUND } from "@desktop/renderer/src/design/surface";
-import { useConnection } from "@desktop/renderer/src/stores/connection";
-import { useTabs } from "@desktop/renderer/src/stores/tabs";
-import { useUi } from "@desktop/renderer/src/stores/ui";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TabPane, TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
+import DesktopSurfaceFrame from "@desktop/renderer/src/features/desktop-shell/DesktopSurfaceFrame";
+import { useSurfaceChromeHost } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
+import type { Tab } from "@desktop/renderer/src/stores/tabs";
 
-const taskWorkspaceMock = vi.hoisted(() =>
-  vi.fn(({ taskId, projectSlug }: { taskId: string; projectSlug?: string }) => (
-    <button type="button">
-      Task {taskId} {projectSlug}
-    </button>
-  )),
-);
-const terminalsTabMock = vi.hoisted(() =>
-  vi.fn(({ active }: { active: boolean }) => (
-    <button type="button" data-active={String(active)}>Terminal workspace</button>
-  )),
-);
+const workTabMock = vi.hoisted(() => vi.fn(() => <div>Work</div>));
+const taskWorkspaceMock = vi.hoisted(() => vi.fn(() => <div>Task</div>));
+const terminalsTabMock = vi.hoisted(() => vi.fn(() => <div>Terminal</div>));
+const homeMock = vi.hoisted(() => vi.fn(() => <div>Browser</div>));
+const browserMock = vi.hoisted(() => vi.fn(() => <div>Web Browser</div>));
+const editorMock = vi.hoisted(() => vi.fn(() => <div>Editor</div>));
+const notesMock = vi.hoisted(() => vi.fn(() => <div>Notes</div>));
 
-vi.mock("@desktop/renderer/src/features/project/ProjectTab", () => ({
-  default: ({ projectSlug }: { projectSlug: string }) => (
-    <button type="button">Project {projectSlug}</button>
-  ),
-}));
-vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({
-  default: taskWorkspaceMock,
-}));
-vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: () => <button type="button">Terminal body</button>,
-}));
-vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({
-  default: terminalsTabMock,
-}));
-vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({
-  default: ({ active }: { active: boolean }) => (
-    <button type="button" data-active={String(active)}>Home workspace</button>
-  ),
-}));
-vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
-  default: () => <button type="button">Chat workspace</button>,
-  HermesPane: () => <button type="button">Hermes workspace</button>,
-  ChatUnavailableState: () => <div>Chat unavailable</div>,
-}));
-vi.mock("@desktop/renderer/src/features/files/FilesWorkspace", () => ({
-  default: () => <button type="button">Files workspace</button>,
-}));
-vi.mock("@desktop/renderer/src/features/browser/BrowserTab", () => ({
-  default: ({ active }: { active: boolean }) => (
-    <button type="button" data-active={String(active)}>Browser workspace</button>
-  ),
-}));
+vi.mock("@desktop/renderer/src/features/work/WorkTab", () => ({ default: workTabMock }));
+vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({ default: taskWorkspaceMock }));
+vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({ default: terminalsTabMock }));
+vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({ default: homeMock }));
+vi.mock("@desktop/renderer/src/features/browser/BrowserTab", () => ({ default: browserMock }));
+vi.mock("@desktop/renderer/src/features/editor/DesktopEditorWorkspace", () => ({ default: editorMock }));
+vi.mock("@desktop/renderer/src/features/notes/NotesWorkspace", () => ({ default: notesMock }));
 
-describe("TabContent", () => {
-  beforeEach(() => {
-    useConnection.setState({
-      status: "signed-in",
-      handle: "operator",
-      platformHost: "https://platform.test",
-      runtimeSlot: "primary",
-      api: null,
-    });
-    useTabs.setState({ tabs: [], activeTabId: null });
-    useUi.setState({ rendererOverlayCount: 0 });
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  workTabMock.mockImplementation(() => <div>Work</div>);
+});
+
+describe("current desktop tab panes", () => {
+  it.each(["desktop", "canvas"] as const)("resizes an inactive Terminal from its full-frame left edge in %s", (presentation) => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const onBoundsChange = vi.fn();
+    const onFocus = vi.fn();
+    const props = {
+      tab: { id: "terminal", kind: "terminals" as const, title: "Terminal", closable: true },
+      surface: { tabId: "terminal", mode: "window" as const, bounds: { x: 100, y: 80, width: 800, height: 600 }, zIndex: 1 },
+      active: false, tabWorkspaceActive: false, presentation, interactionScale: presentation === "canvas" ? 0.5 : 1,
+      overlayOpen: false, onFocus, onClose: vi.fn(), onMinimize: vi.fn(), onMaximize: vi.fn(), onBoundsChange,
+    };
+    const view = render(<DesktopSurfaceFrame {...props} />);
+    const controls = view.container.querySelector('[data-window-resize-controls]')!;
+    expect(controls.parentElement).toBe(view.container.querySelector('[data-os-window]'));
+    expect(controls.parentElement?.hasAttribute('data-window-click-buffer')).toBe(true);
+    expect(controls.closest('[inert]')).toBeNull();
+    expect(controls.children).toHaveLength(8);
+    fireEvent.pointerDown(controls.querySelector('[data-window-resize="w"]')!, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 120, clientY: 100 });
+    expect(onFocus).toHaveBeenCalled();
+    const delta = presentation === "canvas" ? 40 : 20;
+    expect(onBoundsChange).toHaveBeenLastCalledWith({ x: 100 + delta, y: 80, width: 800 - delta, height: 600 });
+    fireEvent.pointerUp(window);
+    view.rerender(<DesktopSurfaceFrame {...props} surface={{ ...props.surface, mode: "minimized" }} />);
+    expect(view.container.querySelector('[data-window-resize-controls]')).toBeNull();
+    expect(view.container.querySelector('[data-window-click-buffer]')).toBeNull();
+    vi.unstubAllGlobals();
   });
-
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-  });
-
-  it("keeps inactive tab panes inert while they remain mounted", () => {
-    const projectId = useTabs.getState().openTab({ kind: "project", projectSlug: "alpha", title: "Alpha" });
-    useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
-    useTabs.getState().focusTab(projectId);
-
-    const { container, getByText } = render(<TabContent />);
-
-    const activePane = container.querySelector<HTMLElement>(`[data-tab-id="${projectId}"]`);
-    const hiddenPane = getByText("Terminal body").parentElement;
-
-    expect(activePane?.hasAttribute("inert")).toBe(false);
-    expect(activePane?.style.display).toBe("flex");
-    expect(activePane?.style.visibility).toBe("visible");
-    expect(activePane?.style.pointerEvents).toBe("auto");
-    expect(activePane?.style.background).toBe(SURFACE_BASE_BACKGROUND);
-    expect(hiddenPane?.hasAttribute("inert")).toBe(true);
-    expect(hiddenPane?.getAttribute("aria-hidden")).toBe("true");
-    expect(hiddenPane?.style.display).toBe("none");
-    expect(hiddenPane?.style.visibility).toBe("hidden");
-    expect(hiddenPane?.style.pointerEvents).toBe("none");
-  });
-
   it.each([
-    ["apps", { kind: "apps" as const, title: "Apps" }],
-    ["chat", { kind: "chat" as const, title: "Chat" }],
-    ["files", { kind: "files" as const, title: "Files" }],
-    ["home", { kind: "home" as const, title: "Home" }],
-    ["project", { kind: "project" as const, projectSlug: "alpha", title: "Alpha" }],
-  ])("fully contains the retained Terminal workspace beneath the %s route", (_route, target) => {
-    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
-    const targetId = useTabs.getState().openTab(target);
-    useTabs.getState().focusTab(targetId);
-
-    const { container } = render(<TabContent />);
-    const terminalPane = container.querySelector<HTMLElement>(`[data-tab-id="${terminalId}"]`);
-    const activePane = container.querySelector<HTMLElement>(`[data-tab-id="${targetId}"]`);
-
-    expect(terminalPane).toBeTruthy();
-    expect(terminalPane?.dataset.tabKind).toBe("terminals");
-    expect(terminalPane?.style.display).toBe("none");
-    expect(terminalPane?.style.visibility).toBe("hidden");
-    expect(terminalPane?.style.pointerEvents).toBe("none");
-    expect(terminalPane?.getAttribute("aria-hidden")).toBe("true");
-    expect(terminalPane?.hasAttribute("inert")).toBe(true);
-
-    expect(activePane).toBeTruthy();
-    expect(activePane?.style.display).toBe("flex");
-    expect(activePane?.style.visibility).toBe("visible");
-    expect(activePane?.style.pointerEvents).toBe("auto");
-    expect(activePane?.style.background).toBe(SURFACE_BASE_BACKGROUND);
-    expect(activePane?.getAttribute("aria-hidden")).toBe("false");
-    expect(activePane?.hasAttribute("inert")).toBe(false);
+    ["chat", "chat"],
+    ["projects", "projects"],
+    ["project", "project"],
+    ["work", "project"],
+  ] as const)("keeps persisted %s tabs on the current Work renderer", (kind, route) => {
+    const tab: Tab = {
+      id: "work", kind, workRoute: route, projectSlug: "alpha",
+      title: "Alpha", closable: true, chatId: "chat-a", chatTitle: "Chat A",
+    };
+    render(<TabPane tab={tab} active />);
+    expect(workTabMock).toHaveBeenCalledWith(expect.objectContaining({ route, active: true }), undefined);
+    if (route === "project") {
+      expect(workTabMock).toHaveBeenCalledWith(expect.objectContaining({
+        projectSlug: "alpha", initialChatId: "chat-a", initialChatTitle: "Chat A",
+      }), undefined);
+    }
   });
 
-  it("forwards task project slugs into the task workspace", () => {
-    useTabs.getState().openTab({
-      kind: "task",
-      taskId: "task_a",
-      projectSlug: "alpha",
-      title: "Task A",
-    });
-
-    const { getByRole } = render(<TabContent />);
-
-    expect(getByRole("button", { name: "Task task_a alpha" })).toBeTruthy();
+  it("forwards task project identity to the live task workspace", () => {
+    render(<TabPane tab={{
+      id: "task", kind: "task", taskId: "task_a", projectSlug: "alpha", title: "Task A", closable: true,
+    }} active />);
     expect(taskWorkspaceMock).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: "task_a", projectSlug: "alpha", active: true }),
+      expect.objectContaining({ taskId: "task_a", projectSlug: "alpha", active: true }), undefined,
+    );
+  });
+
+  it("keeps terminal visibility separate from keyboard ownership", () => {
+    const tab: Tab = { id: "terminal", kind: "terminals", title: "Terminal", closable: true };
+    const view = render(<TabPane tab={tab} active visible />);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: true, visible: true, visualScale: 1 }, undefined);
+    view.rerender(<TabPane tab={tab} active={false} visible />);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: true, visualScale: 1 }, undefined);
+    view.rerender(<TabPane tab={tab} active={false} visible={false} />);
+    expect(terminalsTabMock).toHaveBeenLastCalledWith({ active: false, visible: false, visualScale: 1 }, undefined);
+  });
+
+  it("keeps a visible background Chat live without giving it keyboard ownership", () => {
+    const tab: Tab = { id: "chat", kind: "chat", title: "Chat", closable: false };
+    render(<TabPane tab={tab} active={false} visible />);
+
+    expect(workTabMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active: false, visible: true }),
       undefined,
     );
   });
 
-  it("propagates active ownership to the mounted Terminal workspace across native focus changes", () => {
-    const workspaceId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
-    const nativeId = useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
-    useTabs.getState().focusTab(workspaceId);
-    render(<TabContent />);
-
-    const workspace = screen.getByRole("button", { name: "Terminal workspace" });
-    expect(workspace.getAttribute("data-active")).toBe("true");
-
-    act(() => useTabs.getState().focusTab(nativeId));
-    expect(workspace.getAttribute("data-active")).toBe("false");
-
-    act(() => useTabs.getState().focusTab(workspaceId));
-    expect(workspace.getAttribute("data-active")).toBe("true");
+  it.each(["desktop", "canvas"] as const)("detaches native embeds under overlays in %s", (presentation) => {
+    const tab: Tab = { id: "browser", kind: "home", title: "Browser", closable: false };
+    const props = {
+      tab,
+      surface: { tabId: tab.id, mode: "window" as const, bounds: { x: 0, y: 0, width: 800, height: 600 }, zIndex: 1 },
+      active: true, tabWorkspaceActive: false, presentation,
+      onFocus: vi.fn(), onClose: vi.fn(), onMinimize: vi.fn(), onMaximize: vi.fn(), onBoundsChange: vi.fn(),
+    };
+    const view = render(<DesktopSurfaceFrame {...props} overlayOpen={false} />);
+    expect(homeMock).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }), undefined);
+    view.rerender(<DesktopSurfaceFrame {...props} overlayOpen />);
+    expect(homeMock).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }), undefined);
+    view.rerender(<DesktopSurfaceFrame {...props} overlayOpen={false} />);
+    expect(homeMock).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }), undefined);
   });
 
-  it("detaches the active Home native view while a renderer overlay lease is held", () => {
-    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-    render(<TabContent />);
+  it("mounts hosted Chat navigation in the OS window sidebar safe area", () => {
+    const tab: Tab = { id: "chat", kind: "work", title: "Chat", closable: false, workRoute: "chat" };
+    const commonProps = {
+      tab,
+      active: true,
+      presentation: "desktop" as const,
+      onFocus: vi.fn(),
+      onClose: vi.fn(),
+      onMinimize: vi.fn(),
+      onMaximize: vi.fn(),
+      onBoundsChange: vi.fn(),
+    };
+    const windowSurface = { tabId: tab.id, mode: "window" as const, bounds: { x: 0, y: 0, width: 1_200, height: 800 }, zIndex: 1 };
 
-    const home = screen.getByRole("button", { name: "Home workspace" });
-    expect(home.getAttribute("data-active")).toBe("true");
+    const view = render(<DesktopSurfaceFrame {...commonProps} surface={windowSurface} tabWorkspaceActive={false} />);
 
-    act(() => useUi.getState().acquireRendererOverlay());
-    expect(home.getAttribute("data-active")).toBe("false");
+    const sidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
+    expect(sidebar).toBeTruthy();
+    expect(sidebar.style.width).toBe("240px");
+    expect(sidebar.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("48px");
+    expect(sidebar.querySelector('[aria-label="Chat navigation"]')).toBeTruthy();
+    expect(view.container.querySelector('[data-os-window-main] [aria-label="Chat navigation"]')).toBeNull();
 
-    act(() => useUi.getState().releaseRendererOverlay());
-    expect(home.getAttribute("data-active")).toBe("true");
+    view.rerender(<DesktopSurfaceFrame
+      {...commonProps}
+      surface={{ ...windowSurface, mode: "tab" }}
+      tabWorkspaceActive
+    />);
+
+    const tabSidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
+    expect(tabSidebar.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("");
+    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Toggle Chat sidebar" })).toBeTruthy();
   });
 
-  it("renders the apps tab through the tracked AppLauncher module", () => {
-    useTabs.setState({
-      activeTabId: "apps",
-      tabs: [{ id: "apps", kind: "apps", title: "Apps", closable: true }],
+  it("shows the inspector toggle for a New Chat in full-tab mode", () => {
+    workTabMock.mockImplementation(function DraftWorkWithInspectorChrome() {
+      const chromeHost = useSurfaceChromeHost();
+      React.useLayoutEffect(() => {
+        chromeHost?.setChrome({
+          leftPaneWidth: 240,
+          rightPaneWidth: 0,
+          rightActions: <button type="button" aria-label="Show inspector">Inspector</button>,
+        });
+        return () => chromeHost?.setChrome(null);
+      }, [chromeHost]);
+      return <div>Work</div>;
     });
+    const tab: Tab = {
+      id: "chat-draft",
+      kind: "work",
+      title: "Chat",
+      closable: false,
+      workRoute: "chat",
+      chatView: "draft",
+    };
 
-    render(<TabContent />);
+    const view = render(<DesktopSurfaceFrame
+      tab={tab}
+      surface={{ tabId: tab.id, mode: "tab", bounds: { x: 0, y: 0, width: 1_200, height: 800 }, zIndex: 1 }}
+      active
+      tabWorkspaceActive
+      overlayOpen={false}
+      presentation="desktop"
+      onFocus={vi.fn()}
+      onClose={vi.fn()}
+      onMinimize={vi.fn()}
+      onMaximize={vi.fn()}
+      onBoundsChange={vi.fn()}
+    />);
 
+    const toggle = screen.getByRole("button", { name: "Toggle Chat sidebar" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
+    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
+  });
+
+  it("collapses and restores an active Chat sidebar through OSWindow", () => {
+    const tab: Tab = {
+      id: "chat-active",
+      kind: "work",
+      title: "Chat",
+      closable: false,
+      workRoute: "chat",
+      chatId: "chat-global",
+      chatTitle: "Global chat",
+      chatView: "conversation",
+    };
+    const view = render(<DesktopSurfaceFrame
+      tab={tab}
+      surface={{ tabId: tab.id, mode: "window", bounds: { x: 0, y: 0, width: 1_200, height: 800 }, zIndex: 1 }}
+      active
+      tabWorkspaceActive={false}
+      overlayOpen={false}
+      presentation="desktop"
+      onFocus={vi.fn()}
+      onClose={vi.fn()}
+      onMinimize={vi.fn()}
+      onMaximize={vi.fn()}
+      onBoundsChange={vi.fn()}
+    />);
+
+    const osWindow = view.container.querySelector("[data-os-window]") as HTMLElement;
+    const sidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
+    const trigger = screen.getByRole("button", { name: "Toggle Chat sidebar" });
+    expect(trigger.parentElement?.textContent).toContain("Global chat");
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("true");
+
+    fireEvent.click(trigger);
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("false");
+    expect(sidebar.hidden).toBe(true);
+
+    fireEvent.click(trigger);
+    expect(osWindow.getAttribute("data-sidebar-shown")).toBe("true");
+    expect(sidebar.hidden).toBe(false);
+
+    view.rerender(<DesktopSurfaceFrame
+      tab={tab}
+      surface={{ tabId: tab.id, mode: "tab", bounds: { x: 0, y: 0, width: 1_200, height: 800 }, zIndex: 1 }}
+      active
+      tabWorkspaceActive
+      overlayOpen={false}
+      presentation="desktop"
+      onFocus={vi.fn()}
+      onClose={vi.fn()}
+      onMinimize={vi.fn()}
+      onMaximize={vi.fn()}
+      onBoundsChange={vi.fn()}
+    />);
+
+    expect(screen.getByRole("button", { name: "Toggle Chat sidebar" })).toBeTruthy();
+    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
+    expect(view.container.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("");
+  });
+
+  it("renders apps through the current AppLauncher", () => {
+    render(<TabPane tab={{ id: "apps", kind: "apps", title: "Apps", closable: true }} active />);
     expect(screen.getByRole("heading", { name: /^(Apps|Loading apps)$/ })).toBeTruthy();
   });
 
-  it("renders Browser through its dedicated runtime-aware workspace", () => {
-    useTabs.getState().openTab({ kind: "browser", title: "Browser", closable: false });
-
-    render(<TabContent />);
-
-    expect(screen.getByRole("button", { name: "Browser workspace" }).getAttribute("data-active"))
-      .toBe("true");
+  it.each([
+    ["browser", browserMock],
+    ["editor", editorMock],
+    ["notes", notesMock],
+  ] as const)("renders the current %s workspace", (kind, workspaceMock) => {
+    render(<TabPane tab={{ id: kind, kind, title: kind, closable: true }} active />);
+    expect(workspaceMock).toHaveBeenCalled();
   });
 
-  it("contains a task panel exception without blanking the desktop renderer", () => {
+  it("contains a task panel exception without exposing private errors", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     function BrokenPanel(): React.ReactNode {
       throw new Error("private terminal failure");
     }
-
-    render(
-      <TabErrorBoundary tabTitle="Task A" onClose={vi.fn()}>
-        <BrokenPanel />
-      </TabErrorBoundary>,
-    );
-
+    render(<TabErrorBoundary tabTitle="Task A" onClose={vi.fn()}><BrokenPanel /></TabErrorBoundary>);
     expect(screen.getByRole("heading", { name: "Task A couldn't open" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Close tab" })).toBeTruthy();
     expect(screen.queryByText(/private terminal failure/i)).toBeNull();
+    vi.restoreAllMocks();
   });
 });

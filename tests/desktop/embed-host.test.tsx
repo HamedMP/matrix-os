@@ -97,6 +97,97 @@ describe("EmbedHost", () => {
     });
   });
 
+  it("keeps a retained native frame visible after an embed moves behind another window", async () => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "browser-1", state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:deactivate") {
+        return Promise.resolve({
+          ok: true,
+          snapshotDataUrl: "data:image/jpeg;base64,cGVyc2lzdGVkLWJyb3dzZXI=",
+        }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    const view = render(<EmbedHost kind="browser" url="https://example.com" active />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "browser-1", active: true },
+    ));
+
+    view.rerender(<EmbedHost kind="browser" url="https://example.com" active={false} />);
+
+    const retainedFrame = await screen.findByTestId("embed-retained-frame");
+    expect(retainedFrame.getAttribute("src")).toBe("data:image/jpeg;base64,cGVyc2lzdGVkLWJyb3dzZXI=");
+    expect(invoke).toHaveBeenCalledWith("embed:deactivate", { embedId: "browser-1" });
+  });
+
+  it("clears a retained frame when an inactive embed is replaced", async () => {
+    let nextEmbedId = 0;
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        nextEmbedId += 1;
+        return Promise.resolve({ embedId: `browser-${nextEmbedId}`, state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:deactivate") {
+        return Promise.resolve({
+          ok: true,
+          snapshotDataUrl: "data:image/jpeg;base64,b2xkLXBhZ2U=",
+        }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    const view = render(<EmbedHost kind="browser" url="https://one.example" active />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "browser-1", active: true },
+    ));
+    view.rerender(<EmbedHost kind="browser" url="https://one.example" active={false} />);
+    expect(await screen.findByTestId("embed-retained-frame")).toBeTruthy();
+
+    view.rerender(<EmbedHost kind="browser" url="https://two.example" active={false} />);
+
+    expect(screen.queryByTestId("embed-retained-frame")).toBeNull();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:open",
+      expect.objectContaining({ kind: "browser", url: "https://two.example", active: false }),
+    ));
+  });
+
+  it.each([
+    ["Home", (active: boolean) => <EmbedHost kind="hosted-shell" active={active} />],
+    ["VS Code", (active: boolean) => <EmbedHost kind="code-editor" active={active} />],
+    ["installed web apps", (active: boolean) => (
+      <EmbedHost kind="app" slug="whiteboard" active={active} />
+    )],
+  ])("uses the same retained-frame lifecycle for %s", async (_label, renderEmbed) => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "embed-1", state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:deactivate") {
+        return Promise.resolve({
+          ok: true,
+          snapshotDataUrl: "data:image/jpeg;base64,cmV0YWluZWQ=",
+        }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+    const view = render(renderEmbed(true));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "embed-1", active: true },
+    ));
+
+    view.rerender(renderEmbed(false));
+
+    expect(await screen.findByTestId("embed-retained-frame")).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith("embed:deactivate", { embedId: "embed-1" });
+  });
+
   it("resynchronizes native bounds and page scale when the Canvas transform changes", async () => {
     const view = render(<EmbedHost kind="app" slug="notes" layoutRevision="canvas:0:0:1" visualScale={1} />);
     await act(async () => {
@@ -135,6 +226,28 @@ describe("EmbedHost", () => {
       expect(invoke).toHaveBeenCalledWith("embed:retry-auth", { embedId: "embed-1" });
       expect(screen.getByRole("button", { name: "Retry sign-in" })).toBeTruthy();
     });
+  });
+
+  it("preserves an app failure reported during an auth retry", async () => {
+    let emitState: ((payload: { embedId: string; state: "failed" }) => void) | null = null;
+    vi.mocked(onEvent).mockImplementation((_channel, callback) => {
+      emitState = callback as typeof emitState;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "embed-1", state: "auth-required" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:retry-auth") {
+        emitState?.({ embedId: "embed-1", state: "failed" });
+        return Promise.resolve({ ok: false }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+    render(<EmbedHost kind="app" slug="spec-reader" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry sign-in" }));
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry sign-in" })).toBeNull();
   });
 
   it("refreshes bounds after a successful auth retry", async () => {

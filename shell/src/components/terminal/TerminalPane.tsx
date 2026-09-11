@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useEffectEvent, useReducer, useRef, useState, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
-import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
-import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
-import { buildAuthenticatedWebSocketUrl, getWebSocketAuthToken } from "@/lib/websocket-auth";
-import type { Theme } from "@/hooks/useTheme";
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
-import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
+import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { TerminalControls } from "@matrix-os/ui";
+import { createTerminalKeyHandler } from "./terminal-key-handler";
+import { useWebTerminalControls } from "./useWebTerminalControls";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -20,7 +21,6 @@ import { TerminalLinkContextMenu, type TerminalLinkMenuState } from "./TerminalL
 import {
   INITIAL_TERMINAL_LINKS_STATE,
   activateTerminalLink,
-  copyTerminalLink,
   findTerminalLinkAtCell,
   mayContainTerminalLink,
   openTerminalLink,
@@ -43,29 +43,59 @@ import { sendTerminalResize } from "./terminal-remote-resize";
 import {
   computeSoftGridLayout,
   correctTerminalPointerCoordinates,
+  shouldCorrectTerminalPointerCoordinates,
 } from "./terminal-soft-grid";
 import {
+  installTerminalPointerInterception,
+  markTerminalZoomCorrected,
+} from "./terminal-pointer-interception";
+import {
+  copyTerminalClipboardText,
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
 import {
+  IMAGE_ADDON_OPTIONS,
+  MAX_OSC52_BASE64_LENGTH,
+  OSC52_ALLOWED_TARGETS,
+  TERMINAL_CANONICAL_MAX_COLS,
+  TERMINAL_CANONICAL_MAX_ROWS,
+  TERMINAL_FAST_SCROLL_SENSITIVITY,
+  TERMINAL_MINIMUM_READABLE_FONT_SIZE,
+  TERMINAL_SCROLLBACK_LINES,
+  TERMINAL_SCROLL_SENSITIVITY,
+  applyXtermScrollOptions,
+  applyXtermScrollSurface,
+  applyXtermSurfaceBackground,
+  describeReadyState,
+  isAppleCommandPlatform,
+  refreshTerminalRenderer,
+  scrollTerminalViewportToBottom,
+  shouldDisableWebglRenderer,
+  suppressXtermNativeKeyboard,
+  terminalDebug,
+  terminalTelemetry,
+  toDisposableWebglAddon,
+  type CanonicalReplayRequest,
+  type DisposableWebglAddon,
+} from "./terminal-xterm-runtime";
+import {
   isCanonicalShellSessionId,
-  isLegacyPtySessionId,
+  parseTerminalRefKey,
   terminalWebSocketPathForSession,
 } from "./terminal-session-id";
 import { createXtermLogger } from "./xterm-logger";
 import { createColdReplayVisibility, type ColdReplayVisibility } from "./cold-replay-visibility";
 import { parseTerminalServerMessage, stripTerminalControls } from "./terminal-server-message";
+import type { TerminalPaneProps } from "./terminal-pane-types";
+import {
+  terminalClipboardFailureFeedback,
+  terminalClipboardSuccessFeedback,
+  type TerminalClipboardFeedback,
+} from "./terminal-clipboard-feedback";
 import { useTerminalFocusRequest } from "./useTerminalFocusRequest";
+import { useTerminalFilePaste } from "./useTerminalFilePaste";
 import type { TerminalCompatMode } from "@/stores/terminal-store";
 
-const MAX_OSC52_BASE64_LENGTH = 1_000_000;
-const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
-const BRACKETED_PASTE_OPEN = "\u001b[200~";
-const BRACKETED_PASTE_CLOSE = "\u001b[201~";
-const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
-const MAX_TERMINAL_INPUT = 65_536;
-const SUPPORTED_TERMINAL_PASTE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
 const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
   position: "absolute",
   top: 8,
@@ -81,254 +111,35 @@ const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
   fontSize: 13,
   boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
 };
-const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
-  [".png", "image/png"],
-  [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"],
-  [".gif", "image/gif"],
-  [".webp", "image/webp"],
-]);
-const TERMINAL_SCROLLBACK_LINES = 10_000;
-const TERMINAL_SCROLL_SENSITIVITY = 1;
-const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
-const TERMINAL_MINIMUM_READABLE_FONT_SIZE = 10;
-const TERMINAL_CANONICAL_MAX_COLS = 500;
-const TERMINAL_CANONICAL_MAX_ROWS = 200;
-const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
-  enableSizeReports: false,
-  pixelLimit: 4_194_304,
-  storageLimit: 32,
-  showPlaceholder: true,
-  sixelSupport: true,
-  sixelScrolling: true,
-  sixelPaletteLimit: 256,
-  sixelSizeLimit: 8_000_000,
-  iipSupport: true,
-  iipSizeLimit: 8_000_000,
-};
-
-function shouldDisableWebglRenderer(suppressNativeKeyboard: boolean): boolean {
-  if (suppressNativeKeyboard) return true;
-  if (typeof navigator === "undefined") return false;
-  const userAgent = navigator.userAgent;
-  const isAppleMobile = /\b(iPad|iPhone|iPod)\b/.test(userAgent)
-    || (userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1);
-  const isSafari = /Safari\//.test(userAgent) && !/(Chrome|CriOS|FxiOS|EdgiOS)\//.test(userAgent);
-  return isAppleMobile && isSafari;
+function sendTerminalInputFrame(ws: WebSocket, terminalKey: string | null, data: string): boolean {
+  const terminalRef = parseTerminalRefKey(terminalKey);
+  if (!terminalRef || ws.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify({ type: "input", terminalRef, data }));
+  return true;
 }
 
-function terminalPasteMimeType(file: File): string | null {
-  const typed = file.type.trim().toLowerCase();
-  if (SUPPORTED_TERMINAL_PASTE_MIME_TYPES.has(typed)) {
-    return typed;
-  }
-  const dot = file.name.lastIndexOf(".");
-  if (dot < 0) {
-    return null;
-  }
-  return TERMINAL_PASTE_MIME_BY_EXTENSION.get(file.name.slice(dot).toLowerCase()) ?? null;
-}
-
-function isSupportedTerminalPasteFile(file: File | null | undefined): file is File {
-  return Boolean(file && terminalPasteMimeType(file));
-}
-
-function filesFromTerminalFilePayload(payload: DataTransfer | ClipboardEvent["clipboardData"] | null): File[] {
-  if (!payload) {
-    return [];
-  }
-  const files: File[] = [];
-  const items = Array.from(payload.items ?? []);
-  for (const item of items) {
-    if (item.kind === "file") {
-      const file = item.getAsFile();
-      if (isSupportedTerminalPasteFile(file)) {
-        files.push(file);
-      }
+async function destroyCanonicalTerminalTab(
+  terminalRef: NonNullable<ReturnType<typeof parseTerminalRefKey>>,
+): Promise<void> {
+  try {
+    const response = await fetch(
+      `${getGatewayUrl()}/api/terminal/workspaces/${encodeURIComponent(terminalRef.workspaceId)}/tabs/${encodeURIComponent(terminalRef.tabId)}`,
+      {
+        method: "DELETE",
+        keepalive: true,
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!response.ok) {
+      console.warn("[terminal] Failed to destroy explicitly closed terminal tab");
     }
-  }
-  if (files.length > 0) {
-    return files;
-  }
-  return Array.from(payload.files ?? []).filter(isSupportedTerminalPasteFile);
-}
-
-function terminalPasteUploadTimeout(): { signal: AbortSignal; cleanup: () => void } {
-  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-    return { signal: AbortSignal.timeout(TERMINAL_PASTE_UPLOAD_TIMEOUT_MS), cleanup: () => {} };
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TERMINAL_PASTE_UPLOAD_TIMEOUT_MS);
-  return {
-    signal: controller.signal,
-    cleanup: () => clearTimeout(timeout),
-  };
-}
-
-function splitBracketedPastePayload(parts: string[]): string[] {
-  const maxPayloadLength = MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD;
-  const payload = parts.filter((part) => part.length > 0).join(" ");
-  const chunks: string[] = [];
-  for (let index = 0; index < payload.length; index += maxPayloadLength) {
-    chunks.push(payload.slice(index, index + maxPayloadLength));
-  }
-  return chunks;
-}
-
-function scrollTerminalViewportToBottom(term: Terminal | null): void {
-  term?.scrollToBottom();
-}
-
-function terminalDebug(event: string, details: Record<string, unknown>): void {
-  if (!isTerminalDebugEnabled()) {
-    return;
-  }
-  console.info("[terminal-debug][pane]", event, details);
-}
-
-function suppressXtermNativeKeyboard(container: HTMLElement): void {
-  const helper = container.querySelector("textarea.xterm-helper-textarea");
-  if (!(helper instanceof HTMLTextAreaElement)) {
-    return;
-  }
-  helper.inputMode = "none";
-  helper.readOnly = true;
-  helper.autocomplete = "off";
-  helper.autocapitalize = "none";
-  helper.spellcheck = false;
-  helper.setAttribute("aria-hidden", "true");
-}
-
-function applyXtermSurfaceBackground(
-  xtermElement: HTMLElement | null | undefined,
-  background: string,
-): void {
-  if (!xtermElement) {
-    return;
-  }
-
-  xtermElement.style.backgroundColor = background;
-  for (const selector of [".xterm-viewport", ".xterm-scrollable-element"]) {
-    const surface = xtermElement.querySelector(selector);
-    if (surface instanceof HTMLElement) {
-      surface.style.backgroundColor = background;
-    }
+  } catch (error: unknown) {
+    console.warn(
+      "[terminal] Failed to destroy explicitly closed terminal tab",
+      error instanceof DOMException && error.name === "AbortError" ? "request timed out" : "request failed",
+    );
   }
 }
-
-function applyXtermScrollSurface(
-  xtermElement: HTMLElement | null | undefined,
-  background: string,
-): void {
-  if (!xtermElement) {
-    return;
-  }
-
-  applyXtermSurfaceBackground(xtermElement, background);
-  xtermElement.classList.add("matrix-terminal-xterm-root");
-  xtermElement.style.width = "100%";
-  xtermElement.style.height = "100%";
-  xtermElement.style.overscrollBehavior = "contain";
-  xtermElement.style.touchAction = "pan-y";
-
-  const viewport = xtermElement.querySelector(".xterm-viewport");
-  if (!(viewport instanceof HTMLElement)) {
-    return;
-  }
-
-  viewport.classList.add("matrix-terminal-xterm-viewport");
-  viewport.style.height = "100%";
-  viewport.style.overflowY = "scroll";
-  viewport.style.setProperty("scrollbar-gutter", "stable");
-  viewport.style.overscrollBehavior = "contain";
-  viewport.style.touchAction = "pan-y";
-}
-
-function applyXtermScrollOptions(term: Terminal): void {
-  term.options.scrollback = TERMINAL_SCROLLBACK_LINES;
-  term.options.scrollSensitivity = TERMINAL_SCROLL_SENSITIVITY;
-  term.options.fastScrollSensitivity = TERMINAL_FAST_SCROLL_SENSITIVITY;
-  term.options.scrollOnUserInput = true;
-}
-
-function refreshTerminalRenderer(term: Terminal): void {
-  if (term.rows <= 0) {
-    return;
-  }
-  term.refresh(0, term.rows - 1);
-}
-
-type DisposableWebglAddon = { dispose: () => void };
-type CanonicalReplayRequest = {
-  mode: "cold-replay" | "cursor-resume";
-  requestedSeq: number;
-};
-
-function toDisposableWebglAddon(addon: unknown): DisposableWebglAddon | null {
-  if (!addon || typeof addon !== "object") {
-    return null;
-  }
-  const dispose = (addon as { dispose?: unknown }).dispose;
-  return typeof dispose === "function" ? (addon as DisposableWebglAddon) : null;
-}
-
-function terminalTelemetry(event: string, properties: Record<string, string | number | boolean | undefined>): void {
-  const payload = {
-    source: "terminal-pane",
-    event,
-    ...properties,
-  };
-  capturePostHogEvent("shell_terminal_ws", payload);
-  capturePostHogLog(event.includes("error") ? "error" : "info", `terminal websocket ${event}`, payload);
-}
-
-function describeReadyState(ws: WebSocket | null): string {
-  if (!ws) {
-    return "null";
-  }
-
-  switch (ws.readyState) {
-    case WebSocket.CONNECTING:
-      return "CONNECTING";
-    case WebSocket.OPEN:
-      return "OPEN";
-    case WebSocket.CLOSING:
-      return "CLOSING";
-    case WebSocket.CLOSED:
-      return "CLOSED";
-    default:
-      return `UNKNOWN(${String((ws as { readyState?: unknown }).readyState)})`;
-  }
-}
-
-interface TerminalPaneProps {
-  paneId: string;
-  cwd: string;
-  theme: Theme;
-  isFocused: boolean;
-  focusRequestId?: number;
-  sessionId?: string;
-  claudeMode?: boolean;
-  startupCommand?: string;
-  compatMode?: TerminalCompatMode;
-  onFocus?: (paneId: string) => void;
-  onSessionAttached?: (paneId: string, sessionId: string) => void;
-  isClosing?: boolean;
-  shouldCacheOnUnmount?: (paneId: string) => boolean;
-  shouldDestroyOnUnmount?: (paneId: string) => boolean;
-  allowRemoteResize?: boolean;
-  suppressNativeKeyboard?: boolean;
-  /**
-   * The CSS transform scale applied to the canvas ancestor. When the canvas is
-   * zoomed via `transform: scale(z)`, xterm's mouse-to-cell mapping breaks
-   * because getBoundingClientRect() returns scaled screen pixels while
-   * cssCellWidth is measured at the unscaled font size. Providing the live zoom
-   * factor allows TerminalPane to correct pointer events before xterm sees them.
-   * Defaults to 1 (no correction).
-   */
-  canvasZoom?: number;
-}
-
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/no-many-boolean-props -- cohesive xterm lifecycle owner: terminal creation, WS attach/replay, fit/resize, addon wiring, and caching are one tightly-coupled effect graph that cannot be split without leaking refs across components; the boolean props (isFocused, isClosing, allowRemoteResize, suppressNativeKeyboard) are independent terminal modes, not a hidden variant enum, so collapsing them into an options object would obscure call sites.
 export function TerminalPane({
   paneId,
@@ -356,23 +167,28 @@ export function TerminalPane({
   const terminalCursorStyle = useTerminalSettings((s) => s.cursorStyle);
   const terminalSmoothScroll = useTerminalSettings((s) => s.smoothScroll);
   const cursorBlink = useTerminalSettings((s) => s.cursorBlink);
-  const terminalSurfaceBackground = buildXtermTheme(theme, terminalThemeId).background;
+  const terminalSurfaceTheme = buildXtermTheme(theme, terminalThemeId);
+  const terminalSurfaceBackground = terminalSurfaceTheme.background;
   // Visual-viewport state drives keyboard-aware re-fitting on mobile: when the
   // iOS soft keyboard opens the layout viewport doesn't shrink, so the terminal
   // host must re-fit to the visible band or the prompt hides behind the keyboard.
   const { height: viewportHeight, offsetTop: viewportOffsetTop, keyboardOpen } = useVisualViewport();
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const termRef = useRef<unknown>(null);
+  const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<unknown>(null);
   const searchAddonRef = useRef<unknown>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
   const lastSeqRef = useRef<number>(0);
   const hasReplayCursorRef = useRef(false);
+  const lastPresentationRevisionRef = useRef(0);
   const reconnectAttemptRef = useRef<number>(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingReconnectBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsGenerationRef = useRef(0);
+  const copyOperationGenerationRef = useRef(0);
+  const pasteOperationGenerationRef = useRef(0);
+  const clipboardOperationSequenceRef = useRef(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
@@ -388,8 +204,14 @@ export function TerminalPane({
     INITIAL_TERMINAL_LINKS_STATE,
   );
   const [linkContextMenu, setLinkContextMenu] = useState<TerminalLinkMenuState | null>(null);
-  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [clipboardFeedback, setClipboardFeedback] = useState<TerminalClipboardFeedback | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | "elsewhere" | null>(null);
+  const [controlsConnection, setControlsConnection] = useState<{ sessionName: string | null; connected: boolean }>({ sessionName: null, connected: false });
+  const { controls, handleKeyEvent: handleControlKeyEvent } = useWebTerminalControls({
+    paneId, sessionName: controlsConnection.sessionName,
+    enabled: controlsConnection.connected && isFocused && !isClosing,
+    wsRef, termRef,
+  });
   const resumeLeaseRef = useRef<() => void>(() => undefined);
   const wasFocusedRef = useRef(isFocused);
   const outputBufferRef = useRef("");
@@ -414,6 +236,73 @@ export function TerminalPane({
   }, []);
   const closeLinkContextMenu = useCallback(() => {
     setLinkContextMenu(null);
+    (termRef.current as Terminal | null)?.focus();
+  }, []);
+  const reportClipboardFailure = useCallback((sequence: number, message: string) => {
+    setClipboardFeedback((current) => terminalClipboardFailureFeedback(current, sequence, message));
+  }, []);
+  const reportClipboardSuccess = useCallback((sequence: number) => {
+    setClipboardFeedback((current) => terminalClipboardSuccessFeedback(current, sequence));
+  }, []);
+  const copyTerminalSelection = useCallback((selection: string) => {
+    const operation = ++copyOperationGenerationRef.current;
+    const feedbackSequence = ++clipboardOperationSequenceRef.current;
+    const initiatingSession = sessionIdRef.current;
+    const canCommit = () => copyOperationGenerationRef.current === operation
+      && sessionIdRef.current === initiatingSession;
+    void copyTerminalClipboardText({
+      clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+      text: selection,
+      canCommit,
+    }).then((result) => {
+      if (!canCommit() || result === "cancelled") return;
+      if (result === "success") {
+        reportClipboardSuccess(feedbackSequence);
+      } else {
+        reportClipboardFailure(feedbackSequence, "Clipboard copy failed. Try again.");
+      }
+    }).catch((error: unknown) => {
+      console.warn("[terminal] clipboard copy unavailable", {
+        category: error instanceof DOMException ? error.name : "clipboard-error",
+      });
+      if (canCommit()) reportClipboardFailure(feedbackSequence, "Clipboard copy failed. Try again.");
+    });
+  }, [reportClipboardFailure, reportClipboardSuccess]);
+  const pasteTerminalClipboard = useCallback((submit = false) => {
+    const operation = ++pasteOperationGenerationRef.current;
+    const feedbackSequence = ++clipboardOperationSequenceRef.current;
+    const initiatingSession = sessionIdRef.current;
+    const initiatingSocket = wsRef.current;
+    const initiatingSocketGeneration = wsGenerationRef.current;
+    const canCommit = () => pasteOperationGenerationRef.current === operation
+      && sessionIdRef.current === initiatingSession
+      && wsRef.current === initiatingSocket
+      && wsGenerationRef.current === initiatingSocketGeneration;
+    void pasteClipboardIntoTerminal({
+      clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+      gatewayUrl: getGatewayUrl(),
+      ws: initiatingSocket,
+      submit,
+      canCommit,
+    }).then((result) => {
+      if (!canCommit() || result === "cancelled") return;
+      if (result === "failed" || result === "unavailable") {
+        reportClipboardFailure(feedbackSequence, "Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
+      } else if (result === "image" || result === "text") {
+        reportClipboardSuccess(feedbackSequence);
+      }
+    }).catch((error: unknown) => {
+      console.warn("[terminal] clipboard paste unavailable", {
+        category: error instanceof DOMException ? error.name : "clipboard-error",
+      });
+      if (canCommit()) {
+        reportClipboardFailure(feedbackSequence, "Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
+      }
+    });
+  }, [reportClipboardFailure, reportClipboardSuccess]);
+  const pasteTerminalClipboardEvent = useEffectEvent(pasteTerminalClipboard);
+  const selectAllTerminal = useCallback(() => {
+    (termRef.current as Terminal | null)?.selectAll();
   }, []);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
@@ -468,8 +357,6 @@ export function TerminalPane({
     const container = containerRef.current;
     if (!container) return;
 
-    const MOUSE_EVENTS = ["mousedown", "mousemove", "mouseup"] as const;
-
     const correct = (e: MouseEvent) => {
       const visualScale = canvasZoomRef.current * softGridScaleRef.current;
       if (visualScale === 1) return;
@@ -504,7 +391,6 @@ export function TerminalPane({
         cancelable: e.cancelable,
         composed: e.composed,
         detail: e.detail,
-        view: e.view ?? window,
         screenX: e.screenX,
         screenY: e.screenY,
         clientX: corrected.clientX,
@@ -520,28 +406,21 @@ export function TerminalPane({
         movementY: e.movementY,
       });
       // Mark the event so our own handler ignores it and does not re-correct.
-      Object.defineProperty(synthetic, "_xtermZoomCorrected", { value: true });
+      markTerminalZoomCorrected(synthetic);
       target.dispatchEvent(synthetic);
     };
 
-    const handler = (e: MouseEvent) => {
-      // Skip synthetic events we already corrected to avoid infinite loops.
-      if ((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected) return;
-      const visualScale = canvasZoomRef.current * softGridScaleRef.current;
-      if (visualScale === 1) return;
-      correct(e);
-    };
-
-    for (const type of MOUSE_EVENTS) {
-      // Capture phase so we intercept before xterm's own listeners.
-      container.addEventListener(type, handler, { capture: true });
-    }
-
-    return () => {
-      for (const type of MOUSE_EVENTS) {
-        container.removeEventListener(type, handler, { capture: true });
-      }
-    };
+    return installTerminalPointerInterception({
+      container,
+      getTerminal: () => termRef.current as Terminal | null,
+      getVisualScale: () => canvasZoomRef.current * softGridScaleRef.current,
+      shouldCorrectPointer: (event) => shouldCorrectTerminalPointerCoordinates({
+        type: event.type as "mousedown" | "mousemove" | "mouseup",
+        alreadyCorrected: false,
+        visualScale: canvasZoomRef.current * softGridScaleRef.current,
+      }),
+      correctPointer: correct,
+    });
   // Effect wires once and reads zoom through the ref — no dependency on
   // canvasZoom directly, which avoids tearing down/re-registering listeners
   // on every zoom change while the user is actively zooming the canvas.
@@ -553,9 +432,17 @@ export function TerminalPane({
     (termRef.current as { focus?: () => void } | null)?.focus?.();
   };
 
-  const showPasteError = (message = "Image paste failed. Try a smaller image or paste a saved file with `mos shell paste-file`.") => {
-    setPasteError(message);
-  };
+  useTerminalFilePaste({
+    containerRef,
+    cwd,
+    feedbackSequenceRef: clipboardOperationSequenceRef,
+    operationGenerationRef: pasteOperationGenerationRef,
+    reportPasteFailure: reportClipboardFailure,
+    reportPasteSuccess: reportClipboardSuccess,
+    sessionIdRef,
+    socketGenerationRef: wsGenerationRef,
+    wsRef,
+  });
 
   useEffect(() => {
     isClosingRef.current = !!isClosing;
@@ -564,127 +451,21 @@ export function TerminalPane({
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- syncs the initialSessionId prop into a mutable ref consumed by the imperative WebSocket/PTY layer; this is prop->ref mirroring, not a DOM event handler, and has no parent handler to hoist into
     if (initialSessionId && initialSessionId !== sessionIdRef.current) {
+      copyOperationGenerationRef.current += 1;
+      pasteOperationGenerationRef.current += 1;
       sessionIdRef.current = initialSessionId;
       lastSeqRef.current = 0;
       hasReplayCursorRef.current = false;
+      lastPresentationRevisionRef.current = 0;
+      setControlsConnection({ sessionName: null, connected: false });
+      resumeLeaseRef.current();
     }
   }, [initialSessionId]);
 
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers paste/drop listeners; the fetch runs later from those user event handlers with an AbortSignal timeout.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const sendBracketedPaste = (terminalPaths: string[]) => {
-      const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        for (const chunk of splitBracketedPastePayload(terminalPaths)) {
-          ws.send(JSON.stringify({
-            type: "input",
-            data: `${BRACKETED_PASTE_OPEN}${chunk}${BRACKETED_PASTE_CLOSE}`,
-          }));
-        }
-      }
-    };
-
-    const uploadAndPasteFiles = async (files: File[]) => {
-      const sessionId = sessionIdRef.current;
-      if (!sessionId) {
-        return;
-      }
-      const terminalPaths: string[] = [];
-      let authToken: string | null = null;
-      try {
-        authToken = await getWebSocketAuthToken();
-      } catch (err: unknown) {
-        console.warn("Terminal paste auth token unavailable:", err instanceof Error ? err.message : err);
-      }
-      for (const file of files) {
-        const mimeType = terminalPasteMimeType(file);
-        if (!mimeType) {
-          continue;
-        }
-        const uploadTimeout = terminalPasteUploadTimeout();
-        // react-doctor-disable-next-line react-doctor/react-compiler-unsupported-syntax, react-hooks-js/todo -- try/finally guarantees each paste upload timeout is cleaned up after this user-triggered event handler finishes.
-        try {
-          const headers: Record<string, string> = {
-            "Content-Type": mimeType,
-            "X-Matrix-Filename": file.name,
-          };
-          if (authToken) {
-            headers.Authorization = `Bearer ${authToken}`;
-          }
-          const url = new URL(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/paste-assets`);
-          url.searchParams.set("cwd", cwd || "projects");
-          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- paste uploads are intentionally sequential to preserve terminal insertion order and avoid multiple simultaneous file bodies.
-          const res = await fetch(url.toString(), {
-            method: "POST",
-            credentials: "same-origin",
-            headers,
-            signal: uploadTimeout.signal,
-            body: file,
-          });
-          if (!res.ok) {
-            console.warn(`Terminal paste upload failed: ${res.status}`);
-            continue;
-          }
-          const payload = await res.json() as { terminalPath?: unknown };
-          if (typeof payload.terminalPath === "string") {
-            terminalPaths.push(payload.terminalPath);
-          }
-        } catch (err: unknown) {
-          console.warn("Terminal paste upload failed:", err instanceof Error ? err.message : err);
-        } finally {
-          uploadTimeout.cleanup();
-        }
-      }
-      if (terminalPaths.length > 0) {
-        sendBracketedPaste(terminalPaths);
-      }
-    };
-
-    const captureImagePayload = (event: ClipboardEvent | DragEvent): File[] => {
-      const files = "clipboardData" in event
-        ? filesFromTerminalFilePayload(event.clipboardData)
-        : filesFromTerminalFilePayload(event.dataTransfer);
-      if (files.length === 0) {
-        return [];
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      if ("stopImmediatePropagation" in event) {
-        event.stopImmediatePropagation();
-      }
-      return files;
-    };
-
-    const onPaste = (event: ClipboardEvent) => {
-      const files = captureImagePayload(event);
-      if (files.length > 0) {
-        void uploadAndPasteFiles(files);
-      }
-    };
-    const onDrag = (event: DragEvent) => {
-      captureImagePayload(event);
-    };
-    const onDrop = (event: DragEvent) => {
-      const files = captureImagePayload(event);
-      if (files.length > 0) {
-        void uploadAndPasteFiles(files);
-      }
-    };
-
-    container.addEventListener("paste", onPaste, { capture: true });
-    container.addEventListener("dragenter", onDrag, { capture: true });
-    container.addEventListener("dragover", onDrag, { capture: true });
-    container.addEventListener("drop", onDrop, { capture: true });
-    return () => {
-      container.removeEventListener("paste", onPaste, { capture: true });
-      container.removeEventListener("dragenter", onDrag, { capture: true });
-      container.removeEventListener("dragover", onDrag, { capture: true });
-      container.removeEventListener("drop", onDrop, { capture: true });
-    };
-  }, [cwd]);
+  useEffect(() => () => {
+    copyOperationGenerationRef.current += 1;
+    pasteOperationGenerationRef.current += 1;
+  }, []);
 
   // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom
   // window event with the target paneId; we forward to this pane's PTY if it
@@ -698,22 +479,12 @@ export function TerminalPane({
         return;
       }
       if (detail.action === "paste") {
-        pasteClipboardIntoTerminal({
-          clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
-          gatewayUrl: getGatewayUrl(),
-          ws: wsRef.current,
-          submit: detail.submit === true,
-        }).catch((err: unknown) => {
-          console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
-          showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
-        });
+        pasteTerminalClipboardEvent(detail.submit === true);
         return;
       }
       if (!detail.data) return;
       const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "input", data: detail.data }));
-      }
+      if (ws) sendTerminalInputFrame(ws, sessionIdRef.current, detail.data);
     };
     window.addEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
     return () => window.removeEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
@@ -728,7 +499,21 @@ export function TerminalPane({
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup, react-doctor/exhaustive-deps -- cleanup is returned via init()'s awaited promise (see outer return), and reading the live heartbeatRef.current in cleanup is required to stop the most recent heartbeat instance.
   useEffect(() => {
     let disposed = false;
-    let leaseWasRevoked = false;
+    let lastRevision = -1;
+    let destroyRequested = false;
+    const destroyIfRequested = (): boolean => {
+      const destroyDecision = shouldDestroyOnUnmountRef.current?.(paneId) ?? false;
+      if (destroyRequested || !destroyDecision) {
+        return destroyRequested;
+      }
+      const terminalRef = parseTerminalRefKey(
+        typeof destroyDecision === "string" ? destroyDecision : sessionIdRef.current,
+      );
+      if (!terminalRef) return false;
+      destroyRequested = true;
+      void destroyCanonicalTerminalTab(terminalRef);
+      return true;
+    };
 
     async function init() {
       const log = (event: string, details: Record<string, unknown> = {}) => {
@@ -813,6 +598,7 @@ export function TerminalPane({
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
         hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
+        lastPresentationRevisionRef.current = 0;
       }
       log("init", {
         cached: !!cached,
@@ -984,7 +770,7 @@ export function TerminalPane({
         if (!allowRemoteResizeRef.current || !rememberHardGridDeclaration(proposed)) {
           return;
         }
-        ws.send(JSON.stringify({ type: "resize", ...proposed }));
+        sendTerminalResize(ws, proposed, true, sessionIdRef.current);
       };
 
       const scheduleHardGridMeasurement = () => {
@@ -1034,7 +820,7 @@ export function TerminalPane({
             return;
           }
           fitAddon.fit();
-          sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
+          sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current, sessionIdRef.current);
           focusIfAllowed();
         } catch (err: unknown) {
           log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
@@ -1121,6 +907,7 @@ export function TerminalPane({
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
         hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
+        lastPresentationRevisionRef.current = cached.presentationRevision ?? 0;
         let restoredFitSucceeded = true;
         if (usesCanonicalGrid()) {
           if (usesSoftGrid()) {
@@ -1132,7 +919,7 @@ export function TerminalPane({
         } else {
           try {
             fitAddon.fit();
-            sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
+            sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current, sessionIdRef.current);
           } catch (err: unknown) {
             restoredFitSucceeded = false;
             log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
@@ -1162,6 +949,7 @@ export function TerminalPane({
           scrollSensitivity: TERMINAL_SCROLL_SENSITIVITY,
           fastScrollSensitivity: TERMINAL_FAST_SCROLL_SENSITIVITY,
           scrollOnUserInput: true,
+          rightClickSelectsWord: false,
           allowProposedApi: true,
           logger: createXtermLogger(),
           fontSize: terminalFontSize,
@@ -1314,7 +1102,16 @@ export function TerminalPane({
         const generation = options.generation ?? wsGenerationRef.current + 1;
         wsGenerationRef.current = generation;
         wsRef.current = ws;
+        // Revisions are connection-scoped watermarks. A replacement runtime
+        // may start its authoritative stream below the previous socket's last
+        // revision, so carrying that value across reconnects would reject the
+        // new attached/snapshot/output stream indefinitely.
+        lastRevision = -1;
         const alreadyAttached = options.alreadyAttached === true;
+        setControlsConnection({
+          sessionName: alreadyAttached && sessionIdRef.current && isCanonicalShellSessionId(sessionIdRef.current) ? sessionIdRef.current : null,
+          connected: alreadyAttached && ws.readyState === WebSocket.OPEN,
+        });
         const isColdReplay = options.replayRequest?.mode === "cold-replay";
         const isCurrentWs = () => (
           wsRef.current === ws
@@ -1354,26 +1151,13 @@ export function TerminalPane({
           }
           const currentSessionId = sessionIdRef.current;
           const isCanonicalShellSession = Boolean(currentSessionId && isCanonicalShellSessionId(currentSessionId));
-          const attachMode = currentSessionId ? (isCanonicalShellSession ? "canonical" : "reattach") : "create";
+          const attachMode = isCanonicalShellSession ? "terminal-tab" : "unavailable";
           log("send-attach", {
             attachMode,
             attachSessionId: currentSessionId,
             fromSeq: lastSeqRef.current,
           });
-          if (isCanonicalShellSession) {
-            return;
-          }
-          if (currentSessionId) {
-            ws.send(JSON.stringify({
-              type: "attach",
-              sessionId: currentSessionId,
-              fromSeq: lastSeqRef.current,
-            }));
-          } else {
-            ws.send(JSON.stringify({ type: "attach", cwd }));
-          }
-
-          sendTerminalResize(ws, term, allowRemoteResizeRef.current);
+          sendTerminalResize(ws, term, allowRemoteResizeRef.current, sessionIdRef.current);
 
           const startup = sessionIdRef.current
             ? null
@@ -1381,7 +1165,7 @@ export function TerminalPane({
           if (startup) {
             setTimeout(() => {
               if (isCurrentWs() && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "input", data: `${startup}\r` }));
+                sendTerminalInputFrame(ws, sessionIdRef.current, `${startup}\r`);
               }
             }, 100);
           }
@@ -1403,8 +1187,11 @@ export function TerminalPane({
           heartbeatRef.current = createSocketHealth({
             pingIntervalMs: 10_000,
             pongTimeoutMs: 5_000,
-            send: (data) => {
-              if (isCurrentWs() && ws.readyState === WebSocket.OPEN) ws.send(data);
+            send: () => {
+              const terminalRef = parseTerminalRefKey(sessionIdRef.current);
+              if (terminalRef && isCurrentWs() && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "ping", terminalRef }));
+              }
             },
             onDead: () => {
               if (isCurrentWs()) {
@@ -1439,6 +1226,7 @@ export function TerminalPane({
             return;
           }
           wsRef.current = null;
+          setControlsConnection({ sessionName: null, connected: false });
           heartbeatRef.current?.stop();
           log("ws-close", {
             disposed,
@@ -1450,13 +1238,14 @@ export function TerminalPane({
             isClosing: isClosingRef.current,
           });
           if (disposed || isClosingRef.current) return;
-          if (leaseWasRevoked) return;
 
           // Attempt reconnection with exponential backoff
           const attempt = reconnectAttemptRef.current;
-          if (attempt < 3 && sessionIdRef.current) {
+          if (sessionIdRef.current) {
             clearReconnectTimer();
-            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+            const delay = Math.round(
+              Math.min(30_000, Math.pow(2, Math.min(attempt, 5)) * 1_000) * (0.8 + Math.random() * 0.4),
+            );
             reconnectAttemptRef.current = attempt + 1;
             log("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
             track("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
@@ -1490,20 +1279,14 @@ export function TerminalPane({
             return;
           }
           const raw = typeof evt.data === "string" ? evt.data : "";
-          // Fast pong handling (skip full parse)
-          if (raw.includes('"pong"')) {
-            try {
-              const quick = JSON.parse(raw) as { type: string };
-              if (quick.type === "pong") {
-                heartbeatRef.current?.receivedPong();
-                return;
-              }
-            } catch (_err: unknown) { /* fall through to normal parse */ }
-          }
-
           const msg = parseTerminalServerMessage(raw);
           if (!msg) {
             return;
+          }
+          if ("sessionId" in msg && msg.sessionId && msg.sessionId !== sessionIdRef.current) return;
+          if ("revision" in msg) {
+            if (msg.revision < lastRevision) return;
+            lastRevision = msg.revision;
           }
 
           switch (msg.type) {
@@ -1524,6 +1307,10 @@ export function TerminalPane({
                 acceptedSeq: msg.fromSeq ?? undefined,
               });
               sessionIdRef.current = msg.sessionId;
+              setControlsConnection({
+                sessionName: isCanonicalShellSessionId(msg.sessionId) ? msg.sessionId : null,
+                connected: msg.state === "running",
+              });
               if (msg.canonicalSize) {
                 applyCanonicalGridSize(msg.canonicalSize);
               }
@@ -1532,27 +1319,10 @@ export function TerminalPane({
                 hasReplayCursorRef.current = true;
               }
               onSessionAttachedRef.current?.(paneId, msg.sessionId);
-              if (msg.state === "exited") {
-                const exitCode = msg.exitCode ?? "unknown";
-                term.write(`\r\n[Process exited with code ${exitCode}]\r\n`);
-              }
               break;
 
             case "canonical-size":
               applyCanonicalGridSize(msg);
-              break;
-
-            case "lease-revoked":
-              leaseWasRevoked = true;
-              setConnectionNotice("elsewhere");
-              ws.close();
-              break;
-
-            case "presentation-reset":
-              term.reset();
-              outputBufferRef.current = "";
-              commandBlockBufferRef.current = "";
-              activeCommandBlockRef.current = false;
               break;
 
             case "output":
@@ -1592,16 +1362,30 @@ export function TerminalPane({
               }
               break;
 
-            case "block-mark":
-              if (msg.seq !== null) {
-                lastSeqRef.current = Math.max(lastSeqRef.current, msg.seq + 1);
+            case "snapshot":
+              {
+                const snapshotNextSeq = msg.seq + 1;
+                const presentationRevision = msg.presentationRevision ?? 0;
+                const replacesPresentation = presentationRevision > lastPresentationRevisionRef.current;
+                const isCursorResume = options.replayRequest?.mode === "cursor-resume";
+                if (hasReplayCursorRef.current && snapshotNextSeq <= lastSeqRef.current
+                  && !replacesPresentation && !isCursorResume) break;
+                const needsReplayReconnect = hasReplayCursorRef.current
+                  && snapshotNextSeq < lastSeqRef.current
+                  && replacesPresentation
+                  && !isCursorResume;
+              if (msg.canonicalSize) applyCanonicalGridSize(msg.canonicalSize);
+              // A snapshot is a complete authoritative presentation, not an
+              // incremental output frame. Replace retained xterm state so a
+              // reconnect cannot append a duplicate screen and scrollback.
+              term.reset();
+              term.write(msg.data);
+                lastSeqRef.current = isCursorResume
+                  ? Math.max(lastSeqRef.current, snapshotNextSeq)
+                  : snapshotNextSeq;
                 hasReplayCursorRef.current = true;
-              }
-              if (msg.mark.code === "B" || msg.mark.code === "C") {
-                activeCommandBlockRef.current = true;
-                commandBlockBufferRef.current = "";
-              } else if (msg.mark.code === "D") {
-                activeCommandBlockRef.current = false;
+                lastPresentationRevisionRef.current = Math.max(lastPresentationRevisionRef.current, presentationRevision);
+                if (needsReplayReconnect) ws.close();
               }
               break;
 
@@ -1612,8 +1396,12 @@ export function TerminalPane({
             case "replay-end":
               replayVisibility.revealAfterWrites();
               break;
+            case "pong":
+              heartbeatRef.current?.receivedPong();
+              break;
 
             case "exit": {
+              setControlsConnection({ sessionName: null, connected: false });
               const code = msg.code ?? "unknown";
               term.write(`\r\n[Process exited with code ${code}]\r\n`);
               break;
@@ -1625,17 +1413,7 @@ export function TerminalPane({
               track("server-error", {
                 sessionNotFound: safeMsg === "Session not found",
               });
-              if (safeMsg === "Session not found" && sessionIdRef.current && isLegacyPtySessionId(sessionIdRef.current)) {
-                log("session-not-found-reset");
-                sessionIdRef.current = null;
-                lastSeqRef.current = 0;
-                hasReplayCursorRef.current = false;
-                term.write("\r\n\x1b[33m[Session expired, starting new session...]\x1b[0m\r\n");
-                log("fallback-create-after-session-not-found");
-                ws.send(JSON.stringify({ type: "attach", cwd }));
-              } else {
-                term.write(`\r\n\x1b[31m[Error: ${safeMsg}]\x1b[0m\r\n`);
-              }
+              term.write(`\r\n\x1b[31m[Error: ${safeMsg}]\x1b[0m\r\n`);
               replayVisibility.revealAfterWrites();
               break;
             }
@@ -1652,7 +1430,7 @@ export function TerminalPane({
                 scheduleHardGridMeasurement();
               }
             } else {
-              sendTerminalResize(ws, term, allowRemoteResizeRef.current);
+              sendTerminalResize(ws, term, allowRemoteResizeRef.current, sessionIdRef.current);
             }
             return;
           }
@@ -1681,6 +1459,8 @@ export function TerminalPane({
           return;
         }
         const currentSessionId = sessionIdRef.current;
+        const terminalRef = parseTerminalRefKey(currentSessionId);
+        if (!terminalRef) return;
         const wsPath = terminalWebSocketPathForSession(currentSessionId);
         const replayRequest = getCanonicalReplayRequest();
         const declaredSize = usesHardGrid() ? proposeHardGridDimensions() : null;
@@ -1696,25 +1476,15 @@ export function TerminalPane({
         webSocketConnectPending = true;
         const generation = wsGenerationRef.current + 1;
         wsGenerationRef.current = generation;
-        const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
-          ? {
-              session: currentSessionId,
-              fromSeq: String(replayRequest?.requestedSeq ?? 0),
-              client: suppressNativeKeyboard ? "soft" : "hard",
-              ...(isFocusedRef.current ? { lease: "exclusive" } : {}),
-              ...(declaredSize
-                ? { cols: String(declaredSize.cols), rows: String(declaredSize.rows) }
-                : {}),
-            }
-          : currentSessionId || !cwd
-            ? undefined
-            : { cwd };
-        const queryCwd = query && "cwd" in query ? query.cwd : null;
-        const querySession = query && "session" in query ? query.session : null;
+        const query = {
+          workspaceId: terminalRef.workspaceId,
+          tabId: terminalRef.tabId,
+          fromSeq: String(replayRequest?.requestedSeq ?? 0),
+          client: suppressNativeKeyboard ? "mobile" : "browser",
+          ...(declaredSize ? { cols: String(declaredSize.cols), rows: String(declaredSize.rows) } : {}),
+        };
         log("connect-ws", {
           wsPath,
-          queryCwd,
-          querySession,
           replayMode: replayRequest?.mode,
           requestedSeq: replayRequest?.requestedSeq,
           reconnectAttempt: reconnectAttemptRef.current,
@@ -1748,12 +1518,12 @@ export function TerminalPane({
               return;
             }
             log("connect-ws-url", {
-              urlIncludesCwd: wsUrl.includes("cwd="),
+              urlIncludesWorkspace: wsUrl.includes("workspaceId="),
               urlIncludesToken: wsUrl.includes("token="),
             });
             track("connect", {
               urlIncludesToken: wsUrl.includes("token="),
-              hasCwdQuery: wsUrl.includes("cwd="),
+              hasWorkspaceQuery: wsUrl.includes("workspaceId="),
             });
             const previousWs = wsRef.current;
             if (previousWs && previousWs.readyState !== WebSocket.CLOSED) {
@@ -1786,9 +1556,9 @@ export function TerminalPane({
           existing.onmessage = null;
           existing.close();
           wsRef.current = null;
+          setControlsConnection({ sessionName: null, connected: false });
           heartbeatRef.current?.stop();
         }
-        leaseWasRevoked = false;
         reconnectAttemptRef.current = 0;
         setConnectionNotice(null);
         connectWs();
@@ -1836,20 +1606,24 @@ export function TerminalPane({
 
       const onLinkContextMenu = (event: MouseEvent) => {
         const cell = terminalCellFromPointer(term, event.clientX, event.clientY);
-        if (!cell) return;
-        const link = findTerminalLinkAtCell(term, cell);
-        if (!link) return;
+        const link = cell ? findTerminalLinkAtCell(term, cell) : null;
         event.preventDefault();
         event.stopPropagation();
-        setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
+        event.stopImmediatePropagation();
+        setLinkContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          link,
+          selection: term.getSelection(),
+        });
       };
-      container.addEventListener("contextmenu", onLinkContextMenu);
+      container.addEventListener("contextmenu", onLinkContextMenu, true);
 
       onDataDisposableRef.current?.dispose();
       onDataDisposableRef.current = term.onData((data: string) => {
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data }));
+          sendTerminalInputFrame(ws, sessionIdRef.current, data);
         }
       });
 
@@ -1861,87 +1635,19 @@ export function TerminalPane({
           }
           return;
         }
-        sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current);
+        sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current, sessionIdRef.current);
       });
 
-      // Keyboard shortcuts
-      const sendRaw = (data: string) => {
-        const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data }));
-        }
-      };
-
-      term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
-        if (ev.type !== "keydown") return true;
-
-        if (ev.ctrlKey && ev.shiftKey && ev.key === "F") {
-          setSearchOpen((prev) => !prev);
-          return false;
-        }
-
-        if (ev.ctrlKey && ev.shiftKey && ev.key === "C") {
-          const selection = term.getSelection();
-          if (selection) {
-            navigator.clipboard.writeText(selection).catch((err: unknown) => {
-              console.warn("Clipboard copy failed:", err instanceof Error ? err.message : err);
-            });
-            term.clearSelection();
-            return false;
-          }
-          return true;
-        }
-
-        if (ev.altKey && ev.shiftKey && ev.key.toUpperCase() === "C") {
-          const block = commandBlockBufferRef.current.trim();
-          if (block) {
-            navigator.clipboard.writeText(block).catch((err: unknown) => {
-              console.warn("Command block copy failed:", err instanceof Error ? err.message : err);
-            });
-            return false;
-          }
-          return true;
-        }
-
-        if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
-          pasteClipboardIntoTerminal({
-            clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
-            gatewayUrl: getGatewayUrl(),
-            ws: wsRef.current,
-            submit: ev.altKey,
-          }).catch((err: unknown) => {
-            console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
-            showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
-          });
-          return false;
-        }
-
-        // macOS-style line-editing shortcuts. The browser only delivers
-        // Cmd-arrow events to us when the focus is inside xterm; otherwise
-        // the OS swallows them. We map them to the readline-equivalent
-        // control sequences so bash/zsh, claude, pi, etc. all behave
-        // predictably regardless of OS keymap.
-        if (ev.metaKey && !ev.ctrlKey && !ev.altKey) {
-          if (ev.key === "ArrowLeft") {
-            sendRaw("\x01"); // Ctrl-A — beginning of line
-            return false;
-          }
-          if (ev.key === "ArrowRight") {
-            sendRaw("\x05"); // Ctrl-E — end of line
-            return false;
-          }
-          if (ev.key === "Backspace") {
-            sendRaw("\x15"); // Ctrl-U — kill to start of line
-            return false;
-          }
-          if (ev.key === "ArrowUp") {
-            sendRaw("\x1b[1;5H"); // scroll-to-top emulation: Home with Ctrl mod
-            return false;
-          }
-        }
-
-        return true;
-      });
+      term.attachCustomKeyEventHandler(createTerminalKeyHandler({
+        isMac: isAppleCommandPlatform(navigator.platform),
+        getSelection: () => term.getSelection(),
+        getCommandBlock: () => commandBlockBufferRef.current,
+        copy: copyTerminalSelection,
+        paste: pasteTerminalClipboard,
+        selectAll: () => term.selectAll(),
+        toggleSearch: () => setSearchOpen((open) => !open),
+        handleControls: handleControlKeyEvent,
+      }));
 
       // react-doctor-disable-next-line react-doctor/effect-observer-needs-disconnect -- the async init lifecycle returns a cleanup below that disconnects this observer before terminal teardown.
       const resizeObserver = new ResizeObserver(() => {
@@ -1967,7 +1673,7 @@ export function TerminalPane({
 
       return () => {
         document.removeEventListener("visibilitychange", onVisibilityChange);
-        container.removeEventListener("contextmenu", onLinkContextMenu);
+        container.removeEventListener("contextmenu", onLinkContextMenu, true);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
         if (softGridLayoutFrame !== null) {
@@ -2012,14 +1718,12 @@ export function TerminalPane({
           // may still need to destroy a just-created session before layout state
           // has been updated with its session id.
           const ws = wsRef.current;
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            if (shouldDestroy) {
-              log("cleanup-destroy-via-ws");
-              ws.send(JSON.stringify({ type: "destroy" }));
-            } else {
-              log("cleanup-detach-via-ws");
-              ws.send(JSON.stringify({ type: "detach" }));
-            }
+          if (shouldDestroy) {
+            log("cleanup-destroy-via-http");
+            destroyIfRequested();
+          } else if (ws && ws.readyState === WebSocket.OPEN) {
+            log("cleanup-detach-via-ws");
+            ws.send(JSON.stringify({ type: "detach", terminalRef: parseTerminalRefKey(sessionIdRef.current) }));
           }
           ws?.close();
           removeCached(paneId);
@@ -2050,6 +1754,7 @@ export function TerminalPane({
             ws: wsRef.current,
             lastSeq: lastSeqRef.current,
             hasReplayCursor: hasReplayCursorRef.current,
+            presentationRevision: lastPresentationRevisionRef.current,
             sessionId: cachedSessionId,
           }, { retainSocket });
         } else {
@@ -2065,6 +1770,7 @@ export function TerminalPane({
 
     return () => {
       disposed = true;
+      destroyIfRequested();
       cleanup.then((fn) => fn?.());
     };
     // react-doctor-disable-next-line react-doctor/exhaustive-deps -- theme/font/cursor settings are deliberately excluded: re-running this effect would tear down and rebuild the WebSocket and xterm session. Those settings are applied live by the separate options-sync effect below, and live prop values are read through latest-value refs.
@@ -2148,6 +1854,7 @@ export function TerminalPane({
           wsRef.current,
           termRef.current as Parameters<typeof sendTerminalResize>[1],
           allowRemoteResizeRef.current,
+          sessionIdRef.current,
         );
         if (suppressNativeKeyboard) {
           scrollTerminalViewportToBottom(termRef.current as Terminal | null);
@@ -2170,18 +1877,21 @@ export function TerminalPane({
   }, [viewportHeight, viewportOffsetTop, keyboardOpen, suppressNativeKeyboard]);
 
   useEffect(() => {
-    if (!pasteError) return;
-    const timer = window.setTimeout(() => setPasteError(null), 5_000);
+    if (!clipboardFeedback) return;
+    const timer = window.setTimeout(() => setClipboardFeedback(null), 5_000);
     return () => window.clearTimeout(timer);
-  }, [pasteError]);
+  }, [clipboardFeedback]);
 
   return (
-    // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
+    <div className="ph-no-capture flex h-full w-full min-h-0 min-w-0 flex-col" style={{ backgroundColor: terminalSurfaceBackground }}>
+      <TerminalControls layers={{ popover: SHELL_Z_INDEX.popover, dialog: SHELL_Z_INDEX.appDialog }} controls={controls} theme={terminalSurfaceTheme} />
+    {/* react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly. */}
     <div
       ref={containerRef}
+      data-terminal-viewport
       // ph-no-capture: terminal output can contain secrets (env vars, tokens,
       // file contents); PostHog session replay blocks this element natively.
-      className="ph-no-capture h-full w-full min-h-0 min-w-0 relative overflow-hidden"
+      className="ph-no-capture flex-1 w-full min-h-0 min-w-0 relative overflow-hidden"
       style={{
         outline: isFocused ? "1px solid var(--primary)" : "none",
         outlineOffset: "-1px",
@@ -2192,7 +1902,7 @@ export function TerminalPane({
       onPointerDown={handleFocus}
       onClick={handleFocus}
     >
-      {pasteError && (
+      {clipboardFeedback && (
         <div
           role="status"
           aria-live="polite"
@@ -2202,10 +1912,10 @@ export function TerminalPane({
             background: "rgba(127, 29, 29, 0.95)",
           }}
         >
-          <div style={{ flex: 1, minWidth: 0 }}>{pasteError}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>{clipboardFeedback.message}</div>
           <button
             type="button"
-            onClick={() => setPasteError(null)}
+            onClick={() => setClipboardFeedback(null)}
             style={{
               background: "none",
               border: "none",
@@ -2220,7 +1930,7 @@ export function TerminalPane({
           </button>
         </div>
       )}
-      {connectionNotice && !pasteError && (
+      {connectionNotice && !clipboardFeedback && (
         <div
           role="status"
           aria-live="polite"
@@ -2249,13 +1959,15 @@ export function TerminalPane({
         onCollapse={collapseTerminalLinks}
         onDismiss={dismissTerminalLinks}
         onOpen={openTerminalLink}
-        onCopy={copyTerminalLink}
+        onCopy={(link) => copyTerminalSelection(link.url)}
       />
       <TerminalLinkContextMenu
         menu={linkContextMenu}
         onClose={closeLinkContextMenu}
         onOpen={openTerminalLink}
-        onCopy={copyTerminalLink}
+        onCopy={(link) => copyTerminalSelection(link.url)}
+        onCopySelection={copyTerminalSelection}
+        onSelectAll={selectAllTerminal}
       />
       {/* Reading the imperative xterm search-addon handle during render is
           intentional: the addon is created inside the init effect and is stable
@@ -2271,6 +1983,7 @@ export function TerminalPane({
           theme={theme}
         />
       )}
+    </div>
     </div>
   );
 }

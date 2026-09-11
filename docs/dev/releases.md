@@ -84,8 +84,8 @@ Release metadata also records:
    |------|------|---------|
    | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | secret | shell build |
    | `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` or `NEXT_PUBLIC_POSTHOG_KEY` | secret/var | shell build |
-   | `NEXT_PUBLIC_POSTHOG_HOST` | var | shell build; EU uses `https://eu.i.posthog.com` |
-   | `NEXT_PUBLIC_POSTHOG_API_HOST` | var | shell build; EU uses `https://eu.i.posthog.com` |
+   | `NEXT_PUBLIC_POSTHOG_HOST` | var | shell build; PostHog UI host, EU uses `https://eu.posthog.com` |
+   | `NEXT_PUBLIC_POSTHOG_API_HOST` | var | shell build; same-origin client relay uses `/relay` |
    | `R2_ACCOUNT_ID` | secret | publish |
    | `R2_ACCESS_KEY_ID` | secret | publish |
    | `R2_SECRET_ACCESS_KEY` | secret | publish |

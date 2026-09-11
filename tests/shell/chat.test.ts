@@ -372,36 +372,6 @@ describe("message queue logic", () => {
   });
 });
 
-describe("ChatPanel props", () => {
-  it("ChatPanelProps accepts optional inputBar", async () => {
-    const { ChatPanel } = await import("../../shell/src/components/ChatPanel");
-    expect(ChatPanel).toBeDefined();
-  });
-
-  it("InputBar accepts embedded prop", async () => {
-    const { InputBar } = await import("../../shell/src/components/InputBar");
-    expect(InputBar).toBeDefined();
-  });
-
-  it("ChatPanel renders inputBar regardless of busy state (T2004)", async () => {
-    const mod = await import("../../shell/src/components/ChatPanel");
-    expect(mod.ChatPanel).toBeDefined();
-    const props: Parameters<typeof mod.ChatPanel>[0] = {
-      messages: [],
-      sessionId: undefined,
-      busy: true,
-      connected: true,
-      conversations: [],
-      onNewChat: () => {},
-      onSwitchConversation: () => {},
-      onClose: () => {},
-      inputBar: "test-input",
-    };
-    expect(props.busy).toBe(true);
-    expect(props.inputBar).toBe("test-input");
-  });
-});
-
 describe("groupMessages (T2000)", () => {
   type MessageGroup =
     | { type: "message"; message: ChatMessage }

@@ -18,6 +18,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(unit).toContain("ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/terminal-runtime/current/matrix-terminal-user-keeper.mjs %i");
     expect(unit).toContain("ConditionPathExists=/home/matrix/home/system/terminal-runtimes/%i.json");
     expect(unit).toContain("Environment=MATRIX_HOME=/home/matrix/home");
+    expect(unit).toContain("Environment=XDG_RUNTIME_DIR=%t");
+    expect(unit).toContain("Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus");
     expect(unit).toContain("KillMode=control-group");
     expect(unit).toContain("Restart=no");
     expect(unit).toContain("Slice=matrix-terminal.slice");
@@ -54,7 +56,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
 
   it("keeps awaited readiness retries alive for one-shot controller callers", () => {
     const controller = readFileSync(
-      join(root, "packages/gateway/src/shell/user-systemd-terminal-runtime.ts"),
+      join(root, "packages/terminal-runtime/src/user-systemd-controller.ts"),
       "utf8",
     );
 
@@ -104,22 +106,33 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(generationId).not.toContain("sha256sum \"$@\"");
   });
 
-  it("activates the production adapter from the rollback-scoped bundle marker", () => {
+  it("connects the gateway only to the shared runtime socket", () => {
     const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf8");
     const build = readFileSync(join(root, "scripts/build-host-bundle.sh"), "utf8");
+    const service = readFileSync(
+      join(root, "distro/customer-vps/systemd/matrix-terminal-runtime.service"),
+      "utf8",
+    );
 
-    expect(server).toContain("resolveUserSystemdTerminalActivation");
-    expect(server).toContain("process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED");
+    expect(server).not.toContain("resolveUserSystemdTerminalActivation");
+    expect(server).not.toContain("process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED");
     expect(build).toContain('TERMINAL_USER_SYSTEMD_ENABLED');
     expect(build).toContain('printf \'1\\n\' > "$STAGE_DIR/app/TERMINAL_USER_SYSTEMD_ENABLED"');
     expect(server).toContain('const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)');
     expect(server).toContain('process.env.MATRIX_RUNTIME_SLOT === runtimeHandle');
     expect(server).toContain('secret: () => process.env.UPGRADE_TOKEN ?? ""');
-    expect(server).toContain("loadInstalledTerminalRuntimeGeneration");
-    expect(server).toContain("createUserSystemdZellijRuntime");
-    expect(server).toContain("createUserSystemdZellijAdapter");
-    expect(server).toContain("await userSystemdTerminalController.assertInstallationReady()");
+    expect(server).toContain("new TerminalRuntimeSocketClient");
+    expect(server).toContain("process.env.MATRIX_TERMINAL_RUNTIME_SOCKET");
+    expect(server).not.toContain("createUserSystemdZellijRuntime");
+    expect(server).not.toContain("createUserSystemdZellijAdapter");
+    expect(server).not.toContain("createUserSystemdTerminalRuntime");
     expect(server).not.toContain('MATRIX_TERMINAL_USER_SYSTEMD_ENABLED !== "0"');
+    expect(build).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
+    expect(build).toContain("matrix-terminal-runtime");
+    expect(service).toContain("User=matrix");
+    expect(service).toContain("RuntimeDirectory=matrix");
+    expect(service).toContain("ExecStart=/opt/matrix/bin/matrix-terminal-runtime");
+    expect(service).toContain("KillMode=control-group");
   });
 
   it("installs a fixed attach helper that resolves each descriptor-pinned generation", () => {
@@ -133,7 +146,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     );
 
     expect(attach).toContain("descriptor.generation");
-    expect(attach).toContain('["attach", descriptor.sessionName, ...remainingArgs]');
+    expect(attach).toContain('["attach", descriptor.sessionName, ...remainingArgs, "options", "--default-mode", "normal"]');
     expect(attach).not.toContain("shell: true");
     expect(updater).toContain("/usr/local/bin/matrix-terminal-attach");
   });
@@ -154,7 +167,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
 
     expect(updater).toContain("install_terminal_runtime_payload");
     expect(updater).toContain('if ! install_terminal_runtime_payload "$extract_dir"; then');
-    expect(updater).toContain("Terminal runtime installation failed; aborting before app replacement");
+    expect(updater).toContain("Terminal runtime installation failed — rolling back");
     expect(updater.indexOf('if ! install_terminal_runtime_payload "$extract_dir"; then')).toBeLessThan(
       updater.indexOf('sudo mv "$extract_dir/app" "$APP_DIR"'),
     );
@@ -168,8 +181,65 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(updater).toContain("terminal runtime generation cap reached by active or recoverable sessions");
     expect(updater).not.toMatch(/systemctl stop[^\n]*(matrix-zellij|matrix-terminal\.slice|user@)/);
     expect(updater).not.toMatch(/systemctl restart[^\n]*(matrix-zellij|matrix-terminal\.slice|user@)/);
+    expect(updater).toContain("matrix-terminal-runtime");
+    expect(updater).toContain("terminal-runtime --rollback");
+    expect(updater).toContain("update-transaction");
     expect(decision).toContain("ordered content digests");
     expect(decision).toContain("exact-version reapply");
+  });
+
+  it("treats host replacement and migration as one recoverable update transaction", () => {
+    const updater = readFileSync(
+      join(root, "distro/customer-vps/host-bin/matrix-sync-agent"),
+      "utf8",
+    );
+    const prepare = updater.indexOf('prepare_update_transaction "$extract_dir"');
+    const seal = updater.indexOf("seal_update_transaction", prepare);
+    const stop = updater.indexOf("if ! stop_runtime_services; then", seal);
+    const bootstrap = updater.indexOf('install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"', stop);
+    const candidateRollback = updater.indexOf("matrix-terminal-runtime --rollback");
+    const removeCandidate = updater.indexOf('sudo mv "$APP_DIR" "$STAGING_DIR/failed-', candidateRollback);
+
+    expect(prepare).toBeGreaterThan(-1);
+    expect(seal).toBeGreaterThan(prepare);
+    expect(stop).toBeGreaterThan(seal);
+    expect(bootstrap).toBeGreaterThan(stop);
+    expect(updater).toContain('readonly UPDATE_TRANSACTION_DIR="$STAGING_DIR/update-transaction"');
+    expect(updater).toContain("sudo chown -R root:root \"$UPDATE_TRANSACTION_DIR\"");
+    expect(updater).toContain("restore_update_payload_directory /etc/systemd/system systemd");
+    expect(updater).toContain("restore_update_payload_directory /etc/systemd/user user-systemd");
+    expect(updater).toContain('stop_candidate_touched_system_units');
+    expect(updater).toContain('matrix-sync-agent.service|matrix-restore.service) continue');
+    expect(updater.indexOf('stop_candidate_touched_system_units', updater.indexOf("restore_update_transaction()")))
+      .toBeLessThan(updater.indexOf("restore_update_payload_directory /etc/systemd/system systemd"));
+    expect(updater).toContain('restore_regular_file_atomic "$UPDATE_TRANSACTION_DIR/$label/$name" "$destination_dir/$name"');
+    expect(updater).toContain('sudo mv -Tf "$incoming" "$destination"');
+    expect(updater).toContain('record_update_file "$RELEASE_FILE" release-metadata');
+    expect(updater).toContain('record_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata');
+    expect(updater).toContain('restore_update_file "$RELEASE_FILE" release-metadata');
+    expect(updater).toContain('restore_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata');
+    expect(updater).toContain("restore_update_transaction");
+    expect(updater).toContain("Recovering interrupted update transaction");
+    expect(updater.indexOf('if [ -f "$UPDATE_TRANSACTION_STATE"', updater.indexOf("recover_interrupted_update()")))
+      .toBeLessThan(updater.indexOf('[ -f "$UPDATE_MARKER"', updater.indexOf("recover_interrupted_update()")));
+    expect(updater).toContain('printf \'%s\\n\' "$version" >"$UPDATE_TRANSACTION_DIR/candidate-version"');
+    expect(updater).toContain("transaction_candidate_is_committed");
+    expect(updater.indexOf("transaction_candidate_is_committed", updater.indexOf("recover_interrupted_update()")))
+      .toBeLessThan(updater.indexOf("if do_rollback false; then", updater.indexOf("recover_interrupted_update()")));
+    const committedUpdate = updater.indexOf("if commit_release_metadata; then");
+    const removeLegacyCredentials = updater.indexOf("remove_legacy_r2_credentials", committedUpdate);
+    const clearConsumedMarkers = updater.indexOf("clear_consumed_update_markers", committedUpdate);
+    const cleanupCommittedTransaction = updater.indexOf("cleanup_update_transaction", committedUpdate);
+    expect(removeLegacyCredentials).toBeGreaterThan(committedUpdate);
+    expect(clearConsumedMarkers).toBeGreaterThan(removeLegacyCredentials);
+    expect(cleanupCommittedTransaction).toBeGreaterThan(clearConsumedMarkers);
+    expect(updater).toContain('sudo rm -f -- "$APP_DIR.rollback/.update-available.json"');
+    expect(candidateRollback).toBeGreaterThan(-1);
+    expect(removeCandidate).toBeGreaterThan(candidateRollback);
+    expect(updater).toContain("terminal_runtime_is_healthy");
+    expect(updater).toContain("sudo systemctl is-active --quiet matrix-terminal-runtime.service");
+    expect(updater).toContain("matrix-terminal-runtime --health-check");
+    expect(updater).toContain('verification_error_code="post_install_terminal_health_failed"');
   });
 
   it("documents separate fail-closed rollout paths for new and existing VPSes", () => {
@@ -463,7 +533,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('classify_installed_updater_protocol');
     expect(acceptance).toContain('systemctl show matrix-sync-agent.service -p NRestarts --value');
     expect(acceptance).toContain('case "$error_code" in');
-    expect(acceptance).toContain('download_failed|download_metadata_changed|update_target_mismatch|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown)');
+    expect(acceptance).toContain('download_failed|download_metadata_changed|update_target_mismatch|update_transaction_prepare_failed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|pre_install_service_stop_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_service_start_failed|post_install_terminal_start_failed|post_install_terminal_health_failed|post_install_health_failed|post_install_runtime_version_mismatch|post_install_rollback_failed|apply_failed|apply_interrupted|unknown)');
     expect(acceptance).not.toContain("journalctl -u matrix-sync-agent");
     expect(workflow).toContain("Acceptance stalled at ${state:-unavailable}");
     expect(workflow).toContain("Acceptance failed at ${state}");

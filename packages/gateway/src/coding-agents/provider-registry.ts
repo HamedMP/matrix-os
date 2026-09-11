@@ -43,6 +43,7 @@ export interface CodingAgentProviderRegistry {
 export interface CodingAgentProviderRegistryOptions {
   providers: readonly CodingAgentProviderAdapter[];
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
+  invalidateCredentialDetection?: () => void;
   now?: () => Date;
   healthTimeoutMs?: number;
   cacheTtlMs?: number;
@@ -386,6 +387,7 @@ export function createCodingAgentProviderRegistry(
       return summaries.sort((left, right) => left.id.localeCompare(right.id));
     },
     invalidate(ownerId, providerId) {
+      options.invalidateCredentialDetection?.();
       for (const key of healthCache.keys()) {
         const matchesOwner = !ownerId || key.startsWith(`${ownerId}:`);
         const matchesProvider = !providerId || key.endsWith(`:${providerId}`);

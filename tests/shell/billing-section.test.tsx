@@ -2,7 +2,9 @@
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { desktopPalette } from "@matrix-os/brand";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { nextDeveloperToolsSelection } from "../../shell/src/components/onboarding/developer-tools.js";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
@@ -10,6 +12,12 @@ const clerkState = vi.hoisted(() => ({
   userId: "user_123" as string | null,
   activePlan: null as string | null,
 }));
+const posthogClientMock = vi.hoisted(() => ({
+  capturePostHogEvent: vi.fn(),
+  capturePostHogLog: vi.fn(),
+}));
+
+vi.mock("../../shell/src/lib/posthog-client.js", () => posthogClientMock);
 
 function installClerkMock() {
   vi.doMock("@clerk/nextjs", () => ({
@@ -29,6 +37,16 @@ async function loadBillingSection() {
   return await import("../../shell/src/components/settings/sections/BillingSection.js");
 }
 
+async function waitForBillingConfigurator() {
+  await waitFor(() => expect(screen.getByTestId("billing-configurator-layout")).toBeTruthy());
+}
+
+function normalizedCssColor(color: string): string {
+  const element = document.createElement("span");
+  element.style.color = color;
+  return element.style.color;
+}
+
 describe("BillingSection", () => {
   beforeEach(async () => {
     vi.resetModules();
@@ -42,6 +60,8 @@ describe("BillingSection", () => {
     clerkState.isSignedIn = true;
     clerkState.userId = "user_123";
     clerkState.activePlan = null;
+    posthogClientMock.capturePostHogEvent.mockReset();
+    posthogClientMock.capturePostHogLog.mockReset();
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
         status: 200,
@@ -50,8 +70,63 @@ describe("BillingSection", () => {
     );
   });
 
+  it("keeps the selected CPX22 radio selected until None is chosen", () => {
+    expect(nextDeveloperToolsSelection(["codex"], "codex", true)).toEqual(["codex"]);
+  });
+
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("uses the three-day offer in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+
+    expect(screen.queryByText("Start your 3-day free trial")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    vi.unstubAllEnvs();
+  });
+
+  it("uses a provider-neutral active fixture in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    window.history.replaceState({}, "", "/?e2e_billing_state=active");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    expect(screen.getByRole("heading", { name: "Builder" })).toBeTruthy();
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
+    expect(screen.queryByText(/\$100/)).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    const activeBadge = document.querySelector<HTMLElement>('[data-slot="badge"]');
+    expect(activeBadge?.style.backgroundColor).toBe(normalizedCssColor(desktopPalette.surfaceMuted));
+    expect(activeBadge?.style.borderColor).toBe(normalizedCssColor(desktopPalette.forestHover));
+    expect(activeBadge?.style.color).toBe(normalizedCssColor(desktopPalette.forest));
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllEnvs();
+  });
+
+  it("uses a recoverable unavailable fixture in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    window.history.replaceState({}, "", "/?e2e_billing_state=unavailable");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    expect(screen.getByRole("alert").textContent).toContain("Billing status is unavailable");
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.queryByText("Checking billing status")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Builder" })).toBeTruthy());
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllEnvs();
   });
 
   it("waits for Clerk before rendering a subscription state", async () => {
@@ -75,20 +150,31 @@ describe("BillingSection", () => {
 
     render(<BillingSection />);
 
-    expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
-    expect(screen.getByText("Manage your hosted Matrix computer")).toBeTruthy();
+    const billingHeading = screen.getByRole("heading", { name: "Billing" });
+    expect(billingHeading).toBeTruthy();
+    expect(billingHeading.parentElement?.parentElement?.className).toContain(
+      "font-[family-name:var(--font-geist-sans)]",
+    );
+    await waitForBillingConfigurator();
+    expect(screen.queryByText("Not active")).toBeNull();
+    expect(screen.getByText("Choose your Matrix computer")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
-    expect(screen.getByText("Secure checkout")).toBeTruthy();
-    expect(screen.getByText("Visa")).toBeTruthy();
-    expect(screen.getByText("Mastercard")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
+    expect(screen.getByText("Secure Stripe checkout")).toBeTruthy();
+    expect(screen.queryByText("Visa")).toBeNull();
+    expect(screen.queryByText("Mastercard")).toBeNull();
+    expect(screen.queryByText("Monthly plan")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Annual" })).toBeNull();
+    const developerTools = screen.getByRole("heading", { name: "Developer tools" });
+    expect(developerTools).toBeTruthy();
+    expect(developerTools.closest("section")?.querySelectorAll("img")).toHaveLength(4);
+    expect(screen.queryByText("Power, agents, checkout. Your closest region is already selected.")).toBeNull();
+    expect(screen.queryByText("Falkenstein, Germany")).toBeNull();
+    expect(screen.queryByText("Dedicated VPS prepared before checkout")).toBeNull();
+    expect(screen.queryByText("Your files and data persist across restarts")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it.each([1, 7])("explains the card-required %i-day trial before opening Checkout", async (durationDays) => {
+  it.each([1, 7])("shows a concise %i-day trial summary before opening Checkout", async (durationDays) => {
     const trialEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
     const formattedTrialEnd = new Intl.DateTimeFormat(undefined, {
       month: "short",
@@ -108,12 +194,12 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText(`Start your ${durationDays}-day free trial`)).toBeTruthy());
-    expect(screen.getByText("Card required")).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy());
+    expect(screen.queryByText(`Start your ${durationDays}-day free trial`)).toBeNull();
+    expect(screen.queryByText("Card required")).toBeNull();
     expect(screen.getByText("$0 today").classList.contains("text-cream")).toBe(true);
-    expect(screen.getByText(`First charge ${formattedTrialEnd}`)).toBeTruthy();
-    expect(screen.getByText(`Cancel before ${formattedTrialEnd} to avoid being charged.`)).toBeTruthy();
-    expect(screen.getByText("$19/month after your trial")).toBeTruthy();
+    expect(screen.getByText(`Then $100/month on ${formattedTrialEnd}`)).toBeTruthy();
+    expect(screen.queryByText(`Cancel before ${formattedTrialEnd}`)).toBeNull();
     expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy();
   });
 
@@ -131,12 +217,58 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="add-computer" checkoutRuntimeSlot="studio" />);
 
-    await waitFor(() => expect(screen.getByText("New subscription")).toBeTruthy());
+    const subscriptionBadge = await waitFor(() => screen.getByText("New subscription"));
+    expect(subscriptionBadge.style.backgroundColor).toBe(normalizedCssColor(desktopPalette.canvas));
+    expect(subscriptionBadge.style.borderColor).toBe(normalizedCssColor(desktopPalette.green));
+    expect(subscriptionBadge.style.color).toBe(normalizedCssColor(desktopPalette.forest));
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByText("Start your 7-day free trial")).toBeNull();
   });
 
-  it("shows the authoritative end date and upcoming charge for an active trial", async () => {
+  it("offers internal accounts only plan and region combinations authorized by billing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: true, reason: "active" },
+        trialOffer: { eligible: false, durationDays: 3 },
+        entitlement: {
+          source: "override",
+          planSlug: "internal",
+          status: "active",
+          maxRuntimeSlots: 3,
+          includedRuntimeSlots: 3,
+          addonRuntimeSlots: 0,
+          allowedPlanSlugs: ["matrix_builder"],
+          allowedSelections: [
+            { planSlug: "matrix_builder", regionSlug: "region_fsn1" },
+            { planSlug: "matrix_builder", regionSlug: "region_nbg1" },
+          ],
+          portalAvailable: false,
+          billingInterval: null,
+          gracePeriodEndsAt: null,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialConvertedAt: null,
+          firstTrialPaymentFailedAt: null,
+          effectiveFrom: "2026-08-31T00:00:00.000Z",
+          effectiveUntil: null,
+          updatedAt: "2026-08-31T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="add-computer" checkoutRuntimeSlot="studio" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+
+    expect(screen.getByRole("button", { name: /Falkenstein, Germany/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Nuremberg, Germany/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Ashburn, Virginia/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Hillsboro, Oregon/ })).toBeNull();
+  });
+
+  it("does not replace a legacy trial price with the current catalog price", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         access: { runtimeProxyAllowed: true, reason: "active" },
@@ -148,10 +280,8 @@ describe("BillingSection", () => {
           maxRuntimeSlots: 1,
           includedRuntimeSlots: 1,
           addonRuntimeSlots: 0,
-          defaultServerType: "cpx32",
-          allowedServerTypes: ["cpx22", "cpx32"],
-          stripeSubscriptionId: "sub_trial",
-          stripePriceId: "price_builder_monthly",
+          allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+          portalAvailable: true,
           billingInterval: "monthly",
           gracePeriodEndsAt: null,
           trialStartedAt: "2026-08-19T00:00:00.000Z",
@@ -172,7 +302,8 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     await waitFor(() => expect(screen.getByText("Free trial active")).toBeTruthy());
-    expect(screen.getByText("Your first $19 monthly charge is on Aug 26, 2026.")).toBeTruthy();
+    expect(screen.getByText("Your first monthly charge is on Aug 26, 2026.")).toBeTruthy();
+    expect(screen.queryByText("Your first $100 monthly charge is on Aug 26, 2026.")).toBeNull();
     expect(screen.getByText("Cancel before Aug 26, 2026 to avoid being charged.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Manage trial" })).toBeTruthy();
   });
@@ -185,8 +316,7 @@ describe("BillingSection", () => {
         entitlement: {
           source: "stripe", planSlug: "matrix_builder", status: "past_due",
           maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
-          defaultServerType: "cpx32", allowedServerTypes: ["cpx22", "cpx32"],
-          stripeSubscriptionId: "sub_trial", stripePriceId: "price_builder_monthly",
+          allowedPlanSlugs: ["matrix_starter", "matrix_builder"], portalAvailable: true,
           billingInterval: "monthly", gracePeriodEndsAt: null,
           trialStartedAt: "2026-08-19T00:00:00.000Z", trialEndsAt: "2026-08-26T00:00:00.000Z",
           trialConvertedAt: null, firstTrialPaymentFailedAt: "2026-08-26T00:00:00.000Z",
@@ -279,7 +409,7 @@ describe("BillingSection", () => {
 
     render(<BillingSection />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     expect(screen.queryByText("Reconnecting billing session")).toBeNull();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
@@ -305,10 +435,68 @@ describe("BillingSection", () => {
     expect(screen.queryByText("Not active")).toBeNull();
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5000 });
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
   });
 
-  it("lets users choose annual billing before checkout", async () => {
+  it("shows a recoverable error after repeated invalid billing responses", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    const invalidResponse = () => new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: true, reason: "active" },
+      entitlement: { effectiveFrom: "2026-09-07 12:34:56.123456+00" },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(
+      "Billing status is unavailable",
+    ));
+    expect(screen.queryByText("Checking billing status")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitForBillingConfigurator();
+  });
+
+  it("does not label an unavailable add-computer status as a new subscription", async () => {
+    const invalidResponse = () => new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: true, reason: "active" },
+      entitlement: { effectiveFrom: "2026-09-07 12:34:56.123456+00" },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(invalidResponse());
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="add-computer" />);
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(
+      "Billing status is unavailable",
+    ), { timeout: 5_000 });
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.queryByText("New subscription")).toBeNull();
+  });
+
+  it("sends only the selected Matrix plan, region, and agents to monthly checkout", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -321,14 +509,13 @@ describe("BillingSection", () => {
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
 
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
-    fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Annual" }));
-    expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+    fireEvent.click(screen.getByRole("button", { name: /Ashburn, Virginia/ }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() =>
@@ -337,9 +524,8 @@ describe("BillingSection", () => {
         expect.objectContaining({
           body: JSON.stringify({
             planSlug: "matrix_builder",
-            interval: "annual",
-            regionSlug: "region_nbg1",
-            serverType: "cpx32",
+            interval: "monthly",
+            regionSlug: "region_ash",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
           }),
         }),
@@ -364,7 +550,7 @@ describe("BillingSection", () => {
 
     const onCheckoutNavigate = vi.fn();
     render(<BillingSection mode="provisioning" onCheckoutNavigate={onCheckoutNavigate} />);
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     expect(await screen.findByRole("button", { name: "Opening secure checkout" })).toBeTruthy();
@@ -384,10 +570,11 @@ describe("BillingSection", () => {
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
 
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.getByRole("button", { name: /Builder/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+    expect(screen.getByText("Choose a server location")).toBeTruthy();
 
     // The Settings panel registers a window-level Escape handler; it must not
     // receive the event once the picker has handled and stopped it.
@@ -399,7 +586,7 @@ describe("BillingSection", () => {
       window.removeEventListener("keydown", settingsEscape);
     }
 
-    expect(screen.queryByRole("button", { name: /Builder/ })).toBeNull();
+    expect(screen.queryByText("Choose a server location")).toBeNull();
     expect(settingsEscape).not.toHaveBeenCalled();
   });
 
@@ -421,7 +608,7 @@ describe("BillingSection", () => {
         checkoutReturnPath="/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK"
       />,
     );
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() =>
@@ -432,7 +619,6 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
-            serverType: "cpx32",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
           }),
@@ -468,7 +654,7 @@ describe("BillingSection", () => {
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection mode="provisioning" />);
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     expect(
@@ -492,41 +678,132 @@ describe("BillingSection", () => {
     render(<BillingSection mode="provisioning" />);
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
-    expect(screen.getByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
-    expect(screen.getAllByText("Computer").length).toBeGreaterThanOrEqual(1);
+    await waitForBillingConfigurator();
+    expect(screen.getByText("Choose your Matrix computer")).toBeTruthy();
+    expect(screen.queryByText("Computer power")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change computer" })).toBeNull();
 
-    // Computer options live in a click-to-open dropdown now.
-    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.getByText("CPX22")).toBeTruthy();
-    expect(screen.getByText("$14")).toBeTruthy();
-    expect(screen.getAllByText("CPX32").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("$19").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("CPX52")).toBeTruthy();
-    expect(screen.getByText("$49")).toBeTruthy();
+    // All plans remain visible in one horizontal choice row.
+    const starter = screen.getByRole("button", { name: /^Starter\b/i });
+    const builder = screen.getByRole("button", { name: /^Builder\b/i });
+    const max = screen.getByRole("button", { name: /^Max\b/i });
+    expect(starter).toBeTruthy();
+    expect(screen.getByText("$20")).toBeTruthy();
+    expect(builder).toBeTruthy();
+    expect(screen.getAllByText("$100").length).toBeGreaterThanOrEqual(1);
+    expect(max).toBeTruthy();
+    expect(screen.getByText("$200")).toBeTruthy();
+    expect(starter.parentElement).toBe(builder.parentElement);
+    expect(builder.parentElement).toBe(max.parentElement);
+    expect(starter.parentElement?.className).toContain("grid-cols-3");
+    expect(builder.className).toContain("border-[#0E3422]");
+    expect(builder.className).toContain("bg-[#F4F7ED]");
+    expect(builder.className).not.toContain("ember");
+    expect(screen.getByText("For everyday use")).toBeTruthy();
+    expect(screen.getByText("For technical work and building")).toBeTruthy();
+    expect(screen.getByText("For serious, demanding workloads")).toBeTruthy();
+    expect(screen.queryByText(/CPX22|CPX42|CPX52/)).toBeNull();
 
-    // Region options live in their own dropdown (opening it closes the computer one).
-    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
+    const planLabels = screen.getAllByText("Builder");
+    expect(planLabels).toHaveLength(2);
+    for (const label of planLabels) {
+      expect(label.className).toContain("font-[family-name:var(--font-bricolage)]");
+    }
+
+    const codingAgents = screen.getByRole("list", { name: "Coding agents" });
+    expect(codingAgents.className).toContain("grid-cols-2");
+    const selectedAgent = screen.getByRole("checkbox", { name: "Codex" }).closest("label");
+    expect(selectedAgent?.className).toContain("border-[#0E3422]");
+    expect(selectedAgent?.className).toContain("bg-[#F4F7ED]");
+    expect(selectedAgent?.className).not.toContain("ember");
+
+    // Region options stay out of sight until Advanced settings is expanded.
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
     expect(screen.getAllByText("Region").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Falkenstein is selected by default")).toBeTruthy();
+    expect(screen.getByText("Closest available location is selected")).toBeTruthy();
     expect(screen.getAllByText("🇩🇪").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("Falkenstein, Germany").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Nuremberg, Germany")).toBeTruthy();
-    expect(screen.queryByText("🇺🇸")).toBeNull();
-    expect(screen.queryByText("US East")).toBeNull();
-    expect(screen.queryByText("US West")).toBeNull();
-    expect(screen.queryByText("Americas")).toBeNull();
-    expect(screen.queryByText("ash")).toBeNull();
-    expect(screen.queryByText("hil")).toBeNull();
+    expect(screen.getAllByText("🇺🇸").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
+    expect(screen.getByText("Hillsboro, Oregon")).toBeTruthy();
+    expect(screen.getByText("ash")).toBeTruthy();
+    expect(screen.getByText("hil")).toBeTruthy();
     expect(screen.queryByText("sin")).toBeNull();
-    expect(screen.getByText("Start checkout & provision")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it("defaults an American browser timezone to Falkenstein", async () => {
+  it("uses a single-choice developer tool selector for CPX22", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout") {
+        return new Response(JSON.stringify({ url: "https://checkout.stripe.test/session" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+
+    expect(screen.getByText(
+      "This computer is designed for lighter workloads, so you can preinstall one coding agent—or none.",
+    )).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: "Codex" })).toBeNull();
+    expect((screen.getByRole("radio", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("radio", { name: "None" }) as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(screen.getByRole("radio", { name: "Claude Code" }));
+    expect((screen.getByRole("radio", { name: "Codex" }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("radio", { name: "Claude Code" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/checkout",
+      expect.objectContaining({
+        body: JSON.stringify({
+          planSlug: "matrix_starter",
+          interval: "monthly",
+          regionSlug: "region_fsn1",
+          developerTools: ["claude-code"],
+        }),
+      }),
+    ));
+  });
+
+  it("allows no developer tool on CPX22 and restores multi-select on larger computers", async () => {
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Builder\b/i }));
+    for (const agent of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      expect((screen.getByRole("checkbox", { name: agent }) as HTMLInputElement).checked).toBe(true);
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+    fireEvent.click(screen.getByRole("radio", { name: "None" }));
+    expect((screen.getByRole("radio", { name: "None" }) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Builder\b/i }));
+    expect(screen.queryByRole("radio", { name: "None" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Codex" })).toBeTruthy();
+    expect(screen.getByText("Choose command-line agents to preinstall on this VPS.")).toBeTruthy();
+  });
+
+  it("prefills the closest server for an American browser timezone", async () => {
     vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
       locale: "en-US",
       calendar: "gregory",
@@ -537,10 +814,35 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
-    expect(screen.getByRole("button", { name: "Change region" }).textContent).toContain(
-      "Falkenstein, Germany",
+    await waitForBillingConfigurator();
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    expect(screen.getByRole("button", { name: "Change server location" }).textContent).toContain(
+      "Ashburn, Virginia",
     );
+  });
+
+  it("keeps server location collapsed below computer power and agent provisioning", async () => {
+    const { BillingSection } = await loadBillingSection();
+    render(<BillingSection mode="provisioning" />);
+
+    await waitForBillingConfigurator();
+    const computer = screen.getByRole("group", { name: "Choose your Matrix computer" });
+    const agents = screen.getByRole("heading", { name: "Developer tools" });
+    const advanced = screen.getByRole("button", { name: "Advanced settings" });
+    const follows = Node.DOCUMENT_POSITION_FOLLOWING;
+
+    expect(computer.compareDocumentPosition(agents) & follows).toBeTruthy();
+    expect(agents.compareDocumentPosition(advanced) & follows).toBeTruthy();
+    expect(advanced.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Change server location" })).toBeNull();
+
+    fireEvent.click(advanced);
+    const location = screen.getByRole("button", { name: "Change server location" });
+    expect(advanced.getAttribute("aria-expanded")).toBe("true");
+    expect(advanced.compareDocumentPosition(location) & follows).toBeTruthy();
+    expect(location.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: /Ashburn, Virginia/ })).toBeNull();
   });
 
   it("aligns the provisioning intro and checkout summary in the same layout row", async () => {
@@ -551,18 +853,18 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
     const layout = screen.getByTestId("billing-configurator-layout");
     const mainColumn = screen.getByTestId("billing-configurator-main");
     const heading = screen.getByRole("heading", {
-      name: "Pick the cloud computer Matrix boots on",
+      name: "Choose your Matrix computer",
     });
     const summary = screen.getByRole("complementary");
 
     expect(layout.children).toHaveLength(2);
     expect(layout.children[0]).toBe(mainColumn);
     expect(layout.children[1]).toBe(summary);
-    expect(layout.className).toContain("lg:grid-cols-[minmax(0,1fr)_360px]");
+    expect(layout.className).toContain("lg:grid-cols-[minmax(0,1fr)_340px]");
     expect(layout.className).toContain("lg:items-start");
     expect(mainColumn.contains(heading)).toBe(true);
   });
@@ -581,15 +883,11 @@ describe("BillingSection", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
-    expect(
-      screen.getByText("Choose billing in Settings, then Matrix returns to CLI device approval."),
-    ).toBeTruthy();
-    expect(screen.getByText("Finish billing to approve CLI login")).toBeTruthy();
-    expect(screen.getByText("Billing settings")).toBeTruthy();
-    expect(
-      screen.getByText("Review your plan and region here. Stripe opens only after you choose Continue to pay."),
-    ).toBeTruthy();
+    await waitForBillingConfigurator();
+    expect(screen.queryByText(/returns to CLI device approval/)).toBeNull();
+    expect(screen.getByText("Finish billing")).toBeTruthy();
+    expect(screen.queryByText("Billing settings")).toBeNull();
+    expect(screen.queryByText(/Review your plan and region here/)).toBeNull();
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
 
@@ -624,11 +922,27 @@ describe("BillingSection", () => {
             maxRuntimeSlots: 3,
             includedRuntimeSlots: 2,
             addonRuntimeSlots: 1,
-            defaultServerType: "cpx32",
-            allowedServerTypes: ["cpx22", "cpx32"],
-            stripeSubscriptionId: "sub_123",
-            stripePriceId: "price_123",
+            allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+            portalAvailable: true,
+            billingInterval: "monthly",
+            recurringPrice: {
+              unitAmountMinor: 2000,
+              currency: "usd",
+              interval: "monthly",
+              intervalCount: 1,
+              quantity: 1,
+            },
+            runtimePlacement: {
+              regionSlug: "region_ash",
+              label: "Ashburn, Virginia",
+              countryLabel: "United States",
+              networkZone: "us-east",
+            },
             gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+            trialStartedAt: null,
+            trialEndsAt: null,
+            trialConvertedAt: null,
+            firstTrialPaymentFailedAt: null,
             effectiveFrom: "2026-05-30T00:00:00.000Z",
             effectiveUntil: null,
             updatedAt: "2026-05-30T00:00:00.000Z",
@@ -653,7 +967,28 @@ describe("BillingSection", () => {
     expect(screen.getByText("Current plan")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("2 included, 1 add-on")).toBeTruthy();
-    expect(screen.getByText(/CPX32/)).toBeTruthy();
+    expect(screen.getByText("$20/month")).toBeTruthy();
+    expect(screen.getByText("Ashburn, Virginia")).toBeTruthy();
+    expect(screen.queryByText("Machine")).toBeNull();
+    expect(screen.queryByText(/cpx\d+/i)).toBeNull();
+    expect(screen.queryByText(/hetzner/i)).toBeNull();
+    await waitFor(() => expect(posthogClientMock.capturePostHogEvent).toHaveBeenCalledWith(
+      "shell_billing",
+      expect.objectContaining({
+        event: "view_active_billing",
+        plan_slug: "matrix_builder",
+        recurring_unit_amount_minor: 2000,
+        recurring_total_amount_minor: 2000,
+        currency: "usd",
+        region_slug: "region_ash",
+        location_label: "Ashburn, Virginia",
+      }),
+    ));
+    const activeView = posthogClientMock.capturePostHogEvent.mock.calls.find(
+      ([event, properties]) => event === "shell_billing"
+        && (properties as { event?: string }).event === "view_active_billing",
+    )?.[1];
+    expect(activeView).not.toHaveProperty("selected_price_usd");
     expect(screen.getByText("Receipts and payment")).toBeTruthy();
     expect(screen.getByText("Canceling")).toBeTruthy();
 
@@ -666,6 +1001,42 @@ describe("BillingSection", () => {
     );
   });
 
+  it("does not label the monthly catalog price as an annual charge", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: true, reason: "active" },
+        entitlement: {
+          source: "stripe",
+          planSlug: "matrix_builder",
+          status: "active",
+          maxRuntimeSlots: 1,
+          includedRuntimeSlots: 1,
+          addonRuntimeSlots: 0,
+          allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+          portalAvailable: true,
+          billingInterval: "annual",
+          gracePeriodEndsAt: null,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialConvertedAt: null,
+          firstTrialPaymentFailedAt: null,
+          effectiveFrom: "2026-05-30T00:00:00.000Z",
+          effectiveUntil: null,
+          updatedAt: "2026-05-30T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Annual")).toBeTruthy());
+    expect(screen.queryByText("$100")).toBeNull();
+    expect(screen.queryByText("per year")).toBeNull();
+  });
+
   it("does not mark billing active for the legacy Clerk early_adopter plan", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = "early_adopter";
@@ -674,6 +1045,7 @@ describe("BillingSection", () => {
 
     render(<BillingSection />);
 
-    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    await waitForBillingConfigurator();
+    expect(screen.queryByText("Not active")).toBeNull();
   });
 });

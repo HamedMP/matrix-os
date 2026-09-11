@@ -13,7 +13,7 @@ Build the phone-first Matrix shell on top of PR #99 (`feat(mobile): add app runt
 **Primary Dependencies**: Hono gateway, Zod 4 via `zod/v4`, existing terminal stack (`node-pty`, `@xterm/xterm` on web), Expo Router, React Native WebView, Clerk Expo, AsyncStorage/SecureStore
 **Storage**: Owner-controlled Matrix home files for shell/terminal session metadata (`~/system/terminal-sessions.json`, terminal layout files) plus existing owner Postgres where current workspace/app data already lives. No new embedded database or ORM.
 **Testing**: Vitest for gateway/shell integration, Jest Expo for `apps/mobile`, existing pattern scanner, targeted mobile component/client tests
-**Target Platform**: Phone-sized browser shell, native/Expo mobile app, and existing VPS-native gateway/runtime services
+**Target Platform**: Web Mobile, Native Mobile (Expo), and existing VPS-native gateway/runtime services
 **Project Type**: Shell frontend plus mobile app plus gateway/runtime integration
 **Performance Goals**: Launcher usable within 20 seconds after sign-in; app open transition under 1 second after inventory/session-token resolution on a healthy gateway; terminal reconnect state visible within 2 seconds of WebSocket close; terminal input submitted immediately to the open WebSocket without UI blocking
 **Constraints**: No SSH keys for users; phone launcher is default on phone-sized surfaces; Canvas remains explicit access; all mutating endpoints need `bodyLimit`; external calls and mobile client fetches need finite timeouts; WebSocket messages require schema validation and ownership checks; no raw provider/internal errors in user-visible mobile states
@@ -107,7 +107,7 @@ tests/gateway/
 └── app-runtime-phase1.test.ts
 ```
 
-**Structure Decision**: Keep native mobile-specific screens in `apps/mobile`, add phone-sized browser shell behavior in `shell/src`, reuse existing gateway app-runtime and terminal session registries, and avoid adding new terminal endpoints unless the existing `GET/DELETE /api/terminal/sessions` plus `/ws/terminal` attach protocol cannot satisfy the mobile UX.
+**Structure Decision**: Keep Native Mobile-specific screens in `apps/mobile`, make Web Mobile in `shell/src` follow the Native Mobile behavior contract, reuse existing gateway app-runtime and terminal session registries, and avoid adding new terminal endpoints unless the existing `GET/DELETE /api/terminal/sessions` plus `/ws/terminal` attach protocol cannot satisfy the mobile UX.
 
 ## Phase 0: Research
 
@@ -124,7 +124,7 @@ Tasks should be generated as test-first vertical slices:
 1. Clear the PR #99 CI regressions in the Symphony/workspace tests so the branch has a trustworthy baseline.
 2. Harden PR #99 app discovery/runtime baseline with mobile client timeouts, safe errors, and tests.
 3. Make the launcher the phone default home in both `apps/mobile` and phone-sized `shell/` sessions, then model active app/resume state.
-4. Add explicit Canvas entry/exit behavior for mobile browser shell and native mobile entry points where available.
+4. Add explicit Canvas entry/exit behavior for Web Mobile where available; Canvas is not a Native Mobile presentation.
 5. Add mobile terminal lifecycle client state and tests around the existing terminal REST list/delete endpoints and WebSocket attach/input/resize/detach/destroy protocol.
 6. Add the terminal UI: session picker, full-screen terminal, special-key bar, reconnect/resume states.
 7. Run review gates: `bun run check:patterns`, focused mobile Jest tests, focused gateway Vitest tests, and then broader typecheck/test gates when dependencies are installed.

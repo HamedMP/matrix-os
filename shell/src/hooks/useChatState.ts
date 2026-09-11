@@ -5,6 +5,7 @@ import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 import { useConversation } from "@/hooks/useConversation";
 import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
 import { getGatewayUrl } from "@/lib/gateway";
+import type { CanonicalChatApprovalDecision, CanonicalChatModelSelection } from "@matrix-os/contracts";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
@@ -13,6 +14,9 @@ interface QueuedMessage {
   text: string;
   displayText?: string;
   requestId: string;
+  model?: string;
+  effort?: string;
+  accessSourceId?: string;
 }
 
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
@@ -26,16 +30,39 @@ export interface ChatState {
   currentTool: string | null;
   connected: boolean;
   queue: QueuedMessage[];
+  providerSelection?: CanonicalChatModelSelection;
   conversations: ReturnType<typeof useConversation>["conversations"];
+  activeConversationTitle?: string;
+  renameConversation?: (id: string, title: string) => Promise<boolean>;
+  composerDraftRequest: { id: number; text: string } | null;
+  requestComposerDraft: (text: string) => void;
+  consumeComposerDraft: (id: number) => void;
   submitMessage: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
-    options?: { displayText?: string; promptText?: string },
+    options?: ChatSubmitOptions,
   ) => void;
   newChat: () => Promise<void>;
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
+  submitApproval?: (
+    runId: string,
+    approvalId: string,
+    decision: CanonicalChatApprovalDecision,
+  ) => Promise<boolean>;
+}
+
+export interface ChatSubmitOptions {
+  displayText?: string;
+  promptText?: string;
+  instanceId?: string;
+  model?: string;
+  interactionMode?: string;
+  permissionMode?: string;
+  modelOptions?: Array<{ id: string; value: string | boolean }>;
+  effort?: string;
+  accessSourceId?: string;
 }
 
 export function useChatState(): ChatState {
@@ -44,6 +71,8 @@ export function useChatState(): ChatState {
   const [busy, setBusy] = useState(false);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
+  const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
+  const composerDraftSequence = useRef(0);
   const { connected, connectionEpoch, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
@@ -52,6 +81,7 @@ export function useChatState(): ChatState {
   // Tracks the requestId of the in-flight run so abortCurrent() can target
   // the right server-side AbortController. Cleared on terminal events.
   const currentRequestIdRef = useRef<string | null>(null);
+  const queueRef = useRef<QueuedMessage[]>([]);
   // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of sessionId, read synchronously inside the async WS message handler (which is registered once via a stable subscribe and must not re-subscribe on every sessionId change); writing it in render keeps the mirror current for those deferred reads
   sessionRef.current = sessionId;
 
@@ -140,22 +170,26 @@ export function useChatState(): ChatState {
         // Abort clears the queue: stopping means "I changed my mind".
         // Result/error drain the next queued message as before.
         if (msg.type === "kernel:aborted") {
+          queueRef.current = [];
           setQueue([]);
         } else {
-          setQueue((prev) => {
-            if (prev.length === 0) return prev;
-            const [next, ...rest] = prev;
+          const [next, ...rest] = queueRef.current;
+          if (next) {
+            queueRef.current = rest;
+            setQueue(rest);
             send({
               type: "message",
               text: next.text,
               displayText: next.displayText,
               sessionId: sessionRef.current,
               requestId: next.requestId,
+              model: next.model,
+              effort: next.effort,
+              accessSourceId: next.accessSourceId,
             });
             currentRequestIdRef.current = next.requestId;
             setBusy(true);
-            return rest;
-          });
+          }
         }
 
         if (msg.type === "kernel:error" || msg.type === "kernel:aborted") {
@@ -173,7 +207,7 @@ export function useChatState(): ChatState {
     (
       text: string,
       _files?: Array<{ name: string; type: string; data: string }>,
-      options?: { displayText?: string; promptText?: string },
+      options?: { displayText?: string; promptText?: string; model?: string; effort?: string; accessSourceId?: string },
     ) => {
       if (!text) return;
 
@@ -193,9 +227,27 @@ export function useChatState(): ChatState {
       ]);
 
       if (busy) {
-        setQueue((prev) => [...prev, { text: outboundText, displayText, requestId }]);
+        const nextQueue = [...queueRef.current, {
+          text: outboundText,
+          displayText,
+          requestId,
+          model: options?.model,
+          effort: options?.effort,
+          accessSourceId: options?.accessSourceId,
+        }];
+        queueRef.current = nextQueue;
+        setQueue(nextQueue);
       } else {
-        send({ type: "message", text: outboundText, displayText, sessionId, requestId });
+        send({
+          type: "message",
+          text: outboundText,
+          displayText,
+          sessionId,
+          requestId,
+          model: options?.model,
+          effort: options?.effort,
+          accessSourceId: options?.accessSourceId,
+        });
         currentRequestIdRef.current = requestId;
         setBusy(true);
       }
@@ -214,9 +266,18 @@ export function useChatState(): ChatState {
     // show a "stopping..." pending state in the meantime if needed.
   }, [send]);
 
+  const requestComposerDraft = useCallback((text: string) => {
+    setComposerDraftRequest({ id: ++composerDraftSequence.current, text });
+  }, []);
+
+  const consumeComposerDraft = useCallback((id: number) => {
+    setComposerDraftRequest((current) => current?.id === id ? null : current);
+  }, []);
+
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const newChat = useCallback(async () => {
     setMessages([]);
+    queueRef.current = [];
     setQueue([]);
     try {
       const res = await fetch(`${GATEWAY_URL}/api/conversations`, {
@@ -245,6 +306,7 @@ export function useChatState(): ChatState {
           if (conv) {
             setSessionId(conv.id);
             setMessages(hydrateMessages(conv.messages));
+            queueRef.current = [];
             setQueue([]);
           }
         })
@@ -263,6 +325,9 @@ export function useChatState(): ChatState {
     connected,
     queue,
     conversations,
+    composerDraftRequest,
+    requestComposerDraft,
+    consumeComposerDraft,
     submitMessage,
     newChat,
     switchConversation,

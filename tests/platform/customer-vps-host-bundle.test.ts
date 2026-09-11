@@ -64,6 +64,21 @@ function compareSyncAgentVersions(candidate: string, current: string): string {
   return result.stdout.trim();
 }
 
+function extractSyncAgentFunction(name: string): string {
+  const root = process.cwd();
+  const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+  const functionSource = syncAgent.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
+  expect(functionSource).toBeDefined();
+  return functionSource!;
+}
+
+function runSyncAgentFunction(source: string, invocation: string, setup: string) {
+  return spawnSync('bash', ['-c', `${setup}\n${source}\n${invocation}`], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+}
+
 describe('customer VPS host bundle', () => {
   it('build script packages the systemd entrypoint binaries', () => {
     const root = process.cwd();
@@ -126,6 +141,9 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('[ "$ZELLIJ_ACTUAL_VERSION" = "zellij $ZELLIJ_VERSION" ]');
     expect(script).toContain(
       'timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"',
+    );
+    expect(script).toContain(
+      'node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"',
     );
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/zellij"');
     expect(script).toContain(
@@ -270,7 +288,7 @@ describe('customer VPS host bundle', () => {
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
-    expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex');
+    expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode');
     expect(gatewayUnit).not.toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
@@ -413,11 +431,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       mkdirSync(templateWallpapers, { recursive: true });
       mkdirSync(homeWallpapers, { recursive: true });
 
-      // The template ships all four OS wallpapers plus (hypothetically) an
+      // The template ships all seven OS wallpapers plus (hypothetically) an
       // entry whose name collides with a user upload — the prefix must stay
-      // user-owned for everything except the four exact bundled filenames.
+      // user-owned for everything except the seven exact bundled filenames.
       writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
         'system/wallpapers/macos-light.svg': sha256('macos light v1'),
+        'system/wallpapers/matrix-dawn.webp': sha256('matrix dawn v1'),
+        'system/wallpapers/matrix-dusk.webp': sha256('matrix dusk v1'),
+        'system/wallpapers/matrix-night.webp': sha256('matrix night v1'),
         'system/wallpapers/moraine-lake.jpg': sha256('moraine v2'),
         'system/wallpapers/win11-bloom.jpg': sha256('win11 bloom v2'),
         'system/wallpapers/xp-bliss.jpg': sha256('xp bliss v1'),
@@ -429,6 +450,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
         'system/wallpapers/win11-bloom.jpg': sha256('win11 bloom v1'),
       }, null, 2));
       writeFileSync(join(templateWallpapers, 'macos-light.svg'), 'macos light v1');
+      writeFileSync(join(templateWallpapers, 'matrix-dawn.webp'), 'matrix dawn v1');
+      writeFileSync(join(templateWallpapers, 'matrix-dusk.webp'), 'matrix dusk v1');
+      writeFileSync(join(templateWallpapers, 'matrix-night.webp'), 'matrix night v1');
       writeFileSync(join(templateWallpapers, 'moraine-lake.jpg'), 'moraine v2');
       writeFileSync(join(templateWallpapers, 'win11-bloom.jpg'), 'win11 bloom v2');
       writeFileSync(join(templateWallpapers, 'xp-bliss.jpg'), 'xp bliss v1');
@@ -455,6 +479,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       // Missing bundled wallpapers are added; tracked-but-stale ones update.
       expect(readFileSync(join(homeWallpapers, 'xp-bliss.jpg'), 'utf8')).toBe('xp bliss v1');
       expect(readFileSync(join(homeWallpapers, 'macos-light.svg'), 'utf8')).toBe('macos light v1');
+      expect(readFileSync(join(homeWallpapers, 'matrix-dawn.webp'), 'utf8')).toBe('matrix dawn v1');
+      expect(readFileSync(join(homeWallpapers, 'matrix-dusk.webp'), 'utf8')).toBe('matrix dusk v1');
+      expect(readFileSync(join(homeWallpapers, 'matrix-night.webp'), 'utf8')).toBe('matrix night v1');
       expect(readFileSync(join(homeWallpapers, 'moraine-lake.jpg'), 'utf8')).toBe('moraine v2');
       expect(readFileSync(join(homeWallpapers, 'win11-bloom.jpg'), 'utf8')).toBe('win11 bloom v2');
       // User wallpapers are untouched — including one colliding with a
@@ -845,7 +872,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('classify_recovery_phase');
     expect(workflow).toContain('diagnose_recovery_state');
     expect(workflow).toContain('phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)');
-    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_rollback_failed|post_install_service_start_failed|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
+    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_rollback_failed|post_install_runtime_version_mismatch|post_install_service_start_failed|post_install_terminal_health_failed|post_install_terminal_start_failed|pre_install_service_stop_failed|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|update_transaction_prepare_failed|invalid)');
     expect(workflow).toContain('recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
     expect(workflow).toContain('initial_recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
     expect(workflow).toContain('/usr/bin/python3 - "$error_path"');
@@ -1374,9 +1401,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('write_update_error "bundle_extract_failed"');
     expect(syncAgent).toContain('write_update_error "bundle_layout_invalid"');
     expect(syncAgent).toContain('write_update_error "terminal_runtime_install_failed"');
+    expect(syncAgent).toContain('write_update_error "pre_install_service_stop_failed"');
     expect(syncAgent).toContain('write_update_error "post_install_service_start_failed"');
     expect(syncAgent).toContain('write_update_error "post_install_host_bin_failed"');
-    expect(syncAgent).toContain('write_update_error "post_install_health_failed"');
+    expect(syncAgent).toContain('verification_error_code="post_install_health_failed"');
+    expect(syncAgent).toContain('verification_error_code="post_install_runtime_version_mismatch"');
     expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
     expect(syncAgent).toContain('write_update_error "apply_failed"');
     expect(syncAgent).toContain('write_update_error "apply_interrupted"');
@@ -1403,10 +1432,80 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     const healthFailure = syncAgent.indexOf('log "ERROR: health check failed — rolling back"');
     const healthRollback = syncAgent.indexOf('if do_rollback false; then', healthFailure);
-    const durableHealthError = syncAgent.indexOf('write_update_error "post_install_health_failed"', healthFailure);
+    const durableHealthError = syncAgent.indexOf(
+      'write_update_error "$verification_error_code" "$verification_error_message"',
+      healthFailure,
+    );
     expect(healthFailure).toBeGreaterThan(-1);
     expect(healthRollback).toBeGreaterThan(healthFailure);
     expect(durableHealthError).toBeGreaterThan(healthRollback);
+  });
+
+  it('sync agent refuses to replace the app until runtime services are confirmed stopped', () => {
+    const source = extractSyncAgentFunction('stop_runtime_services');
+    const setup = `
+log() { :; }
+sudo() { "$@"; }
+systemctl() {
+  if [ "$1" = stop ]; then return "${'$'}{STOP_STATUS:-0}"; fi
+  if [ "$1" = show ]; then printf '%s\\n' "${'$'}{SERVICE_STATE:-inactive}"; return 0; fi
+  return 1
+}`;
+
+    const stopped = runSyncAgentFunction(source, 'stop_runtime_services', setup);
+    expect(stopped.status, stopped.stderr || stopped.stdout).toBe(0);
+
+    const stopFailed = runSyncAgentFunction(
+      source,
+      'STOP_STATUS=1 stop_runtime_services',
+      setup,
+    );
+    expect(stopFailed.status).not.toBe(0);
+
+    const stillActive = runSyncAgentFunction(
+      source,
+      'SERVICE_STATE=active stop_runtime_services',
+      setup,
+    );
+    expect(stillActive.status).not.toBe(0);
+  });
+
+  it('sync agent requires the new gateway process to report the expected running version', () => {
+    const source = extractSyncAgentFunction('running_gateway_version');
+    const setup = `
+readonly HEALTH_URL="http://127.0.0.1:4000/health"
+curl() { printf '%s\\n' "${'$'}{HEALTH_RESPONSE}"; }
+json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }`;
+
+    const matching = runSyncAgentFunction(
+      source,
+      'HEALTH_RESPONSE=\'{"status":"ok","runningVersion":"v2026.08.19-1002"}\' running_gateway_version',
+      setup,
+    );
+    expect(matching.status, matching.stderr || matching.stdout).toBe(0);
+    expect(matching.stdout.trim()).toBe('v2026.08.19-1002');
+
+    const legacy = runSyncAgentFunction(
+      source,
+      'HEALTH_RESPONSE=\'{"status":"ok"}\' running_gateway_version',
+      setup,
+    );
+    expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
+    expect(legacy.stdout.trim()).toBe('');
+  });
+
+  it('verifies running identity before committing installed release metadata', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const stopCall = syncAgent.indexOf('if ! stop_runtime_services; then');
+    const appBackup = syncAgent.indexOf('sudo rm -rf "$APP_DIR.rollback"');
+    const versionProbe = syncAgent.indexOf('observed_running_version="$(running_gateway_version)"');
+    const metadataCommit = syncAgent.indexOf('if commit_release_metadata; then');
+
+    expect(stopCall).toBeGreaterThan(-1);
+    expect(stopCall).toBeLessThan(appBackup);
+    expect(versionProbe).toBeGreaterThan(appBackup);
+    expect(versionProbe).toBeLessThan(metadataCommit);
   });
 
   it('keeps explicit update triggers durable until the apply phase is recorded', () => {
@@ -1646,11 +1745,27 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('gateway launcher leaves registration to the independent host service', () => {
     const root = process.cwd();
     const launcher = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
+    const registrationClient = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-register-vps'), 'utf8');
 
     expect(launcher).not.toContain('MATRIX_PLATFORM_REGISTER_URL');
     expect(launcher).not.toContain('MATRIX_REGISTER_CLIENT');
     expect(launcher).not.toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).not.toContain('registration.env');
+    expect(registrationClient).toContain('MATRIX_PLATFORM_REGISTER_URL');
+    expect(registrationClient).toContain('/hetzner/v1/metadata/instance-id');
+    expect(registrationClient).toContain('/hetzner/v1/metadata/public-ipv4');
+    expect(registrationClient).toContain('/vps/register');
+    expect(registrationClient).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(registrationClient).toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(registrationClient).toContain('runtime_ready()');
+    expect(registrationClient).toContain('selected_developer_tools_settled()');
+    expect(registrationClient).toContain('/api/terminal/health');
+    expect(registrationClient).toContain('/var/lib/matrix-developer-tools/installed-tools');
+    expect(registrationClient).toContain('/var/lib/matrix-developer-tools/failed-tools');
+    expect(registrationClient).toContain('grep -qxF "$tool" "$failed_file" && continue');
+    expect(registrationClient).toContain('authorization: Bearer ${MATRIX_AUTH_TOKEN}');
+    expect(registrationClient).toContain('if ! runtime_ready; then');
+    expect(registrationClient).not.toContain('MATRIX_OPTIONAL_TOOLS_START_DELAY_SECONDS');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');
@@ -1685,7 +1800,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health"');
-    expect(workflow).toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
+    expect(workflow).toContain(
+      '$CANDIDATE_URL/system-bundles/channels/${CUSTOMER_VPS_IMAGE_VERSION}.json',
+    );
+    expect(workflow).not.toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
     expect(workflow).toContain("jq -r '.url // empty'");
     expect(workflow).toContain('sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"');
     expect(workflow).toContain('bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"');

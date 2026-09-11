@@ -7,6 +7,7 @@ MAX_ATTEMPTS="${MATRIX_REGISTRATION_MAX_ATTEMPTS:-30}"
 INSTANCE_ID_URL="${MATRIX_METADATA_INSTANCE_ID_URL:-http://169.254.169.254/hetzner/v1/metadata/instance-id}"
 PUBLIC_IPV4_URL="${MATRIX_METADATA_PUBLIC_IPV4_URL:-http://169.254.169.254/hetzner/v1/metadata/public-ipv4}"
 GATEWAY_HEALTH_URL="${MATRIX_GATEWAY_HEALTH_URL:-http://127.0.0.1:${PORT:-4000}/health}"
+TERMINAL_HEALTH_URL="${MATRIX_TERMINAL_HEALTH_URL:-http://127.0.0.1:${PORT:-4000}/api/terminal/health}"
 REGISTRATION_ENV_FILE="${MATRIX_REGISTRATION_ENV_FILE:-/opt/matrix/env/registration.env}"
 
 registration_deadline_epoch() {
@@ -29,6 +30,33 @@ mark_registration_complete() {
   local incoming="${REGISTER_FLAG}.incoming.$$"
   install -m 0640 /dev/null "$incoming"
   mv -f "$incoming" "$REGISTER_FLAG"
+}
+
+selected_developer_tools_settled() {
+  local installed_file="/var/lib/matrix-developer-tools/installed-tools"
+  local failed_file="/var/lib/matrix-developer-tools/failed-tools"
+  local tool bin_name
+  for tool in ${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}; do
+    case "$tool" in
+      claude-code) bin_name="claude" ;;
+      codex|opencode|pi) bin_name="$tool" ;;
+      *) return 1 ;;
+    esac
+    if [ -r "$installed_file" ] && grep -qxF "$tool" "$installed_file" && \
+      [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]; then
+      continue
+    fi
+    [ -r "$failed_file" ] && grep -qxF "$tool" "$failed_file" && continue
+    return 1
+  done
+}
+
+runtime_ready() {
+  [ -n "${MATRIX_AUTH_TOKEN:-}" ] || return 1
+  selected_developer_tools_settled || return 1
+  curl --fail --silent --show-error --max-time 2 \
+    -H "authorization: Bearer ${MATRIX_AUTH_TOKEN}" \
+    "$TERMINAL_HEALTH_URL" >/dev/null
 }
 
 [ ! -f "$REGISTER_FLAG" ] || exit 0
@@ -75,6 +103,10 @@ for _ in $(seq 1 90); do
 done
 if [ "$gateway_healthy" != true ]; then
   echo "matrix-register-vps: gateway health check retry budget exhausted" >&2
+  exit 75
+fi
+if ! runtime_ready; then
+  echo "matrix-register-vps: runtime readiness checks are not settled; deferring" >&2
   exit 75
 fi
 

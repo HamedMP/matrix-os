@@ -1,5 +1,7 @@
 import { z } from "zod/v4";
-import { BETA_ID, MODEL_ID } from "./funded-relay-config.js";
+import { BETA_ID } from "./funded-relay-config.js";
+
+const MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_ARRAY_ITEMS = 2_048;
@@ -121,7 +123,19 @@ export type FundedRequest = z.infer<typeof FundedRequestSchema>;
 
 export function serializeFundedRequest(value: unknown): { body: string; request: FundedRequest } {
   const request = FundedRequestSchema.parse(value);
-  return { body: JSON.stringify(request), request };
+  const { metadata: _callerMetadata, ...forwarded } = request;
+  return { body: JSON.stringify(forwarded), request };
+}
+
+export function serializeCountTokensRequest(request: FundedRequest): string {
+  return JSON.stringify({
+    model: request.model,
+    messages: request.messages,
+    ...(request.system === undefined ? {} : { system: request.system }),
+    ...(request.tools === undefined ? {} : { tools: request.tools }),
+    ...(request.tool_choice === undefined ? {} : { tool_choice: request.tool_choice }),
+    ...(request.thinking === undefined ? {} : { thinking: request.thinking }),
+  });
 }
 
 export function resolveRequestedBetas(

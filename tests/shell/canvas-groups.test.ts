@@ -4,16 +4,17 @@ import {
   useCanvasGroups,
   type CanvasGroup,
 } from "../../shell/src/stores/canvas-groups.js";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
 function resetStores() {
+  useDesktopMode.setState({ mode: "canvas", previousMode: null });
   useCanvasGroups.setState({ groups: [] });
   useWindowManager.setState({
     windows: [],
     nextZ: 1,
     closedPaths: new Set(),
     closedLayouts: new Map(),
-    apps: [],
     focusedWindowId: null,
   });
 }

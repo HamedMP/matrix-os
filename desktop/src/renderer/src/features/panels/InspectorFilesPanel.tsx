@@ -1,3 +1,4 @@
+import { ExpandableFileTree, type InspectorTreeEntry } from "./ExpandableFileTree";
 import type { FileBrowseResponse, FileReadResponse } from "@matrix-os/contracts";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "../../stores/connection";
@@ -6,7 +7,7 @@ import ComputerFileBrowser from "../files/ComputerFileBrowser";
 import { parseBrowserEntries } from "../files/browser-entries";
 import { FilePreview, resolveActivePath, type FileSelection } from "../files/FilePreviewPane";
 import type { WorkFilesScope } from "../work/work-files-scope";
-import { ArrowUp, ChevronDown, ChevronRight, Folder } from "@renderer/lib/hugeicons";
+import { ArrowUp, ChevronRight, Folder } from "@renderer/lib/hugeicons";
 import { FileTypeIcon } from "../files/FileTypeIcon";
 import { MonacoReadOnlyEditor } from "../editor/MonacoReadOnlyEditor";
 
@@ -20,13 +21,6 @@ export type InspectorFileTarget =
       worktreeId?: string;
     };
 
-type InspectorTreeEntry = { path: string; kind: "file" | "directory" };
-type InspectorTreeDirectory = {
-  status: "loading" | "ready" | "error";
-  entries: InspectorTreeEntry[];
-};
-
-const MAX_EXPANDED_FILE_DIRECTORIES = 200;
 const MAX_PROJECT_DIRECTORY_PAGES = 100;
 const PROJECT_DIRECTORY_PAGE_SIZE = 100;
 
@@ -75,94 +69,6 @@ async function browseProjectDirectory(
   throw new Error("FilesUnavailable");
 }
 
-function ExpandableFileTree({
-  loadDirectory,
-  onOpenFile,
-}: {
-  loadDirectory: (path: string) => Promise<InspectorTreeEntry[]>;
-  onOpenFile: (path: string) => void;
-}) {
-  const [expandedPaths, setExpandedPaths] = useState<string[]>([]);
-  const [directories, setDirectories] = useState<Record<string, InspectorTreeDirectory>>({});
-  const lifecycleGeneration = useRef(0);
-
-  useEffect(() => () => { lifecycleGeneration.current += 1; }, []);
-
-  const ensureDirectory = useCallback((path: string) => {
-    const generation = lifecycleGeneration.current;
-    setDirectories((current) => {
-      if (current[path] || Object.keys(current).length >= MAX_EXPANDED_FILE_DIRECTORIES) return current;
-      return { ...current, [path]: { status: "loading", entries: [] } };
-    });
-    void loadDirectory(path).then((entries) => {
-      if (generation !== lifecycleGeneration.current) return;
-      setDirectories((current) => ({ ...current, [path]: { status: "ready", entries } }));
-    }).catch(() => {
-      if (generation !== lifecycleGeneration.current) return;
-      setDirectories((current) => ({ ...current, [path]: { status: "error", entries: [] } }));
-    });
-  }, [loadDirectory]);
-
-  useEffect(() => { ensureDirectory(""); }, [ensureDirectory]);
-
-  const toggleDirectory = (path: string) => {
-    setExpandedPaths((current) => {
-      if (current.includes(path)) return current.filter((candidate) => candidate !== path);
-      if (current.length >= MAX_EXPANDED_FILE_DIRECTORIES - 1) return current;
-      ensureDirectory(path);
-      return [...current, path];
-    });
-  };
-
-  const renderDirectory = (path: string, depth: number) => {
-    const directory = directories[path];
-    if (!directory || directory.status === "loading") {
-      return <p className="px-3 py-2 text-xs" style={{ paddingLeft: 12 + depth * 16, color: "var(--text-tertiary)" }}>Loading files…</p>;
-    }
-    if (directory.status === "error") {
-      return <p className="px-3 py-2 text-xs" style={{ paddingLeft: 12 + depth * 16, color: "var(--danger)" }}>Files are unavailable.</p>;
-    }
-    if (directory.entries.length === 0) {
-      return depth === 0
-        ? <p className="p-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No files.</p>
-        : <p className="px-3 py-1.5 text-xs" style={{ paddingLeft: 28 + depth * 16, color: "var(--text-tertiary)" }}>Empty folder</p>;
-    }
-    return directory.entries.map((entry) => {
-      const expanded = entry.kind === "directory" && expandedPaths.includes(entry.path);
-      return (
-        <div key={entry.path}>
-          <button
-            type="button"
-            aria-label={entry.kind === "directory"
-              ? `${expanded ? "Collapse" : "Expand"} folder ${entry.path}`
-              : `Open file ${entry.path}`}
-            {...(entry.kind === "directory" ? { "aria-expanded": expanded } : {})}
-            className="flex w-full items-center gap-2 truncate py-2 pr-3 text-left text-xs outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-            style={{ paddingLeft: 12 + depth * 16, color: "var(--text-primary)" }}
-            onClick={() => entry.kind === "directory" ? toggleDirectory(entry.path) : onOpenFile(entry.path)}
-          >
-            {entry.kind === "directory" ? (
-              <>
-                {expanded ? <ChevronDown size={13} aria-hidden className="shrink-0" /> : <ChevronRight size={13} aria-hidden className="shrink-0" />}
-                <Folder size={16} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
-              </>
-            ) : <FileTypeIcon filename={entry.path.split("/").at(-1) ?? entry.path} />}
-            <span className="truncate">{entry.path.split("/").at(-1)}</span>
-          </button>
-          {expanded ? renderDirectory(entry.path, depth + 1) : null}
-        </div>
-      );
-    });
-  };
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto" data-testid="files-listing" style={{ background: "var(--bg-surface)" }}>
-      <div data-files-list-header className="sr-only">Expandable file tree</div>
-      {renderDirectory("", 0)}
-    </div>
-  );
-}
-
 /**
  * Inspector Files surface: the shared computer file browser in compact mode,
  * optionally without an inline preview so a parent tab workspace can render
@@ -174,12 +80,14 @@ export function InspectorFilesPanel({
   scope = { kind: "home", chatId: "legacy-inspector" },
   browserOnly = false,
   forceList = false,
+  selectedFile,
   onOpenFile,
 }: {
   scopeLabel?: string;
   scope?: WorkFilesScope;
   browserOnly?: boolean;
   forceList?: boolean;
+  selectedFile?: InspectorFileTarget | null;
   onOpenFile?: (target: InspectorFileTarget) => void;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -198,6 +106,7 @@ export function InspectorFilesPanel({
       <ProjectFilesPanel
         key={`${scopeKey}:${scope.projectId}:${scope.worktreeId ?? "root"}`}
         scope={scope}
+        selectedPath={selectedFile?.kind === "project" && selectedFile.projectId === scope.projectId && selectedFile.worktreeId === scope.worktreeId ? selectedFile.path : undefined}
         browserOnly={browserOnly}
         onOpenFile={onOpenFile}
       />
@@ -207,6 +116,7 @@ export function InspectorFilesPanel({
     <HomeFilesPanel
       key={scopeKey}
       scopeLabel={scopeLabel}
+      selectedPath={selectedFile?.kind === "home" ? selectedFile.path : undefined}
       browserOnly={browserOnly}
       forceList={forceList}
       onOpenFile={onOpenFile}
@@ -219,11 +129,13 @@ function HomeFilesPanel({
   browserOnly,
   forceList,
   onOpenFile,
+  selectedPath,
 }: {
   scopeLabel: string;
   browserOnly: boolean;
   forceList: boolean;
   onOpenFile?: (target: InspectorFileTarget) => void;
+  selectedPath?: string;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -261,17 +173,19 @@ function HomeFilesPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        className="shrink-0 border-b px-3 py-2"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-      >
-        <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{scopeLabel}</p>
-        <p className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-          Browse this computer&apos;s files. This view is not limited to the selected project.
-        </p>
-      </div>
+      {!browserOnly ? (
+        <div
+          className="shrink-0 border-b px-3 py-2"
+          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+        >
+          <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{scopeLabel}</p>
+          <p className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+            Browse this computer&apos;s files. This view is not limited to the selected project.
+          </p>
+        </div>
+      ) : null}
       {browserOnly ? (
-        <ExpandableFileTree loadDirectory={loadDirectory} onOpenFile={handleOpenFile} />
+        <ExpandableFileTree selectedPath={selectedPath} loadDirectory={loadDirectory} onOpenFile={handleOpenFile} />
       ) : (
         <div className="shrink-0">
           <ComputerFileBrowser compact framed forceList={forceList} onOpenFile={handleOpenFile} />
@@ -306,13 +220,15 @@ function ProjectFilesPanel({
   scope,
   browserOnly,
   onOpenFile,
+  selectedPath,
 }: {
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   browserOnly: boolean;
   onOpenFile?: (target: InspectorFileTarget) => void;
+  selectedPath?: string;
 }) {
   if (browserOnly) {
-    return <ProjectFilesTree scope={scope} onOpenFile={onOpenFile} />;
+    return <ProjectFilesTree selectedPath={selectedPath} scope={scope} onOpenFile={onOpenFile} />;
   }
   return <ProjectNavigableFilesPanel scope={scope} onOpenFile={onOpenFile} />;
 }
@@ -320,9 +236,11 @@ function ProjectFilesPanel({
 function ProjectFilesTree({
   scope,
   onOpenFile,
+  selectedPath,
 }: {
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   onOpenFile?: (target: InspectorFileTarget) => void;
+  selectedPath?: string;
 }) {
   const loadDirectory = useCallback(async (path: string): Promise<InspectorTreeEntry[]> => {
     const response = await browseProjectDirectory(scope, path || undefined);
@@ -344,13 +262,7 @@ function ProjectFilesTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-        <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
-          {scope.label}{scope.worktreeId ? " worktree" : ""}
-        </p>
-        <p className="truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>Project root</p>
-      </div>
-      <ExpandableFileTree loadDirectory={loadDirectory} onOpenFile={openFile} />
+      <ExpandableFileTree selectedPath={selectedPath} loadDirectory={loadDirectory} onOpenFile={openFile} />
     </div>
   );
 }

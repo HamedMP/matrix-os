@@ -10,8 +10,8 @@ vi.mock("../../desktop/src/renderer/src/lib/feature-flags", () => ({
 }));
 
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
-import type { AgentThreadSummary, RuntimeSummary, TerminalSessionSummary } from "../../packages/contracts/src/index";
-import { useApps } from "../../desktop/src/renderer/src/stores/apps";
+import type { AgentThreadSummary, RuntimeSummary, TerminalSessionSummary, TerminalTab } from "../../packages/contracts/src/index";
+import { desktopQueryClient } from "../../desktop/src/renderer/src/lib/query-client";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
@@ -22,6 +22,7 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { currentAppsQueryKey } from "./apps-query-test-utils";
 
 function threadSummary(id: string, overrides: Partial<AgentThreadSummary> = {}): AgentThreadSummary {
   return {
@@ -40,6 +41,7 @@ function runtimeSummaryWithThreads(options: {
   activeThreads?: AgentThreadSummary[];
   attentionThreads?: AgentThreadSummary[];
   terminalSessions?: TerminalSessionSummary[];
+  terminalTabs?: TerminalTab[];
 } = {}): RuntimeSummary {
   return {
     runtime: {
@@ -60,6 +62,21 @@ function runtimeSummaryWithThreads(options: {
     activeThreads: { items: options.activeThreads ?? [], hasMore: false, limit: 20 },
     attentionThreads: { items: options.attentionThreads ?? [], hasMore: false, limit: 20 },
     terminalSessions: { items: options.terminalSessions ?? [], hasMore: false, limit: 20 },
+    terminalWorkspaces: {
+      items: options.terminalTabs?.length ? [{
+        id: "tws_00000000000000000000000000000001",
+        scope: "project",
+        projectId: "matrix-os",
+        canonicalSize: { cols: 120, rows: 36 },
+        status: "running",
+        revision: 1,
+        createdAt: "2026-07-07T00:00:00.000Z",
+        updatedAt: "2026-07-07T00:00:00.000Z",
+        tabs: options.terminalTabs,
+      }] : [],
+      hasMore: false,
+      limit: 20,
+    },
     previewSessions: { items: [], hasMore: false, limit: 20 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
   };
@@ -71,6 +88,21 @@ function terminalSessionSummary(id: string, overrides: Partial<TerminalSessionSu
     name: `matrix-${id}`,
     status: "running",
     attachable: true,
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function terminalTabSummary(id: string, overrides: Partial<TerminalTab> = {}): TerminalTab {
+  return {
+    id,
+    workspaceId: "tws_00000000000000000000000000000001",
+    name: `matrix-${id}`,
+    status: "running",
+    cwd: "projects/matrix-os",
+    revision: 1,
+    order: 0,
     createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",
     ...overrides,
@@ -90,6 +122,14 @@ describe("CommandPalette", () => {
       value: ResizeObserverStub,
     });
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    window.HTMLDialogElement.prototype.showModal = function showModal() {
+      this.setAttribute("open", "");
+      this.tabIndex = -1;
+      this.focus();
+    };
+    window.HTMLDialogElement.prototype.close = function close() {
+      this.removeAttribute("open");
+    };
     useUi.setState({ paletteOpen: true, createTaskOpen: false, createProjectOpen: false, composerOpen: false });
     useBoard.setState({ activeProjectSlug: null, projects: [], cardsByProject: {} });
     useSessions.setState({ sessions: [] });
@@ -124,6 +164,7 @@ describe("CommandPalette", () => {
       runtimeSlot: "primary",
       api: { get: vi.fn() } as never,
     });
+    desktopQueryClient.clear();
   });
 
   afterEach(() => {
@@ -131,35 +172,84 @@ describe("CommandPalette", () => {
     vi.restoreAllMocks();
   });
 
-  it("forces an app catalog retry after a previous palette load failed", async () => {
-    const load = vi.fn().mockResolvedValue(undefined);
-    useApps.setState({
-      apps: [],
-      loaded: true,
-      loading: false,
-      error: "server",
-      load,
+  it("focuses the search input after the native dialog opens", async () => {
+    render(<CommandPalette />);
+
+    const input = screen.getByPlaceholderText("Type a command or search…");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(input.className).toContain("focus-visible:shadow-none");
+  });
+
+  it("provides the categorized command-center design without losing command behavior", async () => {
+    useBoard.setState({
+      activeProjectSlug: null,
+      projects: [{ slug: "matrix-os", name: "Matrix OS" }],
+      cardsByProject: {},
     });
 
     render(<CommandPalette />);
 
+    expect(screen.getByText("⌘K")).not.toBeNull();
+    const input = screen.getByPlaceholderText("Type a command or search…");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "All",
+      "Projects",
+      "Actions",
+      "Settings",
+    ]);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
+    expect(screen.getByText("Matrix OS")).not.toBeNull();
+    expect(screen.queryByText("Open Terminal")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
+    const terminalItem = screen.getByText("Open Terminal").closest("[cmdk-item]");
+    expect(terminalItem?.hasAttribute("data-instant-list-hover")).toBe(true);
+    expect(screen.queryByText("Matrix OS")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByText("Open settings")).not.toBeNull();
+    expect(screen.queryByText("Open Terminal")).toBeNull();
+  });
+
+  it("forces an app catalog retry after a previous palette load failed", async () => {
+    await desktopQueryClient.fetchQuery({
+      queryKey: currentAppsQueryKey(),
+      queryFn: () => Promise.reject(new Error("server")),
+      retry: false,
+    }).catch(() => undefined);
+    const get = vi.fn().mockResolvedValue({ apps: [] });
+    useConnection.setState({ api: { get } as never });
+
+    render(<CommandPalette />);
+
     await waitFor(() => {
-      expect(load).toHaveBeenCalledWith(useConnection.getState().api, true);
+      expect(get).toHaveBeenCalledWith("/api/apps", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
   });
 
-  it("opens terminal entries from canonical shell sessions, not workspace sessions", async () => {
+  it("does not duplicate a workspace tab already represented by the terminal store", async () => {
     const openTab = vi.fn();
     useSessions.setState({
       sessions: [{ name: "Workspace Only", attachName: "workspace-only", status: "active", source: "workspace" }],
     });
     useShellSessions.setState({
-      sessions: [{ name: "matrix-main", status: "active" }],
+      sessions: [{
+        name: "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
+        workspaceId: "tws_00000000000000000000000000000001",
+        tabId: "tt_00000000000000000000000000000001",
+        revision: 1,
+        workspaceRevision: 1,
+        cwd: "projects/matrix-os",
+        status: "active",
+        subtitle: "matrix-main",
+      }],
     });
     useCodingAgentWorkspace.setState({
       summary: runtimeSummaryWithThreads({
-        terminalSessions: [
-          terminalSessionSummary("term_matrix_main", {
+        terminalTabs: [
+          terminalTabSummary("tt_00000000000000000000000000000001", {
             name: "matrix-main",
           }),
         ],
@@ -171,13 +261,7 @@ describe("CommandPalette", () => {
 
     expect(screen.queryByText("Workspace Only")).toBeNull();
     expect(screen.queryByText("Open terminal matrix-main")).toBeNull();
-    fireEvent.click(screen.getByText("matrix-main"));
-
-    expect(openTab).toHaveBeenCalledWith({
-      kind: "terminal",
-      sessionName: "matrix-main",
-      title: "matrix-main",
-    });
+    expect(openTab).not.toHaveBeenCalled();
   });
 
   it("no longer offers a retired Agents workspace entry", async () => {
@@ -341,26 +425,87 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha"));
   });
 
+  it("uses linked agent-session titles instead of repeating the generic thread title", () => {
+    useShellSessions.setState({
+      sessions: [
+        {
+          name: "support-chat-fix",
+          status: "active",
+          agent: "codex",
+          subtitle: "Fix support chat",
+          cwd: "projects/matrix-os",
+        },
+        {
+          name: "browser-tabs",
+          status: "active",
+          agent: "claude",
+          subtitle: "Improve Browser tabs",
+          cwd: "projects/matrix-os",
+        },
+        {
+          name: "bright-tide",
+          status: "active",
+          agent: "pi",
+          cwd: "projects/matrix-os",
+        },
+      ],
+    });
+    useCodingAgentWorkspace.setState({
+      summary: runtimeSummaryWithThreads({
+        activeThreads: [
+          threadSummary("thread_support", {
+            title: "Coding agent run",
+            terminalSessionId: "term_support",
+          }),
+          threadSummary("thread_browser", {
+            title: "Coding agent run",
+            terminalSessionId: "term_browser",
+          }),
+          threadSummary("thread_untitled", {
+            title: "Coding agent run",
+            terminalSessionId: "term_untitled",
+          }),
+          threadSummary("thread_stale_terminal", {
+            title: "Coding agent run",
+            terminalSessionId: "term_no_longer_live",
+            projectId: "matrix-os",
+          }),
+        ],
+        terminalSessions: [
+          terminalSessionSummary("term_support", { name: "support-chat-fix" }),
+          terminalSessionSummary("term_browser", { name: "browser-tabs" }),
+          terminalSessionSummary("term_untitled", { name: "bright-tide" }),
+        ],
+      }),
+    });
+
+    render(<CommandPalette />);
+
+    expect(screen.getByText("Open thread Fix support chat")).toBeTruthy();
+    expect(screen.getByText("Open thread Improve Browser tabs")).toBeTruthy();
+    expect(screen.getByText("Open thread bright-tide")).toBeTruthy();
+    expect(screen.getByText("Open thread matrix-os agent run")).toBeTruthy();
+    expect(screen.queryByText("Open thread Coding agent run")).toBeNull();
+  });
+
   it("opens attachable coding-agent terminal sessions from the command palette", async () => {
     const openTab = vi.fn();
     useTabs.setState({ openTab });
     useShellSessions.setState({ sessions: [] });
     useCodingAgentWorkspace.setState({
       summary: runtimeSummaryWithThreads({
-        terminalSessions: [
-          terminalSessionSummary("term_attached_1", {
+        terminalTabs: [
+          terminalTabSummary("tt_00000000000000000000000000000001", {
             name: "matrix-review-758",
-            cwdLabel: "matrix-os",
           }),
-          terminalSessionSummary("term_unavailable_1", {
+          terminalTabSummary("tt_00000000000000000000000000000002", {
             name: "matrix-stale-review",
             status: "stale",
-            attachable: false,
           }),
-          terminalSessionSummary("term_invalid_name_1", {
+          terminalTabSummary("tt_00000000000000000000000000000003", {
             name: "Matrix-Review.123",
           }),
-          terminalSessionSummary("term_invalid_name_2", {
+          terminalTabSummary("tt_00000000000000000000000000000004", {
             name: "matrix-review-",
           }),
         ],
@@ -371,14 +516,14 @@ describe("CommandPalette", () => {
 
     expect(screen.getByText("Open terminal matrix-review-758")).toBeTruthy();
     expect(screen.queryByText("Open terminal matrix-stale-review")).toBeNull();
-    expect(screen.queryByText("Open terminal Matrix-Review.123")).toBeNull();
-    expect(screen.queryByText("Open terminal matrix-review-")).toBeNull();
+    expect(screen.getByText("Open terminal Matrix-Review.123")).toBeTruthy();
+    expect(screen.getByText("Open terminal matrix-review-")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Open terminal matrix-review-758"));
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "terminal",
-      sessionName: "matrix-review-758",
+      sessionName: "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
       title: "matrix-review-758",
     });
   });
@@ -493,7 +638,9 @@ describe("CommandPalette", () => {
 
   it("opens provider setup actions in a foreground terminal from the command palette", async () => {
     const openTab = vi.fn();
-    const post = vi.fn().mockResolvedValue({ name: "matrix-setup-codex-a1b2c3" });
+    const post = vi.fn(async (path: string) => path.endsWith("/ensure")
+      ? { workspace: { id: "tws_00000000000000000000000000000001" } }
+      : { tab: { id: "tt_00000000000000000000000000000001" } });
     useTabs.setState({ openTab });
     useConnection.setState({
       api: {
@@ -539,7 +686,7 @@ describe("CommandPalette", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminals: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       },
     });
 
@@ -548,24 +695,29 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("Install Codex"));
 
     await waitFor(() => {
-      expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
-        name: expect.stringMatching(/^matrix-setup-codex-[a-z0-9]{6}$/),
+      expect(post).toHaveBeenCalledWith("/api/terminal/workspaces/tws_00000000000000000000000000000001/tabs", {
+        name: "Install Codex",
         cwd: "projects",
-        cmd: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@0.144.6",
+        command: ["sh", "-lc", "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@0.144.6"],
       });
     });
     expect(openTab).toHaveBeenCalledWith({
       kind: "terminals",
       title: "Terminal",
     });
-    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-codex-a1b2c3");
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(
+      "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001",
+    );
   });
 
-  it("uses distinct setup session names for similar provider setup actions", async () => {
+  it("creates distinct setup tabs for similar provider actions", async () => {
     const openTab = vi.fn();
-    const post = vi.fn()
-      .mockResolvedValueOnce({ name: "matrix-setup-codex-alp-111111" })
-      .mockResolvedValueOnce({ name: "matrix-setup-codex-alp-222222" });
+    let tab = 0;
+    const post = vi.fn(async (path: string) => {
+      if (path.endsWith("/ensure")) return { workspace: { id: "tws_00000000000000000000000000000001" } };
+      tab += 1;
+      return { tab: { id: `tt_${tab.toString(16).padStart(32, "0")}` } };
+    });
     useTabs.setState({ openTab });
     useConnection.setState({
       api: {
@@ -629,7 +781,7 @@ describe("CommandPalette", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminals: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       },
     });
 
@@ -639,13 +791,13 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("Install Codex Two"));
 
     await waitFor(() => {
-      expect(post).toHaveBeenCalledTimes(2);
+      expect(post).toHaveBeenCalledTimes(4);
     });
-    const firstName = (post.mock.calls[0]![1] as { name: string }).name;
-    const secondName = (post.mock.calls[1]![1] as { name: string }).name;
-    expect(firstName).not.toBe(secondName);
-    expect(firstName).toMatch(/^matrix-setup-[a-z0-9-]{1,18}$/);
-    expect(secondName).toMatch(/^matrix-setup-[a-z0-9-]{1,18}$/);
+    const tabCreates = post.mock.calls.filter(([path]) => String(path).endsWith("/tabs"));
+    expect(tabCreates.map((call) => call[1])).toEqual([
+      { name: "Install Codex One", cwd: "projects", command: ["sh", "-lc", "echo setup-one"] },
+      { name: "Install Codex Two", cwd: "projects", command: ["sh", "-lc", "echo setup-two"] },
+    ]);
   });
 
   it("keeps the palette open with a generic error when provider setup cannot create a terminal", async () => {
@@ -695,7 +847,7 @@ describe("CommandPalette", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminals: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       },
     });
 
@@ -752,7 +904,7 @@ describe("CommandPalette", () => {
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
         attentionThreads: { items: [], hasMore: false, limit: 20 },
-        terminals: { items: [], hasMore: false, limit: 20 },
+        terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       },
     });
 

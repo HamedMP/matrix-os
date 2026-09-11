@@ -33,6 +33,7 @@ describe('platform/customer-vps-cloud-init', () => {
         'https://app.matrix-os.com/system-bundles/0.0.0-pr10000.abcdef012345/matrix-host-bundle.tar.gz',
       registrationToken: 'r'.repeat(64),
       platformVerificationToken: 'v'.repeat(64),
+      fundedAiRuntimeToken: 'f'.repeat(64),
       postgresPassword: 'p'.repeat(48),
     };
     const template = await loadCustomerVpsCloudInitTemplate();
@@ -54,6 +55,7 @@ describe('platform/customer-vps-cloud-init', () => {
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
+    fundedAiRuntimeToken: 'funded-runtime-verification-secret',
     registrationToken: 'registration-secret',
     registrationTokenExpiresAt: '2026-08-29T20:45:00.000Z',
     postgresPassword: 'postgres-secret',
@@ -62,6 +64,8 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogHost: 'https://eu.i.posthog.com',
     posthogPublicHost: 'https://eu.posthog.com',
     posthogApiHost: '/relay',
+    fundedAiEnabled: 'true',
+    fundedAiRelayUrl: 'https://relay.matrix-os.com',
   };
 
   it('renders the registration deadline used to bound service retries', async () => {
@@ -226,6 +230,7 @@ exit 99
     expect(rendered).toContain('UPGRADE_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_AUTH_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_CODE_PROXY_TOKEN=platform-verification-secret');
+    expect(rendered).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=funded-runtime-verification-secret');
     expect(rendered).toContain('PLATFORM_INTERNAL_URL=https://platform.example');
     expect(rendered).toContain('path: /opt/matrix/env/symphony.env');
     expect(rendered).toContain('MATRIX_HANDLE=alice');
@@ -233,7 +238,12 @@ exit 99
     expect(rendered).not.toContain('UPGRADE_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_AUTH_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');
+    expect(rendered).not.toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=\n');
     expect(rendered).not.toContain('PLATFORM_INTERNAL_URL=\n');
+    expect(rendered).toContain('MATRIX_FUNDED_AI_ENABLED=true');
+    expect(rendered).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.matrix-os.com');
+    expect(rendered).not.toContain('AI_RELAY_CONTROL_TOKEN');
+    expect(rendered).not.toContain('CF_AIG_AUTHORIZATION');
   });
 
   it('never renders shared R2 credentials into customer cloud-init', () => {
@@ -316,10 +326,10 @@ exit 99
     expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
-      'systemctl start matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
+      'systemctl start matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
     );
     expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
@@ -328,7 +338,7 @@ exit 99
     expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
-    expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
+    expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service')).toBeLessThan(
       cloudInit.indexOf('systemctl start --no-block matrix-hermes.service'),
     );
     expect(cloudInit.indexOf('systemctl start --no-block matrix-hermes.service')).toBeLessThan(
@@ -377,7 +387,7 @@ exit 99
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
@@ -390,6 +400,7 @@ exit 99
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_AUTH_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
+    expect(cloudInit).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
     expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');
@@ -710,7 +721,7 @@ exit 99
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nfunded={{fundedAiRuntimeToken}}\n',
       input,
     );
 
@@ -719,6 +730,7 @@ exit 99
     expect(redacted).not.toContain('registration-secret');
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).not.toContain('platform-verification-secret');
+    expect(redacted).not.toContain('funded-runtime-verification-secret');
     expect(redacted).toContain('[redacted]');
   });
 
@@ -731,7 +743,7 @@ exit 99
     expect(gateway).toContain('Requires=matrix-restore.service');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/bin/matrix-gateway');
-    expect(gateway).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex');
+    expect(gateway).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode');
     expect(gateway).not.toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(shell).toContain('After=matrix-gateway.service');
     expect(shell).toContain('ConditionPathExists=/opt/matrix/bin/matrix-shell');
@@ -882,7 +894,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-vps-registration.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

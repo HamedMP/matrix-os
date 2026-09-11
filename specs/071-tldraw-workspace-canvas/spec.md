@@ -1,5 +1,7 @@
 # Feature Specification: Workspace Canvas
 
+> **Retired:** Workspace Canvas is no longer a user-visible Matrix OS product. New creation, launcher, renderer, and generic `__workspace__` flows are removed. Existing owner records remain available through authenticated read, export, and deletion compatibility paths; no retirement migration deletes owner data. “Canvas” now means only the free-form OS view governed by `specs/119-os-view-parity/spec.md`.
+
 **Feature Branch**: `071-tldraw-workspace-canvas`  
 **Created**: 2026-04-27  
 **Status**: Draft  

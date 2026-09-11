@@ -44,6 +44,7 @@ describe("terminal session state helpers", () => {
     const optimistic = applyShellUiStatePatch(mainShell, {
       placement: "background",
       lastSeenSeq: 8,
+      pinned: true,
     });
     const concurrentlyRefreshed = {
       ...optimistic,
@@ -55,12 +56,13 @@ describe("terminal session state helpers", () => {
 
     expect(rollbackShellUiStatePatch(
       concurrentlyRefreshed,
-      { placement: "background", lastSeenSeq: 8 },
-      { placement: "active", lastSeenSeq: 4 },
+      { placement: "background", lastSeenSeq: 8, pinned: true },
+      { placement: "active", lastSeenSeq: 4, pinned: false },
     )).toMatchObject({
       placement: "active",
       latestSeq: 12,
       lastSeenSeq: 10,
+      pinned: false,
       unread: true,
     });
   });

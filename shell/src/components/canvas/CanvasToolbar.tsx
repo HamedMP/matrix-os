@@ -3,18 +3,22 @@
 import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX } from "@/hooks/useCanvasTransform";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasLabels } from "@/stores/canvas-labels";
-import { Minus, Plus, Maximize, Type, LayoutGrid, Grid3X3, MousePointer, Hand, Eye, EyeOff, CircleHelpIcon, EllipsisIcon, CheckIcon } from "@/lib/hugeicons";
+import { Minus, Plus, Maximize, Type, LayoutGrid, Grid3X3, MousePointer, Hand, Eye, EyeOff, EllipsisIcon, CheckIcon } from "@/lib/hugeicons";
 import { useDotGrid } from "../DotGrid";
 import { useCanvasSettings } from "@/stores/canvas-settings";
 import { autoArrangeWindows } from "./canvas-auto-arrange";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import {
+  GettingStartedPopover,
+  type GettingStartedSettingsSection,
+} from "../onboarding/GettingStartedPopover";
 
 interface CanvasToolbarProps {
-  guideVisible?: boolean;
-  onOpenGuide?: () => void;
+  onOpenSettings?: (section: GettingStartedSettingsSection) => void;
+  onOpenFirstWork?: () => void;
 }
 
-export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolbarProps = {}) {
+export function CanvasToolbar({ onOpenSettings = () => {}, onOpenFirstWork = () => {} }: CanvasToolbarProps = {}) {
   const zoom = useCanvasTransform((s) => s.zoom);
   const zoomIn = useCanvasTransform((s) => s.zoomIn);
   const zoomOut = useCanvasTransform((s) => s.zoomOut);
@@ -153,20 +157,6 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
           {showTitles ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
         </button>
 
-        {onOpenGuide ? (
-          <>
-            <div className="h-4 w-px shrink-0 bg-border" />
-            <button
-              type="button"
-              onClick={onOpenGuide}
-              className={`p-1 rounded transition-colors ${guideVisible ? "bg-muted text-foreground" : "hover:bg-muted text-muted-foreground"}`}
-              aria-label="Show get started guide"
-              title="Show get started guide"
-            >
-              <CircleHelpIcon className="size-3.5" />
-            </button>
-          </>
-        ) : null}
       </div>
 
       <div data-testid="compact-canvas-actions" className="shrink-0 lg:hidden">
@@ -218,15 +208,6 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
                 </DropdownMenuPrimitive.ItemIndicator>
                 Show app titles
               </DropdownMenuPrimitive.CheckboxItem>
-              {onOpenGuide ? (
-                <>
-                  <DropdownMenuPrimitive.Separator className="my-1 h-px bg-border/40" />
-                  <DropdownMenuPrimitive.Item onSelect={onOpenGuide} className="flex cursor-default select-none items-center gap-2 px-3 py-1 outline-none data-[highlighted]:bg-primary/10 data-[highlighted]:text-foreground">
-                    <CircleHelpIcon className="size-3.5" aria-hidden="true" />
-                    Show get started guide
-                  </DropdownMenuPrimitive.Item>
-                </>
-              ) : null}
             </DropdownMenuPrimitive.Content>
           </DropdownMenuPrimitive.Portal>
         </DropdownMenuPrimitive.Root>
@@ -252,6 +233,13 @@ export function CanvasToolbar({ guideVisible = false, onOpenGuide }: CanvasToolb
           <Hand className="size-3.5" />
         </button>
       </div>
+
+      <div className="h-4 w-px shrink-0 bg-border" />
+      <GettingStartedPopover
+        onOpenSettings={onOpenSettings}
+        onOpenFirstWork={onOpenFirstWork}
+        triggerClassName="flex size-6 shrink-0 items-center justify-center rounded transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
     </>
   );
 }

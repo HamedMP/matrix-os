@@ -1,3 +1,4 @@
+import { useChatFileNavigation } from "./ChatFileNavigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { CanonicalChatDetailResponse, TerminalSessionSummary } from "@matrix-os/contracts";
@@ -14,6 +15,7 @@ import {
 import TerminalView from "../terminal/TerminalView";
 import { resolveWorkFilesScope, type WorkFilesScope } from "./work-files-scope";
 import { projectWorkTerminalSessions } from "./work-terminal-scope";
+import { parseTerminalRefKey, runtimeTerminalTabs } from "../../lib/terminal-workspaces";
 
 const MAX_TERMINAL_SUMMARY_REFRESH_ATTEMPTS = 4;
 const TERMINAL_SUMMARY_REFRESH_DELAY_MS = 1_000;
@@ -53,9 +55,10 @@ function startTerminalSummaryRefresh(
       console.warn("[work] terminal summary refresh failed:", err instanceof Error ? err.message : String(err));
     }
     if (cancelled) return;
-    const liveSessions = useCodingAgentWorkspace.getState().summary?.terminalSessions.items.slice(0, 50) ?? [];
+    const summary = useCodingAgentWorkspace.getState().summary;
+    const liveSessions = summary ? runtimeTerminalTabs(summary).slice(0, 50) : [];
     const unresolved = bindingIds.some((bindingId) => (
-      !liveSessions.some((session) => session.id === bindingId && session.attachable)
+      !liveSessions.some((session) => session.refKey === bindingId && session.attachable)
     ));
     if (unresolved && attempts < MAX_TERMINAL_SUMMARY_REFRESH_ATTEMPTS) {
       retryTimer = setTimeout(() => { void refreshUntilBindingsResolve(); }, TERMINAL_SUMMARY_REFRESH_DELAY_MS);
@@ -167,6 +170,13 @@ function WorkInspectorContent({
   );
   const [selectedId, setSelectedId] = useState(initialTerminalTab?.id ?? FILES_TAB.id);
   const [selectedFile, setSelectedFile] = useState<InspectorFileTarget | null>(null);
+  const navigation = useChatFileNavigation();
+  const requestedFile = navigation?.request;
+  useEffect(() => {
+    if (!requestedFile || requestedFile.chatId !== scope.chatId) return;
+    setSelectedFile(requestedFile.target);
+    setSelectedId(FILES_TAB.id);
+  }, [requestedFile, scope.chatId]);
   const [resolvedChatId, setResolvedChatId] = useState<string | null>(
     detail?.record.chat.id ?? initialTerminal?.chatId ?? null,
   );
@@ -203,20 +213,25 @@ function WorkInspectorContent({
       const chatId = detail?.record.chat.id ?? resolvedChatId ?? await resolveDraftChatId?.();
       if (!chatId) throw new Error("ChatUnavailable");
       setResolvedChatId(chatId);
-      const suffix = globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 26);
-      const requestedName = `chat-${suffix}`;
-      const result = await api.post<{ name: string; created: boolean }>("/api/terminal/sessions", {
-        name: requestedName,
-        chatId,
+      const ensured = await api.post<{ workspace: { id: string } }>("/api/terminal/workspaces/ensure", {
+        ...(scope.kind === "project" ? { projectId: scope.projectId } : {}),
       });
-      const now = new Date().toISOString();
+      const result = await api.post<{ tab: { id: string; name: string; status: TerminalSessionSummary["status"]; createdAt: string; updatedAt: string } }>(
+        `/api/terminal/workspaces/${encodeURIComponent(ensured.workspace.id)}/tabs`,
+        {
+        name: "Chat terminal",
+        cwd: "",
+        chatId,
+        },
+      );
+      const refKey = `${ensured.workspace.id}:${result.tab.id}`;
       const session: TerminalSessionSummary = {
-        id: result.name,
-        name: result.name,
-        status: "running",
+        id: refKey,
+        name: result.tab.name,
+        status: result.tab.status,
         attachable: true,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: result.tab.createdAt,
+        updatedAt: result.tab.updatedAt,
       };
       setCreatedSessions((current) => current.some((candidate) => candidate.id === session.id)
         ? current
@@ -248,7 +263,9 @@ function WorkInspectorContent({
     setTerminalCloseError(false);
     setClosingSessionIds((current) => [...current, tab.sessionId]);
     try {
-      await api.delete(`/api/terminal/sessions/${encodeURIComponent(session.name)}?force=1`);
+      const terminalRef = parseTerminalRefKey(session.id);
+      if (!terminalRef) throw new Error("Invalid terminal reference");
+      await api.delete(`/api/terminal/workspaces/${encodeURIComponent(terminalRef.workspaceId)}/tabs/${encodeURIComponent(terminalRef.tabId)}`);
       setClosedSessionIds((current) => current.includes(tab.sessionId) ? current : [...current, tab.sessionId]);
       setCreatedSessions((current) => current.filter((candidate) => candidate.id !== tab.sessionId));
       removeTab(id);
@@ -425,7 +442,7 @@ function WorkInspectorContent({
                 background: "var(--bg-sunken)",
               }}
             >
-              <InspectorFilesPanel scope={scope} browserOnly forceList onOpenFile={openFile} />
+              <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList onOpenFile={openFile} />
             </section>
           ) : null}
           {selected.kind === "files" && selectedFile ? (
@@ -493,7 +510,7 @@ function WorkInspectorContent({
 function TerminalTab({ sessionId, sessions, chatId, active }: { sessionId: string; sessions: readonly TerminalSessionSummary[]; chatId: string; active: boolean }) {
   const session = sessions.find((candidate) => candidate.id === sessionId && candidate.attachable);
   if (!session) return <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>This terminal is unavailable.</p>;
-  return <TerminalView sessionName={session.name} chatId={chatId} active={active} />;
+  return <TerminalView sessionName={session.id} chatId={chatId} active={active} />;
 }
 
 function InspectorMenuItem({ label, icon, onSelect }: { label: string; icon: ReactNode; onSelect: () => void }) {

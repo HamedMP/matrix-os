@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
-import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
+import {
+  createCanonicalChatClient,
+  type CanonicalChatEventSource,
+} from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -19,11 +22,13 @@ export function CanonicalChatRoute({
   initialView,
   projectLabel,
   active,
+  live = active,
   externalNavigation = false,
   fallback,
   inspector,
   renderInspector,
   inspectorExclusive = false,
+  eventSource,
 }: {
   api: ApiClient | null;
   projectId: string | null;
@@ -32,11 +37,13 @@ export function CanonicalChatRoute({
   initialView?: "index" | "draft" | "conversation";
   projectLabel?: string;
   active: boolean;
+  live?: boolean;
   externalNavigation?: boolean;
   fallback: ReactNode;
   inspector?: ReactNode;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -61,8 +68,8 @@ export function CanonicalChatRoute({
       patch<T>(path: string, body: unknown) {
         return currentApi().patch<T>(path, body);
       },
-      delete<T>(path: string) {
-        return currentApi().delete<T>(path);
+      delete<T>(path: string, body?: unknown) {
+        return currentApi().delete<T>(path, body);
       },
     });
   }, [clientIdentity]);
@@ -96,7 +103,7 @@ export function CanonicalChatRoute({
       setAvailability({ routeKey: null, value: "unavailable" });
       return () => { current = false; };
     }
-    if (!active) return () => { current = false; };
+    if (!live) return () => { current = false; };
     if (
       provenRoute.current?.client === client
       && provenRoute.current.projectId === canonicalProjectId
@@ -116,7 +123,7 @@ export function CanonicalChatRoute({
       setAvailability({ routeKey, value: "unavailable" });
     });
     return () => { current = false; };
-  }, [active, canonicalProjectId, client, routeKey]);
+  }, [canonicalProjectId, client, live, routeKey]);
 
   if (!client || currentAvailability === "unavailable") return fallback;
   if (currentAvailability === "checking") {
@@ -140,18 +147,13 @@ export function CanonicalChatRoute({
       initialView={initialView}
       projectLabel={projectLabel}
       active={active}
+      live={live}
+      eventSource={eventSource}
       externalNavigation={externalNavigation}
       inspector={inspector}
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}
       onActiveChatChanged={(chatId, title) => {
-        if (chatId) {
-          useTabs.getState().recordRecentCanonicalChat(
-            chatId,
-            title ?? "Chat",
-            canonicalProjectId,
-          );
-        }
         if (projectId === null) {
           if (tabId) {
             useTabs.getState().updateChatRoute(tabId, {
@@ -175,10 +177,10 @@ export function CanonicalChatRoute({
           projectSlug: projectId,
           title: projectLabel ?? projectId,
           ...(chatId ? { chatId } : {}),
+          ...(chatId ? { chatTitle: title, chatView: "conversation" as const } : { chatView: "draft" as const }),
         });
       }}
       onProjectChanged={(chatId, targetProjectId, title) => {
-        useTabs.getState().recordRecentCanonicalChat(chatId, title, targetProjectId);
         if (targetProjectId === null) {
           if (tabId) {
             useTabs.getState().updateChatRoute(tabId, {
@@ -203,7 +205,6 @@ export function CanonicalChatRoute({
           title: project?.name ?? projectSlug,
         });
       }}
-      onChatDeleted={(chatId) => useTabs.getState().removeRecentView("conversation", chatId)}
     />
   );
 }

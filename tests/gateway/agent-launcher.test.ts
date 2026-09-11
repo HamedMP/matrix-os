@@ -2,11 +2,27 @@ import { describe, it, expect, vi } from "vitest";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   buildAgentLaunch,
+  buildAgentRuntimeEnvironment,
   createAgentLauncher,
   SupportedAgentSchema,
 } from "../../packages/gateway/src/agent-launcher.js";
 
 describe("agent-launcher", () => {
+  it("forwards validated execution budgets through the isolated runtime environment", () => {
+    vi.stubEnv("MATRIX_CODEX_TOOL_DEADLINE_MS", "120000");
+    vi.stubEnv("MATRIX_CODEX_COMMAND_DEADLINE_MS", "3600000");
+    vi.stubEnv("MATRIX_CODEX_NO_PROGRESS_MS", "not-a-number");
+    vi.stubEnv("MATRIX_CODEX_TURN_DEADLINE_MS", "86400001");
+    try {
+      const env = buildAgentRuntimeEnvironment("/tmp/runtime-owner");
+      expect(env.MATRIX_CODEX_TOOL_DEADLINE_MS).toBe("120000");
+      expect(env.MATRIX_CODEX_COMMAND_DEADLINE_MS).toBe("3600000");
+      expect(env.MATRIX_CODEX_NO_PROGRESS_MS).toBeUndefined();
+      expect(env.MATRIX_CODEX_TURN_DEADLINE_MS).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   function commandError(code: string, message = code): Error & { code: string } {
     return Object.assign(new Error(message), { code });
   }
@@ -15,6 +31,10 @@ describe("agent-launcher", () => {
     const settingsIndex = args.indexOf("--settings");
     expect(settingsIndex).toBeGreaterThanOrEqual(0);
     return JSON.parse(args[settingsIndex + 1]!) as Record<string, unknown>;
+  }
+
+  function codexAppServerSettings(args: string[]): Record<string, unknown> {
+    return JSON.parse(Buffer.from(args.at(-1)!, "base64").toString("utf8")) as Record<string, unknown>;
   }
 
   it("starts all four installation probes before any finishes and keeps stable order", async () => {
@@ -320,6 +340,34 @@ describe("agent-launcher", () => {
     expect(runCommand).toHaveBeenCalledTimes(8);
   });
 
+  it("invalidates cached credential probes after a foreground Terminal login", async () => {
+    let codexAuthenticated = false;
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (args[0] === "--version") {
+        return {
+          stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+          stderr: "",
+        };
+      }
+      if (command === "codex" && args.join(" ") === "login status" && !codexAuthenticated) {
+        throw Object.assign(new Error("not authenticated"), { code: 1 });
+      }
+      return { stdout: "ok\n", stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand, now: () => 1_000 });
+
+    const before = await launcher.detectAgentCredentials();
+    expect(before.agents.find((agent) => agent.id === "codex"))
+      .toMatchObject({ authState: "required" });
+
+    codexAuthenticated = true;
+    launcher.invalidateCredentialDetection();
+
+    const after = await launcher.detectAgentCredentials();
+    expect(after.agents.find((agent) => agent.id === "codex"))
+      .toMatchObject({ authState: "ok" });
+  });
+
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
@@ -449,6 +497,21 @@ describe("agent-launcher", () => {
       "--",
       "review only",
     ]);
+  });
+
+  it("passes the persisted native Codex thread to the app-server runner", () => {
+    const launch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "continue the task",
+      providerThreadId: "native_thread_persisted_1",
+      providerEventPath: "/tmp/codex-events.jsonl",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [] },
+    });
+
+    expect(codexAppServerSettings(launch.args)).toMatchObject({
+      providerThreadId: "native_thread_persisted_1",
+    });
   });
 
   it("maps Codex review and plan modes into launch controls", () => {

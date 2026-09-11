@@ -145,6 +145,7 @@ describe("zellij adapter", () => {
           tab_id: 1,
           pane_cwd: "/home/alice/project",
           pane_command: "codex",
+          pane_title: "Fix terminal session rows",
         }]), "");
       return childProcess();
     });
@@ -153,6 +154,7 @@ describe("zellij adapter", () => {
     await expect(adapter.focusedPaneRuntime("main")).resolves.toEqual({
       cwd: "/home/alice/project",
       command: "codex",
+      title: "Fix terminal session rows",
       observed: true,
     });
     expect(execFile).toHaveBeenCalledTimes(1);
@@ -282,6 +284,20 @@ describe("zellij adapter", () => {
     await expect(adapter.listSessions()).resolves.toEqual([]);
   });
 
+  it("does not expose exited resurrectable zellij sessions as live sessions", async () => {
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, [
+        "active-shell [Created 1m ago]",
+        "deleted-shell [Created 2h ago] (EXITED - attach to resurrect)",
+        "matrix-rt_0123456789abcdef0123456789abcdef [Created 3h ago] (EXITED - attach to resurrect)",
+      ].join("\n"), "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.listSessions()).resolves.toEqual(["active-shell"]);
+  });
+
   it("sanitizes stderr before surfacing execFile errors", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(new Error("boom"), "", "failed in /home/alice/.ssh with zellij internals");
@@ -378,7 +394,7 @@ describe("zellij adapter", () => {
 
     expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["attach", "main"],
+      ["attach", "main", "options", "--default-mode", "normal"],
       expect.objectContaining({
         cols: 120,
         rows: 40,
@@ -425,7 +441,7 @@ describe("zellij adapter", () => {
 
     expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["attach", "main"],
+      ["attach", "main", "options", "--default-mode", "normal"],
       expect.objectContaining({
         env: expect.objectContaining({
           HOME: "/srv/matrix/home",
@@ -460,7 +476,7 @@ describe("zellij adapter", () => {
 
     expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
-      ["attach", "setup"],
+      ["attach", "setup", "options", "--default-mode", "normal"],
       expect.objectContaining({ name: "xterm-256color", cols: 120, rows: 40 }),
     );
     expect(pty.writes).toEqual(["claude\r"]);
@@ -794,7 +810,7 @@ describe("zellij adapter", () => {
           MATRIX_NODE_PREFIX: nodePrefix,
           PATH: "/usr/bin:/bin",
         },
-        timeout: 1_000,
+        timeout: 5_000,
       })).resolves.toMatchObject({ stdout: "MATRIX_CODEX_READY\n" });
     } finally {
       pty.emitExit(0);
@@ -862,6 +878,46 @@ describe("zellij adapter", () => {
     );
   });
 
+  it("treats repeated forced deletion as success after the runtime is already absent", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      if (args[0] === "delete-session") {
+        cb(Object.assign(new Error("missing"), { code: 1 }), "", "session not found");
+      } else {
+        cb(null, "other-shell [EXITED]\n", "");
+      }
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawnPty: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.deleteSession("already-gone", { force: true })).resolves.toBeUndefined();
+
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      "zellij",
+      ["list-sessions", "--no-formatting"],
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it("does not hide a forced deletion failure while the runtime still exists", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      if (args[0] === "delete-session") {
+        cb(Object.assign(new Error("busy"), { code: 1 }), "", "session is busy");
+      } else {
+        cb(null, "still-here [EXITED]\n", "");
+      }
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawnPty: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.deleteSession("still-here", { force: true })).rejects.toMatchObject({
+      code: "zellij_failed",
+    });
+  });
+
   it("evicts the oldest retained creation PTY when the cap is reached", async () => {
     const first = ptyProcess();
     const second = ptyProcess();
@@ -885,8 +941,8 @@ describe("zellij adapter", () => {
 
   it("creates tabs and panes with terminal-capable environment at process launch", async () => {
     const child = childProcess();
-    const execFile = vi.fn((_file, _args, _opts, cb) => {
-      cb(null, "", "");
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      cb(null, args.includes("new-tab") ? "1\n" : "", "");
       return child;
     });
     const adapter = createZellijAdapter({
@@ -912,10 +968,40 @@ describe("zellij adapter", () => {
     }
   });
 
+  it("returns the stable tab ID emitted atomically by Zellij and selects by ID", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      const stdout = args.includes("list-tabs")
+        ? JSON.stringify([{ tab_id: 41, position: 1, name: "tests", active: true }])
+        : args.includes("new-tab") ? "41\n" : "";
+      cb(null, stdout, "");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.listTabs("main")).resolves.toEqual([{
+      id: 41,
+      idx: 1,
+      name: "tests",
+      focused: true,
+    }]);
+    await expect(adapter.createTab("main", { name: "tests" })).resolves.toEqual({
+      id: 41,
+      name: "tests",
+    });
+    await expect(adapter.switchTabById("main", 41)).resolves.toEqual({ ok: true });
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["--session", "main", "action", "go-to-tab-by-id", "41"],
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
   it("splits multi-word commands into argv tokens for zellij actions", async () => {
     const child = childProcess();
-    const execFile = vi.fn((_file, _args, _opts, cb) => {
-      cb(null, "", "");
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      cb(null, args.includes("new-tab") ? "1\n" : "", "");
       return child;
     });
     const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });

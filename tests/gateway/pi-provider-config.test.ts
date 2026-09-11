@@ -68,7 +68,12 @@ describe("workspace provider set wiring with pi", () => {
       agents: ["claude", "codex", "pi"],
       runtime: fakeRuntime(),
       homePath,
-      pi: { runCommand: async () => ({ stdout: "0.81.0\n", stderr: "" }) },
+      pi: {
+        resolveCredentialLaunch: async () => ({
+          env: { ANTHROPIC_API_KEY: "selected-test-key" },
+        }),
+        runCommand: async () => ({ stdout: "0.81.0\n", stderr: "" }),
+      },
     });
 
     expect(set.registryProviders.map((provider) => provider.providerId)).toEqual(["claude", "codex", "pi"]);
@@ -88,7 +93,7 @@ describe("workspace provider set wiring with pi", () => {
       id: "pi",
       displayName: "Pi",
       kind: "pi",
-      availability: "available",
+      availability: "auth_required",
     });
   });
 

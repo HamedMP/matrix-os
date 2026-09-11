@@ -1,6 +1,8 @@
 export interface FocusedPaneRuntimeObservation {
   cwd: string | null;
   command: string | null;
+  /** Title emitted by the active terminal application, when available. */
+  title?: string;
   observed: boolean;
 }
 

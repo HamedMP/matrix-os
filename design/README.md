@@ -1,52 +1,58 @@
-# Matrix OS Design System
+# Matrix OS design system
 
-This directory contains the full design system specification for Matrix OS.
+The approved Figma brand file is the upstream visual source. [`DESIGN.md`](../DESIGN.md)
+is the canonical repository contract that translates it into implementation
+rules. The documents in this directory expand individual foundations and
+components without redefining them.
+
+## Authority
+
+1. [Approved Figma frame](https://www.figma.com/design/xPG2FeYRtC9owCKSVXCqWA/brand?node-id=1-846)
+2. [`DESIGN.md`](../DESIGN.md)
+3. Foundation and component guidance in this directory
+4. Shared implementation tokens in `@matrix-os/brand`
+5. Platform-local styling
+
+When two levels disagree, fix the lower level; do not create another token set.
+Changes to the visual source must be reconciled into `DESIGN.md` through a
+focused brand PR before product code adopts them.
 
 ## Structure
 
-```
-DESIGN.md                    ← Source of truth (YAML tokens + design rationale)
+```text
+DESIGN.md                    canonical contract and compact token reference
 design/
-├── README.md                ← This file
+├── README.md                authority and contribution workflow
 ├── foundations/
-│   ├── colors.md            ← Color palette, usage rules, accessibility
-│   ├── typography.md        ← Font stack, type scale, usage
-│   ├── spacing.md           ← Spacing scale, layout grid, principles
-│   └── elevation.md         ← Shadows, glass-morphism, z-index
-├── components/
-│   ├── button.md            ← Button variants, states, anatomy
-│   ├── card.md              ← Card types, glass variant, layout
-│   ├── input.md             ← Text inputs, textareas, selects
-│   ├── badge.md             ← Tags, pills, status indicators
-│   ├── dialog.md            ← Modals, sheets, drawers
-│   ├── navigation.md        ← Dock, tabs, breadcrumbs
-│   └── app-chrome.md        ← Window chrome, title bar, traffic lights
+│   ├── colors.md            palette, semantics, accessibility
+│   ├── typography.md        family roles and type scale
+│   ├── spacing.md           spacing and responsive layout
+│   └── elevation.md         depth, overlays, and layering
+└── components/
+    ├── button.md
+    ├── card.md
+    ├── input.md
+    ├── badge.md
+    ├── dialog.md
+    ├── navigation.md
+    └── app-chrome.md
 ```
 
-## How to Use
+## Implementation
 
-### For AI-assisted app generation
+- New landing-adjacent, auth, onboarding, billing, and provisioning UI consumes
+  `@matrix-os/brand` rather than platform-local hex values.
+- Web, Electron, native desktop, and mobile may use native primitives, but must
+  preserve the same token roles, content hierarchy, states, and outcomes.
+- Cross-platform migration and parity testing are intentionally tracked outside
+  the brand-contract PR.
+- The public reference at `shell/public/brand-guidelines.html` is a rendered
+  summary. It must agree with `DESIGN.md`, never become a separate authority.
 
-Include `DESIGN.md` in the AI context. It contains all tokens as YAML
-frontmatter and all design rationale as prose — optimized to fit in 2-5K
-tokens.
+## Principles
 
-### For frontend development
-
-The tokens in `DESIGN.md` map directly to CSS custom properties in
-`shell/src/app/globals.css`. When updating the design system, update both
-files.
-
-### For app developers
-
-Apps built on Matrix OS should read the component specs in `design/components/`
-to understand available patterns. The OS injects theme CSS variables into app
-iframes via the bridge.
-
-## Design Principles
-
-1. **Warm, not cold** — natural materials, forest/sand/ember palette
-2. **Calm, not busy** — generous whitespace, restrained animation
-3. **Rounded, not sharp** — soft corners everywhere, pill buttons
-4. **Light, not dark** — warm off-white backgrounds, white card surfaces
-5. **Purposeful, not decorative** — every element earns its place
+1. Expressive, not ornamental.
+2. Calm, not empty.
+3. Organic, not rustic.
+4. Technical, not intimidating.
+5. Bright, not childish.

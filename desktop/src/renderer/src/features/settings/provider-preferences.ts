@@ -7,6 +7,12 @@
 import "../../lib/operator";
 import { create } from "zustand";
 import { diagnosticErrorKind } from "../../lib/errors";
+import {
+  ComposerSelectionPreferenceSchema,
+  type ComposerSelectionPreference,
+  type ComposerSelectionPreferences,
+} from "../../../../shared/provider-preferences";
+import { CanonicalProviderInstanceIdSchema } from "@matrix-os/contracts";
 import type { CanonicalComposerSelection } from "../chat/canonical-composer-state";
 
 export const PROVIDER_PREFERENCES_STATE_KEY = "providerPreferences";
@@ -15,19 +21,11 @@ export const PROVIDER_PREFERENCES_STATE_KEY = "providerPreferences";
 // never trusts persisted or caller-supplied values).
 const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const MAX_COMPOSER_SELECTIONS = 20;
-const MAX_COMPOSER_OPTIONS = 16;
-const MAX_OPTION_VALUE_LENGTH = 128;
-
-export interface ComposerSelectionPreference {
-  options: Array<{ id: string; value: string | boolean }>;
-  permissionMode: string;
-}
-
-type ComposerSelectionPreferences = Record<string, ComposerSelectionPreference>;
 
 interface ProviderPreferencesState {
   // null = automatic (composer picks the first ready provider).
   defaultProviderId: string | null;
+  lastComposerInstanceId: string | null;
   composerSelections: ComposerSelectionPreferences;
   hydrated: boolean;
   hydrate: () => Promise<void>;
@@ -39,6 +37,10 @@ function isValidProviderId(value: unknown): value is string {
   return typeof value === "string" && PROVIDER_ID_PATTERN.test(value);
 }
 
+function isValidInstanceId(value: unknown): value is string {
+  return CanonicalProviderInstanceIdSchema.safeParse(value).success;
+}
+
 function logPersistence(context: string, err: unknown): void {
   console.warn(
     `[provider-preferences] ${context}:`,
@@ -47,28 +49,17 @@ function logPersistence(context: string, err: unknown): void {
 }
 
 function parseComposerPreference(value: unknown): ComposerSelectionPreference | null {
-  if (!value || typeof value !== "object") return null;
-  const candidate = value as { options?: unknown; permissionMode?: unknown };
-  if (!isValidProviderId(candidate.permissionMode) || !Array.isArray(candidate.options)
-    || candidate.options.length > MAX_COMPOSER_OPTIONS) return null;
-  const options: ComposerSelectionPreference["options"] = [];
-  for (const option of candidate.options) {
-    if (!option || typeof option !== "object") return null;
-    const parsed = option as { id?: unknown; value?: unknown };
-    if (!isValidProviderId(parsed.id)) return null;
-    if (typeof parsed.value !== "boolean"
-      && (typeof parsed.value !== "string" || parsed.value.length > MAX_OPTION_VALUE_LENGTH)) return null;
-    if (options.some((existing) => existing.id === parsed.id)) return null;
-    options.push({ id: parsed.id, value: parsed.value });
-  }
-  return { options, permissionMode: candidate.permissionMode };
+  const parsed = ComposerSelectionPreferenceSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const optionIds = parsed.data.options.map((option) => option.id);
+  return new Set(optionIds).size === optionIds.length ? parsed.data : null;
 }
 
 function parseComposerSelections(value: unknown): ComposerSelectionPreferences {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const parsed: ComposerSelectionPreferences = {};
   for (const [instanceId, preference] of Object.entries(value).slice(0, MAX_COMPOSER_SELECTIONS)) {
-    if (!isValidProviderId(instanceId)) continue;
+    if (!isValidInstanceId(instanceId)) continue;
     const valid = parseComposerPreference(preference);
     if (valid) parsed[instanceId] = valid;
   }
@@ -77,16 +68,24 @@ function parseComposerSelections(value: unknown): ComposerSelectionPreferences {
 
 function persistedPreferences(state: Pick<
   ProviderPreferencesState,
-  "defaultProviderId" | "composerSelections"
->): { defaultProviderId: string | null; composerSelections?: ComposerSelectionPreferences } {
-  return Object.keys(state.composerSelections).length > 0
-    ? { defaultProviderId: state.defaultProviderId, composerSelections: state.composerSelections }
-    : { defaultProviderId: state.defaultProviderId };
+  "defaultProviderId" | "lastComposerInstanceId" | "composerSelections"
+>): {
+  defaultProviderId: string | null;
+  lastComposerInstanceId?: string;
+  composerSelections?: ComposerSelectionPreferences;
+} {
+  return {
+    defaultProviderId: state.defaultProviderId,
+    ...(state.lastComposerInstanceId ? { lastComposerInstanceId: state.lastComposerInstanceId } : {}),
+    ...(Object.keys(state.composerSelections).length > 0
+      ? { composerSelections: state.composerSelections }
+      : {}),
+  };
 }
 
 function persistCurrentPreferences(state: Pick<
   ProviderPreferencesState,
-  "defaultProviderId" | "composerSelections"
+  "defaultProviderId" | "lastComposerInstanceId" | "composerSelections"
 >): void {
   void window.operator
     .invoke("state:set", {
@@ -100,6 +99,7 @@ function persistCurrentPreferences(state: Pick<
 
 export const useProviderPreferences = create<ProviderPreferencesState>()((set, get) => ({
   defaultProviderId: null,
+  lastComposerInstanceId: null,
   composerSelections: {},
   hydrated: false,
 
@@ -122,6 +122,10 @@ export const useProviderPreferences = create<ProviderPreferencesState>()((set, g
     const composerSelections = stored && typeof stored === "object"
       ? parseComposerSelections((stored as { composerSelections?: unknown }).composerSelections)
       : {};
+    const lastComposerInstanceId = stored && typeof stored === "object"
+      && isValidInstanceId((stored as { lastComposerInstanceId?: unknown }).lastComposerInstanceId)
+      ? (stored as { lastComposerInstanceId: string }).lastComposerInstanceId
+      : null;
     const current = get();
     set({
       defaultProviderId: current.defaultProviderId !== beforeHydration.defaultProviderId
@@ -130,6 +134,9 @@ export const useProviderPreferences = create<ProviderPreferencesState>()((set, g
       composerSelections: current.composerSelections !== beforeHydration.composerSelections
         ? current.composerSelections
         : composerSelections,
+      lastComposerInstanceId: current.lastComposerInstanceId !== beforeHydration.lastComposerInstanceId
+        ? current.lastComposerInstanceId
+        : lastComposerInstanceId,
       hydrated: true,
     });
   },
@@ -144,8 +151,9 @@ export const useProviderPreferences = create<ProviderPreferencesState>()((set, g
   },
 
   setComposerSelection: (selection) => {
-    if (!isValidProviderId(selection.instanceId)) return;
+    if (!isValidInstanceId(selection.instanceId)) return;
     const preference = parseComposerPreference({
+      model: selection.model,
       options: selection.options,
       permissionMode: selection.permissionMode,
     });
@@ -156,7 +164,11 @@ export const useProviderPreferences = create<ProviderPreferencesState>()((set, g
     if (keys.length > MAX_COMPOSER_SELECTIONS) {
       for (const key of keys.slice(0, keys.length - MAX_COMPOSER_SELECTIONS)) delete next[key];
     }
-    set({ composerSelections: next });
-    persistCurrentPreferences({ ...get(), composerSelections: next });
+    set({ composerSelections: next, lastComposerInstanceId: selection.instanceId });
+    persistCurrentPreferences({
+      ...get(),
+      composerSelections: next,
+      lastComposerInstanceId: selection.instanceId,
+    });
   },
 }));

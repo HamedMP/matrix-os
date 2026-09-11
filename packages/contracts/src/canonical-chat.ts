@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
+import { MAX_AGENT_ATTACHMENT_BYTES } from "#agent-thread-contracts";
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalProviderDriverKindSchema,
@@ -8,6 +9,7 @@ import {
   canonicalReferenceId,
   canonicalSafeErrorText,
   canonicalSafeLabel,
+  canonicalOwnerRelativePath,
 } from "#canonical-chat-primitives";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
@@ -188,6 +190,7 @@ export const CanonicalChatRunSchema = z.object({
     userInput: z.boolean(),
     resume: z.boolean(),
     cancellation: z.boolean(),
+    steering: z.enum(["none", "same_run"]).optional(),
     worktrees: z.enum(["none", "optional", "required"]),
     interactionModes: z.array(canonicalReferenceId(80)).max(16),
     permissionModes: z.array(canonicalReferenceId(80)).max(16),
@@ -245,6 +248,13 @@ export const CanonicalChatRunSchema = z.object({
   }
 });
 
+export const CanonicalChatApprovalDecisionSchema = z.enum([
+  "approve",
+  "approve_for_session",
+  "decline",
+  "cancel",
+]);
+
 export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text"),
@@ -270,7 +280,8 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     kind: CanonicalChatAttachmentKindSchema,
     label: canonicalSafeLabel(240, 960),
     mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
-    sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
+    sizeBytes: z.number().int().min(0).max(MAX_AGENT_ATTACHMENT_BYTES).optional(),
+    ownerReference: canonicalOwnerRelativePath().optional(),
   }).strict(),
   z.object({
     type: z.literal("approval_request"),
@@ -278,14 +289,14 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     title: canonicalSafeLabel(160, 640),
     description: canonicalSafeLabel(1_000, 4_000),
     risk: z.enum(["low", "medium", "high"]),
-    allowedDecisions: z.array(z.enum(["approve", "approve_for_session", "decline", "cancel"]))
+    allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema)
       .min(1)
       .max(4),
   }).strict(),
   z.object({
     type: z.literal("approval_result"),
     approvalId: canonicalReferenceId(128),
-    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
+    decision: CanonicalChatApprovalDecisionSchema,
   }).strict(),
   z.object({
     type: z.literal("status"),
@@ -314,6 +325,8 @@ export const CanonicalChatMessageSchema = z.object({
   seq: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   role: z.enum(["user", "assistant", "tool", "system"]),
   state: z.enum(["pending", "committed", "failed"]),
+  actorId: canonicalReferenceId(128).optional(),
+  purpose: z.enum(["discussion", "ai_request", "assistant", "system"]).optional(),
   turnId: CanonicalChatTurnIdSchema.optional(),
   runId: CanonicalChatRunIdSchema.optional(),
   parts: z.array(CanonicalChatMessagePartSchema).min(1).max(64),
@@ -405,6 +418,46 @@ export const CanonicalChatSafeErrorSchema = z.object({
   }
 });
 
+export const CanonicalChatAgentActivityKindSchema = z.enum([
+  "phase",
+  "reasoning",
+  "plan",
+  "command",
+  "file_change",
+  "mcp_tool",
+  "dynamic_tool",
+  "delegation",
+  "web_search",
+  "image_inspection",
+]);
+
+export const CanonicalChatAgentActivityStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+  "partial",
+]);
+
+export const CanonicalChatAgentActivityPayloadSchema = z.object({
+  activityId: canonicalReferenceId(128),
+  kind: CanonicalChatAgentActivityKindSchema,
+  label: canonicalSafeLabel(240, 960),
+  status: CanonicalChatAgentActivityStatusSchema,
+  summary: canonicalSafeLabel(1_000, 4_000).optional(),
+  preview: canonicalSafeLabel(1_000, 4_000).optional(),
+  previewKind: z.enum(["command", "path", "text"]).optional(),
+  detail: canonicalSafeLabel(2_000, 8_000).optional(),
+}).strict().superRefine((activity, context) => {
+  if ((activity.preview === undefined) !== (activity.previewKind === undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: activity.preview === undefined ? ["preview"] : ["previewKind"],
+      message: "Activity preview and kind must be provided together",
+    });
+  }
+});
+
 export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("run.status"),
@@ -441,6 +494,10 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     status: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("agent.activity"),
+    ...CanonicalChatAgentActivityPayloadSchema.shape,
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("review.ready"),
     reviewId: canonicalReferenceId(128),
     summary: z.object({
@@ -464,11 +521,12 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     approvalId: canonicalReferenceId(128),
     title: canonicalSafeLabel(160, 640),
     risk: z.enum(["low", "medium", "high"]),
+    allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("approval.resolved"),
     approvalId: canonicalReferenceId(128),
-    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
+    decision: CanonicalChatApprovalDecisionSchema,
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.requested"),
@@ -508,4 +566,7 @@ export type CanonicalChatRun = z.infer<typeof CanonicalChatRunSchema>;
 export type CanonicalChatMessagePart = z.infer<typeof CanonicalChatMessagePartSchema>;
 export type CanonicalChatMessage = z.infer<typeof CanonicalChatMessageSchema>;
 export type CanonicalChatRunActivity = z.infer<typeof CanonicalChatRunActivitySchema>;
+export type CanonicalChatApprovalDecision = z.infer<typeof CanonicalChatApprovalDecisionSchema>;
 export type CanonicalChatSafeError = z.infer<typeof CanonicalChatSafeErrorSchema>;
+export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentActivityKindSchema>;
+export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;

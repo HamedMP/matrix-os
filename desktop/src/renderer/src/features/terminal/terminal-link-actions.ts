@@ -2,6 +2,7 @@ import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
 import {
   extractTerminalLinkMatches,
   resolveTerminalLink,
+  type TerminalClipboardResult,
   type TerminalLinkEntry,
 } from "@matrix-os/contracts";
 
@@ -91,7 +92,7 @@ export function openDesktopTerminalLink(link: TerminalLinkEntry): void {
   window.open(link.url, "_blank", "noopener,noreferrer");
 }
 
-function fallbackCopy(text: string): void {
+function fallbackCopy(text: string): boolean {
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.style.position = "fixed";
@@ -99,39 +100,40 @@ function fallbackCopy(text: string): void {
   document.body.appendChild(textarea);
   try {
     textarea.select();
-    document.execCommand("copy");
+    return typeof document.execCommand === "function" && document.execCommand("copy");
   } finally {
     textarea.remove();
   }
 }
 
-function tryFallbackCopy(text: string): void {
+function tryFallbackCopy(text: string): TerminalClipboardResult {
   try {
-    fallbackCopy(text);
-  } catch (err: unknown) {
-    console.warn(
-      "Desktop terminal fallback copy failed:",
-      err instanceof Error ? err.message : err,
-    );
-  }
-}
-
-export function copyDesktopTerminalText(text: string): void {
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(text).catch((err: unknown) => {
-      console.warn(
-        "Desktop terminal clipboard write failed, using fallback:",
-        err instanceof Error ? err.message : err,
-      );
-      tryFallbackCopy(text);
+    return fallbackCopy(text) ? "success" : "unavailable";
+  } catch (error: unknown) {
+    console.warn("[terminal] fallback clipboard copy unavailable", {
+      category: error instanceof DOMException ? error.name : "clipboard-error",
     });
-    return;
+    return "unavailable";
   }
-  tryFallbackCopy(text);
 }
 
-export function copyDesktopTerminalLink(link: TerminalLinkEntry): void {
-  copyDesktopTerminalText(link.url);
+export async function copyDesktopTerminalText(text: string): Promise<TerminalClipboardResult> {
+  if (text.length === 0) return "empty";
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return "success";
+    } catch (error: unknown) {
+      console.warn("[terminal] clipboard copy unavailable; trying fallback", {
+        category: error instanceof DOMException ? error.name : "clipboard-error",
+      });
+    }
+  }
+  return tryFallbackCopy(text);
+}
+
+export function copyDesktopTerminalLink(link: TerminalLinkEntry): Promise<TerminalClipboardResult> {
+  return copyDesktopTerminalText(link.url);
 }
 
 export function activateDesktopTerminalLink(

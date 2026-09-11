@@ -1,4 +1,6 @@
 export const MATRIX_TELEMETRY_EVENTS = {
+  AGENT_RUN_FAILED: "matrix_agent_run_failed",
+  AGENT_RUN_SYNC_FAILED: "matrix_agent_run_sync_failed",
   MARKETING_LANDING_VIEWED: "matrix_marketing_landing_viewed",
   MARKETING_SIGNUP_CLICKED: "matrix_marketing_signup_clicked",
   MARKETING_BILLING_VIEWED: "matrix_marketing_billing_viewed",
@@ -10,6 +12,8 @@ export const MATRIX_TELEMETRY_EVENTS = {
   BILLING_CHECKOUT_COMPLETED: "matrix_billing_checkout_completed",
   BILLING_CHECKOUT_EXPIRED: "matrix_billing_checkout_expired",
   BILLING_SUBSCRIPTION_UPDATED: "matrix_billing_subscription_updated",
+  BILLING_INVOICE_PAID: "matrix_billing_invoice_paid",
+  BILLING_INVOICE_PAYMENT_FAILED: "matrix_billing_invoice_payment_failed",
   BILLING_EVENT_RECEIVED: "matrix_billing_event_received",
   BILLING_TRIAL_STARTED: "matrix_billing_trial_started",
   BILLING_TRIAL_WILL_END: "matrix_billing_trial_will_end",

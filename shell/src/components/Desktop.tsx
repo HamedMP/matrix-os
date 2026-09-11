@@ -1,21 +1,16 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
-import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
+import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { saveDesktopConfigPatch } from "@/hooks/useDesktopConfig";
-import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
-import {
-  parseDesktopFirstRunStatus,
-  shouldApplyInitialDesktopDefaults,
-  shouldShowDeveloperDashboard,
-  type DesktopFirstRunStatus,
-} from "@/lib/desktop-first-run";
+import { parseDesktopFirstRunStatus, type DesktopFirstRunStatus } from "@/lib/desktop-first-run";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
 import { Settings, type SettingsSectionId } from "./Settings";
@@ -26,10 +21,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { SettingsIcon, MessageSquareIcon, LayoutGridIcon } from "@/lib/hugeicons";
+import { SettingsIcon, LayoutGridIcon } from "@/lib/hugeicons";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
-import { AmbientClock } from "./AmbientClock";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
 import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
@@ -38,32 +32,47 @@ import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
-import { ChatPopover } from "./ChatPopover";
-import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
-import { BillingTrialNotification } from "./BillingTrialNotification";
-import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
-import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
-import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh";
-import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { versionedIconUrl } from "@/lib/icon-url";
+import { VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import {
+  buildWebDesktopLauncherApps,
+  buildWebDesktopIconApps,
+  resolveWebDesktopBuiltInLaunch,
+} from "@/lib/web-desktop-app-launch";
+import {
+  createOsViewLayoutMemory,
+  transitionOsViewLayout,
+} from "@/lib/os-view-layout-memory";
+import {
+  loadWebOsViewPresentation,
+} from "@/lib/os-view-state-client";
+import { useCanvasTransformPersistence } from "@/hooks/useOsViewStatePersistence";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
 import {
   enqueueTerminalLaunch,
-  TERMINAL_SETUP_WINDOW_PATH,
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
+import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
+import {
+  OPEN_PROVIDER_SETTINGS_EVENT,
+  OPEN_PROVIDER_TERMINAL_EVENT,
+  providerTerminalSessionFromEvent,
+} from "@/lib/canonical-provider-setup";
 import {
   loadShellSnapshot,
   saveShellSnapshot,
   type ShellSnapshotScope,
 } from "@/lib/shell-snapshot-cache";
 import {
-  DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
+  isRestorableBuiltInAppPath,
+  isRetiredBuiltInAppPath,
   normalizeBuiltInAppPath,
   normalizeBuiltInLayoutWindow,
 } from "@/lib/builtin-apps";
@@ -72,7 +81,6 @@ import {
   findAppByName,
   gatewayFetchSignal,
   registryPathToRelativePath,
-  sameIconAsset,
   type ModuleMeta,
   type ShellBootstrap,
 } from "./desktop/desktop-app-routing";
@@ -83,6 +91,7 @@ import {
   WebDesktopControls,
   type WebDesktopSettingsSection,
 } from "./desktop/WebDesktopControls";
+import { openShellSupport } from "@/lib/posthog-client";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -91,18 +100,6 @@ const GATEWAY_URL = getGatewayUrl();
 // and destabilize every memo/callback that depends on `pinnedApps`. Treated as
 // read-only by convention; consumers always build new arrays rather than mutate.
 const EMPTY_PINNED_APPS: string[] = [];
-async function markOnboardingComplete() {
-  const res = await fetch(`${getGatewayUrl()}/api/settings/onboarding-complete`, {
-    method: "POST",
-    signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    throw new Error("onboarding complete request failed");
-  }
-}
-
-const MIN_WIDTH = 320;
-const MIN_HEIGHT = 200;
 
 interface DesktopProps {
   launchAppPath?: string | null;
@@ -111,52 +108,62 @@ interface DesktopProps {
   cacheScope?: ShellSnapshotScope | null;
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, minimizingIds, firstRunStatus, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
-  const cacheKey = cacheScope?.storageKey;
+  useCanvasTransformPersistence(GATEWAY_URL);
   const windows = useWindowManager((s) => s.windows);
-  const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
   const wmMinimizeWindow = useWindowManager((s) => s.minimizeWindow);
   const wmRestoreAndFocusWindow = useWindowManager((s) => s.restoreAndFocusWindow);
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
   const wmFocusWindow = useWindowManager((s) => s.focusWindow);
   const wmMoveWindow = useWindowManager((s) => s.moveWindow);
-  const wmResizeWindow = useWindowManager((s) => s.resizeWindow);
   const wmReconcileWindowsToViewport = useWindowManager((s) => s.reconcileWindowsToViewport);
   const wmGetWindow = useWindowManager((s) => s.getWindow);
-  const wmSetApps = useWindowManager((s) => s.setApps);
   const wmSetWindows = useWindowManager((s) => s.setWindows);
   const wmLoadLayout = useWindowManager((s) => s.loadLayout);
-  const wmCascadeWindows = useWindowManager((s) => s.cascadeWindows);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
   const wmToggleFullscreen = useWindowManager((s) => s.toggleFullscreen);
   const wmExitFullscreen = useWindowManager((s) => s.exitFullscreen);
+  const queryClient = useQueryClient();
+  const cachedApps = useMemo(() => {
+    const bootstrap = loadShellSnapshot(cacheScope)?.bootstrap;
+    return hydrateAppIconUrls(bootstrap?.apps, bootstrap?.icons, gatewayAssetUrl);
+  }, [cacheScope]);
+  const { data: apiApps = [], refetch: refetchApps } = useQuery({
+    ...appsQueryOptions(),
+    initialData: cachedApps,
+    initialDataUpdatedAt: 0,
+  });
+  const installedApps = useMemo(
+    () => apiApps.map((app) => ({
+      name: app.name,
+      path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")),
+      iconUrl: app.iconUrl ?? iconUrlForSlug(app.icon ?? app.slug),
+    })),
+    [apiApps],
+  );
+  const apps = useMemo(() => buildWebDesktopIconApps(installedApps), [installedApps]);
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDefaultSection, setSettingsDefaultSection] = useState<SettingsSectionId>("appearance");
-  // Chat popup is now fully controlled here so the dock button can toggle
-  // it on click (open if closed, close if open). ChatPopover used to wrap
-  // the button in Radix Dialog.Trigger, which only opened — clicking the
-  // dock to dismiss never worked, especially obvious while the agent was
-  // busy because the popup auto-opens then resists close.
-  const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
-  const firstRunStatusRef = useRef<DesktopFirstRunStatus>("checking");
   // Shell hydration always uses the shared Matrix brand surface. Theme-specific
   // OS boot screens are reserved for actual OS-session transitions so this
   // account → journey → Desktop handoff cannot visually swap designs.
   const launchPathConsumedRef = useRef<string | null>(null);
-  const designApiPathsRef = useRef<Set<string>>(new Set());
-  const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? EMPTY_PINNED_APPS;
   const togglePin = useDesktopConfigStore((s) => s.togglePin);
   const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
   const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
+  const desktopIcons = useDesktopConfigStore((s) => s.desktopIcons);
+  const moveDesktopIcon = useDesktopConfigStore((s) => s.moveDesktopIcon);
+  const removeDesktopIcon = useDesktopConfigStore((s) => s.removeDesktopIcon);
+  const addDesktopIcon = useDesktopConfigStore((s) => s.addDesktopIcon);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
   const isHorizontal = dock.position === "bottom";
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
@@ -164,11 +171,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>> | null>(null);
   if (minimizeTimers.current === null) minimizeTimers.current = new Map();
-  const focusedWindow = windows.reduce<typeof windows[number] | undefined>(
-    (best, w) =>
-      !w.minimized && (best === undefined || w.zIndex > best.zIndex) ? w : best,
-    undefined,
-  );
 
   useEffect(() => {
     const timers = minimizeTimers.current!;
@@ -190,7 +192,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         if (!res.ok) throw new Error("onboarding status unavailable");
         const nextStatus = parseDesktopFirstRunStatus(await res.json());
         if (!cancelled) {
-          firstRunStatusRef.current = nextStatus;
           setFirstRunStatus(nextStatus);
         }
       })
@@ -199,7 +200,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           console.warn("[desktop] first-run status check failed:", err);
         }
         if (!cancelled) {
-          firstRunStatusRef.current = "ready";
           setFirstRunStatus("ready");
         }
       })
@@ -212,23 +212,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       controller.abort();
     };
   }, []);
-
-  const completeOnboarding = () => {
-    if (!shouldApplyInitialDesktopDefaults(firstRunStatusRef.current)) return;
-    firstRunStatusRef.current = "ready";
-    setFirstRunStatus("ready");
-    void markOnboardingComplete().catch((err: unknown) => {
-      console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
-    });
-    void saveDesktopConfigPatch({
-      background: { type: "wallpaper", name: "moraine-lake.jpg" },
-      dock,
-      pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
-      dockOrder,
-    }).catch((err: unknown) => {
-      console.warn("[desktop] initial desktop config persist failed:", err instanceof Error ? err.message : String(err));
-    });
-  };
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435); a fresh function each render would re-register every command-palette entry on every render
   const animateMinimize = useCallback((id: string) => {
@@ -254,13 +237,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     origY: number;
   } | null>(null);
 
-  const resizeRef = useRef<{
-    id: string;
-    startX: number;
-    startY: number;
-    origW: number;
-    origH: number;
-  } | null>(null);
+  const resizeRef = useRef<true | null>(null);
   const viewportReconcilePendingRef = useRef(false);
 
   useEffect(() => {
@@ -302,18 +279,18 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           return;
         }
         return r.json().then((data: { iconUrl: string; etag?: string }) => {
-          wmSetApps((prev) =>
-            prev.map((a) =>
-              nameToSlug(a.name) === slug
-                ? { ...a, iconUrl: versionedIconUrl(`${GATEWAY_URL}${data.iconUrl}`, data.etag) }
-                : a,
+          queryClient.setQueryData<ApiAppEntry[]>(appKeys.list(), (current = []) =>
+            current.map((app) =>
+              (app.slug ?? nameToSlug(app.name)) === slug
+                ? { ...app, iconUrl: versionedIconUrl(`${GATEWAY_URL}${data.iconUrl}`, data.etag) }
+                : app,
             ),
           );
         });
       })
       .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
       .finally(() => generatingRef.current!.delete(slug));
-  }, [wmSetApps]);
+  }, [queryClient]);
 
   const renameAppOnServer = (slug: string, newName: string) => {
     fetch(`${GATEWAY_URL}/api/apps/${slug}/rename`, {
@@ -333,23 +310,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           if (data.newSlug) {
             const oldSlug = slug;
             const ns = data.newSlug;
-            wmSetApps((prev) =>
-              prev.map((a) => {
-                const aSlug = nameToSlug(a.name);
-                if (aSlug === oldSlug) {
-                  const newPath = a.path.includes("/")
-                    ? `apps/${ns}/index.html`
-                    : `apps/${ns}.html`;
-                  return {
-                    ...a,
-                    name: newName,
-                    path: newPath,
-                    iconUrl: iconUrlForSlug(ns),
-                  };
-                }
-                return a;
-              }),
-            );
             // Update open windows
             wmSetWindows((prev) =>
               prev.map((w) => {
@@ -364,6 +324,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               }),
             );
           }
+          void queryClient.invalidateQueries({ queryKey: appKeys.all() });
         });
       })
       .catch((err) => console.warn(`Rename request failed for "${slug}":`, err));
@@ -373,25 +334,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     wmSetWindows((prev) => prev.filter((w) => w.path !== appPath && !w.path.startsWith(appPath + ":")));
   };
 
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds loadModules' deps, and loadModules is a useEffect dependency (L~1070); a fresh function each render would re-fire the module-load effect every render
-  const addApp = useCallback((name: string, path: string, iconSlug?: string, iconUrlOverride?: string) => {
-    const iconUrl = iconUrlOverride ?? iconUrlForSlug(iconSlug);
-    wmSetApps((prev) => {
-      const existing = prev.find((a) => a.path === path);
-      if (existing) {
-        const nextIconUrl = iconUrl === undefined
-          ? existing.iconUrl
-          : sameIconAsset(existing.iconUrl, iconUrl) ? existing.iconUrl : iconUrl;
-        if (existing.name === name && existing.iconUrl === nextIconUrl) return prev;
-        return prev.map((app) => app.path === path ? { ...app, name, iconUrl: nextIconUrl } : app);
-      }
-      return [...prev, { name, path, iconUrl }];
-    });
-  }, [wmSetApps]);
-
-
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435) and feeds loadModules' deps (also a useEffect dependency); a fresh function each render would re-fire both effects every render
   const openWindow = useCallback((name: string, path: string) => {
+    if (isRetiredBuiltInAppPath(path)) return;
     // Open without minimizing other windows — allow multiple apps visible.
     // Terminal is a singleton app now; individual shell sessions live inside
     // its Paper drawer rather than separate OS windows.
@@ -400,7 +345,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     // In canvas mode, pan to center on the window after it opens/focuses
     if (useDesktopMode.getState().mode === "canvas") {
       requestAnimationFrame(() => {
-        const win = useWindowManager.getState().windows.find((w) => w.path === path);
+        const win = useWindowManager.getState().windows.find((w) => (
+          w.path === path && (path !== "__terminal__" || w.terminalPersistence !== "ephemeral")
+        ));
         if (win) {
           const cRect = useCanvasTransform.getState().containerRect;
           useCanvasTransform.getState().focusOnWindow(
@@ -431,7 +378,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the launch-path useEffect dependency array (L~930); a fresh function each render would re-fire that effect every render
   const focusOrOpen = useCallback((name: string, path: string) => {
     const existing = useWindowManager.getState().windows.find(
-      (w) => w.path === path || w.path.startsWith(path + ":"),
+      (w) => path === "__terminal__"
+        ? w.path === path && w.terminalPersistence !== "ephemeral"
+        : w.path === path || w.path.startsWith(path + ":"),
     );
 
     if (existing) {
@@ -442,25 +391,47 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
   }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
-  const openSetupTerminal = (action: TerminalLaunchAction) => {
+  // Keep every app entry point on one routing path. Some installed catalog
+  // apps (notably Browser) intentionally map to shell-owned behavior instead
+  // of AppViewer, so dock, command-palette, launcher, and deep-link launches
+  // must all resolve them before opening a window.
+  const openAppOrFocus = useCallback((path: string, name?: string) => {
+    const builtInLaunch = resolveWebDesktopBuiltInLaunch(path);
+    if (builtInLaunch?.kind === "external") {
+      window.open(builtInLaunch.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (builtInLaunch?.kind === "external-code") {
+      window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (builtInLaunch?.kind === "app") {
+      focusOrOpen(builtInLaunch.name, builtInLaunch.path);
+      return;
+    }
+    if (builtInLaunch?.kind === "os-view") {
+      useDesktopMode.getState().setMode(builtInLaunch.mode);
+      return;
+    }
+    focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
+  }, [apps, focusOrOpen]);
+
+  const focusTerminalForHandoff = useCallback((handoff: (targetId?: string) => void) => {
     const windows = useWindowManager.getState().windows;
-    const focusedId = useWindowManager.getState().focusedWindowId;
-    const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
-    const setupTerminal = windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH);
-    const existingTerminal = focusedTerminal ?? setupTerminal ?? windows.reduce<typeof windows[number] | undefined>(
-      (best, w) =>
-        w.path.startsWith("__terminal__") && (best === undefined || w.zIndex > best.zIndex) ? w : best,
-      undefined,
-    );
-    if (existingTerminal) {
-      wmRestoreAndFocusWindow(existingTerminal.id);
+    const setupTerminal = windows.find((w) => (
+      w.path === "__terminal__" && w.terminalPersistence === "ephemeral"
+    ));
+    if (setupTerminal) {
+      wmRestoreAndFocusWindow(setupTerminal.id);
     } else {
-      wmOpenWindow("Terminal", TERMINAL_SETUP_WINDOW_PATH, dockXOffset);
+      wmOpenWindow("Terminal", "__terminal__", dockXOffset, { terminalPersistence: "ephemeral" });
     }
     const resolveTargetTerminal = () => (
-      existingTerminal
-        ? useWindowManager.getState().getWindow(existingTerminal.id)
-        : useWindowManager.getState().windows.find((w) => w.path === TERMINAL_SETUP_WINDOW_PATH)
+      setupTerminal
+        ? useWindowManager.getState().getWindow(setupTerminal.id)
+        : useWindowManager.getState().windows.find((w) => (
+            w.path === "__terminal__" && w.terminalPersistence === "ephemeral"
+          ))
     );
 
     requestAnimationFrame(() => {
@@ -475,19 +446,46 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           );
         }
       }
-      enqueueTerminalLaunch(action, win?.id);
+      handoff(win?.id);
     });
+  }, [dockXOffset, wmOpenWindow, wmRestoreAndFocusWindow]);
+
+  const openSetupTerminal = (action: TerminalLaunchAction) => {
+    focusTerminalForHandoff((targetId) => enqueueTerminalLaunch(action, targetId));
   };
+
+  const openExistingProviderTerminal = useCallback((sessionId: string) => {
+    focusTerminalForHandoff((targetId) => {
+      if (targetId) enqueueExistingTerminalSession(sessionId, targetId);
+    });
+  }, [focusTerminalForHandoff]);
+
+  useEffect(() => {
+    const openProviderSettings = () => {
+      setSettingsDefaultSection("agents-providers");
+      setSettingsOpen(true);
+      setTaskBoardOpen(false);
+    };
+    const openProviderTerminal = (event: Event) => {
+      const sessionId = providerTerminalSessionFromEvent(event);
+      if (sessionId) openExistingProviderTerminal(sessionId);
+    };
+    window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
+    window.addEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
+    return () => {
+      window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
+      window.removeEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
+    };
+  }, [openExistingProviderTerminal]);
 
   // Vocal mode's open_app tool and auto-open-after-build both go through
   // this. Fuzzy-matches `query` against the current apps list and focuses
   // (or opens) the best match. Returns the result so the caller can
   // report success/failure back to Gemini for accurate narration.
   const openAppByName = (query: string): { success: boolean; resolvedName?: string } => {
-    const currentApps = useWindowManager.getState().apps;
-    const match = findAppByName(currentApps, query);
+    const match = findAppByName(apps, query);
     if (match) {
-      focusOrOpen(match.name, match.path);
+      openAppOrFocus(match.path, match.name);
       return { success: true, resolvedName: match.name };
     }
     return { success: false };
@@ -495,11 +493,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   useEffect(() => {
     if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
-    const match = useWindowManager.getState().apps.find((app) => app.path === launchAppPath);
+    const match = apps.find((app) => app.path === launchAppPath);
     if (!match) return;
     launchPathConsumedRef.current = launchAppPath;
-    focusOrOpen(match.name, match.path);
-  }, [apps, focusOrOpen, launchAppPath]);
+    openAppOrFocus(match.path, match.name);
+  }, [apps, launchAppPath, openAppOrFocus]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async (signal?: AbortSignal) => {
@@ -522,11 +520,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     ) => {
       if (isLoadAborted()) return;
 
-      const iconForSlug = (slug: string | undefined): string | undefined => {
-        if (!slug) return undefined;
-        return gatewayAssetUrl(bootstrap.icons?.[slug]?.versionedUrl) ?? iconUrlForSlug(slug);
-      };
-
       const savedLayout: { windows?: LayoutWindow[] } =
         !isPreVpsBillingSetupRoute() ? bootstrap.layout ?? {} : {};
       const savedWindows = (savedLayout.windows ?? []).map(normalizeBuiltInLayoutWindow);
@@ -540,44 +533,16 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         layoutToLoad.push(saved);
       };
 
-      // Register built-in apps
-      addApp("Terminal", "__terminal__", "terminal", iconForSlug("terminal"));
-      addApp("Files", "__file-browser__", "files", iconForSlug("files"));
-      if (!HERMES_CHAT_HIDDEN) {
-        addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
-      }
-      const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
+      const savedBuiltIns = savedWindows.filter((w) => isRestorableBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
       }
 
       // Load pre-installed apps from /api/apps (apps/ directory)
       if (Array.isArray(bootstrap.apps)) {
-        const appsList = bootstrap.apps;
-        const nextApiPaths = new Set(
-          appsList.map((app) => normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""))),
-        );
-        const previousApiPaths = designApiPathsRef.current;
-        // A cached bootstrap is applied before the authoritative network
-        // bootstrap. Remove API-owned entries that disappeared from the fresh
-        // list before adding its apps, otherwise an app from the cached OS
-        // design survives a reload alongside the active design's apps.
-        if (previousApiPaths.size > 0) {
-          wmSetApps((current) => current.filter(
-            (entry) => !previousApiPaths.has(entry.path) || nextApiPaths.has(entry.path),
-          ));
-        }
-        // Baseline for the design-switch reconcile effect: removals only ever
-        // apply to entries that came from /api/apps.
-        designApiPathsRef.current = nextApiPaths;
-        for (const app of appsList) {
+        for (const app of bootstrap.apps) {
           if (isLoadAborted()) return;
-          // path from API is like "/files/apps/calculator/index.html"
-          // strip leading "/files/" to get relative path for AppViewer
           const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
-          const iconSlug = app.icon ?? app.slug;
-          addApp(app.name, relativePath, iconSlug, iconForSlug(iconSlug));
-
           const saved = layoutMap.get(relativePath);
           queueSavedLayout(saved);
           // Don't auto-open pre-installed apps - let users open from dock/store
@@ -596,7 +561,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             if (!relativeBasePath) continue;
             const defaultEntryFile = mod.type === "react-app" ? "dist/index.html" : "index.html";
             const path = normalizeBuiltInAppPath(`${relativeBasePath}/${defaultEntryFile}`);
-            addApp(mod.name, path, nameToSlug(mod.name));
             const saved = layoutMap.get(path);
             queueSavedLayout(saved);
             continue;
@@ -636,7 +600,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
             if (!metaRes?.ok) {
               path = normalizeBuiltInAppPath(path);
-              addApp(appName, path, nameToSlug(appName));
               const saved = layoutMap.get(path);
               queueSavedLayout(saved);
               continue;
@@ -647,8 +610,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
             path = normalizeBuiltInAppPath(`${relativeBasePath}/${entryFile}`);
             appName = meta.name ?? mod.name;
-
-            addApp(appName, path, meta.icon ?? nameToSlug(appName));
 
             const saved = layoutMap.get(path);
             if (saved) {
@@ -683,13 +644,24 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (bootstrapRes === null) return;
       const bootstrap = bootstrapRes?.ok ? await readJsonForLoad<ShellBootstrap>(bootstrapRes) : {};
       if (bootstrap === null) return;
+      if (!isPreVpsBillingSetupRoute()) {
+        const presentation = await loadWebOsViewPresentation(GATEWAY_URL, useDesktopMode.getState().mode, signal);
+        if (presentation) {
+          bootstrap.layout = { windows: presentation.windows };
+          useCanvasTransform.getState().setTransform(
+            presentation.transform.zoom,
+            presentation.transform.panX,
+            presentation.transform.panY,
+          );
+        }
+      }
       if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
       await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
     } catch (err) {
       if (isLoadAborted()) return;
       console.warn("[desktop] Failed to load desktop modules:", err);
     }
-  }, [addApp, cacheScope, openWindow, wmLoadLayout]);
+  }, [cacheScope, openWindow, wmLoadLayout]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -700,6 +672,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   useFileWatcher((path: string, event: string) => {
     if (path === "system/modules.json" && event !== "unlink") {
       loadModules();
+      void queryClient.invalidateQueries({ queryKey: appKeys.all() });
       return;
     }
 
@@ -709,12 +682,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       const isAppIndex = path.match(/^apps\/[^/]+\/(index\.html|dist\/index\.html)$/);
       if (!isRootHtml && !isAppIndex) return;
 
-      const name = path.replace("apps/", "").replace(/\/(dist\/)?index\.html$/, "").replace(".html", "");
+      void queryClient.invalidateQueries({ queryKey: appKeys.all() });
       if (event === "unlink") {
-        wmSetApps((prev) => prev.filter((a) => a.path !== path));
         wmSetWindows((prev) => prev.filter((w) => w.path !== path));
-      } else {
-        addApp(name, path, nameToSlug(name));
       }
     }
   });
@@ -746,35 +716,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     setInteracting(hasActiveWindowInteraction(dragRef.current, resizeRef.current));
   };
 
-  const onResizeStart = (id: string, e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const win = wmGetWindow(id);
-    if (!win) return;
-    resizeRef.current = {
-      id,
-      startX: e.clientX,
-      startY: e.clientY,
-      origW: win.width,
-      origH: win.height,
-    };
-    setInteracting(true);
-    wmFocusWindow(id);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  };
-
-  const onResizeMove = (e: React.PointerEvent) => {
-    if (!resizeRef.current) return;
-    const { id, startX, startY, origW, origH } = resizeRef.current;
-    wmResizeWindow(
-      id,
-      Math.max(MIN_WIDTH, origW + (e.clientX - startX)),
-      Math.max(MIN_HEIGHT, origH + (e.clientY - startY)),
-    );
-  };
-
-  const onResizeEnd = () => {
-    resizeRef.current = null;
+  const onResizeInteractionChange = (active: boolean) => {
+    resizeRef.current = active ? true : null;
     setInteracting(hasActiveWindowInteraction(dragRef.current, resizeRef.current));
   };
 
@@ -786,16 +729,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const previousMode = useDesktopMode((s) => s.previousMode);
   const setDesktopMode = useDesktopMode((s) => s.setMode);
   const visibleModes = useDesktopMode((s) => s.visibleModes);
-  const getModeConfig = useDesktopMode((s) => s.getModeConfig);
-  const modeConfig = getModeConfig(desktopMode);
   const themeStyle = useThemeStyle();
+  const osViewLayoutsRef = useRef(createOsViewLayoutMemory());
   // Windows designs replace the mac menu bar + dock with a bottom taskbar.
   const isWindowsDesign = themeStyle === "winxp" || themeStyle === "win11";
 
-  // The gateway re-filters design-scoped apps on every /api/apps call, but
-  // the shell only bootstraps its list once. Refetch on mid-session design
-  // switches so scoped apps (XP Minesweeper, Widgets, Stickies…) appear and
-  // disappear live without a reload.
+  // Design changes can alter the server-filtered catalog. React Query owns
+  // that catalog, so a refetch is sufficient—there is no second list to
+  // reconcile with window-manager state.
   const designStyleRef = useRef<string | null>(null);
   useEffect(() => {
     if (!themeStyle) return;
@@ -805,59 +746,25 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
     if (designStyleRef.current === themeStyle) return;
     designStyleRef.current = themeStyle;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`${GATEWAY_URL}/api/apps`, { signal: AbortSignal.timeout(10_000) });
-        if (!res.ok || cancelled) return;
-        const apiApps = (await res.json()) as ApiAppEntry[];
-        if (cancelled) return;
-        const { next, apiPaths } = reconcileDesignApps({
-          current: useWindowManager.getState().apps,
-          apiApps,
-          previousApiPaths: designApiPathsRef.current,
-          normalizePath: (path) => normalizeBuiltInAppPath(path.replace(/^\/files\//, "")),
-          iconUrlFor: (app) => iconUrlForSlug(app.icon ?? app.slug),
-        });
-        designApiPathsRef.current = apiPaths;
-        wmSetApps(next);
-      } catch (err) {
-        if (!cancelled) {
-          console.warn("[desktop] design app refresh failed:", err instanceof Error ? err.message : String(err));
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [themeStyle, wmSetApps]);
-  const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
-  // Developer Fast Path dashboard removed (off-brand + redundant with the
-  // new Set up your workspace checklist). Dev mode opens to the terminal.
-  void shouldShowDeveloperDashboard;
-  const developerDashboardVisible = false;
-  const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
-  const selectDesktopMode = (mode: DesktopMode) => {
-    setDesktopMode(mode);
-    if (!getModeConfig(mode).showLauncher) setTaskBoardOpen(false);
-  };
-
-  // Cascade windows back to the viewport when leaving canvas. Canvas
-  // positions use a wide grid that extends off-screen in other modes.
+    void refetchApps();
+  }, [refetchApps, themeStyle]);
+  // Geometry belongs to the presentation namespace. Switching OS views keeps
+  // canonical windows and sessions alive while restoring each view's last
+  // in-memory geometry. Durable namespaced geometry follows in the persistence
+  // slice; viewport reconciliation remains a renderer concern.
   useEffect(() => {
-    if (desktopMode !== "canvas" && previousMode === "canvas") {
-      wmCascadeWindows(dockXOffset, 20, 30);
-    }
-  }, [desktopMode, previousMode, dockXOffset, wmCascadeWindows]);
-
-  useEffect(() => {
-    const onOpenPrCanvas = (event: Event) => {
-      const detail = (event as CustomEvent<{ scopeRef?: Record<string, unknown>; title?: string }>).detail;
-      if (!detail?.scopeRef) return;
-      setDesktopMode("canvas");
-      void openPrCanvas(detail.scopeRef, detail.title);
-    };
-    window.addEventListener("matrix:open-pr-canvas", onOpenPrCanvas);
-    return () => window.removeEventListener("matrix:open-pr-canvas", onOpenPrCanvas);
-  }, [openPrCanvas, setDesktopMode]);
+    if (!previousMode || previousMode === desktopMode) return;
+    const currentWindows = useWindowManager.getState().windows;
+    const transition = transitionOsViewLayout(
+      osViewLayoutsRef.current,
+      previousMode,
+      desktopMode,
+      currentWindows,
+    );
+    osViewLayoutsRef.current = transition.memory;
+    useWindowManager.setState({ windows: transition.windows });
+    if (desktopMode === "desktop") wmReconcileWindowsToViewport();
+  }, [desktopMode, previousMode, wmReconcileWindowsToViewport]);
 
   // Aoede is orthogonal to mode now — a pointer-events-none overlay that
   // can ride on top of any mode. The dock button toggles it.
@@ -882,19 +789,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     return () => clearTimeout(t);
   }, [vocalActive]);
 
-  const modes = visibleModes();
-  const cycleMode = () => {
-    const idx = modes.findIndex((m) => m.id === desktopMode);
-    // If current mode is hidden or not found, jump to the first visible mode.
-    const nextIdx = idx < 0 ? 0 : (idx + 1) % modes.length;
-    setDesktopMode(modes[nextIdx].id);
-  };
-
   const toggleMcRef = useRef(() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); });
-  const openWindowRef = useRef(openWindow);
-  useEffect(() => {
-    openWindowRef.current = openWindow;
-  }, [openWindow]);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- false positive: the setState calls counted here (setDesktopMode, setSettingsOpen, setTaskBoardOpen) live inside command `execute` handlers that only fire on user invocation; this effect just registers/unregisters command-palette entries and runs no setState synchronously, so there is no render cascade
   useEffect(() => {
@@ -905,7 +800,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       keywords: ["mode", "layout", m.id, m.description],
       execute: () => {
         setDesktopMode(m.id);
-        if (!m.showLauncher) setTaskBoardOpen(false);
       },
     }));
 
@@ -1090,11 +984,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       group: "Apps" as const,
       icon: app.iconUrl,
       keywords: [app.path],
-      execute: () => openWindowRef.current(app.name, app.path),
+      execute: () => openAppOrFocus(app.path, app.name),
     }));
     if (appCommands.length > 0) register(appCommands);
     return () => unregister(apps.map((a) => `app:${a.path}`));
-  }, [apps, register, unregister]);
+  }, [apps, openAppOrFocus, register, unregister]);
 
   useEffect(() => {
     if (!fullscreenWindowId) return;
@@ -1105,17 +999,38 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
+  const openWebSettings = useCallback((section: WebDesktopSettingsSection) => {
+    setSettingsDefaultSection(section);
+    setSettingsOpen(true);
+    setTaskBoardOpen(false);
+  }, []);
+
+  const openGettingStartedWork = useCallback(() => {
+    openAppOrFocus("__chat__", "Chat");
+  }, [openAppOrFocus]);
+
   const canvasToolbarChild = desktopMode === "canvas" ? (
     <CanvasToolbar
-      guideVisible={manualSetupVisible}
-      onOpenGuide={() => setManualSetupVisible(true)}
+      onOpenSettings={openWebSettings}
+      onOpenFirstWork={openGettingStartedWork}
     />
   ) : null;
 
-  // Shared by the Windows taskbar (start menu, quick launch) and the XP
-  // desktop icons: open the app window or focus the existing one.
-  const openAppOrFocus = (path: string, name?: string) =>
-    focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path);
+  const launcherApps = useMemo(
+    () => buildWebDesktopLauncherApps(installedApps, desktopMode),
+    [installedApps, desktopMode],
+  );
+
+  const openLauncherDestination = useCallback((name: string, path: string) => {
+    if (path === "__settings__" || path === "__plugins__") {
+      setSettingsDefaultSection(path === "__plugins__" ? "integrations" : "appearance");
+      setSettingsOpen(true);
+      setTaskBoardOpen(false);
+      return;
+    }
+    openAppOrFocus(path, name);
+    setTaskBoardOpen(false);
+  }, [openAppOrFocus]);
 
   if (firstRunStatus === "checking") {
     return (
@@ -1133,7 +1048,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       <ShellNotificationStack>
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
-        <BillingTrialNotification />
       </ShellNotificationStack>
       {desktopMode !== "desktop" && (isWindowsDesign ? (
         <WindowsTaskbar
@@ -1143,16 +1057,24 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           onOpenApp={openAppOrFocus}
           onFocusWindow={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
           onMinimizeWindow={animateMinimize}
-          onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}
+          onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); }}
           onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
         >
           {canvasToolbarChild}
         </WindowsTaskbar>
-      ) : canvasToolbarChild)}
+      ) : canvasToolbarChild ? (
+        <header
+          data-testid="canvas-toolbar"
+          className="relative flex h-[38px] shrink-0 items-center justify-center gap-0.5 border-b border-white/30 bg-card/70 px-3 text-xs leading-none text-foreground/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)] backdrop-blur-xl"
+          style={{ zIndex: SHELL_Z_INDEX.menuBar }}
+        >
+          {canvasToolbarChild}
+        </header>
+      ) : null)}
       <OsSessionHost />
-      <div className="relative flex-1 flex flex-col md:flex-row">
+      <div className="relative min-h-0 flex-1 flex flex-col md:flex-row">
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
-        {modeConfig.showDock && desktopMode !== "desktop" && !isWindowsDesign && <div
+        {desktopMode !== "desktop" && !isWindowsDesign && <div
           className={[
             "hidden md:block fixed z-[55]",
             dock.position === "left" && "left-0 top-0 h-full",
@@ -1240,7 +1162,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       <DockIcon
                         name={app.name}
                         active={hasAny}
-                        onClick={() => focusOrOpen(app.name, app.path)}
+                        onClick={() => openAppOrFocus(app.path, app.name)}
                         iconSize={dock.iconSize}
                         tooltipSide={tooltipSide}
                         iconUrl={app.iconUrl}
@@ -1347,7 +1269,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       key={app.path}
                       name={app.name}
                       active={hasAny}
-                      onClick={() => focusOrOpen(app.name, app.path)}
+                      onClick={() => openAppOrFocus(app.path, app.name)}
                       iconSize={dock.iconSize}
                       tooltipSide={tooltipSide}
                       iconUrl={app.iconUrl}
@@ -1358,13 +1280,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                   );
                 })}
                 </div>
-                {modeConfig.showLauncher && (
+                {(
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         type="button"
                         data-testid="dock-tasks"
-                        onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                        onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
                         className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                           taskBoardOpen
                             ? "bg-primary text-primary-foreground border-primary"
@@ -1386,7 +1308,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                     and isn't duplicated in the apps row below. */}
                 {(() => {
                   const terminalApp = apps.find((a) => a.path === "__terminal__");
-                  const terminalActive = windows.some((w) => !w.minimized && (w.path === "__terminal__" || w.path.startsWith("__terminal__:")));
+                  const terminalActive = windows.some((w) => !w.minimized && w.path === "__terminal__");
                   return (
                     <DockIcon
                       name="Terminal"
@@ -1398,33 +1320,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                     />
                   );
                 })()}
-                {!HERMES_CHAT_HIDDEN && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-chat"
-                      onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
-                      className={`relative flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                        chatOpen
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card border-border/60"
-                      }`}
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                      aria-label={chatOpen ? "Close Hermes" : "Open Hermes"}
-                    >
-                      <MessageSquareIcon className="size-4" />
-                      {chat?.busy && (
-                        <span
-                          className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
-                          aria-hidden
-                        />
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
-                </Tooltip>
-                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1445,7 +1340,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                     <button
                       type="button"
                       data-testid="dock-settings"
-                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
+                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
                       className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                         settingsOpen
                           ? "bg-primary text-primary-foreground border-primary"
@@ -1486,33 +1381,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         </div>}
 
         {/* Mobile dock (bottom tab bar) */}
-        {modeConfig.showDock && desktopMode !== "desktop" && (
+        {desktopMode !== "desktop" && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
-            {!HERMES_CHAT_HIDDEN && (
-            <button
-              type="button"
-              data-testid="dock-chat-mobile"
-              onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
-              className={`relative flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
-                chatOpen
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card border-border/60"
-              }`}
-              aria-label={chatOpen ? "Close Hermes" : "Open Hermes"}
-            >
-              <MessageSquareIcon className="size-4" />
-              {chat?.busy && (
-                <span
-                  className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
-                  aria-hidden
-                />
-              )}
-            </button>
-            )}
-            {modeConfig.showLauncher && (
+            {(
               <button
                 type="button"
-                onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
                 className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                   taskBoardOpen
                     ? "bg-primary text-primary-foreground border-primary"
@@ -1523,7 +1397,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               </button>
             )}            <button
               type="button"
-              onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
+              onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 settingsOpen
                   ? "bg-primary text-primary-foreground border-primary"
@@ -1547,7 +1421,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 <button
                   type="button"
                   key={app.path}
-                  onClick={() => openWindow(app.name, app.path)}
+                  onClick={() => openAppOrFocus(app.path, app.name)}
                   className={`flex shrink-0 h-9 items-center gap-1.5 px-3 rounded-lg border transition-all active:scale-95 ${
                     win
                       ? "bg-primary/10 border-primary/30 text-foreground"
@@ -1574,23 +1448,19 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               onOpenLauncher={() => {
                 setTaskBoardOpen((open) => !open);
                 setSettingsOpen(false);
-                setChatOpen(false);
               }}
               headerActions={(
                 <WebDesktopControls
-                  onOpenSettings={(section) => {
-                    setSettingsDefaultSection(section);
-                    setSettingsOpen(true);
-                    setTaskBoardOpen(false);
-                    setChatOpen(false);
-                  }}
+                  onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
+                  onOpenSupport={() => void openShellSupport()}
+                  onOpenSettings={openWebSettings}
+                  onOpenFirstWork={openGettingStartedWork}
                 />
               )}
               onOpenSettings={(section: WebDesktopSettingsSection) => {
                 setSettingsDefaultSection(section);
                 setSettingsOpen(true);
                 setTaskBoardOpen(false);
-                setChatOpen(false);
               }}
               onActivateWindow={(id) => wmRestoreAndFocusWindow(id)}
               onCloseWindow={wmCloseWindow}
@@ -1601,6 +1471,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 }
               }}
               onToggleFullscreen={wmToggleFullscreen}
+              desktopIcons={desktopIcons}
+              onMoveDesktopIcon={moveDesktopIcon}
+              onRemoveDesktopIcon={removeDesktopIcon}
             />
           ) : null}
           {/* XP desktop icons: above the wallpaper, below app windows. The
@@ -1610,72 +1483,36 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           <MissionControl
             open={taskBoardOpen}
             nativePresentation={desktopMode === "desktop"}
-            apps={apps}
+            apps={launcherApps}
             openWindows={windows.reduce<Set<string>>((acc, w) => {
               if (!w.minimized) acc.add(w.path);
               return acc;
             }, new Set())}
-            onOpenApp={openWindow}
+            onOpenApp={openLauncherDestination}
             onClose={() => setTaskBoardOpen(false)}
             pinnedApps={pinnedApps}
             onTogglePin={togglePin}
             onRegenerateIcon={regenerateIcon}
             onRenameApp={renameAppOnServer}
             onRemoveFromCanvas={removeFromCanvas}
+            onCreateApp={() => {
+              focusOrOpen("Chat", "__chat__");
+              chat?.requestComposerDraft("/matrix-app-builder ");
+            }}
+            onAddToDesktop={addDesktopIcon}
           />
 
-          {!modeConfig.showWindows && modeConfig.id === "ambient" && (
-            <AmbientClock onSwitchMode={cycleMode} />
-          )}
-
-          {!modeConfig.showWindows && modeConfig.id !== "ambient" && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
-                <p className="text-sm text-muted-foreground mb-1">
-                  {modeConfig.label} mode
-                </p>
-                <button
-                  type="button"
-                  onClick={cycleMode}
-                  className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
-                >
-                  Switch mode
-                </button>
-              </div>
-            </div>
-          )}
-
-          {developerDashboardVisible && (
-            <DeveloperModeDashboard
-              onOpenTerminal={() => {
-                completeOnboarding();
-                focusOrOpen("Terminal", "__terminal__");
-              }}
-              onSwitchCanvas={() => {
-                setDesktopMode("canvas");
-                setManualSetupVisible(true);
-              }}
-            />
-          )}
-
-          {modeConfig.showWindows && desktopMode === "canvas" && (
-            <CanvasRenderer>
-              {manualSetupVisible && (
-                <SetupChecklist onOpenTerminal={openSetupTerminal} />
-              )}
-            </CanvasRenderer>
-          )}
+          {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
 
           {vocalMounted && (
             <VocalPanel
               active={vocalActive}
               chat={chat}
               onOpenApp={openAppByName}
-              onDismissChat={() => setChatOpen(false)}
             />
           )}
 
-          {modeConfig.showWindows && desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
+          {desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <p className="text-sm text-white/50 drop-shadow-md">
@@ -1688,7 +1525,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           {/* Desktop: positioned windows; Mobile: full-screen cards.
               We render minimized windows too (display:none) so iframe state,
               terminal sockets, and React state survive minimize -> restore. */}
-          {modeConfig.showWindows && desktopMode !== "canvas" && windows.map((win) => (
+          {desktopMode !== "canvas" && windows.map((win) => (
             <DesktopWindow
               key={win.id}
               win={win}
@@ -1704,9 +1541,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               onDragStart={onDragStart}
               onFocusWindow={wmFocusWindow}
               onOpenWindow={openWindow}
-              onResizeEnd={onResizeEnd}
-              onResizeMove={onResizeMove}
-              onResizeStart={onResizeStart}
+              onResizeInteractionChange={onResizeInteractionChange}
               onToggleFullscreen={wmToggleFullscreen}
               topInset={desktopMode === "desktop" ? 38 : 0}
             />
@@ -1722,12 +1557,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           setSettingsOpen(false);
           openSetupTerminal(action);
         }}
+        onOpenProviderTerminalSession={(sessionId) => {
+          setSettingsOpen(false);
+          openExistingProviderTerminal(sessionId);
+        }}
       />
-      {/* Single ChatPopover instance shared by desktop + mobile dock
-          buttons. Lives outside both dock-orientation branches so it
-          isn't unmounted when the viewport orientation flips. */}
-      <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
-
       {/* No fullscreen exit pill: every maximized window keeps its own header
           (Desktop CardHeader / Canvas in-window title bar) with traffic lights,
           and Escape still exits fullscreen as a keyboard fallback. */}

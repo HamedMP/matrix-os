@@ -1,13 +1,17 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
+import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
+import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
+import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
+import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
+import { initializeCodexProvider, ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -26,16 +30,19 @@ const MAX_COMPLETED_REQUESTS = 100;
 const MAX_CONTROL_SOCKETS = 20;
 const MAX_TRACKED_ITEMS = 500;
 const MAX_PENDING_TURNS = 20;
+const MAX_STEER_RETRIES = 20;
 const MAX_TURN_FRAME_BYTES = 128 * 1024;
 const ASSISTANT_DELTA_FLUSH_CHARS = 16;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const RPC_TIMEOUT_MS = 30 * 1000;
-const CONTROL_SOCKET_TIMEOUT_MS = 2_000;
+const STEER_RPC_TIMEOUT_MS = 60 * 1000;
+const CONTROL_SOCKET_TIMEOUT_MS = 60 * 1000;
 const PROVIDER_STOP_TIMEOUT_MS = 5_000;
 const SHUTDOWN_REPLAY_GRACE_MS = 250;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
+const CREDENTIAL_DISPLAY_TEXT = /(?:api[_-]?key|authorization|cookie|credential|password|secret|token)\s*(?:=|:|\s)/i;
 const NativeRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
 const NativeReferenceSchema = z.string().min(1).max(512);
 const ApprovalMethodSchema = z.enum([
@@ -74,6 +81,7 @@ const ProviderModelReferenceSchema = z.string()
   .refine((value) => !value.includes(".."));
 const RunnerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
+  providerThreadId: NativeReferenceSchema.optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
@@ -158,6 +166,7 @@ const ToolLifecycleTypeSchema = z.enum([
   "collabAgentToolCall",
   "webSearch",
   "plan",
+  "reasoning",
 ]);
 const AgentMessageLifecycleItemSchema = z.object({
   id: NativeReferenceSchema,
@@ -168,7 +177,14 @@ const AgentMessageLifecycleItemSchema = z.object({
 const ToolLifecycleItemSchema = z.object({
   id: NativeReferenceSchema,
   type: ToolLifecycleTypeSchema,
+  server: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
+  tool: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
   status: z.string().max(80).optional(),
+  command: z.string().max(MAX_PROVIDER_LINE_BYTES).optional(),
+  cwd: z.string().max(4_096).optional(),
+  changes: z.array(z.object({
+    path: z.string().min(1).max(4_096),
+  }).passthrough()).max(200).optional(),
   aggregatedOutput: z.string().max(MAX_PROVIDER_LINE_BYTES).nullable().optional(),
   result: z.unknown().nullable().optional(),
   error: z.unknown().nullable().optional(),
@@ -199,11 +215,50 @@ const TurnCompletedSchema = z.object({
     }).passthrough(),
   }).passthrough(),
 }).passthrough();
+const TokenUsageBreakdownSchema = z.object({
+  inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  cachedInputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  reasoningOutputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).passthrough();
+const TokenUsageUpdatedSchema = z.object({
+  method: z.literal("thread/tokenUsage/updated"),
+  params: z.object({
+    threadId: NativeReferenceSchema,
+    turnId: NativeReferenceSchema,
+    tokenUsage: z.object({
+      last: TokenUsageBreakdownSchema,
+    }).passthrough(),
+  }).passthrough(),
+}).passthrough();
 const RpcResponseSchema = z.object({
   id: NativeRequestIdSchema,
   result: z.unknown().optional(),
   error: z.unknown().optional(),
 }).passthrough();
+const RpcErrorSchema = z.object({
+  code: z.number().int(),
+  message: z.string().max(512),
+}).passthrough();
+
+class ProviderRpcError extends Error {
+  constructor(reason = "rejected") {
+    super("provider_request_failed");
+    this.name = "ProviderRpcError";
+    this.reason = reason;
+  }
+}
+
+function providerRpcError(raw) {
+  const parsed = RpcErrorSchema.safeParse(raw);
+  return new ProviderRpcError(
+    parsed.success
+      && parsed.data.code === -32600
+      && parsed.data.message === "no active turn to steer"
+      ? "turn_not_idle"
+      : "rejected",
+  );
+}
 const ApprovalControlSchema = z.object({
   type: z.literal("approval"),
   approvalId: z.string().regex(/^appr_codex_[a-f0-9]{32}$/),
@@ -228,7 +283,23 @@ const TurnControlSchema = PendingTurnSchema.extend({
   type: z.literal("turn"),
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
-const ControlSchema = z.discriminatedUnion("type", [TurnControlSchema, ApprovalControlSchema, InputControlSchema]);
+const InterruptControlSchema = z.object({
+  type: z.literal("interrupt"),
+  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
+}).strict();
+const SteerControlSchema = z.object({
+  type: z.literal("steer"),
+  prompt: PendingTurnSchema.shape.prompt,
+  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
+}).strict();
+const ControlSchema = z.discriminatedUnion("type", [
+  CodexHibernateControlSchema,
+  TurnControlSchema,
+  SteerControlSchema,
+  InterruptControlSchema,
+  ApprovalControlSchema,
+  InputControlSchema,
+]);
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -290,6 +361,9 @@ let transcriptBytes = (await eventFile.stat()).size;
 let stopping = false;
 let activeTurn = false;
 let activeTurnOutcome;
+let nativeThreadId;
+let activeNativeTurnId;
+let activeTurnTokenUsage;
 let terminalEventCount = 0;
 let stdinClosed = false;
 let wakeTurn;
@@ -298,12 +372,73 @@ let stopTimer;
 let nextRpcId = 1;
 const pendingRpc = new Map();
 const pendingApprovals = new Map();
+const sessionApprovalGrants = createCodexSessionApprovalGrants();
 const pendingInputs = new Map();
 const completedControls = new Map();
+const mcpElicitations = createCodexMcpElicitations({ send: sendProvider, persist, safeText: safeExternalText });
+const idleHibernation = createCodexIdleHibernation(() => ({
+  providerThreadId: nativeThreadId, completedTurns: terminalEventCount,
+  active: activeTurn || stopping,
+  pending: pendingTurns.length + pendingApprovals.size + pendingInputs.size + pendingRpc.size + mcpElicitations.size,
+  otherControls: controlSockets.size > 1,
+}));
 const assistantItemsWithDelta = new Set();
 const assistantDeltaBuffers = new Map();
 const startedToolItems = new Set();
 const toolItemsWithOutput = new Set();
+const toolBoundaryWaiters = new Set();
+let toolBoundaryVersion = 0;
+let executionExpired = false;
+let rejectExecution;
+const executionWatchdog = createCodexExecutionWatchdog({
+  waitingForHuman: () => pendingApprovals.size > 0 || pendingInputs.size > 0 || mcpElicitations.size > 0,
+  expire: (diagnostic) => {
+    if (!activeTurn) return;
+    executionExpired = true;
+    process.stderr.write(`${JSON.stringify({
+      event: "coding_execution_expired",
+      phase: diagnostic.phase,
+      durationMs: diagnostic.durationMs,
+      dispatchId: digest([nativeThreadId, activeNativeTurnId]),
+      ...(diagnostic.toolCallId ? { toolCallId: diagnostic.toolCallId } : {}),
+      remoteOutcome: "unknown",
+    })}\n`);
+    rejectExecution?.(new Error("Coding execution deadline exceeded"));
+  },
+});
+
+function settleToolBoundaryWaiters(reachedBoundary) {
+  for (const waiter of toolBoundaryWaiters) {
+    clearTimeout(waiter.timeout);
+    waiter.resolve(reachedBoundary);
+  }
+  toolBoundaryWaiters.clear();
+}
+
+function publishToolBoundary(nativeTurnId) {
+  if (nativeTurnId !== activeNativeTurnId) return;
+  toolBoundaryVersion += 1;
+  settleToolBoundaryWaiters(true);
+}
+
+function waitForToolBoundary(afterVersion, expectedTurnId, timeoutMs) {
+  if (toolBoundaryVersion > afterVersion) return Promise.resolve(true);
+  if (!activeTurn || activeNativeTurnId !== expectedTurnId || timeoutMs <= 0) {
+    return Promise.resolve(false);
+  }
+  if (toolBoundaryWaiters.size >= MAX_CONTROL_SOCKETS) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const waiter = {
+      resolve,
+      timeout: setTimeout(() => {
+        toolBoundaryWaiters.delete(waiter);
+        resolve(false);
+      }, timeoutMs),
+    };
+    waiter.timeout.unref();
+    toolBoundaryWaiters.add(waiter);
+  });
+}
 
 function digest(parts) {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 32);
@@ -319,13 +454,61 @@ function assertTrackedItemCapacity(collection, value) {
   }
 }
 
-function toolPresentation(type) {
-  if (type === "commandExecution") return { displayName: "Run command", kind: "command" };
-  if (type === "fileChange") return { displayName: "Update files", kind: "file_change" };
-  if (type === "webSearch") return { displayName: "Search web", kind: "search" };
-  if (type === "plan") return { displayName: "Update plan", kind: "plan" };
-  if (type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
+function toolPresentation(item) {
+  if (item.type === "commandExecution") return { displayName: "Run command", kind: "command" };
+  if (item.type === "fileChange") return { displayName: "Update files", kind: "file_change" };
+  if (item.type === "webSearch") return { displayName: "Search web", kind: "search" };
+  if (item.type === "plan") return { displayName: "Update plan", kind: "plan" };
+  if (item.type === "reasoning") return { displayName: "Thinking", kind: "reasoning" };
+  if (item.type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
+  if (item.type === "mcpToolCall" && item.server && item.tool) {
+    return { displayName: `Use ${item.server}.${item.tool}`, kind: "tool" };
+  }
   return { displayName: "Use tool", kind: "tool" };
+}
+
+function safeDisplayPath(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4_096 || value.includes("\0")) {
+    return undefined;
+  }
+  const normalized = value.replaceAll("\\", "/");
+  if (!isAbsolute(normalized)) {
+    if (normalized.split("/").includes("..")) return undefined;
+    return normalized;
+  }
+  const ownerHome = "/home/matrix/home";
+  if (normalized === ownerHome) return "~/";
+  if (normalized.startsWith(`${ownerHome}/`)) return `~/${normalized.slice(ownerHome.length + 1)}`;
+  for (const writableRoot of config.writableRoots) {
+    const root = writableRoot.replaceAll("\\", "/").replace(/\/$/, "");
+    if (normalized !== root && !normalized.startsWith(`${root}/`)) continue;
+    const ownerRelative = relative(root, normalized).replaceAll("\\", "/");
+    return ownerRelative || ".";
+  }
+  return undefined;
+}
+
+function safeToolDetails(item) {
+  if (item.type === "commandExecution") {
+    const command = typeof item.command === "string" ? item.command.trim() : "";
+    const safeCommand = command.length > 0
+      && command.length <= 1_000
+      && !UNSAFE_DISPLAY_TEXT.test(command)
+      && !CREDENTIAL_DISPLAY_TEXT.test(command)
+      && !/[\r\n\u0000]/.test(command)
+      ? command
+      : undefined;
+    const cwd = safeDisplayPath(item.cwd);
+    return {
+      ...(safeCommand ? { preview: safeCommand, previewKind: "command" } : {}),
+      ...(cwd ? { detail: `Working directory: ${cwd}` } : {}),
+    };
+  }
+  if (item.type === "fileChange") {
+    const path = safeDisplayPath(item.changes?.[0]?.path);
+    return path ? { preview: path, previewKind: "path" } : {};
+  }
+  return {};
 }
 
 function toolOutcome(status) {
@@ -419,7 +602,7 @@ function sendProvider(value) {
   child.stdin.write(`${JSON.stringify(value)}\n`);
 }
 
-function request(method, params) {
+function request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
   if (pendingRpc.size >= MAX_PENDING_REQUESTS) {
     return Promise.reject(new Error("provider_request_limit"));
   }
@@ -428,7 +611,7 @@ function request(method, params) {
     const timeout = setTimeout(() => {
       pendingRpc.delete(id);
       reject(new Error("provider_request_timeout"));
-    }, RPC_TIMEOUT_MS);
+    }, timeoutMs);
     timeout.unref();
     pendingRpc.set(id, { resolve, reject, timeout });
     sendProvider({ id, method, params });
@@ -483,6 +666,14 @@ async function handleApproval(raw) {
   }
   const identity = approvalIdentity(parsed.data);
   const decisions = decisionMapping(parsed.data);
+  const sessionDecision = sessionApprovalGrants.decisionFor(
+    parsed.data.method,
+    decisions.nativeDecisionByMatrixDecision,
+  );
+  if (sessionDecision !== undefined) {
+    sendProvider({ id: parsed.data.id, result: { decision: sessionDecision } });
+    return true;
+  }
   if (decisions.allowedDecisions.length === 0) {
     sendProvider({ id: parsed.data.id, result: { decision: "cancel" } });
     return true;
@@ -500,6 +691,7 @@ async function handleApproval(raw) {
   });
   pendingApprovals.set(identity.approvalId, {
     nativeRequestId: parsed.data.id,
+    method: parsed.data.method,
     allowedDecisions: decisions.allowedDecisions,
     nativeDecisionByMatrixDecision: decisions.nativeDecisionByMatrixDecision,
     expiresAt: Date.now() + REQUEST_TIMEOUT_MS,
@@ -587,15 +779,18 @@ async function handleItemLifecycle(raw) {
     return true;
   }
 
-  const presentation = toolPresentation(item.type);
+  const presentation = toolPresentation(item);
+  const details = safeToolDetails(item);
   if (parsed.data.method === "item/started") {
     assertTrackedItemCapacity(startedToolItems, matrixItemId);
     await persist({
       type: "matrix.codex.tool.started",
       toolCallId: matrixItemId,
       ...presentation,
+      ...details,
     });
     startedToolItems.add(matrixItemId);
+    executionWatchdog.toolStarted(matrixItemId, item.type);
     return true;
   }
 
@@ -605,6 +800,7 @@ async function handleItemLifecycle(raw) {
       type: "matrix.codex.tool.started",
       toolCallId: matrixItemId,
       ...presentation,
+      ...details,
     });
     startedToolItems.add(matrixItemId);
   }
@@ -622,22 +818,37 @@ async function handleItemLifecycle(raw) {
     outcome: toolOutcome(item.status),
   });
   startedToolItems.delete(matrixItemId);
+  executionWatchdog.toolCompleted(matrixItemId);
   toolItemsWithOutput.delete(matrixItemId);
+  publishToolBoundary(parsed.data.params.turnId);
   return true;
 }
 
 async function handleProviderMessage(raw) {
   const response = RpcResponseSchema.safeParse(raw);
-  if (response.success && pendingRpc.has(response.data.id)) {
+  if (raw?.method === undefined && response.success && pendingRpc.has(response.data.id)) {
     const pending = pendingRpc.get(response.data.id);
     pendingRpc.delete(response.data.id);
     clearTimeout(pending.timeout);
-    if (response.data.error !== undefined) pending.reject(new Error("provider_request_failed"));
+    if (response.data.error !== undefined) pending.reject(providerRpcError(response.data.error));
     else pending.resolve(response.data.result);
+    return;
+  }
+  // A deadline settles this execution once. Do not accept late tool results,
+  // approvals or a final answer while interruption/shutdown is in flight.
+  if (executionExpired || !activeTurn) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
+  const notificationTurnId = raw?.params?.turnId ?? raw?.params?.turn?.id;
+  if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
     return;
   }
   if (await handleApproval(raw)) return;
   if (await handleInput(raw)) return;
+  if (await mcpElicitations.handle(raw, nativeThreadId)) return;
+  if (rejectCodexServerRequest(raw, sendProvider)) return;
   if (await handleItemLifecycle(raw)) return;
   const outputDelta = ToolOutputDeltaSchema.safeParse(raw);
   if (outputDelta.success) {
@@ -647,6 +858,11 @@ async function handleProviderMessage(raw) {
     );
     assertTrackedItemCapacity(toolItemsWithOutput, toolCallId);
     toolItemsWithOutput.add(toolCallId);
+    // MCP progress notifications can be liveness heartbeats, not useful work.
+    if (outputDelta.data.method !== "item/mcpToolCall/progress"
+      && typeof outputDelta.data.params.delta === "string" && outputDelta.data.params.delta.length > 0) {
+      executionWatchdog.progress(toolCallId);
+    }
     return;
   }
   const delta = AgentDeltaSchema.safeParse(raw);
@@ -655,11 +871,30 @@ async function handleProviderMessage(raw) {
     assertTrackedItemCapacity(assistantItemsWithDelta, messageId);
     await bufferAssistantDelta(messageId, delta.data.params.delta);
     assistantItemsWithDelta.add(messageId);
+    if (delta.data.params.delta.length > 0) executionWatchdog.progress();
+    return;
+  }
+  const usage = TokenUsageUpdatedSchema.safeParse(raw);
+  if (usage.success) {
+    if (
+      activeTurn &&
+      usage.data.params.threadId === nativeThreadId &&
+      usage.data.params.turnId === activeNativeTurnId
+    ) {
+      const last = usage.data.params.tokenUsage.last;
+      activeTurnTokenUsage = {
+        input_tokens: last.inputTokens,
+        output_tokens: last.outputTokens,
+        cached_input_tokens: last.cachedInputTokens,
+        reasoning_output_tokens: last.reasoningOutputTokens,
+      };
+    }
     return;
   }
   const completed = TurnCompletedSchema.safeParse(raw);
   if (completed.success) {
-    await finishTurn(completed.data.params.turn.status === "completed" ? "completed" : "failed");
+    const status = completed.data.params.turn.status;
+    await finishTurn(status === "completed" ? "completed" : status === "interrupted" ? "aborted" : "failed");
   }
 }
 
@@ -708,10 +943,52 @@ async function discardProviderErrors(stream) {
 }
 
 function controlResponse(socket, value) {
-  socket.end(`${JSON.stringify(value)}\n`);
+  socket.end(`${JSON.stringify(value)}\n`, () => { if (idleHibernation.closing) stop(); });
+}
+
+async function steerActiveTurn(control) {
+  const expectedThreadId = nativeThreadId;
+  const expectedTurnId = activeNativeTurnId;
+  if (!expectedThreadId || !expectedTurnId) return false;
+  const deadline = Date.now() + STEER_RPC_TIMEOUT_MS;
+
+  for (let attempt = 0; attempt < MAX_STEER_RETRIES; attempt += 1) {
+    if (!activeTurn || nativeThreadId !== expectedThreadId || activeNativeTurnId !== expectedTurnId) {
+      return false;
+    }
+    const boundaryBeforeRequest = toolBoundaryVersion;
+    const toolWasActive = startedToolItems.size > 0;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
+    try {
+      await request("turn/steer", {
+        threadId: expectedThreadId,
+        expectedTurnId,
+        clientUserMessageId: control.clientRequestId,
+        input: [{ type: "text", text: control.prompt, text_elements: [] }],
+      }, remainingMs);
+      return true;
+    } catch (error) {
+      if (!(error instanceof ProviderRpcError) || error.reason !== "turn_not_idle") throw error;
+      if (!activeTurn || activeNativeTurnId !== expectedTurnId) return false;
+      const boundaryAlreadyReached = toolBoundaryVersion > boundaryBeforeRequest;
+      if (!toolWasActive && startedToolItems.size === 0 && !boundaryAlreadyReached) return false;
+      if (!boundaryAlreadyReached) {
+        const reachedBoundary = await waitForToolBoundary(
+          boundaryBeforeRequest,
+          expectedTurnId,
+          deadline - Date.now(),
+        );
+        if (!reachedBoundary) return false;
+      }
+    }
+  }
+  return false;
 }
 
 async function applyControl(control) {
+  if (control.type === "hibernate") return { ok: idleHibernation.prepare(control.providerThreadId) };
+  if (idleHibernation.closing) return { ok: false };
   const replay = completedControls.get(control.clientRequestId);
   if (replay) {
     const same = replay.fingerprint === digest([control]);
@@ -719,14 +996,25 @@ async function applyControl(control) {
   }
   if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
+  } else if (control.type === "steer") {
+    if (!await steerActiveTurn(control)) return { ok: false };
+  } else if (control.type === "interrupt") {
+    if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
+    await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
   } else if (control.type === "approval") {
-    const pending = pendingApprovals.get(control.approvalId);
-    if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
-    sendProvider({
-      id: pending.nativeRequestId,
-      result: { decision: pending.nativeDecisionByMatrixDecision[control.decision] },
-    });
-    pendingApprovals.delete(control.approvalId);
+    if (!await mcpElicitations.decide(control.approvalId, control.decision)) {
+      const pending = pendingApprovals.get(control.approvalId);
+      if (!pending || !pending.allowedDecisions.includes(control.decision)) return { ok: false };
+      const nativeDecision = pending.nativeDecisionByMatrixDecision[control.decision];
+      sendProvider({
+        id: pending.nativeRequestId,
+        result: { decision: nativeDecision },
+      });
+      if (control.decision === "approve_for_session") {
+        sessionApprovalGrants.grant(pending.method);
+      }
+      pendingApprovals.delete(control.approvalId);
+    }
   } else {
     const pending = pendingInputs.get(control.requestId);
     if (!pending) return { ok: false };
@@ -793,6 +1081,10 @@ await chmod(controlPath, 0o600);
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
+  void mcpElicitations.sweep().catch(() => {
+    process.stderr.write("Integration expiry could not be settled.\n");
+    stop();
+  });
   for (const [approvalId, pending] of pendingApprovals) {
     if (pending.expiresAt > now) continue;
     pendingApprovals.delete(approvalId);
@@ -809,23 +1101,13 @@ const cleanupTimer = setInterval(() => {
 }, 30_000);
 cleanupTimer.unref();
 
-const child = spawn(command, [...commandArgs, "app-server"], {
-  cwd: process.cwd(),
-  env: process.env,
-  stdio: ["pipe", "pipe", "pipe"],
-});
-const childExit = new Promise((resolve) => {
-  child.once("error", (error) => resolve({ code: null, signal: null, error }));
-  child.once("close", (code, signal) => {
-    if (stopTimer) clearTimeout(stopTimer);
-    for (const pending of pendingRpc.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("provider_stopped"));
-    }
-    pendingRpc.clear();
-    resolve({ code, signal });
-  });
-});
+const startupController = new AbortController();
+let child;
+let childExit = Promise.resolve({ code: null, signal: null });
+let providerOutput = Promise.resolve({ ok: true });
+let providerErrors = Promise.resolve({ ok: true });
+let startupReconnecting = false;
+let userStopped = false;
 
 function decodeTurnFrame(line) {
   if (Buffer.byteLength(line, "utf8") > MAX_TURN_FRAME_BYTES) return undefined;
@@ -855,7 +1137,7 @@ function enqueueTurn(line) {
 }
 
 function enqueuePendingTurn(turn) {
-  if (pendingTurns.length >= MAX_PENDING_TURNS) return false;
+  if (idleHibernation.closing || stopping || pendingTurns.length >= MAX_PENDING_TURNS) return false;
   pendingTurns.push(turn);
   wakeTurn?.();
   wakeTurn = undefined;
@@ -898,27 +1180,35 @@ input.on("close", () => {
 function stop() {
   if (stopping) return;
   stopping = true;
+  startupController.abort();
   input.close();
   wakeTurn?.();
   wakeTurn = undefined;
-  child.kill("SIGTERM");
-  stopTimer = setTimeout(() => child.kill("SIGKILL"), PROVIDER_STOP_TIMEOUT_MS);
+  if (!child) return;
+  signalCodexProviderChild(child, "SIGTERM");
+  stopTimer = setTimeout(() => signalCodexProviderChild(child, "SIGKILL"), PROVIDER_STOP_TIMEOUT_MS);
   stopTimer.unref();
 }
 
 async function finishTurn(outcome) {
+  executionWatchdog.stop();
+  await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
     assistantDeltaBuffers.size > 0 ||
     startedToolItems.size > 0 ||
     toolItemsWithOutput.size > 0;
   if (!activeTurn && !hasUnsettledItems) {
-    if (outcome === "failed" && terminalEventCount === 0) {
-      await persist({ type: "turn.failed" });
+    if ((outcome === "failed" || outcome === "aborted") && terminalEventCount === 0) {
+      await persist({ type: outcome === "aborted" ? "turn.aborted" : "turn.failed" });
       terminalEventCount += 1;
     }
     return;
   }
+  const tokenUsage = activeTurnTokenUsage;
   activeTurn = false;
+  activeNativeTurnId = undefined;
+  activeTurnTokenUsage = undefined;
+  settleToolBoundaryWaiters(false);
   for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
     await persist({ type: "matrix.codex.assistant.completed", messageId });
@@ -928,14 +1218,17 @@ async function finishTurn(outcome) {
     await persist({
       type: "matrix.codex.tool.completed",
       toolCallId,
-      outcome: "cancelled",
+      outcome: outcome === "failed" ? "failed" : "cancelled",
     });
     startedToolItems.delete(toolCallId);
     toolItemsWithOutput.delete(toolCallId);
   }
   assistantDeltaBuffers.clear();
   toolItemsWithOutput.clear();
-  await persist({ type: outcome === "completed" ? "turn.completed" : "turn.failed" });
+  await persist({
+    type: outcome === "completed" ? "turn.completed" : outcome === "aborted" ? "turn.aborted" : "turn.failed",
+    ...(outcome === "completed" && tokenUsage ? { usage: tokenUsage } : {}),
+  });
   terminalEventCount += 1;
   activeTurnOutcome?.(outcome);
   activeTurnOutcome = undefined;
@@ -947,49 +1240,86 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
+  executionExpired = false;
+  activeTurnTokenUsage = undefined;
   try {
-    await request("turn/start", turnStartParams(threadId, turn));
+    const started = await request("turn/start", turnStartParams(threadId, turn));
+    activeNativeTurnId = z.object({
+      turn: z.object({ id: NativeReferenceSchema }).passthrough(),
+    }).passthrough().parse(started).turn.id;
   } catch (error) {
     activeTurn = false;
+    activeNativeTurnId = undefined;
+    activeTurnTokenUsage = undefined;
     activeTurnOutcome = undefined;
     throw error;
   }
-  return Promise.race([
-    outcome,
-    childExit.then(async () => {
-      const output = await providerOutput;
-      if (!output.ok) throw output.error;
-      if (!activeTurn) return outcome;
-      throw new Error("provider_stopped_during_turn");
-    }),
-  ]);
+  const expired = new Promise((_resolve, reject) => { rejectExecution = reject; });
+  executionWatchdog.start();
+  try {
+    return await Promise.race([
+      outcome,
+      expired,
+      childExit.then(async () => {
+        const output = await providerOutput;
+        if (!output.ok) throw output.error;
+        if (!activeTurn) return outcome;
+        throw new Error("provider_stopped_during_turn");
+      }),
+    ]);
+  } catch (error) {
+    if (executionExpired && activeNativeTurnId) {
+      try {
+        await request("turn/interrupt", { threadId, turnId: activeNativeTurnId }, 5_000);
+      } catch (_cancelError) {
+        process.stderr.write("Coding cancellation unconfirmed; remote outcome unknown.\n");
+      }
+    }
+    throw error;
+  } finally {
+    executionWatchdog.stop();
+    rejectExecution = undefined;
+  }
 }
 
-const providerOutput = consumeProviderOutput(child.stdout).then(
-  () => ({ ok: true }),
-  (error) => {
-    stop();
-    return { ok: false, error };
-  },
-);
-const providerErrors = discardProviderErrors(child.stderr).then(
-  () => ({ ok: true }),
-  (error) => {
-    stop();
-    return { ok: false, error };
-  },
-);
-process.once("SIGTERM", stop);
-process.once("SIGINT", stop);
+process.once("SIGTERM", () => { userStopped = true; stop(); });
+process.once("SIGINT", () => { userStopped = true; stop(); });
 
 let exitCode = 0;
 try {
-  await request("initialize", {
-    clientInfo: { name: "matrix-os", title: "Matrix OS", version: "1" },
-    capabilities: { experimentalApi: true },
+  const initialized = await initializeCodexProvider({ command, args: commandArgs,
+    cwd: process.cwd(), env: process.env, signal: startupController.signal,
+    onRetry: async ({ label }) => {
+      startupReconnecting = true;
+      await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect",
+        kind: "phase", displayName: label });
+    },
   });
+  child = initialized.child;
+  childExit = initialized.closed.then((exit) => {
+    if (stopTimer) clearTimeout(stopTimer);
+    for (const pending of pendingRpc.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("provider_stopped"));
+    }
+    pendingRpc.clear();
+    return exit;
+  });
+  providerOutput = consumeProviderOutput(child.stdout).then(
+    () => ({ ok: true }), (error) => { stop(); return { ok: false, error }; },
+  );
+  providerErrors = discardProviderErrors(child.stderr).then(
+    () => ({ ok: true }), (error) => { stop(); return { ok: false, error }; },
+  );
+  if (startupReconnecting) {
+    await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect", outcome: "success" });
+    startupReconnecting = false;
+  }
+  startupController.signal.throwIfAborted();
   sendProvider({ method: "initialized", params: {} });
-  const started = await request("thread/start", {
+  const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
+  const started = await request(threadMethod, {
+    ...(config.providerThreadId ? { threadId: config.providerThreadId } : {}),
     model: config.model,
     serviceTier: config.serviceTier,
     cwd: process.cwd(),
@@ -998,8 +1328,12 @@ try {
     runtimeWorkspaceRoots: config.writableRoots,
     experimentalRawEvents: false,
   });
-  const threadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
+  nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
+  if (config.providerThreadId && nativeThreadId !== config.providerThreadId) {
+    throw new Error("provider_resume_identity_mismatch");
+  }
+  await persist({ type: "thread.started", thread_id: nativeThreadId });
   let turn = PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,
@@ -1009,8 +1343,8 @@ try {
     ],
   });
   while (turn && !stopping) {
-    const outcome = await runTurn(threadId, turn);
-    if (outcome !== "completed") exitCode = 1;
+    const outcome = await runTurn(nativeThreadId, turn);
+    if (outcome === "failed") exitCode = 1;
     const next = await Promise.race([
       nextTurn().then((value) => ({ type: "turn", value })),
       childExit.then((exit) => ({ type: "exit", exit })),
@@ -1038,12 +1372,29 @@ try {
   if (exit.error) throw exit.error;
   await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_REPLAY_GRACE_MS));
   if (activeTurn || terminalEventCount === 0) exitCode = 1;
-} catch (_error) {
+} catch (error) {
   exitCode = 1;
-  await finishTurn("failed").catch(() => undefined);
+  if (error instanceof ProviderStartupCleanupUnconfirmed) {
+    // Keep the runner/thread supervised and non-terminal while its exact child
+    // remains unconfirmed. Never release canonical busy state or retry here.
+    child = error.child;
+    childExit = error.closed;
+    startupReconnecting = true;
+    await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect",
+      kind: "phase", displayName: "Waiting for startup cleanup" });
+    await childExit;
+  }
+  if (startupReconnecting) {
+    await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect",
+      outcome: userStopped ? "cancelled" : "failed" });
+  }
+  await finishTurn(userStopped ? "aborted" : "failed").catch((error) => {
+    console.warn("[coding-agents] Terminal startup state could not be persisted:", error instanceof Error ? error.name : "UnknownError");
+  });
   stop();
   await Promise.allSettled([childExit, providerOutput, providerErrors]);
 } finally {
+  executionWatchdog.stop();
   input.close();
   clearInterval(cleanupTimer);
   if (stopTimer) clearTimeout(stopTimer);

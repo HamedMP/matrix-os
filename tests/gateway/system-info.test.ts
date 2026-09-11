@@ -13,6 +13,17 @@ function tmpHome(): string {
 }
 
 describe("T135: System info", () => {
+  it("advertises compatibility from the running code independently of release files", () => {
+    const homePath = tmpHome();
+    try {
+      expect(getSystemInfo(homePath).runtimeCompatibility).toEqual({
+        schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1,
+      });
+    } finally {
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("includes image provenance from build environment", () => {
     const homePath = tmpHome();
     const previousSha = process.env.MATRIX_BUILD_SHA;
@@ -278,6 +289,30 @@ describe("T135: System info", () => {
     }
   });
 
+  it("reports the startup-captured running bundle separately from installed provenance", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release.json");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    writeFileSync(
+      releasePath,
+      JSON.stringify({ version: "v2026.08.19-1002", channel: "dev" }),
+    );
+
+    try {
+      const info = getSystemInfo(homePath, {
+        runningVersion: "v2026.08.18-997",
+      });
+
+      expect(info.version).toBe("v2026.08.19-1002");
+      expect(info.runningVersion).toBe("v2026.08.18-997");
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("reports the persistent update channel separately from bundle provenance", () => {
     const homePath = tmpHome();
     const releasePath = join(homePath, "release.json");
@@ -526,7 +561,7 @@ describe("T135: System info", () => {
 
     const info = getSystemInfo(homePath);
 
-    expect(info.model).toBe("claude-opus-4-6");
+    expect(info.model).toBe("claude-opus-5");
     expect(info.effort).toBe("high");
     rmSync(homePath, { recursive: true, force: true });
   });
@@ -537,7 +572,7 @@ describe("T135: System info", () => {
 
     const info = getSystemInfo(homePath);
 
-    expect(info.model).toBe("claude-opus-4-6");
+    expect(info.model).toBe("claude-opus-5");
     expect(info.effort).toBe("high");
     rmSync(homePath, { recursive: true, force: true });
   });

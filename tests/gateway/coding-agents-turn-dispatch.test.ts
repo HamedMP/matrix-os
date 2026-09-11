@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { AgentThreadEventSchema } from "@matrix-os/contracts";
 import type { CodingAgentProviderAdapter } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { createCodingAgentTurnDispatcher } from "../../packages/gateway/src/coding-agents/turn-dispatcher.js";
 import {
@@ -157,6 +158,57 @@ describe("coding agent turn dispatch", () => {
         await harness.threads.getThread(ownerPrincipal, harness.threadId),
       )).not.toContain("provider_conversation_stable");
     } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("persists resumed provider output before the turn finishes", async () => {
+    let finishRun!: () => void;
+    const runGate = new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread: completedStart(() => "provider_conversation_streaming_turn"),
+      async resumeTurn({ thread, turn, resumeState, publishEvents, now, nextEventId }) {
+        await publishEvents?.({
+          events: [AgentThreadEventSchema.parse({
+            type: "assistant.text.delta",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: now().toISOString(),
+            messageId: `msg_${turn.turnId}`,
+            delta: "Turn is still working...",
+          })],
+        });
+        await runGate;
+        return { events: [], outcome: "completed", resumeState };
+      },
+    };
+    const harness = await createTurnHarness({ provider });
+
+    try {
+      const path = `/api/coding-agents/threads/${harness.threadId}/turns`;
+      expect((await harness.app.request(postTurn(path, {
+        ...turnBody,
+        clientRequestId: "req_streaming_turn_1",
+      }))).status).toBe(202);
+      await vi.waitFor(async () => {
+        const snapshot = await harness.threads.getThread(ownerPrincipal, harness.threadId);
+        expect(snapshot.events.items).toContainEqual(expect.objectContaining({
+          type: "assistant.text.delta",
+          delta: "Turn is still working...",
+        }));
+        expect(snapshot.thread.status).toBe("running");
+      });
+
+      finishRun();
+      await vi.waitFor(async () => {
+        await expect(harness.threads.getThread(ownerPrincipal, harness.threadId))
+          .resolves.toMatchObject({ thread: { status: "completed" } });
+      });
+    } finally {
+      finishRun();
       await harness.cleanup();
     }
   });

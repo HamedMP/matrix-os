@@ -5,7 +5,7 @@ describe("E2E: Health endpoint", () => {
   let gw: TestGateway;
 
   beforeAll(async () => {
-    gw = await startTestGateway();
+    gw = await startTestGateway({ runningVersion: "v2026.08.18-997" });
   });
 
   afterAll(async () => {
@@ -17,5 +17,13 @@ describe("E2E: Health endpoint", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe("ok");
+    expect(body.runningVersion).toBe("v2026.08.18-997");
+  });
+
+  it("reports the same startup-captured version through authenticated system info", async () => {
+    const res = await gw.request("/api/system/info");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.runningVersion).toBe("v2026.08.18-997");
   });
 });

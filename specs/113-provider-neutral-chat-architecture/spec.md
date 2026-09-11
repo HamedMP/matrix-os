@@ -1,10 +1,14 @@
 # Canonical Chat, Provider, and Project Workspace Architecture
 
+> **OS-view amendment:** canonical Chat identity, provider binding, Turn state, copy, recovery, and persistence are shared across Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile. Renderers may adapt chrome and spatial composition but must not create renderer-specific Chat models. See `specs/119-os-view-parity/spec.md`.
+
 **Linear issue:** MAT-319
 **Created:** 2026-08-13
 **Status:** Amended for final architecture review on 2026-08-24
 **Scope:** Canonical contracts, persistence, provider execution, shared Desktop surfaces, workspace resources, migration, and implementation sequencing
 **Related delivery:** MAT-299, MAT-318, MAT-321, MAT-344, MAT-364, and MAT-468
+
+**Startup/recovery contract:** [OM-234: startup, usage errors, and model discovery](./chat-startup-and-model-discovery.md).
 
 ## Purpose
 
@@ -653,7 +657,7 @@ All schemas are strict and bounded. Every mutating HTTP endpoint uses Hono
 | `POST /api/chats/:chatId/exports` | Verified principal | Owner/org admin | Bounded temp export with cleanup policy |
 | `GET /api/chat-providers` | Verified principal | Owner/member read | Safe Driver/Instance/model/options/skills/commands projection only |
 | `GET /api/chats/:chatId/resources` | Verified principal | Owner/member read | Capability- and Project-filtered `@` resource search; opaque IDs only |
-| Chat event WebSocket | Browser query token or native/CLI bearer path | Owner/member read | Exact query-token allowlist, bounded frame schema, replay cursor |
+| `GET /api/chats/events` HTTP event stream | Verified browser/native/CLI bearer principal | Owner/member read | `text/event-stream`, bounded frame schema, `Last-Event-ID` replay cursor |
 | Channel adapter dispatch | Authenticated internal channel principal | Mapped owner/member action | Channel/thread binding resolved server-side; no owner override |
 
 Auth failure is fail-closed. Missing database, ProjectManager, Provider registry,
@@ -671,6 +675,8 @@ The Gateway subscription hub:
 - caps connections per owner and globally;
 - tracks `lastTouched`, sweeps stale connections, and evicts failed senders;
 - isolates each send failure;
+- uses a bounded SSE response queue and evicts slow consumers;
+- sends bounded heartbeat comments and treats response cancellation as detach;
 - supports replay after a monotonic cursor and signals a replay gap;
 - publishes only after transaction commit; and
 - drains/clears subscribers before repository/shared-Kysely shutdown.
@@ -698,7 +704,7 @@ Initial hard maxima; lower deployment-specific limits may be configured.
 | Provider registry | 20 Drivers and 64 Instances per owner; duplicate stable IDs fail startup |
 | Instance catalog | 64 models, 64 skills/commands, 32 option descriptors, and 128 tool capability IDs per projection |
 | Dispatch history window | 200 messages or 2 MiB encoded; explicit range and truncation metadata required |
-| WebSocket frame | Existing bounded Chat frame limit; schema validation after JSON parsing |
+| HTTP event-stream frame | 16 KiB application-frame limit; schema validation after incremental SSE parsing |
 | Event subscribers | 32 per owner and a configured global cap; TTL sweep plus explicit shutdown drain |
 | Exports | Streamed; at most 20 retained temporary exports per owner; 24-hour TTL with symlink-safe recurring cleanup |
 | External capability/health calls | `AbortSignal.timeout`, 2 seconds default and 30 seconds hard maximum |
@@ -893,9 +899,10 @@ Implementation tests are written first after these public seams are approved.
   resolution; first-Turn binding; event/state bounds; same-Instance resume;
   cross-Instance mutation rejection and Fork; cancel timeout; generic failures;
   Project/root requirements.
-- **Gateway/auth:** route/body/query validation, `bodyLimit` including DELETE,
-  personal/org membership matrix, browser WebSocket query-token path, replay
-  gaps, stale subscriber eviction, shutdown drain.
+- **Gateway/auth:** route/body/query/header validation, `bodyLimit` including
+  DELETE, personal/org membership matrix, standard bearer-authenticated HTTP
+  event stream, replay gaps, bounded response queues, stale subscriber
+  eviction, cancellation cleanup, and shutdown drain.
 - **Concurrency:** Turn admission versus context update/delete/archive; late
   provider callbacks; duplicate requests; two-shell mutation conflicts.
 - **Shells:** identical Global/Project Chat composition, runtime-scope

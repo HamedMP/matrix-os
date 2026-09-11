@@ -168,7 +168,7 @@ describe('platform/journey-routes', () => {
       });
       await admitPrebillingIntent(db, {
         intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: '2026-06-11T12:30:00.000Z',
-        reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000,
+        maxActive: 1,
         now: '2026-06-11T11:56:00.000Z',
       });
       await db.transaction((trx) => authorizePrebillingIntent(trx, {

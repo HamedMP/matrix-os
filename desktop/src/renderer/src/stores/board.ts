@@ -1,9 +1,8 @@
-// Board (kanban) store. Wire shapes verified against
+// Shared project/task catalog and live session linkage. Wire shapes verified against
 // packages/gateway/src/workspace-routes.ts + task-manager.ts:
 //   GET  /api/workspace/projects            -> { projects: ProjectConfig[], nextCursor: null }
 //   GET  /api/projects/{slug}/tasks         -> { tasks: TaskRecord[], nextCursor: string|null }
-//   POST /api/projects/{slug}/tasks         -> { task: TaskRecord }
-//   PATCH/DELETE /api/projects/{slug}/tasks/{id} -> { task } / { ok: true }
+//   PATCH /api/projects/{slug}/tasks/{id} -> { task }
 // Server is last-write-wins, so mutations are serialized per task and stale
 // writes trigger a refetch instead of a silent overwrite (FR-011).
 import { create } from "zustand";
@@ -47,14 +46,6 @@ export interface Project {
   description?: string;
   updatedAt?: string;
 }
-
-export const BOARD_COLUMNS: readonly CardStatus[] = [
-  "todo",
-  "running",
-  "waiting",
-  "blocked",
-  "complete",
-];
 
 const CardStatusSchema = z.enum(["todo", "running", "waiting", "blocked", "complete", "archived"]);
 const PROJECT_CREATE_TIMEOUT_MS = 30_000;
@@ -135,25 +126,6 @@ function toCard(raw: unknown): Card | null {
   };
 }
 
-export function groupCardsByColumn(cards: Card[]): Record<CardStatus, Card[]> {
-  const grouped: Record<CardStatus, Card[]> = {
-    todo: [],
-    running: [],
-    waiting: [],
-    blocked: [],
-    complete: [],
-    archived: [],
-  };
-  for (const card of cards) {
-    if (card.status === "archived") continue;
-    grouped[card.status].push(card);
-  }
-  for (const status of BOARD_COLUMNS) {
-    grouped[status].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-  }
-  return grouped;
-}
-
 function categoryOf(err: unknown): AppErrorCategory {
   return err instanceof AppError ? err.category : "server";
 }
@@ -220,15 +192,6 @@ export interface TaskEventUpdated {
   status: string;
 }
 
-export interface CreateTaskInput {
-  title: string;
-  description?: string;
-  status?: CardStatus;
-  priority?: CardPriority;
-}
-
-export type CardPatch = Partial<Pick<Card, "title" | "description" | "status" | "priority" | "order">>;
-
 interface BoardState {
   projects: Project[];
   projectsStatus: ProjectListStatus;
@@ -247,18 +210,12 @@ interface BoardState {
     path?: string;
   }): Promise<Project | null>;
   selectProject(api: ApiClient, slug: string): Promise<void>;
-  refreshTasks(api: ApiClient, slug: string): Promise<void>;
-  createTask(api: ApiClient, slug: string, input: CreateTaskInput): Promise<Card | null>;
-  updateTask(api: ApiClient, slug: string, taskId: string, patch: CardPatch): Promise<void>;
   linkSession(
     api: ApiClient,
     slug: string,
     taskId: string,
     fields: { linkedSessionId?: string; linkedWorktreeId?: string; status?: CardStatus },
   ): Promise<void>;
-  moveTask(api: ApiClient, slug: string, taskId: string, status: CardStatus, order: number): Promise<void>;
-  archiveTask(api: ApiClient, slug: string, taskId: string): Promise<void>;
-  deleteTask(api: ApiClient, slug: string, taskId: string): Promise<void>;
   applyTaskEvent(event: TaskEventCreated | TaskEventUpdated): void;
   removeProjectState(slug: string): void;
 }
@@ -294,40 +251,6 @@ export const useBoard = create<BoardState>()((set, get) => {
       console.error("[board] Failed to load tasks:", err);
       set({ refreshing: false, error: categoryOf(err) });
     }
-  }
-
-  function mutateTask(
-    api: ApiClient,
-    slug: string,
-    taskId: string,
-    patch: CardPatch,
-  ): Promise<void> {
-    const before = get().cardsByProject[slug]?.find((card) => card.id === taskId);
-    if (!before) return Promise.resolve();
-    if (!canEnqueueTaskMutation(taskId)) {
-      set({ error: "server" });
-      return Promise.resolve();
-    }
-    const runtimeGeneration = captureRuntimeGeneration();
-    patchCard(slug, taskId, (card) => ({ ...card, ...patch }));
-    return enqueueTaskMutation(taskId, async () => {
-      try {
-        const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), patch);
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-        const card = toCard(response.task);
-        if (card) patchCard(slug, taskId, () => card);
-        set({ error: null });
-      } catch (err: unknown) {
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-        console.error("[board] Task update failed:", err);
-        patchCard(slug, taskId, () => before);
-        // FR-011: a rejected write may mean our base was stale — converge on
-        // server truth instead of silently overwriting, then surface the
-        // mutation failure (the refetch must not clear it).
-        await refreshInto(api, slug);
-        set({ error: categoryOf(err) });
-      }
-    });
   }
 
   return {
@@ -422,40 +345,6 @@ export const useBoard = create<BoardState>()((set, get) => {
       }
     },
 
-    refreshTasks: async (api, slug) => {
-      await refreshInto(api, slug);
-    },
-
-    createTask: async (api, slug, input) => {
-      const runtimeGeneration = captureRuntimeGeneration();
-      try {
-        const response = await api.post<{ task: unknown }>(taskPath(slug), input);
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
-        const card = toCard(response.task);
-        if (!card) {
-          set({ error: "server" });
-          return null;
-        }
-        set((state) => ({
-          cardsByProject: {
-            ...state.cardsByProject,
-            [slug]: (state.cardsByProject[slug] ?? []).some((existing) => existing.id === card.id)
-              ? (state.cardsByProject[slug] ?? [])
-              : [...(state.cardsByProject[slug] ?? []), card],
-          },
-          error: null,
-        }));
-        return card;
-      } catch (err: unknown) {
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
-        console.error("[board] Task create failed:", err);
-        set({ error: categoryOf(err) });
-        return null;
-      }
-    },
-
-    updateTask: (api, slug, taskId, patch) => mutateTask(api, slug, taskId, patch),
-
     linkSession: (api, slug, taskId, fields) => {
       const before = get().cardsByProject[slug]?.find((card) => card.id === taskId);
       if (!before) {
@@ -484,64 +373,6 @@ export const useBoard = create<BoardState>()((set, get) => {
           await refreshInto(api, slug);
           set({ error: categoryOf(err) });
           throw err;
-        }
-      });
-    },
-
-    moveTask: (api, slug, taskId, status, order) =>
-      mutateTask(api, slug, taskId, { status, order }),
-
-    archiveTask: (api, slug, taskId) => {
-      const cards = get().cardsByProject[slug];
-      if (!cards?.some((card) => card.id === taskId)) return Promise.resolve();
-      if (!canEnqueueTaskMutation(taskId)) {
-        set({ error: "server" });
-        return Promise.resolve();
-      }
-      const runtimeGeneration = captureRuntimeGeneration();
-      return enqueueTaskMutation(taskId, async () => {
-        try {
-          const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), {
-            status: "archived",
-          });
-          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-          const card = toCard(response.task);
-          if (card) patchCard(slug, taskId, () => card);
-          set({ error: null });
-        } catch (err: unknown) {
-          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-          console.error("[board] Task archive failed:", err);
-          set({ error: categoryOf(err) });
-        }
-      });
-    },
-
-    deleteTask: (api, slug, taskId) => {
-      const cards = get().cardsByProject[slug];
-      if (!cards?.some((card) => card.id === taskId)) return Promise.resolve();
-      if (!canEnqueueTaskMutation(taskId)) {
-        set({ error: "server" });
-        return Promise.resolve();
-      }
-      const runtimeGeneration = captureRuntimeGeneration();
-      return enqueueTaskMutation(taskId, async () => {
-        try {
-          await api.delete<{ ok: boolean }>(taskPath(slug, taskId));
-          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-          set((state) => {
-            const current = state.cardsByProject[slug] ?? [];
-            return {
-              cardsByProject: {
-                ...state.cardsByProject,
-                [slug]: current.filter((card) => card.id !== taskId),
-              },
-              error: null,
-            };
-          });
-        } catch (err: unknown) {
-          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
-          console.error("[board] Task delete failed:", err);
-          set({ error: categoryOf(err) });
         }
       });
     },

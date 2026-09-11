@@ -18,6 +18,12 @@ describe("coding-agent workspace provider configuration", () => {
     })).toEqual(["claude", "codex"]);
   });
 
+  it("registers every supported customer VPS coding harness", () => {
+    expect(configuredWorkspaceProviderAgents({
+      MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS: "claude,codex,pi,opencode",
+    })).toEqual(["claude", "codex", "pi", "opencode"]);
+  });
+
   it("returns no workspace providers when both flags are disabled", () => {
     expect(configuredWorkspaceProviderAgents({})).toEqual([]);
     expect(configuredWorkspaceProviderAgents({

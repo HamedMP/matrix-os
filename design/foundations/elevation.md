@@ -8,15 +8,15 @@ status: stable
 
 ## Shadow Scale
 
-Shadow color is always derived from Deep (`#32352E`), never pure black.
+Shadow color is derived from brand Ink (`#1F2D1D`), never pure black.
 
 | Level | Value                                    | Use For                      |
 |-------|------------------------------------------|------------------------------|
-| xs    | `0 1px 2px rgba(50, 53, 46, 0.04)`     | Inputs, subtle lift          |
-| sm    | `0 2px 4px rgba(50, 53, 46, 0.06)`     | Cards at rest                |
-| md    | `0 4px 12px rgba(50, 53, 46, 0.08)`    | Cards on hover, dropdowns    |
-| lg    | `0 8px 24px rgba(50, 53, 46, 0.10)`    | Floating panels, modals      |
-| xl    | `0 16px 48px rgba(50, 53, 46, 0.12)`   | Windows, full dialogs        |
+| xs    | `0 1px 2px rgba(31, 45, 29, 0.05)`     | Inputs, subtle lift          |
+| sm    | `0 2px 8px rgba(31, 45, 29, 0.07)`     | Cards at rest                |
+| md    | `0 4px 24px rgba(31, 45, 29, 0.08)`    | Cards on hover, dropdowns    |
+| lg    | `0 12px 36px rgba(31, 45, 29, 0.12)`   | Floating panels, modals      |
+| xl    | `0 24px 64px rgba(31, 45, 29, 0.16)`   | Windows, full dialogs        |
 
 ## Glass-morphism
 
@@ -25,9 +25,9 @@ with the content behind them.
 
 | Variant  | Background               | Blur    | Use For                    |
 |----------|--------------------------|---------|----------------------------|
-| Light    | `rgba(255,255,255,0.70)` | 12px    | Tooltips, light overlays   |
-| Standard | `rgba(255,255,255,0.80)` | 12px    | Panels, sidebars, popovers|
-| Heavy    | `rgba(255,255,255,0.90)` | 16px    | Input bars, dialogs        |
+| Light    | `rgba(252,252,248,0.70)` | 12px    | Tooltips, light overlays   |
+| Standard | `rgba(252,252,248,0.82)` | 12px    | Panels, sidebars, popovers |
+| Heavy    | `rgba(252,252,248,0.92)` | 16px    | Input bars, dialogs        |
 
 Always pair glass surfaces with `border: 1px solid var(--border)` for a
 visible edge.
@@ -55,5 +55,5 @@ From the UX Guide — material type determines visual treatment:
   background, `sm` or `md` shadow
 - **Transient surfaces** (popovers, tooltips, drawers): glass-morphism with
   backdrop blur, `lg` shadow
-- **Overlays** (mission control, modal backdrops): `rgba(50, 53, 46, 0.40)`
+- **Overlays** (mission control, modal backdrops): `rgba(31, 45, 29, 0.40)`
   with `backdrop-filter: blur(8px)`

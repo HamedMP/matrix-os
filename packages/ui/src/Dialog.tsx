@@ -1,3 +1,4 @@
+import { useGettingStartedBlocker } from "./getting-started-visibility.js";
 import { useEffect, useEffectEvent, useRef, type HTMLAttributes, type ReactNode } from "react";
 import { cn } from "./cn.js";
 
@@ -8,6 +9,7 @@ export interface DialogProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 const overlayStyle: React.CSSProperties = {
+  margin: "auto",
   padding: 0,
   border: "none",
   background: "transparent",
@@ -19,7 +21,7 @@ const overlayStyle: React.CSSProperties = {
 const contentStyle: React.CSSProperties = {
   background: "var(--matrix-card)",
   color: "var(--matrix-card-fg)",
-  borderRadius: "var(--matrix-radius-xl)",
+  borderRadius: "var(--matrix-radius-xl, 16px)",
   padding: "24px",
   maxWidth: "480px",
   width: "90vw",
@@ -28,7 +30,8 @@ const contentStyle: React.CSSProperties = {
   boxShadow: "0 20px 60px rgba(0, 0, 0, 0.15)",
 };
 
-export function Dialog({ open, onClose, className, style, children, ...rest }: DialogProps) {
+export function Dialog({ open, onClose, className, style, children, "aria-label": ariaLabel, ...rest }: DialogProps) {
+  useGettingStartedBlocker(open);
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   // Read the latest onClose from the listeners without re-subscribing them.
@@ -73,7 +76,7 @@ export function Dialog({ open, onClose, className, style, children, ...rest }: D
   }, []);
 
   return (
-    <dialog ref={dialogRef} className="matrix-dialog-overlay" style={overlayStyle}>
+    <dialog ref={dialogRef} className="matrix-dialog-overlay" style={overlayStyle} aria-label={ariaLabel}>
       <div className={cn("matrix-dialog", className)} style={{ ...contentStyle, ...style }} {...rest}>
         {children}
       </div>

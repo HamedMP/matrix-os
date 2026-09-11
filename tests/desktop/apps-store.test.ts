@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from "vitest";
-import { appIconUrl, parseApps, preloadAppIcons, resetAppsRuntime, useApps } from "../../desktop/src/renderer/src/stores/apps";
+import { appIconUrl, parseApps, preloadAppIcons } from "../../desktop/src/renderer/src/features/apps/apps.api";
 
 describe("desktop app icon warmup", () => {
   afterEach(() => {
-    resetAppsRuntime();
+    for (const link of document.head.querySelectorAll('link[rel="preload"][as="image"]')) link.remove();
   });
 
   it("preloads only the first 20 selected-runtime icons", () => {
@@ -23,27 +23,9 @@ describe("desktop app icon warmup", () => {
   it("removes preloads when the runtime changes", () => {
     preloadAppIcons("https://platform.test", "primary", [{ slug: "notes", name: "Notes" }]);
 
-    resetAppsRuntime();
+    for (const link of document.head.querySelectorAll('link[rel="preload"][as="image"]')) link.remove();
 
     expect(document.head.querySelectorAll('link[rel="preload"][as="image"]')).toHaveLength(0);
-  });
-
-  it("waits for an already-running catalog request before a second consumer continues", async () => {
-    let resolveCatalog!: (value: unknown) => void;
-    const api = {
-      get: vi.fn(() => new Promise<unknown>((resolve) => {
-        resolveCatalog = resolve;
-      })),
-    };
-
-    const first = useApps.getState().load(api as never);
-    const second = useApps.getState().load(api as never);
-    resolveCatalog({ apps: [{ slug: "notes", name: "Notes" }] });
-
-    await Promise.all([first, second]);
-
-    expect(api.get).toHaveBeenCalledOnce();
-    expect(useApps.getState().apps).toEqual([{ slug: "notes", name: "Notes" }]);
   });
 
   it("preserves the primary-runtime icon URL", () => {
@@ -58,7 +40,27 @@ describe("desktop app icon warmup", () => {
     }] })).toEqual([{
       slug: "2048",
       name: "2048",
+      path: "apps/games/2048/index.html",
       appIdentity: "games/2048",
     }]);
+  });
+
+  it("makes existing generated apps placeable from either catalog path shape", () => {
+    expect(parseApps({ apps: [{
+      slug: "sushi-counter",
+      name: "Sushi Counter",
+      file: "sushi-counter/index.html",
+      path: "/files/apps/sushi-counter/index.html",
+    }] })).toEqual([{
+      slug: "sushi-counter",
+      name: "Sushi Counter",
+      path: "apps/sushi-counter/index.html",
+      appIdentity: "sushi-counter",
+    }]);
+  });
+
+  it("parses the complete catalog without client-side truncation", () => {
+    const apps = Array.from({ length: 201 }, (_, index) => ({ slug: `app-${index}`, name: `App ${index}` }));
+    expect(parseApps({ apps })).toHaveLength(201);
   });
 });

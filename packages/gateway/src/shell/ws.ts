@@ -73,6 +73,7 @@ export interface ShellWsFlowControlOptions {
 export interface ShellWsHandlerOptions {
   registry: ShellWsRegistry;
   adapter: ShellWsAdapter;
+  isSessionTombstoned?: (name: string) => Promise<boolean>;
   scrollbackStore?: ScrollbackStore;
   maxReplayBytes?: number;
   maxBuffers?: number;
@@ -418,7 +419,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
       runtime.outputCompat = outputCompat;
       // zellij attach can lose the race against the session's own creation
-      // (POST /api/terminal/sessions followed immediately by the ws attach, or
+      // (POST /api/terminal/workspaces/:workspaceId/tabs followed immediately by the ws attach, or
       // a cold zellij daemon). Retry briefly before declaring attach_failed so
       // transient startup races do not surface as user-visible errors.
       const maxAttachAttempts = 3;
@@ -610,6 +611,15 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
   async function open({ ws, session, fromSeq = 0, clientClass: openOptionsClass, declaredSize, exclusiveLease = false }: ShellWsOpenOptions): Promise<ShellWsSession> {
     const safeName = validateSessionName(session);
+    if (await options.isSessionTombstoned?.(safeName)) {
+      sendJson(ws, {
+        type: "error",
+        code: "session_not_found",
+        message: "Session not found",
+      });
+      ws.close?.();
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
     const sessions = await options.registry.list();
     const info = sessions.find((candidate) => candidate.name === safeName);
     if (!info) {

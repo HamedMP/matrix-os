@@ -36,7 +36,7 @@ export class AdmissionController {
     this.cleanupTimer.unref?.();
   }
 
-  acquire(runtimeId: string): AdmissionLease | null {
+  acquireGlobal(): AdmissionLease | null {
     if (this.closed || this.active >= this.config.globalConcurrency) return null;
     const now = this.now();
     this.sweep(now, false);
@@ -45,9 +45,25 @@ export class AdmissionController {
       this.globalWindowStartedAt = now;
     }
     if (this.globalCount >= this.config.globalRateLimitPerMinute) return null;
+    this.globalCount += 1;
+    this.active += 1;
+    let released = false;
+    return {
+      release: () => {
+        if (released) return;
+        released = true;
+        this.active = Math.max(0, this.active - 1);
+      },
+    };
+  }
+
+  admitRuntime(runtimeId: string): boolean {
+    if (this.closed) return false;
+    const now = this.now();
+    this.sweep(now, false);
     let state = this.runtimes.get(runtimeId);
     if (!state) {
-      if (this.runtimes.size >= this.config.maxRuntimeEntries) return null;
+      if (this.runtimes.size >= this.config.maxRuntimeEntries) return false;
       state = { active: 0, count: 0, windowStartedAt: now, lastTouchedAt: now };
       this.runtimes.set(runtimeId, state);
     }
@@ -56,14 +72,17 @@ export class AdmissionController {
       state.windowStartedAt = now;
     }
     state.lastTouchedAt = now;
-    if (state.active >= this.config.runtimeConcurrency || state.count >= this.config.rateLimitPerMinute) {
-      return null;
-    }
-
-    state.active += 1;
+    if (state.count >= this.config.rateLimitPerMinute) return false;
     state.count += 1;
-    this.active += 1;
-    this.globalCount += 1;
+    return true;
+  }
+
+  acquireResources(runtimeId: string): AdmissionLease | null {
+    if (this.closed) return null;
+    const state = this.runtimes.get(runtimeId);
+    if (!state || state.active >= this.config.runtimeConcurrency) return null;
+    state.active += 1;
+    state.lastTouchedAt = this.now();
     let released = false;
     return {
       release: () => {
@@ -71,7 +90,6 @@ export class AdmissionController {
         released = true;
         state.active = Math.max(0, state.active - 1);
         state.lastTouchedAt = this.now();
-        this.active = Math.max(0, this.active - 1);
       },
     };
   }

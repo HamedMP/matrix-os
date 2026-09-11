@@ -13,7 +13,7 @@ describe("gateway shell layout routes", () => {
     return app;
   }
 
-  it("lists, shows, saves, applies, dumps, and deletes layouts", async () => {
+  it("keeps layout storage available but rejects legacy session layout actions", async () => {
     const layouts = {
       list: vi.fn(async () => [{ name: "dev", modifiedAt: "2026-01-01T00:00:00.000Z" }]),
       show: vi.fn(async () => ({ name: "dev", kdl: "layout {}" })),
@@ -37,17 +37,17 @@ describe("gateway shell layout routes", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kdl: "layout {}" }),
     })).json()).resolves.toEqual({ ok: true });
-    await expect((await app.request("/api/sessions/main/layouts/dev/apply", {
+    const apply = await app.request("/api/sessions/main/layouts/dev/apply", {
       method: "POST",
-    })).json()).resolves.toEqual({ ok: true });
-    await expect((await app.request("/api/sessions/main/layout/dump")).json()).resolves.toEqual({
-      layout: { kdl: "layout {}" },
     });
+    expect(apply.status).toBe(426);
+    const dump = await app.request("/api/sessions/main/layout/dump");
+    expect(dump.status).toBe(426);
     await expect((await app.request("/api/layouts/dev", { method: "DELETE" })).json()).resolves.toEqual({ ok: true });
 
     expect(layouts.save).toHaveBeenCalledWith("dev", "layout {}");
-    expect(workspace.applyLayout).toHaveBeenCalledWith("main", "dev");
-    expect(workspace.dumpLayout).toHaveBeenCalledWith("main");
+    expect(workspace.applyLayout).not.toHaveBeenCalled();
+    expect(workspace.dumpLayout).not.toHaveBeenCalled();
   });
 
   it("returns a stable unavailable error when layout storage is not wired", async () => {

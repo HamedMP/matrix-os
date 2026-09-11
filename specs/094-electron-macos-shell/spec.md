@@ -1,5 +1,7 @@
 # Feature Specification: Electron macOS Shell ("Operator")
 
+> **Terminology and parity amendment:** the shipped product surface is Electron Desktop. “Shell” and “Operator” below are historical implementation names. Electron Desktop remains the default packaged OS view and becomes the ongoing visual/interaction ground truth for shared desktop app surfaces. Canvas means the free-form Canvas OS view and is exposed through the app launcher; it is not the hosted Workspace Canvas described by older sections. See `specs/119-os-view-parity/spec.md`.
+
 **Feature Branch**: `094-electron-macos-shell`
 **Created**: 2026-06-13
 **Status**: Draft
@@ -14,7 +16,7 @@ The product model blends two proven desktop apps:
 - **From the OpenAI Codex app**: agent-first workflow — a list of parallel agent threads, a composer that launches agent work from anywhere, live run status, diff review before shipping, and notifications when an agent needs attention.
 - **From SlayZone**: task-centric workspace — kanban projects and tasks where each task owns its terminal, editor, browser, git, and artifact panels in a resizable panel strip, with templates, tags, and per-project statuses.
 
-What Matrix OS adds on top of both: everything runs on the user's own VPS (no local PTY, no local database of record), Hermes (the AI kernel) is a first-class conversation surface, and the user's Matrix OS apps and hosted Canvas shell are embeddable inside the same window.
+What Matrix OS adds on top of both: everything runs on the user's own VPS (no local PTY, no local database of record), Hermes (the AI kernel) is a first-class conversation surface, and the user's Matrix OS apps and shared Canvas composition are available inside the same window.
 
 All prior learnings from the SwiftUI prototype are treated as requirements here, not suggestions — they were paid for with real debugging time (auth loops, terminal client pileups, session merge bugs).
 

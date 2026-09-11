@@ -577,7 +577,22 @@ export function getAuthPage(
     var signOutTarget = ${signOutTargetJson};
     var billingSetupTarget = ${billingSetupTargetJson};
     var SIGN_OUT_TIMEOUT_MS = ${BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS};
-    var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
+    function normalizeRuntimeSlot(value) {
+      return typeof value === 'string'
+        && value.length <= 32
+        && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value)
+        ? value
+        : null;
+    }
+    function isRetryableAppSessionStatus(status) {
+      return status === 402
+        || status === 404
+        || status === 408
+        || status === 425
+        || status === 429
+        || status >= 500;
+    }
+    var requestedRuntime = normalizeRuntimeSlot(new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime'));
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
     var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
     var defaultDeveloperTools = ['codex', 'claude-code', 'opencode', 'pi'];
@@ -615,6 +630,8 @@ export function getAuthPage(
     var billingConfirmationPolls = 0;
     var maxBillingConfirmationPolls = 60;
     var billingRetryTimeoutId = null;
+    var appSessionRetryTimeoutId = null;
+    var appSessionRetryDelayMs = 4000;
     var provisioningRetryError = 'Matrix could not start building this VPS. Try again.';
     var activeProvisionButton = null;
     var activeProvisionInputs = [];
@@ -1046,6 +1063,14 @@ export function getAuthPage(
       checkoutJustCompleted = false;
       setProvisionControls(false, provisioningRetryError);
     }
+    function waitForAppSession(afterProvision) {
+      showLoadingState('Finishing your Matrix computer...');
+      if (appSessionRetryTimeoutId !== null) return;
+      appSessionRetryTimeoutId = window.setTimeout(function() {
+        appSessionRetryTimeoutId = null;
+        continueWithClerkSession(afterProvision);
+      }, appSessionRetryDelayMs);
+    }
     function retryProvisioningAfterBillingDelay(developerTools) {
       billingConfirmationPolls += 1;
       if (billingConfirmationPolls > maxBillingConfirmationPolls) {
@@ -1137,19 +1162,22 @@ export function getAuthPage(
         });
     }
     function continueWithClerkSession(afterProvision) {
+      var provisioningAccepted = afterProvision === true;
+      var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;
+      var passiveRuntimeContinuation = passiveCheckoutContinuation || Boolean(deviceReturnTarget);
       if (!window.Clerk.session) {
-        if (afterProvision) showProvisionRetryError();
+        if (provisioningAccepted) showProvisionRetryError();
         else showSignedInRecoveryState();
         return;
       }
       window.Clerk.session.getToken()
         .then(function(token) {
           if (!token) {
-            if (afterProvision) showProvisionRetryError();
+            if (provisioningAccepted) showProvisionRetryError();
             else showSignedInRecoveryState();
             return null;
           }
-          var sessionRedirectTarget = afterProvision ? provisionHandoffTarget : redirectTarget;
+          var sessionRedirectTarget = provisioningAccepted ? provisionHandoffTarget : redirectTarget;
           return fetch('/api/auth/app-session', {
             method: 'POST',
             headers: {
@@ -1165,33 +1193,33 @@ export function getAuthPage(
           if (!res) return null;
           if (res.ok) return res.json();
           if (res.status === 404) {
-            if (afterProvision) {
-              showProvisionRetryError();
-              return null;
-            }
-            if (checkoutJustCompleted) {
-              showDefaultInstallsState();
+            if (passiveRuntimeContinuation) {
+              waitForAppSession(provisioningAccepted);
               return null;
             }
             showNoRuntimeState();
             return null;
           }
           if (res.status === 402) {
-            if (afterProvision) showProvisionRetryError();
+            if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);
             else openBillingSettingsFromClerkSession();
             return null;
           }
-          if (afterProvision) showProvisionRetryError();
+          if (passiveRuntimeContinuation && isRetryableAppSessionStatus(res.status)) waitForAppSession(provisioningAccepted);
           else showSignedInRecoveryState();
           return null;
         })
         .then(function(payload) {
           if (!payload) return;
-          window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));
+          if (appSessionRetryTimeoutId !== null) {
+            window.clearTimeout(appSessionRetryTimeoutId);
+            appSessionRetryTimeoutId = null;
+          }
+          window.location.replace(provisioningAccepted ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));
         })
         .catch(function(err) {
           console.error('[matrix] Clerk session exchange failed', err instanceof Error ? err.name : String(typeof err));
-          if (afterProvision) showProvisionRetryError();
+          if (passiveRuntimeContinuation) waitForAppSession(provisioningAccepted);
           else showSignedInRecoveryState();
         });
     }
@@ -1336,176 +1364,7 @@ export function getNoContainerPage() {
 </html>`;
 }
 
-export function getVpsBootPage(input: { status: string }) {
-  const title = input.status === 'recovering' ? 'Restoring Matrix OS' : 'Booting Matrix OS';
-  const detail = input.status === 'recovering'
-    ? 'Matrix is restoring your workspace and will bring you back automatically.'
-    : 'Matrix is preparing your cloud computer. This usually takes a couple of minutes.';
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="8">
-  <title>${title}</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background:
-        radial-gradient(circle at 50% 42%, rgba(196, 162, 101, 0.14), transparent 31%),
-        linear-gradient(180deg, #fffdf6 0%, #f5efe2 100%);
-      color: #2f392c;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      padding: 28px;
-    }
-    main {
-      width: min(620px, 100%);
-      display: grid;
-      justify-items: center;
-      gap: 28px;
-      text-align: center;
-    }
-    .mark {
-      width: 132px;
-      height: 132px;
-      border-radius: 50%;
-      border: 1px solid rgba(47, 57, 44, 0.12);
-      display: grid;
-      place-items: center;
-      background: rgba(255, 253, 246, 0.62);
-      box-shadow: 0 24px 90px rgba(47, 57, 44, 0.12);
-      position: relative;
-      overflow: hidden;
-    }
-    .mark::before {
-      content: "";
-      width: 68px;
-      height: 68px;
-      border-radius: 50%;
-      border: 2px solid rgba(196, 162, 101, 0.38);
-      border-top-color: #c4a265;
-      animation: spin 1.9s cubic-bezier(0.16, 1, 0.3, 1) infinite;
-    }
-    .mark::after {
-      content: "M";
-      position: absolute;
-      inset: 0;
-      display: grid;
-      place-items: center;
-      font-size: 30px;
-      font-weight: 700;
-      color: #2f392c;
-    }
-    .wordmark {
-      margin: 0;
-      font-size: clamp(34px, 8vw, 68px);
-      font-weight: 500;
-      line-height: 0.96;
-      text-transform: uppercase;
-      background: linear-gradient(90deg, #2f392c 0%, #2f392c 24%, #c4a265 50%, #2f392c 76%, #2f392c 100%);
-      background-size: 300% 100%;
-      background-clip: text;
-      -webkit-background-clip: text;
-      color: transparent;
-      animation: shimmer 8s ease-in-out infinite, glow 8s ease-in-out infinite;
-    }
-    .copy {
-      display: grid;
-      gap: 14px;
-      max-width: 520px;
-    }
-    p {
-      color: rgba(47, 57, 44, 0.68);
-      font-size: 16px;
-      line-height: 1.65;
-      margin: 0;
-    }
-    .status {
-      min-height: 34px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      border: 1px solid rgba(47, 57, 44, 0.12);
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.48);
-      padding: 7px 12px;
-      color: rgba(47, 57, 44, 0.72);
-      font-size: 13px;
-      box-shadow: 0 12px 40px rgba(47, 57, 44, 0.08);
-    }
-    strong { color: #2f392c; font-weight: 700; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes shimmer {
-      0%, 100% { background-position: 200% 0; }
-      50% { background-position: -100% 0; }
-    }
-    @keyframes glow {
-      0%, 100% { filter: brightness(1); }
-      50% { filter: brightness(1.12); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .mark::before, .wordmark { animation-duration: 1ms; animation-iteration-count: 1; }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <div class="mark" aria-hidden="true"></div>
-    <div class="copy">
-      <h1 class="wordmark">${title}</h1>
-      <p>${detail}</p>
-    </div>
-    <p class="status">Instance status: <strong>${escapeHtml(input.status)}</strong></p>
-  </main>
-</body>
-</html>`;
-}
-
-const SERVER_STRENGTHS: Record<string, { vcpu: number; memoryGiB: number; diskGiB?: number }> = {
-  cpx11: { vcpu: 2, memoryGiB: 2, diskGiB: 40 },
-  cpx21: { vcpu: 3, memoryGiB: 4, diskGiB: 80 },
-  cpx22: { vcpu: 2, memoryGiB: 4, diskGiB: 80 },
-  cpx31: { vcpu: 4, memoryGiB: 8, diskGiB: 160 },
-  cpx41: { vcpu: 8, memoryGiB: 16, diskGiB: 240 },
-  cpx51: { vcpu: 16, memoryGiB: 32, diskGiB: 360 },
-  cx22: { vcpu: 2, memoryGiB: 4, diskGiB: 40 },
-  cx32: { vcpu: 4, memoryGiB: 8, diskGiB: 80 },
-  cx42: { vcpu: 8, memoryGiB: 16, diskGiB: 160 },
-  cx52: { vcpu: 16, memoryGiB: 32, diskGiB: 320 },
-};
-
-function machineStrength(machine: UserMachineRecord): {
-  serverType: string;
-  label: string;
-  detail: string;
-} {
-  const serverType = machine.serverType;
-  if (!serverType) {
-    return {
-      serverType: 'Unknown plan',
-      label: 'Unknown',
-      detail: 'CPU/RAM unavailable',
-    };
-  }
-  const strength = SERVER_STRENGTHS[serverType.toLowerCase()];
-  if (!strength) {
-    return {
-      serverType,
-      label: serverType,
-      detail: 'CPU/RAM unavailable',
-    };
-  }
-  return {
-    serverType,
-    label: `${strength.vcpu} vCPU`,
-    detail: `${strength.memoryGiB} GB RAM${strength.diskGiB ? ` · ${strength.diskGiB} GB disk` : ''}`,
-  };
-}
+export { getVpsBootPage } from './vps-boot-page.js';
 
 export type RuntimePickerMachine = UserMachineRecord & {
   displayVersion: string;
@@ -1516,7 +1375,6 @@ export function getRuntimePickerPage(input: {
   selectedHandle: string | null;
 }): string {
   const rows = input.machines.map((machine) => {
-    const strength = machineStrength(machine);
     const isSelected = machine.handle === input.selectedHandle;
     const version = machine.displayVersion;
     const title = machine.runtimeSlot === 'primary' ? 'Main Computer' : `${machine.runtimeSlot} Computer`;
@@ -1537,9 +1395,6 @@ export function getRuntimePickerPage(input: {
       </div>
       <div class="details">
         <span>${escapeHtml(version)}</span>
-        <span>${escapeHtml(strength.label)}</span>
-        <span>${escapeHtml(strength.detail)}</span>
-        <span>${escapeHtml(strength.serverType)}</span>
         <span>Created ${escapeHtml(started)}</span>
       </div>
     </a>`;

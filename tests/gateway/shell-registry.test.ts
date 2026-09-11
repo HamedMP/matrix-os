@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +19,36 @@ afterEach(async () => {
 });
 
 describe("shell registry", () => {
+  it("reports trustworthy agent liveness through the managed terminal wrapper", async () => {
+    const root = await tempRoot();
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "claude",
+      type: "turn-started",
+      occurredAt: "2026-08-31T12:00:00.000Z",
+    });
+    let command = "/home/matrix/home/system/zellij/matrix-terminal-shell";
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: root, command, observed: true })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+
+    await expect(registry.observeAgentLiveness("main", "claude")).resolves.toBe("running");
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "claude",
+      type: "session-ended",
+      occurredAt: "2026-08-31T12:01:00.000Z",
+    });
+    await expect(registry.observeAgentLiveness("main", "claude")).resolves.toBe("unknown");
+    command = "zsh";
+    await expect(registry.observeAgentLiveness("main", "claude")).resolves.toBe("stopped");
+  });
+
   it("decorates listed sessions concurrently", async () => {
     const root = await tempRoot();
     const live = new Set<string>();
@@ -96,7 +126,7 @@ describe("shell registry", () => {
     expect(adapter.focusedPaneRuntime).toHaveBeenCalledTimes(sessionNames.length);
   });
 
-  it("adds gateway-owned project and Git context while preserving the session cwd", async () => {
+  it("adds gateway-owned project, Git context, and a home-relative active cwd", async () => {
     const root = await tempRoot();
     const cwd = join(root, "projects", "matrix-os");
     await mkdir(cwd, { recursive: true });
@@ -122,15 +152,31 @@ describe("shell registry", () => {
     const listed = await registry.list();
     expect(listed).toMatchObject([{
       name: "calm-otter",
+      cwd: "projects/matrix-os",
       project: "Matrix OS",
       repository: "HamedMP/matrix-os",
       branch: "codex/session-context",
       pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
     }]);
-    expect(listed[0]).not.toHaveProperty("cwd");
     const persisted = JSON.parse(await readFile(join(root, "system", "shell-sessions.json"), "utf8"));
     expect(persisted.sessions["calm-otter"].cwd).toBe(resolvedCwd);
     expect(gitContextResolver.resolve).toHaveBeenCalledWith({ sessionName: "calm-otter", cwd: resolvedCwd });
+  });
+
+  it("does not expose an active cwd outside the Matrix home", async () => {
+    const root = await tempRoot();
+    const outside = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["calm-otter"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: outside, command: "zsh", observed: true })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    const listed = await registry.list();
+
+    expect(listed[0]).not.toHaveProperty("cwd");
   });
 
   it("persists an explicitly launched agent and omits agent metadata from plain terminals", async () => {
@@ -289,13 +335,19 @@ describe("shell registry", () => {
       listSessions: vi.fn(async () => ["main"]),
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
-      focusedPaneRuntime: vi.fn(async () => ({ cwd: root, command: "claude", observed: true })),
+      focusedPaneRuntime: vi.fn(async () => ({
+        cwd: root,
+        command: "claude",
+        title: "Investigate production SSH",
+        observed: true,
+      })),
     };
     const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.list()).resolves.toMatchObject([{
       name: "main",
       agent: "claude",
+      subtitle: "Investigate production SSH",
       visualStatus: "running",
     }]);
   });
@@ -774,7 +826,7 @@ describe("shell registry", () => {
       scrollbackStore: scrollbackStore as never,
     });
 
-    await registry.updateUiState("main", { placement: "background", lastSeenSeq: 4 });
+    await registry.updateUiState("main", { placement: "background", lastSeenSeq: 4, pinned: true });
     vi.setSystemTime(new Date("2026-06-18T12:00:01.000Z"));
     await registry.updateUiState("review-done", { lastSeenSeq: 3, visualStatus: "finished" });
     vi.setSystemTime(new Date("2026-06-18T12:00:02.000Z"));
@@ -782,6 +834,7 @@ describe("shell registry", () => {
     await expect(registry.list()).resolves.toMatchObject([
       {
         name: "main",
+        pinned: true,
         placement: "background",
         latestSeq: 12,
         lastSeenSeq: 4,
@@ -806,6 +859,7 @@ describe("shell registry", () => {
 
     const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
     expect(JSON.parse(raw).sessions.main.placement).toBe("background");
+    expect(JSON.parse(raw).sessions.main.pinned).toBe(true);
   });
 
   it("derives status dots from OSC marks and unread output while ignoring legacy client state", async () => {
@@ -1828,6 +1882,104 @@ describe("shell registry", () => {
     await expect(registry.delete("already-gone", { force: true })).resolves.toBeUndefined();
 
     expect(adapter.deleteSession).toHaveBeenCalledWith("already-gone", { force: true });
+  });
+
+  it("keeps a recovered pre-existing runtime when the registry write fails and allows retry", async () => {
+    const root = await tempRoot();
+    const systemPath = join(root, "system");
+    const persistPath = join(systemPath, "shell-sessions.json");
+    const backupPath = join(systemPath, "shell-sessions.backup.json");
+    await mkdir(systemPath, { recursive: true });
+    await writeFile(persistPath, JSON.stringify({
+      sessions: {
+        bench: {
+          name: "bench",
+          status: "exited",
+          createdAt: "2026-08-30T00:00:00.000Z",
+          updatedAt: "2026-08-30T00:00:00.000Z",
+          attachedClients: 0,
+          tabs: [],
+        },
+      },
+    }), { flag: "wx" });
+    let live = false;
+    let failRegistryWrite = true;
+    const adapter = {
+      listSessions: vi.fn(async () => live ? ["bench"] : []),
+      createSession: vi.fn(async () => undefined),
+      recoverSession: vi.fn(async () => {
+        live = true;
+        if (failRegistryWrite) {
+          await rename(persistPath, backupPath);
+          await mkdir(persistPath);
+        }
+      }),
+      deleteSession: vi.fn(async () => {
+        live = false;
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, persistPath });
+
+    await expect(registry.recover("bench")).rejects.toBeInstanceOf(Error);
+
+    expect(live).toBe(true);
+    expect(adapter.deleteSession).not.toHaveBeenCalled();
+
+    await rm(persistPath, { recursive: true });
+    await rename(backupPath, persistPath);
+    failRegistryWrite = false;
+
+    await expect(registry.recover("bench")).resolves.toMatchObject({
+      name: "bench",
+      status: "active",
+    });
+    expect(adapter.recoverSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries registry cleanup after runtime deletion succeeds but metadata persistence fails", async () => {
+    const root = await tempRoot();
+    const systemPath = join(root, "system");
+    const persistPath = join(systemPath, "shell-sessions.json");
+    const backupPath = join(systemPath, "shell-sessions.backup.json");
+    await mkdir(systemPath, { recursive: true });
+    await writeFile(persistPath, JSON.stringify({
+      sessions: {
+        bench: {
+          name: "bench",
+          status: "active",
+          createdAt: "2026-08-30T00:00:00.000Z",
+          updatedAt: "2026-08-30T00:00:00.000Z",
+          attachedClients: 0,
+          tabs: [],
+        },
+      },
+    }), { flag: "wx" });
+    let live = true;
+    let failRegistryWrite = true;
+    const adapter = {
+      listSessions: vi.fn(async () => live ? ["bench"] : []),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => {
+        live = false;
+        if (failRegistryWrite) {
+          await rename(persistPath, backupPath);
+          await mkdir(persistPath);
+        }
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, persistPath });
+
+    await expect(registry.delete("bench", { force: true })).rejects.toBeInstanceOf(Error);
+    expect(live).toBe(false);
+
+    await rm(persistPath, { recursive: true });
+    await rename(backupPath, persistPath);
+    failRegistryWrite = false;
+
+    await expect(registry.delete("bench", { force: true })).resolves.toBeUndefined();
+    expect(adapter.deleteSession).toHaveBeenCalledTimes(2);
+    const persisted = JSON.parse(await readFile(persistPath, "utf8"));
+    expect(persisted.sessions.bench).toBeUndefined();
   });
 
   it("deletes metadata-tracked sessions without listing live zellij sessions", async () => {

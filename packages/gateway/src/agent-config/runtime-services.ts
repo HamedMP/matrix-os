@@ -47,7 +47,9 @@ export interface HermesAgentRuntimeServices {
   controller: AgentRuntimeController;
 }
 
-export interface AgentRuntimeServices extends HermesAgentRuntimeServices {}
+export interface AgentRuntimeServices extends HermesAgentRuntimeServices {
+  systemRuntimeSources: { hermes: AgentRuntimeSource };
+}
 
 interface LazyOpenClawRpcOptions {
   readToken?: (homePath: string) => Promise<string>;
@@ -125,8 +127,8 @@ export function createLazyOpenClawRpc(
   }
 
   return {
-    async call(method, params, signal) {
-      return (await getClient()).call(method, params, signal);
+    async call(method, params, signal, callOptions) {
+      return (await getClient()).call(method, params, signal, callOptions);
     },
     reset,
     async close() {
@@ -418,5 +420,5 @@ export function createAgentRuntimeServices(options: {
     adapters,
     timeoutMs: 75_000,
   });
-  return { source, controller };
+  return { source, controller, systemRuntimeSources: { hermes: hermesSource } };
 }

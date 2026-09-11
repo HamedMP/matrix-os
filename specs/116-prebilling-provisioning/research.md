@@ -4,7 +4,7 @@
 
 **Decision**: Keep compute, region, billing interval, acquisition, and agent selection ahead of checkout. When `POST /billing/checkout` successfully creates and durably finalizes an open Stripe Checkout Session, atomically enqueue one owner-bound preparation intent and durable provisioning job, then return the existing checkout URL. Do not call the provider merely because a user highlighted a compute card or opened the billing UI.
 
-**Rationale**: At that point Matrix has every immutable provisioning input and a server-owned payable session, while checkout time can overlap the build. Stripe Checkout Sessions support an explicit expiration from 30 minutes to 24 hours; V1 uses a 30-minute policy window plus one minute of API transport/clock-skew headroom so Stripe does not reject a request that arrives just under its minimum. The provider-cost lease and payment window share that authority ([Stripe Checkout Session create reference](https://docs.stripe.com/api/checkout/sessions/create)).
+**Rationale**: At that point Matrix has every immutable provisioning input and a server-owned payable session, while checkout time can overlap the build. Stripe Checkout Sessions support an explicit expiration from 30 minutes to 24 hours; V1 uses a 30-minute policy window plus one minute of API transport/clock-skew headroom so Stripe does not reject a request that arrives just under its minimum. The unpaid-preparation lease and payment window share that authority ([Stripe Checkout Session create reference](https://docs.stripe.com/api/checkout/sessions/create)).
 
 ## Decision 2: Add a dedicated preparation intent instead of a billing bypass flag
 
@@ -42,11 +42,11 @@
 
 **Rationale**: Checkout is the user action that authorizes preparation, so a second client mutation would reintroduce the missing-click problem. A stable checkout response avoids breaking mobile/device clients; the journey remains the server-owned resumption surface.
 
-## Decision 8: Use a feature flag, strict capacity controls, and continuation-safe rollback
+## Decision 8: Use strict count capacity and continuation-safe configuration semantics
 
-**Decision**: Add an off-by-default primary-onboarding feature flag, deterministic rollout percentage/allowlist, and database-enforced active-count and reserved-hourly-cost ceilings. Apply per-account creation limits in Postgres and trusted network-origin limits at the edge rather than trusting forwarded headers in application code. Unknown server cost fails closed. Turning the flag off stops new intents but keeps workers reconciling, authorizing, or cleaning existing intents to terminal states.
+**Decision**: Add an off-by-default primary-onboarding feature flag, deterministic rollout percentage/allowlist, and one database-enforced global active-count ceiling across all offered machine sizes. Serialize admission with the existing PostgreSQL advisory lock and admit only while `activeCount < maxActive`. Apply per-account creation limits in Postgres and trusted network-origin limits at the edge rather than trusting forwarded headers in application code. The runtime retains continuation-safe disabled semantics for testing and any future reviewed transition, but the production deployment workflow keeps admission enabled and exposes no rollback-drain dispatch path.
 
-**Rationale**: Prebilling work has real cost before card authorization. A kill switch that also stops cleanup would leak resources, while application parsing of untrusted forwarding headers would violate the constitution.
+**Rationale**: Prebilling work has real cost before card authorization. Continuation workers must remain safe under any intentionally reviewed configuration transition, while application parsing of untrusted forwarding headers would violate the constitution. The maintained operational policy is count-only admission at full rollout; exceptional rollback requires a separate reviewed workflow/code change.
 
 ## Decision 9: Authorization repairs paid-without-machine state server-side
 

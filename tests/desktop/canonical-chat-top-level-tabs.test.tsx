@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const workspace = vi.hoisted(() => ({
   props: null as null | {
     onActiveChatChanged?: (chatId: string | null, title?: string) => void;
+    onProjectChanged?: (chatId: string, projectId: string | null, title: string) => void;
   },
 }));
 
@@ -88,5 +89,43 @@ describe("CanonicalChatRoute top-level tab ownership", () => {
       closable: true,
     });
     expect(useTabs.getState().activeTabId).toBe(draftId);
+  });
+
+  it("keeps the selected Project Chat title when canonical detail loading reports the active Chat", async () => {
+    const workTabId = useTabs.getState().openTab({
+      kind: "work",
+      title: "Chat",
+      workRoute: "project",
+      projectSlug: "alpha",
+      chatId: "chat-old",
+      chatTitle: "Old project chat",
+      chatView: "conversation",
+      closable: false,
+    });
+
+    render(
+      <CanonicalChatRoute
+        api={routeApi()}
+        projectId="alpha"
+        projectLabel="Alpha"
+        initialChatId="chat-new"
+        initialView="conversation"
+        active
+        fallback={<div>legacy chat</div>}
+      />,
+    );
+
+    expect(await screen.findByText("canonical workspace")).toBeTruthy();
+    act(() => workspace.props?.onActiveChatChanged?.("chat-new", "New project chat"));
+
+    expect(useTabs.getState().tabs).toHaveLength(1);
+    expect(useTabs.getState().tabs.find((tab) => tab.id === workTabId)).toMatchObject({
+      kind: "work",
+      workRoute: "project",
+      projectSlug: "alpha",
+      chatId: "chat-new",
+      chatTitle: "New project chat",
+      chatView: "conversation",
+    });
   });
 });

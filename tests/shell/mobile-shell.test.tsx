@@ -2,10 +2,9 @@
 
 import React from "react";
 import { renderToString } from "react-dom/server";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MobileAppSurface } from "../../shell/src/components/mobile/MobileAppSurface.js";
-import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher.js";
+import { toast } from "sonner";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
@@ -13,6 +12,7 @@ import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.
 let fileChangeHandler: ((path: string, event: "add" | "change" | "unlink") => void) | null = null;
 const settingsMock = vi.hoisted(() => ({
   onOpenAgentTerminal: undefined as undefined | ((action: "openclaw-install") => void),
+  onOpenProviderTerminalSession: undefined as undefined | ((sessionId: string) => void),
 }));
 
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
@@ -22,8 +22,16 @@ vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
-  TerminalApp: ({ launchTargetId }: { launchTargetId?: string }) => (
-    <div data-testid="terminal-app">
+  TerminalApp: ({ launchTargetId, layoutId, persistence }: {
+    launchTargetId?: string;
+    layoutId?: string;
+    persistence?: "durable" | "ephemeral";
+  }) => (
+    <div
+      data-testid="terminal-app"
+      data-layout-id={layoutId}
+      data-persistence={persistence}
+    >
       <input
         aria-label="Command composer"
         onFocus={() => window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", {
@@ -38,9 +46,21 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/Settings.js", () => ({
-  Settings: ({ onOpenAgentTerminal }: { onOpenAgentTerminal?: (action: "openclaw-install") => void }) => {
+  Settings: ({
+    onOpenAgentTerminal,
+    onOpenProviderTerminalSession,
+  }: {
+    onOpenAgentTerminal?: (action: "openclaw-install") => void;
+    onOpenProviderTerminalSession?: (sessionId: string) => void;
+  }) => {
     settingsMock.onOpenAgentTerminal = onOpenAgentTerminal;
-    return <button onClick={() => onOpenAgentTerminal?.("openclaw-install")}>Install OpenClaw from Settings</button>;
+    settingsMock.onOpenProviderTerminalSession = onOpenProviderTerminalSession;
+    return (
+      <>
+        <button onClick={() => onOpenAgentTerminal?.("openclaw-install")}>Install OpenClaw from Settings</button>
+        <button onClick={() => onOpenProviderTerminalSession?.("provider-login")}>Continue provider login</button>
+      </>
+    );
   },
 }));
 
@@ -120,6 +140,7 @@ describe("mobile shell", () => {
     });
     setDesktopViewport();
     settingsMock.onOpenAgentTerminal = undefined;
+    settingsMock.onOpenProviderTerminalSession = undefined;
     window.sessionStorage.clear();
   });
 
@@ -154,79 +175,6 @@ describe("mobile shell", () => {
     expect(screen.getByTestId("viewport-mode").textContent).toBe("desktop");
   });
 
-  it("opens apps from the mobile launcher and shows active app state", () => {
-    const onOpenApp = vi.fn();
-
-    render(
-      <MobileLauncher
-        apps={[{ name: "Notes", path: "apps/notes/index.html" }]}
-        openWindowPaths={new Set(["apps/notes/index.html"])}
-        onOpenApp={onOpenApp}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("mobile-launcher-app-apps/notes/index.html"));
-
-    expect(onOpenApp).toHaveBeenCalledWith("Notes", "apps/notes/index.html");
-    expect(screen.getByLabelText("Open")).toBeTruthy();
-  });
-
-  it("offers an explicit resume action for the last mobile app", () => {
-    const onResumeApp = vi.fn();
-
-    render(
-      <MobileLauncher
-        apps={[
-          { name: "Notes", path: "apps/notes/index.html" },
-          { name: "Tasks", path: "__workspace__" },
-        ]}
-        openWindowPaths={new Set()}
-        onOpenApp={vi.fn()}
-        resumeApp={{ name: "Notes", path: "apps/notes/index.html" }}
-        onResumeApp={onResumeApp}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("mobile-resume-app"));
-
-    expect(onResumeApp).toHaveBeenCalledWith("Notes", "apps/notes/index.html");
-  });
-
-  it("returns home from a full-screen mobile app without unmounting content", () => {
-    const onHome = vi.fn();
-
-    render(
-      <MobileAppSurface title="Notes" onHome={onHome}>
-        <div data-testid="runtime-content">runtime</div>
-      </MobileAppSurface>,
-    );
-
-    fireEvent.click(screen.getByTestId("mobile-home-button"));
-
-    expect(onHome).toHaveBeenCalled();
-    expect(screen.getByTestId("runtime-content")).toBeTruthy();
-  });
-
-  it("keeps app content inside the mobile surface viewport", () => {
-    render(
-      <MobileAppSurface title="Terminal" onHome={vi.fn()}>
-        <div data-testid="terminal-content" className="h-full w-full overflow-hidden" />
-      </MobileAppSurface>,
-    );
-
-    expect(screen.getByTestId("mobile-app-surface").className).toContain("overflow");
-    expect(screen.getByTestId("terminal-content")).toBeTruthy();
-  });
-
-  it("shows a safe fallback when a restored mobile app is missing", () => {
-    render(
-      <MobileAppSurface title="Missing app" onHome={vi.fn()} unavailableMessage="Open the app from the launcher again." />,
-    );
-
-    expect(screen.getByText("App unavailable")).toBeTruthy();
-    expect(screen.getByText("Open the app from the launcher again.")).toBeTruthy();
-  });
-
   it("caps live terminal instances opened from the mobile dock", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
       ok: true,
@@ -251,6 +199,32 @@ describe("mobile shell", () => {
     expect(screen.getAllByLabelText("Close Terminal")).toHaveLength(5);
   });
 
+  it("does not evict a durable terminal when setup is launched at capacity", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      for (let i = 0; i < 5; i += 1) {
+        fireEvent.click(screen.getByLabelText("Terminal"));
+      }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Install OpenClaw from Settings" }));
+
+    const terminals = screen.getAllByTestId("terminal-app");
+    expect(terminals).toHaveLength(5);
+    expect(terminals.every((terminal) => terminal.dataset.persistence === "durable")).toBe(true);
+    expect(window.sessionStorage.getItem("matrix:terminal-launch-queue") ?? "").not.toContain("openclaw-install");
+    expect(toast).toHaveBeenCalledWith("Close a Terminal before starting setup");
+  });
+
   it("opens a launch shortcut target inside the mobile shell", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
       ok: true,
@@ -273,8 +247,48 @@ describe("mobile shell", () => {
     render(<MobileShell />);
     fireEvent.click(screen.getByRole("button", { name: "Install OpenClaw from Settings" }));
 
-    expect(await screen.findByTestId("terminal-app")).toBeTruthy();
+    const terminal = await screen.findByTestId("terminal-app");
+    expect(terminal.dataset.persistence).toBe("ephemeral");
+    expect(terminal.dataset.layoutId).toBeUndefined();
     expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toContain("openclaw-install");
+  });
+
+  it("focuses a visible terminal for an existing provider session without queuing a command", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue provider login" }));
+
+    expect(await screen.findByTestId("terminal-app")).toBeTruthy();
+    expect(window.sessionStorage.getItem("matrix:provider-terminal-session-queue")).toContain("provider-login");
+    expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toBeNull();
+  });
+
+  it("gives normal mobile terminals independent durable layouts", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      fireEvent.click(screen.getByLabelText("Terminal"));
+      fireEvent.click(screen.getByLabelText("Terminal"));
+    });
+
+    const terminals = screen.getAllByTestId("terminal-app");
+    const layoutIds = terminals.map((terminal) => terminal.dataset.layoutId);
+    expect(terminals.every((terminal) => terminal.dataset.persistence === "durable")).toBe(true);
+    expect(layoutIds.every((layoutId) => /^term-layout_[0-9a-f]{32}$/.test(layoutId ?? ""))).toBe(true);
+    expect(new Set(layoutIds).size).toBe(2);
   });
 
   it("hides the bottom dock while the terminal command composer is focused", async () => {
@@ -306,6 +320,42 @@ describe("mobile shell", () => {
     fireEvent.blur(screen.getByRole("textbox", { name: "Command composer" }));
 
     expect(dock.style.display).toBe("flex");
+  });
+
+  it("marks only the current dock destination and disables an empty app switcher", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell />);
+    const dock = within(screen.getByTestId("mobile-bottom-dock"));
+    expect(dock.getByRole("button", { name: "Apps" }).getAttribute("aria-current")).toBe("page");
+    expect(dock.getByRole("button", { name: "Open" }).hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(dock.getByRole("button", { name: "Terminal" }));
+    expect(dock.getByRole("button", { name: "Terminal" }).getAttribute("aria-current")).toBe("page");
+    expect(dock.getByRole("button", { name: "Apps" }).hasAttribute("aria-current")).toBe(false);
+    expect(dock.getByRole("button", { name: "Open" }).hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(dock.getByRole("button", { name: "Apps" }));
+    expect(dock.getByRole("button", { name: "Apps" }).getAttribute("aria-current")).toBe("page");
+    expect(dock.getByRole("button", { name: "Terminal" }).hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("makes background terminals inert without discarding their mounted state", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell launchAppPath="__terminal__" />);
+    const terminal = await screen.findByTestId("terminal-app");
+    const frame = terminal.closest("[aria-hidden]")!;
+    const dock = within(screen.getByTestId("mobile-bottom-dock"));
+    expect(frame.hasAttribute("inert")).toBe(false);
+
+    fireEvent.click(dock.getByRole("button", { name: "Apps" }));
+    expect(frame.hasAttribute("inert")).toBe(true);
+    expect(screen.getByTestId("terminal-app")).toBe(terminal);
+    fireEvent.click(dock.getByRole("button", { name: "Open" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resume foreground app" }));
+    expect(frame.hasAttribute("inert")).toBe(false);
+    expect(screen.getByTestId("terminal-app")).toBe(terminal);
   });
 
   it("loads installed mobile apps from the shared shell bootstrap endpoint", async () => {

@@ -5,16 +5,77 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSection } from "../../shell/src/components/settings/sections/AgentSection.js";
+import { IdentityPersonalitySection } from "../../shell/src/components/settings/sections/IdentityPersonalitySection.js";
 
-vi.mock("../../shell/src/components/settings/sections/AgentRuntimePanel.js", () => ({
-  AgentRuntimePanel: () => <div>Runtime settings</div>,
+const providerControllerState = vi.hoisted(() => ({
+  snapshot: {} as unknown,
+  error: null as string | null,
+}));
+
+vi.mock("@matrix-os/ui", () => ({
+  AgentsProvidersView: ({
+    onOpenTerminal,
+    onOpenBrowser,
+  }: {
+    onOpenTerminal: (sessionId: string) => void;
+    onOpenBrowser: (path: string) => void;
+  }) => (
+    <div>
+      <h2>Agents &amp; providers</h2>
+      <button onClick={() => onOpenTerminal("provider-login")}>Continue in Terminal</button>
+      <button onClick={() => onOpenBrowser("/api/ai/providers/login-attempts/attempt-1/authorize")}>Continue in browser</button>
+    </div>
+  ),
+  useProviderSettingsController: () => ({
+    snapshot: providerControllerState.snapshot,
+    selectedHarnessId: null,
+    connectionAttempt: null,
+    busy: false,
+    error: providerControllerState.error,
+    onSelectHarness: vi.fn(),
+    refresh: vi.fn(),
+    mutate: vi.fn(),
+  }),
+  ProviderSettingsTransportError: class ProviderSettingsTransportError extends Error {
+    code: string;
+    constructor(code: string) {
+      super("Provider settings are unavailable.");
+      this.code = code;
+    }
+  },
 }));
 
 afterEach(() => {
+  providerControllerState.snapshot = {};
+  providerControllerState.error = null;
   vi.unstubAllGlobals();
 });
 
-describe("Canvas Agent section", () => {
+describe("Canvas settings sections", () => {
+  it("renders the shared provider adapter separately from identity and personality", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const onOpenTerminal = vi.fn();
+    render(<AgentSection onOpenTerminal={onOpenTerminal} />);
+
+    const heading = screen.getByRole("heading", { name: "Agents & providers" });
+    expect(heading).toBeVisible();
+    expect(heading.closest("[data-provider-settings-adapter='shared']")).toBeTruthy();
+    expect(screen.queryByText("SOUL (Personality)")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue in Terminal" }));
+    expect(onOpenTerminal).toHaveBeenCalledWith("provider-login");
+  });
+
+  it("shows a safe unavailable state when the first provider read fails", () => {
+    providerControllerState.snapshot = null;
+    providerControllerState.error = "Provider settings are unavailable.";
+
+    render(<AgentSection />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Provider settings are unavailable");
+    expect(screen.queryByText(/Anthropic|secret|private/i)).toBeNull();
+  });
+
   it("persists SOUL to its owner-controlled file", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => (
       String(input).endsWith("/files/system/soul.md")
@@ -22,7 +83,9 @@ describe("Canvas Agent section", () => {
         : Response.json({ displayName: "Matrix" })
     ));
     vi.stubGlobal("fetch", fetcher);
-    render(<AgentSection />);
+    render(<IdentityPersonalitySection />);
+
+    expect(screen.getByRole("heading", { name: "Identity & personality" })).toBeVisible();
 
     expect(await screen.findByText("Original soul")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));

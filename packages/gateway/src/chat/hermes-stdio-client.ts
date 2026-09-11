@@ -35,6 +35,7 @@ interface HermesGatewayReadable {
 }
 
 export interface HermesGatewayProcess {
+  readonly pid?: number;
   stdin: HermesGatewayWritable;
   stdout: HermesGatewayReadable;
   stderr: HermesGatewayReadable;
@@ -58,11 +59,20 @@ interface PendingRequest {
 export interface HermesStdioClient {
   ready(): Promise<void>;
   request(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
-  close(): Promise<void>;
+  /** Actual exit or definitive no-child spawn failure, never a kill timeout. */
+  whenExited(): Promise<void>;
+  /** Bounded cleanup; false means the process is still owned and must be tracked. */
+  close(): Promise<boolean>;
+}
+
+export class HermesGatewayReadyTimeout extends Error {
+  readonly name = "HermesGatewayReadyTimeout";
+  constructor() { super("Hermes gateway did not become ready"); }
 }
 
 const defaultSpawn: HermesGatewaySpawn = (command, args, options) => spawn(command, args, options);
-const MAX_FRAME_BYTES = 256 * 1024;
+const MAX_INBOUND_FRAME_BYTES = 512 * 1024;
+const MAX_OUTBOUND_FRAME_BYTES = 256 * 1024;
 const MAX_PENDING_REQUESTS = 16;
 const DEFAULT_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -71,6 +81,32 @@ const FORCE_SETTLE_MS = 250;
 
 function safeError(message: string, cause?: unknown): Error {
   return new Error(message, cause === undefined ? undefined : { cause });
+}
+
+type HermesGatewayProtocolFailureReason =
+  | "event_invalid"
+  | "frame_too_large"
+  | "invalid_json"
+  | "unsupported_frame";
+
+export class HermesGatewayProtocolError extends Error {
+  constructor(
+    readonly reason: HermesGatewayProtocolFailureReason,
+    message: string,
+    cause?: unknown,
+    readonly eventType?: string,
+  ) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "HermesGatewayProtocolError";
+  }
+}
+
+function protocolError(
+  reason: HermesGatewayProtocolFailureReason,
+  message: string,
+  cause?: unknown,
+): HermesGatewayProtocolError {
+  return new HermesGatewayProtocolError(reason, message, cause);
 }
 
 export function createHermesStdioClient(options: {
@@ -91,6 +127,7 @@ export function createHermesStdioClient(options: {
   let failed: Error | undefined;
   let closing = false;
   let exited = false;
+  let closePromise: Promise<boolean> | undefined;
   let readySettled = false;
   let resolveReady!: () => void;
   let rejectReady!: (error: Error) => void;
@@ -109,7 +146,7 @@ export function createHermesStdioClient(options: {
   });
 
   const readyTimer = setTimeout(() => {
-    fail(safeError("Hermes gateway did not become ready"));
+    fail(new HermesGatewayReadyTimeout());
   }, options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
   readyTimer.unref?.();
 
@@ -135,19 +172,26 @@ export function createHermesStdioClient(options: {
     settleReady(error);
     rejectPending(error);
     options.onFailure(error);
-    child.kill("SIGTERM");
+    if (!exited) signalChild("SIGTERM");
+  }
+
+  function signalChild(signal: NodeJS.Signals): void {
+    try { child.kill(signal); }
+    catch (error: unknown) {
+      console.warn("[chat/hermes] Child termination signal failed:", error instanceof Error ? error.name : "UnknownError");
+    }
   }
 
   function handleFrame(line: string): void {
-    if (Buffer.byteLength(line, "utf8") > MAX_FRAME_BYTES) {
-      fail(safeError("Hermes gateway frame exceeded limit"));
+    if (Buffer.byteLength(line, "utf8") > MAX_INBOUND_FRAME_BYTES) {
+      fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
       return;
     }
     let value: unknown;
     try {
       value = JSON.parse(line);
     } catch (error: unknown) {
-      fail(safeError("Hermes gateway returned invalid data", error));
+      fail(protocolError("invalid_json", "Hermes gateway returned invalid data", error));
       return;
     }
     const event = HermesGatewayEventSchema.safeParse(value);
@@ -156,13 +200,18 @@ export function createHermesStdioClient(options: {
       try {
         options.onEvent(event.data.params);
       } catch (error: unknown) {
-        fail(safeError("Hermes gateway event was invalid", error));
+        fail(new HermesGatewayProtocolError(
+          "event_invalid",
+          "Hermes gateway event was invalid",
+          error,
+          event.data.params.type,
+        ));
       }
       return;
     }
     const response = JsonRpcResponseSchema.safeParse(value);
     if (!response.success) {
-      fail(safeError("Hermes gateway returned an unsupported frame"));
+      fail(protocolError("unsupported_frame", "Hermes gateway returned an unsupported frame"));
       return;
     }
     const request = pending.get(response.data.id);
@@ -176,8 +225,8 @@ export function createHermesStdioClient(options: {
   child.stdout.on("data", (chunk) => {
     if (failed || closing) return;
     inputBuffer += decoder.write(chunk);
-    if (Buffer.byteLength(inputBuffer, "utf8") > MAX_FRAME_BYTES && !inputBuffer.includes("\n")) {
-      fail(safeError("Hermes gateway frame exceeded limit"));
+    if (Buffer.byteLength(inputBuffer, "utf8") > MAX_INBOUND_FRAME_BYTES && !inputBuffer.includes("\n")) {
+      fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
       return;
     }
     while (!failed) {
@@ -187,15 +236,23 @@ export function createHermesStdioClient(options: {
       inputBuffer = inputBuffer.slice(newline + 1);
       if (line) handleFrame(line);
     }
-    if (!failed && Buffer.byteLength(inputBuffer, "utf8") > MAX_FRAME_BYTES) {
-      fail(safeError("Hermes gateway frame exceeded limit"));
+    if (!failed && Buffer.byteLength(inputBuffer, "utf8") > MAX_INBOUND_FRAME_BYTES) {
+      fail(protocolError("frame_too_large", "Hermes gateway frame exceeded limit"));
     }
   });
   let stderrBytes = 0;
   child.stderr.on("data", (chunk) => {
     stderrBytes = Math.min(8_192, stderrBytes + chunk.byteLength);
   });
-  child.once("error", (error) => fail(safeError("Hermes gateway could not start", error)));
+  child.once("error", (error) => {
+    // Node reports an undefined PID when spawn itself failed. An absent PID
+    // property on an injected process is unknown, not proof of non-admission.
+    if ("pid" in child && child.pid === undefined) {
+      exited = true;
+      resolveExit();
+    }
+    fail(safeError("Hermes gateway could not start", error));
+  });
   child.once("exit", (code, signal) => {
     exited = true;
     resolveExit();
@@ -207,6 +264,7 @@ export function createHermesStdioClient(options: {
 
   return {
     ready: () => readyPromise,
+    whenExited: () => exitPromise,
     request(method, params, timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS) {
       if (failed) return Promise.reject(failed);
       if (closing) return Promise.reject(safeError("Hermes gateway is closing"));
@@ -215,7 +273,7 @@ export function createHermesStdioClient(options: {
       }
       const id = ++requestId;
       const frame = `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`;
-      if (Buffer.byteLength(frame, "utf8") > MAX_FRAME_BYTES) {
+      if (Buffer.byteLength(frame, "utf8") > MAX_OUTBOUND_FRAME_BYTES) {
         return Promise.reject(safeError("Hermes gateway request exceeded limit"));
       }
       return new Promise<unknown>((resolve, reject) => {
@@ -234,33 +292,48 @@ export function createHermesStdioClient(options: {
         }
       });
     },
-    async close() {
-      if (closing) return exitPromise;
+    close() {
+      if (closePromise) return closePromise;
       closing = true;
       clearTimeout(readyTimer);
       settleReady(safeError("Hermes gateway closed"));
       rejectPending(safeError("Hermes gateway closed"));
-      if (exited) return;
-      child.stdin.end();
-      let forceKillTimer: NodeJS.Timeout | undefined;
-      let forceSettleTimer: NodeJS.Timeout | undefined;
-      await Promise.race([
-        exitPromise,
-        new Promise<void>((resolve) => {
-          forceKillTimer = setTimeout(() => {
-            if (exited) return resolve();
-            child.kill("SIGTERM");
-            forceSettleTimer = setTimeout(() => {
-              if (!exited) child.kill("SIGKILL");
-              resolve();
-            }, FORCE_SETTLE_MS);
-            forceSettleTimer.unref?.();
-          }, TERMINATION_GRACE_MS);
-          forceKillTimer.unref?.();
-        }),
-      ]);
-      if (forceKillTimer) clearTimeout(forceKillTimer);
-      if (forceSettleTimer) clearTimeout(forceSettleTimer);
+      closePromise = (async () => {
+        if (exited) return true;
+        try { child.stdin.end(); }
+        catch (error: unknown) {
+          console.warn("[chat/hermes] Child input close failed:", error instanceof Error ? error.name : "UnknownError");
+        }
+        let terminateTimer: NodeJS.Timeout | undefined;
+        let killTimer: NodeJS.Timeout | undefined;
+        let settleTimer: NodeJS.Timeout | undefined;
+        try {
+          await Promise.race([
+            exitPromise,
+            new Promise<void>((resolve) => {
+              terminateTimer = setTimeout(() => {
+                if (exited) return resolve();
+                signalChild("SIGTERM");
+                killTimer = setTimeout(() => {
+                  if (!exited) signalChild("SIGKILL");
+                  // Sending SIGKILL is not proof of exit. Give the real exit
+                  // listener a bounded window, then report unknown cleanup.
+                  settleTimer = setTimeout(resolve, FORCE_SETTLE_MS);
+                  settleTimer.unref?.();
+                }, FORCE_SETTLE_MS);
+                killTimer.unref?.();
+              }, TERMINATION_GRACE_MS);
+              terminateTimer.unref?.();
+            }),
+          ]);
+          return exited;
+        } finally {
+          if (terminateTimer) clearTimeout(terminateTimer);
+          if (killTimer) clearTimeout(killTimer);
+          if (settleTimer) clearTimeout(settleTimer);
+        }
+      })();
+      return closePromise;
     },
   };
 }

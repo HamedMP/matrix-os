@@ -13,6 +13,7 @@ import {
   terminalAgentInstallCommand,
   terminalAgentVisibleInstallCommand,
 } from "../../shell/src/components/terminal/terminal-agent-options.js";
+import { TERMINAL_AGENT_OPTIONS as DESKTOP_TERMINAL_AGENT_OPTIONS } from "../../desktop/src/renderer/src/features/terminal/terminal-agent-options.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -67,10 +68,12 @@ describe("terminal agent options", () => {
     );
   });
 
-  it("launches Codex through the Matrix terminal PATH as a single executable command", () => {
+  it("launches Codex inline so terminal scrollback remains selectable", () => {
     const codex = TERMINAL_AGENT_OPTIONS.find((option) => option.id === "codex");
+    const desktopCodex = DESKTOP_TERMINAL_AGENT_OPTIONS.find((option) => option.id === "codex");
 
-    expect(codex?.launchCommand).toBe("codex");
+    expect(codex?.launchCommand).toBe("codex --no-alt-screen");
+    expect(desktopCodex?.launchCommand).toBe("codex --no-alt-screen");
     expect(codex?.launchCommand).not.toMatch(/\b(?:export|exec)\b|[;&|]/);
   });
 

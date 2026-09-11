@@ -138,7 +138,7 @@ Fullscreen takeover, no dock/chrome. Stage-aware rendering via `OnboardingScreen
 - **Mic permission**: `MicPermissionDialog` explains why the mic is needed. Deny -> text mode, no dead-end.
 - **Conversation**: `VoiceOrb` + `VoiceWave` pulse with real-time audio levels. Transcript fades in and out below the orb. No app-suggestion cards or persona panels (cut — the voice agent is enough).
 - **API key**: `ApiKeyInput` appears when the agent reaches the key stage. Password-masked paste input, link to console.anthropic.com, generic error feedback.
-- **Done**: `~/system/onboarding-complete.json` written, desktop loads on `moraine-lake` wallpaper preset.
+- **Done**: `~/system/onboarding-complete.json` written, desktop loads on the `matrix-dusk` wallpaper.
 
 ### Design principles
 

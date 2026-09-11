@@ -44,6 +44,8 @@ describe("app launch helpers", () => {
     expect(iconUrlForSlug("game-center")).toBe("/icons/game-center.png");
     expect(iconUrlForSlug("grid")).toBe("/icons/grid.svg");
     expect(iconUrlForSlug("layers")).toBe("/icons/layers.svg");
+    expect(iconUrlForSlug("canvas")).toBe("/icons/canvas.svg");
+    expect(iconUrlForSlug("desktop")).toBe("/icons/desktop.svg");
     expect(iconUrlForSlug("minesweeper")).toBe("/icons/minesweeper.png");
     expect(iconUrlForSlug("pomodoro")).toBe("/icons/pomodoro-timer.png");
     expect(iconUrlForSlug("pomodoro-timer")).toBe("/icons/pomodoro-timer.png");

@@ -22,6 +22,7 @@ export interface CanonicalSlashEntry {
 }
 
 export interface CanonicalComposerPreference {
+  model?: string;
   options: Array<{ id: string; value: string | boolean }>;
   permissionMode: string;
 }
@@ -118,7 +119,12 @@ export function applyCanonicalComposerPreference(
   if (!preference) return current;
   const instance = catalog.instances.find((candidate) => candidate.id === current.instanceId);
   if (!instance) return current;
-  let next = current;
+  const preferredModel = preference.model
+    ? instance.models.find((model) => (
+        model.id === preference.model && model.availability === "available"
+      ))
+    : undefined;
+  let next = preferredModel ? { ...current, model: preferredModel.id } : current;
   for (const option of preference.options) {
     next = updateCanonicalComposerOption(catalog, next, option.id, option.value);
   }

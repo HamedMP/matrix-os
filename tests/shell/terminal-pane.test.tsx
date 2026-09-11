@@ -126,12 +126,12 @@ describe("TerminalPane terminal-link wiring", () => {
     expect(source).not.toContain("authLink");
   });
 
-  it("intercepts contextmenu only after resolving a safe link under the pointer", () => {
+  it("intercepts contextmenu while resolving only safe links under the pointer", () => {
     expect(source).toContain('addEventListener("contextmenu"');
     expect(source).toContain("terminalCellFromPointer");
-    expect(source).toContain("findTerminalLinkAtCell");
-    expect(source).toMatch(/if \(!(?:cell|link)\) return;/);
+    expect(source).toContain("const link = cell ? findTerminalLinkAtCell(term, cell) : null;");
     expect(source).toContain("event.preventDefault()");
+    expect(source).toContain("selection: term.getSelection()");
   });
 
   it("overrides xterm OSC hyperlink activation with the button-aware link handler", () => {

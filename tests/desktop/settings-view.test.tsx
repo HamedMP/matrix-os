@@ -46,21 +46,39 @@ describe("SettingsView", () => {
     expect(screen.getByRole("heading", { name: "Account" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Channels" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Agents & providers" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Identity & personality" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Providers" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Agent (Hermes)" })).toBeNull();
   });
 
-  it("opens the requested section and consumes the deep-link request", async () => {
-    useUi.getState().requestSettingsSection("agent");
+  it.each(["agent", "providers"] as const)("maps the legacy %s deep link to Agents & providers and consumes it", async (legacySection) => {
+    useUi.setState({ requestedSettingsSection: legacySection });
 
     render(<SettingsView />);
 
-    // The unified Agent section renders instead of the default Account.
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Agent" })).not.toBeNull());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull());
+    expect(useUi.getState().requestedSettingsSection).toBeNull();
+  });
+
+  it.each(["agent", "providers"] as const)("normalizes the legacy %s section at the request boundary", (legacySection) => {
+    useUi.getState().requestSettingsSection(legacySection);
+
+    expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
+  });
+
+  it("opens Identity & personality as a first-class section", async () => {
+    useUi.getState().requestSettingsSection("identity-personality");
+
+    render(<SettingsView />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Identity & personality" })).not.toBeNull());
     expect(useUi.getState().requestedSettingsSection).toBeNull();
   });
 
   it("keeps the selected navigation highlight in sync with the visible section", () => {
     render(<SettingsView />);
-    const providers = screen.getByRole("button", { name: "Providers" });
+    const providers = screen.getByRole("button", { name: "Agents & providers" });
     const services = screen.getByRole("button", { name: "Services" });
 
     fireEvent.click(providers);
@@ -69,6 +87,16 @@ describe("SettingsView", () => {
     fireEvent.click(services);
     expect(services.className).toContain("bg-[var(--bg-selected)]");
     expect(providers.className).not.toContain("bg-[var(--bg-selected)]");
+  });
+
+  it("keeps the previous local Agents & providers settings surface", async () => {
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Providers" })).not.toBeNull());
+    expect(document.querySelector('[data-settings-adapter="agents-providers-legacy"]')).not.toBeNull();
+    expect(document.querySelector('[data-provider-settings-adapter="legacy"]')).not.toBeNull();
+    expect(screen.queryByText("HARNESSES")).toBeNull();
   });
 
   it("groups services, MCPs, skills, and CLI under Integrations", () => {

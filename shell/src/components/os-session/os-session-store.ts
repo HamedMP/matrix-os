@@ -7,8 +7,7 @@ import type { OsBootDesign } from "./os-session-utils";
  * Session overlays for the OS lock / user-switch / log-off simulation. This is
  * a simulation only: nothing here touches Clerk sign-out or real power state.
  * The views are design-keyed by their openers (the XP start menu opens the XP
- * dialog, the Win11 flyout the Win11 lock screen, the Apple menu the macOS
- * lock screen), so the active view always matches the active design.
+ * dialog and the Win11 flyout the Win11 lock screen), so the active view always matches the active design.
  */
 export type OsSessionView =
   | "none"
@@ -16,8 +15,7 @@ export type OsSessionView =
   | "xp-shutdown"
   | "xp-welcome"
   | "xp-safe-off"
-  | "win11-lock"
-  | "macos-lock";
+  | "win11-lock";
 
 interface OsSessionState {
   view: OsSessionView;
@@ -30,7 +28,6 @@ interface OsSessionState {
   showXpWelcome: () => void;
   showXpSafeOff: () => void;
   openWin11Lock: () => void;
-  openMacosLock: () => void;
   /** Replays the boot screen; also dismisses any open session overlay. */
   beginBoot: (design: OsBootDesign) => void;
   endBoot: () => void;
@@ -46,7 +43,6 @@ export const useOsSessionStore = create<OsSessionState>()((set) => ({
   showXpWelcome: () => set({ view: "xp-welcome" }),
   showXpSafeOff: () => set({ view: "xp-safe-off" }),
   openWin11Lock: () => set({ view: "win11-lock" }),
-  openMacosLock: () => set({ view: "macos-lock" }),
   beginBoot: (design) => set((s) => ({ view: "none", bootDesign: design, bootId: s.bootId + 1 })),
   endBoot: () => set({ bootDesign: null }),
   close: () => set({ view: "none" }),

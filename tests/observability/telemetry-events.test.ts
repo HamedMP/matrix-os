@@ -16,6 +16,8 @@ describe("Matrix telemetry events", () => {
       BILLING_CHECKOUT_COMPLETED: "matrix_billing_checkout_completed",
       BILLING_CHECKOUT_EXPIRED: "matrix_billing_checkout_expired",
       BILLING_SUBSCRIPTION_UPDATED: "matrix_billing_subscription_updated",
+      BILLING_INVOICE_PAID: "matrix_billing_invoice_paid",
+      BILLING_INVOICE_PAYMENT_FAILED: "matrix_billing_invoice_payment_failed",
       BILLING_EVENT_RECEIVED: "matrix_billing_event_received",
       VPS_PROVISION_REQUESTED: "matrix_vps_provision_requested",
       VPS_PROVISION_FAILED: "matrix_vps_provision_failed",

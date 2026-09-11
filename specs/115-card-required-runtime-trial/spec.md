@@ -136,4 +136,6 @@ Stripe Dashboard production configuration must enable Stripe's trial-ending emai
 - Shell tests cover eligible, ineligible, active, expiring, failed, recovered, and additional-computer states.
 - Stripe test mode and Test Clocks exercise successful and declined conversion through the configured trial duration; the canonical product test remains three days.
 - Run targeted billing/VPS/UI tests, full tests and coverage, production shell build, and Canvas-first browser validation.
-- Public pricing and billing documentation ships in a separate `matrix-os-site` PR (MAT-446).
+- Public hosted pricing and regional machine mappings are defined in
+  `specs/119-hosted-pricing-regions/spec.md`; the trial lifecycle in this spec
+  applies unchanged to Starter, Builder, and Max.

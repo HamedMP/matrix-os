@@ -144,6 +144,16 @@ describe("InspectorFilesPanel", () => {
     );
   }
 
+  it("reveals and selects the previewed file in its parent folder", async () => {
+    const { rerender } = render(<InspectorFilesPanel browserOnly selectedFile={{ kind: "home", path: "workspaces/app.ts", label: "app.ts" }} />);
+    const file = await screen.findByRole("button", { name: "Open file workspaces/app.ts" });
+    expect(file.getAttribute("aria-current")).toBe("true");
+    expect(screen.getByRole("button", { name: "Collapse folder workspaces" })).toBeTruthy();
+    rerender(<InspectorFilesPanel browserOnly selectedFile={{ kind: "home", path: "workspaces/hero.png", label: "hero.png" }} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open file workspaces/hero.png" }).getAttribute("aria-current")).toBe("true"));
+    expect(file.getAttribute("aria-current")).toBeNull();
+  });
+
   it("opens with the browser and a preview placeholder", async () => {
     renderPanel();
 
@@ -162,6 +172,19 @@ describe("InspectorFilesPanel", () => {
     );
 
     const folder = await screen.findByRole("button", { name: "Expand folder workspaces" });
+    const rootFile = screen.getByRole("button", { name: "Open file README.md" });
+    expect(folder.className).toContain("gap-2.5");
+    expect(folder.className).toContain("px-2.5");
+    expect(folder.className).toContain("py-1.5");
+    expect(folder.className).toContain("text-sm");
+    expect(folder.className).not.toContain("hover:bg-");
+    expect(rootFile.className).toContain("gap-2.5");
+    expect(rootFile.className).toContain("px-2.5");
+    expect(rootFile.className).toContain("py-1.5");
+    expect(rootFile.className).toContain("text-sm");
+    expect(rootFile.className).not.toContain("hover:bg-");
+    expect(Array.from(folder.querySelectorAll("svg")).every((icon) => icon.getAttribute("width") === "15")).toBe(true);
+    expect(rootFile.querySelector("img")?.getAttribute("width")).toBe("15");
     fireEvent.click(folder);
     fireEvent.click(await screen.findByRole("button", { name: "Open file workspaces/app.ts" }));
 
@@ -170,6 +193,8 @@ describe("InspectorFilesPanel", () => {
     expect(screen.getByTestId("files-listing").className).not.toContain("h-52");
     expect(screen.queryByRole("group", { name: "View options" })).toBeNull();
     expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+    expect(screen.queryByText("Matrix Home")).toBeNull();
+    expect(screen.queryByText("Browse this computer's files. This view is not limited to the selected project.")).toBeNull();
     expect(folder.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("button", { name: "Open file README.md" })).toBeTruthy();
     expect(onOpenFile).toHaveBeenCalledWith(expect.objectContaining({
@@ -203,6 +228,8 @@ describe("InspectorFilesPanel", () => {
 
     expect(await screen.findByRole("button", { name: "Open file README.md" })).toBeTruthy();
     expect(screen.queryByText("Loading files…")).toBeNull();
+    expect(screen.queryByText("Matrix OS")).toBeNull();
+    expect(screen.queryByText("Project root")).toBeNull();
   });
 
   it("expands Project folders inline without replacing the root listing", async () => {
@@ -274,7 +301,11 @@ describe("InspectorFilesPanel", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open README.md" }));
 
-    expect(await screen.findByRole("heading", { name: "Inspector files" })).toBeTruthy();
+    expect(await screen.findByRole(
+      "heading",
+      { name: "Inspector files" },
+      { timeout: 5_000 },
+    )).toBeTruthy();
   });
 
   it("previews a picked text file within the 1 MB cap", async () => {

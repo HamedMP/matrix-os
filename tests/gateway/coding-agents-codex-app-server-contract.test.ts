@@ -33,20 +33,67 @@ describe("Codex app-server contract", () => {
         "0.150.1": {
           schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
+        "0.151.0": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        "0.152.0": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        "0.152.1": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        "0.153.0": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        "0.153.2": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        "0.153.3": {
+          schemaSha256ByTarget: {
+            "darwin-arm64": expect.stringMatching(/^[a-f0-9]{64}$/),
+            "linux-x64": expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
+        "0.153.4": {
+          schemaSha256ByTarget: {
+            "darwin-arm64": expect.stringMatching(/^[a-f0-9]{64}$/),
+            "linux-x64": expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
       },
       requiredServerMethods: [
         "item/commandExecution/requestApproval",
         "item/fileChange/requestApproval",
         "item/tool/requestUserInput",
         "item/permissions/requestApproval",
+        "mcpServer/elicitation/request",
       ],
       requiredServerNotifications: [
         "item/started",
         "item/completed",
         "item/agentMessage/delta",
         "item/commandExecution/outputDelta",
+        "thread/tokenUsage/updated",
         "turn/completed",
       ],
+      requiredServerProtocolSchemaDigests: {
+        "item/commandExecution/requestApproval": {
+          schemaSha256ByTarget: {
+            "darwin-arm64": expect.stringMatching(/^[a-f0-9]{64}$/),
+            "linux-x64": expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
+        "item/fileChange/requestApproval": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "item/tool/requestUserInput": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "item/permissions/requestApproval": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "mcpServer/elicitation/request": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "item/started": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "item/completed": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "item/agentMessage/delta": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "item/commandExecution/outputDelta": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "thread/tokenUsage/updated": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "turn/completed": expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
     });
   });
 
@@ -90,6 +137,38 @@ describe("Codex app-server contract", () => {
     expect(codexAppServerContractStatus("codex-cli 0.150.1")).toEqual({
       status: "verified",
       version: "0.150.1",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.151.0")).toEqual({
+      status: "verified",
+      version: "0.151.0",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.152.0")).toEqual({
+      status: "verified",
+      version: "0.152.0",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.152.1")).toEqual({
+      status: "verified",
+      version: "0.152.1",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.153.0")).toEqual({
+      status: "verified",
+      version: "0.153.0",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.153.2")).toEqual({
+      status: "verified",
+      version: "0.153.2",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.153.3")).toEqual({
+      status: "verified",
+      version: "0.153.3",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.153.4")).toEqual({
+      status: "verified",
+      version: "0.153.4",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.154.0")).toEqual({
+      status: "verified",
+      version: "0.154.0",
     });
     expect(codexAppServerContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",

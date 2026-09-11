@@ -1,10 +1,11 @@
 import type { SyncJwtClaims } from "./auth-jwt.js";
 
 export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
+export const PLATFORM_USER_ID_CONTEXT_KEY = "platformUserId";
 export const AUTH_CONTEXT_READY_CONTEXT_KEY = "authContextReady";
 export const SAFE_PRINCIPAL_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
-export type PrincipalSource = "jwt" | "configured-container" | "dev-default";
+export type PrincipalSource = "jwt" | "platform-verified" | "configured-container" | "dev-default";
 
 export interface RequestPrincipal {
   userId: string;
@@ -65,6 +66,11 @@ function readClaims(c: PrincipalContextReader): SyncJwtClaims | undefined {
   return c.get(JWT_CLAIMS_CONTEXT_KEY as never) as SyncJwtClaims | undefined;
 }
 
+function readPlatformUserId(c: PrincipalContextReader): string | undefined {
+  if (typeof c.get !== "function") return undefined;
+  return c.get(PLATFORM_USER_ID_CONTEXT_KEY as never) as string | undefined;
+}
+
 function isLocalDevelopmentEnv(env: NodeJS.ProcessEnv): boolean {
   const nodeEnv = env.NODE_ENV;
   return nodeEnv === undefined || nodeEnv === "" || nodeEnv === "development" || nodeEnv === "test" || nodeEnv === "local";
@@ -88,6 +94,11 @@ function assertSafePrincipalUserId(userId: string, source: PrincipalSource): voi
   }
 }
 
+export function setPlatformVerifiedPrincipal(c: PrincipalContextWriter, userId: string): void {
+  assertSafePrincipalUserId(userId, "platform-verified");
+  c.set(PLATFORM_USER_ID_CONTEXT_KEY as never, userId);
+}
+
 export function getOptionalRequestPrincipal(
   c: PrincipalContextReader,
   config: Partial<PrincipalRuntimeConfig> = {},
@@ -104,6 +115,12 @@ export function getOptionalRequestPrincipal(
     }
     assertSafePrincipalUserId(claims.sub, "jwt");
     return { userId: claims.sub, source: "jwt" };
+  }
+
+  const platformUserId = readPlatformUserId(c);
+  if (platformUserId) {
+    assertSafePrincipalUserId(platformUserId, "platform-verified");
+    return { userId: platformUserId, source: "platform-verified" };
   }
 
   if (runtime.configuredUserId && runtime.isTrustedSingleUserGateway) {

@@ -62,8 +62,8 @@ const userOwnedPrefixes = [
 ];
 
 // OS-bundled wallpapers are template-managed even though system/wallpapers/
-// is a user-owned prefix: the OS design presets (Windows XP, Windows 11,
-// macOS) and the default background must reach existing VPS homes, not only
+// is a user-owned prefix: the Matrix day-cycle backgrounds, OS design presets
+// (Windows XP, Windows 11, macOS), and default background must reach existing VPS homes, not only
 // fresh first-boot homes. This set must list exact file paths only — every
 // other file under system/wallpapers/ stays user-owned and is never touched.
 // (The sync loop below only adds/updates files listed in the template
@@ -71,6 +71,9 @@ const userOwnedPrefixes = [
 // either way.)
 const systemOwnedWallpapers = new Set([
   "system/wallpapers/macos-light.svg",
+  "system/wallpapers/matrix-dawn.webp",
+  "system/wallpapers/matrix-dusk.webp",
+  "system/wallpapers/matrix-night.webp",
   "system/wallpapers/moraine-lake.jpg",
   "system/wallpapers/win11-bloom.jpg",
   "system/wallpapers/xp-bliss.jpg",

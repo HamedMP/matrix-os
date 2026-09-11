@@ -10,12 +10,17 @@ import {
   type CanonicalChatRecord,
   type CanonicalCreateChatRequest,
   type CanonicalUpdateChatUserStateRequest,
+  type CanonicalUpdateChatTitleRequest,
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-import { ChatBusyError, ChatConflictError } from "../../packages/gateway/src/chat/errors.js";
+import {
+  ChatBusyError,
+  ChatConflictError,
+  ChatRunNotAcknowledgeableError,
+} from "../../packages/gateway/src/chat/errors.js";
 import {
   createCanonicalChatRoutes,
   type CanonicalChatRouteService,
@@ -41,7 +46,9 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
   return {
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
+    updateTitle: vi.fn(async () => record),
     updateUserState: vi.fn(async () => record),
+    acknowledgeCompletion: vi.fn(async () => record),
     delete: vi.fn(async () => ({ chatId: record.chat.id, deletedAt: record.chat.updatedAt })),
     list: vi.fn(async () => ({ items: [record] })),
     search: vi.fn(async () => ({ items: [record] })),
@@ -55,7 +62,28 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     admitTurn: vi.fn(async () => {
       throw new Error("not configured");
     }),
+    enqueueQueuedTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    cancelQueuedTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    reorderQueuedTurns: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    updateQueuedTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    steerQueuedTurn: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    steerRun: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
     cancelRun: vi.fn(async () => {
+      throw new Error("not configured");
+    }),
+    submitApproval: vi.fn(async () => {
       throw new Error("not configured");
     }),
     retryTurn: vi.fn(async () => {
@@ -70,6 +98,18 @@ function appFor(service: CanonicalChatRouteService) {
     service,
     getPrincipal: () => ({ userId: "owner_1", source: "jwt" }),
   }));
+}
+
+function acknowledge(
+  app: ReturnType<typeof appFor>,
+  path = "/api/chats/chat_route_test/runs/run_route_completed/acknowledge",
+  body: unknown = {},
+) {
+  return app.request(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 describe("canonical Chat routes", () => {
@@ -145,6 +185,44 @@ describe("canonical Chat routes", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("renames a Chat with owner-derived identity, validation, and a body limit", async () => {
+    const renamed = { ...record, chat: { ...record.chat, title: "Release plan", revision: 1 } };
+    const updateTitle = vi.fn(async (
+      _owner: ChatOwner,
+      _chatId: string,
+      _input: CanonicalUpdateChatTitleRequest,
+    ) => renamed);
+    const app = appFor(routeService({ updateTitle }));
+
+    const response = await app.request("/api/chats/chat_route_test/title", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 0, title: "  Release plan  " }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(renamed);
+    expect(updateTitle).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      { baseRevision: 0, title: "Release plan" },
+    );
+
+    const invalid = await app.request("/api/chats/chat_route_test/title", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 0, title: "   " }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const oversized = await app.request("/api/chats/chat_route_test/title", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 0, title: "x".repeat(5 * 1024) }),
+    });
+    expect(oversized.status).toBe(413);
+  });
+
   it("updates only the authenticated principal's bounded Chat user state", async () => {
     const pinned = {
       ...record,
@@ -187,6 +265,77 @@ describe("canonical Chat routes", () => {
       body: JSON.stringify({ pinned: true, padding: "x".repeat(5 * 1024) }),
     });
     expect(oversized.status).toBe(413);
+  });
+
+  it("acknowledges the authenticated principal's exact completed Run through a strict empty body", async () => {
+    const acknowledged = {
+      ...record,
+      latestSuccessfulCompletion: {
+        runId: "run_route_completed",
+        completedAt: "2026-08-25T12:02:00.000Z",
+        unacknowledged: false,
+      },
+    };
+    const acknowledgeCompletion = vi.fn(async () => acknowledged);
+    const response = await acknowledge(appFor(routeService({ acknowledgeCompletion })));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(acknowledged);
+    expect(acknowledgeCompletion).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route_completed",
+    );
+  });
+
+  it("rejects malformed acknowledgement paths, non-empty bodies, and oversized bodies", async () => {
+    const app = appFor(routeService());
+    const cases: Array<[string, unknown, number]> = [
+      ["/api/chats/not-a-chat/runs/run_route_completed/acknowledge", {}, 400],
+      ["/api/chats/chat_route_test/runs/not-a-run/acknowledge", {}, 400],
+      ["/api/chats/chat_route_test/runs/run_route_completed/acknowledge", { completedAt: "2026-08-25T12:02:00.000Z" }, 400],
+      ["/api/chats/chat_route_test/runs/run_route_completed/acknowledge", { padding: "x".repeat(5 * 1024) }, 413],
+    ];
+    for (const [path, body, status] of cases) {
+      expect((await acknowledge(app, path, body)).status).toBe(status);
+    }
+  });
+
+  it("returns a safe acknowledgement error without exposing repository details", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await acknowledge(appFor(routeService({
+        acknowledgeCompletion: vi.fn(async () => {
+          throw new Error("postgres://secret-host/private-owner");
+        }),
+      })));
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: {
+          code: "service_unavailable",
+          safeMessage: "Chat is temporarily unavailable.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        },
+      });
+
+      const rejected = await acknowledge(appFor(routeService({
+        acknowledgeCompletion: vi.fn(async () => {
+          throw new ChatRunNotAcknowledgeableError("chat_route_test", "run_route_completed");
+        }),
+      })));
+      expect(rejected.status).toBe(409);
+      expect(await rejected.json()).toEqual({
+        error: {
+          code: "run_unavailable",
+          safeMessage: "Only a successful completed Run can be acknowledged.",
+          retryable: false,
+        },
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   it("deletes an owned Chat with an idempotency key", async () => {
@@ -366,6 +515,231 @@ describe("canonical Chat routes", () => {
     }
   });
 
+  it("enqueues a bounded next Turn through an explicit owner-derived route", async () => {
+    const queuedAt = "2026-08-31T09:00:00.000Z";
+    const queued = {
+      queuedTurn: {
+        id: "qturn_route",
+        chatId: "chat_route_test",
+        clientRequestId: "req_route_queue",
+        position: 1,
+        parts: [{ type: "text", text: "run this next" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        createdAt: queuedAt,
+        updatedAt: queuedAt,
+      },
+      queueDepth: 1,
+    };
+    const enqueueQueuedTurn = vi.fn(async () => queued);
+    const service = routeService() as CanonicalChatRouteService & {
+      enqueueQueuedTurn: typeof enqueueQueuedTurn;
+    };
+    service.enqueueQueuedTurn = enqueueQueuedTurn;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/queued-turns",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_queue",
+          baseRevision: 1,
+          parts: [{ type: "text", text: "run this next" }],
+          selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+          interactionMode: "default",
+          permissionMode: "supervised",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual(queued);
+    expect(enqueueQueuedTurn).toHaveBeenCalledWith(
+      { userId: "owner_1", source: "jwt" },
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      expect.objectContaining({ clientRequestId: "req_route_queue" }),
+    );
+  });
+
+  it("cancels one exact queued Turn through an owner-derived bounded DELETE route", async () => {
+    const cancelQueuedTurn = vi.fn(async () => ({
+      queuedTurnId: "qturn_route_cancel",
+      queueDepth: 1,
+      cancellation: "cancelled" as const,
+    }));
+    const service = routeService() as CanonicalChatRouteService & {
+      cancelQueuedTurn: typeof cancelQueuedTurn;
+    };
+    service.cancelQueuedTurn = cancelQueuedTurn;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/queued-turns/qturn_route_cancel",
+      {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_queue_cancel",
+          baseRevision: 3,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      queuedTurnId: "qturn_route_cancel",
+      queueDepth: 1,
+      cancellation: "cancelled",
+    });
+    expect(cancelQueuedTurn).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "qturn_route_cancel",
+      { clientRequestId: "req_route_queue_cancel", baseRevision: 3 },
+    );
+  });
+
+  it("reorders the complete queued Turn set through an owner-derived bounded route", async () => {
+    const reorderedAt = "2026-08-31T09:10:00.000Z";
+    const queuedTurns = ["qturn_route_second", "qturn_route_first"].map((id, index) => ({
+      id,
+      chatId: "chat_route_test",
+      clientRequestId: `req_${id}`,
+      position: index + 1,
+      parts: [{ type: "text" as const, text: id }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      createdAt: reorderedAt,
+      updatedAt: reorderedAt,
+    }));
+    const reorderQueuedTurns = vi.fn(async () => ({ queuedTurns }));
+    const service = routeService() as CanonicalChatRouteService & {
+      reorderQueuedTurns: typeof reorderQueuedTurns;
+    };
+    service.reorderQueuedTurns = reorderQueuedTurns;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/queued-turns/order",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_queue_reorder",
+          baseRevision: 3,
+          queuedTurnIds: ["qturn_route_second", "qturn_route_first"],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ queuedTurns });
+    expect(reorderQueuedTurns).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      expect.objectContaining({
+        clientRequestId: "req_route_queue_reorder",
+        queuedTurnIds: ["qturn_route_second", "qturn_route_first"],
+      }),
+    );
+  });
+
+  it("edits one queued Turn through an owner-derived bounded PATCH route", async () => {
+    const updatedAt = "2026-08-31T09:11:00.000Z";
+    const queuedTurn = {
+      id: "qturn_route_edit",
+      chatId: "chat_route_test",
+      clientRequestId: "req_route_original",
+      position: 1,
+      parts: [{ type: "text" as const, text: "edited queued message" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      createdAt: updatedAt,
+      updatedAt,
+    };
+    const updateQueuedTurn = vi.fn(async () => ({ queuedTurn }));
+    const service = routeService() as CanonicalChatRouteService & {
+      updateQueuedTurn: typeof updateQueuedTurn;
+    };
+    service.updateQueuedTurn = updateQueuedTurn;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/queued-turns/qturn_route_edit",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_queue_edit",
+          baseRevision: 3,
+          parts: [{ type: "text", text: "edited queued message" }],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ queuedTurn });
+    expect(updateQueuedTurn).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "qturn_route_edit",
+      expect.objectContaining({
+        clientRequestId: "req_route_queue_edit",
+        baseRevision: 3,
+      }),
+    );
+  });
+
+  it("promotes one queued Turn to same-Run steering through a bounded route", async () => {
+    const message = {
+      id: "msg_route_queued_steer",
+      chatId: "chat_route_test",
+      seq: 2,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: "cturn_route",
+      runId: "run_route",
+      parts: [{ type: "text" as const, text: "steer queued now" }],
+      createdAt: "2026-08-31T09:12:00.000Z",
+    };
+    const steered = {
+      runId: "run_route",
+      turnId: "cturn_route",
+      message,
+      steering: "accepted" as const,
+    };
+    const steerQueuedTurn = vi.fn(async () => steered);
+    const service = routeService() as CanonicalChatRouteService & {
+      steerQueuedTurn: typeof steerQueuedTurn;
+    };
+    service.steerQueuedTurn = steerQueuedTurn;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/runs/run_route/queued-turns/qturn_route_steer/steer",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_queued_steer",
+          baseRevision: 4,
+          expectedTurnId: "cturn_route",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(steered);
+    expect(steerQueuedTurn).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route",
+      "qturn_route_steer",
+      expect.objectContaining({ clientRequestId: "req_route_queued_steer", baseRevision: 4 }),
+    );
+  });
+
   it("admits and cancels a Run through strict owner-derived routes", async () => {
     const admission = CanonicalChatTurnAdmissionResponseSchema.parse({
       record: {
@@ -504,6 +878,91 @@ describe("canonical Chat routes", () => {
       "chat_route_test",
       "cturn_route",
       { clientRequestId: "req_route_retry", baseRevision: 2 },
+    );
+  });
+
+  it("steers only the exact active Run through an explicit owner-derived route", async () => {
+    const steeredAt = "2026-08-31T09:30:00.000Z";
+    const steered = {
+      runId: "run_route",
+      turnId: "cturn_route",
+      message: {
+        id: "msg_steer_route",
+        chatId: "chat_route_test",
+        seq: 2,
+        role: "user",
+        state: "committed",
+        turnId: "cturn_route",
+        runId: "run_route",
+        parts: [{ type: "text", text: "focus on the failing test" }],
+        createdAt: steeredAt,
+      },
+      steering: "accepted",
+    };
+    const steerRun = vi.fn(async () => steered);
+    const service = routeService({ steerRun });
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/runs/run_route/steer",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_steer",
+          expectedTurnId: "cturn_route",
+          parts: [{ type: "text", text: "focus on the failing test" }],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(steered);
+    expect(steerRun).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route",
+      expect.objectContaining({
+        clientRequestId: "req_route_steer",
+        expectedTurnId: "cturn_route",
+      }),
+    );
+  });
+
+  it("submits a bounded approval decision for the authenticated owner's active Run", async () => {
+    const submitApproval = vi.fn(async () => ({
+      approvalId: "appr_command",
+      decision: "approve_for_session" as const,
+      submission: "accepted" as const,
+    }));
+    const service = routeService() as CanonicalChatRouteService & {
+      submitApproval: typeof submitApproval;
+    };
+    service.submitApproval = submitApproval;
+
+    const response = await appFor(service).request(
+      "/api/chats/chat_route_test/runs/run_route/approvals/appr_command",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_approval",
+          decision: "approve_for_session",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      approvalId: "appr_command",
+      decision: "approve_for_session",
+      submission: "accepted",
+    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      "run_route",
+      "appr_command",
+      { clientRequestId: "req_route_approval", decision: "approve_for_session" },
     );
   });
 });

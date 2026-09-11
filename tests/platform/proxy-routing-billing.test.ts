@@ -72,7 +72,10 @@ describe("platform proxy routing billing and provisioning", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
-      entitlement: { planSlug: "matrix_builder" },
+      entitlement: {
+        planSlug: "matrix_builder",
+        allowedPlanSlugs: ["matrix_starter", "matrix_builder"],
+      },
       access: { runtimeProxyAllowed: true },
     });
     expect(fetchMock).not.toHaveBeenCalled();
@@ -417,7 +420,7 @@ describe("platform proxy routing billing and provisioning", () => {
 
   it("classifies websocket paths without preserving secrets", () => {
     expect(classifyWebSocketPath("/ws?token=secret")).toBe("/ws");
-    expect(classifyWebSocketPath("/ws/terminal/session?token=secret&session=main")).toBe("/ws/terminal");
+    expect(classifyWebSocketPath("/ws/terminal/tab?token=secret&workspaceId=tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&tabId=tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")).toBe("/ws/terminal");
     expect(classifyWebSocketPath("/ws/other?token=secret")).toBe("/ws/*");
     expect(classifyWebSocketPath("/api/ping")).toBe("other");
   });
@@ -508,8 +511,9 @@ describe("platform proxy routing billing and provisioning", () => {
     expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     const html = await res.text();
     expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
+    expect(html).toContain('class="matrix-boot-screen" role="status" aria-live="polite"');
+    expect(html).toContain('http-equiv="refresh" content="8"');
+    expect(html).not.toContain("Instance status:");
     expect(html).not.toContain("alice.matrix-os.com");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -554,8 +558,9 @@ describe("platform proxy routing billing and provisioning", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
     const html = await res.text();
     expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
+    expect(html).toContain('class="matrix-boot-screen" role="status" aria-live="polite"');
+    expect(html).toContain('http-equiv="refresh" content="8"');
+    expect(html).not.toContain("Instance status:");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -594,8 +599,9 @@ describe("platform proxy routing billing and provisioning", () => {
     expect(res.status).toBe(503);
     const html = await res.text();
     expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
+    expect(html).toContain('class="matrix-boot-screen" role="status" aria-live="polite"');
+    expect(html).toContain('http-equiv="refresh" content="8"');
+    expect(html).not.toContain("Instance status:");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

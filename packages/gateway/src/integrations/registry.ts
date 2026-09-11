@@ -1,5 +1,10 @@
 import type { ServiceAction, ServiceDefinition } from "./types.js";
+import { EXPANSION_SERVICE_REGISTRY } from "./registry-expansion.js";
+import { X_SERVICE_REGISTRY } from "./registry-x.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
+import { GMAIL_SERVICE } from "./gmail.js";
+import { GOOGLE_SERVICES } from "./google.js";
+import { listValidation } from "./list-validation.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
 
@@ -36,33 +41,6 @@ function encodeDiscordSnowflake(value: unknown): string {
   return value;
 }
 
-// Drive Query Language string-literal escape. Drive QL treats `\\` as a
-// literal backslash and `\'` as a literal single quote -- so a naive
-// quote-only escape like .replace(/'/g, "\\'") is bypassable with a trailing
-// backslash (input "test\'" becomes `'test\\''`, and Drive parses `\\` as a
-// literal \, terminates the string at the next `'`, then interprets the rest
-// as QL operators). Classic SQL-string escape rule: backslashes FIRST, then
-// quotes. Used for both the free-text `query` filter and the `folderId`
-// containment clause in google_drive.list_files.
-const escapeDriveQL = (s: string): string =>
-  s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-
-// RFC 2822 header-injection guard for Gmail send_email. Strips CR and LF
-// from any user-supplied header value before it goes into the raw MIME
-// message. Without this, a caller could sneak `\r\nBcc: attacker@x` into
-// the subject field and spray hidden recipients.
-const stripCrLf = (s: unknown): string => String(s).replace(/[\r\n]/g, "");
-
-// Base64url encoder for Gmail's `raw` field. RFC 4648 sec 5: replace + with
-// -, / with _, strip trailing =. Node's Buffer doesn't ship a base64url
-// variant pre-16, and we want this to stay portable.
-const toBase64Url = (msg: string): string =>
-  Buffer.from(msg, "utf-8")
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
 function cappedPositiveInt(value: unknown, fallback: number, max: number): number {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
@@ -83,288 +61,27 @@ function linearGraphqlBody(query: string, variables?: Record<string, unknown>): 
   return variables ? { query, variables } : { query };
 }
 
-export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
-  gmail: {
-    id: "gmail",
-    name: "Gmail",
-    category: "google",
-    pipedreamApp: "gmail",
-    icon: "mail",
-    logoUrl: `${LOGO_BASE}/gmail/logo/48`,
-    actions: {
-      list_messages: {
-        description: "List recent email messages",
-        params: {
-          query: { type: "string" },
-          maxResults: { type: "number" },
-        },
-        directApi: {
-          method: "GET",
-          url: "https://gmail.googleapis.com/gmail/v1/users/me/messages",
-          mapParams: (p) => ({
-            ...(p.maxResults ? { maxResults: String(p.maxResults) } : {}),
-            ...(p.query ? { q: String(p.query) } : {}),
-          }),
-        },
-      },
-      get_message: {
-        description: "Get a specific email message by ID",
-        params: {
-          messageId: { type: "string", required: true },
-        },
-        directApi: {
-          method: "GET",
-          url: (p) => `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(String(p.messageId))}?format=full`,
-        },
-      },
-      // Gmail API: users.messages.send. The API expects a base64url-encoded
-      // RFC 2822 message in the `raw` field. We build a minimal plain-text
-      // MIME message from the caller's fields -- HTML bodies and attachments
-      // need multipart/alternative and multipart/mixed respectively, which
-      // is more complexity than this directApi is worth. For those, fall
-      // back to the gmail-send-email Pipedream component (paid plan only).
-      //
-      // Header injection guard: sanitize CR and LF out of every user-supplied
-      // header value before it lands in the raw message. Without this, a
-      // caller could smuggle `\r\nBcc: attacker@example.com` into the
-      // subject and spray hidden recipients. The body is not sanitized --
-      // CR/LF in the body is legitimate message content.
-      send_email: {
-        description: "Send an email",
-        params: {
-          to: { type: "string", required: true },
-          subject: { type: "string", required: true },
-          body: { type: "string", required: true },
-          cc: { type: "string" },
-        },
-        directApi: {
-          method: "POST",
-          url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-          mapBody: (p) => {
-            const headers = [
-              `To: ${stripCrLf(p.to)}`,
-              `Subject: ${stripCrLf(p.subject)}`,
-              ...(p.cc ? [`Cc: ${stripCrLf(p.cc)}`] : []),
-              'Content-Type: text/plain; charset="UTF-8"',
-              "MIME-Version: 1.0",
-            ];
-            const msg = `${headers.join("\r\n")}\r\n\r\n${String(p.body)}`;
-            return { raw: toBase64Url(msg) };
-          },
-        },
-      },
-      search: {
-        description: "Search emails by query",
-        params: {
-          query: { type: "string", required: true },
-          maxResults: { type: "number" },
-        },
-        directApi: {
-          method: "GET",
-          url: "https://gmail.googleapis.com/gmail/v1/users/me/messages",
-          mapParams: (p) => ({
-            q: String(p.query),
-            ...(p.maxResults ? { maxResults: String(p.maxResults) } : {}),
-          }),
-        },
-      },
-      list_labels: {
-        description: "List all email labels",
-        params: {},
-        directApi: {
-          method: "GET",
-          url: "https://gmail.googleapis.com/gmail/v1/users/me/labels",
-        },
-      },
-    },
-  },
+type RegistryServiceInput = Omit<ServiceDefinition, "actions" | "connectorKind"> & {
+  connectorKind?: ServiceDefinition["connectorKind"];
+  actions: ServiceDefinition["actions"];
+};
 
-  google_calendar: {
-    id: "google_calendar",
-    name: "Google Calendar",
-    category: "google",
-    pipedreamApp: "google_calendar",
-    icon: "calendar",
-    logoUrl: `${LOGO_BASE}/google_calendar/logo/48`,
-    actions: {
-      // GCal API: events.list. We always target the user's primary calendar
-      // -- multi-calendar support would require a separate `calendarId` param
-      // and a /calendars/list call to enumerate.
-      list_events: {
-        description: "List calendar events",
-        params: {
-          timeMin: { type: "string" },
-          timeMax: { type: "string" },
-          maxResults: { type: "number" },
-        },
-        directApi: {
-          method: "GET",
-          url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-          mapParams: (p) => ({
-            singleEvents: "true",
-            orderBy: "startTime",
-            ...(p.timeMin ? { timeMin: String(p.timeMin) } : {}),
-            ...(p.timeMax ? { timeMax: String(p.timeMax) } : {}),
-            ...(p.maxResults ? { maxResults: String(p.maxResults) } : {}),
-          }),
-        },
-      },
-      // GCal API: events.insert. `start`/`end` are RFC3339 strings; we wrap
-      // them in dateTime fields. Callers passing a date-only string will get
-      // a Google-side validation error -- by design, we don't try to detect
-      // and remap to {date: ...} all-day events here.
-      create_event: {
-        description: "Create a new calendar event",
-        params: {
-          summary: { type: "string", required: true },
-          start: { type: "string", required: true },
-          end: { type: "string", required: true },
-          description: { type: "string" },
-          location: { type: "string" },
-        },
-        directApi: {
-          method: "POST",
-          url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-          mapBody: (p) => ({
-            summary: String(p.summary),
-            start: { dateTime: String(p.start) },
-            end: { dateTime: String(p.end) },
-            ...(p.description ? { description: String(p.description) } : {}),
-            ...(p.location ? { location: String(p.location) } : {}),
-          }),
-        },
-      },
-      // GCal API: events.patch (PATCH, not PUT, so we don't have to send the
-      // whole event object). Only fields the caller actually provided are
-      // forwarded.
-      update_event: {
-        description: "Update an existing calendar event",
-        params: {
-          eventId: { type: "string", required: true },
-          summary: { type: "string" },
-          start: { type: "string" },
-          end: { type: "string" },
-        },
-        directApi: {
-          method: "PATCH",
-          url: (p) =>
-            `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(String(p.eventId))}`,
-          mapBody: (p) => ({
-            ...(p.summary !== undefined ? { summary: String(p.summary) } : {}),
-            ...(p.start !== undefined ? { start: { dateTime: String(p.start) } } : {}),
-            ...(p.end !== undefined ? { end: { dateTime: String(p.end) } } : {}),
-          }),
-        },
-      },
-      // GCal API: events.delete. Returns 204 No Content on success.
-      delete_event: {
-        description: "Delete a calendar event",
-        params: {
-          eventId: { type: "string", required: true },
-        },
-        directApi: {
-          method: "DELETE",
-          url: (p) =>
-            `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(String(p.eventId))}`,
-        },
-      },
+function defineServiceRegistry(
+  input: Record<string, RegistryServiceInput>,
+): Record<string, ServiceDefinition> {
+  return Object.fromEntries(Object.entries(input).map(([serviceId, service]) => [
+    serviceId,
+    {
+      ...service,
+      connectorKind: service.connectorKind ?? "pipedream",
     },
-  },
+  ])) as Record<string, ServiceDefinition>;
+}
 
-  google_drive: {
-    id: "google_drive",
-    name: "Google Drive",
-    category: "google",
-    pipedreamApp: "google_drive",
-    icon: "hard-drive",
-    logoUrl: `${LOGO_BASE}/google_drive/logo/48`,
-    actions: {
-      // Drive API v3: files.list. Combines optional `query` (free-text name
-      // search) and `folderId` (parents containment) into Drive's `q` filter
-      // language. If both are absent, returns the user's recent files.
-      list_files: {
-        description: "List files in Google Drive",
-        params: {
-          query: { type: "string" },
-          maxResults: { type: "number" },
-          folderId: { type: "string" },
-        },
-        directApi: {
-          method: "GET",
-          url: "https://www.googleapis.com/drive/v3/files",
-          mapParams: (p) => {
-            const clauses: string[] = [];
-            if (p.query) clauses.push(`name contains '${escapeDriveQL(String(p.query))}'`);
-            if (p.folderId) clauses.push(`'${escapeDriveQL(String(p.folderId))}' in parents`);
-            return {
-              fields: "files(id,name,mimeType,modifiedTime,size,parents,webViewLink)",
-              ...(clauses.length > 0 ? { q: clauses.join(" and ") } : {}),
-              ...(p.maxResults ? { pageSize: String(p.maxResults) } : { pageSize: "25" }),
-            };
-          },
-        },
-      },
-      // Drive API v3: files.get (metadata only -- no alt=media). Returns the
-      // standard file metadata fields. For the binary content, the agent
-      // would need a separate `download_file` action we haven't shipped.
-      get_file: {
-        description: "Get file metadata by ID",
-        params: {
-          fileId: { type: "string", required: true },
-        },
-        directApi: {
-          method: "GET",
-          url: (p) =>
-            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(String(p.fileId))}`,
-          mapParams: () => ({
-            fields: "id,name,mimeType,modifiedTime,createdTime,size,parents,owners,webViewLink",
-          }),
-        },
-      },
-      // upload_file deliberately has NO directApi block. Drive's single-
-      // request media upload (POST /upload/drive/v3/files?uploadType=multipart)
-      // requires a hand-built multipart/related body with boundary framing,
-      // a metadata JSON part, and a content part with correct
-      // Content-Transfer-Encoding. That's ~25 lines of careful code that only
-      // handles text content cleanly -- binary uploads need base64 plus
-      // re-encoding. Not worth the complexity here. upload_file falls through
-      // to the google_drive-upload-file Pipedream component, which requires
-      // a paid Pipedream plan. On a free plan, agents should fall back to
-      // get_file + share_file workflows instead. Documented in the
-      // integrations skill at home/.agents/skills/matrix-integrations/SKILL.md.
-      upload_file: {
-        description: "Upload a file to Google Drive (requires paid Pipedream plan)",
-        params: {
-          name: { type: "string", required: true },
-          content: { type: "string", required: true },
-          mimeType: { type: "string" },
-          folderId: { type: "string" },
-        },
-      },
-      // Drive API v3: permissions.create. Defaults to role=reader for least
-      // privilege; caller can override with `role` (writer, commenter, owner).
-      // sendNotificationEmail=false avoids spamming the recipient -- if they
-      // want a notification, they can paste the link manually.
-      share_file: {
-        description: "Share a file with another user",
-        params: {
-          fileId: { type: "string", required: true },
-          email: { type: "string", required: true },
-          role: { type: "string" },
-        },
-        directApi: {
-          method: "POST",
-          url: (p) =>
-            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(String(p.fileId))}/permissions?sendNotificationEmail=false`,
-          mapBody: (p) => ({
-            type: "user",
-            role: p.role ? String(p.role) : "reader",
-            emailAddress: String(p.email),
-          }),
-        },
-      },
-    },
-  },
+export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineServiceRegistry({
+  gmail: GMAIL_SERVICE,
+
+  ...GOOGLE_SERVICES,
 
   github: {
     id: "github",
@@ -385,7 +102,10 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // active repos surface first; matches what `gh repo list` does.
       list_repos: {
         description: "List repositories",
+        risk: "read",
+        paramsSchema: listValidation.repos,
         params: {
+          page: { type: "number" },
           sort: { type: "string" },
           per_page: { type: "number" },
         },
@@ -393,6 +113,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           method: "GET",
           url: "https://api.github.com/user/repos",
           mapParams: (p) => ({
+            ...(p.page !== undefined ? { page: String(p.page) } : {}),
             sort: p.sort ? String(p.sort) : "updated",
             per_page: p.per_page ? String(p.per_page) : "30",
           }),
@@ -403,7 +124,11 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // issues should filter on `pull_request === null` client-side.
       list_issues: {
         description: "List issues for a repository (use owner/repo format)",
+        risk: "read",
+        paramsSchema: listValidation.issues,
         params: {
+          page: { type: "number" },
+          per_page: { type: "number" },
           repo: { type: "string", required: true },
           state: { type: "string" },
         },
@@ -411,6 +136,8 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           method: "GET",
           url: (p) => `https://api.github.com/repos/${encodeOwnerRepo(p.repo)}/issues`,
           mapParams: (p) => ({
+            ...(p.page !== undefined ? { page: String(p.page) } : {}),
+            ...(p.per_page !== undefined ? { per_page: String(p.per_page) } : {}),
             state: p.state ? String(p.state) : "open",
           }),
         },
@@ -420,6 +147,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // split here. Empty string -> no labels, not a single empty label.
       create_issue: {
         description: "Create a new issue (use owner/repo format)",
+        risk: "write",
         params: {
           repo: { type: "string", required: true },
           title: { type: "string", required: true },
@@ -441,7 +169,11 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // GitHub API: GET /repos/{owner}/{repo}/pulls.
       list_prs: {
         description: "List pull requests for a repository (use owner/repo format)",
+        risk: "read",
+        paramsSchema: listValidation.issues,
         params: {
+          page: { type: "number" },
+          per_page: { type: "number" },
           repo: { type: "string", required: true },
           state: { type: "string" },
         },
@@ -449,6 +181,8 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           method: "GET",
           url: (p) => `https://api.github.com/repos/${encodeOwnerRepo(p.repo)}/pulls`,
           mapParams: (p) => ({
+            ...(p.page !== undefined ? { page: String(p.page) } : {}),
+            ...(p.per_page !== undefined ? { per_page: String(p.per_page) } : {}),
             state: p.state ? String(p.state) : "open",
           }),
         },
@@ -457,13 +191,19 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // default is unread only.
       get_notifications: {
         description: "Get notifications",
+        risk: "read",
+        paramsSchema: listValidation.notifications,
         params: {
+          page: { type: "number" },
+          per_page: { type: "number" },
           all: { type: "boolean" },
         },
         directApi: {
           method: "GET",
           url: "https://api.github.com/notifications",
           mapParams: (p) => ({
+            ...(p.page !== undefined ? { page: String(p.page) } : {}),
+            ...(p.per_page !== undefined ? { per_page: String(p.per_page) } : {}),
             all: p.all ? "true" : "false",
           }),
         },
@@ -481,6 +221,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     actions: {
       viewer: {
         description: "Get the connected Linear user",
+        risk: "read",
         params: {},
         directApi: {
           method: "POST",
@@ -494,6 +235,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_teams: {
         description: "List Linear teams",
+        risk: "read",
         params: {
           first: { type: "number" },
         },
@@ -511,6 +253,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_projects: {
         description: "List Linear projects",
+        risk: "read",
         params: {
           first: { type: "number" },
           after: { type: "string" },
@@ -540,6 +283,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_workflow_states: {
         description: "List workflow states for a Linear team",
+        risk: "read",
         params: {
           teamId: { type: "string", required: true },
           first: { type: "number" },
@@ -561,6 +305,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       list_issues: {
         description: "List Linear issues, optionally filtered by team, project, or state name",
+        risk: "read",
         params: {
           first: { type: "number" },
           teamId: { type: "string" },
@@ -638,6 +383,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       create_issue: {
         description: "Create a Linear issue",
+        risk: "write",
         params: {
           teamId: { type: "string", required: true },
           title: { type: "string", required: true },
@@ -677,6 +423,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       update_issue: {
         description: "Update a Linear issue",
+        risk: "write",
         params: {
           issueId: { type: "string", required: true },
           title: { type: "string" },
@@ -711,6 +458,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       comment_issue: {
         description: "Add a comment to a Linear issue",
+        risk: "write",
         params: {
           issueId: { type: "string", required: true },
           body: { type: "string", required: true },
@@ -735,6 +483,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       },
       create_workflow_state: {
         description: "Create a Linear workflow state for Symphony",
+        risk: "write",
         params: {
           teamId: { type: "string", required: true },
           name: { type: "string", required: true },
@@ -758,21 +507,6 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
               color: String(p.color),
               type: p.type ? String(p.type) : "started",
             },
-          }),
-        },
-      },
-      graphql: {
-        description: "Run a custom Linear GraphQL operation for advanced workflows",
-        params: {
-          query: { type: "string", required: true },
-          variables: { type: "object" },
-        },
-        directApi: {
-          method: "POST",
-          url: "https://api.linear.app/graphql",
-          mapBody: (p) => ({
-            query: String(p.query),
-            ...(p.variables && typeof p.variables === "object" ? { variables: p.variables } : {}),
           }),
         },
       },
@@ -800,6 +534,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // channel name like "#general" -- Slack resolves both.
       send_message: {
         description: "Send a message to a channel",
+        risk: "write",
         params: {
           channel: { type: "string", required: true },
           text: { type: "string", required: true },
@@ -814,14 +549,18 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
         },
       },
       list_channels: {
-        description: "List available channels",
+        description: "List a page of channels; continue with response_metadata.next_cursor",
+        risk: "read",
+        paramsSchema: listValidation.channels,
         params: {
+          cursor: { type: "string" },
           limit: { type: "number" },
         },
         directApi: {
           method: "GET",
           url: "https://slack.com/api/conversations.list",
           mapParams: (p) => ({
+            ...(p.cursor !== undefined ? { cursor: String(p.cursor) } : {}),
             limit: p.limit ? String(p.limit) : "100",
             exclude_archived: "true",
             types: "public_channel,private_channel",
@@ -829,8 +568,11 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
         },
       },
       list_messages: {
-        description: "List messages in a channel",
+        description: "List a page of channel messages; continue with response_metadata.next_cursor",
+        risk: "read",
+        paramsSchema: listValidation.messages,
         params: {
+          cursor: { type: "string" },
           channel: { type: "string", required: true },
           limit: { type: "number" },
         },
@@ -838,6 +580,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           method: "GET",
           url: "https://slack.com/api/conversations.history",
           mapParams: (p) => ({
+            ...(p.cursor !== undefined ? { cursor: String(p.cursor) } : {}),
             channel: String(p.channel),
             limit: p.limit ? String(p.limit) : "20",
           }),
@@ -849,13 +592,19 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // they need to reconnect with `search:read` user-scope.
       search: {
         description: "Search messages",
+        risk: "read",
+        paramsSchema: listValidation.search,
         params: {
+          page: { type: "number" },
+          count: { type: "number" },
           query: { type: "string", required: true },
         },
         directApi: {
           method: "GET",
           url: "https://slack.com/api/search.messages",
           mapParams: (p) => ({
+            ...(p.page !== undefined ? { page: String(p.page) } : {}),
+            ...(p.count !== undefined ? { count: String(p.count) } : {}),
             query: String(p.query),
           }),
         },
@@ -864,6 +613,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // colons -- ":thumbsup:" should be passed as "thumbsup".
       react: {
         description: "Add a reaction to a message (emoji name without colons)",
+        risk: "write",
         params: {
           channel: { type: "string", required: true },
           timestamp: { type: "string", required: true },
@@ -903,6 +653,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // strictly validated before interpolation.
       send_message: {
         description: "Send a message to a channel",
+        risk: "write",
         params: {
           channelId: { type: "string", required: true },
           content: { type: "string", required: true },
@@ -919,16 +670,28 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // OAuth scope.
       list_servers: {
         description: "List servers the bot is in",
-        params: {},
+        risk: "read",
+        paramsSchema: listValidation.servers,
+        params: {
+          before: { type: "string" },
+          after: { type: "string" },
+          limit: { type: "number" },
+        },
         directApi: {
           method: "GET",
           url: "https://discord.com/api/v10/users/@me/guilds",
+          mapParams: (p) => ({
+            ...(p.before !== undefined ? { before: String(p.before) } : {}),
+            ...(p.after !== undefined ? { after: String(p.after) } : {}),
+            ...(p.limit !== undefined ? { limit: String(p.limit) } : {}),
+          }),
         },
       },
       // GET /guilds/{guild.id}/channels. Requires bot membership with
       // VIEW_CHANNEL permission.
       list_channels: {
         description: "List channels in a server",
+        risk: "read",
         params: {
           serverId: { type: "string", required: true },
         },
@@ -941,7 +704,11 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
       // GET /channels/{channel.id}/messages. Returns most recent first.
       list_messages: {
         description: "List messages in a channel",
+        risk: "read",
+        paramsSchema: listValidation.discordMessages,
         params: {
+          before: { type: "string" },
+          after: { type: "string" },
           channelId: { type: "string", required: true },
           limit: { type: "number" },
         },
@@ -950,13 +717,17 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           url: (p) =>
             `https://discord.com/api/v10/channels/${encodeDiscordSnowflake(p.channelId)}/messages`,
           mapParams: (p) => ({
+            ...(p.before !== undefined ? { before: String(p.before) } : {}),
+            ...(p.after !== undefined ? { after: String(p.after) } : {}),
             limit: p.limit ? String(Math.min(100, Number(p.limit))) : "20",
           }),
         },
       },
     },
   },
-};
+  ...X_SERVICE_REGISTRY,
+  ...EXPANSION_SERVICE_REGISTRY,
+});
 
 export function getService(id: string): ServiceDefinition | undefined {
   return SERVICE_REGISTRY[id];
@@ -1001,6 +772,7 @@ export async function discoverComponentKeys(
 
   for (const service of services) {
     try {
+      if (service.connectorKind !== "pipedream" || !service.pipedreamApp) continue;
       const actions = await pipedream.discoverActions(service.pipedreamApp);
       const keySet = new Map(actions.map((a) => [a.key, a]));
 

@@ -3,10 +3,10 @@ title: Badge
 description: Tags, pills, and status indicators.
 status: stable
 tokens:
-  - colors.primary
-  - colors.accent
-  - colors.secondary
-  - colors.muted
+  - semanticColors.primary
+  - semanticColors.accent
+  - semanticColors.muted
+  - semanticColors.foreground
   - rounded.full
   - typography.caption
 ---
@@ -27,13 +27,13 @@ Small labels for categorization, status, and metadata.
 
 | Variant   | Background              | Text              | Use For                     |
 |-----------|-------------------------|-------------------|-----------------------------|
-| Default   | `--primary` @ 10%       | `--primary`       | Categories, tags            |
-| Accent    | `--accent` @ 10%        | `--accent`        | Highlights, new, featured   |
-| Muted     | `--muted`               | `--muted-fg`      | Metadata, secondary info    |
-| Success   | `--success` @ 10%       | `--success`       | Active, online, completed   |
-| Warning   | `--warning` @ 10%       | `--warning`       | Pending, attention needed   |
-| Danger    | `--destructive` @ 10%   | `--destructive`   | Error, offline, critical    |
-| Outline   | transparent             | `--foreground`    | Subtle categorization       |
+| Default   | Teal 100                | Teal 800          | Categories, tags            |
+| Accent    | Green 200               | Ink               | Highlights, new, featured   |
+| Muted     | `semanticColors.muted`   | `semanticColors.mutedForeground` | Metadata, secondary info |
+| Success   | Green 200               | Teal 800          | Active, online, completed   |
+| Warning   | Gold 200                | Gold 800          | Pending, attention needed   |
+| Danger    | Coral 100               | Coral 700         | Error, offline, critical    |
+| Outline   | transparent             | `semanticColors.foreground` | Subtle categorization    |
 
 ## Properties
 

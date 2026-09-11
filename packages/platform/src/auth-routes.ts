@@ -1,7 +1,10 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { MatrixComputerRuntimeSlotSchema } from '@matrix-os/contracts';
+import {
+  MatrixComputerRuntimeSlotSchema,
+  SupportIdentityResponseSchema,
+} from '@matrix-os/contracts';
 import {
   createDeviceFlow,
   DeviceApprovalError,
@@ -45,6 +48,7 @@ export interface AuthRoutesConfig {
   jwtSecret: string;
   platformUrl: string; // e.g. https://platform.matrix-os.com
   gatewayUrlForHandle: (handle: string) => string;
+  supportIdentitySecret?: string;
   ignoreLegacyContainers?: boolean;
   // Optional non-secret display profile (name/avatar) for the signing-in
   // client. Must NEVER throw or block token issuance — return null on any
@@ -502,6 +506,34 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       return c.html(approvalSuccessPage(nativeRedirectUri));
     },
   );
+
+  // GET /api/support/identity -- authenticated Support ownership proof.
+  app.get('/api/support/identity', async (c) => {
+    const auth = c.req.header('authorization');
+    if (!auth?.startsWith('Bearer ')) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    let claims: SyncJwtClaims;
+    try {
+      claims = await verifySyncJwt(auth.slice(7), { secret: config.jwtSecret });
+    } catch (err: unknown) {
+      if (isSyncJwtConfigError(err)) throw err;
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    if (!config.supportIdentitySecret) {
+      return c.json(SupportIdentityResponseSchema.parse({ status: 'unavailable' }), 503);
+    }
+
+    return c.json(SupportIdentityResponseSchema.parse({
+      status: 'verified',
+      distinctId: claims.sub,
+      identityHash: createHmac('sha256', config.supportIdentitySecret)
+        .update(claims.sub)
+        .digest('hex'),
+    }));
+  });
 
   // GET /api/me -- authed via sync JWT. Returns handle + gatewayUrl.
   app.get('/api/me', async (c) => {

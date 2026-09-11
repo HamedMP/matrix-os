@@ -1,0 +1,890 @@
+import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AiProviderSnapshotV3Schema,
+  ProviderSettingsSnapshotSchema,
+  type AiProviderSnapshotV3,
+  type FundedAiEffectivePolicy,
+  type FundedAiFundingSummary,
+  type ProviderDependencyCounts,
+} from "@matrix-os/contracts";
+import {
+  ProviderSettingsStore,
+  ProviderSettingsStoreError,
+  type ProviderAccountDependencyCoordinator,
+  type ProviderAccountLifecycleCoordinator,
+  type ProviderLoginCoordinator,
+  type ProviderSettingsRuntimeCoordinator,
+} from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
+import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
+import {
+  PROVIDER_SETTINGS_NOW as NOW,
+  providerReady as ready,
+  providerSettingsCanonicalFixture,
+} from "./provider-settings-test-support.js";
+
+describe("ProviderSettingsStore", () => {
+  let homePath: string;
+  let privateRootPath: string;
+  let canonical: AiProviderSnapshotV3;
+  let dependencyCounts: Omit<ProviderDependencyCounts, "harnessInstanceCount">;
+  let dependencies: ProviderAccountDependencyCoordinator;
+  let lifecycle: ProviderAccountLifecycleCoordinator;
+  let login: ProviderLoginCoordinator;
+  let runtime: ProviderSettingsRuntimeCoordinator;
+
+  beforeEach(async () => {
+    homePath = await mkdtemp(join(tmpdir(), "provider-settings-store-"));
+    privateRootPath = join(dirname(homePath), `.matrix-private-${homePath.split("-").at(-1)}`);
+    canonical = providerSettingsCanonicalFixture();
+    dependencyCounts = { activeChatCount: 0, resumableChatCount: 0 };
+    dependencies = {
+      getAccountDependencies: vi.fn(async ({ harnessInstanceIds }) => ({
+        ...dependencyCounts,
+        harnessInstanceCount: harnessInstanceIds.length,
+      })),
+      reassignDependencies: vi.fn(async () => undefined),
+    };
+    const disconnect = async (accountId: string) => {
+        canonical = AiProviderSnapshotV3Schema.parse({
+          ...canonical,
+          revision: canonical.revision + 1,
+          accounts: canonical.accounts.map((account) => account.id === accountId ? {
+            ...account,
+            authMethod: null,
+            state: "setup_required",
+            checkedAt: null,
+            staleAfter: null,
+            action: "connect",
+          } : account),
+          accessSources: canonical.accessSources.map((source) => source.id === "owner_anthropic_profile" ? {
+            ...source,
+            state: "setup_required",
+            checkedAt: null,
+            staleAfter: null,
+            action: "connect",
+          } : source),
+          instances: canonical.instances.map((instance) => instance.accountId === accountId ? {
+            ...instance,
+            readiness: {
+              state: "setup_required",
+              checkedAt: null,
+              staleAfter: null,
+              action: "connect",
+              safeReason: null,
+            },
+            defaultModelId: null,
+          } : instance),
+        });
+    };
+    lifecycle = {
+      supportedActions: vi.fn((account) => account.authenticated
+        ? ["logout_account", "remove_account"]
+        : ["remove_account"]),
+      logout: vi.fn(async ({ account }) => await disconnect(account.id)),
+      remove: vi.fn(async ({ account }) => await disconnect(account.id)),
+    };
+    login = {
+      supportedMethods: vi.fn(() => ["terminal", "oauth", "api_key"]),
+      startLogin: vi.fn(async ({ mutation }) => ({
+        id: "attempt_real_terminal_1",
+        harnessInstanceId: mutation.harnessInstanceId,
+        accountId: mutation.accountId,
+        method: mutation.method,
+        state: "pending",
+        action: { kind: "open_terminal", terminalSessionId: "terminal_real_1" },
+        expiresAt: new Date(NOW.getTime() + 10 * 60_000).toISOString(),
+        safeFailure: null,
+      })),
+    };
+    runtime = {
+      supportedActions: [
+        "add_harness",
+        "update_harness",
+        "set_harness_enabled",
+        "set_route",
+        "select_account",
+        "select_access_source",
+        "set_gateway_budget",
+        "set_gateway_allowlist",
+      ],
+      isRecoveryReady: vi.fn(() => true),
+      applyConfiguration: vi.fn(async () => undefined),
+      rollbackConfiguration: vi.fn(async () => undefined),
+    };
+  });
+
+  afterEach(async () => {
+    await rm(homePath, { recursive: true, force: true });
+    await rm(privateRootPath, { recursive: true, force: true });
+  });
+
+  function createStore(options: {
+    withDependencies?: boolean;
+    withLifecycle?: boolean;
+    withLogin?: boolean;
+    withRuntime?: boolean;
+    snapshot?: () => AiProviderSnapshotV3;
+    fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
+  } = {}) {
+    let nextId = 0;
+    return new ProviderSettingsStore({
+      homePath,
+      privateRootPath,
+      providerSnapshotReader: {
+        getSnapshot: async () => structuredClone((options.snapshot ?? (() => canonical))()),
+      },
+      dependencyCoordinator: options.withDependencies === false ? undefined : dependencies,
+      accountLifecycle: options.withLifecycle === false ? undefined : lifecycle,
+      loginCoordinator: options.withLogin === false ? undefined : login,
+      runtimeCoordinator: options.withRuntime === false ? undefined : runtime,
+      fundingSummaryReader: options.fundingSummary === undefined ? undefined : {
+        getFundingSummary: vi.fn(async () => {
+          if (options.fundingSummary instanceof Error) throw options.fundingSummary;
+          return options.fundingSummary!;
+        }),
+      },
+      now: () => NOW,
+      idGenerator: () => `generated_${++nextId}`,
+    });
+  }
+
+  it("projects fresh V3 truth and persists owner configuration without readiness or usage copies", async () => {
+    const store = createStore();
+    const initial = await store.getSnapshot();
+    expect(ProviderSettingsSnapshotSchema.safeParse(initial).success).toBe(true);
+    expect(initial).toMatchObject({
+      projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: 7 },
+      revision: 0,
+      access: { mode: "writable" },
+    });
+    expect(initial.harnessCatalog).toEqual([
+      expect.objectContaining({ harness: "hermes", available: false, runnable: false, safeReason: "runtime_not_supported" }),
+      expect.objectContaining({ harness: "openclaw", available: false, runnable: false, safeReason: "runtime_not_supported" }),
+      expect.objectContaining({ harness: "pi", available: false, runnable: false, safeReason: "runtime_not_supported" }),
+      expect.objectContaining({ harness: "opencode", available: false, runnable: false, safeReason: "runtime_not_supported" }),
+    ]);
+    expect(initial.accessSources[0]!.usage).toMatchObject({
+      kind: "unavailable",
+      authority: "unavailable",
+      reason: "ledger_not_available",
+    });
+
+    const response = await store.mutate({
+      type: "add_harness",
+      expectedRevision: 0,
+      idempotencyKey: "add_opencode_1",
+      harness: "opencode",
+      displayName: "OpenCode",
+      route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" },
+      accessSourceId: "matrix_included",
+      accountId: null,
+    });
+    expect(response.kind).toBe("snapshot");
+    expect(response.snapshot.revision).toBe(1);
+    expect(response.snapshot.harnesses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ harness: "opencode", enabled: false, installState: "missing" }),
+    ]));
+    const stored = await readFile(store.configurationPath, "utf8");
+    expect((await stat(store.configurationPath)).mode & 0o777).toBe(0o600);
+    expect(stored).not.toMatch(/"readiness"|"usage"|apiKey|accessToken/);
+  });
+
+  it("normalizes a persisted legacy Claude driver to canonical inventory for projection and login", async () => {
+    canonical = AiProviderSnapshotV3Schema.parse({
+      ...canonical,
+      drivers: canonical.drivers.filter((driver) => driver.id === "claude_code"),
+      instances: canonical.instances.map((instance) => ({ ...instance, driverId: "claude_code" })),
+    });
+    login.supportedMethods = vi.fn(({ driverId, installState }) =>
+      driverId === "claude_code" && installState === "installed" ? ["terminal"] : []);
+    const store = createStore();
+    await mkdir(dirname(store.configurationPath), { recursive: true });
+    await writeFile(store.configurationPath, JSON.stringify({
+      schemaVersion: 1,
+      revision: 0,
+      harnesses: [{
+        id: "harness_legacy_claude",
+        driverId: "kernel",
+        harness: "claude",
+        displayName: "Claude",
+        accentColor: null,
+        enabled: true,
+        selectedAccountId: null,
+        accessSourceId: "matrix_included",
+        route: { kind: "fixed", providerId: "anthropic", modelId: "claude-sonnet-5" },
+      }],
+      accountProfiles: [],
+      gatewayPolicy: {
+        accessSourceId: "matrix_included",
+        monthlyBudgetMicrousd: null,
+        allowedModelIds: ["claude-sonnet-5"],
+        topUpEnabled: false,
+      },
+      receipts: [],
+    }), { mode: 0o600 });
+
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.supportedActions).toContain("start_login");
+    expect(snapshot.harnesses).toContainEqual(expect.objectContaining({
+      id: "harness_legacy_claude",
+      harness: "claude",
+      enabled: true,
+      installState: "installed",
+      loginMethods: ["terminal"],
+      recommendedLoginMethod: "terminal",
+    }));
+
+    await expect(store.mutate({
+      type: "start_login",
+      expectedRevision: 0,
+      idempotencyKey: "legacy_claude_login_1",
+      harnessInstanceId: "harness_legacy_claude",
+      accountId: null,
+      method: "terminal",
+    })).resolves.toMatchObject({
+      kind: "login_attempt",
+      snapshot: {
+        harnesses: [expect.objectContaining({ enabled: true, installState: "installed" })],
+      },
+    });
+    expect(login.startLogin).toHaveBeenCalledWith(expect.objectContaining({
+      harness: expect.objectContaining({
+        id: "harness_legacy_claude",
+        driverId: "claude_code",
+        harness: "claude",
+        installState: "installed",
+      }),
+    }));
+
+    await expect(store.mutate({
+      type: "set_harness_enabled",
+      expectedRevision: 1,
+      idempotencyKey: "legacy_claude_disable_1",
+      harnessInstanceId: "harness_legacy_claude",
+      enabled: false,
+    })).resolves.toMatchObject({
+      kind: "snapshot",
+      snapshot: { harnesses: [expect.objectContaining({ enabled: false })] },
+    });
+    await expect(store.mutate({
+      type: "set_harness_enabled",
+      expectedRevision: 2,
+      idempotencyKey: "legacy_claude_enable_1",
+      harnessInstanceId: "harness_legacy_claude",
+      enabled: true,
+    })).resolves.toMatchObject({
+      kind: "snapshot",
+      snapshot: { harnesses: [expect.objectContaining({ enabled: true })] },
+    });
+  });
+
+  it("projects all four generic harness setup states from canonical inventory and runtime support", async () => {
+    canonical.drivers.push(
+      { id: "hermes", displayName: "Hermes", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools"], setupActions: [] },
+      { id: "openclaw", displayName: "OpenClaw", kind: "cli", installState: "missing", health: "stopped", capabilities: ["tools"], setupActions: ["install"] },
+      { id: "pi", displayName: "Pi", kind: "cli", installState: "installed", health: "stopped", capabilities: ["tools"], setupActions: ["open_terminal"] },
+      { id: "opencode", displayName: "OpenCode", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools"], setupActions: [] },
+    );
+    runtime = { ...runtime, supportedHarnessKinds: ["hermes", "openclaw", "pi"] };
+
+    const projected = await createStore().getSnapshot();
+
+    expect(projected.harnessCatalog).toEqual([
+      { harness: "hermes", displayName: "Hermes", installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null },
+      { harness: "openclaw", displayName: "OpenClaw", installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" },
+      { harness: "pi", displayName: "Pi", installState: "installed", available: true, runnable: false, setupAction: "open_terminal", safeReason: "setup_required" },
+      { harness: "opencode", displayName: "OpenCode", installState: "installed", available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" },
+    ]);
+  });
+
+  it("lets a registered installed direct adapter receive credentials from its selected route", async () => {
+    const readDrivers = createProviderDriverInventoryReader({
+      detectAgentInstallations: vi.fn(async () => ({
+        agents: [{
+          id: "opencode" as const,
+          command: "opencode",
+          displayName: "OpenCode",
+          installState: "installed" as const,
+          installed: true,
+          authState: "unknown" as const,
+          workspaceCompatibility: "not_applicable" as const,
+          version: "1.16.0",
+          errorCode: null,
+        }],
+      })),
+      runtimeSource: vi.fn(async () => ({
+        runtime: { selected: null, transition: null, options: [] },
+        providers: [],
+        messaging: { runtime: "hermes" as const, provider: null, model: null, configured: false },
+      })),
+    });
+    canonical.drivers.push(...await readDrivers(AbortSignal.timeout(1_000)));
+    runtime = { ...runtime, supportedHarnessKinds: ["opencode"] };
+
+    const projected = await createStore().getSnapshot();
+
+    expect(projected.harnessCatalog.find((entry) => entry.harness === "opencode")).toEqual({
+      harness: "opencode",
+      displayName: "OpenCode",
+      installState: "installed",
+      available: true,
+      runnable: true,
+      setupAction: "none",
+      safeReason: null,
+    });
+  });
+
+  it("projects authoritative promotional, add-on, reserved, and monthly budget truth without enabling top-ups", async () => {
+    const fundingSummary: FundedAiFundingSummary = {
+      asOf: NOW.toISOString(),
+      periodStart: "2026-08-01T00:00:00.000Z",
+      monthlyBudgetMicrousd: 5_000_000,
+      settledThisMonthMicrousd: 1_000_000,
+      reservedMicrousd: 250_000,
+      reservedThisMonthMicrousd: 250_000,
+      promotionalBalanceMicrousd: 2_000_000,
+      addonBalanceMicrousd: 1_000_000,
+      creditBalanceMicrousd: 3_000_000,
+      fundingShortfallMicrousd: 500_000,
+      remainingBalanceMicrousd: 2_250_000,
+      remainingBudgetMicrousd: 3_750_000,
+    };
+    const policy: FundedAiEffectivePolicy = {
+      enabled: true,
+      globalRevision: 4,
+      runtimeRevision: 2,
+      allowedModelIds: ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
+      monthlyBudgetMicrousd: fundingSummary.monthlyBudgetMicrousd,
+      checkedAt: NOW.toISOString(),
+      staleAfter: "2026-08-30T10:01:00.000Z",
+    };
+    const store = createStore({ fundingSummary: { funding: fundingSummary, policy } });
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.usage).toEqual({
+      kind: "managed_credit",
+      authority: "matrix_ledger",
+      state: "current",
+      scope: "owner_entitlement",
+      currency: "USD",
+      usedMicrousd: 1_000_000,
+      remainingMicrousd: 2_250_000,
+      limitMicrousd: 5_000_000,
+      periodStartedAt: "2026-08-01T00:00:00.000Z",
+      resetsAt: "2026-09-01T00:00:00.000Z",
+      asOf: NOW.toISOString(),
+      credit: {
+        promotionalBalanceMicrousd: 2_000_000,
+        addonBalanceMicrousd: 1_000_000,
+        creditBalanceMicrousd: 3_000_000,
+        reservedMicrousd: 250_000,
+        fundingShortfallMicrousd: 500_000,
+        remainingBalanceMicrousd: 2_250_000,
+      },
+      budget: {
+        monthlyBudgetMicrousd: 5_000_000,
+        settledThisMonthMicrousd: 1_000_000,
+        reservedThisMonthMicrousd: 250_000,
+        remainingBudgetMicrousd: 3_750_000,
+      },
+    });
+    expect(snapshot.gatewayPolicy).toMatchObject({
+      monthlyBudgetMicrousd: 5_000_000,
+      allowedModelIds: ["claude-sonnet-5"],
+      topUpEnabled: false,
+    });
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
+      .toEqual(["claude-sonnet-5"]);
+    await expect(store.mutate({
+      type: "add_harness",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "reject_owner_only_funded_model",
+      harness: "opencode",
+      displayName: "OpenCode owner-only route",
+      route: { kind: "configurable", providerId: "anthropic", modelId: "claude-opus-5" },
+      accessSourceId: "matrix_included",
+      accountId: null,
+    })).rejects.toMatchObject({ code: "invalid_route" });
+    expect(snapshot.supportedActions).not.toContain("add_credit");
+    expect(snapshot.supportedActions).not.toContain("set_gateway_budget");
+    expect(snapshot.supportedActions).not.toContain("set_gateway_allowlist");
+
+    const purchasable = await createStore({
+      fundingSummary: {
+        funding: { ...fundingSummary, topUpEnabled: true },
+        policy,
+      },
+    }).getSnapshot();
+    expect(purchasable.gatewayPolicy?.topUpEnabled).toBe(true);
+    expect(purchasable.supportedActions).toContain("add_credit");
+    await expect(store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "platform_budget_is_read_only",
+      monthlyBudgetMicrousd: 4_000_000,
+    })).rejects.toMatchObject({ code: "runtime_unavailable" });
+    await expect(store.mutate({
+      type: "set_gateway_allowlist",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "platform_allowlist_is_read_only",
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+    })).rejects.toMatchObject({ code: "runtime_unavailable" });
+
+    const stale = await createStore({
+      fundingSummary: {
+        funding: { ...fundingSummary, asOf: "2026-08-30T09:50:00.000Z" },
+        policy,
+      },
+    }).getSnapshot();
+    expect(stale.accessSources.find((source) => source.id === "matrix_included")?.usage)
+      .toMatchObject({ kind: "managed_credit", state: "stale" });
+  });
+
+  it("shows ledger usage as unavailable instead of falling back to local estimates", async () => {
+    const localStore = createStore();
+    const localSnapshot = await localStore.getSnapshot();
+    await localStore.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: localSnapshot.revision,
+      idempotencyKey: "stale_local_budget_1",
+      monthlyBudgetMicrousd: 9_000_000,
+    });
+
+    const store = createStore({ fundingSummary: new Error("postgresql://secret@db.internal") });
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.usage).toMatchObject({
+      kind: "unavailable",
+      authority: "unavailable",
+      reason: "ledger_not_available",
+    });
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds)
+      .toEqual([]);
+    expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual([]);
+    expect(snapshot.gatewayPolicy?.monthlyBudgetMicrousd).toBeNull();
+    expect(snapshot.harnesses.some((harness) => harness.accessSourceId === "matrix_included"))
+      .toBe(false);
+
+    const malformedSnapshot = await createStore({
+      fundingSummary: { funding: {}, policy: {} } as unknown as {
+        funding: FundedAiFundingSummary;
+        policy: FundedAiEffectivePolicy;
+      },
+    }).getSnapshot();
+    expect(malformedSnapshot.accessSources.find((source) => source.id === "matrix_included")?.usage)
+      .toMatchObject({ kind: "unavailable", reason: "ledger_not_available" });
+    expect(malformedSnapshot.gatewayPolicy).toMatchObject({
+      allowedModelIds: [],
+      monthlyBudgetMicrousd: null,
+    });
+  });
+
+  it("is read-only and rejects cosmetic mutations without a runtime coordinator", async () => {
+    const store = createStore({
+      withRuntime: false,
+      withLogin: false,
+      withLifecycle: false,
+      withDependencies: false,
+    });
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.access).toEqual({ mode: "read_only", reason: "runtime_unavailable" });
+    expect(snapshot.supportedActions).toEqual([]);
+    await expect(store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: 0,
+      idempotencyKey: "budget_unwired_1",
+      monthlyBudgetMicrousd: 1,
+    })).rejects.toMatchObject({ code: "runtime_unavailable" });
+  });
+
+  it("fails reads closed while runtime receipt recovery is unresolved", async () => {
+    runtime.isRecoveryReady = () => false;
+    const store = createStore();
+    await expect(store.getSnapshot()).rejects.toMatchObject({
+      code: "runtime_unavailable",
+      status: 503,
+    });
+    runtime.isRecoveryReady = () => true;
+    await expect(store.getSnapshot()).resolves.toMatchObject({ revision: 0 });
+  });
+
+  it("rejects missing, malformed, and stale canonical projections", async () => {
+    expect(() => new ProviderSettingsStore({
+      homePath,
+      providerSnapshotReader: undefined as never,
+    })).toThrow("Canonical provider snapshot reader is required");
+    const stale = { ...canonical, refreshedAt: "2026-08-30T09:00:00.000Z" };
+    await expect(createStore({ snapshot: () => stale }).getSnapshot())
+      .rejects.toMatchObject({ code: "projection_unavailable" });
+  });
+
+  it("enforces revision concurrency and bounded idempotency", async () => {
+    const store = createStore();
+    const mutation = {
+      type: "set_gateway_budget" as const,
+      expectedRevision: 0,
+      idempotencyKey: "budget_1",
+      monthlyBudgetMicrousd: 2_000_000,
+    };
+    expect((await store.mutate(mutation)).snapshot.revision).toBe(1);
+    expect((await store.mutate(mutation)).snapshot.revision).toBe(1);
+    await expect(store.mutate({ ...mutation, monthlyBudgetMicrousd: 3_000_000 }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+
+    const results = await Promise.allSettled([
+      store.mutate({ ...mutation, expectedRevision: 1, idempotencyKey: "budget_2", monthlyBudgetMicrousd: 3_000_000 }),
+      store.mutate({ ...mutation, expectedRevision: 1, idempotencyKey: "budget_3", monthlyBudgetMicrousd: 4_000_000 }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected"))
+      .toMatchObject({ reason: expect.objectContaining({ code: "revision_conflict" }) });
+  });
+
+  it("rolls runtime configuration back when canonical refresh fails", async () => {
+    let reads = 0;
+    const store = createStore({
+      snapshot: () => {
+        reads += 1;
+        if (reads === 2) throw new Error("refresh failed at /private/provider");
+        return canonical;
+      },
+    });
+    const mutation = {
+      type: "add_harness" as const,
+      expectedRevision: 0,
+      idempotencyKey: "add_refresh_failure_1",
+      harness: "opencode" as const,
+      displayName: "OpenCode",
+      route: { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" },
+      accessSourceId: "matrix_included",
+      accountId: null,
+    };
+
+    await expect(store.mutate(mutation)).rejects.toMatchObject({ code: "projection_unavailable" });
+    expect(runtime.applyConfiguration).toHaveBeenCalledOnce();
+    expect(runtime.rollbackConfiguration).toHaveBeenCalledOnce();
+    expect(runtime.rollbackConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ mutation, idempotencyKey: mutation.idempotencyKey }),
+    );
+    expect((await store.getSnapshot()).revision).toBe(0);
+  });
+
+  it("rolls runtime configuration back when owner configuration persistence fails", async () => {
+    const store = createStore();
+    await store.getSnapshot();
+    const tempPath = join(dirname(store.configurationPath), ".settings.json.tmp");
+    const sentinelPath = join(homePath, "runtime-rollback-sentinel.txt");
+    await writeFile(sentinelPath, "untouched");
+    await symlink(sentinelPath, tempPath);
+    const mutation = {
+      type: "add_harness" as const,
+      expectedRevision: 0,
+      idempotencyKey: "add_persist_failure_1",
+      harness: "opencode" as const,
+      displayName: "OpenCode",
+      route: { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" },
+      accessSourceId: "matrix_included",
+      accountId: null,
+    };
+
+    await expect(store.mutate(mutation)).rejects.toMatchObject({ code: "configuration_unavailable" });
+    expect(runtime.applyConfiguration).toHaveBeenCalledOnce();
+    expect(runtime.rollbackConfiguration).toHaveBeenCalledOnce();
+    expect(await readFile(sentinelPath, "utf8")).toBe("untouched");
+    await unlink(tempPath);
+    expect((await store.getSnapshot()).revision).toBe(0);
+  });
+
+  it("fails closed without exposing a runtime compensation error", async () => {
+    let reads = 0;
+    runtime.rollbackConfiguration = vi.fn(async () => {
+      throw new Error("rollback failed at /private/provider");
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const store = createStore({
+      snapshot: () => {
+        reads += 1;
+        if (reads === 2) throw new Error("canonical refresh failed");
+        return canonical;
+      },
+    });
+
+    try {
+      await expect(store.mutate({
+        type: "add_harness",
+        expectedRevision: 0,
+        idempotencyKey: "add_compensation_failure_1",
+        harness: "opencode",
+        displayName: "OpenCode",
+        route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" },
+        accessSourceId: "matrix_included",
+        accountId: null,
+      })).rejects.toMatchObject({ code: "runtime_unavailable" });
+      expect(warning.mock.calls.flat().join(" ")).not.toContain("rollback failed at");
+      expect(warning.mock.calls.flat().join(" ")).not.toContain("/private/provider");
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("returns an idempotent visible Terminal login attempt and keeps secrets outside sync/export", async () => {
+    const store = createStore();
+    const mutation = {
+      type: "start_login" as const,
+      expectedRevision: 0,
+      idempotencyKey: "login_1",
+      harnessInstanceId: "harness_kernel",
+      accountId: null,
+      method: "terminal" as const,
+    };
+    const first = await store.mutate(mutation);
+    const retried = await store.mutate(mutation);
+    expect(first).toMatchObject({
+      kind: "login_attempt",
+      attempt: { state: "pending", action: { kind: "open_terminal" } },
+    });
+    expect(retried).toEqual(first);
+    expect(login.startLogin).toHaveBeenCalledOnce();
+    expect(first.kind === "login_attempt" && first.attempt.action).toEqual({
+      kind: "open_terminal",
+      terminalSessionId: "terminal_real_1",
+    });
+
+    await store.setAccountSecret("owner_anthropic", "secret-value");
+    expect(store.secretsPath.startsWith(homePath)).toBe(false);
+    expect((await stat(store.secretsPath)).mode & 0o777).toBe(0o600);
+    expect(JSON.stringify(await store.getSnapshot())).not.toContain("secret-value");
+  });
+
+  it("does not fabricate login sessions and rejects account/provider mismatches", async () => {
+    await expect(createStore({ withLogin: false }).mutate({
+      type: "start_login",
+      expectedRevision: 0,
+      idempotencyKey: "login_unwired_1",
+      harnessInstanceId: "harness_kernel",
+      accountId: null,
+      method: "terminal",
+    })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+
+    canonical = AiProviderSnapshotV3Schema.parse({
+      ...canonical,
+      accessSources: [...canonical.accessSources, {
+        id: "owner_openai_profile",
+        displayName: "OpenAI account",
+        fundingKind: "owner_account",
+        vendor: "openai",
+        accountLabel: "OpenAI",
+        eligibleModelIds: ["gpt-5"],
+        policyVersion: "policy_1",
+        ...ready,
+      }],
+      accounts: [...canonical.accounts, {
+        id: "owner_openai",
+        vendor: "openai",
+        authMethod: "provider_profile",
+        accountLabel: "OpenAI",
+        ...ready,
+      }],
+      instances: [...canonical.instances, {
+        id: "kernel_openai",
+        driverId: "kernel",
+        vendor: "openai",
+        accountId: "owner_openai",
+        accessSourceId: "owner_openai_profile",
+        label: "OpenAI",
+        readiness: ready,
+        capabilitySnapshot: ["tools", "resume"],
+        modelIds: ["gpt-5"],
+        defaultModelId: "gpt-5",
+        catalogVersion: "catalog_1",
+      }],
+      models: [...canonical.models, {
+        id: "gpt-5",
+        vendor: "openai",
+        displayName: "GPT-5",
+        status: "current",
+        capabilities: ["tools", "reasoning"],
+        effortControls: ["high"],
+        eligibleAccessSourceIds: ["owner_openai_profile"],
+        dataPolicies: [{
+          accessSourceId: "owner_openai_profile",
+          route: "owner_direct",
+          disclosureKey: "owner-openai",
+        }],
+        aliases: [],
+        catalogVersion: "catalog_1",
+      }],
+    });
+    await expect(createStore().mutate({
+      type: "start_login",
+      expectedRevision: 0,
+      idempotencyKey: "login_wrong_provider_1",
+      harnessInstanceId: "harness_kernel",
+      accountId: "owner_openai",
+      method: "terminal",
+    })).rejects.toMatchObject({ code: "invalid_route" });
+    expect(login.startLogin).not.toHaveBeenCalled();
+
+    login.startLogin = vi.fn(async ({ mutation }) => ({
+      id: "attempt_wrong_1",
+      harnessInstanceId: "harness_other",
+      accountId: mutation.accountId,
+      method: mutation.method,
+      state: "pending",
+      action: { kind: "open_terminal", terminalSessionId: "terminal_wrong_1" },
+      expiresAt: new Date(NOW.getTime() + 60_000).toISOString(),
+      safeFailure: null,
+    }));
+    await expect(createStore().mutate({
+      type: "start_login",
+      expectedRevision: 0,
+      idempotencyKey: "login_incoherent_1",
+      harnessInstanceId: "harness_kernel",
+      accountId: null,
+      method: "terminal",
+    })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+  });
+
+  it("recovers a deterministic stale atomic-write temp and validates receipt attempts", async () => {
+    const store = createStore();
+    const tempPath = join(dirname(store.configurationPath), ".settings.json.tmp");
+    await mkdir(dirname(tempPath), { recursive: true });
+    await writeFile(tempPath, "stale", { mode: 0o600 });
+    await store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: 0,
+      idempotencyKey: "budget_atomic_1",
+      monthlyBudgetMicrousd: 2_000_000,
+    });
+    await expect(stat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const sentinelPath = join(homePath, "sentinel.txt");
+    await writeFile(sentinelPath, "untouched");
+    await symlink(sentinelPath, tempPath);
+    await expect(store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: 1,
+      idempotencyKey: "budget_atomic_2",
+      monthlyBudgetMicrousd: 3_000_000,
+    })).rejects.toMatchObject({ code: "configuration_unavailable" });
+    expect(await readlink(tempPath)).toBe(sentinelPath);
+    expect(await readFile(sentinelPath, "utf8")).toBe("untouched");
+    await unlink(tempPath);
+
+    const persisted = JSON.parse(await readFile(store.configurationPath, "utf8"));
+    persisted.receipts[0].attempt = { secret: "must-not-persist" };
+    await writeFile(store.configurationPath, JSON.stringify(persisted), { mode: 0o600 });
+    await expect(store.getSnapshot()).rejects.toMatchObject({ code: "configuration_unavailable" });
+  });
+
+  it("keeps logout distinct and blocks removal until exact dependencies are reassigned", async () => {
+    const store = createStore();
+    let response = await store.mutate({
+      type: "select_account",
+      expectedRevision: 0,
+      idempotencyKey: "select_owner_1",
+      harnessInstanceId: "harness_kernel",
+      accountId: "owner_anthropic",
+    });
+    await store.setAccountSecret("owner_anthropic", "secret-value");
+    response = await store.mutate({
+      type: "logout_account",
+      expectedRevision: response.snapshot.revision,
+      idempotencyKey: "logout_owner_1",
+      accountId: "owner_anthropic",
+    });
+    expect(response.snapshot.accounts).toEqual([
+      expect.objectContaining({ id: "owner_anthropic", authState: "unauthenticated" }),
+    ]);
+    expect(await readFile(store.secretsPath, "utf8")).not.toContain("secret-value");
+
+    await expect(store.mutate({
+      type: "remove_account",
+      expectedRevision: response.snapshot.revision,
+      idempotencyKey: "remove_owner_1",
+      accountId: "owner_anthropic",
+      dependencyGuard: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 },
+      confirmation: "remove_account",
+    })).rejects.toMatchObject({ code: "account_in_use" });
+
+    response = await store.mutate({
+      type: "reassign_account",
+      expectedRevision: response.snapshot.revision,
+      idempotencyKey: "reassign_owner_1",
+      fromAccountId: "owner_anthropic",
+      target: { kind: "access_source", accessSourceId: "matrix_included" },
+      scope: "all_dependencies",
+      dependencyGuard: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 },
+    });
+    expect(dependencies.reassignDependencies).toHaveBeenCalledOnce();
+
+    response = await store.mutate({
+      type: "remove_account",
+      expectedRevision: response.snapshot.revision,
+      idempotencyKey: "remove_owner_2",
+      accountId: "owner_anthropic",
+      dependencyGuard: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 },
+      confirmation: "remove_account",
+    });
+    expect(response.snapshot.accounts).toEqual([]);
+    expect(lifecycle.remove).toHaveBeenCalledWith({
+      account: expect.objectContaining({ id: "owner_anthropic", authenticated: false }),
+      idempotencyKey: "remove_owner_2",
+    });
+    expect(dependencies.reassignDependencies).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "reassign_owner_1",
+    }));
+  });
+
+  it("recovers an idempotent account removal after owner-config persistence fails", async () => {
+    const store = createStore();
+    await store.getSnapshot();
+    const tempPath = join(dirname(store.configurationPath), ".settings.json.tmp");
+    const sentinelPath = join(homePath, "remove-sentinel.txt");
+    await writeFile(sentinelPath, "untouched");
+    await symlink(sentinelPath, tempPath);
+    const mutation = {
+      type: "remove_account" as const,
+      expectedRevision: 0,
+      idempotencyKey: "remove_recovery_1",
+      accountId: "owner_anthropic",
+      dependencyGuard: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 },
+      confirmation: "remove_account" as const,
+    };
+    await expect(store.mutate(mutation)).rejects.toMatchObject({ code: "configuration_unavailable" });
+    expect(canonical.accounts).toEqual([
+      expect.objectContaining({ id: "owner_anthropic", authMethod: null, state: "setup_required" }),
+    ]);
+    await unlink(tempPath);
+
+    const response = await store.mutate(mutation);
+    expect(response.snapshot.accounts).toEqual([]);
+    expect(lifecycle.remove).toHaveBeenNthCalledWith(1, {
+      account: expect.objectContaining({ id: "owner_anthropic" }),
+      idempotencyKey: "remove_recovery_1",
+    });
+    expect(lifecycle.remove).toHaveBeenNthCalledWith(2, {
+      account: expect.objectContaining({ id: "owner_anthropic" }),
+      idempotencyKey: "remove_recovery_1",
+    });
+  });
+
+  it("fails closed without dependency and lifecycle coordinators and preserves malformed owner files", async () => {
+    const store = createStore({ withDependencies: false, withLifecycle: false });
+    await expect(store.mutate({
+      type: "remove_account",
+      expectedRevision: 0,
+      idempotencyKey: "remove_unwired_1",
+      accountId: "owner_anthropic",
+      dependencyGuard: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 },
+      confirmation: "remove_account",
+    })).rejects.toMatchObject({ code: "dependency_unavailable" });
+
+    await mkdir(dirname(store.configurationPath), { recursive: true });
+    await writeFile(store.configurationPath, "{not valid json", { mode: 0o600 });
+    await expect(store.getSnapshot()).rejects.toBeInstanceOf(ProviderSettingsStoreError);
+    await expect(store.getSnapshot()).rejects.toMatchObject({ code: "configuration_unavailable" });
+    expect(await readFile(store.configurationPath, "utf8")).toBe("{not valid json");
+  });
+});

@@ -1,6 +1,7 @@
 import { link, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod/v4";
+import { TerminalKeyboardPreferencesSchema } from "@matrix-os/contracts";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { shellError } from "./errors.js";
 import { validateSessionName } from "./names.js";
@@ -32,6 +33,7 @@ const TerminalFontFamilySchema = z.enum(["MesloLGS NF", "Berkeley Mono", "JetBra
 const TerminalCursorStyleSchema = z.enum(["block", "bar", "underline"]);
 
 export const ShellPreferencesPatchSchema = z.object({
+  keyboard: TerminalKeyboardPreferencesSchema.optional(),
   shellThemeId: ShellThemeIdSchema.optional(),
   fontFamily: TerminalFontFamilySchema.optional(),
   ligatures: z.boolean().optional(),
@@ -72,6 +74,7 @@ export const ShellPreferencesSchema = z.preprocess((input) => {
   ligatures: z.boolean().default(true),
   cursorStyle: TerminalCursorStyleSchema.default("block"),
   smoothScroll: z.boolean().default(true),
+  keyboard: TerminalKeyboardPreferencesSchema.default(() => TerminalKeyboardPreferencesSchema.parse({})),
 }));
 
 export type ShellPreferences = z.infer<typeof ShellPreferencesSchema>;
