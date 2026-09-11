@@ -1362,7 +1362,6 @@ apply_update() {
   if [ "$healthy" = true ]; then
     if commit_release_metadata; then
       log "Updated release metadata"
-      cleanup_update_transaction
       if ! remove_legacy_r2_credentials; then
         log "ERROR: legacy R2 credentials could not be removed after the broker migration"
         write_update_error "legacy_storage_credentials_remain" "The update completed, but legacy storage credentials still require removal." "$version"
@@ -1371,6 +1370,7 @@ apply_update() {
       fi
       log "Health check passed — update to $version complete"
       clear_consumed_update_markers
+      cleanup_update_transaction
     else
       log "ERROR: release metadata commit failed — rolling back"
       if do_rollback false; then

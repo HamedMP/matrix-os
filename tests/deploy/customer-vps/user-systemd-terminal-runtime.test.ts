@@ -226,8 +226,13 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(updater).toContain("transaction_candidate_is_committed");
     expect(updater.indexOf("transaction_candidate_is_committed", updater.indexOf("recover_interrupted_update()")))
       .toBeLessThan(updater.indexOf("if do_rollback false; then", updater.indexOf("recover_interrupted_update()")));
-    expect(updater.indexOf("cleanup_update_transaction", updater.indexOf("if commit_release_metadata; then")))
-      .toBeLessThan(updater.indexOf("remove_legacy_r2_credentials", updater.indexOf("if commit_release_metadata; then")));
+    const committedUpdate = updater.indexOf("if commit_release_metadata; then");
+    const removeLegacyCredentials = updater.indexOf("remove_legacy_r2_credentials", committedUpdate);
+    const clearConsumedMarkers = updater.indexOf("clear_consumed_update_markers", committedUpdate);
+    const cleanupCommittedTransaction = updater.indexOf("cleanup_update_transaction", committedUpdate);
+    expect(removeLegacyCredentials).toBeGreaterThan(committedUpdate);
+    expect(clearConsumedMarkers).toBeGreaterThan(removeLegacyCredentials);
+    expect(cleanupCommittedTransaction).toBeGreaterThan(clearConsumedMarkers);
     expect(updater).toContain('sudo rm -f -- "$APP_DIR.rollback/.update-available.json"');
     expect(candidateRollback).toBeGreaterThan(-1);
     expect(removeCandidate).toBeGreaterThan(candidateRollback);
