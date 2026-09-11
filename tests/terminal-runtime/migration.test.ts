@@ -16,6 +16,53 @@ afterEach(async () => {
 });
 
 describe("terminal workspace cutover", () => {
+  it("prepares every replacement workspace before stopping any legacy session", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-migration-order-"));
+    homes.push(homePath);
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
+      sessions: {
+        first: { name: "first", status: "active", cwd: "" },
+        second: { name: "second", status: "active", cwd: "" },
+      },
+    }));
+    const events: string[] = [];
+    const cutover: LegacyZellijCutover = {
+      ensureWorkspace: async (name) => { events.push(`ensure:${name}`); },
+      createShellTab: async (_name, input) => {
+        events.push(`tab:${input.internalName}`);
+        return { tabId: events.length, paneId: `terminal_${events.length}` };
+      },
+      stopLegacySessions: async () => { events.push("stop"); },
+    };
+
+    await migrateTerminalWorkspaces({ homePath, projects: [], cutover });
+
+    const stopIndex = events.indexOf("stop");
+    expect(stopIndex).toBeGreaterThan(0);
+    expect(events.slice(0, stopIndex).filter((event) => event.startsWith("ensure:"))).toHaveLength(1);
+    expect(events.slice(0, stopIndex).filter((event) => event.startsWith("tab:"))).toHaveLength(2);
+  });
+
+  it("leaves legacy sessions running when replacement preparation fails", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-migration-prepare-failure-"));
+    homes.push(homePath);
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
+      sessions: { legacy: { name: "legacy", status: "active", cwd: "" } },
+    }));
+    let stopped = false;
+    const cutover: LegacyZellijCutover = {
+      ensureWorkspace: async () => undefined,
+      createShellTab: async () => { throw new Error("replacement unavailable"); },
+      stopLegacySessions: async () => { stopped = true; },
+    };
+
+    await expect(migrateTerminalWorkspaces({ homePath, projects: [], cutover }))
+      .rejects.toThrow("replacement unavailable");
+    expect(stopped).toBe(false);
+  });
+
   it("commits a reserved main workspace on a clean install with no legacy sessions", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-migration-clean-"));
     homes.push(homePath);
@@ -150,7 +197,7 @@ describe("terminal workspace cutover", () => {
     const cutover: LegacyZellijCutover = {
       stopLegacySessions: async (names) => {
         const journal = JSON.parse(await readFile(join(systemPath, "terminal-migration-journal.json"), "utf8"));
-        expect(journal.status).toBe("staged");
+        expect(journal.status).toBe("prepared");
         stopped.push(names);
       },
       ensureWorkspace: async () => undefined,

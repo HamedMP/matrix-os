@@ -11,6 +11,63 @@ import {
 const lexicalRealpath = async (path: string): Promise<string> => path;
 
 describe("Zellij 0.44.3 structured runtime adapter", () => {
+  it("propagates one explicit owner runtime environment to attachments", async () => {
+    const runtimeEnvironment = {
+      HOME: "/home/matrix/home",
+      MATRIX_HOME: "/home/matrix/home",
+      ZELLIJ_CONFIG_DIR: "/home/matrix/home/system/zellij",
+      XDG_RUNTIME_DIR: "/run/user/999",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/999/bus",
+    };
+    const spawnPty = vi.fn((): RuntimePty => ({
+      resize: vi.fn(),
+      kill: vi.fn(),
+      onData: vi.fn(() => ({ dispose: vi.fn() })),
+      onExit: vi.fn(() => ({ dispose: vi.fn() })),
+    }));
+    const run = vi.fn(async () => "");
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      env: runtimeEnvironment,
+      run,
+      spawnPty,
+    });
+
+    await adapter.openAttachment("matrix-w-0123456789abcdef0123456789abcdef", {
+      paneId: "terminal_12",
+      size: { cols: 120, rows: 36 },
+      onData: () => undefined,
+      onExit: () => undefined,
+    });
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      ["attach", "matrix-w-0123456789abcdef0123456789abcdef"],
+      expect.objectContaining({ env: runtimeEnvironment }),
+    );
+  });
+
+  it("propagates non-missing legacy session deletion failures", async () => {
+    const failure = Object.assign(new Error("denied"), { stderr: "permission denied" });
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      run: vi.fn(async () => { throw failure; }),
+    });
+
+    await expect(adapter.stopLegacySessions(["legacy-session"]))
+      .rejects.toBe(failure);
+  });
+
+  it("tolerates only confirmed missing legacy sessions", async () => {
+    const failure = Object.assign(new Error("missing"), { stderr: "session does not exist" });
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      run: vi.fn(async () => { throw failure; }),
+    });
+
+    await expect(adapter.stopLegacySessions(["legacy-session"]))
+      .resolves.toBeUndefined();
+  });
+
   it.each([
     [{ type: "resize", direction: "up" }, ["resize", "increase", "up", "--pane-id", "terminal_12"]],
     [{ type: "fullscreen" }, ["toggle-fullscreen", "--pane-id", "terminal_12"]],

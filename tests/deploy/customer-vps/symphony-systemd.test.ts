@@ -149,7 +149,7 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(syncAgent).toContain("sudo systemctl enable matrix-symphony.service");
     expect(syncAgent).toContain("sudo systemctl start --no-block matrix-symphony.service");
     expect(syncAgent).toContain("stop_runtime_services()");
-    expect(syncAgent).toContain("if ! sudo systemctl stop matrix-symphony matrix-gateway matrix-shell; then");
+    expect(syncAgent).toContain("if ! sudo systemctl stop matrix-symphony matrix-gateway matrix-shell matrix-terminal-runtime; then");
     expect(syncAgent).toContain('sudo systemctl show --property=ActiveState --value "$service"');
     expect(syncAgent).not.toContain("sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true");
   });
