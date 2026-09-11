@@ -79,6 +79,14 @@ suite("Electron Desktop keeps cloud updates out of the workspace", () => {
 
     // Install network fixtures before authenticating, so even the first gate probe
     // sees the outage/mismatch. Never replace renderer components or the IPC bridge.
+    // Playwright interception bypasses Electron's onHeadersReceived CORS hook.
+    // Match its exact renderer-origin policy for these loopback fixtures.
+    const fixtureHeaders = {
+      "Access-Control-Allow-Origin": new URL(window.url()).origin,
+      "Access-Control-Allow-Credentials": "true",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, x-runtime-slot",
+    };
     let cloudUpdatePosts = 0;
     window.on("request", (request) => {
       if (request.method() === "POST" && new URL(request.url()).pathname === "/api/system/update") {
@@ -86,6 +94,7 @@ suite("Electron Desktop keeps cloud updates out of the workspace", () => {
       }
     });
     await window.route("**/api/system/info", (route) => route.fulfill({
+      headers: fixtureHeaders,
       status: scenario === "502" ? 502 : 200,
       contentType: "application/json",
       body: JSON.stringify(scenario === "502" ? { error: "Service unavailable" } : info),
@@ -94,11 +103,13 @@ suite("Electron Desktop keeps cloud updates out of the workspace", () => {
     // be absent simply because the stub returns 404 for release discovery.
     const latest = { version: "v2099.01.01-0001", channel: "dev", gitCommit: otherCommit };
     await window.route("**/api/system/update*", (route) => route.fulfill({
+      headers: fixtureHeaders,
       status: route.request().method() === "POST" ? 503 : 200,
       contentType: "application/json",
       body: JSON.stringify({ channel: "dev", latest, updateAvailable: true }),
     }));
     await window.route("**/api/system/releases*", (route) => route.fulfill({
+      headers: fixtureHeaders,
       status: 200, contentType: "application/json", body: JSON.stringify({ releases: [latest] }),
     }));
 
