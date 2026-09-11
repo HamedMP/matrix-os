@@ -1,3 +1,4 @@
+import { useGettingStartedVisibility, useGettingStartedPopoverFocus } from "@matrix-os/ui";
 import * as Popover from "@radix-ui/react-popover";
 import { onboardingChecklist } from "@matrix-os/brand";
 import { Github } from "lucide-react";
@@ -58,6 +59,11 @@ function StepIndicator({ step }: { step: GettingStartedStep }) {
 }
 
 export default function GettingStartedPopover() {
+  const { scope } = useGettingStartedVisibility();
+  return <GettingStartedPopoverContent key={scope} />;
+}
+
+function GettingStartedPopoverContent() {
   const api = useConnection((state) => state.api);
   const connectionStatus = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
@@ -65,7 +71,8 @@ export default function GettingStartedPopover() {
   const authGeneration = useConnection((state) => state.authGeneration);
   const openTab = useTabs((state) => state.openTab);
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
-  const [open, setOpen] = useState(false);
+  const { visible: open, requestedOpen, blocked, isBlocked, setRequestedOpen: setOpen } = useGettingStartedVisibility();
+  const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
 
@@ -86,10 +93,11 @@ export default function GettingStartedPopover() {
     // Dismissal is deliberately owned by the title-bar trigger. Radix may
     // request `false` for Escape, focus changes, and outside interactions;
     // none of those are allowed to close this persistent checklist.
-    if (!nextOpen) return;
+    if (!nextOpen || blocked) return;
+    markManualOpen();
     setOpen(true);
     setRefreshRequest((request) => (request + 1) % 1_000_000);
-  }, []);
+  }, [blocked, markManualOpen, setOpen]);
 
   const autoOpenKey = useMemo(() => (
     handle ? gettingStartedAutoOpenKey(handle, runtimeSlot) : null
@@ -100,12 +108,13 @@ export default function GettingStartedPopover() {
       connectionStatus !== "signed-in"
       || !autoOpenKey
       || !snapshot.loaded
+      || blocked
+      || isBlocked()
       || snapshot.completedCount === TOTAL_STEPS
       || hasAutoOpened(autoOpenKey)
     ) return;
-    rememberAutoOpened(autoOpenKey);
     setOpen(true);
-  }, [autoOpenKey, connectionStatus, snapshot.completedCount, snapshot.loaded]);
+  }, [autoOpenKey, connectionStatus, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, setOpen]);
 
   const openSettings = useCallback((section: "services" | "providers" | "billing") => {
     requestSettingsSection(section);
@@ -130,6 +139,14 @@ export default function GettingStartedPopover() {
     }
   }, [openSettings, openTab]);
 
+  useEffect(() => {
+    // A manual opening counts too, even while status is loading: a later
+    // response must not undo the user's explicit dismissal.
+    if (open && !isBlocked() && autoOpenKey) {
+      rememberAutoOpened(autoOpenKey);
+    }
+  }, [open, isBlocked, autoOpenKey]);
+
   const label = `Getting started — ${snapshot.completedCount} of ${TOTAL_STEPS}`;
   const progress = `${(snapshot.completedCount / TOTAL_STEPS) * 100}%`;
 
@@ -140,8 +157,9 @@ export default function GettingStartedPopover() {
           type="button"
           aria-label={label}
           title={label}
+          disabled={blocked}
           onClick={() => {
-            if (open) setOpen(false);
+            if (requestedOpen) setOpen(false);
           }}
           className="relative flex size-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
           style={{ color: "var(--text-secondary)" }}
@@ -164,6 +182,8 @@ export default function GettingStartedPopover() {
           side="bottom"
           sideOffset={7}
           collisionPadding={12}
+          onOpenAutoFocus={onOpenAutoFocus}
+          onCloseAutoFocus={onCloseAutoFocus}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           className="w-[252px] overflow-hidden rounded-[12px] border outline-none"

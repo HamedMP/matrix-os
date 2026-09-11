@@ -209,6 +209,7 @@ async function prepareScratchPath(
   homePath: string,
   sessionId: string,
   nowMs: () => number,
+  reuseExisting = false,
 ): Promise<string | null> {
   const scratchRoot = join(homePath, "system", "agent-scratch");
   await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
@@ -226,6 +227,12 @@ async function prepareScratchPath(
     return scratchPath;
   } catch (err: unknown) {
     if (!isErrnoCode(err, "EEXIST")) throw err;
+    if (reuseExisting) {
+      const existing = await lstat(scratchPath);
+      return existing.isDirectory() && !existing.isSymbolicLink()
+        && await realpath(scratchPath) === join(canonicalScratchRoot, sessionId)
+        ? scratchPath : null;
+    }
     if (!await reclaimStaleScratchPath(homePath, sessionId, nowMs)) return null;
     try {
       await mkdir(scratchPath, { mode: 0o700 });
@@ -284,7 +291,7 @@ export function createAgentSandbox(options: {
       return statusForUid(currentUid(options.getUid), required);
     },
 
-    async preflight(input: unknown): Promise<
+    async preflight(input: unknown, recovery?: { reuseCodexScratch: true }): Promise<
       | { ok: true; sandbox: AgentLaunchSandbox | undefined; status: AgentSandboxStatus }
       | Failure
     > {
@@ -365,7 +372,8 @@ export function createAgentSandbox(options: {
       }
 
       const scratchPath = sandboxMode === "workspace_write" && !effectiveReadOnly
-        ? await prepareScratchPath(homePath, request.sessionId, nowMs)
+        ? await prepareScratchPath(homePath, request.sessionId, nowMs,
+          request.agent === "codex" && recovery?.reuseCodexScratch === true)
         : null;
       if (sandboxMode === "workspace_write" && !effectiveReadOnly && !scratchPath) {
         return failure(409, "sandbox_unavailable", "Agent sandbox is unavailable", uidStatus);

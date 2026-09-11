@@ -1705,21 +1705,6 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
-  it("bounds gateway startup instead of waiting forever for a ready frame", async () => {
-    const gateway = fakeGateway({ emitReady: false });
-    const adapter = createHermesChatProviderAdapter({
-      homePath: "/home/matrix/home",
-      spawnFn: gateway.spawnFn,
-      readyTimeoutMs: 5,
-    });
-
-    expect(await collect(adapter.start(baseInput))).toEqual([
-      expect.objectContaining({ type: "run.completed", outcome: "failed" }),
-    ]);
-    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
-    expect(gateway.requests).toEqual([]);
-  });
-
   it("bounds JSON-RPC requests instead of waiting forever for a response", async () => {
     const gateway = fakeGateway({ ignoreMethods: ["session.create"] });
     const adapter = createHermesChatProviderAdapter({

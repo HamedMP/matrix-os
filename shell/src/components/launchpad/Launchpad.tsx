@@ -20,7 +20,10 @@ import {
 } from "@/lib/hugeicons";
 import {
   OS_VIEW_CREATE_APP_APPEARANCE,
+  clampOsViewContextMenuPoint,
   osViewFixedAppAppearanceForPath,
+  type OsViewDesktopAddResult,
+  type OsViewDesktopBounds,
   type OsViewFixedAppIcon,
 } from "@matrix-os/contracts";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
@@ -70,7 +73,7 @@ export function Launchpad({
   visible: boolean;
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
-  onAddToDesktop?: (path: string) => void;
+  onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
 }) {
   // Keep the registry's stable order, flattened from the classic sections.
   const groups = groupLauncherApps(apps);
@@ -78,7 +81,9 @@ export function Launchpad({
 
   const [query, setQuery] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
-  const [contextApp, setContextApp] = useState<AppEntry | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ app: AppEntry; x: number; y: number } | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [placementPending, setPlacementPending] = useState(false);
   const filteredApps = filterLaunchpadApps(orderedApps, query);
 
   // Viewport-derived page size. window is only read inside this effect
@@ -115,7 +120,25 @@ export function Launchpad({
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (visible) searchRef.current?.focus();
+    else {
+      setContextMenu(null);
+      setContextError(null);
+      setPlacementPending(false);
+    }
   }, [visible]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const dismissMenuFirst = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setContextMenu(null);
+      setContextError(null);
+    };
+    document.addEventListener("keydown", dismissMenuFirst, true);
+    return () => document.removeEventListener("keydown", dismissMenuFirst, true);
+  }, [contextMenu]);
 
   const launch = (app: AppEntry) => {
     onOpenApp(app.name, app.path);
@@ -128,6 +151,14 @@ export function Launchpad({
       data-visible={visible ? "true" : undefined}
       className="launchpad-root"
       style={{ zIndex: SHELL_Z_INDEX.launchpad }}
+      onPointerDownCapture={(event) => {
+        if (!contextMenu) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest("[data-launchpad-context-menu]")) return;
+        event.stopPropagation();
+        setContextMenu(null);
+        setContextError(null);
+      }}
     >
       {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss backdrop: a pure pointer convenience that closes Launchpad only when the empty area itself is clicked. Keyboard dismiss is provided by the launcher's global Escape handler (MissionControl), and the real controls are focusable buttons. */}
       <div
@@ -185,7 +216,15 @@ export function Launchpad({
                   key={app.path}
                   app={app}
                   onLaunch={() => launch(app)}
-                  onContextMenu={isOsViewDestinationPath(app.path) ? undefined : () => setContextApp(app)}
+                  onContextMenu={isOsViewDestinationPath(app.path) ? undefined : (event) => {
+                    if (placementPending) return;
+                    const point = clampOsViewContextMenuPoint(
+                      { x: event.clientX, y: event.clientY },
+                      { width: window.innerWidth, height: window.innerHeight },
+                    );
+                    setContextMenu({ app, ...point });
+                    setContextError(null);
+                  }}
                 />
               ))}
             </div>
@@ -208,19 +247,46 @@ export function Launchpad({
               />
             ))}
         </div>
-        {contextApp && contextApp.path !== "__create-app__" && onAddToDesktop ? (
-          <div role="menu" className="fixed left-1/2 top-1/2 z-50 min-w-48 -translate-x-1/2 rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg">
+        {contextMenu && contextMenu.app.path !== "__create-app__" && onAddToDesktop ? (
+          <div
+            role="menu"
+            data-launchpad-context-menu
+            className="fixed z-50 min-w-48 max-w-64 rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
             <button
               type="button"
               role="menuitem"
+              disabled={placementPending}
+              aria-busy={placementPending}
               className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
-              onClick={() => {
-                onAddToDesktop(contextApp.path);
-                setContextApp(null);
+              onClick={async () => {
+                if (placementPending) return;
+                let result: OsViewDesktopAddResult = "failed";
+                setPlacementPending(true);
+                try {
+                  result = await onAddToDesktop(contextMenu.app.path, {
+                    width: Math.max(1, window.innerWidth),
+                    height: Math.max(1, window.innerHeight - 126),
+                  });
+                } catch (error: unknown) {
+                  console.warn("[launchpad] Desktop placement failed:", error instanceof Error ? error.name : "UnknownError");
+                }
+                setPlacementPending(false);
+                if (result === "added" || result === "already-present") {
+                  setContextMenu(null);
+                  setContextError(null);
+                  onClose();
+                  return;
+                }
+                setContextError(result === "desktop-full"
+                  ? "Desktop is full. Remove an icon and try again."
+                  : "Could not add the app. Please try again.");
               }}
             >
-              Add {contextApp.name} to Desktop
+              Add {contextMenu.app.name} to Desktop
             </button>
+            {contextError ? <p role="alert" className="max-w-60 px-3 pb-2 text-xs">{contextError}</p> : null}
           </div>
         ) : null}
       </div>
@@ -228,7 +294,7 @@ export function Launchpad({
   );
 }
 
-function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu?: () => void }) {
+function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu?: (event: React.MouseEvent) => void }) {
   const { showImage, onError } = useIconWithFallback(app.iconUrl);
   const builtInAppearance = osViewFixedAppAppearanceForPath(app.path);
   const BuiltInIcon = builtInAppearance
@@ -236,7 +302,7 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
     : undefined;
   const useFixedIcon = BuiltInIcon && builtInAppearance?.iconSource === "fixed";
   return (
-    <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(); } : undefined}>
+    <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(event); } : undefined}>
       <span className="launchpad-icon">
         {app.path === "__create-app__" ? (
           <span

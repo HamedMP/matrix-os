@@ -427,6 +427,35 @@ jobs:
             body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"],"timeoutMs":30000}'
             send_runtime_command "$body" "$response"
           }
+          reconcile_preview_registration() {
+            local body response=/tmp/preview-registration-recovery.json
+            jq -e --arg h "$HANDLE" --arg v "$VERSION" \
+              '.status == "running" and .healthy == true and .handle == $h and .runtimeSlot == $h and .runtimeVersion == $v and (.machineId | type == "string") and (.publicIPv4 | type == "string")' \
+              <<< "$runtime" >/dev/null
+            body="$(jq -cn --rawfile script scripts/preview-registration-recovery.py \
+              --arg h "$HANDLE" --arg m "$(jq -r '.machineId' <<< "$runtime")" \
+              --arg v "$VERSION" --arg s "$address" \
+              '{command:["/usr/bin/python3","-c",$script,$h,$m,$v,$s],timeoutMs:15000}')"
+            send_runtime_command "$body" "$response"
+            echo "Preview registration verified against platform and host identity."
+          }
+          verify_preview_stability() {
+            local baseline="" current response=/tmp/preview-runtime-stability.json body until_time
+            body='{"command":["/usr/bin/systemctl","show","matrix-gateway.service","--property=MainPID","--property=NRestarts","--property=ActiveState"],"timeoutMs":10000}'
+            until_time=$((SECONDS + 900))
+            while true; do
+              send_runtime_command "$body" "$response"
+              current="$(jq -er '.stdout | select(contains("ActiveState=active") and (contains("MainPID=0\n") | not))' "$response")"
+              if [ -n "$baseline" ] && [ "$current" != "$baseline" ]; then
+                echo "Preview gateway restarted during stability validation." >&2
+                exit 1
+              fi
+              baseline="$current"
+              [ "$SECONDS" -lt "$until_time" ] || break
+              sleep 30
+            done
+            echo "Preview gateway remained stable for 15 minutes."
+          }
           code="$(attempt)"
           if [ "$code" != "200" ]; then
             echo "Deploy returned HTTP ${code}; retrying once in 30s..."
@@ -474,6 +503,8 @@ jobs:
               if active_bundle_version="$(probe_active_bundle_version 2>/dev/null)"; then
                 echo "Active app version for ${HANDLE}: ${active_bundle_version:-unavailable}"
                 if [ "$active_bundle_version" = "$VERSION" ]; then
+                  reconcile_preview_registration
+                  verify_preview_stability
                   echo "Preview ready: ${HANDLE} is healthy on ${VERSION}"
                   break
                 fi

@@ -4,6 +4,7 @@ import {
   MATRIX_HOSTED_BILLING_PLANS,
   MATRIX_HOSTED_BILLING_REGIONS,
   closestMatrixRegionSlug,
+  getMatrixDeveloperToolPreinstallLimit,
   resolveMatrixMachineProfile,
 } from "@matrix-os/contracts";
 
@@ -51,5 +52,12 @@ describe("hosted billing catalog", () => {
     expect(closestMatrixRegionSlug("Europe/Paris")).toBe("region_nbg1");
     expect(closestMatrixRegionSlug("Asia/Tokyo")).toBe("region_hil");
     expect(closestMatrixRegionSlug(undefined)).toBe("region_fsn1");
+  });
+
+  it("limits only CPX22 to one preinstalled developer tool", () => {
+    expect(getMatrixDeveloperToolPreinstallLimit("cpx22")).toBe(1);
+    expect(getMatrixDeveloperToolPreinstallLimit("CPX22")).toBe(1);
+    expect(getMatrixDeveloperToolPreinstallLimit("cpx21")).toBeNull();
+    expect(getMatrixDeveloperToolPreinstallLimit("cpx42")).toBeNull();
   });
 });

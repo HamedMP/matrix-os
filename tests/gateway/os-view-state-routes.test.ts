@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { createDefaultOsViewDocument } from "@matrix-os/contracts";
+import { createDefaultOsViewDocument, type OsViewStateResponse } from "@matrix-os/contracts";
 import { createOsViewStateRoutes } from "../../packages/gateway/src/os-view-state/routes.js";
 import { OsViewStateConflictError } from "../../packages/gateway/src/os-view-state/repository.js";
 
@@ -8,9 +8,9 @@ function appFor(repository: {
   getOrCreate: ReturnType<typeof vi.fn>;
   patch: ReturnType<typeof vi.fn>;
   importLegacyDesktop: ReturnType<typeof vi.fn>;
-}, ownerId = "owner-1") {
+}, ownerId = "owner-1", onChanged?: (ownerId: string, state: OsViewStateResponse) => void) {
   const app = new Hono();
-  app.route("/api/os-view-state", createOsViewStateRoutes({ repository, getOwnerId: () => ownerId }));
+  app.route("/api/os-view-state", createOsViewStateRoutes({ repository, getOwnerId: () => ownerId, onChanged }));
   return app;
 }
 
@@ -41,6 +41,27 @@ describe("OS-view state routes", () => {
     expect(response.status).toBe(400);
     expect(repository.patch).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({ error: "Invalid OS-view state mutation" });
+  });
+
+  it("notifies live clients only after a committed mutation", async () => {
+    const updated = { ...record, revision: 2 };
+    const repository = {
+      getOrCreate: vi.fn(),
+      patch: vi.fn(async () => updated),
+      importLegacyDesktop: vi.fn(),
+    };
+    const onChanged = vi.fn();
+    const response = await appFor(repository, "owner-1", onChanged).request("/api/os-view-state", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseRevision: 1,
+        mutationId: `osvm_${"b".repeat(32)}`,
+        patch: { desktop: { icons: [] } },
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(onChanged).toHaveBeenCalledWith("owner-1", updated);
   });
 
   it("maps optimistic conflicts without leaking database details", async () => {

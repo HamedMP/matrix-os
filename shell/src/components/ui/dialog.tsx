@@ -1,5 +1,6 @@
 "use client"
 
+import { GettingStartedBlocker } from "@matrix-os/ui";
 import * as React from "react"
 import { XIcon } from "@/lib/hugeicons"
 import { Dialog as DialogPrimitive } from "radix-ui"
@@ -7,10 +8,12 @@ import { Dialog as DialogPrimitive } from "radix-ui"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
+const ModalContext = React.createContext(true)
+
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+  return <ModalContext value={props.modal !== false}><DialogPrimitive.Root data-slot="dialog" {...props} /></ModalContext>
 }
 
 function DialogTrigger({
@@ -57,6 +60,7 @@ function DialogContent({
   showCloseButton?: boolean
   overlayStyle?: React.CSSProperties
 }) {
+  const modal = React.useContext(ModalContext)
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay style={overlayStyle} />
@@ -68,6 +72,7 @@ function DialogContent({
         )}
         {...props}
       >
+        <GettingStartedBlocker active={modal} />
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close

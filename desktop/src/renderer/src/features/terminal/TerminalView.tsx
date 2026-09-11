@@ -1,4 +1,7 @@
 import { Terminal } from "@xterm/xterm";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { createPortal } from "react-dom";
+import { TerminalControls } from "@matrix-os/ui";
 import {
   classifyTerminalClipboardShortcut,
   classifyTerminalPointerEvent,
@@ -6,7 +9,7 @@ import {
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
@@ -14,6 +17,7 @@ import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
+import { parseTerminalRefKey } from "../../lib/terminal-workspaces";
 import { getAttachManager } from "./terminal-runtime";
 import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./TerminalLinkContextMenu";
 import {
@@ -35,6 +39,7 @@ import {
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
 import { installMouseTrackingSelection } from "./terminal-mouse-selection";
 import { decodeOsc52Clipboard } from "./terminal-osc52";
+import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -100,6 +105,7 @@ interface TerminalViewProps {
   active?: boolean;
   visualScale?: number;
   onRecreate?: () => void;
+  controlsHost?: HTMLElement | null;
 }
 
 type ClipboardFeedback = {
@@ -125,6 +131,15 @@ function clipboardSuccessFeedback(
   return current && current.sequence > sequence ? current : null;
 }
 
+async function terminalPasteFileBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+  }
+  return btoa(binary);
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component -- This component owns one xterm instance and its coupled attach, resize, link, paste, and teardown lifecycle. Splitting those effects across child components would obscure single-resource ownership; visual theme helpers and menus remain extracted.
 export default function TerminalView({
   sessionName,
@@ -132,6 +147,7 @@ export default function TerminalView({
   active = true,
   visualScale = 1,
   onRecreate,
+  controlsHost,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
   const terminalThemeId = useTerminalAppearance((state) => state.themeId);
@@ -158,8 +174,6 @@ export default function TerminalView({
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
-  const [leaseRevoked, setLeaseRevoked] = useState(false);
-  const [leaseAttempt, setLeaseAttempt] = useState(0);
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
   const closeTerminalContextMenu = useCallback(() => {
     setTerminalContextMenu(null);
@@ -198,8 +212,17 @@ export default function TerminalView({
     endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
-    setLeaseRevoked(false);
   }
+
+  const controls = useDesktopTerminalControls({
+    api, sessionName, chatId, active, socketState,
+    isMac: navigator.platform.startsWith("Mac"),
+    attachmentRef, termRef,
+  });
+  const controlsRef = useRef(controls);
+  useLayoutEffect(() => {
+    controlsRef.current = controls;
+  }, [controls]);
 
   // xterm lifecycle — mount once, dispose only on real unmount (tab close).
   useEffect(() => {
@@ -296,7 +319,7 @@ export default function TerminalView({
         isComposing: event.isComposing,
         hasSelection: Boolean(selection),
       });
-      if (!action) return true;
+      if (!action) return controlsRef.current.handleKeyEvent(event);
       event.preventDefault();
       if (action === "copy") {
         void copyTerminalTextWithFeedback(selection);
@@ -493,14 +516,6 @@ export default function TerminalView({
           terminal.resize(size.cols, size.rows);
         }
       },
-      onLeaseRevoked: () => {
-        endedRef.current = true;
-        setLeaseRevoked(true);
-        setSocketState("ended");
-      },
-      onPresentationReset: () => {
-        terminal.reset();
-      },
       onGap: () => {
         terminal.clear();
         terminal.write(GAP_MARKER);
@@ -528,7 +543,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, leaseAttempt]);
+  }, [sessionName, chatId, active]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -575,24 +590,27 @@ export default function TerminalView({
         return;
       }
       try {
+        const terminalRef = parseTerminalRefKey(sessionName);
+        if (!terminalRef) throw new Error("invalid terminal reference");
         const paths = await Promise.all(files.map(async ({ file, mimeType }) => {
-          const response = await api.postBytes<{ terminalPath?: unknown }>(
-            `/api/terminal/sessions/${encodeURIComponent(sessionName)}/paste-assets`,
-            file,
-            {
-              "Content-Type": mimeType,
-              "X-Matrix-Filename": safeTerminalUploadFilename(file.name),
-            },
+          const response = await api.post<{ assets?: Array<{ terminalPath?: unknown }> }>(
+            `/api/terminal/workspaces/${encodeURIComponent(terminalRef.workspaceId)}/tabs/${encodeURIComponent(terminalRef.tabId)}/paste-assets`,
+            { assets: [{
+              name: safeTerminalUploadFilename(file.name),
+              mimeType,
+              dataBase64: await terminalPasteFileBase64(file),
+            }] },
             { timeoutMs: 30_000 },
           );
+          const terminalPath = response.assets?.[0]?.terminalPath;
           if (
-            typeof response.terminalPath !== "string"
-            || !response.terminalPath.startsWith("/home/matrix/home/")
-            || /[\u0000\r\n]/.test(response.terminalPath)
+            typeof terminalPath !== "string"
+            || !terminalPath.startsWith("/home/matrix/home/")
+            || /[\u0000\r\n]/.test(terminalPath)
           ) {
             throw new Error("invalid terminal paste response");
           }
-          return response.terminalPath;
+          return terminalPath;
         }));
         if (paths.length === 0 || !isCurrentOperation(operation, initiatingAttachment)) return;
         const payload = bracketTerminalPaths(paths);
@@ -692,17 +710,6 @@ export default function TerminalView({
   }, [active, api, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
-    if (leaseRevoked) {
-      return {
-        text: "Live on another device.",
-        action: <Button variant="primary" onClick={() => {
-          endedRef.current = false;
-          setLeaseRevoked(false);
-          setSocketState("connecting");
-          setLeaseAttempt((attempt) => attempt + 1);
-        }}>Resume here</Button>,
-      };
-    }
     if (socketState === "fatal") {
       return { text: "This session has ended on your computer.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }
@@ -718,8 +725,12 @@ export default function TerminalView({
     <div
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4"
       data-terminal-surface
-      style={{ backgroundColor: terminalTheme.background }}
+      style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
     >
+      {controlsHost === undefined ? <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} theme={terminalTheme} /> : controlsHost ? createPortal(
+        <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} placement="header" theme={{ background: "var(--bg-surface)", foreground: "var(--text-primary)" }} />,
+        controlsHost,
+      ) : null}
       <div
         ref={hostRef}
         className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"

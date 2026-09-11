@@ -1,12 +1,11 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PinIcon, PinOffIcon, SquareTerminal, Trash2, X } from "@renderer/lib/hugeicons";
-import { useState } from "react";
+import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PinIcon, PinOffIcon, Trash2, X } from "@renderer/lib/hugeicons";
+import { type Ref, useState } from "react";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
 import { OSWindowSafeView } from "../desktop-shell/OSWindow";
-import { DesktopNewSessionControl } from "./DesktopNewSessionControl";
-import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
+import { TerminalSessionHeader } from "./TerminalSessionHeader";
 import { relativeSessionActivity } from "./terminal-session-activity";
 import {
   terminalAgentLabel,
@@ -17,6 +16,10 @@ import {
   type TerminalAgentOption,
 } from "./terminal-agent-options";
 import { DesktopTerminalAgentLogo } from "./DesktopTerminalAgentLogo";
+
+function displayName(shell: ShellSessionSummary): string {
+  return shell.subtitle?.trim() || shell.tabId || shell.name;
+}
 
 function agentMetadata(shell: ShellSessionSummary): string | null {
   if (!shell.agent) return null;
@@ -34,6 +37,7 @@ function sessionTitle(shell: ShellSessionSummary): string {
 }
 
 export function TerminalSessionSidebar({
+  showHeader = true,
   sessions,
   selectedName,
   creating,
@@ -44,6 +48,9 @@ export function TerminalSessionSidebar({
   renameDraft,
   renameError,
   onCreate,
+  onCollapse,
+  sidebarId,
+  collapseButtonRef,
   onCreateAgent,
   onRefreshAgentStatuses,
   onSelect,
@@ -55,6 +62,7 @@ export function TerminalSessionSidebar({
   onPin,
   onDelete,
 }: {
+  showHeader?: boolean;
   sessions: ShellSessionSummary[];
   selectedName: string | null;
   creating: boolean;
@@ -65,6 +73,9 @@ export function TerminalSessionSidebar({
   renameDraft: string;
   renameError: string | null;
   onCreate: () => void;
+  onCollapse: () => void;
+  sidebarId: string;
+  collapseButtonRef: Ref<HTMLButtonElement>;
   onCreateAgent: (option: TerminalAgentOption, action: TerminalAgentMenuAction) => void;
   onRefreshAgentStatuses: () => void;
   onSelect: (session: ShellSessionSummary) => void;
@@ -78,28 +89,16 @@ export function TerminalSessionSidebar({
 }) {
   const [actionsName, setActionsName] = useState<string | null>(null);
   return (
-    <OSWindowSafeView area="sidebar" data-terminal-session-sidebar className="flex h-full min-h-0 w-full flex-col">
+    <OSWindowSafeView area="sidebar" style={showHeader ? undefined : { paddingTop: 0 }} data-terminal-session-sidebar className="flex h-full min-h-0 w-full flex-col">
       <aside className="flex h-full min-h-0 w-full flex-col">
-        <div className="flex min-h-12 shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-subtle)" }}>
-          <div className="flex min-w-0 items-center gap-1.5">
-            <SquareTerminal size={16} aria-hidden="true" />
-            <h1 className="truncate text-base font-medium tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>Terminal</h1>
-          </div>
-          <div data-terminal-sidebar-header-actions className="no-drag flex shrink-0 items-center gap-2">
-            <DesktopTerminalThemePicker />
-            <DesktopNewSessionControl
-              disabled={disabled}
-              creating={creating}
-              agentStatuses={agentStatuses}
-              checkingAgentStatuses={checkingAgentStatuses}
-              onRefreshAgentStatuses={onRefreshAgentStatuses}
-              onCreateShell={onCreate}
-              onCreateAgent={onCreateAgent}
-            />
-          </div>
-        </div>
+        {showHeader && <div className="shrink-0 border-b" style={{ borderColor: "var(--border-subtle)" }}>
+          <TerminalSessionHeader sidebarId={sidebarId} buttonRef={collapseButtonRef} onToggle={onCollapse}
+            disabled={disabled} creating={creating} agentStatuses={agentStatuses} checkingAgentStatuses={checkingAgentStatuses}
+            onRefreshAgentStatuses={onRefreshAgentStatuses} onCreateShell={onCreate} onCreateAgent={onCreateAgent} />
+        </div>}
         <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {[...sessions].sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))).map((session) => {
+            const label = displayName(session);
             const selected = selectedName === session.name;
             const metadata = agentMetadata(session);
             const title = sessionTitle(session);
@@ -135,7 +134,7 @@ export function TerminalSessionSidebar({
                   <>
                     <button
                       type="button"
-                      aria-label={`Open ${session.name}`}
+                      aria-label={`Open ${label}`}
                       aria-current={selected || undefined}
                       className="flex min-h-16 w-full min-w-0 items-start px-4 py-3 pr-10 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
                       style={{ background: selected ? "var(--bg-hover)" : "transparent" }}
@@ -230,7 +229,7 @@ function SessionActions({ session, disabled, open, onOpenChange, onRename, onCop
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          aria-label={`More actions for ${session.name}`}
+          aria-label={`More actions for ${displayName(session)}`}
           disabled={disabled}
           className="absolute right-2 top-3 z-10 flex size-7 items-center justify-center rounded-md bg-[var(--bg-surface)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-active)] focus-visible:opacity-100 group-hover/session:opacity-100"
         >
@@ -239,7 +238,7 @@ function SessionActions({ session, disabled, open, onOpenChange, onRename, onCop
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          aria-label={`Actions for ${session.name}`}
+          aria-label={`Actions for ${displayName(session)}`}
           align="end"
           sideOffset={5}
           className="fade-in min-w-[200px] rounded-lg border p-1"

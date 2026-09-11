@@ -267,19 +267,23 @@ describe("provider-neutral conversation transcript", () => {
     const userBubbleContent = expand.closest('[data-slot="bubble-content"]') as HTMLElement;
     const userBubble = userBubbleContent.closest('[data-slot="bubble"]') as HTMLElement;
     const userMessageContent = userBubbleContent.closest('[data-slot="message-content"]') as HTMLElement;
-    expect(userBubble.getAttribute("data-variant")).toBe("plain");
-    expect(userBubble.className).toContain("bg-transparent");
-    expect(userBubbleContent.className).toContain("px-0");
-    expect(userBubbleContent.className).toContain("py-px");
+    expect(userBubble.getAttribute("data-variant")).toBe("secondary");
+    expect(userBubble.className).not.toContain("bg-transparent");
+    expect(userBubble.className).toContain("max-w-[min(85%,48rem)]");
+    expect(userBubbleContent.className).toContain("max-w-full");
+    expect(userBubbleContent.className).not.toContain("85%");
+    expect(userBubbleContent.className).toContain("px-4");
+    expect(userBubbleContent.className).toContain("py-3");
     expect(userBubbleContent.className).not.toContain("p-0");
-    expect(userBubbleContent.className).toContain("rounded-none");
+    expect(userBubbleContent.className).toContain("rounded-2xl");
     expect(userBubbleContent.className).not.toContain("rounded-xl");
     expect(userBubbleContent.className).not.toContain("px-3");
     expect(userBubbleContent.className).not.toContain("py-2");
-    expect(userBubbleContent.className).toContain("text-md");
-    expect(userBubbleContent.className).toContain("leading-[16px]");
+    expect(userBubbleContent.className).toContain("text-[14px]");
+    expect(userBubbleContent.style.background).toContain("color-mix");
+    expect(userBubbleContent.className).toContain("leading-relaxed");
     expect(userBubbleContent.className).not.toContain("font-");
-    expect(userMessageContent.className).toContain("gap-0");
+    expect(userMessageContent.className).toContain("gap-1.5");
     expect(expand.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(longMessage)).toBeNull();
     expect(screen.getByText("run.log")).toBeTruthy();
@@ -587,6 +591,109 @@ describe("provider-neutral conversation transcript", () => {
 
       expect(response?.textContent?.length).toBe(text.length);
       expect(response?.textContent).toBe(text);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows a streamed work message immediately when completion promotes it to the final response", () => {
+    vi.useFakeTimers();
+    const text = `${"promoted_stream_output_".repeat(100)}done`;
+    const streamedMessage = {
+      kind: "message" as const,
+      id: "message-streamed-work",
+      role: "assistant" as const,
+      phase: "commentary" as const,
+      markdown: text,
+      copyText: text,
+      timestamp: 1_000,
+    };
+    const activeTurn: ConversationTurnPresentation = {
+      id: "turn-promoted-stream",
+      startedAt: 1_000,
+      endedAt: 1_000,
+      active: true,
+      work: [streamedMessage],
+    };
+
+    try {
+      const { container, rerender } = render(
+        <ConversationTranscript turns={[activeTurn]} callbacks={{ copyText: vi.fn() }} />,
+      );
+      expect(container.querySelector('[data-selectable]')?.textContent).toBe(text);
+
+      rerender(
+        <ConversationTranscript
+          turns={[{
+            ...activeTurn,
+            active: false,
+            endedAt: 2_000,
+            work: [],
+            final: {
+              ...streamedMessage,
+              id: "message-promoted-final",
+              phase: "final",
+              markdown: text,
+              copyText: text,
+              wasStreamed: true,
+            },
+          }]}
+          callbacks={{ copyText: vi.fn() }}
+        />,
+      );
+
+      expect(container.querySelector('[data-selectable]')?.textContent).toBe(text);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves mount animation for a distinct final after streamed commentary", () => {
+    vi.useFakeTimers();
+    const finalText = `${"distinct_final_output_".repeat(100)}done`;
+    const activeTurn: ConversationTurnPresentation = {
+      id: "turn-distinct-final",
+      startedAt: 1_000,
+      endedAt: 1_000,
+      active: true,
+      work: [{
+        kind: "message",
+        id: "message-streamed-commentary",
+        role: "assistant",
+        phase: "commentary",
+        markdown: "Earlier streamed commentary",
+        copyText: "Earlier streamed commentary",
+        timestamp: 1_000,
+      }],
+    };
+
+    try {
+      const { container, rerender } = render(
+        <ConversationTranscript turns={[activeTurn]} callbacks={{ copyText: vi.fn() }} />,
+      );
+
+      rerender(
+        <ConversationTranscript
+          turns={[{
+            ...activeTurn,
+            active: false,
+            endedAt: 2_000,
+            work: [],
+            final: {
+              kind: "message",
+              id: "message-distinct-final",
+              role: "assistant",
+              phase: "final",
+              markdown: finalText,
+              copyText: finalText,
+              timestamp: 2_000,
+            },
+          }]}
+          callbacks={{ copyText: vi.fn() }}
+        />,
+      );
+
+      expect(container.querySelector('[data-selectable]')?.textContent).not.toBe(finalText);
     } finally {
       vi.useRealTimers();
     }

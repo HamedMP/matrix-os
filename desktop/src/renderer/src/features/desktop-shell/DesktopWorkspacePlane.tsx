@@ -1,3 +1,4 @@
+import { isPointNearWindow } from "@matrix-os/ui";
 import {
   forwardRef,
   useEffect,
@@ -88,6 +89,12 @@ const DesktopWorkspacePlane = forwardRef<HTMLDivElement, DesktopWorkspacePlanePr
   const canvas = mode === "canvas";
   const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (mode !== "desktop" || event.button !== 0 || !isBackgroundEvent(event)) return;
+    const frames = event.currentTarget.querySelectorAll<HTMLElement>("[data-window-click-buffer]:not([aria-hidden='true'])");
+    for (const frame of frames) {
+      const style = getComputedStyle(frame);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      if (isPointNearWindow({ x: event.clientX, y: event.clientY }, frame.getBoundingClientRect())) return;
+    }
     onBackgroundClick?.();
   };
   return (

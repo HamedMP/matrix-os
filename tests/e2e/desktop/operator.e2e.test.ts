@@ -344,11 +344,12 @@ suite("operator desktop e2e", () => {
     await page.waitForTimeout(150);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05b-settings-providers.png") });
 
-    await page.getByRole("button", { name: "Integrations" }).click();
+    await page.getByRole("button", { name: "Services" }).click();
     await page.getByRole("heading", { name: "Integrations" }).waitFor({ timeout: 10_000 });
     await page.getByText("Matrix OS Team").waitFor({ timeout: 10_000 });
     await page.getByText("GitHub", { exact: true }).waitFor();
     await page.getByText("Slack").waitFor();
+    await page.getByText("X", { exact: true }).last().waitFor();
     await page.mouse.move(1_000, 680);
     await page.waitForTimeout(150);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05c-settings-integrations.png") });

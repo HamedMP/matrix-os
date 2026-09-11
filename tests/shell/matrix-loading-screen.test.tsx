@@ -11,17 +11,15 @@ import { MatrixLoadingScreen } from "../../shell/src/components/MatrixLoadingScr
 const ROOT = join(import.meta.dirname, "../..");
 
 describe("MatrixLoadingScreen", () => {
-  it("shows only the original animated gradient mark and landing-brand wordmark", () => {
+  it("uses the shared Figma loading mark and motion without a second visible wordmark", () => {
     render(<MatrixLoadingScreen />);
 
     const heading = screen.getByRole("heading", { name: "Matrix OS" });
-    expect(heading.style.fontFamily).toBe("var(--font-bricolage), 'Bricolage Grotesque', sans-serif");
-    expect(heading.style.fontWeight).toBe("700");
+    expect(heading.className).toBe("matrix-boot-sr-only");
     const mark = screen.getByRole("img", { name: "Matrix OS logo" });
-    expect(mark.style.backgroundImage).toContain("linear-gradient");
-    expect(mark.style.backgroundImage).toContain("rgb(196, 162, 101)");
-    expect(mark.style.animation).toContain("onboard-shimmer 8s ease-in-out infinite");
-    expect(mark.style.animation).toContain("onboard-glow 8s ease-in-out infinite");
+    expect(mark.className).toBe("matrix-boot-mark");
+    expect(document.querySelector("style")?.textContent).toContain("matrix-boot-gradient 4s linear infinite");
+    expect(document.querySelector("style")?.textContent).toContain("prefers-reduced-motion: reduce");
     expect(screen.queryByText("Checking your workspace and preparing the right Matrix surface.")).toBeNull();
     expect(screen.queryByText("Loading Matrix")).toBeNull();
     expect(screen.getByRole("status").getAttribute("data-matrix-loading-screen")).toBe("true");
@@ -38,5 +36,11 @@ describe("MatrixLoadingScreen", () => {
     expect(onboardingGate).not.toContain("Loading your Matrix computer…");
     expect(desktop).not.toContain("function MatrixFirstRunLoading");
     expect(desktop).not.toContain("isBootDesign(initialThemeStyle)");
+  });
+
+  it("shares the same loading presentation with Electron Desktop", () => {
+    const app = readFileSync(join(ROOT, "desktop/src/renderer/src/App.tsx"), "utf8");
+    expect(app).toContain('<MatrixBootScreen label="Connecting to your Matrix computer" />');
+    expect(app).not.toContain("Connecting…");
   });
 });

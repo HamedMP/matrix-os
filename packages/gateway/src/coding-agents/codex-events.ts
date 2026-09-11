@@ -100,6 +100,11 @@ const CodexExecEventSchema = z.discriminatedUnion("type", [
 ]);
 const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
   z.object({
+    type: z.literal("matrix.codex.approval.resolved"),
+    approvalId: ApprovalIdSchema,
+    decision: z.literal("cancel"),
+  }).strict(),
+  z.object({
     type: z.literal("matrix.codex.approval.requested"),
     approvalId: ApprovalIdSchema,
     correlationId: CorrelationIdSchema,
@@ -132,7 +137,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.started"),
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
-    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning"]),
+    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase"]),
     preview: SafeDisplayStringSchema.optional(),
     previewKind: z.enum(["command", "path", "text"]).optional(),
     detail: SafeDisplayStringSchema.optional(),
@@ -214,6 +219,9 @@ function appServerRecordEvents(
   context: CodexEventContext,
   record: z.infer<typeof MatrixCodexRecordSchema>,
 ): AgentThreadEvent[] {
+  if (record.type === "matrix.codex.approval.resolved") {
+    return [event(context, { type: "approval.resolved", approvalId: record.approvalId, decision: record.decision })];
+  }
   if (record.type === "matrix.codex.approval.requested") {
     return [event(context, {
       type: "approval.requested",

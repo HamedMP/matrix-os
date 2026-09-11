@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useState, useEffect } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
@@ -57,6 +58,8 @@ export function QuickLook() {
       active = false;
     };
   }, [fullPath, quickLookPath]);
+
+  useGettingStartedBlocker(Boolean(quickLookPath && fullPath));
 
   if (!quickLookPath || !fullPath) return null;
 

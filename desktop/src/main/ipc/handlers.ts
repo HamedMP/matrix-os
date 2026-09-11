@@ -12,6 +12,7 @@ import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 import { clampZoomFactor, DEFAULT_ZOOM_FACTOR } from "../platform/zoom";
 import { AppError, categoryMessage, type AppErrorCategory } from "../../shared/app-error";
+import { BuildSourceSchema, type BuildSource } from "@matrix-os/contracts";
 
 interface IpcMainLike {
   handle(
@@ -38,6 +39,7 @@ export interface HandlerContext {
   }>;
   acknowledgeWhatsNew: (version: string) => Promise<void>;
   getAppVersion: () => string;
+  buildSource: BuildSource | null;
   completeAnalyticsFlush: () => void;
   fetchSupportIdentity: () => Promise<SupportIdentityResponse>;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
@@ -168,6 +170,7 @@ function toWebContentsViewBounds(
 }
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
+  const buildSource = BuildSourceSchema.nullable().parse(ctx.buildSource);
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
@@ -214,7 +217,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("support:get-identity", () => ctx.fetchSupportIdentity());
 
-  handle("app:get-version", () => ({ version: ctx.getAppVersion() }));
+  handle("app:get-version", () => ({ version: ctx.getAppVersion(), source: buildSource }));
 
   handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
   handle("runtime:select", async ({ slot }) => {

@@ -6,11 +6,19 @@ import { describe, expect, it } from "vitest";
 import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
 import { parseCodexExecJsonLine } from "../../packages/gateway/src/coding-agents/codex-events.js";
 
-async function waitForTranscript(path: string, pattern: RegExp): Promise<string> {
+// Native resume identity is owner-only bridge metadata, never a rendered event.
+function visibleTranscript(transcript: string): string {
+  return transcript.trim().split("\n").filter((line) => JSON.parse(line).type !== "thread.started").join("\n");
+}
+
+async function waitForTranscript(
+  path: string,
+  condition: RegExp | ((transcript: string) => boolean),
+): Promise<string> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const value = await readFile(path, "utf8").catch(() => "");
-    if (pattern.test(value)) return value;
+    if (typeof condition === "function" ? condition(value) : condition.test(value)) return value;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("Timed out waiting for Codex transcript");
@@ -221,7 +229,7 @@ describe("Codex app-server control runtime", () => {
       const approval = beforeDecision.trim().split("\n").map((line) => JSON.parse(line))
         .find((event) => event.type === "matrix.codex.approval.requested");
       expect(approval.approvalId).toMatch(/^appr_codex_[a-f0-9]{32}$/);
-      expect(beforeDecision).not.toMatch(/auth\.json|private\/project|private\.internal|native-|"42"|:42/);
+      expect(visibleTranscript(beforeDecision)).not.toMatch(/auth\.json|private\/project|private\.internal|native-|"42"|:42/);
 
       const control = {
         type: "approval",
@@ -255,7 +263,7 @@ describe("Codex app-server control runtime", () => {
       const transcript = await readFile(eventPath, "utf8");
       expect(transcript).toContain('"type":"matrix.codex.assistant.delta"');
       expect(transcript).toContain('"type":"turn.completed"');
-      expect(transcript).not.toMatch(/auth\.json|private\/project|native-/);
+      expect(visibleTranscript(transcript)).not.toMatch(/auth\.json|private\/project|native-/);
     } finally {
       child.kill("SIGTERM");
       await rm(homePath, { recursive: true, force: true });
@@ -319,7 +327,7 @@ describe("Codex app-server control runtime", () => {
         question: "The coding agent needs an answer.",
         options: [{ label: "Minimal", description: "Choose this option." }],
       });
-      expect(beforeAnswer).not.toMatch(/native-|rpc-input-secret|private\/project|private-question/);
+      expect(visibleTranscript(beforeAnswer)).not.toMatch(/native-|rpc-input-secret|private\/project|private-question/);
 
       const [approach, secret] = request.questions;
       await expect(sendControl(controlPath, {
@@ -345,7 +353,7 @@ describe("Codex app-server control runtime", () => {
       });
       const transcript = await readFile(eventPath, "utf8");
       expect(transcript).not.toContain("temporary-secret-value");
-      expect(transcript).not.toMatch(/native-|rpc-input-secret|private\/project/);
+      expect(visibleTranscript(transcript)).not.toMatch(/native-|rpc-input-secret|private\/project/);
     } finally {
       child.kill("SIGTERM");
       await rm(homePath, { recursive: true, force: true });
@@ -406,7 +414,7 @@ describe("Codex app-server control runtime", () => {
       const transcript = (await readFile(eventPath, "utf8")).trim().split("\n");
       expect(transcript.filter((line) => JSON.parse(line).type === "matrix.codex.approval.requested"))
         .toHaveLength(20);
-      expect(transcript.join("\n")).not.toContain("native-");
+      expect(visibleTranscript(transcript.join("\n"))).not.toContain("native-");
     } finally {
       child.kill("SIGTERM");
       await rm(homePath, { recursive: true, force: true });
@@ -467,7 +475,7 @@ describe("Codex app-server control runtime", () => {
     ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
     try {
       const transcript = await waitForTranscript(eventPath, /"type":"turn.completed"/);
-      expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output|secret-mcp-token|private result/);
+      expect(visibleTranscript(transcript)).not.toMatch(/native-|auth\.json|private\/project|secret-token-output|secret-mcp-token|private result/);
 
       let sequence = 0;
       const parsedTranscript = transcript.trim().split("\n").map((line) => parseCodexExecJsonLine(line, {
@@ -628,7 +636,10 @@ describe("Codex app-server control runtime", () => {
     child.stdin?.write(`matrix-turn-v2:${secondTurn}\n`);
 
     try {
-      await waitForTranscript(eventPath, /answer-2/);
+      const transcript = await waitForTranscript(
+        eventPath,
+        (value) => (value.match(/"type":"turn.completed"/g) ?? []).length >= 2,
+      );
       const requests = (await readFile(requestsPath, "utf8"))
         .trim().split("\n").map((line) => JSON.parse(line));
       expect(requests).toHaveLength(2);
@@ -646,7 +657,6 @@ describe("Codex app-server control runtime", () => {
         effort: "high",
         serviceTier: "standard",
       });
-      const transcript = await readFile(eventPath, "utf8");
       expect(transcript.match(/"type":"turn.completed"/g)).toHaveLength(2);
       expect(transcript).toContain("answer-1");
       expect(transcript).toContain("answer-2");

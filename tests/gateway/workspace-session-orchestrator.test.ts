@@ -8,6 +8,10 @@ import {
 } from "../../packages/gateway/src/workspace-session-orchestrator.js";
 
 describe("workspace session orchestrator", () => {
+  const terminalRef = {
+    workspaceId: "tws_00000000000000000000000000000001",
+    tabId: "tt_00000000000000000000000000000001",
+  };
   const tempHomes: string[] = [];
 
   afterEach(async () => {
@@ -28,7 +32,7 @@ describe("workspace session orchestrator", () => {
     worktreeId: "wt_abc123def456",
     agent: "codex",
     runtime: { type: "zellij", status: "running" },
-    terminalSessionId: "term_sess_fixed",
+    terminalRef,
   };
 
   function deps(overrides: Record<string, unknown> = {}) {
@@ -62,7 +66,7 @@ describe("workspace session orchestrator", () => {
       killSession: vi.fn(async () => ({ ok: true, session: { ...session, runtime: { type: "zellij", status: "exited" } } })),
     };
     const sessionRuntimeBridge = {
-      registerSession: vi.fn(() => ({ ok: true, mode: "observe", terminalSessionId: "term_sess_fixed" })),
+      registerSession: vi.fn(() => ({ ok: true, mode: "observe", terminalRef })),
     };
     const eventPublisher = {
       publishSessionStarted: vi.fn(async () => undefined),
@@ -185,6 +189,75 @@ describe("workspace session orchestrator", () => {
       workspaceRoot: rootChatWorkspace,
       ownerId: "user_workspace",
     }));
+  });
+
+  it.each(["public", "foreign-owner", "unrelated-thread", "missing-session"])("rejects root workspace reuse with %s provenance", async (scenario) => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-root-provenance-"));
+    tempHomes.push(home);
+    const workspace = join(home, "temporary", "root-chat-workspaces", "sess_fixed");
+    await mkdir(workspace, { recursive: true });
+    const d = deps();
+    d.agentSessionManager.getSession.mockResolvedValue({ ok: true, session: {
+      ...session, projectSlug: undefined, ownerId: scenario === "foreign-owner" ? "other" : "user_workspace",
+    } } as never);
+    if (scenario === "missing-session") d.agentSessionManager.getSession.mockResolvedValue({ ok: false, status: 404 } as never);
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d, homePath: home });
+    try {
+      const result = await orchestrator.startSession({
+        ownerScope: { type: "user", id: "user_workspace" },
+        ...(scenario === "public" ? {} : { recoveryThreadId: scenario === "unrelated-thread" ? "thread_other" : "thread_fixed" }),
+        request: { sessionId: "sess_fixed", kind: "agent", agent: "codex" },
+      });
+      expect(result.ok).toBe(false);
+      expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+      await expect(access(workspace)).resolves.toBeUndefined();
+    } finally { await orchestrator.close(); }
+  });
+
+  it.each([true, false])("reuses a root workspace without deleting it when launch succeeds=%s", async (succeeds) => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-root-recovery-"));
+    tempHomes.push(home);
+    const workspace = join(home, "temporary", "root-chat-workspaces", "sess_fixed");
+    await mkdir(workspace, { recursive: true });
+    const d = deps();
+    d.agentSessionManager.getSession.mockResolvedValue({ ok: true, session: {
+      ...session, projectSlug: undefined, ownerId: "user_workspace",
+    } } as never);
+    if (!succeeds) d.agentSandbox.preflight.mockResolvedValueOnce({
+      ok: false, status: 503, error: { code: "sandbox_unavailable", message: "Unavailable" },
+    } as never);
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d, homePath: home });
+    try {
+      const result = await orchestrator.startSession({
+        ownerScope: { type: "user", id: "user_workspace" },
+        recoveryThreadId: "thread_fixed",
+        request: { sessionId: "sess_fixed", kind: "agent", agent: "codex" },
+      });
+      expect(d.agentSandbox.preflight).toHaveBeenCalled();
+      expect(result.ok).toBe(succeeds);
+      await expect(access(workspace)).resolves.toBeUndefined();
+    } finally { await orchestrator.close(); }
+  });
+
+  it("rejects an existing root workspace symlink without touching its target", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-root-symlink-"));
+    tempHomes.push(home);
+    const root = join(home, "temporary", "root-chat-workspaces");
+    const target = join(home, "external");
+    await mkdir(root, { recursive: true });
+    await mkdir(target);
+    await symlink(target, join(root, "sess_fixed"));
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d, homePath: home });
+    try {
+      const result = await orchestrator.startSession({
+        ownerScope: { type: "user", id: "user_workspace" },
+        request: { sessionId: "sess_fixed", kind: "agent", agent: "codex" },
+      });
+      expect(result.ok).toBe(false);
+      expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+      await expect(access(target)).resolves.toBeUndefined();
+    } finally { await orchestrator.close(); }
   });
 
   it("periodically protects every active root Chat status and stops the timer on close", async () => {
@@ -612,7 +685,7 @@ describe("workspace session orchestrator", () => {
     });
     await expect(orchestrator.attachSession("sess_fixed", "observe")).resolves.toMatchObject({
       ok: true,
-      terminalSessionId: "term_sess_fixed",
+      terminalRef,
     });
     await expect(orchestrator.stopSession("sess_fixed")).resolves.toMatchObject({
       ok: true,

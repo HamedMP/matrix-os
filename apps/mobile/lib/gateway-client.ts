@@ -1,11 +1,11 @@
 import { encodeAppSlugPath } from "@/lib/app-slugs";
 import {
-  isSafeShellSessionName,
-  parseShellSessions,
+  isSafeSessionId,
+  parseTerminalSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
 import { logMobileCodingAgentWarning } from "@/lib/coding-agent-diagnostics";
-import { SHELL_SESSION_CREATE_ATTEMPTS, twoWordShellSessionName } from "@/lib/shell-session-names";
+import { twoWordShellSessionName } from "@/lib/shell-session-names";
 import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
@@ -437,8 +437,7 @@ export class GatewayClient {
   }
 
   get terminalWsUrl(): string {
-    // Shell-sessions endpoint: attach by session name passed in the query.
-    return this.withBaseQuery(`${this.wsBaseUrl}/ws/terminal/session`);
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws/terminal/tab`);
   }
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
@@ -637,29 +636,16 @@ export class GatewayClient {
     };
   }
 
-  openTerminalWebSocket(
-    token?: string | null,
-    sessionName?: string,
-    fromSeq?: number,
-    presentation?: {
-      client: "hard" | "soft";
-      cols: number;
-      rows: number;
-      lease?: "exclusive";
-    },
-  ): WebSocket {
+  openTerminalWebSocket(token?: string | null, terminalRefKey?: string, fromSeq?: number): WebSocket {
     if (token || this.token) {
       assertSecureTokenTransport(this.baseUrl);
     }
     const params = new URLSearchParams();
-    if (sessionName) params.set("session", sessionName);
+    const [workspaceId, tabId] = terminalRefKey?.split(":") ?? [];
+    if (workspaceId) params.set("workspaceId", workspaceId);
+    if (tabId) params.set("tabId", tabId);
+    params.set("client", "mobile");
     if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
-    if (presentation) {
-      params.set("client", presentation.client);
-      params.set("cols", String(presentation.cols));
-      params.set("rows", String(presentation.rows));
-      if (presentation.lease) params.set("lease", presentation.lease);
-    }
     if (token) params.set("token", token);
     const query = params.toString();
     const wsUrl = query ? appendQuery(this.terminalWsUrl, query) : this.terminalWsUrl;
@@ -925,19 +911,19 @@ export class GatewayClient {
 
   async getTerminalSessions(): Promise<MobileTerminalSession[]> {
     try {
-      const res = await this.fetchGateway("/api/terminal/sessions");
+      const res = await this.fetchGateway("/api/terminal/workspaces");
       if (!res.ok) {
         await res.text().catch((err: unknown) => {
-          logGatewayCatchWarning("failed to read /api/terminal/sessions error body", err);
+          logGatewayCatchWarning("failed to read terminal workspace error body", err);
           return "";
         });
-        logGatewayStatusWarning("/api/terminal/sessions unavailable", res.status);
+        logGatewayStatusWarning("terminal workspaces unavailable", res.status);
         return [];
       }
-      const body = (await res.json()) as { sessions?: unknown };
-      return parseShellSessions(body?.sessions ?? body);
+      const body = (await res.json()) as { workspaces?: unknown };
+      return parseTerminalSessions(body?.workspaces ?? body);
     } catch (err: unknown) {
-      logGatewayCatchWarning("/api/terminal/sessions unavailable", err);
+      logGatewayCatchWarning("terminal workspaces unavailable", err);
       return [];
     }
   }
@@ -1495,53 +1481,72 @@ export class GatewayClient {
     }
   }
 
-  /** Create a new shell session and return its zellij name, or null on failure. */
+  /** Create a main-workspace terminal tab and return its serialized TerminalRef. */
   async createTerminalSession(): Promise<string | null> {
-    for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
-      const name = twoWordShellSessionName();
-      try {
-        const res = await this.fetchGateway("/api/terminal/sessions", {
-          method: "POST",
-          body: JSON.stringify({ name }),
-          headers: { "Content-Type": "application/json" },
+    const name = twoWordShellSessionName();
+    try {
+      const ensured = await this.fetchGateway("/api/terminal/workspaces/ensure", {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!ensured.ok) return null;
+      const ensuredBody = (await ensured.json().catch((err: unknown) => {
+        logGatewayCatchWarning("terminal workspace ensure returned invalid JSON", err);
+        return null;
+      })) as { workspace?: { id?: unknown } } | null;
+      const workspaceId = typeof ensuredBody?.workspace?.id === "string" ? ensuredBody.workspace.id : "";
+      if (!/^tws_[0-9a-f]{32}$/.test(workspaceId)) return null;
+      const res = await this.fetchGateway(`/api/terminal/workspaces/${workspaceId}/tabs`, {
+        method: "POST",
+        body: JSON.stringify({ name, cwd: "projects" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read terminal tab create error body", err);
+          return "";
         });
-        if (await isSessionExistsResponse(res) && attempt < SHELL_SESSION_CREATE_ATTEMPTS - 1) {
-          continue;
-        }
-        if (!res.ok) {
-          await res.text().catch((err: unknown) => {
-            logGatewayCatchWarning("failed to read terminal session create error body", err);
-            return "";
-          });
-          logGatewayStatusWarning("terminal session create failed", res.status);
-          return null;
-        }
-        const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
-        const created = typeof body?.name === "string" ? body.name : name;
-        return isSafeShellSessionName(created) ? created : null;
-      } catch (err: unknown) {
-        logGatewayCatchWarning("terminal session create unavailable", err);
+        logGatewayStatusWarning("terminal tab create failed", res.status);
         return null;
       }
+      const body = (await res.json().catch((err: unknown) => {
+        logGatewayCatchWarning("terminal tab create returned invalid JSON", err);
+        return null;
+      })) as { tab?: { id?: unknown } } | null;
+      const tabId = typeof body?.tab?.id === "string" ? body.tab.id : "";
+      const created = `${workspaceId}:${tabId}`;
+      return isSafeSessionId(created) ? created : null;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("terminal tab create unavailable", err);
+      return null;
     }
-    logGatewayWarning("terminal session create failed", "collision_exhausted");
-    return null;
   }
 
   /**
-   * Create a shell session that runs a provider setup command and return its
-   * zellij name for terminal handoff, or null on failure. The command is sent to
-   * the gateway inside the bounded foreground session and is never stored in
+   * Create a workspace tab that runs a provider setup command and return its
+   * serialized TerminalRef for handoff, or null on failure. The command is sent
+   * to the gateway inside the bounded foreground tab and is never stored in
    * shell state or rendered in the UI (CLAUDE.md: provider setup stays
    * terminal-backed and command-hidden).
    */
   async createProviderSetupSession(command: string): Promise<string | null> {
     if (typeof command !== "string" || command.length === 0) return null;
-    const name = `matrix-setup-${randomShellSuffix()}`;
+    const name = `Setup ${randomShellSuffix()}`;
     try {
-      const res = await this.fetchGateway("/api/terminal/sessions", {
+      const ensured = await this.fetchGateway("/api/terminal/workspaces/ensure", {
+        method: "POST", body: "{}", headers: { "Content-Type": "application/json" },
+      });
+      if (!ensured.ok) return null;
+      const ensuredBody = (await ensured.json().catch((err: unknown) => {
+        logGatewayCatchWarning("provider setup workspace ensure returned invalid JSON", err);
+        return null;
+      })) as { workspace?: { id?: unknown } } | null;
+      const workspaceId = typeof ensuredBody?.workspace?.id === "string" ? ensuredBody.workspace.id : "";
+      if (!/^tws_[0-9a-f]{32}$/.test(workspaceId)) return null;
+      const res = await this.fetchGateway(`/api/terminal/workspaces/${workspaceId}/tabs`, {
         method: "POST",
-        body: JSON.stringify({ name, cwd: "projects", cmd: command }),
+        body: JSON.stringify({ name, cwd: "projects", command: ["sh", "-lc", command] }),
         headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
@@ -1552,27 +1557,32 @@ export class GatewayClient {
         logGatewayStatusWarning("provider setup session create failed", res.status);
         return null;
       }
-      const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
-      const created = typeof body?.name === "string" ? body.name : name;
-      return isSafeShellSessionName(created) ? created : null;
-    } catch {
-      logGatewayWarning("provider setup session create unavailable", "unavailable");
+      const body = (await res.json().catch((err: unknown) => {
+        logGatewayCatchWarning("provider setup tab create returned invalid JSON", err);
+        return null;
+      })) as { tab?: { id?: unknown } } | null;
+      const tabId = typeof body?.tab?.id === "string" ? body.tab.id : "";
+      const created = `${workspaceId}:${tabId}`;
+      return isSafeSessionId(created) ? created : null;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("provider setup tab create unavailable", err);
       return null;
     }
   }
 
-  async deleteTerminalSession(name: string): Promise<boolean> {
-    if (!isSafeShellSessionName(name)) return false;
+  async deleteTerminalSession(refKey: string): Promise<boolean> {
+    if (!isSafeSessionId(refKey)) return false;
+    const [workspaceId, tabId] = refKey.split(":");
     try {
       const res = await this.fetchGateway(
-        `/api/terminal/sessions/${encodeURIComponent(name)}?force=1`,
+        `/api/terminal/workspaces/${workspaceId}/tabs/${tabId}`,
         { method: "DELETE" },
       );
       if (res.ok || res.status === 404) return true;
-      logGatewayStatusWarning("terminal session delete unavailable", res.status);
+      logGatewayStatusWarning("terminal tab delete unavailable", res.status);
       return false;
-    } catch {
-      logGatewayWarning("terminal session delete unavailable", "unavailable");
+    } catch (err: unknown) {
+      logGatewayCatchWarning("terminal tab delete unavailable", err);
       return false;
     }
   }

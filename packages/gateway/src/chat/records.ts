@@ -132,6 +132,17 @@ export function messageSearchText(message: CanonicalChatMessage): string {
     .slice(0, 96 * 1024);
 }
 
+export function messageAttribution(message: CanonicalChatMessage): {
+  actor_id: string | null;
+  purpose: "discussion" | "ai_request" | "assistant" | "system";
+} {
+  return {
+    actor_id: message.actorId ?? null,
+    purpose: message.purpose
+      ?? (message.role === "user" ? "ai_request" : message.role === "assistant" ? "assistant" : "system"),
+  };
+}
+
 export function toChatRecord(
   row: Selectable<ChatsTable>,
   activeRun?: Selectable<ChatRunsTable>,
@@ -196,6 +207,8 @@ export function toMessage(row: Selectable<ChatMessagesTable>): CanonicalChatMess
     seq: Number(row.seq),
     role: row.role,
     state: row.state,
+    ...(row.actor_id === null ? {} : { actorId: row.actor_id }),
+    purpose: row.purpose,
     ...(row.turn_id === null ? {} : { turnId: row.turn_id }),
     ...(row.run_id === null ? {} : { runId: row.run_id }),
     parts: parseJson(row.parts),

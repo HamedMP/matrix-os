@@ -11,6 +11,7 @@ import {
   UserInputAnswerRequestSchema,
 } from "@matrix-os/contracts";
 import { codexProviderEventPath } from "./codex-event-bridge.js";
+import { CodexHibernateControlSchema } from "./codex-idle-hibernation.mjs";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const MatrixQuestionIdSchema = z.string().regex(/^question_codex_[a-f0-9]{24}$/);
@@ -52,6 +53,7 @@ const SteerFrameSchema = z.object({
   clientRequestId: RequestIdSchema,
 }).strict();
 const ControlFrameSchema = z.discriminatedUnion("type", [
+  CodexHibernateControlSchema,
   TurnFrameSchema,
   SteerFrameSchema,
   InterruptFrameSchema,
@@ -73,6 +75,7 @@ const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
 export interface CodexControlClient {
+  hibernate?(input: { sessionId: string; providerThreadId: string; clientRequestId: string }): Promise<void>;
   submitTurn(input: {
     sessionId: string;
     turnId: string;
@@ -111,7 +114,7 @@ export function codexProviderControlPath(homePath: string, sessionId: string): s
 export function createCodexControlClient(options: {
   homePath: string;
   timeoutMs?: number;
-}): CodexControlClient {
+}): CodexControlClient & Required<Pick<CodexControlClient, "hibernate">> {
   const homePath = resolve(options.homePath);
   const requestedTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Number.isFinite(requestedTimeoutMs)
@@ -126,6 +129,8 @@ export function createCodexControlClient(options: {
   ): Promise<void> {
     const frame = ControlFrameSchema.parse(input);
     const path = codexProviderControlPath(homePath, sessionId);
+    let sent = false;
+    let rejected = false;
     try {
       const info = await lstat(path);
       if (!info.isSocket() || info.isSymbolicLink()) throw new Error("control_unavailable");
@@ -151,7 +156,7 @@ export function createCodexControlClient(options: {
         socket.setEncoding("utf8");
         socket.setTimeout(operationTimeoutMs, fail);
         socket.once("error", fail);
-        socket.once("connect", () => socket.end(line));
+        socket.once("connect", () => { sent = true; socket.end(line); });
         socket.on("data", (chunk) => {
           responseText += chunk;
           if (Buffer.byteLength(responseText, "utf8") > MAX_RESPONSE_BYTES) fail();
@@ -171,13 +176,19 @@ export function createCodexControlClient(options: {
           if (!settled) fail();
         });
       });
-      if (!response.ok) throw new Error("control_rejected");
+      if (!response.ok) { rejected = true; throw new Error("control_rejected"); }
     } catch (_error) {
-      throw new Error("Codex control request failed");
+      const error = new Error("Codex control request failed");
+      error.name = rejected ? "CodexControlRejectedError" : sent ? "CodexControlTransportError" : "CodexControlUnavailableError";
+      throw error;
     }
   }
 
   return {
+    hibernate(input) {
+      return send(input.sessionId, { type: "hibernate", providerThreadId: input.providerThreadId,
+        clientRequestId: input.clientRequestId }, Math.min(timeoutMs, 2_000));
+    },
     submitTurn(input) {
       return send(input.sessionId, {
         type: "turn",

@@ -1,7 +1,17 @@
+import type { z } from "zod/v4";
+
 export interface ActionParam {
   type: "string" | "number" | "boolean" | "object" | "array";
   description?: string;
   required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  /** Compile-time regular-expression source used to validate string values. */
+  pattern?: string;
+  /** Safe, user-facing description returned when `pattern` does not match. */
+  patternMessage?: string;
 }
 
 export interface DirectApi {
@@ -9,11 +19,19 @@ export interface DirectApi {
   url: string | ((params: Record<string, unknown>) => string);
   mapParams?: (params: Record<string, unknown>) => Record<string, string>;
   mapBody?: (params: Record<string, unknown>) => Record<string, unknown>;
+  /** Header names and values are compile-time registry data, never caller input. */
+  staticHeaders?: Readonly<Record<string, string>>;
 }
+
+export type IntegrationActionRisk = "read" | "write" | "destructive";
+export type IntegrationConnectorKind = "pipedream" | "mcp_preset";
 
 export interface ServiceAction {
   description: string;
   params: Record<string, ActionParam>;
+  risk: IntegrationActionRisk;
+  /** Constraints only: schemas must not coerce or transform input. */
+  paramsSchema?: z.ZodType;
   componentKey?: string;
   directApi?: DirectApi;
 }
@@ -22,7 +40,12 @@ export interface ServiceDefinition {
   id: string;
   name: string;
   category: string;
-  pipedreamApp: string;
+  connectorKind: IntegrationConnectorKind;
+  pipedreamApp?: string;
+  mcpPreset?: {
+    url: string;
+    authMode: "oauth";
+  };
   icon: string;
   logoUrl: string;
   actions: Record<string, ServiceAction>;

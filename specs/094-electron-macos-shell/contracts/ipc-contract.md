@@ -13,6 +13,7 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
 | `auth:poll` | `{}` | `{status: "pending"\|"authorized"\|"expired", profile?}` | profile = `{handle, userId}` — no token |
 | `auth:status` | `{}` | `{signedIn, handle?, runtimeSlot, platformHost}` | |
 | `auth:sign-out` | `{}` | `{ok}` | clears credential + embed partitions (FR-006) |
+| `app:get-version` | `{}` | `{version, source: {commit, ancestors} \| null}` | Native version and build-time Git source; full 40-character hashes, at most 256 ancestors; no credentials |
 | `runtime:select` | `{slot: string(1-64)}` | `{ok}` | triggers socket teardown→rebuild broadcast |
 | `state:get` | `{key: enum}` | JSON value | window/layout/appearance reads |
 | `state:set` | `{key: enum, value (bounded)}` | `{ok}` | atomic write |
@@ -40,6 +41,16 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
 
 - All strings carry max lengths; bounds objects are `{x,y,width,height}` ints within
   [-16384, 16384]; arrays capped.
+- `app:get-version.source` is captured from the checkout during the Electron build,
+  not read from a user's Git repository at runtime. The renderer compares it with
+  the running gateway's `/api/system/info.build.sha`. Native host bundles without
+  a valid image SHA use `release.gitCommit` only when schema/kind are recognized
+  and `release.version`, `version`, and explicit `runningVersion` all agree.
+  Package/template `installedVersion` does not identify the running process.
+  Equal sources are aligned;
+  a cloud source in Desktop's ancestry is behind; other differing sources remain
+  different without guessing their order. Missing or invalid provenance is unknown.
+  The legacy protocol window is not evidence that two releases contain the same changes.
 - `embed:open` is a discriminated union: `kind:"app"` requires a non-empty slug
   while `kind:"hosted-shell"` does not accept a slug. Missing app slugs are rejected
   by Zod at the IPC boundary before the embed manager can request an app token.

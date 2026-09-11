@@ -19,6 +19,30 @@ const record = {
 };
 
 describe("canonical shell Chat client", () => {
+  it("opens the canonical HTTP event stream with lifecycle cancellation and resume cursor", async () => {
+    const response = new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } });
+    const fetchFn = vi.fn(async () => response);
+    const caller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+    const opened = await client.openEventStream({ cursor: 12, signal: caller.signal });
+
+    expect(opened).toBe(response);
+    expect(opened.bodyUsed).toBe(false);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://matrix.test/api/chats/events?messageVersion=2",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(timeout).toHaveBeenCalledWith(5 * 60 * 1000);
+    caller.abort();
+    expect((fetchFn.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
   it("lists and creates global Chats through the canonical routes with strict responses", async () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?")) return Response.json({ items: [record] });
@@ -81,6 +105,17 @@ describe("canonical shell Chat client", () => {
       expect.objectContaining({ id: "msg_shell_user", role: "user", content: "Hello" }),
       expect.objectContaining({ id: "msg_shell_tool", role: "system", content: "Using Run command...", tool: "bash" }),
     ]);
+  });
+
+  it("keeps attachment-only messages without synthesizing a duplicate text bubble", () => {
+    const projected = projectCanonicalMessages([{
+      id: "msg_image", chatId: "chat_shell_test", seq: 1, role: "user", state: "committed",
+      parts: [{ type: "attachment_reference", attachmentId: "image", kind: "image", label: "image.png", ownerReference: "temporary/image.png" }],
+      createdAt: "2026-08-31T00:00:00.000Z",
+    }]);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.content).toBe("");
+    expect(projected[0]?.attachments).toEqual([expect.objectContaining({ label: "image.png", kind: "image" })]);
   });
 
   it("projects pending approvals and submits a bounded canonical decision", async () => {

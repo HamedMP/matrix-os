@@ -31,6 +31,33 @@ afterEach(() => {
 });
 
 describe("current desktop tab panes", () => {
+  it.each(["desktop", "canvas"] as const)("resizes an inactive Terminal from its full-frame left edge in %s", (presentation) => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const onBoundsChange = vi.fn();
+    const onFocus = vi.fn();
+    const props = {
+      tab: { id: "terminal", kind: "terminals" as const, title: "Terminal", closable: true },
+      surface: { tabId: "terminal", mode: "window" as const, bounds: { x: 100, y: 80, width: 800, height: 600 }, zIndex: 1 },
+      active: false, tabWorkspaceActive: false, presentation, interactionScale: presentation === "canvas" ? 0.5 : 1,
+      overlayOpen: false, onFocus, onClose: vi.fn(), onMinimize: vi.fn(), onMaximize: vi.fn(), onBoundsChange,
+    };
+    const view = render(<DesktopSurfaceFrame {...props} />);
+    const controls = view.container.querySelector('[data-window-resize-controls]')!;
+    expect(controls.parentElement).toBe(view.container.querySelector('[data-os-window]'));
+    expect(controls.parentElement?.hasAttribute('data-window-click-buffer')).toBe(true);
+    expect(controls.closest('[inert]')).toBeNull();
+    expect(controls.children).toHaveLength(8);
+    fireEvent.pointerDown(controls.querySelector('[data-window-resize="w"]')!, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 120, clientY: 100 });
+    expect(onFocus).toHaveBeenCalled();
+    const delta = presentation === "canvas" ? 40 : 20;
+    expect(onBoundsChange).toHaveBeenLastCalledWith({ x: 100 + delta, y: 80, width: 800 - delta, height: 600 });
+    fireEvent.pointerUp(window);
+    view.rerender(<DesktopSurfaceFrame {...props} surface={{ ...props.surface, mode: "minimized" }} />);
+    expect(view.container.querySelector('[data-window-resize-controls]')).toBeNull();
+    expect(view.container.querySelector('[data-window-click-buffer]')).toBeNull();
+    vi.unstubAllGlobals();
+  });
   it.each([
     ["chat", "chat"],
     ["projects", "projects"],
@@ -126,7 +153,8 @@ describe("current desktop tab panes", () => {
 
     const tabSidebar = view.container.querySelector("[data-os-window-sidebar]") as HTMLElement;
     expect(tabSidebar.querySelector<HTMLElement>('[data-os-window-safe-view="sidebar"]')?.style.paddingTop).toBe("");
-    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeNull();
+    expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Toggle Chat sidebar" })).toBeTruthy();
   });
 
   it("shows the inspector toggle for a New Chat in full-tab mode", () => {
@@ -165,6 +193,12 @@ describe("current desktop tab panes", () => {
       onBoundsChange={vi.fn()}
     />);
 
+    const toggle = screen.getByRole("button", { name: "Toggle Chat sidebar" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
     expect(view.container.querySelector("[data-os-window-top-bar-overlay]")).toBeTruthy();
   });

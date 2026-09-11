@@ -12,9 +12,8 @@ import { createAgentLauncher } from "./agent-launcher.js";
 import { PromptContentSchema } from "./prompt-validation.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
-import { SessionRegistry } from "./session-registry.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
-import { createZellijRuntime } from "./zellij-runtime.js";
+import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { approveReview, createReviewLoopRecord, startNextReviewRound, stopReview } from "./review-loop.js";
 import { createReviewStore } from "./review-store.js";
 import { createTaskManager } from "./task-manager.js";
@@ -35,7 +34,6 @@ type AgentLauncher = ReturnType<typeof createAgentLauncher>;
 type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
 type AgentSandbox = ReturnType<typeof createAgentSandbox>;
 type SessionRuntimeBridge = ReturnType<typeof createSessionRuntimeBridge>;
-type ZellijRuntime = ReturnType<typeof createZellijRuntime>;
 type ReviewStore = ReturnType<typeof createReviewStore>;
 type TaskManager = ReturnType<typeof createTaskManager>;
 type PreviewManager = ReturnType<typeof createPreviewManager>;
@@ -153,6 +151,7 @@ const EmptyObjectSchema = z.object({}).passthrough();
 const ProjectVisibilitySchema = z.enum(["active", "archived", "all"]);
 const ProjectDeleteCompatibilitySchema = z.object({
   confirmation: z.string().min(1).max(128),
+  confirmTerminate: z.boolean().optional(),
 }).strict();
 
 const CreateReviewSchema = z.object({
@@ -233,7 +232,7 @@ export function createWorkspaceRoutes(options: {
   agentLauncher?: AgentLauncher;
   agentSessionManager?: AgentSessionManager;
   agentSandbox?: AgentSandbox;
-  zellijRuntime?: ZellijRuntime;
+  terminalRuntime?: TerminalRuntimeSocketClient;
   sessionRuntimeBridge?: SessionRuntimeBridge;
   reviewStore?: ReviewStore;
   taskManager?: TaskManager;
@@ -255,25 +254,17 @@ export function createWorkspaceRoutes(options: {
   const gitLog = options.gitLog ?? createGitLog({ homePath: options.homePath });
   const worktreeManager = options.worktreeManager ?? createWorktreeManager({ homePath: options.homePath });
   const agentLauncher = options.agentLauncher ?? createAgentLauncher({ cwd: options.homePath, runtimeHome: options.homePath });
-  const zellijRuntime = options.zellijRuntime ?? createZellijRuntime({ homePath: options.homePath });
+  const terminalRuntime = options.terminalRuntime ?? new TerminalRuntimeSocketClient({
+    socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
+  });
   const agentSessionManager = options.agentSessionManager ?? createAgentSessionManager({
     homePath: options.homePath,
     worktreeManager,
     agentLauncher,
-    zellijRuntime,
-    inputWriter: (sessionId, input, signal) => zellijRuntime.sendInput(sessionId, input, signal),
+    terminalRuntime,
   });
   const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
-  // Defense in depth: when the caller forgets to inject sessionRuntimeBridge,
-  // construct a bridge whose registry does NOT auto-restore from the persist
-  // file. Otherwise this fallback races server.ts's primary registry on the
-  // same `<home>/system/terminal-sessions.json`, double-spawning bash children
-  // for every persisted session on every gateway boot.
-  const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge({
-    homePath: options.homePath,
-    registry: new SessionRegistry(options.homePath, { autoRestore: false }),
-    zellijRuntime,
-  });
+  const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge();
   const reviewStore = options.reviewStore ?? createReviewStore({ homePath: options.homePath });
   const taskManager = options.taskManager ?? createTaskManager({ homePath: options.homePath });
   const previewManager = options.previewManager ?? createPreviewManager({ homePath: options.homePath });
@@ -334,6 +325,11 @@ export function createWorkspaceRoutes(options: {
       if (options.codingAgentThreadStore) {
         const threads = await options.codingAgentThreadStore.deleteProjectThreads(principal, project.slug);
         if (!threads.ok) throw new Error("coding-agent cleanup blocked");
+      }
+      const workspace = (await terminalRuntime.listWorkspaces())
+        .find((candidate) => candidate.scope === "project" && candidate.projectId === project.id);
+      if (workspace) {
+        await terminalRuntime.deleteWorkspace(workspace.id, { confirmTerminate: true });
       }
     },
   });
@@ -483,6 +479,16 @@ export function createWorkspaceRoutes(options: {
     } catch (err: unknown) {
       return principalError(c, err);
     }
+    if (body.value.type === "delete") {
+      const project = await projectManager.getProject(c.req.param("slug"), ownerScope);
+      if (!project.ok) return c.json({ error: project.error }, status(project.status));
+      const confirmation = await requireTerminalDeletionConfirmation(
+        c,
+        project.project.id,
+        body.value.confirmTerminate ?? false,
+      );
+      if (confirmation) return confirmation;
+    }
     const result = await projectLifecycleService.applyProjectLifecycleAction(
       lifecyclePrincipal(ownerScope),
       c.req.param("slug"),
@@ -491,6 +497,33 @@ export function createWorkspaceRoutes(options: {
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json(result);
   });
+
+  async function requireTerminalDeletionConfirmation(
+    c: Context,
+    projectId: string,
+    confirmTerminate: boolean,
+  ) {
+    try {
+      const workspace = (await terminalRuntime.listWorkspaces())
+        .find((candidate) => candidate.scope === "project" && candidate.projectId === projectId);
+      if (workspace) {
+        const impact = await terminalRuntime.deletionImpact(workspace.id);
+        if (impact.runningTabs > 0 && !confirmTerminate) {
+          return c.json({
+            error: {
+              code: "terminal_termination_confirmation_required",
+              message: "Project has running terminal tabs",
+            },
+            ...impact,
+          }, 409);
+        }
+      }
+    } catch (error: unknown) {
+      console.error("[workspace-routes] Terminal workspace deletion failed", error);
+      return c.json(errorBody("terminal_runtime_unavailable", "Project could not be deleted"), 503);
+    }
+    return null;
+  }
 
   app.delete("/api/projects/:slug", limited, async (c) => {
     const body = await parseJson(c, ProjectDeleteCompatibilitySchema);
@@ -501,10 +534,24 @@ export function createWorkspaceRoutes(options: {
     } catch (err: unknown) {
       return principalError(c, err);
     }
+    const project = await projectManager.getProject(c.req.param("slug"), ownerScope);
+    if (!project.ok) return c.json({ error: project.error }, status(project.status));
+    const confirmation = await requireTerminalDeletionConfirmation(
+      c,
+      project.project.id,
+      body.value.confirmTerminate ?? false,
+    );
+    if (confirmation) return confirmation;
     const result = await projectLifecycleService.applyProjectLifecycleAction(
       lifecyclePrincipal(ownerScope),
       c.req.param("slug"),
-      { type: "delete", confirmation: body.value.confirmation },
+      {
+        type: "delete",
+        confirmation: body.value.confirmation,
+        ...(body.value.confirmTerminate === undefined
+          ? {}
+          : { confirmTerminate: body.value.confirmTerminate }),
+      },
     );
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json(result);
@@ -779,11 +826,15 @@ export function createWorkspaceRoutes(options: {
     }
     try {
       const boundedSessions = result.sessions.slice(0, 100);
-      const terminalSessionIds = boundedSessions.map((session) => session.terminalSessionId);
+      const terminalSessionIds = boundedSessions.map((session) => (
+        `${session.terminalRef.workspaceId}:${session.terminalRef.tabId}`
+      ));
       const boundIds = await options.listChatBoundSessionIds(ownerScope, terminalSessionIds);
       const bound = new Set(boundIds.slice(0, 100));
       return c.json({
-        sessions: boundedSessions.filter((session) => !bound.has(session.terminalSessionId)),
+        sessions: boundedSessions.filter((session) => !bound.has(
+          `${session.terminalRef.workspaceId}:${session.terminalRef.tabId}`,
+        )),
         nextCursor: result.nextCursor,
       });
     } catch (err: unknown) {

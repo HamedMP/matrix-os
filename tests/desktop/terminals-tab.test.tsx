@@ -4,6 +4,7 @@ import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OSWindow, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow";
 import TerminalsTab from "../../desktop/src/renderer/src/features/terminal/TerminalsTab";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
@@ -30,7 +31,7 @@ function deferred<T>() {
 }
 
 vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({
+  default: function MockTerminalView({
     sessionName,
     active,
     visualScale,
@@ -38,7 +39,7 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
     sessionName: string;
     active?: boolean;
     visualScale?: number;
-  }) => {
+  }) {
     const themeMode = useAppearance((state) => state.mode);
     const terminalThemeId = useTerminalAppearance((state) => state.themeId);
     React.useEffect(() => {
@@ -232,6 +233,20 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
   });
 
+  it("keeps the Terminal title, session details, and controls in one header with a persistent sidebar toggle", () => {
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active" }] });
+    renderTab();
+    const header = screen.getByRole("banner");
+    expect(header.contains(screen.getByRole("heading", { name: "Terminal", exact: true }))).toBe(true);
+    expect(header.querySelector("[data-terminal-controls-host]")).not.toBeNull();
+    const toggle = screen.getByRole("button", { name: "Hide terminal tabs" });
+    expect(toggle.querySelector('svg')?.getAttribute('data-direction')).toBe('left');
+    fireEvent.click(toggle);
+    const show = screen.getByRole("button", { name: "Show terminal tabs" });
+    expect(header.contains(show)).toBe(true);
+    expect(show.querySelector('svg')?.getAttribute('data-direction')).toBe('right');
+  });
+
   it("places the shell theme picker beside the new-session controls in the sidebar", () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active", createdAt: "2026-08-26T09:41:00.000Z" }],
@@ -284,9 +299,11 @@ describe("TerminalsTab", () => {
   });
 
   it("opens the Figma-aligned session detail without a Terminal-local back control", () => {
+    const stableRef = `tws_${"a".repeat(32)}:tt_${"1".repeat(32)}`;
     useShellSessions.setState({
       sessions: [{
-        name: "matrix-main",
+        name: stableRef,
+        subtitle: "matrix-main",
         status: "active",
         placement: "active",
         createdAt: "2026-08-12T09:30:00.000Z",
@@ -302,9 +319,10 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Back to terminal sessions" })).toBeNull();
     expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
+    expect(screen.queryByText(stableRef)).toBeNull();
     expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
-    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
-    expect(terminalMounts.get("matrix-main")).toBe(1);
+    expect(screen.getByTestId(`terminal-view-${stableRef}`).getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get(stableRef)).toBe(1);
   });
 
   it("uses the Figma session frame without a secondary session rail", () => {
@@ -584,6 +602,58 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("textbox", { name: "Search terminal sessions" })).toBeNull();
   });
 
+  it("collapses and restores the terminal tabs sidebar", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    renderTab();
+
+    const hideTabs = screen.getByRole("button", { name: "Hide terminal tabs" });
+    expect(hideTabs.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("list", { name: "Terminal sessions" })).toBeTruthy();
+
+    const terminal = screen.getByTestId("terminal-view-matrix-main");
+    hideTabs.focus();
+    fireEvent.click(hideTabs);
+
+    expect(screen.queryByRole("list", { name: "Terminal sessions" })).toBeNull();
+    const showTabs = screen.getByRole("button", { name: "Show terminal tabs" });
+    expect(showTabs.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(showTabs);
+    expect(screen.getByTestId("terminal-view-matrix-main")).toBe(terminal);
+
+    fireEvent.click(showTabs);
+
+    expect(screen.getByRole("list", { name: "Terminal sessions" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide terminal tabs" }).getAttribute("aria-expanded"))
+      .toBe("true");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Hide terminal tabs" }));
+    expect(screen.getByTestId("terminal-view-matrix-main")).toBe(terminal);
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("keeps collapsed terminal controls and content below floating window chrome", () => {
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active" }] });
+    const { container } = render(
+      <Tooltip.Provider>
+        <OSWindow surfaceId="terminal" safeAreaLayout="sidebar" topBar={<TopBar title="Terminal" />}>
+          <TerminalsTab />
+        </OSWindow>
+      </Tooltip.Provider>,
+    );
+    const content = container.querySelector<HTMLElement>('[data-testid="desktop-terminal-app"]');
+    expect(content).not.toBeNull();
+    expect(content!.style.paddingTop).toBe("48px");
+    fireEvent.click(screen.getByRole("button", { name: "Hide terminal tabs" }));
+    const header = screen.getByRole("banner");
+    expect(header.contains(screen.getByRole("button", { name: "Show terminal tabs" }))).toBe(true);
+    expect(screen.queryByRole("complementary", { name: "Collapsed terminal tabs" })).toBeNull();
+    expect(content!.style.paddingTop).toBe("48px");
+    fireEvent.click(screen.getByRole("button", { name: "Show terminal tabs" }));
+    expect(content!.style.paddingTop).toBe("48px");
+  });
+
   it("keeps delete and connect actions in one non-overlapping overflow menu", async () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
@@ -653,7 +723,7 @@ describe("TerminalsTab", () => {
     renderTab();
     fireEvent.doubleClick(screen.getByTestId("terminal-session-title-matrix-main"));
 
-    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Terminal session name" }).value).toBe("matrix-main");
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Terminal session name" }).value).toBe("Fix terminal actions");
   });
 
   it("creates Claude, Codex, OpenCode, and Pi sessions from the new-terminal menu", async () => {
@@ -670,10 +740,10 @@ describe("TerminalsTab", () => {
     expect(screen.getByRole("menuitem", { name: /Codex/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /OpenCode/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /Pi/ })).toBeTruthy();
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-claude").getAttribute("src")).toContain("/agent-logos/claude-code.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-codex").getAttribute("src")).toContain("/agent-logos/codex.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-opencode").getAttribute("src")).toContain("/agent-logos/opencode-white.png");
-    expect(screen.getByTestId("desktop-terminal-agent-logo-image-pi").getAttribute("src")).toContain("/agent-logos/pi-coding-agent.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-claude").getAttribute("src")).toBe("./agent-logos/claude-code.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-codex").getAttribute("src")).toBe("./agent-logos/codex.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-opencode").getAttribute("src")).toBe("./agent-logos/opencode-white.png");
+    expect(screen.getByTestId("desktop-terminal-agent-logo-image-pi").getAttribute("src")).toBe("./agent-logos/pi-coding-agent.png");
 
     fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api, {
@@ -696,7 +766,7 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    expect(screen.getByText("Fix terminal tabs")).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-title-matrix-codex-fix").textContent).toBe("Fix terminal tabs");
     const metadata = screen.getByTestId("terminal-session-agent-metadata-matrix-codex-fix");
     expect(metadata.textContent).toContain("Codex · gpt-5.6");
     expect(metadata.textContent).toContain("~/projects/matrix-os");
@@ -827,13 +897,13 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    const row = screen.getByRole("button", { name: "Open matrix-main" });
+    const row = screen.getByRole("button", { name: "Open Improve terminal session rows" });
     expect(row.textContent).toContain("Codex");
     expect(row.textContent).toContain("gpt-5.4");
     expect(row.textContent).toContain("high");
     expect(row.textContent).toContain("Improve terminal session rows");
     expect(row.textContent).not.toContain("Editing terminal sidebar");
-    expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Improve terminal session rows" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Editing terminal sidebar" })).toBeNull();
   });
 

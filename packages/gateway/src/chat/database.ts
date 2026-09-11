@@ -55,6 +55,8 @@ export interface ChatMessagesTable {
   state: "pending" | "committed" | "failed";
   turn_id: string | null;
   run_id: string | null;
+  actor_id: string | null;
+  purpose: "discussion" | "ai_request" | "assistant" | "system";
   parts: JsonValue;
   byte_count: number;
   search_text: string;
@@ -216,6 +218,14 @@ export interface ChatMigrationsTable {
 }
 
 export interface ChatDatabase {
+  chat_shares: {
+    id: string;
+    chat_id: string;
+    token_hash: string;
+    snapshot: JsonValue;
+    created_at: Timestamp;
+    expires_at: Timestamp;
+  };
   chats: ChatsTable;
   chat_members: ChatMembersTable;
   chat_user_state: ChatUserStateTable;
@@ -234,7 +244,9 @@ export interface ChatDatabase {
   chat_migrations: ChatMigrationsTable;
 }
 
-export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<void> {
+export async function bootstrapChatDatabase<Database extends ChatDatabase>(
+  db: Kysely<Database>,
+): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS chats (
       id TEXT PRIMARY KEY,
@@ -293,12 +305,34 @@ export async function bootstrapChatDatabase(db: Kysely<ChatDatabase>): Promise<v
       state TEXT NOT NULL CHECK (state IN ('pending', 'committed', 'failed')),
       turn_id TEXT,
       run_id TEXT,
+      actor_id TEXT,
+      purpose TEXT NOT NULL DEFAULT 'system' CHECK (purpose IN ('discussion', 'ai_request', 'assistant', 'system')),
       parts JSONB NOT NULL,
       byte_count INTEGER NOT NULL CHECK (byte_count >= 0 AND byte_count <= 131072),
       search_text TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL,
       UNIQUE (chat_id, seq)
     )
+  `.execute(db);
+  // Existing owner databases predate immutable collaboration attribution.
+  // Keep this migration on the canonical Chat bootstrap path so no Chat write
+  // can run before the columns exist.
+  await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS actor_id TEXT`.execute(db);
+  await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS purpose TEXT`.execute(db);
+  await sql`
+    UPDATE chat_messages
+    SET purpose = CASE role
+      WHEN 'user' THEN 'ai_request'
+      WHEN 'assistant' THEN 'assistant'
+      ELSE 'system'
+    END
+    WHERE purpose IS NULL
+  `.execute(db);
+  await sql`ALTER TABLE chat_messages ALTER COLUMN purpose SET NOT NULL`.execute(db);
+  await sql`ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS chat_messages_purpose_check`.execute(db);
+  await sql`
+    ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_purpose_check
+    CHECK (purpose IN ('discussion', 'ai_request', 'assistant', 'system'))
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_attachments (

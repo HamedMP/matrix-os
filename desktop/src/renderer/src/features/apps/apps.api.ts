@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ApiClient } from "../../lib/api";
 import { desktopQueryClient, desktopQueryScope, type DesktopQueryScope } from "../../lib/query-client";
 import { useConnection } from "../../stores/connection";
+import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
 export { appIconUrl, clearPreloadedAppIcons, preloadAppIcons } from "./app-icons";
 
 export interface MatrixApp {
@@ -30,12 +31,6 @@ function appIdentityFromFile(value: unknown): string | undefined {
   return identity.length <= 256 && SAFE_APP_IDENTITY.test(identity) ? identity : undefined;
 }
 
-function appPathFromFile(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > 2048) return undefined;
-  const path = value.replace(/^\/+/, "");
-  return path.startsWith("apps/") && !path.split("/").includes("..") ? path : undefined;
-}
-
 export function parseApps(value: unknown): MatrixApp[] {
   const list = Array.isArray(value)
     ? value
@@ -45,14 +40,14 @@ export function parseApps(value: unknown): MatrixApp[] {
   const apps: MatrixApp[] = [];
   for (const raw of list) {
     if (!raw || typeof raw !== "object") continue;
-    const app = raw as Partial<MatrixApp> & { file?: unknown };
+    const app = raw as Partial<MatrixApp> & { file?: unknown; path?: unknown };
     if (typeof app.slug !== "string" || app.slug.trim().length === 0) continue;
     const slug = app.slug.trim();
     const name = typeof app.name === "string" && app.name.trim().length > 0 ? app.name.trim() : slug;
     const category =
       typeof app.category === "string" && app.category.trim().length > 0 ? app.category.trim() : undefined;
     const appIdentity = appIdentityFromFile(app.file);
-    const path = appPathFromFile(app.file);
+    const path = canonicalOsViewCatalogPath({ path: app.path, file: app.file }) ?? undefined;
     apps.push({
       slug,
       name,

@@ -44,7 +44,7 @@ beforeEach(() => {
   updaterMock.autoUpdater.removeAllListeners.mockClear();
   updaterMock.autoUpdater.once.mockClear();
   updaterMock.autoUpdater.on.mockClear();
-  updaterMock.autoUpdater.checkForUpdates.mockReset().mockResolvedValue({});
+  updaterMock.autoUpdater.checkForUpdates.mockReset().mockResolvedValue({ updateInfo: { version: "1.2.3" } });
   updaterMock.autoUpdater.quitAndInstall.mockReset();
 });
 
@@ -101,19 +101,74 @@ describe("createUpdater", () => {
     await firstCheck;
   });
 
-  it("does not reset ready status on later scheduled checks", async () => {
+  it("refreshes a staged update and skips intermediate releases", async () => {
     const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
-
     await updater.check();
     updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
-    updaterMock.autoUpdater.removeAllListeners.mockClear();
     updaterMock.autoUpdater.checkForUpdates.mockClear();
-
+    updaterMock.autoUpdater.checkForUpdates.mockImplementationOnce(async () => {
+      updaterMock.handlers.get("update-available")?.({ version: "1.2.9" });
+      return { updateInfo: { version: "1.2.9" } };
+    });
     await updater.check();
+    expect(updaterMock.autoUpdater.checkForUpdates).toHaveBeenCalledOnce();
+    expect(updater.snapshot()).toMatchObject({ status: "downloading", version: "1.2.9" });
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.9" });
+    expect(updater.snapshot()).toMatchObject({ status: "ready", version: "1.2.9" });
+  });
 
-    expect(updater.status()).toBe("ready");
-    expect(updaterMock.autoUpdater.removeAllListeners).not.toHaveBeenCalled();
-    expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  it("checks freshness before installing a staged package", async () => {
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+    await updater.check();
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
+    updaterMock.autoUpdater.checkForUpdates.mockImplementationOnce(async () => {
+      updaterMock.handlers.get("update-available")?.({ version: "1.2.9" });
+      return { updateInfo: { version: "1.2.9" } };
+    });
+    expect(await updater.install()).toBe(false);
+    expect(updaterMock.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    expect(updater.snapshot()).toMatchObject({ status: "downloading", version: "1.2.9" });
+  });
+
+  it("reuses a freshly confirmed staged version without another download", async () => {
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+    await updater.check();
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
+    updaterMock.autoUpdater.checkForUpdates.mockImplementationOnce(async () => {
+      updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
+      expect(updaterMock.autoUpdater.autoDownload).toBe(false);
+      return { updateInfo: { version: "1.2.3" } };
+    });
+    await updater.check();
+    expect(updater.snapshot()).toMatchObject({ status: "ready", version: "1.2.3" });
+  });
+
+  it("does not install an unverified cached package when the manifest check fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+    await updater.check();
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
+    updaterMock.autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("offline"));
+    expect(await updater.install()).toBe(false);
+    expect(updaterMock.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    expect(updater.status()).toBe("error");
+    warn.mockRestore();
+  });
+
+  it("prevents competing install/check operations during freshness validation", async () => {
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+    await updater.check();
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
+    let finish!: (value: unknown) => void;
+    updaterMock.autoUpdater.checkForUpdates.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const install = updater.install();
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(await updater.install()).toBe(false);
+    await updater.check();
+    finish({ updateInfo: { version: "1.2.3" } });
+    expect(await install).toBe(true);
+    expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
+    expect(updaterMock.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
   });
 
   it("reports ready through callbacks instead of check return timing", async () => {

@@ -18,7 +18,11 @@ describe("provider settings runtime capability wiring", () => {
     expect(source).toContain("detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations");
     expect(source).toContain("runtimeSource: agentRuntimeServices.source");
     expect(source).toContain("createProviderTerminalLoginCoordinator({");
-    expect(source).toContain("registry: zellijShellRegistry");
+    const loginCoordinatorWiring = source.match(
+      /const providerLoginCoordinator = createProviderTerminalLoginCoordinator\(\{[\s\S]*?\n  \}\);/,
+    )?.[0];
+    expect(loginCoordinatorWiring).toBeDefined();
+    expect(loginCoordinatorWiring).toContain("registry: providerLoginTerminalRegistry");
     expect(source).toContain("loginCoordinator: providerLoginCoordinator");
     expect(source).toContain("createDefaultProviderCliAccountLifecycleCoordinator({");
     expect(source).not.toContain("codingAgentWorkspaceAgents.flatMap((agent)");

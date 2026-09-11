@@ -1,0 +1,13 @@
+{
+  "name": "matrix-os",
+  "owner": { "name": "Matrix OS" },
+  "metadata": { "description": "Remote Matrix computer tools and coding workflows" },
+  "plugins": [
+    {
+      "name": "matrix-os",
+      "source": "./plugins/matrix-os",
+      "description": "Matrix remote computer tools and coding workflows",
+      "category": "productivity"
+    }
+  ]
+}

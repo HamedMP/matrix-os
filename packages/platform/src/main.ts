@@ -45,16 +45,11 @@ import { createCustomerVpsRoutes } from './customer-vps-routes.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import {
   buildCustomerVpsProxyUrl,
-  deriveEntitlementAccess,
-  EntitlementStatusSchema,
-  type EntitlementAccessDecision,
 } from './profile-routing.js';
 import {
   getRuntimeAccessDecision,
-  type BillingEntitlement,
-  type RuntimeAccessDecision,
 } from './billing.js';
-import { resolveEffectiveBillingEntitlementForSlot } from './billing-entitlement-resolver.js';
+import { getRuntimeEntitlementDecision, getRuntimeEntitlementDecisionForUser, resolveEffectiveBillingEntitlement, stripeBillingEntitlementsEnabled } from './runtime-entitlement.js';
 import { createBillingRoutes } from './billing-routes.js';
 import { createPrebillingProvisioningCoordinator } from './prebilling-provisioning.js';
 import { loadPrebillingProvisioningConfig } from './prebilling-provisioning-config.js';
@@ -81,6 +76,7 @@ import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import { createLegacyContainerRoutes } from './legacy-container-routes.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
+import { createPlatformMcpRoutes } from './mcp-registration.js';
 import {
   HANDLE_PATTERN,
   describeError,
@@ -129,6 +125,7 @@ import {
   collectTenantPublicTelemetryEnv,
 } from './platform-startup-env.js';
 import type { PlatformApp } from './platform-app-types.js';
+import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
 export { escapeInlineScriptJson } from './auth-pages.js';
 export { buildPostAuthRedirectPath } from './request-routing.js';
 export type { PlatformApp } from './platform-app-types.js';
@@ -202,80 +199,6 @@ function bearerTokenEquals(authHeader: string | undefined, expected: string): bo
   return timingSafeTokenEquals(authHeader.slice(7), expected);
 }
 
-function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): EntitlementAccessDecision {
-  const rawStatus = env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS?.trim();
-  if (!rawStatus) {
-    return deriveEntitlementAccess({ status: 'active' });
-  }
-  const parsed = EntitlementStatusSchema.safeParse(rawStatus);
-  if (!parsed.success) {
-    console.warn('[platform] Invalid MATRIX_PAID_BETA_ENTITLEMENT_STATUS; denying paid runtime access.');
-    return deriveEntitlementAccess({ status: 'changed' });
-  }
-  return deriveEntitlementAccess({ status: parsed.data });
-}
-
-function stripeBillingEntitlementsEnabled(env: NodeJS.ProcessEnv): boolean {
-  return (
-    env.MATRIX_STRIPE_BILLING_ENABLED === 'true' ||
-    env.MATRIX_BILLING_PROVIDER === 'stripe' ||
-    Boolean(env.STRIPE_SECRET_KEY?.trim())
-  );
-}
-
-async function resolveEffectiveBillingEntitlement(
-  db: PlatformDB,
-  clerkUserId: string,
-  now = new Date(),
-  runtimeSlot?: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<BillingEntitlement | null> {
-  return resolveEffectiveBillingEntitlementForSlot(db, clerkUserId, now, runtimeSlot, env);
-}
-
-async function getRuntimeEntitlementDecisionForUser(
-  db: PlatformDB,
-  clerkUserId: string,
-  env: NodeJS.ProcessEnv = process.env,
-  runtimeSlot?: string,
-  provisioningClass?: string,
-  now = new Date(),
-): Promise<EntitlementAccessDecision> {
-  if (provisioningClass === 'preview') {
-    return {
-      status: 'active',
-      runtimeProxyAllowed: true,
-      ownerDataPreserved: true,
-      ownerDataExportable: true,
-      remediation: null,
-    };
-  }
-  if (!stripeBillingEntitlementsEnabled(env)) {
-    return getRuntimeEntitlementDecision(env);
-  }
-  return billingAccessToProfileDecision(
-    getRuntimeAccessDecision(await resolveEffectiveBillingEntitlement(db, clerkUserId, now, runtimeSlot, env), now),
-  );
-}
-
-function billingAccessToProfileDecision(decision: RuntimeAccessDecision): EntitlementAccessDecision {
-  if (decision.runtimeProxyAllowed) {
-    return {
-      status: 'active',
-      runtimeProxyAllowed: true,
-      ownerDataPreserved: true,
-      ownerDataExportable: true,
-      remediation: null,
-    };
-  }
-  return {
-    status: decision.reason === 'no_entitlement' ? 'missing' : 'expired',
-    runtimeProxyAllowed: false,
-    ownerDataPreserved: true,
-    ownerDataExportable: true,
-    remediation: 'Renew paid runtime access or ask an operator to grant access.',
-  };
-}
 
 function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Cache-Control', 'no-store, private');
@@ -321,11 +244,14 @@ export function createApp(deps: {
   platformSecret?: string;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  customMcpRoutes?: Hono<any>;
+  internalCustomMcpRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
+  collaboration?: PlatformCollaborationRuntime;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -513,6 +439,7 @@ export function createApp(deps: {
     );
   }
 
+  app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
   app.route('/', createComputerRoutes({
     db,
     clerkAuth,
@@ -661,6 +588,10 @@ export function createApp(deps: {
     }));
   }
 
+  // Collaboration routes must precede personal session routing so recipients
+  // without a provisioned computer reach the owner's registered authority.
+  deps.collaboration?.register(app);
+
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
@@ -688,6 +619,9 @@ export function createApp(deps: {
 
   if (deps.integrationRoutes) {
     app.route('/api/integrations', deps.integrationRoutes);
+  }
+  if (deps.customMcpRoutes) {
+    app.route('/api/mcp-servers', deps.customMcpRoutes);
   }
   if (deps.internalIntegrationRoutes) {
     const internalIntegrationApp = new Hono<{
@@ -727,6 +661,30 @@ export function createApp(deps: {
     });
     internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
     app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
+  }
+  if (deps.internalCustomMcpRoutes) {
+    const internalCustomMcpApp = new Hono<{
+      Variables: {
+        internalContainerHandle: string;
+        internalContainerClerkUserId: string;
+      };
+    }>();
+    internalCustomMcpApp.use('*', async (c, next) => {
+      const handle = c.req.param('handle');
+      if (!handle || !platformSecret) return c.json({ error: 'Unauthorized' }, 401);
+      const auth = c.req.header('authorization');
+      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
+      if (!timingSafeTokenEquals(token, buildPlatformVerificationToken(handle, platformSecret))) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      const record = (await getRunningUserMachineByHandle(db, handle)) ?? (await getContainer(db, handle));
+      if (!record?.clerkUserId) return c.json({ error: 'Unknown handle' }, 404);
+      c.set('internalContainerHandle', handle);
+      c.set('internalContainerClerkUserId', record.clerkUserId);
+      return next();
+    });
+    internalCustomMcpApp.route('/', deps.internalCustomMcpRoutes);
+    app.route('/internal/containers/:handle/mcp-servers', internalCustomMcpApp);
   }
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);

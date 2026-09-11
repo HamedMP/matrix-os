@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
@@ -38,7 +39,7 @@ describe("Desktop mode controls", () => {
   });
 
   it("places the ready Update control immediately left of the same-size account avatar", () => {
-    render(<DesktopModeControls />);
+    render(<GettingStartedVisibilityProvider scope="controls-test"><DesktopModeControls /></GettingStartedVisibilityProvider>);
 
     const labels = screen.getAllByRole("button").map((button) => (
       button.getAttribute("aria-label") ?? button.textContent

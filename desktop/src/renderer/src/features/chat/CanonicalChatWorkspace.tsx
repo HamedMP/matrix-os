@@ -1,3 +1,7 @@
+import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { ChatSharingButton } from "./ChatSharingButton";
+import { ChatContextMenu } from "@matrix-os/ui";
+import { openChatWebLink } from "./chat-web-navigation";
 import type {
   CanonicalChatClient,
   CanonicalChatEventSource,
@@ -16,7 +20,9 @@ import { ConversationTranscript } from "../../components/conversation/transcript
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
-import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
+import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
+import { useChatFileNavigation } from "../work/ChatFileNavigation";
+import { resolveChatInspectorTarget, resolveWorkFilesScope } from "../work/work-files-scope";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -103,6 +109,8 @@ export function CanonicalChatWorkspace({
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const projects = useBoard((state) => state.projects);
+  const fileNavigation = useChatFileNavigation();
+  const chromeHost = useSurfaceChromeHost();
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
@@ -262,7 +270,10 @@ export function CanonicalChatWorkspace({
   const composerHasInput = Boolean(
     draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
   );
-  const transcript = controller.detail ? canonicalChatPresentation(controller.detail) : [];
+  const transcript = controller.detail ? canonicalChatPresentation({
+    ...controller.detail,
+    streamedMessageIds: controller.streamedMessageIds,
+  }) : [];
 
   useEffect(() => {
     if (!editingQueuedTurn || !controller.detail) return;
@@ -270,6 +281,10 @@ export function CanonicalChatWorkspace({
       && queuedTurns.some((turn) => turn.id === editingQueuedTurn.id);
     if (!editStillExists) setEditingQueuedTurn(null);
   }, [controller.detail, editingQueuedTurn, queuedTurns]);
+  const loadChatImage = useCallback((src: string) => {
+    if (!api) return Promise.reject(new Error("ChatUnavailable"));
+    return api.getBlob(src, { maxBytes: 8 * 1024 * 1024 });
+  }, [api]);
   const copyText = useCallback(async (text: string) => {
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
     await navigator.clipboard.writeText(text);
@@ -692,8 +707,8 @@ export function CanonicalChatWorkspace({
         </form>
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
           {controller.items.map((record) => (
+            <ChatContextMenu key={record.chat.id} chatId={record.chat.id}>
             <button
-              key={record.chat.id}
               type="button"
               aria-label={record.chat.title}
               aria-pressed={record.chat.id === controller.activeChatId}
@@ -707,6 +722,7 @@ export function CanonicalChatWorkspace({
                 {record.chat.lastMessagePreview ?? "No messages yet"}
               </span>
             </button>
+            </ChatContextMenu>
           ))}
           {controller.status === "ready" && controller.items.length === 0 ? (
             <p className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
@@ -732,13 +748,32 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail && globalView === "conversation" ? (
           <>
+            {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
+            <ChatContextMenu chatId={controller.detail.record.chat.id}>
+            <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
               copyText,
-              openFile: openFileInDesktopEditor,
-              ...(api ? { loadImage: (src: string) => api.getBlob(src, { maxBytes: 10 * 1024 * 1024 }) } : {}),
+              openAttachment: (rawPath) => {
+                const path = normalizeDesktopEditorPath(rawPath);
+                if (!path || !fileNavigation || !controller.detail) return false;
+                fileNavigation.open({ chatId: controller.detail.record.chat.id, target: { kind: "home", path, label: path.split("/").at(-1) ?? path } });
+                return true;
+              },
+              openWebLink: openChatWebLink,
+              openFile: (rawPath) => {
+                if (!fileNavigation || !controller.detail) return false;
+                const scope = resolveWorkFilesScope(controller.detail, projects);
+                const target = resolveChatInspectorTarget(rawPath, scope);
+                if (!target) return false;
+                fileNavigation.open({ chatId: scope.chatId, target });
+                return true;
+              },
+              ...(api ? { loadImage: loadChatImage } : {}),
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
             }} />
+            </div>
+            </ChatContextMenu>
             <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (

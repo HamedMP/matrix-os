@@ -141,6 +141,9 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain(
       'timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"',
     );
+    expect(script).toContain(
+      'node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"',
+    );
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/zellij"');
     expect(script).toContain(
       'tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json',
@@ -1746,6 +1749,15 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(launcher).toContain('/vps/register');
     expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(launcher).toContain('runtime_ready()');
+    expect(launcher).toContain('selected_developer_tools_settled()');
+    expect(launcher).toContain('/api/terminal/health');
+    expect(launcher).toContain('/var/lib/matrix-developer-tools/installed-tools');
+    expect(launcher).toContain('/var/lib/matrix-developer-tools/failed-tools');
+    expect(launcher).toContain('grep -qxF "$tool" "$failed_file" && continue');
+    expect(launcher).toContain('authorization: Bearer ${MATRIX_AUTH_TOKEN}');
+    expect(launcher).toContain('if ! runtime_ready; then');
+    expect(launcher).not.toContain('MATRIX_OPTIONAL_TOOLS_START_DELAY_SECONDS');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');

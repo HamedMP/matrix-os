@@ -227,7 +227,10 @@ Response: `201`
 {
   "session": {
     "id": "sess_123",
-    "terminalSessionId": "term_123",
+    "terminalRef": {
+      "workspaceId": "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tabId": "tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
     "status": "starting",
     "runtime": { "type": "zellij" },
     "nativeAttachCommand": "zellij attach matrix-sess_123"

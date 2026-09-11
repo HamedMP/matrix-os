@@ -99,6 +99,49 @@ DMG background errors fail the build.
 
 ## Updates
 
+### Desktop and cloud release alignment
+
+Each Electron build embeds the actual checkout commit and up to 256 ancestors.
+Release jobs fetch sufficient Git history and reject a release SHA that differs
+from the checkout or contains uncommitted source changes. Only the release
+workflow's package-version stamping is exempt; dirty local builds report unknown
+provenance. This metadata is exposed through the bounded `app:get-version`
+IPC response; installed apps do not need Git or GitHub access to compare releases.
+
+The update reminder first compares that source with the running gateway's
+`/api/system/info.build.sha`. Native host bundles may return `"unknown"` for
+this legacy image-environment field. In that case the shared contract reads
+`release.gitCommit` only from a schema-1 host bundle whose `release.version`,
+`version`, and explicit `runningVersion` all match. Missing running versions or
+an installation awaiting gateway restart cannot establish source identity.
+`installedVersion` is template/package metadata and is not used for this check.
+Different commits trigger an advisory reminder even when both releases advertise
+the same legacy protocol number. An ancestor identifies missing cloud changes;
+different branches or history beyond the bounded window remain different without
+inventing an ordering. Matching source proves release alignment, not that every
+configuration, external provider, or feature is operational.
+
+Regression coverage includes the captured public provenance fields from a native
+host response, the actual `getSystemInfo` producer without image build variables,
+and built-Electron replay through the preload IPC and update dialog. The producer
+test also replaces release metadata before simulating gateway restart, after its
+file cache expires. Verify against a real authenticated VPS before release; an
+idealized fixture with a populated `build.sha` cannot prove host compatibility.
+
+Checks run at startup, computer switches, and reconnect. Focus checks have a
+15-minute cooldown, and there is no periodic alignment poll. Network failures and
+missing provenance stay quiet and are never reported as aligned, unless a valid
+protocol window explicitly requires an upgrade. Such an unsupported protocol
+keeps its required-component recovery direction; a supported protocol never
+proves source alignment. Dismissal applies
+to the current source pair on the current computer; a later release pair can prompt
+again. Updates retain each component's channel, update the cloud before Desktop
+when both are available, and verify the installed cloud target is running. If
+current channels cannot provide matching releases, the reminder does not claim
+completion or silently switch channels.
+
+### Desktop artifact discovery
+
 Packaged desktop builds use a channel-scoped Generic feed backed by GitHub
 release downloads:
 
@@ -155,3 +198,56 @@ scheduled check, wait for the blue **Update** button, select it, verify the app
 relaunches on B, and confirm **What's New** displays B's generated changelog
 exactly once. Repeat the check after relaunch and verify that B is reported up
 to date.
+
+## Desktop / VPS compatibility and update freshness
+
+Desktop and host bundles have independent product versions. Electron Desktop
+uses the source alignment check above for update reminders and retains explicit
+unsupported-protocol recovery. The gateway advertises `runtimeCompatibility`; its
+manually maintained protocol window is not evidence that both releases contain
+the same merged changes. Preserve older wire formats while clients migrate.
+
+Electron Desktop checks at startup, on computer switches, and on realtime/network
+reconnect. Focus checks run only when the previous check is at least 15 minutes
+old. There is no background polling timer. Network failures and missing or invalid
+source identities stay silent unless a valid protocol window proves an upgrade
+is required.
+
+Different source identities open a centered, dismissible reminder with installed
+and available versions for both components. It preserves the titlebar and mounted
+workspace. Later, Escape, or clicking outside dismisses that release pair for the
+current computer connection; a different pair can prompt again. Native embeds
+suspend only while the modal is open and resume on dismissal.
+
+One primary action checks both channels again. If both have updates, the cloud
+computer goes first; the desktop app restarts only after the installed and running
+cloud versions match the target. Channel freshness alone does not prove alignment:
+after an update returns, reread the actual sources before reporting completion.
+Versions are compared within each component's own channel, never between desktop
+semver and bundle dates. Failed checks stay explicitly unavailable. Update
+progress may be hidden without cancelling an accepted update. Changing computers
+cancels subsequent steps, and cloud requests stay bound to the original runtime.
+The button discloses a local restart; opening the reminder never installs either
+update. Users can dismiss the reminder and keep their current work.
+
+For canonical Chat, `messageVersion=2` explicitly opts into `actorId` and `purpose`.
+Absent or `messageVersion=1` retains the message shape accepted by Desktop
+`0.1.0-canary.20260908044406`. This applies to detail, turn admission, steering, and
+SSE snapshot/delta payloads. SSE framing (`X-Matrix-Chat-Protocol: 2`) is a separate
+contract: older Desktop releases already use it and still need message-v1 output.
+Project only validated responses, never stored rows or outbox records. Keep strict
+request validation. New additive response fields can still break old strict
+parsers; negotiate a new wire version or preserve the older projection.
+
+The updater rechecks the channel manifest even with an already-staged package and
+checks again before installing. A newer target replaces the staged package; only
+a freshly confirmed ready target may restart/install. A failed freshness check is
+retryable and never silently installs an intermediate cached release. Downloads
+remain automatic; restart remains an explicit user action. Stable, beta, canary,
+and dev retain separate feeds, and an unavailable feed must not switch channels.
+
+Rollout order: publish the backward-compatible VPS fix, ship the recovery-capable
+Desktop baseline, then retain the compatibility window until older clients have
+migrated. Existing clients cannot retroactively learn a newly introduced handshake.
+Validate the unversioned and opted-in Chat formats, a staged N+1 with N+3 now
+published, same-version reuse, failed freshness checks, and runtime-switch fencing.

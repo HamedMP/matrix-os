@@ -1,3 +1,4 @@
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { File } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../stores/connection";
@@ -154,6 +155,7 @@ function QuickOpenInner({ onClose }: { onClose: () => void }) {
 export default function QuickOpen() {
   const open = useUi((s) => s.quickOpenOpen);
   const setOpen = useUi((s) => s.setQuickOpenOpen);
+  useGettingStartedBlocker(open);
   if (!open) return null;
   return <QuickOpenInner onClose={() => setOpen(false)} />;
 }

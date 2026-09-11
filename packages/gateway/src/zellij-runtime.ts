@@ -286,11 +286,11 @@ export function createZellijRuntime(options: {
     },
 
     attachCommand(sessionId: string): string[] {
-      return ["zellij", "attach", sessionName(sessionId)];
+      return ["zellij", "attach", sessionName(sessionId), "options", "--default-mode", "normal"];
     },
 
     observeCommand(sessionId: string): string[] {
-      return ["zellij", "attach", sessionName(sessionId), "--index", "0"];
+      return ["zellij", "attach", sessionName(sessionId), "--index", "0", "options", "--default-mode", "normal"];
     },
 
     async sendInput(sessionId: string, input: string, signal?: AbortSignal): Promise<void> {

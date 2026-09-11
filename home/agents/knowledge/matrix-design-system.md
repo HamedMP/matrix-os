@@ -52,10 +52,10 @@ The shell injects `--matrix-*` variables into app iframes via the bridge. Apps t
 2. **Forest is structural.** Headers, primary buttons, nav active states, icons.
 3. **Cream is warmth.** Secondary fills, hover states, sidebar backgrounds.
 4. **Deep is text.** Never use pure black `#000000`.
-5. **Backgrounds are GRADIENT, not flat.** Blend sand shades for warmth.
+5. **Backgrounds inherit the active theme.** Solid content surfaces are valid; gradients are optional depth treatments.
 6. **Shadows use Deep-tinted** `rgba(50,53,46,X)`, never pure black.
 
-### Gradient Backgrounds
+### Optional Gradient Backgrounds (fallback examples only)
 
 ```css
 /* App page background — warm sand wash (DEFAULT for all apps) */
@@ -78,13 +78,11 @@ background: linear-gradient(135deg, #32352E 0%, #434E3F 40%, #D6AB8B 100%);
 | `--matrix-font-display`  | `"Orbitron", system-ui, sans-serif` | H1/H2 display headings and large stat numbers  |
 | `--matrix-font-mono`     | `"JetBrains Mono", monospace`       | Code, data, terminal                           |
 
-### Orbitron Rules (CRITICAL)
+### App Typography
 
-Orbitron is the Matrix OS brand typeface. Use it **minimally**:
-
-- **Use for:** H1, H2 display headings, large metric/stat numbers (1.5rem+)
-- **NEVER use for:** subtitles (H3+), card titles, descriptions, button labels, navigation, form labels, body text, or anything below 16px
-- **H3 and below are ALWAYS Inter weight 600.**
+Use inherited shell fonts for app headings and controls. Display fonts are optional
+for explicit art direction, never mandatory. Create hierarchy with weight, size,
+leading, measure, and alignment. Do not load remote fonts.
 
 ### Type Scale
 
@@ -110,8 +108,8 @@ Use inherited shell font tokens in app CSS: `var(--matrix-font-sans, Inter, syst
 
 | Element   | Border Radius | Notes                        |
 |-----------|---------------|------------------------------|
-| Buttons   | 50px          | Full capsule, always         |
-| Inputs    | 50px          | Full capsule                 |
+| Buttons   | 6-12px        | Match function and density   |
+| Inputs    | 6-12px        | Keep forms legible           |
 | Cards     | 22px          | Soft rounded                 |
 | Inner UI  | 14-16px       | Nested elements, icon bgs    |
 | Badges    | 9999px        | Perfect pill                 |
@@ -172,70 +170,22 @@ Default to simple line-style SVGs for all UI icons. Only use specialist bundled 
 
 Never exceed 500ms. Always respect `prefers-reduced-motion`.
 
-### Page Mount — Staggered Fade Up (signature animation)
-
-```css
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.animate-in { animation: fadeUp 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; }
-/* Stagger: 60ms gap between siblings */
-.stagger > :nth-child(1) { animation-delay: 0s; }
-.stagger > :nth-child(2) { animation-delay: 0.06s; }
-.stagger > :nth-child(3) { animation-delay: 0.12s; }
-.stagger > :nth-child(4) { animation-delay: 0.18s; }
-.stagger > :nth-child(5) { animation-delay: 0.24s; }
-```
-
-### Hover Lift (all clickable elements)
-
-```css
-.hoverable { transition: transform 0.2s ease, box-shadow 0.2s ease; }
-.hoverable:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(50,53,46,0.08); }
-.hoverable:active { transform: translateY(0); transition-duration: 0.1s; }
-```
-
-### Skeleton Loading — Warm Shimmer
-
-```css
-@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-.skeleton {
-  background: linear-gradient(90deg, var(--matrix-muted) 25%, #F7F1E7 50%, var(--matrix-muted) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.8s ease-in-out infinite;
-  border-radius: 10px;
-}
-```
-
-Use warm sand tones in the shimmer, not gray or white.
-
-### Progress Bars
-
-```css
-.progress-fill { transition: width 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
-```
-
-Animate width from 0 to target on mount.
-
-### Animation Rules
-
-- Page load = one orchestrated wave (stagger all top-level elements)
-- Hover lift on every clickable card and button
-- Loading always uses warm-tinted skeletons, never blank space
-- Spinners: use a local CSS/SVG spinner, never a remote script
-- Reduced motion fallback is mandatory
+Read the installed emil-design-eng and apple-design skills, plus the matrix-app-builder
+app-craft reference. Keep frequent actions immediate. Use short ease-out transitions
+for occasional changes, interruptible springs for gestures, and static or opacity-only
+reduced-motion alternatives. Do not stagger all content on mount, lift every control,
+or show invented progress. Stable, theme-aware loading placeholders are enough.
 
 ## Component Patterns
 
 ### Buttons
 
-Capsule-shaped with clear hierarchy:
+Use clear hierarchy and a radius appropriate to the control:
 
 ```css
 button {
   padding: 10px 24px;
-  border-radius: 50px;
+  border-radius: 8px;
   font-family: 'Inter', system-ui, sans-serif;
   font-size: 0.875rem;
   font-weight: 500;
@@ -278,7 +228,7 @@ Glass card with gradient background showing through:
 input, select {
   background: rgba(255, 255, 255, 0.8);
   border: 1.5px solid rgba(214, 211, 200, 0.6);
-  border-radius: 50px;
+  border-radius: 8px;
   padding: 13px 22px;
   font-family: 'Inter', system-ui, sans-serif;
   font-size: 0.875rem;
@@ -329,8 +279,8 @@ Always use flexbox centering and inline SVG or bundled local icons:
 6. **All inputs need visible focus states.** Never just `outline:none` with no replacement.
 7. **All buttons need hover + active states.** No flat state-free buttons.
 8. **Don't mix border-radius values** on adjacent elements.
-9. **Backgrounds must be gradient**, not flat. Use the sand wash as default.
-10. **Orbitron only for H1/H2.** Subtitles, card titles, and everything else use Inter.
+9. **Backgrounds must honor the active theme.** Use gradients only with a purpose.
+10. **Inherit shell fonts.** Establish hierarchy through size, weight, leading, and spacing.
 
 ## Bridge API Patterns
 

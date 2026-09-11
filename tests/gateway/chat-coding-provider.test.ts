@@ -10,6 +10,7 @@ import type {
   CodingAgentThreadStore,
   CodingAgentTurnStore,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
+import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_coding" };
 const occurredAt = "2026-08-26T00:00:00.000Z";
@@ -119,6 +120,64 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it("recovers a paginated exact-run transcript through a fresh adapter without admitting a new turn", async () => {
+    const fake = fakeStore([]);
+    const first = event({ type: "assistant.text.delta", eventId: "evt_page_one", messageId: "msg_final", delta: "first " });
+    const second = event({ type: "assistant.text.delta", eventId: "evt_page_two", messageId: "msg_final", delta: "second" });
+    fake.getThread.mockResolvedValueOnce({ ...snapshot([first]), events: { items: [first], hasMore: true, limit: 200, nextCursor: first.eventId } });
+    fake.getThread.mockResolvedValueOnce(snapshot([second,
+      event({ type: "thread.completed", eventId: "evt_recovered", outcome: "completed" }),
+    ]));
+    const fresh = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const recovered = await fresh.recover!({ owner, runId: "run_coding",
+      state: fresh.parseState({ conversationId: "thread_native", runId: "run_coding", replayAfter: "evt_boundary" }),
+      signal: new AbortController().signal,
+    });
+    expect(recovered).toEqual({ outcome: "completed", messages: [{ messageId: "msg_final", text: "first second" }] });
+    expect(fake.createThread).not.toHaveBeenCalled();
+    expect(fake.acceptTurn).not.toHaveBeenCalled();
+    expect(fake.getThread).toHaveBeenLastCalledWith(expect.objectContaining({ userId: owner.ownerId }), "thread_native", "evt_page_one");
+  });
+
+  it("does not recover another turn's final from an old compatible state", async () => {
+    const fake = fakeStore([
+      event({ type: "turn.accepted", eventId: "evt_new_run", turnId: "turn_new", clientRequestId: "req_new", acceptedAt: occurredAt }),
+      event({ type: "thread.completed", eventId: "evt_new_done", outcome: "completed" }),
+    ]);
+    const fresh = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const state = fresh.parseState({ conversationId: "thread_native" });
+    expect(await fresh.recover!({ owner, runId: "run_coding", state, signal: new AbortController().signal })).toBeNull();
+  });
+
+  it("recovers persisted final content when terminal delivery is lost without replaying the prompt", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const received: CanonicalProviderRunEvent[] = [];
+    let settled = false;
+    const task = (async () => {
+      for await (const item of adapter.start(input({ signal: controller.signal }))) received.push(item);
+    })().finally(() => { settled = true; });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      fake.getThread.mockResolvedValue(snapshot([
+        event({ type: "assistant.text.delta", eventId: "evt_recovered_text", messageId: "msg_final", delta: "Recovered final." }),
+        event({ type: "thread.completed", eventId: "evt_recovered_final", outcome: "completed" }),
+      ]));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(settled).toBe(true);
+      expect(received).toContainEqual({ type: "assistant.delta", messageId: "msg_final", delta: "Recovered final." });
+      expect(received.filter((item) => item.type === "run.completed")).toHaveLength(1);
+      expect(fake.createThread).toHaveBeenCalledTimes(1);
+      expect(fake.acceptTurn).not.toHaveBeenCalled();
+    } finally {
+      controller.abort();
+      await task;
+      vi.useRealTimers();
+    }
+  });
+
   it("routes Pi through the shared coding seam with its exact model and enforceable sandbox", async () => {
     const createThread = vi.fn(async () => ({
       snapshot: {
@@ -267,7 +326,7 @@ describe("canonical coding Chat Provider adapter", () => {
     for await (const candidate of adapter.start(input())) events.push(candidate);
 
     expect(events).toEqual([
-      { type: "state.updated", state: { conversationId: "thread_native" } },
+      { type: "state.updated", state: { conversationId: "thread_native", runId: "run_coding" } },
       {
         type: "agent.activity",
         activityId: "tool_command",
@@ -317,7 +376,7 @@ describe("canonical coding Chat Provider adapter", () => {
     for await (const candidate of adapter.start(input())) events.push(candidate);
 
     expect(events).toEqual([
-      { type: "state.updated", state: { conversationId: "thread_native" } },
+      { type: "state.updated", state: { conversationId: "thread_native", runId: "run_coding" } },
       { type: "terminal.bound", terminalSessionId: "terminal_native", terminalSessionCreatedAt: occurredAt },
       { type: "assistant.delta", messageId: "msg_native", delta: "done" },
       expect.objectContaining({ type: "resource.changed", resourceKind: "file", changeKind: "updated" }),
@@ -415,7 +474,7 @@ describe("canonical coding Chat Provider adapter", () => {
     for await (const candidate of adapter.start(input())) events.push(candidate);
 
     expect(events).toEqual([
-      { type: "state.updated", state: { conversationId: "thread_native" } },
+      { type: "state.updated", state: { conversationId: "thread_native", runId: "run_coding" } },
       { type: "assistant.delta", messageId: "msg_commentary", delta: "I'll run the requested command." },
       { type: "assistant.delta", messageId: "msg_final", delta: "# Verification\n\n- Complete" },
       { type: "run.completed", outcome: "completed" },
@@ -439,7 +498,10 @@ describe("canonical coding Chat Provider adapter", () => {
       ...input(),
       resumeState: { conversationId: "thread_native" },
     })) events.push(candidate);
-    expect(events).toEqual([{ type: "run.completed", outcome: "completed" }]);
+    expect(events).toEqual([
+      { type: "state.updated", state: { conversationId: "thread_native", runId: "run_coding", replayAfter: "evt_accepted" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
     expect(fake.acceptTurn).toHaveBeenCalledWith(
       expect.objectContaining({ userId: owner.ownerId }),
       "thread_native",
@@ -466,7 +528,7 @@ describe("canonical coding Chat Provider adapter", () => {
 
     await expect(iterator.next()).resolves.toEqual({
       done: false,
-      value: { type: "state.updated", state: { conversationId: "thread_native" } },
+      value: { type: "state.updated", state: { conversationId: "thread_native", runId: "run_coding" } },
     });
     await expect(adapter.steer!({
       owner,
@@ -589,7 +651,10 @@ describe("canonical coding Chat Provider adapter", () => {
       resumeState: { conversationId: "thread_native" },
     })) events.push(candidate);
 
-    expect(events).toEqual([{ type: "run.completed", outcome: "completed" }]);
+    expect(events).toEqual([
+      { type: "state.updated", state: { conversationId: "thread_native", runId: "run_coding" } },
+      { type: "run.completed", outcome: "completed" },
+    ]);
   });
 
   it("drains a healthy long Codex stream without treating total event IDs as backlog", async () => {

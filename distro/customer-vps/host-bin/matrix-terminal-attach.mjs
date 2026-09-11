@@ -87,7 +87,9 @@ try {
 }
 
 const configDir = join(homePath, "system", "zellij");
-const child = spawn(zellijPath, ["attach", descriptor.sessionName, ...remainingArgs], {
+// Match the gateway adapter: Normal is a typing fallback for old Normal-mode
+// servers and new Locked-mode servers, without changing their initial mode.
+const child = spawn(zellijPath, ["attach", descriptor.sessionName, ...remainingArgs, "options", "--default-mode", "normal"], {
   cwd: homePath,
   env: {
     ...process.env,

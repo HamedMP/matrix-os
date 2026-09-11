@@ -1,11 +1,28 @@
 // @vitest-environment jsdom
 import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { PanelLeftOpenIcon, PanelLeftCloseIcon } from "@desktop/renderer/src/lib/hugeicons";
+function iconPaths(Icon: typeof PanelLeftOpenIcon) {
+ const el = document.createElement("div");
+ el.innerHTML = renderToStaticMarkup(<Icon size={15} aria-hidden />);
+ return el.querySelector("svg")?.innerHTML;
+}
+
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { OSWindow, OSWindowSafeView, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow.js";
 
 describe("Electron OS window chrome", () => {
+  it("places resize controls above the entire frame, outside the content and sidebar", () => {
+    const { container } = render(<OSWindow surfaceId="terminal" sidebarWidth={240}
+      sidebar={<div>Sessions</div>} frameControls={<div data-testid="resize-controls" />}>
+      <div>Terminal</div>
+    </OSWindow>);
+    const controls = container.querySelector('[data-testid="resize-controls"]')!;
+    expect(controls.parentElement).toBe(container.querySelector("[data-os-window]"));
+    expect(controls.closest("[data-os-window-main]")).toBeNull();
+  });
   it("owns sidebar visibility and toggles it from the reusable title trigger", () => {
     const { container } = render(
       <OSWindow
@@ -34,6 +51,7 @@ describe("Electron OS window chrome", () => {
     expect(osWindow.getAttribute("data-sidebar-shown")).toBe("true");
     expect(sidebar.hidden).toBe(false);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.querySelector("svg")?.innerHTML).toBe(iconPaths(PanelLeftOpenIcon));
     expect(trigger.getAttribute("data-os-window-sidebar-trigger")).toBe("");
     expect(trigger.className).toContain("size-7");
     expect(trigger.className).toContain("hover:bg-[var(--bg-hover)]");
@@ -49,6 +67,7 @@ describe("Electron OS window chrome", () => {
 
     expect(osWindow.getAttribute("data-sidebar-shown")).toBe("false");
     expect(sidebar.hidden).toBe(true);
+    expect(trigger.querySelector("svg")?.innerHTML).toBe(iconPaths(PanelLeftCloseIcon));
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(container.querySelector("[data-os-window-traffic-lights]")).toBe(trafficLights);
     expect(trafficLights.parentElement).toBe(trafficLightsParent);

@@ -302,7 +302,7 @@ describe("canonical Chat client", () => {
       cursor: "chatcur_current",
     });
     expect(get).toHaveBeenCalledWith(
-      "/api/chats/chat_client_test?limit=100&cursor=chatcur_current",
+      "/api/chats/chat_client_test?limit=100&cursor=chatcur_current&messageVersion=2",
     );
     expect(detail.nextCursor).toBe("chatcur_older");
 
@@ -377,7 +377,7 @@ describe("canonical Chat client", () => {
       decision: "approve_for_session",
     });
 
-    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns", turnInput);
+    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns?messageVersion=2", turnInput);
     expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel", {
       clientRequestId: "req_client_cancel",
     });
@@ -416,7 +416,7 @@ describe("canonical Chat client", () => {
       parts: [{ type: "text" as const, text: "Adjust the active run" }],
       createdAt: "2026-08-26T00:00:03.000Z",
     };
-    const post = vi.fn(async (path: string) => path.endsWith("/steer")
+    const post = vi.fn(async (path: string) => path.includes("/steer?")
       ? {
           runId: "run_client",
           turnId: "cturn_client",
@@ -473,7 +473,7 @@ describe("canonical Chat client", () => {
     });
 
     expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/queued-turns", queueInput);
-    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer", {
+    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer?messageVersion=2", {
       clientRequestId: "req_client_steer",
       expectedTurnId: "cturn_client",
       parts: steeringMessage.parts,
@@ -498,7 +498,7 @@ describe("canonical Chat client", () => {
     );
     expect(post).toHaveBeenNthCalledWith(
       3,
-      "/api/chats/chat_client_test/runs/run_client/queued-turns/qturn_client/steer",
+      "/api/chats/chat_client_test/runs/run_client/queued-turns/qturn_client/steer?messageVersion=2",
       {
         clientRequestId: "req_client_steer_queue",
         baseRevision: 5,
@@ -529,7 +529,7 @@ describe("canonical Chat client", () => {
 
     await client.admitTurn(record.chat.id, turnInput);
 
-    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns", turnInput);
+    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns?messageVersion=2", turnInput);
   });
 });
 

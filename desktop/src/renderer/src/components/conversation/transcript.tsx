@@ -1,12 +1,10 @@
+import { UserMessage } from "./user-message";
 import {
   CheckCircle2,
   ChevronRight,
   CircleAlert,
-  FileText,
-  Link2,
   MessageCircle,
   ShieldAlert,
-  Wrench,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -84,135 +82,6 @@ function TurnReceipt({
   );
 }
 
-function UserMessage({
-  message,
-  callbacks,
-}: {
-  message: ConversationMessagePresentation;
-  callbacks: ConversationPresentationCallbacks;
-}) {
-  const lines = message.markdown.split("\n");
-  const collapsible = message.markdown.length > 700 || lines.length > 12;
-  const [expanded, setExpanded] = useState(false);
-  const references = message.references ?? message.attachments ?? [];
-  const visibleMarkdown = collapsible && !expanded
-    ? `${lines.slice(0, 10).join("\n").slice(0, 700)}…`
-    : message.markdown;
-  const renderStructuredContent = Boolean(message.content?.length) && (!collapsible || expanded);
-  return (
-    <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
-      <Message align="end">
-        <MessageContent className="gap-0">
-          <Bubble variant="plain" align="end">
-            <BubbleContent className="max-w-[48rem] whitespace-pre-wrap rounded-none px-0 py-px text-md leading-[16px]" data-selectable>
-              {renderStructuredContent ? message.content!.map((segment, index) => {
-                if (segment.kind === "text") return <span key={`text:${index}`}>{segment.text}</span>;
-                if (segment.kind === "image") {
-                  return (
-                    <span key={`image:${segment.id}`} className="mt-2 block overflow-hidden rounded-lg border" style={{ borderColor: "var(--border-default)" }}>
-                      <AuthenticatedMessageImage
-                        src={segment.src}
-                        label={segment.label}
-                        loadImage={callbacks.loadImage}
-                      />
-                    </span>
-                  );
-                }
-                const Icon = segment.referenceKind === "file"
-                  ? FileText
-                  : segment.referenceKind === "resource" ? Link2 : Wrench;
-                return (
-                  <span
-                    key={`${segment.referenceKind}:${segment.id}`}
-                    className="mx-0.5 inline-flex max-w-full translate-y-px items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs"
-                    style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-                  >
-                    <Icon size={12} aria-hidden className="shrink-0" />
-                    <span className="truncate">{segment.label}</span>
-                  </span>
-                );
-              }) : visibleMarkdown}
-              {!renderStructuredContent && references.length > 0 ? (
-                <span className="mt-2 flex flex-wrap justify-end gap-1.5">
-                  {references.map((reference) => {
-                    const Icon = reference.kind === "file" ? FileText : reference.kind === "resource" ? Link2 : Wrench;
-                    return (
-                    <span
-                      key={`${reference.kind}:${reference.id}`}
-                      className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
-                      style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-                    >
-                      <Icon size={12} aria-hidden className="shrink-0" />
-                      <span className="truncate">{reference.label}</span>
-                    </span>
-                    );
-                  })}
-                </span>
-              ) : null}
-              {collapsible ? (
-                <button
-                  type="button"
-                  aria-label={expanded ? "Show less" : "Show full message"}
-                  aria-expanded={expanded}
-                  className="mt-2 block rounded-md text-xs font-medium underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-                  style={{ color: "var(--text-secondary)" }}
-                  onClick={() => setExpanded((value) => !value)}
-                >
-                  {expanded ? "Show less" : "Show more"}
-                </button>
-              ) : null}
-            </BubbleContent>
-          </Bubble>
-          <MessageMetadata
-            content={message.copyText}
-            timestamp={message.timestamp}
-            role="User"
-            copyText={callbacks.copyText}
-          />
-        </MessageContent>
-      </Message>
-    </ConversationItem>
-  );
-}
-
-function AuthenticatedMessageImage({
-  src,
-  label,
-  loadImage,
-}: {
-  src: string;
-  label: string;
-  loadImage?: (src: string) => Promise<Blob>;
-}) {
-  const [resolvedSrc, setResolvedSrc] = useState(loadImage ? "" : src);
-  useEffect(() => {
-    if (!loadImage) {
-      setResolvedSrc(src);
-      return;
-    }
-    let active = true;
-    let objectUrl: string | undefined;
-    void loadImage(src).then((blob) => {
-      if (!active) return;
-      objectUrl = URL.createObjectURL(blob);
-      setResolvedSrc(objectUrl);
-    }).catch((error: unknown) => {
-      console.warn("[conversation] image preview unavailable:", error instanceof Error ? error.name : "UnknownError");
-    });
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [loadImage, src]);
-  return resolvedSrc ? (
-    <img src={resolvedSrc} alt={label} className="block max-h-72 w-full object-contain" />
-  ) : (
-    <span role="status" aria-label={`Loading ${label}`} className="block px-3 py-6 text-center text-xs" style={{ color: "var(--text-tertiary)" }}>
-      Loading image…
-    </span>
-  );
-}
-
 function ResponseMessage({
   message,
   callbacks,
@@ -269,7 +138,7 @@ function ResponseMessage({
         <MessageContent className="gap-0">
           <Bubble variant="ghost">
             <BubbleContent className="w-full max-w-full overflow-visible">
-              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile}>{visibleMarkdown}</MessageResponse>
+              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (
@@ -336,7 +205,7 @@ function Notice({
               <div className="min-w-0">
                 <p className="font-medium leading-5">{notice.label}</p>
                 <div className="mt-0.5 leading-5" style={{ color: "var(--text-secondary)" }}>
-                  <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile}>{notice.markdown}</MessageResponse>
+                  <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{notice.markdown}</MessageResponse>
                 </div>
                 {availableActions.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -563,7 +432,10 @@ function ConversationTurn({
           callbacks={callbacks}
           showMetadata={!turn.active}
           streaming={turn.active}
-          animateOnMount={!initialFinalIds.has(turn.final.id)}
+          animateOnMount={
+            !initialFinalIds.has(turn.final.id)
+            && !(turn.final.kind === "message" && turn.final.wasStreamed)
+          }
         />
       ) : null}
     </>

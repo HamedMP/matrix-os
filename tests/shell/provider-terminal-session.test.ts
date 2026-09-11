@@ -4,9 +4,32 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   drainExistingTerminalSessionQueue,
   drainExistingTerminalSessionQueueWithRetry,
+  enqueueExistingTerminalRef,
   enqueueExistingTerminalSession,
   hasQueuedExistingTerminalSession,
 } from "../../shell/src/lib/provider-terminal-session.js";
+
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const PROVIDER_TAB_ID = `tt_${"b".repeat(32)}`;
+const OLD_TAB_ID = `tt_${"c".repeat(32)}`;
+const OTHER_TAB_ID = `tt_${"d".repeat(32)}`;
+const providerRef = `${WORKSPACE_ID}:${PROVIDER_TAB_ID}`;
+const otherRef = `${WORKSPACE_ID}:${OTHER_TAB_ID}`;
+
+function workspaceResponse(tabs: unknown[]) {
+  return {
+    workspaces: [{
+      id: WORKSPACE_ID,
+      scope: "main",
+      status: "running",
+      tabs,
+    }],
+  };
+}
+
+function tab(id: string, name: string, status: unknown) {
+  return { id, name, status };
+}
 
 afterEach(() => {
   sessionStorage.clear();
@@ -20,34 +43,36 @@ describe("provider terminal session handoff", () => {
   });
 
   it("attaches only a listed non-exited session and never creates or executes anything", async () => {
-    const fetcher = vi.fn(async () => Response.json({
-      sessions: [
-        { name: "provider-login", status: "active" },
-        { name: "old-login", status: "exited" },
-      ],
-    }));
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "provider-login", "running"),
+      tab(OLD_TAB_ID, "old-login", "exited"),
+    ])));
     enqueueExistingTerminalSession("provider-login", "window-a");
     enqueueExistingTerminalSession("old-login", "window-a");
 
     await expect(drainExistingTerminalSessionQueue("window-a", { fetcher }))
-      .resolves.toEqual(["provider-login"]);
+      .resolves.toEqual([providerRef]);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/terminal/sessions`,
+      `${window.location.origin}/api/terminal/workspaces`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
     expect(fetcher.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
   });
 
   it("fails closed on malformed lists and keeps other terminal targets queued", async () => {
-    const fetcher = vi.fn(async () => Response.json({ sessions: [{ name: "provider-login", status: 42 }] }));
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "provider-login", 42),
+    ])));
     enqueueExistingTerminalSession("provider-login", "window-a");
     enqueueExistingTerminalSession("other-login", "window-b");
 
     await expect(drainExistingTerminalSessionQueue("window-a", { fetcher })).resolves.toEqual([]);
-    const validFetcher = vi.fn(async () => Response.json({ sessions: [{ name: "other-login", status: "active" }] }));
+    const validFetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(OTHER_TAB_ID, "other-login", "running"),
+    ])));
     await expect(drainExistingTerminalSessionQueue("window-b", { fetcher: validFetcher }))
-      .resolves.toEqual(["other-login"]);
+      .resolves.toEqual([otherRef]);
   });
 
   it("retains matched handoffs until the server confirms the session is active", async () => {
@@ -61,34 +86,34 @@ describe("provider terminal session handoff", () => {
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue"))
       .toContain("provider-login");
 
-    const inactive = vi.fn(async () => Response.json({
-      sessions: [{ name: "provider-login", status: "exited" }],
-    }));
+    const inactive = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "provider-login", "exited"),
+    ])));
     await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: inactive }))
       .resolves.toEqual([]);
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue"))
       .toContain("provider-login");
 
-    const active = vi.fn(async () => Response.json({
-      sessions: [{ name: "provider-login", status: "active" }],
-    }));
+    const active = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "provider-login", "running"),
+    ])));
     await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: active }))
-      .resolves.toEqual(["provider-login"]);
+      .resolves.toEqual([providerRef]);
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
   });
 
   it("retries retained handoffs with a bounded backoff until the session becomes active", async () => {
     enqueueExistingTerminalSession("provider-login", "window-a");
     const fetcher = vi.fn()
-      .mockResolvedValueOnce(Response.json({ sessions: [{ name: "provider-login", status: "exited" }] }))
-      .mockResolvedValueOnce(Response.json({ sessions: [{ name: "provider-login", status: "active" }] }));
+      .mockResolvedValueOnce(Response.json(workspaceResponse([tab(PROVIDER_TAB_ID, "provider-login", "exited")])))
+      .mockResolvedValueOnce(Response.json(workspaceResponse([tab(PROVIDER_TAB_ID, "provider-login", "running")])))
     const wait = vi.fn(async () => {});
 
     await expect(drainExistingTerminalSessionQueueWithRetry("window-a", {
       fetcher,
       wait,
       maxAttempts: 3,
-    })).resolves.toEqual(["provider-login"]);
+    })).resolves.toEqual([providerRef]);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(wait).toHaveBeenCalledWith(250);
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
@@ -96,9 +121,9 @@ describe("provider terminal session handoff", () => {
 
   it("stops retrying after the bounded attempt count and preserves the handoff", async () => {
     enqueueExistingTerminalSession("provider-login", "window-a");
-    const fetcher = vi.fn(async () => Response.json({
-      sessions: [{ name: "provider-login", status: "exited" }],
-    }));
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "provider-login", "exited"),
+    ])));
     const wait = vi.fn(async () => {});
 
     await expect(drainExistingTerminalSessionQueueWithRetry("window-a", {
@@ -120,6 +145,31 @@ describe("provider terminal session handoff", () => {
     expect(hasQueuedExistingTerminalSession("window-a")).toBe(true);
     now.mockReturnValue(11 * 60_000);
     expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
+  });
+
+  it("keeps a canonical running-command handoff past the legacy discovery timeout", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    enqueueExistingTerminalRef(providerRef, "window-a");
+
+    now.mockReturnValue(11 * 60_000);
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(true);
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "provider-login", "running"),
+    ])));
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher }))
+      .resolves.toEqual([providerRef]);
+    expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
+  });
+
+  it("removes a canonical handoff after an authoritative list proves it inactive", async () => {
+    enqueueExistingTerminalRef(providerRef, "window-a");
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "provider-login", "exited"),
+    ])));
+
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher }))
+      .resolves.toEqual([]);
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
   });
 
