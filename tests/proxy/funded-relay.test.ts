@@ -411,6 +411,36 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
+  it("logs bounded field-only diagnostics for invalid request schemas", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn();
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+    const response = await app.request("/v1/messages", fundedRequest(JSON.stringify({
+      ...JSON.parse(requestBody()),
+      tools: [{
+        name: "read",
+        input_schema: { type: "object" },
+        future_streaming_mode: true,
+        secret_token: "must-not-be-logged",
+      }],
+    })));
+    expect(response.status).toBe(400);
+    expect(warn).toHaveBeenCalledWith("[proxy] Funded AI request rejected", {
+      errorName: "ZodError",
+      issues: [{
+        code: "unrecognized_keys",
+        path: "tools.0",
+        keys: ["future_streaming_mode", "<redacted>"],
+      }],
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("must-not-be-logged");
+    expect(fetchMock).not.toHaveBeenCalled();
+    warn.mockRestore();
+    await relay.close();
+  });
+
   it("times out bounded token counting and does not reserve or generate", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
