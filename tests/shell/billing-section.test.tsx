@@ -51,6 +51,8 @@ describe("BillingSection", () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.restoreAllMocks();
+    window.localStorage.clear();
+    window.history.replaceState({}, "", "/");
     installClerkMock();
     const { resetMatrixBillingAccessCacheForTests } = await import(
       "../../shell/src/hooks/useMatrixBillingAccess.js"
@@ -496,7 +498,8 @@ describe("BillingSection", () => {
     expect(screen.queryByText("New subscription")).toBeNull();
   });
 
-  it("sends only the selected Matrix plan, region, and agents to monthly checkout", async () => {
+  it("sends the selected Matrix plan, region, agents, and campaign attribution to monthly checkout", async () => {
+    window.history.replaceState({}, "", "/?rdt_cid=reddit-click&utm_source=reddit&utm_medium=cpc&utm_campaign=launch");
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -527,10 +530,18 @@ describe("BillingSection", () => {
             interval: "monthly",
             regionSlug: "region_ash",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
+            attribution: {
+              rdt_cid: "reddit-click",
+              utm_source: "reddit",
+              utm_medium: "cpc",
+              utm_campaign: "launch",
+              landing_path: "/?rdt_cid=reddit-click&utm_source=reddit&utm_medium=cpc&utm_campaign=launch",
+            },
           }),
         }),
       ),
     );
+    window.history.replaceState({}, "", "/");
   });
 
   it("opens secure checkout while computer preparation continues in the background", async () => {
@@ -612,19 +623,17 @@ describe("BillingSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/billing/checkout",
-        expect.objectContaining({
-          body: JSON.stringify({
-            planSlug: "matrix_builder",
-            interval: "monthly",
-            regionSlug: "region_fsn1",
-            developerTools: ["codex", "claude-code", "opencode", "pi"],
-            returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
-          }),
-        }),
-      ),
+      expect(fetchMock.mock.calls.some(([input]) => input === "/billing/checkout")).toBe(true),
     );
+    const checkoutCall = fetchMock.mock.calls.find(([input]) => input === "/billing/checkout");
+    const checkoutBody = JSON.parse(String(checkoutCall?.[1]?.body));
+    expect(checkoutBody).toMatchObject({
+      planSlug: "matrix_builder",
+      interval: "monthly",
+      developerTools: ["codex", "claude-code", "opencode", "pi"],
+      returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    });
+    expect(checkoutBody).not.toHaveProperty("attribution");
   });
 
   it("explains how to resume a checkout with different selections", async () => {

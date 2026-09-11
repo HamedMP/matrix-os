@@ -74,6 +74,7 @@ import {
   prepareAiCreditCheckoutClaim,
 } from './ai-credit-checkout-store.js';
 import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
+import type { RedditConversionsClient, RedditPurchaseInput } from './reddit-conversions.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -123,6 +124,20 @@ const HistoricalBillingRegionSlugSchema = z.enum([
   'region_hil',
 ]);
 
+const MarketingAttributionSchema = z.object({
+  rdt_cid: z.string().min(1).max(256).optional(),
+  utm_source: z.string().min(1).max(256).optional(),
+  utm_medium: z.string().min(1).max(256).optional(),
+  utm_campaign: z.string().min(1).max(256).optional(),
+  utm_content: z.string().min(1).max(256).optional(),
+  utm_term: z.string().min(1).max(256).optional(),
+  landing_path: z.string().min(1).max(512).refine(
+    (value) => isSafeMarketingLandingPath(value),
+    { message: 'Invalid marketing landing path' },
+  ).optional(),
+}).strict();
+export type MarketingAttribution = z.infer<typeof MarketingAttributionSchema>;
+
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.literal('monthly').default('monthly'),
@@ -130,6 +145,7 @@ const CheckoutRequestSchema = z.object({
   serverType: HetznerServerTypeSchema.optional(),
   developerTools: DeveloperToolsWithDefaultSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
+  attribution: MarketingAttributionSchema.optional(),
   returnPath: z.string().min(1).max(2048).optional().refine(
     // Safe iff it is already a same-origin allowlisted path (origins.ts is the
     // single source of truth for redirect-target validation).
@@ -164,6 +180,7 @@ export interface StripeCheckoutSessionInput {
   trialPeriodDays?: number | null;
   paymentMethodMode?: 'card_required' | 'dynamic';
   prebillingIntentId?: string;
+  attribution?: MarketingAttribution;
   expiresAt?: string;
   successUrl: string;
   cancelUrl: string;
@@ -280,6 +297,7 @@ export function createBillingRoutes(options: {
   upsertEntitlement?: typeof upsertBillingEntitlement;
   prebilling?: PrebillingCheckoutCoordinator;
   fundedAiRepository?: Pick<import('./ai-funded-policy-repository.js').AiFundedPolicyRepository, 'grantCreditInTransaction'>;
+  redditConversions?: RedditConversionsClient;
   /**
    * Optional product telemetry sink. Fire-and-forget: implementations must
    * never throw into the request path. Properties are PII-free product facts
@@ -611,6 +629,7 @@ export function createBillingRoutes(options: {
           prebillingIntentId: preparation.intentId,
           expiresAt: preparation.expiresAt,
         } : {}),
+        attribution: parsed.data.attribution,
         successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
       });
@@ -1104,6 +1123,10 @@ export function createBillingRoutes(options: {
           );
         });
       }
+      const redditPurchase = event.type === 'checkout.session.completed'
+        ? readRedditPurchase(event)
+        : null;
+      if (redditPurchase) await options.redditConversions?.sendPurchase(redditPurchase);
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));
@@ -1148,6 +1171,12 @@ function buildCheckoutTelemetryProperties(data: CheckoutRequest): Record<string,
     return_path_present: Boolean(data.returnPath),
     developer_tools_count: data.developerTools.length,
     selected_catalog_price_usd: planPriceUsd(data.planSlug, data.interval),
+    utm_source: data.attribution?.utm_source,
+    utm_medium: data.attribution?.utm_medium,
+    utm_campaign: data.attribution?.utm_campaign,
+    utm_content: data.attribution?.utm_content,
+    utm_term: data.attribution?.utm_term,
+    reddit_click_present: Boolean(data.attribution?.rdt_cid),
   };
 }
 
@@ -1550,6 +1579,68 @@ function isFirstPostTrialInvoice(
     && trialEndsAt !== null
     && trialConvertedAt === null
     && Date.parse(invoice.createdAt) >= Date.parse(trialEndsAt);
+}
+
+function isSafeMarketingLandingPath(value: string): boolean {
+  if (!value.startsWith('/') || value.startsWith('//')) return false;
+  try {
+    const url = new URL(value, 'https://matrix-os.com');
+    return url.origin === 'https://matrix-os.com';
+  } catch {
+    return false;
+  }
+}
+
+function readRedditPurchase(event: StripeWebhookEvent): RedditPurchaseInput | null {
+  if (!event.data.object || typeof event.data.object !== 'object') return null;
+  const session = event.data.object as {
+    id?: unknown;
+    client_reference_id?: unknown;
+    amount_total?: unknown;
+    currency?: unknown;
+    metadata?: unknown;
+  };
+  const checkoutSessionId = readStripeObjectId(session);
+  const clerkUserId = readClerkUserIdFromCheckoutSession(session);
+  if (
+    !checkoutSessionId
+    || !clerkUserId
+    || !Number.isSafeInteger(session.amount_total)
+    || (session.amount_total as number) < 0
+    || typeof session.currency !== 'string'
+    || !/^[a-z]{3}$/.test(session.currency)
+    || !Number.isSafeInteger(event.created)
+    || event.created <= 0
+  ) {
+    return null;
+  }
+  const metadata = session.metadata && typeof session.metadata === 'object'
+    ? session.metadata as Record<string, unknown>
+    : {};
+  const clickId = readBoundedMetadataString(metadata.matrix_attr_rdt_cid, 256);
+  const landingPath = readBoundedMetadataString(metadata.matrix_attr_landing_path, 512);
+  const sourceUrl = new URL(
+    landingPath && isSafeMarketingLandingPath(landingPath) ? landingPath : '/',
+    'https://matrix-os.com',
+  );
+  if (clickId && !sourceUrl.searchParams.has('rdt_cid')) {
+    sourceUrl.searchParams.set('rdt_cid', clickId);
+  }
+  return {
+    eventAt: event.created * 1_000,
+    checkoutSessionId,
+    clerkUserId,
+    ...(clickId ? { clickId } : {}),
+    eventSourceUrl: sourceUrl.toString(),
+    currency: session.currency,
+    value: (session.amount_total as number) / 100,
+  };
+}
+
+function readBoundedMetadataString(value: unknown, maxLength: number): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength
+    ? value
+    : undefined;
 }
 
 function readExpandableStripeId(value: unknown): string | null {

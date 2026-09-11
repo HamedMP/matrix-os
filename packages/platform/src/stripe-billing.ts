@@ -12,6 +12,23 @@ import type {
 export const MATRIX_STRIPE_API_VERSION = '2026-07-29.dahlia';
 export const MATRIX_STRIPE_API_TIMEOUT_MS = 10_000;
 
+function stripeAttributionMetadata(
+  attribution: StripeCheckoutSessionInput['attribution'],
+): Record<string, string> {
+  if (!attribution) return {};
+  return Object.fromEntries(
+    Object.entries({
+      matrix_attr_rdt_cid: attribution.rdt_cid,
+      matrix_attr_utm_source: attribution.utm_source,
+      matrix_attr_utm_medium: attribution.utm_medium,
+      matrix_attr_utm_campaign: attribution.utm_campaign,
+      matrix_attr_utm_content: attribution.utm_content,
+      matrix_attr_utm_term: attribution.utm_term,
+      matrix_attr_landing_path: attribution.landing_path,
+    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+}
+
 function checkoutIntegrationIdentifier(
   prefix: 'matrix-subscription' | 'matrix-ai-credit',
   idempotencyKey: string,
@@ -39,6 +56,15 @@ export function createStripeBillingClient(options: {
     apiTimeoutMs: MATRIX_STRIPE_API_TIMEOUT_MS,
 
     async createCheckoutSession(input: StripeCheckoutSessionInput) {
+      const metadata = {
+        clerk_user_id: input.clerkUserId,
+        matrix_region_slug: input.regionSlug,
+        matrix_runtime_slot: input.runtimeSlot,
+        ...(input.prebillingIntentId
+          ? { matrix_prebilling_intent_id: input.prebillingIntentId }
+          : {}),
+        ...stripeAttributionMetadata(input.attribution),
+      };
       const session = await stripe.checkout.sessions.create({
         mode: input.mode,
         integration_identifier: `matrix_checkout_${stableLetterSuffix(input.idempotencyKey)}`,
@@ -53,14 +79,7 @@ export function createStripeBillingClient(options: {
         ...(input.paymentMethodMode === 'card_required'
           ? { payment_method_collection: 'always' as const }
           : {}),
-        metadata: {
-          clerk_user_id: input.clerkUserId,
-          matrix_region_slug: input.regionSlug,
-          matrix_runtime_slot: input.runtimeSlot,
-          ...(input.prebillingIntentId
-            ? { matrix_prebilling_intent_id: input.prebillingIntentId }
-            : {}),
-        },
+        metadata,
         subscription_data: {
           ...(input.trialPeriodDays
             ? {
@@ -70,14 +89,7 @@ export function createStripeBillingClient(options: {
               },
             }
             : {}),
-          metadata: {
-            clerk_user_id: input.clerkUserId,
-            matrix_region_slug: input.regionSlug,
-            matrix_runtime_slot: input.runtimeSlot,
-            ...(input.prebillingIntentId
-              ? { matrix_prebilling_intent_id: input.prebillingIntentId }
-              : {}),
-          },
+          metadata,
         },
         tax_id_collection: { enabled: true },
         ...(input.customerId

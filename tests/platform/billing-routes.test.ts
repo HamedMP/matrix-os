@@ -63,6 +63,7 @@ describe('platform billing routes', () => {
     routeEnv: NodeJS.ProcessEnv = env,
     captureEvent?: Parameters<typeof createBillingRoutes>[0]['captureEvent'],
     now: () => Date = () => new Date('2026-05-30T00:00:00.000Z'),
+    redditConversions?: Parameters<typeof createBillingRoutes>[0]['redditConversions'],
   ) {
     const app = new Hono();
     app.route('/billing', createBillingRoutes({
@@ -72,6 +73,7 @@ describe('platform billing routes', () => {
       resolveClerkUserId: () => Promise.resolve(userId),
       now,
       captureEvent,
+      redditConversions,
     }));
     return app;
   }
@@ -88,6 +90,13 @@ describe('platform billing routes', () => {
         regionSlug: 'region_nbg1',
         serverType: 'cpx42',
         runtimeSlot: 'studio',
+        attribution: {
+          rdt_cid: 'reddit-click',
+          utm_source: 'reddit',
+          utm_medium: 'cpc',
+          utm_campaign: 'launch',
+          landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
+        },
       }),
     });
 
@@ -103,6 +112,11 @@ describe('platform billing routes', () => {
       allowPromotionCodes: true,
       regionSlug: 'region_nbg1',
       runtimeSlot: 'studio',
+      attribution: expect.objectContaining({
+        rdt_cid: 'reddit-click',
+        utm_source: 'reddit',
+        utm_campaign: 'launch',
+      }),
       successUrl: 'https://app.matrix-os.com/?billing=success&checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
     }));
@@ -1838,6 +1852,55 @@ describe('platform billing routes', () => {
       properties: { stripe_event_type: 'checkout.session.expired' },
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_growth_test');
+  });
+
+  it('retries signed Stripe purchase attribution when Reddit delivery fails', async () => {
+    const sendPurchase = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValue('sent');
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue({
+      id: 'evt_reddit_purchase',
+      type: 'checkout.session.completed',
+      created: 1_779_753_600,
+      data: {
+        object: {
+          id: 'cs_reddit_purchase',
+          client_reference_id: 'user_123',
+          amount_total: 10000,
+          currency: 'usd',
+          metadata: {
+            clerk_user_id: 'user_123',
+            matrix_attr_rdt_cid: 'reddit-click',
+            matrix_attr_landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
+          },
+        },
+      },
+    });
+    const app = createApp(
+      null,
+      env,
+      undefined,
+      () => new Date('2026-05-30T00:00:00.000Z'),
+      { sendPurchase },
+    );
+
+    const request = () => app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+    expect((await request()).status).toBe(500);
+    expect((await request()).status).toBe(200);
+    expect(sendPurchase).toHaveBeenCalledTimes(2);
+    expect(sendPurchase).toHaveBeenLastCalledWith({
+      eventAt: 1_779_753_600_000,
+      checkoutSessionId: 'cs_reddit_purchase',
+      clerkUserId: 'user_123',
+      clickId: 'reddit-click',
+      eventSourceUrl: 'https://matrix-os.com/?rdt_cid=reddit-click&utm_source=reddit',
+      currency: 'usd',
+      value: 100,
+    });
   });
 
   it('passes server-written intent metadata to signed checkout-expiry cleanup', async () => {
