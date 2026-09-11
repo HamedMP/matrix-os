@@ -51,9 +51,12 @@ export function AgentsProvidersView({
   const genericConfiguration = harness !== null
     && harness !== undefined
     && configurationHarnessKinds.includes(harness.harness);
-  const gatewaySource = snapshot.gatewayPolicy === null
-    ? snapshot.accessSources.find((source) => source.kind === "matrix_gateway") ?? null
-    : snapshot.accessSources.find((source) => source.id === snapshot.gatewayPolicy?.accessSourceId) ?? null;
+  // One Matrix balance, with separate exact serving routes behind it. Preserve
+  // the selected managed route; prefer GLM only when choosing Matrix anew.
+  const gatewaySource = snapshot.accessSources.find((source) => source.kind === "matrix_gateway" && source.id === harness?.accessSourceId)
+    ?? snapshot.accessSources.find((source) => source.id === "matrix_cloudflare" && source.readiness.state === "ready" && source.eligibleModelIds.length > 0)
+    ?? snapshot.accessSources.find((source) => source.id === snapshot.gatewayPolicy?.accessSourceId)
+    ?? snapshot.accessSources.find((source) => source.kind === "matrix_gateway") ?? null;
   const gatewayProvider = gatewaySource === null
     ? null
     : snapshot.modelProviders.find((provider) => provider.id === gatewaySource.providerId) ?? null;

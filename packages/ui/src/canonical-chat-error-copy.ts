@@ -17,7 +17,7 @@ const REASONS: Record<CanonicalChatSafeError["code"], string> = {
   run_unavailable: "The agent Run is temporarily unavailable. Try again.",
   history_window_required: "This Chat needs more recent history before it can continue. Refresh and try again.",
   migration_in_progress: "This Chat is being upgraded. Wait a moment and try again.",
-  run_failed: "The agent Run failed before it could start. Try again.",
+  run_failed: "The agent could not complete its reply. Try again or check Agents & providers.",
   resource_unavailable: "One of the referenced files or resources is unavailable.",
   authorization_failed: "You do not have permission to send this message.",
   service_unavailable: "Chat service is temporarily unavailable. Try again.",

@@ -64,7 +64,7 @@ function boundedInteger(raw: string | undefined, fallback: number, min: number, 
 function loadPromotionalGrantConfig(env: NodeJS.ProcessEnv): AiFundedPromotionalGrantConfig {
   if (env.AI_FUNDED_PROMOTIONAL_GRANT_ENABLED !== "true") return { enabled: false };
   const campaignId = PromotionCampaignSchema.safeParse(env.AI_FUNDED_PROMOTIONAL_GRANT_CAMPAIGN_ID);
-  const amountMicrousd = PromotionAmountSchema.safeParse(Number(env.AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD));
+  const amountMicrousd = PromotionAmountSchema.safeParse(Number(env.AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD ?? "5000000"));
   const expiresAt = IsoTimestampSchema.safeParse(env.AI_FUNDED_PROMOTIONAL_GRANT_EXPIRES_AT);
   if (!campaignId.success || !amountMicrousd.success || !expiresAt.success) {
     throw new Error("Funded AI promotional grant is misconfigured");
@@ -157,6 +157,7 @@ function policyErrorResponse(c: Context, error: unknown) {
     if (error.code === "insufficient_credit") return c.json(safeError("insufficient_credit"), 402);
     if (error.code === "budget_exceeded") return c.json(safeError("budget_exceeded"), 403);
     if (error.code === "model_not_allowed") return c.json(safeError("model_not_allowed"), 403);
+    if (error.code === "unavailable") return c.json(safeError("unavailable"), 503);
     return c.json(safeError("access_disabled"), 403);
   }
   const errorName = error instanceof Error ? error.name : typeof error;
@@ -183,9 +184,12 @@ export function createAiFundedRuntimeRoutes(options: {
   platformSecret: string;
   repository: AiFundedPolicyRepository;
   topUpEnabled?: boolean;
+  promotionalGrant?: AiFundedPromotionalGrantConfig;
+  now?: () => Date;
 }) {
   if (!options.repository || !options.db) throw new Error("Funded AI runtime dependencies are missing");
   if (options.platformSecret.length < 32) throw new Error("Funded AI runtime authentication is misconfigured");
+  const now = options.now ?? (() => new Date());
   const app = new Hono();
   app.use("*", async (c, next) => {
     noStore(c);
@@ -229,11 +233,20 @@ export function createAiFundedRuntimeRoutes(options: {
     const body = EmptyBodySchema.safeParse(await readStrictJson(c));
     if (!body.success) return c.json(safeError("invalid_request"), 400);
     try {
-      const summary = await options.repository.getRuntimeFundingSummary({
+      const identity = {
         ownerId: machine.clerkUserId,
         machineId: machine.machineId,
         runtimeSlot: machine.runtimeSlot,
-      });
+      };
+      // Verify live policy before allocating promotion credit. The grant itself
+      // is owner/campaign idempotent, so refreshes and multiple runtimes cannot
+      // mint it more than once.
+      let summary = await options.repository.getRuntimeFundingSummary(identity);
+      if (options.promotionalGrant?.enabled
+        && options.promotionalGrant.expiresAt > now().toISOString()) {
+        await grantConfiguredPromotion(options.repository, identity, options.promotionalGrant);
+        summary = await options.repository.getRuntimeFundingSummary(identity);
+      }
       return c.json(FundedAiRuntimeFundingSummaryResponseSchema.parse({
         contractVersion: 1,
         funding: { ...summary.funding, topUpEnabled: options.topUpEnabled === true },
@@ -244,6 +257,24 @@ export function createAiFundedRuntimeRoutes(options: {
     }
   });
   return app;
+}
+
+async function grantConfiguredPromotion(
+  repository: AiFundedPolicyRepository,
+  identity: { ownerId: string; machineId: string; runtimeSlot: string },
+  promotion: Extract<AiFundedPromotionalGrantConfig, { enabled: true }>,
+) {
+  const idempotencyDigest = createHash("sha256")
+    .update(`${promotion.campaignId}\0${identity.ownerId}`)
+    .digest("hex");
+  return repository.grantCredit({
+    entryId: `promotion:${idempotencyDigest}`,
+    identity,
+    kind: "promotional_grant",
+    amountMicrousd: promotion.amountMicrousd,
+    sourceReference: promotion.campaignId,
+    expiresAt: promotion.expiresAt,
+  });
 }
 
 export function createAiFundedOperatorRoutes(options: {
@@ -359,17 +390,11 @@ export function createAiFundedOperatorRoutes(options: {
         machineId: machine.machineId,
         runtimeSlot: machine.runtimeSlot,
       };
-      const idempotencyDigest = createHash("sha256")
-        .update(`${options.promotionalGrant.campaignId}\0${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}`)
-        .digest("hex");
-      const grant = await options.repository.grantCredit({
-        entryId: `promotion:${idempotencyDigest}`,
+      const grant = await grantConfiguredPromotion(
+        options.repository,
         identity,
-        kind: "promotional_grant",
-        amountMicrousd: options.promotionalGrant.amountMicrousd,
-        sourceReference: options.promotionalGrant.campaignId,
-        expiresAt: options.promotionalGrant.expiresAt,
-      });
+        options.promotionalGrant,
+      );
       return c.json(FundedAiPromotionalGrantResponseSchema.parse({
         contractVersion: 1,
         grant: {

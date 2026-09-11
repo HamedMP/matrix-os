@@ -4,6 +4,7 @@ import type {
   CanonicalChatRunActivity,
   CanonicalChatTurn,
 } from "@matrix-os/contracts";
+import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
 import type {
   ConversationAttachmentPresentation,
   ConversationActivityGroupPresentation,
@@ -537,7 +538,9 @@ function runPresentation(
         phase: "final" as const,
         tone: stopped ? "stopped" as const : "failed" as const,
         label: stopped ? "Agent work stopped" : "Agent work failed",
-        markdown: stopped ? "Run was cancelled." : runError?.error.safeMessage ?? "The agent run failed.",
+        markdown: stopped ? "Run was cancelled."
+          : canonicalChatSafeFailureReason(runError?.error.code)
+            ?? canonicalChatSafeFailureReason("run_failed")!,
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
         ...(!stopped && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
           ? { actions: [{ kind: "retry" as const, turnId, label: "Retry" }] }

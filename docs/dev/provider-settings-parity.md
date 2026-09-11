@@ -266,8 +266,12 @@ Cloudflare AI Gateway provides Unified Billing and a coarse operator spend
 fuse. It does not own Matrix user identity, per-user balances, model entitlement,
 or add-on credit. Cloudflare spend rules are defense in depth because accounting
 can be eventually consistent and rule counts are bounded. Matrix owns the
-authoritative Kysely/Postgres ledger, reserves spend atomically before a funded
-call, and reconciles provider usage afterward. Provider settings reads the
+authoritative Kysely/Postgres ledger. In Cloudflare usage mode it atomically
+holds the currently affordable amount before a funded call, allows only one
+funded request in flight per owner, then reconciles the exact usage returned in
+the provider response. The user's debit is capped at that hold; Matrix absorbs
+any final in-flight overrun without creating debt or clawing back later credit.
+Provider settings reads the
 resulting promotional balance, add-on balance, held reservations, settled
 monthly use, and remaining monthly budget through a machine-authenticated
 platform summary. The response is identity-free and is never persisted on the
@@ -283,12 +287,24 @@ revisions. Owner self-service may later narrow an operator ceiling, but it must
 be a machine-authenticated platform mutation before either shell advertises it.
 
 First-launch promotional credit is also platform-owned. It is disabled unless
-an operator explicitly configures one bounded campaign ID, positive microusd
-amount, and ISO expiry. Grant creation derives the exact owner, machine, and
-runtime slot from the running handle and uses one `ON CONFLICT`-guarded ledger
-entry per campaign/runtime. Retries cannot double-credit. Once remaining
+an operator explicitly configures one bounded campaign ID and ISO expiry. The
+amount defaults to $5 and may be set to $10 for a reviewed campaign. After live
+policy eligibility succeeds, the first authenticated funding-summary read
+claims it automatically. Grant creation derives identity from the running
+handle and uses one `ON CONFLICT`-guarded ledger entry per owner/campaign across
+runtimes. Retries and another computer cannot double-credit. Once remaining
 promotional credit expires, new funded admission and usage summaries fail
 closed; an expired local value is never treated as spendable credit.
+
+`@cf/zai-org/glm-5.3-flash` is the new managed default for generic OpenAI-wire
+harnesses such as Pi and OpenCode. The UI labels Cloudflare Workers AI as the
+model provider and Matrix AI as **Paid through**. Native Claude remains on its
+Anthropic-compatible route. Existing explicit Chat, harness, and own-account
+selections are preserved rather than silently rewritten.
+
+If a started usage-mode request ends without trustworthy final usage, its hold
+remains unresolved and blocks another funded request for that owner until exact
+operator reconciliation. Cleanup must not invent a charge or release that hold.
 
 Usage displays must state their authority:
 

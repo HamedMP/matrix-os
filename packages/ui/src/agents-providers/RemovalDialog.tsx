@@ -43,7 +43,7 @@ export function RemovalDialog({
     && affectedHarnesses.every((harness) => source.eligibleModelIds.includes(harness.route.modelId)
       && isSupportedGenericHarnessCredentialRoute({ ...harness, accessSourceId: source.id }, source))
     && (source.kind !== "matrix_gateway"
-      || (gatewayPolicy?.accessSourceId === source.id
+      || (gatewayPolicy !== null
         && affectedHarnesses.every((harness) => gatewayPolicy.allowedModelIds.includes(harness.route.modelId))))
   );
   const alternatives = [

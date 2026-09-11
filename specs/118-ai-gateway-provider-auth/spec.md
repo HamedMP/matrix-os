@@ -162,7 +162,7 @@ availability, labels, guarded transitions, and resulting V3 refreshes.
 ### Functional Requirements
 
 - **FR-001**: Matrix MUST offer an operator-controlled Matrix-funded AI access source that lets eligible users complete Chat turns without owner-supplied provider credentials.
-- **FR-002**: The first release MUST support Matrix-funded access without a user-visible metered allowance, while enforcing a global disable switch, a global spend ceiling, bounded concurrency, request size limits, and abuse-rate protection.
+- **FR-002**: The first metered release MUST grant eligible new owners a visible bounded starter credit, defaulting to $5 and configurable to $10 per campaign, while enforcing a global disable switch, a global spend ceiling, bounded concurrency, request size limits, and abuse-rate protection.
 - **FR-003**: Matrix MUST keep upstream billing credentials out of owner-controlled computers, client bundles, logs, error responses, and exported user data.
 - **FR-004**: Every funded request MUST be attributable to a verified Matrix user and runtime by the Matrix-controlled request boundary; clients MUST NOT be able to override billing identity.
 - **FR-005**: Matrix MUST preserve owner Chat content in the owner's data store; gateway observability MUST default to metadata-only records and MUST NOT retain prompts, responses, tool payloads, file contents, or provider credentials.
@@ -185,7 +185,7 @@ availability, labels, guarded transitions, and resulting V3 refreshes.
 - **FR-022**: Provider calls MUST enforce timeouts, cancellation propagation, response and stream size bounds, redirect policy, retry limits, and per-run idempotency where supported.
 - **FR-023**: The Matrix-funded request boundary MUST not cache stateful Agent SDK turns by default.
 - **FR-024**: Any usage or entitlement persistence added after the initial release MUST use owner/platform PostgreSQL through Kysely according to ownership; no new embedded database or ORM is permitted.
-- **FR-025**: Later allowance and add-on releases MUST enforce atomic spend reservation or another concurrency-safe budget boundary before a provider call and reconcile the final provider-reported cost afterward.
+- **FR-025**: Metered funded requests MUST enforce an atomic affordable hold before a provider call, allow at most one funded request in flight per owner, and reconcile the final provider-reported response usage afterward. A final overrun MAY be absorbed by Matrix but MUST NOT create user debt or consume later credit.
 - **FR-026**: Provider-reported usage and model identity MUST be retained as bounded billing metadata for reconciliation when metering is enabled, without retaining Chat content.
 - **FR-027**: New execution harnesses MUST implement the canonical provider driver/instance contract and MUST NOT create harness-specific Chat persistence or renderer-only state.
 - **FR-028**: OpenCode SHOULD reuse the existing Matrix harness support rather than be reimplemented from the comparison project.
@@ -219,17 +219,17 @@ availability, labels, guarded transitions, and resulting V3 refreshes.
 - **Execution Harness**: The user-facing name for the executable agent runtime represented internally by a provider driver and one or more provider instances; installation and enablement are independent from account authentication.
 - **Model Descriptor**: A bounded model record with stable ID, display name, capabilities, effort options, availability, access-source eligibility, and data-handling notes.
 - **AI Gateway Request Identity**: A platform-verified association among Matrix user, runtime, Chat run, access source, and upstream request; it is not supplied by the browser.
-- **Included AI Policy**: Operator-controlled availability and eligible-model policy for the initial unmetered experience, later extended by allowance and add-on entitlements.
+- **Included AI Policy**: Operator-controlled availability, starter-credit campaign, budget, and eligible-model policy for Matrix-funded access.
 - **Usage Record**: Content-free reconciliation metadata for a completed or failed request, including provider request identity, canonical model, token usage, cost basis, status, and timestamps.
-- **Spend Reservation**: A future concurrency-safe hold against an allowance or add-on before an external request, with committed, released, or reconciled states.
+- **Spend Reservation**: A concurrency-safe hold against starter or add-on credit before an external request, with reserved, in-flight, settled, released, or unresolved reconciliation states.
 - **Connection Attempt**: A short-lived owner-scoped interactive login transaction with verifier/challenge state, callback correlation, expiry, and terminal outcome.
 
 ### Assumptions
 
-- The initial Matrix-funded offer is available to eligible signed-in users with no user-visible dollar or token meter; exact included duration and later add-on pricing are deferred to the pricing release.
+- The initial metered Matrix-funded offer gives each eligible owner one $5 starter grant per configured campaign; operators may configure a reviewed $10 campaign. Add-on pricing remains deferred.
 - The owner has approved Cloudflare AI Gateway as the funded upstream and Matrix-owned add-on credits as the hard customer balance.
 - A global operator budget and kill switch are mandatory even before individual allowances exist.
-- Matrix-funded access defaults to a cost-balanced current model; the most expensive and special-retention models may require owner credentials or a later paid add-on.
+- Matrix-funded access defaults to `@cf/zai-org/glm-5.3-flash` through Cloudflare Workers AI for compatible generic harnesses; native Claude stays on its Anthropic-compatible route. More expensive or special-retention models may require owner credentials or a later paid add-on.
 - Owner Anthropic credentials always take precedence when the user explicitly selects them; Matrix does not silently switch a run between owner-funded and Matrix-funded billing.
 - Provider account secrets remain owner/platform secrets and are excluded from ordinary file sync and export surfaces.
 - Organization-shared provider billing is deferred until the organization owner-resolution and billing authority are fully implemented.

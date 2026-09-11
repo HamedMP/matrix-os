@@ -7,32 +7,30 @@
 
 ## Summary
 
-Give eligible Matrix users a working AI kernel without BYOK by placing a Matrix-controlled, Anthropic-compatible relay between each owner VPS and Cloudflare AI Gateway Unified Billing. Keep the shared upstream credential only at the relay; authenticate every runtime with a scoped/revocable service credential; disable payload logging; allowlist funded models; and ship the first version without a user-visible allowance while retaining global budget, rate, concurrency, size, telemetry, eligibility, and kill-switch controls.
+Give eligible Matrix users a working AI kernel without BYOK by placing a Matrix-controlled relay between each owner VPS and Cloudflare AI Gateway Unified Billing. Keep shared upstream credentials only at the relay; authenticate every runtime with a scoped/revocable service credential; disable payload logging; allowlist funded models; grant one visible $5 starter credit per owner/campaign by default; and retain global budget, rate, concurrency, size, telemetry, eligibility, and kill-switch controls.
 
 In parallel, update the Claude Agent SDK through real-runtime spikes, publish the current Anthropic model catalog, and replace the misleading single Anthropic auth badge with a canonical provider snapshot that separates harness, model provider, account, access source, and model. Add OpenRouter OAuth PKCE and the best officially supported Anthropic login flow behind that same contract. Metering/add-ons and extra ACP harnesses are later additive phases.
 
 ### Current implementation checkpoint
 
-The staged work through Phase 2 provides the default-off Cloudflare transport
-boundary plus a read-only V3 snapshot and compatibility projections for Chat
-and Settings. It does not enable funded AI on production VPSes, complete the
-shared **Agents & providers** redesign, mutate provider accounts, issue the
-production runtime-scoped relay credentials, or create the Postgres credit
-ledger. Those remain separate TDD slices below so the secret-bearing relay,
-account lifecycle, shell convergence, and commercial billing are reviewed
-independently.
+The PR1502 repair candidate adds the default-off Cloudflare Workers AI GLM route,
+response-settled Postgres metering, owner/campaign starter grants, and shared V3
+Chat/Settings projection. It remains preview-only: funded AI is not enabled on
+production VPSes, add-on checkout is not activated, and no production rollout
+is authorized. The secret-bearing relay, account lifecycle, shell convergence,
+and commercial billing remain independently reviewable TDD slices.
 
 ## Technical Context
 
 **Language/Version**: Node.js 24+, TypeScript 5.5+ strict, ES modules
 **Primary Dependencies**: Claude Agent SDK V1 `query()`/`resume`, Hono, Zod 4 (`zod/v4`), Kysely, PostgreSQL, Next.js 16, React 19, Cloudflare AI Gateway, OpenRouter OAuth/API
-**Storage**: owner configuration/secret files for provider credentials; owner Postgres only if provider account orchestration needs durable multi-instance state; platform PostgreSQL/Kysely for later entitlements, reservations, and content-free usage records
+**Storage**: owner configuration/secret files for provider credentials; owner Postgres only if provider account orchestration needs durable multi-instance state; platform PostgreSQL/Kysely for entitlements, starter/add-on credit, reservations, and content-free usage records
 **Testing**: Vitest and `@vitest/coverage-v8`; real Agent SDK spike/integration suite; Hono route/stream integration tests; shell store/component tests; release-parity disposable VPS smoke
 **Target Platform**: VPS-native Linux customer runtime, central Matrix relay/control plane, browser/desktop/mobile/channel shells
 **Project Type**: monorepo, distributed web/runtime/control-plane system
 **Performance Goals**: funded relay adds less than 250 ms p95 time-to-first-token overhead; bounded status refresh under 2 seconds; kill switch effective within 60 seconds
 **Constraints**: no funded secret on customer VPS; metadata-only relay/gateway logs; fixed external endpoints with timeouts and redirects rejected; no stateful Agent response cache; 99-100% kernel/gateway coverage target; no SQLite/new ORM; production is VPS-native, not Docker
-**Scale/Scope**: all eligible personal runtimes, initial Anthropic funded route, Anthropic/OpenRouter owner accounts, one canonical Chat/provider state across all shells; organizations, pricing, add-ons, and ACP harnesses are staged separately
+**Scale/Scope**: eligible personal runtimes, Cloudflare Workers AI GLM funded route plus retained Anthropic compatibility, Anthropic/OpenRouter owner accounts, one canonical Chat/provider state across all shells; organizations, add-ons, and more harnesses are staged separately
 
 ## Constitution Check
 

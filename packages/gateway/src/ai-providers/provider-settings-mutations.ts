@@ -182,11 +182,12 @@ export function applyProviderConfigurationMutation(input: {
         ? input.snapshot.accessSources.find((candidate) => candidate.id === policy.accessSourceId)
         : undefined;
       if (!policy || !source
-        || mutation.allowedModelIds.some((modelId) => !source.eligibleModelIds.includes(modelId))) {
+        || mutation.allowedModelIds.some((modelId) => !input.snapshot.accessSources.some((candidate) =>
+          candidate.kind === "matrix_gateway" && candidate.eligibleModelIds.includes(modelId)))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       const activeGatewayModels = input.config.harnesses
-        .filter((candidate) => candidate.accessSourceId === policy.accessSourceId)
+        .filter((candidate) => input.snapshot.accessSources.some((source) => source.id === candidate.accessSourceId && source.kind === "matrix_gateway"))
         .map((candidate) => candidate.route.modelId);
       if (activeGatewayModels.some((modelId) => !mutation.allowedModelIds.includes(modelId))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);

@@ -51,7 +51,7 @@ function validateBoundedJson(value: unknown, ctx: z.RefinementCtx, depth: number
   ctx.addIssue({ code: "custom", message: "Unsupported JSON value" });
 }
 
-const BoundedJsonSchema = z.unknown().superRefine((value, ctx) => {
+export const BoundedJsonSchema = z.unknown().superRefine((value, ctx) => {
   validateBoundedJson(value, ctx, 0);
 });
 

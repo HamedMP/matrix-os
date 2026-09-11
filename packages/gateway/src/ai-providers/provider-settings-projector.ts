@@ -390,7 +390,7 @@ export async function projectProviderSettings(input: {
   }
   const modelProviders = [...modelsByVendor].map(([id, models]) => ({
     id,
-    displayName: id[0]!.toUpperCase() + id.slice(1),
+    displayName: id === "cloudflare" ? "Cloudflare Workers AI" : id[0]!.toUpperCase() + id.slice(1),
     models: models.map((model) => ({
       id: model.id,
       displayName: model.displayName,
@@ -427,8 +427,7 @@ export async function projectProviderSettings(input: {
     ? {
         ...input.config.gatewayPolicy,
         allowedModelIds: input.fundedPolicyAuthoritative
-          ? sources.find((source) => source.id === input.config.gatewayPolicy?.accessSourceId)!
-            .eligibleModelIds
+          ? [...new Set(sources.filter((source) => source.kind === "matrix_gateway").flatMap((source) => source.eligibleModelIds))]
           : input.config.gatewayPolicy.allowedModelIds,
         monthlyBudgetMicrousd: input.fundedPolicyAuthoritative
           ? input.fundingSummary?.monthlyBudgetMicrousd ?? null

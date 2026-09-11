@@ -38,6 +38,7 @@ export {
 export {
   canonicalProviderAvailabilityLabel,
   deriveCanonicalProviderChoices,
+  orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export { CompactChatProviderChoices } from "./compact-chat-provider-choices.js";
@@ -51,3 +52,4 @@ export type {
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
+export { canonicalChatRunFailure } from "./canonical-chat-run-error.js";

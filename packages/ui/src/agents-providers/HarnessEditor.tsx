@@ -34,8 +34,7 @@ function sourceSupportsModel(
       route: { kind: "configurable", providerId: source.providerId, modelId },
     }, source)) return false;
   if (source.kind !== "matrix_gateway") return true;
-  return snapshot.gatewayPolicy?.accessSourceId === source.id
-    && snapshot.gatewayPolicy.allowedModelIds.includes(modelId);
+  return snapshot.gatewayPolicy?.allowedModelIds.includes(modelId) === true;
 }
 
 function routeTargetForProvider(snapshot: ProviderSettingsSnapshot, provider: ProviderModelProvider, harness: ProviderHarnessInstance) {
