@@ -2,13 +2,11 @@ import {
   PreviewSessionSummarySchema,
   ProjectSummarySchema,
   RuntimeSummarySchema,
-  SafeDisplayStringSchema,
-  TerminalSessionIdSchema,
   type AgentProviderSummary,
   type AgentThreadSummary,
   type PreviewSessionSummary,
   type RuntimeSummary,
-  type TerminalSessionSummary,
+  type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type {
@@ -31,18 +29,8 @@ const MAX_PROJECT_SUMMARY_TIMEOUT_MS = 10_000;
 
 type ProjectSummary = ReturnType<typeof ProjectSummarySchema.parse>;
 
-export interface CodingAgentTerminalSession {
-  name: string;
-  status?: "active" | "exited";
-  visualStatus?: "running" | "finished" | "idle" | "waiting";
-  createdAt: string;
-  updatedAt: string;
-  attachedClients?: number;
-  recoverable?: boolean;
-}
-
-export interface CodingAgentTerminalSessionRegistry {
-  list(): Promise<CodingAgentTerminalSession[]> | CodingAgentTerminalSession[];
+export interface CodingAgentTerminalWorkspaceRegistry {
+  list(): Promise<TerminalWorkspace[]> | TerminalWorkspace[];
 }
 
 export interface CodingAgentRuntimeSummaryService {
@@ -74,7 +62,7 @@ export interface CodingAgentProjectSummaryStore {
 
 export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
-  terminalRegistry?: CodingAgentTerminalSessionRegistry;
+  terminalRegistry?: CodingAgentTerminalWorkspaceRegistry;
   providerRegistry?: Pick<CodingAgentProviderRegistry, "listProviders">;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
   threads?: CodingAgentThreadSummaryStore;
@@ -105,20 +93,7 @@ export interface CodingAgentRuntimeSummaryOptions {
   };
 }
 
-function safeIsoFromMillis(value: number, fallback: Date): string {
-  const date = Number.isFinite(value) ? new Date(value) : fallback;
-  if (Number.isNaN(date.getTime())) return fallback.toISOString();
-  return date.toISOString();
-}
-
-function safeDisplayLabel(value: string, fallback: string): { label: string; sanitized: boolean } {
-  const label = value.length <= 120 ? value : `${value.slice(0, 117)}...`;
-  return SafeDisplayStringSchema.safeParse(label).success
-    ? { label, sanitized: false }
-    : { label: fallback, sanitized: true };
-}
-
-function canReadTerminalSessions(principal: RequestPrincipal, terminalOwnerId: string | undefined): boolean {
+function canReadTerminalWorkspaces(principal: RequestPrincipal, terminalOwnerId: string | undefined): boolean {
   if (terminalOwnerId) return principal.userId === terminalOwnerId;
   return principal.source === "configured-container" || principal.source === "dev-default";
 }
@@ -126,36 +101,6 @@ function canReadTerminalSessions(principal: RequestPrincipal, terminalOwnerId: s
 function canReadOwnerResource(principal: RequestPrincipal, ownerId: string | undefined): boolean {
   if (ownerId) return principal.userId === ownerId;
   return principal.source === "configured-container" || principal.source === "dev-default";
-}
-
-function terminalStatus(session: CodingAgentTerminalSession): TerminalSessionSummary["status"] {
-  if (session.status === "exited") return "exited";
-  if (session.recoverable) return "stale";
-  if (session.visualStatus === "waiting") return "idle";
-  if (session.visualStatus === "finished") return "idle";
-  if (session.visualStatus === "running") return "running";
-  if ((session.attachedClients ?? 0) > 0) return "running";
-  return "idle";
-}
-
-function terminalSummaryFromSession(
-  _homePath: string,
-  now: Date,
-  session: CodingAgentTerminalSession,
-  index: number,
-): TerminalSessionSummary {
-  const status = terminalStatus(session);
-  const safeName = safeDisplayLabel(session.name, "Private session");
-  const safeId = TerminalSessionIdSchema.safeParse(session.name);
-  const canAttach = safeId.success && !safeName.sanitized && session.status !== "exited" && !session.recoverable;
-  return {
-    id: safeId.success && !safeName.sanitized ? safeId.data : `terminal_private_${index}`,
-    name: safeName.label,
-    status,
-    attachable: canAttach,
-    createdAt: safeIsoFromMillis(Date.parse(session.createdAt), now),
-    updatedAt: safeIsoFromMillis(Date.parse(session.updatedAt), now),
-  };
 }
 
 function capability(input: {
@@ -307,26 +252,22 @@ async function readProjects(
   }
 }
 
-async function readTerminalSessions(
-  registry: CodingAgentTerminalSessionRegistry | undefined,
-  homePath: string,
-  now: Date,
+async function readTerminalWorkspaces(
+  registry: CodingAgentTerminalWorkspaceRegistry | undefined,
   principal: RequestPrincipal,
   terminalOwnerId: string | undefined,
-): Promise<{ items: TerminalSessionSummary[]; hasMore: boolean; limit: number }> {
+): Promise<{ items: TerminalWorkspace[]; hasMore: boolean; limit: number }> {
   if (!registry) return { items: [], hasMore: false, limit: TERMINAL_SUMMARY_LIMIT };
-  if (!canReadTerminalSessions(principal, terminalOwnerId)) {
+  if (!canReadTerminalWorkspaces(principal, terminalOwnerId)) {
     return { items: [], hasMore: false, limit: TERMINAL_SUMMARY_LIMIT };
   }
   try {
-    const sessions = (await registry.list())
+    const workspaces = (await registry.list())
       .slice()
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     return {
-      items: sessions.slice(0, TERMINAL_SUMMARY_LIMIT).map((session, index) =>
-        terminalSummaryFromSession(homePath, now, session, index)
-      ),
-      hasMore: sessions.length > TERMINAL_SUMMARY_LIMIT,
+      items: workspaces.slice(0, TERMINAL_SUMMARY_LIMIT),
+      hasMore: workspaces.length > TERMINAL_SUMMARY_LIMIT,
       limit: TERMINAL_SUMMARY_LIMIT,
     };
   } catch (err: unknown) {
@@ -346,10 +287,8 @@ export function createCodingAgentRuntimeSummaryService(
       summaryOptions: CodingAgentRuntimeSummaryRequestOptions = {},
     ): Promise<RuntimeSummary> {
       const now = nowFn();
-      const terminalSessions = readTerminalSessions(
+      const terminalWorkspaces = readTerminalWorkspaces(
         options.terminalRegistry,
-        options.homePath,
-        now,
         principal,
         options.terminalOwnerId,
       );
@@ -372,7 +311,7 @@ export function createCodingAgentRuntimeSummaryService(
       const filesEnabled = options.capabilities?.files === true && canReadOwnerResource(principal, options.filesOwnerId);
       const sourceControlEnabled = options.capabilities?.sourceControl === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
-        canReadTerminalSessions(principal, options.terminalOwnerId);
+        canReadTerminalWorkspaces(principal, options.terminalOwnerId);
       const projectWorkspaceConfigured = options.capabilities?.projectWorkspace === true;
       const projectWorkspaceEnabled = projectWorkspaceConfigured && projectRead.available;
       const projectWorkspaceReason = !projectRead.available
@@ -428,7 +367,7 @@ export function createCodingAgentRuntimeSummaryService(
         projects: projectRead.page,
         activeThreads,
         attentionThreads,
-        terminalSessions: await terminalSessions,
+        terminalWorkspaces: await terminalWorkspaces,
         previewSessions: await previewSessions,
         recentActivity: { items: [], hasMore: false, limit: 30 },
         limits: {

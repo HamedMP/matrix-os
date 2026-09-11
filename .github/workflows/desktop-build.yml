@@ -63,6 +63,8 @@ jobs:
           fi
 
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 257
 
       - uses: pnpm/action-setup@v6
 
@@ -485,6 +487,8 @@ jobs:
           fi
 
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 257
 
       - uses: pnpm/action-setup@v6
 

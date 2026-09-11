@@ -23,7 +23,7 @@ function runtimeSummary() {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: {
       maxPromptBytes: 16384,

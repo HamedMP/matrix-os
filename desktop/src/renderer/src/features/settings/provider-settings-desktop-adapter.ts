@@ -16,7 +16,7 @@ import type {
 import { AppError } from "../../../../shared/app-error";
 import { buildGatewayUrl, type ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
-import { isExistingShellSessionName, useShellSessions } from "../../stores/shell-sessions";
+import { isValidShellSessionName, useShellSessions } from "../../stores/shell-sessions";
 import { useTabs } from "../../stores/tabs";
 
 const PROVIDER_SETTINGS_PATH = "/api/ai/provider-settings";
@@ -105,7 +105,7 @@ export async function openExistingProviderTerminalSession(
   terminalSessionId: string,
   isIdentityCurrent: () => boolean = () => true,
 ): Promise<boolean> {
-  if (!isExistingShellSessionName(terminalSessionId)) return false;
+  if (!isValidShellSessionName(terminalSessionId)) return false;
   const sessions = await useShellSessions.getState().load(api);
   if (!isIdentityCurrent()) return false;
   const exists = sessions?.some((session) => (

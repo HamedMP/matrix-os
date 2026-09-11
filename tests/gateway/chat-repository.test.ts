@@ -34,6 +34,7 @@ function message(chatId: string, seq = 1): CanonicalChatMessage {
     seq,
     role: "user",
     state: "committed",
+    purpose: "ai_request",
     turnId: `cturn_${chatId}_${seq}`,
     parts: [{ type: "text", text: `message ${seq}` }],
     createdAt: now,
@@ -342,14 +343,14 @@ describe("ChatRepository", () => {
     await createChat(repository, "replay_other_owner", otherOwner);
     await createChat(repository, "replay_second");
 
-    const firstWindow = await events.replayOutboxWindow(owner, { limit: 1 });
+    const firstWindow = await events.replayOutboxWindow(owner, { limit: 2 });
     expect(firstWindow).toMatchObject({ gap: false });
-    expect(firstWindow.events).toHaveLength(1);
+    expect(firstWindow.events).toHaveLength(2);
     expect(firstWindow.events[0]?.chatId).toBe("chat_replay_first");
-    expect(firstWindow.nextCursor).toBe(firstWindow.events[0]?.cursor);
+    expect(firstWindow.nextCursor).toBe(firstWindow.events[1]?.cursor);
 
     const remaining = await events.replayOutboxWindow(owner, {
-      afterCursor: firstWindow.nextCursor,
+      afterCursor: firstWindow.events[0]?.cursor,
       limit: 1000,
     });
     expect(remaining.gap).toBe(false);
@@ -384,9 +385,10 @@ describe("ChatRepository", () => {
 
     const window = await events.replayOutboxWindow(owner, { limit: 10_000 });
 
-    expect(window.gap).toBe(false);
-    expect(window.events).toHaveLength(100);
-    expect(window.nextCursor).toBe(window.events.at(-1)?.cursor);
+    expect(window.gap).toBe(true);
+    expect(window.events).toEqual([]);
+    const latest = await repository.kysely.selectFrom("chat_outbox").select("cursor").orderBy("cursor", "desc").limit(1).executeTakeFirstOrThrow();
+    expect(window.nextCursor).toBe(Number(latest.cursor));
   });
 
   it("hydrates and updates owner-local Chat pin state atomically", async () => {
@@ -904,6 +906,33 @@ describe("ChatRepository", () => {
     })).rejects.toBeInstanceOf(ChatBusyError);
   });
 
+  it("rejects a new Turn after the locked Chat row becomes discussion-only shared", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_safence",
+      clientRequestId: "req_safence",
+      title: "Shared admission fence",
+    });
+    await repository.kysely.updateTable("chats").set({
+      collaboration: JSON.stringify({
+        scopeId: "10000000-0000-4000-8000-000000000099",
+        mode: "discussion_only",
+        executionFenced: true,
+      }),
+    }).where("id", "=", created.chat.id).execute();
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+
+    await expect(repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: run(created.chat.id, acceptedTurn),
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    await expect(repository.kysely.selectFrom("chat_runs").selectAll()
+      .where("chat_id", "=", created.chat.id).execute()).resolves.toEqual([]);
+  });
+
   it("durably enqueues an idempotent ordered Turn while a Run is active", async () => {
     const admitted = await admitChat(repository, "queued_turn");
     const queuedInput = {
@@ -946,7 +975,7 @@ describe("ChatRepository", () => {
       .toContainEqual(expect.objectContaining({
         eventType: "queue.enqueued",
         revision: 2,
-        payload: { queuedTurnId: "qturn_queued_turn_1", position: 1 },
+        payload: expect.objectContaining({ queuedTurnId: "qturn_queued_turn_1", position: 1 }),
       }));
     await expect(repository.enqueueQueuedTurn(otherOwner, {
       ...queuedInput,
@@ -1031,7 +1060,7 @@ describe("ChatRepository", () => {
       .toContainEqual(expect.objectContaining({
         eventType: "queue.cancelled",
         revision: 5,
-        payload: { queuedTurnId: "qturn_queue_cancel_2", position: 2 },
+        payload: expect.objectContaining({ queuedTurnId: "qturn_queue_cancel_2", position: 2 }),
       }));
   });
 
@@ -1080,7 +1109,7 @@ describe("ChatRepository", () => {
       .toContainEqual(expect.objectContaining({
         eventType: "queue.reordered",
         revision: 5,
-        payload: { queuedTurnIds: order },
+        payload: expect.objectContaining({ queuedTurnIds: order }),
       }));
   });
 
@@ -1141,7 +1170,7 @@ describe("ChatRepository", () => {
       .toContainEqual(expect.objectContaining({
         eventType: "queue.updated",
         revision: 4,
-        payload: { queuedTurnId: "qturn_queue_edit_1", position: 1 },
+        payload: expect.objectContaining({ queuedTurnId: "qturn_queue_edit_1", position: 1 }),
       }));
   });
 
@@ -1864,6 +1893,7 @@ describe("ChatRepository", () => {
       seq: 2,
       role: "assistant",
       state: "committed",
+      purpose: "assistant",
       turnId: acceptedTurn.id,
       runId: acceptedRun.id,
       parts: [{ type: "text", text: "done" }],

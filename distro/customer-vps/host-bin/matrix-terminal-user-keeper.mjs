@@ -1,6 +1,8 @@
 #!/opt/matrix/runtime/node/bin/node
+// matrix-terminal-readiness: invocation-v1
 import { spawn } from "node:child_process";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -231,10 +233,11 @@ await new Promise((resolveStart) => {
     clearTimeout(startTimer);
     fail("session_start_failed");
   });
-  child.once("exit", (_code, signal) => {
+  child.once("exit", (code, signal) => {
     clearTimeout(startTimer);
     if (requestedSignal || signal) exitAfterChild(null, signal);
     if (startTimedOut) fail("session_start_timeout");
+    if (code !== 0) fail("session_start_failed");
     resolveStart();
   });
 });
@@ -254,3 +257,25 @@ child = spawn("/usr/bin/script", ["-qefc", watcherCommand, "/dev/null"], {
 });
 child.once("error", () => fail("pty_start_failed"));
 child.once("exit", (code, signal) => exitAfterChild(code, signal));
+
+// Do not use list-sessions to probe a just-created server: Zellij can panic on
+// a probe disconnect before FirstClientConnected has initialized session_data.
+// The per-unit invocation fences stale signals after restart, including SIGKILL.
+const invocationId = process.env.INVOCATION_ID;
+if (typeof invocationId === "string" && /^[0-9a-f]{32}$/.test(invocationId)) {
+  try {
+    const readyPath = join(homePath, "system", "terminal-runtimes", `${runtimeId}.ready.json`);
+    const handle = await open(readyPath, constants.O_WRONLY | constants.O_CREAT
+      | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+    try {
+      const stats = await handle.stat();
+      if (!stats.isFile() || stats.nlink !== 1) throw new Error("Invalid readiness target");
+      await handle.truncate(0);
+      await handle.writeFile(JSON.stringify({ version: 1, invocationId,
+        generation: descriptor.generation, createdAt: descriptor.createdAt }));
+    } finally { await handle.close(); }
+  } catch (error) {
+    process.stderr.write(`matrix-terminal-user-keeper: readiness_signal_failed (${error instanceof Error ? error.name : "unknown"})\n`);
+    forwardSignal("SIGTERM");
+  }
+}

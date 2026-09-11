@@ -25,6 +25,7 @@ export type ServerMessage =
   | { type: "session:switched"; sessionId: string }
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number; requestId?: string; eventId?: string }
   | { type: "data:change"; app: string; key: string }
+  | { type: "os-view:changed"; revision: number; updatedAt: string }
   | {
       type: "client:ack";
       actionId: string;

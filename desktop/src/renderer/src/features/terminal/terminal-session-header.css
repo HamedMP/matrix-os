@@ -1,0 +1,15 @@
+.matrix-terminal-app-header {
+  container-type: inline-size;
+  container-name: terminal-header;
+}
+@container terminal-header (max-width: 680px) {
+  [data-terminal-header-status],
+  [data-terminal-header-session] p {
+    display: none;
+  }
+}
+@container terminal-header (max-width: 560px) {
+  [data-terminal-header-session] {
+    display: none;
+  }
+}

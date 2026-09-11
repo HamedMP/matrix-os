@@ -54,7 +54,7 @@ describe("native app database bridge", () => {
 
   it("binds each sender to its registered app slug and current app URL", async () => {
     const request = vi.fn(async (_slug: string, _query: unknown) => ({ id: "db-note" }));
-    const bridge = new NativeAppBridge({
+    const bridge = new NativeAppBridge({ gatewayRequest: vi.fn(),
       request,
       gatewayOrigin: () => "https://gateway.test",
     });
@@ -82,7 +82,7 @@ describe("native app database bridge", () => {
   });
 
   it("evicts sender registrations when views close and caps retained identities", async () => {
-    const bridge = new NativeAppBridge({
+    const bridge = new NativeAppBridge({ gatewayRequest: vi.fn(),
       request: vi.fn(async () => []),
       gatewayOrigin: () => "https://gateway.test",
       maxSenders: 2,
@@ -144,7 +144,7 @@ describe("native app database bridge", () => {
       }),
     );
 
-    const bridge = new NativeAppBridge({ request, gatewayOrigin: () => "https://gateway.test" });
+    const bridge = new NativeAppBridge({ gatewayRequest: vi.fn(), request, gatewayOrigin: () => "https://gateway.test" });
     bridge.register(77, "games/2048", "2048");
     await expect(bridge.query(
       { id: 77, url: "https://gateway.test/apps/2048/" },

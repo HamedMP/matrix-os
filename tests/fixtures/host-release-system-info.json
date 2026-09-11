@@ -1,0 +1,14 @@
+{
+  "version": "v2026.09.10-1205",
+  "runningVersion": "v2026.09.10-1205",
+  "installedVersion": "0.4.0",
+  "build": { "sha": "unknown", "ref": "unknown", "date": "unknown" },
+  "runtimeCompatibility": { "schemaVersion": 1, "minDesktopProtocol": 1, "maxDesktopProtocol": 1 },
+  "release": {
+    "schemaVersion": 1,
+    "kind": "matrix-os-host-bundle",
+    "version": "v2026.09.10-1205",
+    "channel": "dev",
+    "gitCommit": "5a33ceb47fcdd035c95d8dfedf0cd02a5209106b"
+  }
+}

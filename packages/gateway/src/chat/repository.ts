@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { messagePurpose } from "./message-purpose.js";
+import { captureChatContent } from "./content-projection.js";
+import { captureChatFailureMetadata } from "./failure-telemetry.js";
+import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
   CanonicalChatRunActivitySchema,
   CanonicalChatIdSchema,
@@ -11,6 +13,7 @@ import {
   CanonicalChatTurnSchema,
   CanonicalOwnerScopeSchema,
   TerminalSessionIdSchema,
+  type CanonicalChatCollaboration,
   type CanonicalChatMessage,
   type CanonicalChatQueuedTurn,
   type CanonicalChatModelSelection,
@@ -33,6 +36,7 @@ import {
 import {
   asIso,
   jsonb,
+  messageAttribution,
   messageSearchText,
   toActivities,
   toChatRecord,
@@ -262,16 +266,18 @@ async function hydrateRecord(
   executor: Executor,
   owner: ChatOwner,
   chatId: string,
+  collaborationProjection?: CanonicalChatCollaboration,
 ): Promise<ChatRecord | null> {
   const row = await selectOwnedChat(executor, owner, chatId);
   if (!row) return null;
-  return toPrincipalRecord(executor, owner, row);
+  return toPrincipalRecord(executor, owner, row, collaborationProjection);
 }
 
 async function toPrincipalRecord(
   executor: Executor,
   owner: ChatOwner,
   row: Selectable<ChatsTable>,
+  collaborationProjection?: CanonicalChatCollaboration,
 ): Promise<ChatRecord> {
   const [activeRun, userState, latestSuccessfulCompletion] = await Promise.all([
     activeRunQuery(executor, row.id),
@@ -279,7 +285,9 @@ async function toPrincipalRecord(
     latestSuccessfulCompletionQuery(executor, row.id),
   ]);
   return toChatRecord(
-    row,
+    collaborationProjection
+      ? { ...row, collaboration: JSON.stringify(collaborationProjection) }
+      : row,
     activeRun,
     userState ? toUserState(userState) : undefined,
     latestSuccessfulCompletion,
@@ -381,6 +389,28 @@ export class ChatRepository {
     return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
   }
 
+  async appendOutboxEvent(
+    ownerInput: ChatOwner,
+    chatId: string,
+    revision: number,
+    eventType: ChatOutboxEventType,
+    payload: Record<string, unknown> = {},
+    collaborationProjection?: CanonicalChatCollaboration,
+  ): Promise<void> {
+    const owner = validateOwner(ownerInput);
+    CanonicalChatIdSchema.parse(chatId);
+    z.number().int().nonnegative().parse(revision);
+    await this.transact((trx) => this.appendOutbox(
+      trx,
+      owner,
+      chatId,
+      revision,
+      eventType,
+      payload,
+      collaborationProjection,
+    ));
+  }
+
   private async transact<T>(fn: (trx: Executor) => Promise<T>): Promise<T> {
     if (this.transactionScoped) return fn(this.kysely);
     const result = await this.kysely.transaction().execute(async (trx) => {
@@ -402,8 +432,23 @@ export class ChatRepository {
     revision: number,
     eventType: ChatOutboxEventType,
     payload: Record<string, unknown> = {},
+    collaborationProjection?: CanonicalChatCollaboration,
   ): Promise<void> {
-    const event = await insertOutbox(executor, owner, chatId, revision, eventType, payload);
+    const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
+      (projectionOwner, projectionChatId) => hydrateRecord(
+        executor,
+        projectionOwner,
+        projectionChatId,
+        collaborationProjection,
+      ));
+    const streamContent = captured && new TextEncoder().encode(JSON.stringify(captured)).byteLength < 512 * 1024 - 2048
+      ? captured : undefined;
+    const failureTelemetry = captureChatFailureMetadata(eventType, captured, payload.runId, payload.failureDiagnostic);
+    const { messageDelta: _delta, activityIds: _activities, removedActivityIds: _removed, ...metadata } = payload;
+    const event = await insertOutbox(executor, owner, chatId, revision, eventType, {
+      ...metadata, ...(streamContent ? { streamContent } : {}),
+      ...(failureTelemetry ? { failureTelemetry } : {}),
+    });
     this.outboxDelivery.capture(executor, { owner, event });
   }
 
@@ -863,6 +908,9 @@ export class ChatRepository {
       if (current.lifecycle !== "active") {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
+      if (current.collaboration !== null) {
+        throw new ChatConflictError(input.chatId, Number(current.revision));
+      }
       if (Number(current.revision) !== input.baseRevision) {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
@@ -884,13 +932,13 @@ export class ChatRepository {
         chat_id: input.chatId,
         seq: message.seq,
         role: message.role,
-        purpose: messagePurpose(message),
         state: message.state,
         turn_id: message.turnId ?? null,
         run_id: message.runId ?? null,
         parts: jsonb(message.parts),
         byte_count: encoded.encode(JSON.stringify(message)).byteLength,
         search_text: messageSearchText(message),
+        ...messageAttribution(message),
         created_at: message.createdAt,
       }).execute();
       for (const part of message.parts) {
@@ -1100,6 +1148,9 @@ export class ChatRepository {
       if (current.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
+      if (current.collaboration !== null) {
+        throw new ChatConflictError(chatId, Number(current.revision));
+      }
       if (Number(current.revision) !== input.baseRevision) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
@@ -1107,6 +1158,14 @@ export class ChatRepository {
       const turnRow = await trx.selectFrom("chat_turns").selectAll()
         .where("id", "=", turnId).where("chat_id", "=", chatId).forUpdate().executeTakeFirst();
       if (!turnRow) throw new ChatNotFoundError(chatId);
+      const latestTurn = await trx.selectFrom("chat_turns").select(["id"])
+        .where("chat_id", "=", chatId)
+        .orderBy("base_message_seq", "desc")
+        .orderBy("created_at", "desc")
+        .executeTakeFirst();
+      if (latestTurn?.id !== turnId) {
+        throw new ChatConflictError(chatId, Number(current.revision));
+      }
       const latest = await trx.selectFrom("chat_runs").selectAll()
         .where("turn_id", "=", turnId).orderBy("attempt", "desc").forUpdate().executeTakeFirst();
       if (!latest || ACTIVE_RUNS.includes(latest.status as typeof ACTIVE_RUNS[number])
@@ -1281,8 +1340,15 @@ export class ChatRepository {
     chatId: string;
     driverKind: string;
     instanceId: string;
+    schemaVersion: number;
+    executionRootFingerprint: string | null;
+    includeInterrupted?: boolean;
   }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     return this.runLifecycle.getLatestAdapterStateForChat(ownerInput, input);
+  }
+
+  async hasRetryRequest(owner: ChatOwner, input: { chatId: string; turnId: string; clientRequestId: string }): Promise<boolean> {
+    return this.runLifecycle.hasRetryRequest(owner, input);
   }
 
   async markRunRunning(ownerInput: ChatOwner, input: {
@@ -1319,6 +1385,7 @@ export class ChatRepository {
     messageId: string;
     delta: string;
     createdAt: string;
+    snapshot?: boolean;
   }): Promise<CanonicalChatMessage> {
     return this.runLifecycle.appendAssistantDelta(ownerInput, input);
   }
@@ -1328,6 +1395,7 @@ export class ChatRepository {
     runId: string;
     outcome: "completed" | "failed" | "aborted";
     completedAt: string;
+    diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;
   }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
     return this.runLifecycle.finishRun(ownerInput, input);
@@ -1366,6 +1434,14 @@ export class ChatRepository {
       limit: Math.max(1, Math.min(100, Math.trunc(input.limit))),
     });
     const nextCursor = events.at(-1)?.cursor;
+    if (events.length >= Math.max(1, Math.min(100, Math.trunc(input.limit)))) {
+      const latest = await this.kysely.selectFrom("chat_outbox").select("cursor")
+        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+        .orderBy("cursor", "desc").limit(1).executeTakeFirst();
+      if (latest && Number(latest.cursor) > (nextCursor ?? 0)) {
+        return { events: [], gap: true, nextCursor: Number(latest.cursor) };
+      }
+    }
     return {
       events,
       gap: false,
@@ -1484,6 +1560,10 @@ export class ChatRepository {
         throw new ChatConflictError(input.chatId, Number(chat.revision));
       }
       await this.appendOutbox(trx, owner, input.chatId, Number(chat.revision) + 1, "chat.deleted");
+      // Retain legacy cursor metadata, but never retain deleted transcript bodies.
+      await trx.updateTable("chat_outbox").set({ payload: sql`payload - 'streamContent'` })
+        .where("chat_id", "=", input.chatId)
+        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).execute();
       await trx.deleteFrom("chats").where("id", "=", input.chatId)
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).execute();
       return { chatId: input.chatId, deletedAt: asIso(deletion.deleted_at) ?? new Date(0).toISOString() };

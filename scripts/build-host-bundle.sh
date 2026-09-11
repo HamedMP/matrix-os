@@ -41,6 +41,7 @@ pnpm --filter '@matrix-os/observability' build
 pnpm --filter '@matrix-os/brand' build
 pnpm --filter '@matrix-os/kernel' build
 pnpm --filter '@matrix-os/integrations-mcp' build
+pnpm --filter '@matrix-os/scope-runtime' build
 pnpm --filter '@matrix-os/gateway' build
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
@@ -94,6 +95,7 @@ ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
 }
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-watcher-sizing.mjs" "$STAGE_DIR/bin/zellij"
+node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"
 TERMINAL_RUNTIME_GENERATION="$(
   "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
     "$STAGE_DIR/bin/zellij" \
@@ -126,7 +128,7 @@ cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-integrations" "$STAGE_DIR/bin/matrix-integrations-mcp" "$STAGE_DIR/bin/matrix-register-integrations-mcp" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-openclaw" "$STAGE_DIR/bin/matrix-openclaw-gateway" "$STAGE_DIR/bin/matrix-agent-runtime-control" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-prepare-host-prerequisites" "$STAGE_DIR/bin/matrix-aws-cli-smoke" "$STAGE_DIR/bin/matrix-golden-service-diagnostics" "$STAGE_DIR/bin/matrix-golden-snapshot-activate" "$STAGE_DIR/bin/matrix-golden-snapshot-fast-path" "$STAGE_DIR/bin/matrix-golden-snapshot-sanitize" "$STAGE_DIR/bin/matrix-golden-snapshot-validate" "$STAGE_DIR/bin/matrix-write-bootstrap-attestation" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
+chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-terminal-runtime" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-integrations" "$STAGE_DIR/bin/matrix-integrations-mcp" "$STAGE_DIR/bin/matrix-register-integrations-mcp" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-scope-runtime" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-openclaw" "$STAGE_DIR/bin/matrix-openclaw-gateway" "$STAGE_DIR/bin/matrix-agent-runtime-control" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-prepare-host-prerequisites" "$STAGE_DIR/bin/matrix-aws-cli-smoke" "$STAGE_DIR/bin/matrix-golden-service-diagnostics" "$STAGE_DIR/bin/matrix-golden-snapshot-activate" "$STAGE_DIR/bin/matrix-golden-snapshot-fast-path" "$STAGE_DIR/bin/matrix-golden-snapshot-sanitize" "$STAGE_DIR/bin/matrix-golden-snapshot-validate" "$STAGE_DIR/bin/matrix-write-bootstrap-attestation" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
@@ -143,10 +145,15 @@ cp -a "$ROOT_DIR/scripts/configure-hermes-matrix-defaults.mjs" "$STAGE_DIR/app/s
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
+cp -a "$ROOT_DIR/patches" "$STAGE_DIR/app/patches"
 printf '%s\n' "$TERMINAL_RUNTIME_GENERATION" > "$STAGE_DIR/app/TERMINAL_RUNTIME_GENERATION"
 # Activation follows the installed app payload so the supported updater's
 # app rollback atomically returns pre-activation bundles to dormant behavior.
 printf '1\n' > "$STAGE_DIR/app/TERMINAL_USER_SYSTEMD_ENABLED"
+# PR2 installs the rollback-safe foundation only. The inverse systemd
+# ConditionPathExists fence prevents accidental activation until PR3 removes
+# this app-owned marker while completing M2.
+printf '1\n' > "$STAGE_DIR/app/SCOPE_RUNTIME_DISABLED"
 if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"
 fi

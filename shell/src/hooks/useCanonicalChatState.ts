@@ -7,6 +7,12 @@ import type {
   CanonicalChatDetailResponse,
   CanonicalChatRecord,
 } from "@matrix-os/contracts";
+import {
+  createSharedCanonicalChatEventSource,
+  createCanonicalChatRefresh,
+  applyCanonicalChatContent,
+  type CanonicalChatEventConnectionState,
+} from "@matrix-os/ui";
 import { useSocket } from "@/hooks/useSocket";
 import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -14,10 +20,11 @@ import {
   createCanonicalShellChatClient,
   canonicalShellChatFailureMessage,
   isDefinitiveCanonicalChatRejection,
-  projectCanonicalMessages,
 } from "@/lib/canonical-chat-client";
+import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
 
-const ACTIVE_RUN_POLL_MS = 500;
+const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
+const EVENT_INVALIDATION_COALESCE_MS = 200;
 
 function requestId(): string {
   return `req_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
@@ -36,17 +43,29 @@ function conversationMeta(record: CanonicalChatRecord) {
 
 export function useCanonicalChatState(): ChatState {
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl: getGatewayUrl() }), []);
+  const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
+    openStream: (input) => client.openEventStream(input),
+  }), [client]);
   const { connected } = useSocket();
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string>();
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [safeError, setSafeError] = useState<string | null>(null);
+  const [eventConnectionState, setEventConnectionState] = useState<CanonicalChatEventConnectionState>(
+    eventSource.connectionState(),
+  );
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
   const composerDraftSequence = useRef(0);
   const detailRequestGeneration = useRef(0);
+  const pendingEventSourceDisposalRef = useRef<{
+    source: typeof eventSource;
+    cancelled: boolean;
+  } | null>(null);
   const detailRef = useRef(detail);
   const activeChatIdRef = useRef(activeChatId);
+  // An empty selection after New chat is intentional, not an initial restore.
+  const autoRestoreChatRef = useRef(true);
   detailRef.current = detail;
   activeChatIdRef.current = activeChatId;
 
@@ -54,7 +73,9 @@ export function useCanonicalChatState(): ChatState {
     try {
       const page = await client.list();
       setRecords(page.items);
-      setActiveChatId((current) => current ?? page.items[0]?.chat.id);
+      if (autoRestoreChatRef.current) {
+        setActiveChatId((current) => current ?? page.items[0]?.chat.id);
+      }
     } catch (error: unknown) {
       console.warn("[canonical-chat] Shell list unavailable:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("Chats could not be loaded. Try again.");
@@ -71,8 +92,9 @@ export function useCanonicalChatState(): ChatState {
       const current = detailRef.current;
       if (current?.record.chat.id === chatId
         && current.record.chat.revision > value.record.chat.revision) {
-        return null;
+        return current;
       }
+      detailRef.current = value;
       setDetail(value);
       setSafeError(null);
       return value;
@@ -89,6 +111,70 @@ export function useCanonicalChatState(): ChatState {
   useEffect(() => {
     void loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    const pendingDisposal = pendingEventSourceDisposalRef.current;
+    if (pendingDisposal?.source === eventSource) {
+      pendingDisposal.cancelled = true;
+      pendingEventSourceDisposalRef.current = null;
+    }
+    const stateSubscription = eventSource.subscribeConnectionState(() => {
+      setEventConnectionState(eventSource.connectionState());
+    });
+    void eventSource.start();
+    return () => {
+      stateSubscription.dispose();
+      const disposal = { source: eventSource, cancelled: false };
+      pendingEventSourceDisposalRef.current = disposal;
+      queueMicrotask(() => {
+        if (!disposal.cancelled) disposal.source.dispose();
+        if (pendingEventSourceDisposalRef.current === disposal) {
+          pendingEventSourceDisposalRef.current = null;
+        }
+      });
+    };
+  }, [eventSource]);
+
+  useEffect(() => {
+    const selectedRefresh = createCanonicalChatRefresh(async () => (
+      !activeChatId || Boolean(await loadDetail(activeChatId))
+    ));
+    let listTimer: number | undefined;
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.content) {
+        const record = event.content.content.record;
+        setRecords((current) => current.map((item) => item.chat.id === record.chat.id
+          && item.chat.revision < record.chat.revision ? record : item));
+        if (event.chatId === activeChatId) {
+          const current = detailRef.current;
+          const next = current ? applyCanonicalChatContent(current, event.content) : null;
+          if (next) {
+            detailRef.current = next;
+            setDetail(next);
+            setSafeError(null);
+          } else selectedRefresh.schedule();
+        }
+        if (event.eventType === "chat.created" || event.eventType === "chat.updated") void loadList();
+        return;
+      }
+      if (event.type === "chat.full_refresh" || event.chatId === activeChatId) {
+        selectedRefresh.schedule(EVENT_INVALIDATION_COALESCE_MS);
+      }
+      // Token/message deltas affect the selected transcript, not the work rail.
+      if (event.type === "chat.full_refresh" || event.eventType !== "run.message") {
+        if (listTimer !== undefined) return;
+        listTimer = window.setTimeout(() => {
+          listTimer = undefined;
+          void loadList();
+        }, EVENT_INVALIDATION_COALESCE_MS);
+      }
+    });
+    return () => {
+      subscription.dispose();
+      selectedRefresh.dispose();
+      if (listTimer !== undefined) window.clearTimeout(listTimer);
+    };
+  }, [activeChatId, eventSource, loadDetail, loadList]);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,21 +217,21 @@ export function useCanonicalChatState(): ChatState {
   }, [activeChatId, loadDetail]);
 
   useEffect(() => {
-    if (!activeChatId || !detail?.record.activeRun) return;
+    if (!activeChatId || !detail?.record.activeRun || eventConnectionState === "open") return;
     let cancelled = false;
     let timer: number | undefined;
     const poll = () => {
       timer = window.setTimeout(async () => {
         await loadDetail(activeChatId);
         if (!cancelled) poll();
-      }, ACTIVE_RUN_POLL_MS);
+      }, ACTIVE_RUN_FALLBACK_POLL_MS);
     };
     poll();
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [activeChatId, Boolean(detail?.record.activeRun), loadDetail]);
+  }, [activeChatId, Boolean(detail?.record.activeRun), eventConnectionState, loadDetail]);
 
   const submitMessage = useCallback((
     text: string,
@@ -205,7 +291,8 @@ export function useCanonicalChatState(): ChatState {
           permissionMode: options.permissionMode!,
         });
         turnAdmitted = true;
-        setDetail((current) => ({
+        setDetail((current) => current?.record.chat.id === admitted.record.chat.id
+          && current.record.chat.revision >= admitted.record.chat.revision ? current : ({
           record: admitted.record,
           messages: [...(current?.record.chat.id === record.chat.id ? current.messages : []), admitted.message],
           turns: [...(current?.record.chat.id === record.chat.id ? current.turns : []), admitted.turn],
@@ -228,6 +315,9 @@ export function useCanonicalChatState(): ChatState {
   }, [activeChatId, client, loadDetail, loadList, submitting]);
 
   const newChat = useCallback(async () => {
+    autoRestoreChatRef.current = false;
+    activeChatIdRef.current = undefined;
+    detailRef.current = null;
     detailRequestGeneration.current += 1;
     setActiveChatId(undefined);
     setDetail(null);
@@ -320,7 +410,7 @@ export function useCanonicalChatState(): ChatState {
     }
   }, [client, records]);
 
-  const messages = detail ? projectCanonicalMessages(detail.messages) : [];
+  const messages = detail ? projectCanonicalTranscript(detail) : [];
   const visibleError = safeError ?? (detail?.record.chat.id === activeChatId ? canonicalChatRunFailure(detail) : null);
   if (visibleError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: visibleError, timestamp: Date.now() });

@@ -37,6 +37,7 @@ import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { managedChatInstances } from "./managed-chat-catalog.js";
 import { configuredHarnessInstanceFromAiSnapshot, unavailableInstance, unavailableReasonFor } from "./configured-harness-catalog.js";
+import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -158,18 +159,7 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
       : provider.availability === "auth_required"
         ? "auth_required" as const
         : "unavailable" as const;
-    return [
-      ["default", "Claude default"],
-      ["opus", "Claude Opus"],
-      ["sonnet", "Claude Sonnet"],
-    ].map(([id, displayName]) => ({
-      id: id!,
-      displayName: displayName!,
-      availability,
-      capabilities: ["reasoning", "tools", "vision"],
-      supportsVision: true,
-      supportsToolUse: true,
-    }));
+    return claudeFallbackCatalog().models.map((model) => ({ ...model, availability }));
   }
   const parsedModel = provider.defaultModel === undefined
     ? null
@@ -197,9 +187,8 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
 function codingOptions(provider: AgentProviderSummary): CanonicalProviderOptionDescriptor[] {
   const driverKind = codingDriverKind(provider);
   if (driverKind !== "codex" && driverKind !== "claude_code") return [];
-  const efforts = driverKind === "claude_code"
-    ? ["low", "medium", "high", "max"]
-    : ["low", "medium", "high", "xhigh", "max", "ultra"];
+  if (driverKind === "claude_code") return claudeFallbackCatalog().options;
+  const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
   return [{
     id: "effort",
     label: "Reasoning",
@@ -713,9 +702,11 @@ export function createChatProviderCatalogService(options: {
     provider: AgentProviderSummary,
     principal: RequestPrincipal,
   ) => Promise<CodingModelCatalogProjection | null>;
+  invalidateCodingModelCatalog?: (principal: RequestPrincipal) => void;
 }): ChatProviderCatalogService {
   const service: ChatProviderCatalogService = {
     async refresh(principal) {
+      options.invalidateCodingModelCatalog?.(principal);
       options.codingProviders.invalidate(principal.userId);
       options.agentRuntimeSource.invalidate?.();
       for (const source of Object.values(options.systemRuntimeSources ?? {})) {

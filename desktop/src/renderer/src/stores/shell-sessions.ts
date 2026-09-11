@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
-import { SHELL_SESSION_CREATE_ATTEMPTS, twoWordShellSessionName } from "../lib/shell-session-names";
+import { twoWordShellSessionName } from "../lib/shell-session-names";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export type ShellSessionPlacement = "active" | "background";
@@ -9,7 +9,12 @@ export type ShellVisualStatus = "running" | "waiting" | "finished" | "idle";
 
 export interface ShellSessionSummary {
   name: string;
-  cwd?: string;
+  workspaceId: string;
+  tabId: string;
+  revision: number;
+  workspaceRevision: number;
+  projectId?: string;
+  cwd: string;
   pinned?: boolean;
   status?: "active" | "exited" | "degraded";
   placement?: ShellSessionPlacement;
@@ -56,30 +61,24 @@ interface ShellSessionsState {
   patchUiState(api: ApiClient, name: string, patch: ShellUiStatePatch): Promise<boolean>;
 }
 
-const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
-const EXISTING_SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const LEGACY_PTY_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_CWD = "projects";
+const TERMINAL_REF_KEY_PATTERN = /^tws_[0-9a-f]{32}:tt_[0-9a-f]{32}$/;
 
 export function isValidShellSessionName(name: string): boolean {
-  return SHELL_SESSION_NAME_PATTERN.test(name);
+  return TERMINAL_REF_KEY_PATTERN.test(name);
 }
 
-/** Server-created login sessions can be longer than user-created/renamed names. */
-export function isExistingShellSessionName(name: string): boolean {
-  return !LEGACY_PTY_SESSION_ID_PATTERN.test(name) && EXISTING_SHELL_SESSION_NAME_PATTERN.test(name);
+export function isValidShellDisplayName(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length >= 1 && trimmed.length <= 120 && !/[\u0000-\u001f\u007f]/.test(trimmed);
 }
 
-function shellConnectCommand(name: string): string {
-  return `matrix shell connect ${name}`;
+function shellConnectCommand(shell: Pick<ShellSessionSummary, "projectId" | "tabId">): string {
+  return `matrix shell connect --project ${shell.projectId ?? "main"} --tab ${shell.tabId}`;
 }
 
 function nextShellName(): string {
   return twoWordShellSessionName();
-}
-
-function isSessionExistsError(err: unknown): boolean {
-  return err instanceof AppError && err.detail === "session_exists";
 }
 
 function errorCategory(err: unknown): AppErrorCategory {
@@ -91,28 +90,49 @@ function asArray<T>(value: unknown): T[] {
 }
 
 function isSafeDisplayCwd(value: unknown): value is string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 4096 || value.includes("\0")) return false;
-  if (value === "~") return true;
+  if (typeof value !== "string" || value.length > 4096 || value.includes("\0")) return false;
+  if (value === "" || value === "~") return true;
   if (value.startsWith("/") || value.startsWith("\\")) return false;
   return !value.split(/[\\/]/).some((segment) => segment === "..");
 }
 
-function asShellSession(value: unknown): ShellSessionSummary | null {
+function asShellSession(value: unknown, workspace: { id: string; revision: number; projectId?: string }): ShellSessionSummary | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  if (typeof record.name !== "string" || !isExistingShellSessionName(record.name)) return null;
-  const shell: ShellSessionSummary = { name: record.name };
-  if (isSafeDisplayCwd(record.cwd)) shell.cwd = record.cwd;
-  if (typeof record.pinned === "boolean") shell.pinned = record.pinned;
-  if (record.status === "active" || record.status === "exited" || record.status === "degraded") shell.status = record.status;
-  if (record.placement === "active" || record.placement === "background") shell.placement = record.placement;
+  if (typeof record.id !== "string" || !/^tt_[0-9a-f]{32}$/.test(record.id)
+    || typeof record.name !== "string" || !isSafeDisplayCwd(record.cwd)) return null;
+  const shell: ShellSessionSummary = {
+    name: `${workspace.id}:${record.id}`,
+    workspaceId: workspace.id,
+    tabId: record.id,
+    revision: typeof record.revision === "number" ? record.revision : 0,
+    workspaceRevision: workspace.revision,
+    ...(workspace.projectId ? { projectId: workspace.projectId } : {}),
+    cwd: record.cwd,
+    subtitle: record.name,
+  };
+  const uiState = record.uiState && typeof record.uiState === "object"
+    ? record.uiState as Record<string, unknown>
+    : null;
+  const agent = record.agent && typeof record.agent === "object"
+    ? record.agent as Record<string, unknown>
+    : null;
+  if (typeof uiState?.pinned === "boolean") shell.pinned = uiState.pinned;
+  if (record.status === "starting" || record.status === "running" || record.status === "idle" || record.status === "active") {
+    shell.status = "active";
+  } else if (record.status === "failed" || record.status === "unavailable" || record.status === "degraded") {
+    shell.status = "degraded";
+  } else if (record.status === "exited") {
+    shell.status = "exited";
+  }
+  if (uiState?.placement === "active" || uiState?.placement === "background") shell.placement = uiState.placement;
   if (typeof record.createdAt === "string") shell.createdAt = record.createdAt;
   if (typeof record.updatedAt === "string") shell.updatedAt = record.updatedAt;
   if (typeof record.attachedClients === "number" && Number.isFinite(record.attachedClients)) shell.attachedClients = record.attachedClients;
   if (typeof record.latestSeq === "number" && Number.isFinite(record.latestSeq)) shell.latestSeq = record.latestSeq;
   else if (record.latestSeq === null) shell.latestSeq = null;
-  if (typeof record.lastSeenSeq === "number" && Number.isFinite(record.lastSeenSeq)) shell.lastSeenSeq = record.lastSeenSeq;
-  else if (record.lastSeenSeq === null) shell.lastSeenSeq = null;
+  if (typeof uiState?.lastSeenSeq === "number" && Number.isFinite(uiState.lastSeenSeq)) shell.lastSeenSeq = uiState.lastSeenSeq;
+  else if (uiState?.lastSeenSeq === null) shell.lastSeenSeq = null;
   if (typeof record.unread === "boolean") shell.unread = record.unread;
   if (
     record.visualStatus === "running" ||
@@ -122,9 +142,9 @@ function asShellSession(value: unknown): ShellSessionSummary | null {
   ) {
     shell.visualStatus = record.visualStatus;
   }
-  if (typeof record.attachCommand === "string") shell.attachCommand = record.attachCommand;
-  if (record.agent === "claude" || record.agent === "codex" || record.agent === "opencode" || record.agent === "pi") {
-    shell.agent = record.agent;
+  shell.attachCommand = shellConnectCommand(shell);
+  if (agent?.providerId === "claude" || agent?.providerId === "codex" || agent?.providerId === "opencode" || agent?.providerId === "pi") {
+    shell.agent = agent.providerId;
   }
   if (typeof record.subtitle === "string") shell.subtitle = record.subtitle;
   if (typeof record.lastAction === "string") shell.lastAction = record.lastAction;
@@ -161,9 +181,17 @@ function asShellSession(value: unknown): ShellSessionSummary | null {
 }
 
 function parseShellSessions(value: unknown): ShellSessionSummary[] {
-  return asArray<unknown>(value).flatMap((entry) => {
-    const shell = asShellSession(entry);
-    return shell ? [shell] : [];
+  return asArray<Record<string, unknown>>(value).flatMap((entry) => {
+    if (typeof entry.id !== "string" || !/^tws_[0-9a-f]{32}$/.test(entry.id) || !Array.isArray(entry.tabs)) return [];
+    const workspace = {
+      id: entry.id,
+      revision: typeof entry.revision === "number" ? entry.revision : 0,
+      ...(typeof entry.projectId === "string" ? { projectId: entry.projectId } : {}),
+    };
+    return entry.tabs.flatMap((tab) => {
+      const shell = asShellSession(tab, workspace);
+      return shell ? [shell] : [];
+    });
   });
 }
 
@@ -177,9 +205,12 @@ function deriveUnread(shell: ShellSessionSummary): ShellSessionSummary {
 function optimisticRename(shell: ShellSessionSummary, nextName: string): ShellSessionSummary {
   return {
     ...shell,
-    name: nextName,
-    attachCommand: shell.attachCommand ? shellConnectCommand(nextName) : shell.attachCommand,
+    subtitle: nextName,
   };
+}
+
+function originalDisplayName(sessions: ShellSessionSummary[], name: string): string | undefined {
+  return sessions.find((session) => session.name === name)?.subtitle;
 }
 
 function applyUiPatch(shell: ShellSessionSummary, patch: ShellUiStatePatch): ShellSessionSummary {
@@ -244,11 +275,8 @@ function rollbackUiPatch(
 }
 
 async function fetchShellSessions(api: ApiClient): Promise<ShellSessionSummary[]> {
-  const response = await api.get<{ sessions?: unknown }>("/api/terminal/sessions");
-  if (!response || !Array.isArray(response.sessions)) {
-    throw new AppError("server", { detail: "invalid_sessions_response" });
-  }
-  return parseShellSessions(response.sessions);
+  const response = await api.get<{ workspaces: unknown }>("/api/terminal/workspaces");
+  return parseShellSessions(response.workspaces);
 }
 
 export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
@@ -288,80 +316,80 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     // must not repopulate the new one (the transition already reset `creating`).
     const generation = captureRuntimeGeneration();
     set({ creating: true, error: null });
-    for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
-      const name = nextShellName();
+    const displayName = nextShellName();
+    try {
+      const ensured = await api.post<{ workspace?: Record<string, unknown> }>("/api/terminal/workspaces/ensure", {});
+      const workspaceId = typeof ensured.workspace?.id === "string" ? ensured.workspace.id : "";
+      if (!/^tws_[0-9a-f]{32}$/.test(workspaceId)) throw new Error("Invalid terminal workspace response");
+      const response = await api.post<{ tab?: unknown }>(`/api/terminal/workspaces/${workspaceId}/tabs`, {
+        name: displayName,
+        cwd: DEFAULT_CWD,
+        ...(options.cmd ? { command: ["sh", "-lc", options.cmd] } : {}),
+        ...(options.agent ? { agent: { providerId: options.agent } } : {}),
+      });
+      if (!isCurrentRuntimeGeneration(generation)) return null;
+      const created = asShellSession(response.tab, {
+        id: workspaceId,
+        revision: typeof ensured.workspace?.revision === "number" ? ensured.workspace.revision : 0,
+      });
+      if (!created) throw new Error("Invalid terminal tab response");
+      const refreshSequence = get().loadSequence + 1;
+      set({ loadSequence: refreshSequence });
       try {
-        const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
-          name,
-          cwd: DEFAULT_CWD,
-          ...(options.cmd ? { cmd: options.cmd } : {}),
-          ...(options.agent ? { agent: options.agent } : {}),
-        });
+        const sessions = await fetchShellSessions(api);
         if (!isCurrentRuntimeGeneration(generation)) return null;
-        const createdName = typeof response.name === "string" && isValidShellSessionName(response.name) ? response.name : name;
-        let created: ShellSessionSummary = {
-          name: createdName,
-          status: "active",
-          placement: "active",
-          attachCommand: shellConnectCommand(createdName),
-          ...(options.agent ? { agent: options.agent } : {}),
-        };
-        const refreshSequence = get().loadSequence + 1;
-        set({ loadSequence: refreshSequence });
-        try {
-          const sessions = await fetchShellSessions(api);
-          if (!isCurrentRuntimeGeneration(generation)) return null;
-          if (refreshSequence !== get().loadSequence) {
-            set({ creating: false, error: null });
-            return created;
-          }
-          created = sessions.find((session) => session.name === createdName) ?? created;
-          set((state) => ({
-            sessions: sessions.some((session) => session.name === createdName) ? sessions : [created, ...state.sessions],
-            creating: false,
-            loading: false,
-            error: null,
-            authoritativeRevision: state.authoritativeRevision + 1,
-          }));
-        } catch (refreshErr: unknown) {
-          if (!isCurrentRuntimeGeneration(generation)) return null;
-          if (refreshSequence !== get().loadSequence) {
-            set({ creating: false, error: null });
-            return created;
-          }
-          console.error("[shell-sessions] Failed to refresh after shell create:", refreshErr);
-          set((state) => ({
-            sessions: state.sessions.some((session) => session.name === created.name) ? state.sessions : [created, ...state.sessions],
-            creating: false,
-            loading: false,
-            error: errorCategory(refreshErr),
-          }));
+        if (refreshSequence !== get().loadSequence) {
+          set({ creating: false, error: null });
+          return created;
         }
-        return created;
-      } catch (err: unknown) {
+        const refreshed = sessions.find((session) => session.name === created.name) ?? created;
+        set((state) => ({
+          sessions: sessions.some((session) => session.name === created.name) ? sessions : [refreshed, ...state.sessions],
+          creating: false,
+          loading: false,
+          error: null,
+          authoritativeRevision: state.authoritativeRevision + 1,
+        }));
+      } catch (refreshErr: unknown) {
         if (!isCurrentRuntimeGeneration(generation)) return null;
-        if (isSessionExistsError(err) && attempt < SHELL_SESSION_CREATE_ATTEMPTS - 1) continue;
-        console.error("[shell-sessions] Failed to create shell session:", err);
-        set({ creating: false, error: errorCategory(err) });
-        return null;
+        if (refreshSequence !== get().loadSequence) {
+          set({ creating: false, error: null });
+          return created;
+        }
+        console.error("[shell-sessions] Failed to refresh after shell create:", refreshErr);
+        set((state) => ({
+          sessions: state.sessions.some((session) => session.name === created.name) ? state.sessions : [created, ...state.sessions],
+          creating: false,
+          loading: false,
+          error: errorCategory(refreshErr),
+        }));
       }
+      return created;
+    } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(generation)) return null;
+      console.error("[shell-sessions] Failed to create shell session:", err);
+      set({ creating: false, error: errorCategory(err) });
+      return null;
     }
-    set({ creating: false, error: "server" });
-    return null;
   },
 
   adoptCreatedSession: (name) => {
-    if (!isExistingShellSessionName(name)) return;
+    if (!isValidShellSessionName(name)) return;
+    const [workspaceId, tabId] = name.split(":") as [string, string];
     set((state) => (
       state.sessions.some((session) => session.name === name)
         ? state
         : {
             sessions: [{
               name,
-              cwd: DEFAULT_CWD,
+              workspaceId,
+              tabId,
+              revision: 0,
+              workspaceRevision: 0,
+              cwd: "",
               status: "active",
               placement: "active",
-              attachCommand: shellConnectCommand(name),
+              attachCommand: shellConnectCommand({ tabId }),
             }, ...state.sessions],
             // A session-list fetch that started before this confirmed create
             // can return a stale snapshot without the new session. Advance
@@ -379,7 +407,8 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     const deleted = deletedIndex >= 0 ? previous[deletedIndex] : undefined;
     set({ sessions: previous.filter((session) => session.name !== name), error: null });
     try {
-      await api.delete(`/api/terminal/sessions/${encodeURIComponent(name)}?force=1`);
+      if (!deleted) throw new Error("Terminal tab not found");
+      await api.delete(`/api/terminal/workspaces/${deleted.workspaceId}/tabs/${deleted.tabId}`);
       return true;
     } catch (err: unknown) {
       // After a computer switch the cleared list must not get the old
@@ -396,8 +425,8 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
 
   rename: async (api, name, nextNameRaw) => {
     const nextName = nextNameRaw.trim();
-    if (name === nextName) return true;
-    if (!isValidShellSessionName(nextName)) {
+    if (originalDisplayName(get().sessions, name) === nextName) return true;
+    if (nextName.length < 1 || nextName.length > 120) {
       set({ error: "server" });
       return false;
     }
@@ -410,12 +439,20 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       error: null,
     });
     try {
-      const response = await api.put<{ session?: unknown }>(`/api/terminal/sessions/${encodeURIComponent(name)}/rename`, { name: nextName });
+      if (!original) throw new Error("Terminal tab not found");
+      const response = await api.patch<{ tab?: unknown }>(`/api/terminal/workspaces/${original.workspaceId}/tabs/${original.tabId}`, {
+        name: nextName,
+        baseRevision: original.revision,
+      });
       if (!isCurrentRuntimeGeneration(generation)) return false;
-      const renamed = asShellSession(response.session) ?? null;
+      const renamed = asShellSession(response.tab, {
+        id: original.workspaceId,
+        revision: original.workspaceRevision,
+        ...(original.projectId ? { projectId: original.projectId } : {}),
+      });
       if (renamed) {
         set((state) => ({
-          sessions: state.sessions.map((session) => (session.name === nextName ? renamed : session)),
+          sessions: state.sessions.map((session) => (session.name === name ? renamed : session)),
           error: null,
         }));
       }
@@ -424,7 +461,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       if (!isCurrentRuntimeGeneration(generation)) return false;
       console.error("[shell-sessions] Failed to rename shell session:", err);
       set((state) => ({
-        sessions: original ? rollbackRename(state.sessions, original, originalIndex, nextName) : state.sessions,
+        sessions: original ? state.sessions.map((session) => session.name === name ? original : session) : state.sessions,
         error: errorCategory(err),
       }));
       return false;
@@ -435,18 +472,20 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     const previous = get().sessions;
     const next = moveSession(previous, fromName, toName);
     if (!next) return true;
+    const moved = previous.find((session) => session.name === fromName);
+    const target = previous.find((session) => session.name === toName);
+    if (!moved || !target || moved.workspaceId !== target.workspaceId) return false;
     // A runtime switch clears this store while the PUT is in flight; the old
     // computer's response must not repopulate the new computer's list.
     const runtimeGeneration = captureRuntimeGeneration();
     set({ sessions: next, error: null });
     try {
-      const response = await api.put<{ sessions?: unknown }>("/api/terminal/sessions/order", {
-        order: next.map((session) => session.name),
+      const workspaceTabs = next.filter((session) => session.workspaceId === moved.workspaceId);
+      await api.put<{ workspace?: unknown }>(`/api/terminal/workspaces/${moved.workspaceId}/tabs/order`, {
+        tabIds: workspaceTabs.map((session) => session.tabId),
+        baseRevision: moved.workspaceRevision,
       });
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
-      if (Array.isArray(response.sessions)) {
-        set({ sessions: parseShellSessions(response.sessions), error: null });
-      }
       return true;
     } catch (err: unknown) {
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
@@ -464,8 +503,16 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       error: null,
     });
     try {
-      const response = await api.patch<{ session?: unknown }>(`/api/terminal/sessions/${encodeURIComponent(name)}/ui-state`, patch);
-      const updated = asShellSession(response.session) ?? null;
+      if (!previousSession) throw new Error("Terminal tab not found");
+      const response = await api.patch<{ tab?: unknown }>(`/api/terminal/workspaces/${previousSession.workspaceId}/tabs/${previousSession.tabId}/ui-state`, {
+        ...patch,
+        baseRevision: previousSession.revision,
+      });
+      const updated = asShellSession(response.tab, {
+        id: previousSession.workspaceId,
+        revision: previousSession.workspaceRevision,
+        ...(previousSession.projectId ? { projectId: previousSession.projectId } : {}),
+      });
       if (updated) {
         set((state) => ({
           sessions: state.sessions.map((session) => (session.name === updated.name ? updated : session)),

@@ -97,11 +97,10 @@ const ROUTE_SCOPED_SIGNATURE_PATHS = [
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = [
-  "/ws",
   "/ws/chats/events",
+  "/ws",
   "/ws/voice",
-  "/ws/terminal",
-  "/ws/terminal/session",
+  "/ws/terminal/tab",
   "/ws/onboarding",
   "/ws/vocal",
 ];
@@ -200,7 +199,7 @@ export function authMiddleware(
     const expectedRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT;
 
     const normalizedPath = c.req.path;
-    if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
+    if ((c.req.method === "GET" && /^\/api\/share\/chats\/[a-f0-9]{64}$/.test(normalizedPath)) || PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return nextWithReady(c, next);
     }

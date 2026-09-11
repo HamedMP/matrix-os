@@ -149,9 +149,17 @@ function pathWithMatrixAgentBins(runtimeHome: string, nodePrefix = matrixNodePre
 }
 
 export function buildAgentRuntimeEnvironment(runtimeHome?: string): Record<string, string> {
-  if (!runtimeHome) return {};
+  const executionEnv: Record<string, string> = {};
+  for (const key of ["MATRIX_CODEX_TOOL_DEADLINE_MS", "MATRIX_CODEX_COMMAND_DEADLINE_MS", "MATRIX_CODEX_NO_PROGRESS_MS", "MATRIX_CODEX_TURN_DEADLINE_MS"]) {
+    const value = Number(process.env[key]);
+    if (Number.isSafeInteger(value) && value > 0 && value <= 86_400_000) {
+      executionEnv[key] = String(value);
+    }
+  }
+  if (!runtimeHome) return executionEnv;
   const nodePrefix = matrixNodePrefix();
   return {
+    ...executionEnv,
     HOME: runtimeHome,
     MATRIX_HOME: runtimeHome,
     MATRIX_NODE_PREFIX: nodePrefix,

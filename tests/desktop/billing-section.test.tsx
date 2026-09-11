@@ -100,12 +100,100 @@ describe("desktop billing settings", () => {
 
     render(<BillingSection />);
     await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: /Open portal/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Manage billing/i }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/billing/portal", {}));
     expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
       url: "https://billing.stripe.test/session",
     });
+  });
+
+  it("explains missing billing linkage instead of hiding management", async () => {
+    const api = makeApi({
+      ...activeBilling,
+      entitlement: { ...activeBilling.entitlement, source: "override", portalAvailable: false },
+    });
+    useConnection.setState({ api: api as never });
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+
+    const button = screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText(/no linked billing customer/)).not.toBeNull();
+    fireEvent.click(button);
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("explains an unavailable portal without calling a paid account internal", async () => {
+    useConnection.setState({ api: makeApi({
+      ...activeBilling,
+      entitlement: { ...activeBilling.entitlement, portalAvailable: false },
+    }) as never });
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+
+    expect((screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Billing management is not available for this account yet/)).not.toBeNull();
+    expect(screen.queryByText(/no linked billing customer/)).toBeNull();
+  });
+
+  it("disables management while refreshing and explains a failed status check", async () => {
+    const api = makeApi(activeBilling);
+    useConnection.setState({ api: api as never });
+    render(<BillingSection />);
+    expect((screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    let rejectRefresh!: (reason: Error) => void;
+    api.get.mockImplementationOnce(() => new Promise((_, reject) => { rejectRefresh = reject; }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    const button = screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.post).not.toHaveBeenCalled();
+    rejectRefresh(new Error("status unavailable"));
+    await waitFor(() => expect(screen.getByText(/Refresh your billing status/)).not.toBeNull());
+    expect(button.disabled).toBe(true);
+    expect(screen.queryByText(/no linked billing customer/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(button.disabled).toBe(false));
+  });
+
+  it("prevents duplicate portal requests while opening the browser", async () => {
+    let finishOpening!: () => void;
+    vi.mocked(window.operator.invoke).mockImplementation(() => new Promise<void>((resolve) => {
+      finishOpening = resolve;
+    }));
+    const api = makeApi(activeBilling);
+    useConnection.setState({ api: api as never });
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Manage billing/i }));
+    await waitFor(() => expect(window.operator.invoke).toHaveBeenCalled());
+    const opening = screen.getByRole("button", { name: /Opening/i }) as HTMLButtonElement;
+    expect(opening.disabled).toBe(true);
+    fireEvent.click(opening);
+    expect(api.post).toHaveBeenCalledTimes(1);
+    finishOpening();
+    await waitFor(() => expect((screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it.each(["request", "redirect", "browser"])("shows a safe retryable error for a %s failure", async (failure) => {
+    const api = makeApi(activeBilling);
+    if (failure === "request") api.post.mockRejectedValueOnce(new Error("private provider detail"));
+    if (failure === "redirect") api.post.mockResolvedValueOnce({ url: "javascript:alert(1)" });
+    if (failure === "browser") vi.mocked(window.operator.invoke).mockRejectedValueOnce(new Error("private filesystem path"));
+    useConnection.setState({ api: api as never });
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Manage billing/i }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Billing portal is unavailable. Try again in a moment."));
+    expect((screen.getByRole("button", { name: /Manage billing/i }) as HTMLButtonElement).disabled).toBe(false);
+    if (failure !== "browser") expect(window.operator.invoke).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Manage billing/i }));
+    await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
+      url: "https://billing.stripe.test/session",
+    }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
   it("starts checkout with the selected native billing options", async () => {
@@ -145,7 +233,7 @@ describe("desktop billing settings", () => {
     render(<BillingSection />);
     await waitFor(() => expect(screen.getByText("Billing required")).not.toBeNull());
 
-    expect(screen.getByRole("button", { name: /Open portal/i })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Manage billing/i })).not.toBeNull();
     expect(screen.getByRole("button", { name: /Continue to checkout/i })).not.toBeNull();
   });
 });

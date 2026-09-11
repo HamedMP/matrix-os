@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./boot-screen": {
+      "types": "./src/boot-screen.ts",
+      "import": "./dist/boot-screen.js",
+      "default": "./dist/boot-screen.js"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js",

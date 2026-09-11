@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = join(import.meta.dirname, "../..");
-const releaseVersion = "0.3.15";
+const releaseVersion = "0.3.16";
 
 function readSection(markdown: string, heading: string): string {
   const marker = `## ${heading}\n`;

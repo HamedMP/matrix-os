@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render as renderUI, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NavigationHeader from "../../desktop/src/renderer/src/features/mission-control/NavigationHeader";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "../../desktop/src/renderer/src/stores/native-desktop-mode";
+
+function render(ui: React.ReactElement) {
+  return renderUI(<GettingStartedVisibilityProvider scope="header-test">{ui}</GettingStartedVisibilityProvider>);
+}
 
 describe("Desktop navigation header", () => {
   beforeEach(() => {

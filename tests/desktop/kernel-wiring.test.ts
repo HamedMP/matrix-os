@@ -13,6 +13,11 @@ import { useProjectView } from "../../desktop/src/renderer/src/stores/project-vi
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
+import {
+  resetDesktopIconsRuntime,
+  useDesktopIcons,
+} from "../../desktop/src/renderer/src/stores/desktop-icons";
+import { createDefaultOsViewDocument } from "@matrix-os/contracts";
 
 type MockKernelSocket = {
   subscribe: ReturnType<typeof vi.fn>;
@@ -53,7 +58,7 @@ function codingAgentAttentionSummaryFixture() {
       hasMore: false,
       limit: 20,
     },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: {
       maxPromptBytes: 16384,
@@ -106,6 +111,8 @@ describe("kernel wiring", () => {
     useProjectWorkspaces.setState({ entries: {} });
     useThreads.setState({ threads: [], activeThreadId: null });
     useHermesChat.setState(useHermesChat.getInitialState(), true);
+    resetDesktopIconsRuntime();
+    useDesktopIcons.setState({ icons: [], loaded: false });
     useCodingAgentWorkspace.setState({
       status: "idle",
       summary: null,
@@ -233,6 +240,35 @@ describe("kernel wiring", () => {
       api,
       "conversation-live",
     ));
+    cleanup();
+  });
+
+  it("reloads a newer Desktop icon revision after an OS-view invalidation", async () => {
+    const sushiIcon = { path: "apps/sushi-counter/index.html", x: 20, y: 480 };
+    const api = {
+      get: vi.fn().mockResolvedValue({
+        revision: 7,
+        document: {
+          ...createDefaultOsViewDocument(),
+          desktop: { windows: [], icons: [sushiIcon] },
+        },
+        updatedAt: "2026-09-08T12:00:00.000Z",
+      }),
+    };
+    useConnection.setState({ api: api as never });
+    const cleanup = wireKernel();
+    const handleMessage = kernelSocketMocks.instances[0]?.subscribe.mock.calls[0]?.[0] as (
+      msg: unknown,
+    ) => void;
+
+    handleMessage({
+      type: "os-view:changed",
+      revision: 7,
+      updatedAt: "2026-09-08T12:00:00.000Z",
+    });
+
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/os-view-state"));
+    await vi.waitFor(() => expect(useDesktopIcons.getState().icons).toEqual([sushiIcon]));
     cleanup();
   });
 

@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
-import { countPanes as countPanesFromStore, getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
+import { getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
+import { dispatchTerminalPaneAction } from "./terminal-pane-actions";
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
 import { useThemeStyle } from "../window/useThemeStyle";
@@ -9,9 +10,15 @@ import { applyTerminalDesignTheme, resolveTerminalDesign } from "./terminal-desi
 import { TerminalDesignTabStrip } from "./TerminalDesignTabStrip";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
-import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
+import {
+  drainTerminalLaunchQueue,
+  releaseTerminalLaunchTarget,
+  requeueFailedTerminalLaunch,
+  TERMINAL_LAUNCH_EVENT,
+} from "@/lib/terminal-launch";
 import {
   drainExistingTerminalSessionQueueWithRetry,
+  enqueueExistingTerminalRef,
   hasQueuedExistingTerminalSession,
   PROVIDER_TERMINAL_SESSION_EVENT,
 } from "@/lib/provider-terminal-session";
@@ -24,38 +31,38 @@ import { TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChro
 import { MobileCommandComposer, MobileTerminalActions } from "./MobileTerminalControls";
 import { DEFAULT_TERMINAL_SIDEBAR_WIDTH, LocalTerminalSidebar } from "./TerminalSidebar";
 import { TerminalKeyBar } from "./TerminalKeyBar";
-import { isCanonicalShellSessionId } from "./terminal-session-id";
+import { isCanonicalShellSessionId, parseTerminalRefKey, terminalRefKey } from "./terminal-session-id";
+import type { TerminalWorkspace } from "@matrix-os/contracts";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetail } from "./mobile-terminal-events";
 import {
   DEFAULT_CWD,
   applyCompatModeToTabs,
-  closePaneInTree,
   compatModeForShellSession,
-  destroyTerminalSessions,
   getCanonicalShellSessionIds,
   getFirstPaneId,
   getPaneIdsForSession,
-  getPaneSessionId,
   getSessionIds,
   genId,
   hasPaneId,
   layoutUsesOnlyCanonicalShellSessions,
+  mergeTerminalLayouts,
   removeSessionFromPaneTree,
   renameSessionInTree,
   setPaneSessionId,
-  splitPaneInTree,
   terminalSessionName,
   type Tab,
   type TerminalLayout,
 } from "./terminal-layout";
 import { formatShellDisplayName } from "./TerminalSidebarItems";
-import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./DesktopTerminalWorkspace";
+import { useTerminalSessionCreate } from "./useTerminalSessionCreate";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
+
+const MAX_UNMOUNTED_LAYOUT_SAVE_RETRIES = 3;
 
 function dispatchPaneInput(paneId: string | null, data: string): void {
   if (!paneId) return;
@@ -67,27 +74,18 @@ function dispatchPaneInput(paneId: string | null, data: string): void {
   );
 }
 
-async function readShellErrorCode(res: Response): Promise<string | null> {
-  try {
-    const data = await res.clone().json() as { error?: { code?: unknown } };
-    return typeof data.error?.code === "string" ? data.error.code : null;
-  } catch (err: unknown) {
-    console.warn("Failed to parse shell error response:", err instanceof Error ? err.message : String(err));
-    return null;
-  }
-}
-
-async function isShellSessionExistsResponse(res: Response): Promise<boolean> {
-  return res.status === 409 && await readShellErrorCode(res) === "session_exists";
-}
-
 interface ShellSessionSummary {
-  name?: unknown;
-  status?: unknown;
+  name: string;
+  workspaceId: string;
+  tabId: string;
+  revision: number;
+  cwd: string;
+  status: string;
+  projectId?: string;
 }
 
 // In-flight dedupe for the sessions list: the mount bootstrap needs the same
-// /api/terminal/sessions payload as the ensure step that follows it, so both
+// /api/terminal/workspaces payload as the ensure step that follows it, so both
 // join one fetch instead of paying two serial roundtrips. Keyed by gateway
 // URL so navigating between machines (/vm/A -> /vm/B) never joins a fetch
 // started for the previous machine.
@@ -100,12 +98,21 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
   }
   const promise = (async () => {
     try {
-      const res = await fetch(`${key}/api/terminal/sessions`, {
+      const res = await fetch(`${key}/api/terminal/workspaces`, {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) return null;
-      const data = await res.json() as { sessions?: ShellSessionSummary[] };
-      return Array.isArray(data.sessions) ? data.sessions : [];
+      const data = await res.json() as { workspaces?: TerminalWorkspace[] };
+      if (!Array.isArray(data.workspaces)) return [];
+      return data.workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({
+        name: terminalRefKey({ workspaceId: workspace.id, tabId: tab.id }),
+        workspaceId: workspace.id,
+        tabId: tab.id,
+        revision: tab.revision,
+        cwd: tab.cwd,
+        status: tab.status,
+        ...(workspace.scope === "project" ? { projectId: workspace.projectId } : {}),
+      })));
     } catch (err: unknown) {
       console.warn("Failed to list shell sessions:", err instanceof Error ? err.message : String(err));
       return null;
@@ -119,39 +126,6 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
   });
 }
 
-type SavedShellSessionsStatus = "active" | "stale" | "unavailable";
-
-async function getSavedShellSessionsStatus(sessionNames: string[]): Promise<SavedShellSessionsStatus> {
-  const requestedNames = Array.from(new Set(
-    sessionNames.filter((name) => isCanonicalShellSessionId(name)),
-  ));
-  if (requestedNames.length === 0) {
-    return "active";
-  }
-
-  try {
-    const sessions = await listShellSessions();
-    if (sessions === null) {
-      return "unavailable";
-    }
-    const existingNames = new Set<string>();
-    for (const session of sessions) {
-      if (typeof session.name === "string") {
-        existingNames.add(session.name);
-      }
-    }
-
-    // A saved layout is only a UI reference. Missing runtimes can be stopped or
-    // intentionally interrupted, so mounting Terminal must never relaunch them.
-    // Falling back to the first active session also prevents a stale layout from
-    // producing one expected 409 response per missing pane on every app mount.
-    return requestedNames.every((name) => existingNames.has(name)) ? "active" : "stale";
-  } catch (err: unknown) {
-    console.warn("Failed to validate saved terminal sessions:", err instanceof Error ? err.message : err);
-    return "unavailable";
-  }
-}
-
 async function getFirstOrderedShellSessionName(): Promise<string | null> {
   const sessions = await listShellSessions();
   if (!sessions) {
@@ -162,7 +136,78 @@ async function getFirstOrderedShellSessionName(): Promise<string | null> {
       return session.name;
     }
   }
-  return null;
+  const workspace = await ensureWorkspaceForCwd(DEFAULT_CWD);
+  if (!workspace) return null;
+  const existing = workspace.tabs.find((tab) => tab.status !== "exited" && tab.status !== "failed");
+  if (existing) return terminalRefKey({ workspaceId: workspace.id, tabId: existing.id });
+  const response = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${workspace.id}/tabs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Terminal", cwd: DEFAULT_CWD }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return null;
+  const payload = await response.json() as { tab?: { id?: unknown } };
+  return typeof payload.tab?.id === "string"
+    ? terminalRefKey({ workspaceId: workspace.id, tabId: payload.tab.id })
+    : null;
+}
+
+async function destroyTerminalTab(sessionId: string): Promise<boolean> {
+  const ref = parseTerminalRefKey(sessionId);
+  if (!ref) return false;
+  try {
+    const response = await fetch(
+      `${getGatewayUrl()}/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`,
+      {
+        method: "DELETE",
+        keepalive: true,
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!response.ok) console.warn("Failed to delete ephemeral terminal tab:", response.status);
+    return response.ok;
+  } catch (error: unknown) {
+    console.warn("Failed to delete ephemeral terminal tab:", error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+function destroyTerminalTabs(sessionIds: string[]): void {
+  const seenRefs: Record<string, true> = Object.create(null) as Record<string, true>;
+  for (const sessionId of sessionIds) {
+    if (seenRefs[sessionId]) continue;
+    seenRefs[sessionId] = true;
+    void destroyTerminalTab(sessionId);
+  }
+}
+
+async function ensureWorkspaceForCwd(cwd: string): Promise<TerminalWorkspace | null> {
+  let projectId: string | undefined;
+  const slug = cwd.split("/").filter(Boolean)[1];
+  if (cwd.startsWith("projects/") && slug) {
+    try {
+      const projectsResponse = await fetch(`${getGatewayUrl()}/api/projects?root=projects`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (projectsResponse.ok) {
+        const projects = await projectsResponse.json() as { projects?: Array<{ id?: unknown; slug?: unknown }> };
+        const project = projects.projects?.find((candidate) => candidate.slug === slug);
+        if (typeof project?.id === "string") projectId = project.id;
+      }
+    } catch (error) {
+      console.warn("Failed to resolve terminal project workspace:", error);
+    }
+  }
+  const response = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/ensure`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(projectId ? { projectId } : {}),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return null;
+  const payload = await response.json() as { workspace?: TerminalWorkspace };
+  return payload.workspace ?? null;
 }
 
 let globalShellThemePreferenceLoadStarted = false;
@@ -201,8 +246,6 @@ function terminalAppDebug(event: string, details: Record<string, unknown>): void
   console.info("[terminal-debug][app]", event, details);
 }
 
-const countPanes = countPanesFromStore;
-
 interface TerminalAppProps {
   initialCommand?: string;
   initialLabel?: string;
@@ -231,10 +274,14 @@ interface TerminalAppProps {
   suspended?: boolean;
   /** Use the native Desktop session workspace inside a web OS window. */
   desktopParity?: boolean;
+  /** Stable owner ID for this ordinary Terminal window's independent layout. */
+  layoutId?: string;
+  /** Setup/login terminals never read or write durable window layouts. */
+  persistence?: "durable" | "ephemeral";
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal shell component; extraction tracked separately. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
-export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false, desktopParity = false }: TerminalAppProps = {}) {
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/no-high-complexity-react-function, react-doctor/prefer-useReducer -- no-giant-component/no-high-complexity-react-function: cohesive core terminal shell component whose extraction is tracked separately; splitting it during a retry-idempotency fix would be broad and behavior-changing. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
+export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false, desktopParity = false, layoutId, persistence = "durable" }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
@@ -273,6 +320,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [initialized, setInitialized] = useState(false);
   const [mobileInputActive, setMobileInputActive] = useState(false);
   const [desktopSessionState, setDesktopSessionState] = useState<{ count: number; ready: boolean }>({ count: 0, ready: false });
+  const [unavailableSessionIds, setUnavailableSessionIds] = useState<string[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<Tab[]>(tabs);
@@ -295,8 +343,15 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const terminalLayoutHydratedRef = useRef(false);
   const terminalLayoutDirtyRef = useRef(false);
+  const terminalLayoutChangeVersionRef = useRef(0);
+  const terminalLayoutRevisionRef = useRef(0);
+  const terminalLayoutBaseRef = useRef<TerminalLayout | null>(null);
+  const terminalLayoutSkipNextDirtyRef = useRef(false);
+  const terminalLayoutRetryAttemptRef = useRef(0);
+  const terminalLayoutUnmountedRetryCountRef = useRef(0);
   const markTerminalLayoutDirty = () => {
     terminalLayoutDirtyRef.current = true;
+    terminalLayoutChangeVersionRef.current += 1;
   };
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `log` is consumed in the dependency array of the tabs-changed useEffect below; removing the memo would re-create it every render and re-run that effect.
   const log = useCallback((event: string, details: Record<string, unknown> = {}) => {
@@ -328,33 +383,105 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, [mobile, mobileTerminalInputId]);
 
-  const persistLayoutNow = () => {
+  const persistLayoutNow = async (): Promise<boolean> => {
+    if (persistence === "ephemeral") return true;
+    const changeVersion = terminalLayoutChangeVersionRef.current;
     const layout: TerminalLayout = {
       tabs: tabsRef.current,
       activeTabId: activeTabIdRef.current,
       ...(initialMobileRef.current ? {} : { sidebarOpen: sidebarOpenRef.current }),
     };
 
-    return fetch(`${getGatewayUrl()}/api/terminal/layout`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(layout),
-      keepalive: true,
-      signal: AbortSignal.timeout(10_000),
-    }).catch((err: unknown) => {
-      console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
-    });
-  };
-
-  const getPendingSessionIds = (paneIds: string[]) => {
-    const seen = new Set<string>();
-    for (const paneId of paneIds) {
-      const sessionId = pendingPaneSessionsRef.current!.get(paneId);
-      if (sessionId) {
-        seen.add(sessionId);
+    const endpoint = layoutId
+      ? `${getGatewayUrl()}/api/terminal/window-layouts/${encodeURIComponent(layoutId)}`
+      : `${getGatewayUrl()}/api/terminal/layout`;
+    try {
+      const res = await fetch(endpoint, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(layoutId
+          ? { baseRevision: terminalLayoutRevisionRef.current, layout }
+          : layout),
+        keepalive: true,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (layoutId && res.status === 409) {
+        const currentRes = await fetch(endpoint, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!currentRes.ok) {
+          console.warn("Failed to reload terminal layout after conflict:", currentRes.status);
+          return false;
+        }
+        const current = await currentRes.json() as {
+          revision?: unknown;
+          layout?: TerminalLayout;
+        };
+        if (typeof current.revision !== "number" || !current.layout) {
+          console.warn("Failed to reload terminal layout after conflict: invalid response");
+          return false;
+        }
+        const merged = mergeTerminalLayouts(
+          terminalLayoutBaseRef.current ?? current.layout,
+          layout,
+          current.layout,
+        );
+        const retryRes = await fetch(endpoint, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ baseRevision: current.revision, layout: merged }),
+          keepalive: true,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!retryRes.ok) {
+          console.warn("Failed to save rebased terminal layout:", retryRes.status);
+          return false;
+        }
+        const saved = await retryRes.json() as { revision?: unknown; layout?: TerminalLayout };
+        if (typeof saved.revision !== "number") {
+          console.warn("Failed to save rebased terminal layout: invalid response");
+          return false;
+        }
+        terminalLayoutRevisionRef.current = saved.revision;
+        const persistedLayout = saved.layout ?? merged;
+        terminalLayoutBaseRef.current = persistedLayout;
+        const changedDuringSave = terminalLayoutChangeVersionRef.current !== changeVersion;
+        const latestLayout: TerminalLayout = {
+          tabs: tabsRef.current,
+          activeTabId: activeTabIdRef.current,
+          ...(initialMobileRef.current ? {} : { sidebarOpen: sidebarOpenRef.current }),
+        };
+        const layoutToAdopt = changedDuringSave
+          ? mergeTerminalLayouts(layout, latestLayout, persistedLayout)
+          : persistedLayout;
+        if (mountedRef.current && JSON.stringify(layoutToAdopt) !== JSON.stringify(latestLayout)) {
+          const nextTabs = layoutToAdopt.tabs ?? [];
+          const nextActiveTabId = nextTabs.some((tab) => tab.id === layoutToAdopt.activeTabId)
+            ? layoutToAdopt.activeTabId ?? ""
+            : nextTabs[0]?.id ?? "";
+          terminalLayoutSkipNextDirtyRef.current = !changedDuringSave;
+          setTabs(applyCompatModeToTabs(nextTabs));
+          setActiveTabId(nextActiveTabId);
+          if (!initialMobileRef.current) setSidebarOpen(layoutToAdopt.sidebarOpen ?? true);
+        }
+        return true;
       }
+      if (!res.ok) {
+        console.warn("Failed to save terminal layout:", res.status);
+        return false;
+      }
+      if (layoutId) {
+        const saved = await res.json() as { revision?: unknown; layout?: TerminalLayout };
+        if (typeof saved.revision === "number") {
+          terminalLayoutRevisionRef.current = saved.revision;
+          terminalLayoutBaseRef.current = saved.layout ?? layout;
+        }
+      }
+      return true;
+    } catch (err: unknown) {
+      console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
+      return false;
     }
-    return Array.from(seen);
   };
 
   const markPanesClosing = (paneIds: string[]) => {
@@ -370,10 +497,24 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   useEffect(() => {
     mountedRef.current = true;
+    terminalLayoutUnmountedRetryCountRef.current = 0;
     return () => {
       mountedRef.current = false;
+      if (persistence === "ephemeral") {
+        destroyTerminalTabs(tabsRef.current.flatMap((tab) => getSessionIds(tab.paneTree)));
+        return;
+      }
+      if (!terminalLayoutDirtyRef.current) return;
+      if (layoutSaveTimerRef.current) {
+        clearTimeout(layoutSaveTimerRef.current);
+        layoutSaveTimerRef.current = null;
+      }
+      const changeVersion = terminalLayoutChangeVersionRef.current;
+      terminalLayoutUnmountedRetryCountRef.current = 0;
+      void persistLayoutNow().then((saved) => settleLayoutSave(saved, changeVersion));
     };
-  }, []);
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- persistence is a mount-time window policy; persistLayoutNow and settleLayoutSave read the latest layout exclusively through refs, and re-subscribing this cleanup would flush during ordinary renders. A bounded retry continuation survives unmount so transient final-save failures get a limited recovery window.
+  }, [persistence]);
 
   useEffect(() => {
     loadGlobalShellThemePreference(setThemeId);
@@ -447,63 +588,54 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const createShellSessionTab = async (
     label: string,
     cwd = DEFAULT_CWD,
-    options: CreateShellSessionTabOptions = {},
+    options: CreateShellSessionTabOptions & { preserveOnLateUnmount?: boolean } = {},
   ) => {
-    let requestedCwd = cwd || "~";
-    let retriedHomeCwd = false;
-    for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
-      const name = terminalSessionName();
-      try {
-        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
-        const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            cwd: requestedCwd,
-            ...(options.cmd ? { cmd: options.cmd } : {}),
-            ...(options.agent ? { agent: options.agent } : {}),
-          }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (await isShellSessionExistsResponse(res)) {
-          continue;
+    const requestedCwd = cwd === "~" ? "" : cwd;
+    try {
+      const workspace = await ensureWorkspaceForCwd(requestedCwd);
+      if (!workspace) return null;
+      const name = label.trim() || terminalSessionName();
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${workspace.id}/tabs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tabId: options.tabId,
+          name,
+          cwd: requestedCwd,
+          ...(options.cmd ? { command: ["sh", "-lc", options.cmd] } : {}),
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as { tab?: { id?: unknown } };
+      if (typeof data.tab?.id !== "string") return null;
+      const terminalKey = terminalRefKey({ workspaceId: workspace.id, tabId: data.tab.id });
+      if (!mountedRef.current) {
+        if (options.preserveOnLateUnmount) {
+          // This tab may already be executing a queued command. Hand off the
+          // exact live ref so another terminal surface adopts it without
+          // deleting its output or retrying side effects.
+          return enqueueExistingTerminalRef(terminalKey) ? terminalKey : null;
         }
-        if (!res.ok) {
-          if (!retriedHomeCwd && res.status === 400 && await readShellErrorCode(res) === "invalid_cwd") {
-            retriedHomeCwd = true;
-            requestedCwd = "~";
-            attempt -= 1;
-            continue;
-          }
-          console.warn(`Failed to create shell session "${name}": ${res.status}`);
-          return null;
+        const removed = await destroyTerminalTab(terminalKey);
+        if (removed) {
+          return terminalKey;
         }
-        if (!mountedRef.current) {
-          destroyTerminalSessions([name]);
-          return null;
-        }
-        const data = await res.json() as { name?: unknown };
-        const sessionName = typeof data.name === "string" ? data.name : name;
-        addSessionTab(label, sessionName, requestedCwd, {
-          ...(options.agent ? { agent: options.agent } : {}),
-          ...(options.compatMode ? { compatMode: options.compatMode } : {}),
-          legacyCompat: false,
-        });
-        return sessionName;
-      } catch (err: unknown) {
-        console.warn(
-          "Failed to create shell session:",
-          err instanceof Error ? err.message : String(err),
-        );
-        if (err instanceof Error && err.name === "AbortError") {
-          continue;
-        }
-        return null;
+        // Preserve a failed cleanup as an exact canonical handoff. The next
+        // terminal surface attaches the already-running command instead of
+        // duplicating it or relying on an ephemeral mount to load inventory.
+        return enqueueExistingTerminalRef(terminalKey) ? terminalKey : null;
       }
+      addSessionTab(label, terminalKey, requestedCwd, {
+        ...(options.agent ? { agent: options.agent } : {}),
+        compatMode: options.compatMode,
+        legacyCompat: false,
+      });
+      return terminalKey;
+    } catch (err: unknown) {
+      console.warn("Failed to create terminal tab:", err instanceof Error ? err.message : String(err));
+      return null;
     }
-    console.warn("Failed to create shell session: name collision");
-    return null;
   };
 
   const backgroundShellSession = (sessionId: string) => {
@@ -552,7 +684,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
     async function initLayout() {
       if (initialCommand) {
-        addTab(DEFAULT_CWD, initialLabel ?? "Terminal", initialClaudeMode, initialCommand);
+        await createShellSessionTab(initialLabel ?? "Terminal", DEFAULT_CWD, {
+          cmd: initialCommand,
+          agent: initialClaudeMode ? "claude" : initialCommand === "codex" ? "codex" : undefined,
+          compatMode: initialCommand === "codex" ? "codex-tui" : undefined,
+        });
         if (!cancelled) setInitialized(true);
         return;
       }
@@ -563,32 +699,56 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         return;
       }
 
+      if (persistence === "ephemeral") {
+        if (!cancelled) setInitialized(true);
+        return;
+      }
+
       try {
         // Warm the sessions list in parallel with the layout fetch — the
         // ensure step below joins the same in-flight request instead of
         // paying a second serial roundtrip before the terminal can open.
-        void listShellSessions();
-        const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+        const sessionsPromise = listShellSessions();
+        const endpoint = layoutId
+          ? `${getGatewayUrl()}/api/terminal/window-layouts/${encodeURIComponent(layoutId)}`
+          : `${getGatewayUrl()}/api/terminal/layout`;
+        const res = await fetch(endpoint, {
           signal: AbortSignal.timeout(10_000),
         });
         if (res.ok) {
-          const data = await res.json() as TerminalLayout;
+          const response = await res.json() as TerminalLayout | {
+            revision?: unknown;
+            layout?: TerminalLayout;
+          };
+          const data = layoutId && "layout" in response && response.layout
+            ? response.layout
+            : response as TerminalLayout;
+          if (layoutId && "revision" in response && typeof response.revision === "number") {
+            terminalLayoutRevisionRef.current = response.revision;
+            terminalLayoutBaseRef.current = data;
+          }
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessionStatus = await getSavedShellSessionsStatus(getCanonicalShellSessionIds(data));
-              // A failed catalog request does not prove that a runtime stopped.
-              // Preserve the saved layout so a transient outage cannot overwrite
-              // the user's tabs and panes; only an authoritative stale result falls back.
-              if (!cancelled && sessionStatus !== "stale") {
-                const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
-                const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-                setTabs(applyCompatModeToTabs(data.tabs));
-                setActiveTabId(nextActiveTabId);
-                setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
-                requestPaneFocus(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
-                setInitialized(true);
-                return;
+              const sessions = await sessionsPromise;
+              if (cancelled) return;
+              if (sessions) {
+                const activeNames = new Set(sessions.flatMap((session) => (
+                  typeof session.name === "string" && session.status !== "exited"
+                    ? [session.name]
+                    : []
+                )));
+                setUnavailableSessionIds(
+                  getCanonicalShellSessionIds(data).filter((name) => !activeNames.has(name)),
+                );
               }
+              const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
+              const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
+              setTabs(applyCompatModeToTabs(data.tabs));
+              setActiveTabId(nextActiveTabId);
+              setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
+              requestPaneFocus(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+              setInitialized(true);
+              return;
             }
 
             const sessionName = await getFirstOrderedShellSessionName();
@@ -629,7 +789,18 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
     if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return;
     for (const launch of drainTerminalLaunchQueue(launchTargetId)) {
-      addTab(DEFAULT_CWD, launch.label, launch.claudeMode, launch.command);
+      void createShellSessionTab(launch.label, DEFAULT_CWD, {
+        tabId: launch.tabId,
+        cmd: launch.command,
+        compatMode: launch.command === "codex" ? "codex-tui" : undefined,
+        preserveOnLateUnmount: true,
+      }).then((terminalKey) => {
+        if (!terminalKey) {
+          // Retry through a deferred launch event, with a persisted cap that
+          // prevents a temporarily unavailable runtime from becoming a hot loop.
+          requeueFailedTerminalLaunch(launch.action, launch.retryCount, launch.tabId);
+        }
+      });
     }
   });
 
@@ -646,6 +817,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return () => window.removeEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
   }, [initialized, launchTargetId]);
 
+  useEffect(() => () => {
+    if (launchTargetId) releaseTerminalLaunchTarget(launchTargetId);
+  }, [launchTargetId]);
+
   const drainProviderSessions = useEffectEvent((event?: Event): Promise<void> => {
     const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
     if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return Promise.resolve();
@@ -656,7 +831,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     }
     const operation = (async () => {
       const sessionIds = await drainExistingTerminalSessionQueueWithRetry(launchTargetId);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) {
+        for (const sessionId of sessionIds) enqueueExistingTerminalRef(sessionId);
+        return;
+      }
       for (const sessionId of sessionIds) {
         const existingTab = tabsRef.current.find((tab) => getSessionIds(tab.paneTree).includes(sessionId));
         if (existingTab) {
@@ -697,8 +875,32 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, [initialized, launchTargetId]);
 
-  const flushLayout = useEffectEvent(() => {
-    void persistLayoutNow();
+  const flushLayout = useEffectEvent(() => persistLayoutNow());
+
+  const settleLayoutSave = useEffectEvent(function settle(saved: boolean, changeVersion: number) {
+    if (saved) {
+      terminalLayoutRetryAttemptRef.current = 0;
+      terminalLayoutUnmountedRetryCountRef.current = 0;
+      if (terminalLayoutChangeVersionRef.current === changeVersion) {
+        terminalLayoutDirtyRef.current = false;
+        return;
+      }
+    }
+    if (!terminalLayoutDirtyRef.current || layoutSaveTimerRef.current) return;
+    if (!mountedRef.current) {
+      if (terminalLayoutUnmountedRetryCountRef.current >= MAX_UNMOUNTED_LAYOUT_SAVE_RETRIES) {
+        return;
+      }
+      terminalLayoutUnmountedRetryCountRef.current += 1;
+    }
+    const retryAttempt = Math.min(terminalLayoutRetryAttemptRef.current, 4);
+    terminalLayoutRetryAttemptRef.current = retryAttempt + 1;
+    const retryDelayMs = Math.min(500 * (2 ** retryAttempt), 5_000);
+    layoutSaveTimerRef.current = setTimeout(() => {
+      layoutSaveTimerRef.current = null;
+      const retryVersion = terminalLayoutChangeVersionRef.current;
+      void flushLayout().then((retrySaved) => settle(retrySaved, retryVersion));
+     }, retryDelayMs);
   });
 
   useEffect(() => {
@@ -710,16 +912,21 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       terminalLayoutHydratedRef.current = true;
       if (!terminalLayoutDirtyRef.current) return;
     }
+    if (terminalLayoutSkipNextDirtyRef.current) {
+      terminalLayoutSkipNextDirtyRef.current = false;
+      return;
+    }
     terminalLayoutDirtyRef.current = true;
+    terminalLayoutChangeVersionRef.current += 1;
 
     if (layoutSaveTimerRef.current) {
       clearTimeout(layoutSaveTimerRef.current);
     }
 
+    const changeVersion = terminalLayoutChangeVersionRef.current;
     layoutSaveTimerRef.current = setTimeout(() => {
       layoutSaveTimerRef.current = null;
-      flushLayout();
-      terminalLayoutDirtyRef.current = false;
+      void flushLayout().then((saved) => settleLayoutSave(saved, changeVersion));
     }, 500);
 
     return () => {
@@ -744,8 +951,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         layoutSaveTimerRef.current = null;
       }
 
-      flushLayout();
-      terminalLayoutDirtyRef.current = false;
+      const changeVersion = terminalLayoutChangeVersionRef.current;
+      void flushLayout().then((saved) => settleLayoutSave(saved, changeVersion));
     };
 
     window.addEventListener("pagehide", flushOnPageHide);
@@ -774,10 +981,6 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const closingTab = tabsRef.current.find((tab) => tab.id === tabId);
     if (closingTab) {
       const paneIds = getAllPaneIds(closingTab.paneTree);
-      destroyTerminalSessions([
-        ...getSessionIds(closingTab.paneTree),
-        ...getPendingSessionIds(paneIds),
-      ]);
       markPanesClosing(paneIds);
     }
     log("close-tab", {
@@ -796,36 +999,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const splitPane = (paneId: string, dir: "horizontal" | "vertical") => {
-    setTabs(prev => prev.map(t => {
-      if (t.id !== activeTabId || countPanes(t.paneTree) >= 4) return t;
-      return { ...t, paneTree: splitPaneInTree(t.paneTree, paneId, dir) };
-    }));
+    dispatchTerminalPaneAction(paneId, { type: "split", direction: dir === "horizontal" ? "right" : "down" });
   };
 
   const closePane = (paneId: string) => {
-    const activeTabRecord = tabsRef.current.find((tab) => tab.id === activeTabId);
-    const closingSessionIds = new Set<string>();
-    const closingSessionId = activeTabRecord ? getPaneSessionId(activeTabRecord.paneTree, paneId) : null;
-    if (closingSessionId) closingSessionIds.add(closingSessionId);
-    const pendingSessionId = pendingPaneSessionsRef.current!.get(paneId);
-    if (pendingSessionId) closingSessionIds.add(pendingSessionId);
-    destroyTerminalSessions(Array.from(closingSessionIds));
-    markPanesClosing([paneId]);
-    log("close-pane", { paneId });
-    setTabs(prev => {
-      const tab = prev.find(t => t.id === activeTabId);
-      if (!tab) return prev;
-      const newTree = closePaneInTree(tab.paneTree, paneId);
-      if (!newTree) {
-        const next = prev.filter(t => t.id !== activeTabId);
-        const replacement = next[0];
-        setActiveTabId(replacement?.id ?? "");
-        requestPaneFocus(replacement ? getFirstPaneId(replacement.paneTree) : null);
-        return next;
-      }
-      requestPaneFocus(getFirstPaneId(newTree));
-      return prev.map(t => t.id === activeTabId ? { ...t, paneTree: newTree } : t);
-    });
+    dispatchTerminalPaneAction(paneId, { type: "close" });
   };
 
   const renameTab = (tabId: string, label: string) => {
@@ -887,7 +1065,36 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const shouldDestroyPane = (paneId: string) => {
-    return closingPaneIdsRef.current!.has(paneId);
+    if (!closingPaneIdsRef.current!.has(paneId)) return false;
+    return pendingPaneSessionsRef.current!.get(paneId) ?? true;
+  };
+
+  const recoverShellSession = async (sessionId: string, cwd: string): Promise<boolean> => {
+    const ref = parseTerminalRefKey(sessionId);
+    if (!ref) return false;
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Recovered terminal", cwd: cwd === "~" ? "" : cwd }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return false;
+      const data = await res.json() as { tab?: { id?: unknown } };
+      if (typeof data.tab?.id !== "string") return false;
+      const replacementId = terminalRefKey({ workspaceId: ref.workspaceId, tabId: data.tab.id });
+      const nextTabs = tabsRef.current.map((tab) => ({
+        ...tab,
+        paneTree: renameSessionInTree(tab.paneTree, sessionId, replacementId),
+      }));
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      setUnavailableSessionIds((current) => current.filter((name) => name !== sessionId));
+      return true;
+    } catch (err: unknown) {
+      console.warn("Failed to recover terminal session:", err instanceof Error ? err.message : String(err));
+      return false;
+    }
   };
 
   useEffect(() => {
@@ -920,14 +1127,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   }, [activeTabId, initialized, sidebarOpen]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (!e.ctrlKey || !e.shiftKey) return;
+    if (e.defaultPrevented || e.repeat || !e.ctrlKey || !e.shiftKey || e.metaKey || e.altKey) return;
     switch (e.key.toUpperCase()) {
       case "T": e.preventDefault(); markTerminalLayoutDirty(); void createShellSessionTab("Shell", getCwd()); break;
-      case "W": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); closePane(focusedPaneId); } break;
-      case "D": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); splitPane(focusedPaneId, "horizontal"); } break;
-      case "E": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); splitPane(focusedPaneId, "vertical"); } break;
       case "B": e.preventDefault(); markTerminalLayoutDirty(); setSidebarOpen(o => !o); break;
-      case "C": e.preventDefault(); markTerminalLayoutDirty(); addTab(getCwd(), "Claude Code", true); break;
       case "Z": e.preventDefault(); markTerminalLayoutDirty(); void createShellSessionTab("Shell", getCwd()); break;
     }
   };
@@ -938,10 +1141,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       current.count === next.count && current.ready === next.ready ? current : next
     ));
   }, []);
-  const createDesktopShell = async () => {
-    const name = await createShellSessionTab("Shell", DEFAULT_CWD);
-    if (name) setDesktopSessionState({ count: 1, ready: true });
-  };
+  const { create: createDesktopShell, creating: creatingDesktopShell } = useTerminalSessionCreate({
+    createSession: () => createShellSessionTab("Shell", DEFAULT_CWD),
+    onCreated: () => setDesktopSessionState({ count: 1, ready: true }),
+  });
 
   // Construct store-compatible interface for child components
   const storeApi = {
@@ -987,14 +1190,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       markTerminalLayoutDirty();
       return reorderTabs(...args);
     },
-    splitPane: (...args: Parameters<typeof splitPane>) => {
-      markTerminalLayoutDirty();
-      return splitPane(...args);
-    },
-    closePane: (...args: Parameters<typeof closePane>) => {
-      markTerminalLayoutDirty();
-      return closePane(...args);
-    },
+    splitPane,
+    closePane,
     setFocusedPane: (paneId: string | null) => {
       markTerminalLayoutDirty();
       setFocusedPaneId(paneId);
@@ -1043,6 +1240,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           {desktopParity && desktopSessionState.count === 0 ? (
             <DesktopTerminalEmptyState
               ready={desktopSessionState.ready}
+              creating={creatingDesktopShell}
               onCreate={() => void createDesktopShell()}
             />
           ) : activeTab ? (
@@ -1079,6 +1277,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                     focusRequestId={focusRequestId}
                     onFocusPane={setFocusedPaneId}
                     onSessionAttached={handleSessionAttached}
+                    unavailableSessionIds={unavailableSessionIds}
+                    onRecoverSession={recoverShellSession}
                     shouldCachePane={shouldCachePane}
                     shouldDestroyPane={shouldDestroyPane}
                     allowRemoteResize={!mobile}

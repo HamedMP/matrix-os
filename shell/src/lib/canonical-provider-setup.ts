@@ -1,8 +1,13 @@
-import type {
-  CanonicalProviderInstanceDescriptor,
-  CanonicalProviderSetupAction,
+import {
+  TerminalTabIdSchema,
+  TerminalWorkspaceIdSchema,
+  type CanonicalProviderInstanceDescriptor,
+  type CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
-import { isCanonicalShellSessionId } from "../components/terminal/terminal-session-id";
+import {
+  isCanonicalShellSessionId,
+  terminalRefKey,
+} from "../components/terminal/terminal-session-id";
 import { getGatewayUrl } from "./gateway";
 
 const RESPONSE_LIMIT_BYTES = 64 * 1024;
@@ -89,22 +94,43 @@ export async function executeCanonicalProviderSetupAction(input: {
   }
   if (!input.action.id.startsWith(`${actionPrefix(input.instance)}_`)) return false;
   try {
-    const response = await (input.fetcher ?? fetch)(`${getGatewayUrl()}/api/terminal/sessions`, {
+    const fetcher = input.fetcher ?? fetch;
+    const ensureResponse = await fetcher(`${getGatewayUrl()}/api/terminal/workspaces/ensure`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: sessionName(input.instance),
-        cwd: "projects",
-        cmd: input.action.command,
-      }),
+      body: JSON.stringify({}),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) return false;
-    const value = await boundedJson(response);
-    const sessionId = value && typeof value === "object"
-      ? (value as { name?: unknown }).name
-      : null;
-    if (typeof sessionId !== "string" || !isCanonicalShellSessionId(sessionId)) return false;
+    if (!ensureResponse.ok) return false;
+    const ensured = await boundedJson(ensureResponse);
+    const workspaceId = TerminalWorkspaceIdSchema.safeParse(
+      ensured && typeof ensured === "object"
+        ? (ensured as { workspace?: { id?: unknown } }).workspace?.id
+        : null,
+    );
+    if (!workspaceId.success) return false;
+    const createResponse = await fetcher(
+      `${getGatewayUrl()}/api/terminal/workspaces/${encodeURIComponent(workspaceId.data)}/tabs`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: sessionName(input.instance),
+          cwd: "projects",
+          command: ["sh", "-lc", input.action.command],
+        }),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!createResponse.ok) return false;
+    const created = await boundedJson(createResponse);
+    const tabId = TerminalTabIdSchema.safeParse(
+      created && typeof created === "object"
+        ? (created as { tab?: { id?: unknown } }).tab?.id
+        : null,
+    );
+    if (!tabId.success) return false;
+    const sessionId = terminalRefKey({ workspaceId: workspaceId.data, tabId: tabId.data });
     window.dispatchEvent(new CustomEvent(OPEN_PROVIDER_TERMINAL_EVENT, { detail: { sessionId } }));
     return true;
   } catch (error: unknown) {

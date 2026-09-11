@@ -10,6 +10,7 @@ import {
   type KernelEvent,
   type KernelResult,
   type MatrixDB,
+  type OsViewAgentTools,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFile } from "node:fs/promises";
@@ -30,6 +31,7 @@ import {
 } from "./kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "./funded-ai-credential-manager.js";
 import type { KernelEffort, KernelModel } from "./kernel-settings.js";
+import type { RequestApprovalFn } from "@matrix-os/kernel";
 
 export type SpawnFn = typeof spawnKernel;
 
@@ -44,6 +46,7 @@ export interface DispatchOptions {
       (trace/session id, model, latency, token counts, error category input).
       Never receives message content. Failures are swallowed. */
   onAiGeneration?: (input: AiGenerationInput) => void;
+  osViewTools?: OsViewAgentTools;
 }
 
 export interface DispatchContext {
@@ -62,6 +65,8 @@ export interface KernelDispatchOverrides {
   accessSourceId?: KernelCredentialAccessSourceId;
   /** Internal, validated execution root. Never accepted from client frames. */
   workingDirectory?: string;
+  /** Per-client native approval bridge. Never accepted from request JSON. */
+  requestApproval?: RequestApprovalFn;
 }
 
 export interface BatchEntry {
@@ -227,6 +232,8 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         workingDirectory: entry.kernelOverrides?.workingDirectory,
         maxTurns: opts.maxTurns,
         env: credentialLaunch.env,
+        requestApproval: entry.kernelOverrides?.requestApproval,
+        osViewTools: opts.osViewTools,
       };
       try {
         for await (const event of spawnFn(message, config, deadline.controller)) {
@@ -375,6 +382,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             model: opts.model,
             maxTurns: opts.maxTurns,
             env: credentialLaunch.env,
+            osViewTools: opts.osViewTools,
           };
 
           try {

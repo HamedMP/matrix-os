@@ -406,7 +406,7 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
     evidence: [
       testEvidence(
         "tests/e2e/desktop/terminal-sessions.e2e.test.ts",
-        "renders the Figma-aligned list and preserves the mounted terminal buffer across list-detail navigation",
+        "keeps controls in the title row and preserves the terminal buffer across sidebar and session changes",
       ),
       testEvidence(
         "tests/e2e/desktop/operator.e2e.test.ts",

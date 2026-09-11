@@ -13,7 +13,7 @@ import {
 } from "../../packages/contracts/src/index.js";
 import {
   createCodingAgentRuntimeSummaryService,
-  type CodingAgentTerminalSessionRegistry,
+  type CodingAgentTerminalWorkspaceRegistry,
 } from "../../packages/gateway/src/coding-agents/runtime-summary.js";
 import {
   CodingAgentReviewSnapshotError,
@@ -61,15 +61,32 @@ function successfulFindingsRound(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function registryWith(count: number): CodingAgentTerminalSessionRegistry {
+function registryWith(count: number): CodingAgentTerminalWorkspaceRegistry {
   return {
-    list: () => Array.from({ length: count }, (_, index) => ({
-      name: `main-${index}`,
-      status: index % 3 === 0 ? "exited" as const : "active" as const,
+    list: () => Array.from({ length: count }, (_, index) => {
+      const suffix = (index + 1).toString(16).padStart(32, "0");
+      const workspaceId = `tws_${suffix}`;
+      return {
+      id: workspaceId,
+      scope: "project" as const,
+      projectId: `project-${index}`,
+      canonicalSize: { cols: 120, rows: 36 },
+      status: "running" as const,
+      revision: 1,
       createdAt: new Date(now.getTime() - index * 1000).toISOString(),
       updatedAt: new Date(now.getTime() - index * 1000).toISOString(),
-      attachedClients: index % 2,
-    })),
+      tabs: [{
+        id: `tt_${suffix}`,
+        workspaceId,
+        name: `main-${index}`,
+        cwd: `projects/project-${index}`,
+        status: index % 3 === 0 ? "exited" as const : "running" as const,
+        revision: 1,
+        order: 0,
+        createdAt: new Date(now.getTime() - index * 1000).toISOString(),
+        updatedAt: new Date(now.getTime() - index * 1000).toISOString(),
+      }],
+    }; }),
   };
 }
 
@@ -117,13 +134,12 @@ describe("coding agent runtime summary", () => {
         installStatus: "installed",
       }),
     ]);
-    expect(summary.terminalSessions.items).toHaveLength(20);
-    expect(summary.terminalSessions.hasMore).toBe(true);
-    expect(summary.terminalSessions.items[0]).toMatchObject({
-      id: "main-0",
-      name: "main-0",
-      attachable: false,
-      status: "exited",
+    expect(summary.terminalWorkspaces.items).toHaveLength(20);
+    expect(summary.terminalWorkspaces.hasMore).toBe(true);
+    expect(summary.terminalWorkspaces.items[0]).toMatchObject({
+      id: "tws_00000000000000000000000000000001",
+      projectId: "project-0",
+      tabs: [expect.objectContaining({ name: "main-0", status: "exited" })],
     });
     expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|\/bin\/bash|token|secret|Postgres/i);
   });
@@ -250,8 +266,8 @@ describe("coding agent runtime summary", () => {
 
     const summary = RuntimeSummarySchema.parse(await service.getSummary(otherPrincipal));
 
-    expect(summary.terminalSessions.items).toEqual([]);
-    expect(summary.terminalSessions.hasMore).toBe(false);
+    expect(summary.terminalWorkspaces.items).toEqual([]);
+    expect(summary.terminalWorkspaces.hasMore).toBe(false);
   });
 
   it("withholds terminal sessions for jwt principals when no owner id is configured", async () => {
@@ -265,21 +281,33 @@ describe("coding agent runtime summary", () => {
 
     const summary = RuntimeSummarySchema.parse(await service.getSummary(jwtPrincipal));
 
-    expect(summary.terminalSessions.items).toEqual([]);
-    expect(summary.terminalSessions.hasMore).toBe(false);
+    expect(summary.terminalWorkspaces.items).toEqual([]);
+    expect(summary.terminalWorkspaces.hasMore).toBe(false);
   });
 
-  it("replaces unsafe terminal cwd labels instead of failing the whole summary", async () => {
+  it("preserves owner-relative terminal cwd values", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",
       terminalRegistry: {
         list: () => [{
-          name: "id_rsa",
-          status: "active",
-          visualStatus: "running",
+          id: "tws_00000000000000000000000000000001",
+          scope: "main" as const,
+          canonicalSize: { cols: 120, rows: 36 },
+          status: "running" as const,
+          revision: 1,
           createdAt: now.toISOString(),
           updatedAt: now.toISOString(),
-          attachedClients: 1,
+          tabs: [{
+            id: "tt_00000000000000000000000000000001",
+            workspaceId: "tws_00000000000000000000000000000001",
+            name: "main",
+            cwd: "projects/matrix-os",
+            status: "running" as const,
+            revision: 1,
+            order: 0,
+            createdAt: now.toISOString(),
+            updatedAt: now.toISOString(),
+          }],
         }],
       },
       now: () => now,
@@ -288,27 +316,18 @@ describe("coding agent runtime summary", () => {
 
     const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
 
-    expect(summary.terminalSessions.items[0]).toMatchObject({
-      id: "terminal_private_0",
-      name: "Private session",
-      status: "running",
-      attachable: false,
+    expect(summary.terminalWorkspaces.items[0]).toMatchObject({
+      scope: "main",
+      tabs: [expect.objectContaining({ cwd: "projects/matrix-os" })],
     });
     expect(JSON.stringify(summary)).not.toMatch(/\.ssh|id_rsa|\/home\/matrix/i);
   });
 
-  it("keeps display-safe terminal names with schema-unsafe ids from failing the summary", async () => {
+  it("keeps display names separate from opaque terminal ids", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",
       terminalRegistry: {
-        list: () => [{
-          name: "my terminal",
-          status: "active",
-          visualStatus: "running",
-          createdAt: now.toISOString(),
-          updatedAt: now.toISOString(),
-          attachedClients: 1,
-        }],
+        list: () => registryWith(1).list(),
       },
       now: () => now,
       runtime: { id: "rt_primary", label: "Primary Matrix computer" },
@@ -316,11 +335,9 @@ describe("coding agent runtime summary", () => {
 
     const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
 
-    expect(summary.terminalSessions.items[0]).toMatchObject({
-      id: "terminal_private_0",
-      name: "my terminal",
-      status: "running",
-      attachable: false,
+    expect(summary.terminalWorkspaces.items[0]).toMatchObject({
+      id: "tws_00000000000000000000000000000001",
+      tabs: [expect.objectContaining({ name: "main-0" })],
     });
   });
 
@@ -345,7 +362,7 @@ describe("coding agent runtime summary", () => {
     const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
 
     expect(summary.providers).toEqual([]);
-    expect(summary.terminalSessions.items).toEqual([]);
+    expect(summary.terminalWorkspaces.items).toEqual([]);
     expect(summary.capabilities).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "codingAgentsRuntimeSummary", enabled: true }),
       expect.objectContaining({ id: "codingAgentsThreadCreate", enabled: false }),
@@ -785,7 +802,7 @@ describe("coding agent runtime summary", () => {
       projects: { items: [], hasMore: false, limit: 20 },
       activeThreads: { items: [], hasMore: false, limit: 50 },
       attentionThreads: { items: [], hasMore: false, limit: 50 },
-      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       previewSessions: { items: [], hasMore: false, limit: 50 },
       recentActivity: { items: [], hasMore: false, limit: 30 },
       limits: {

@@ -3,6 +3,7 @@ import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow.js";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
@@ -69,6 +70,7 @@ const terminalWindow: AppWindow = {
   height: 420,
   minimized: false,
   zIndex: 1,
+  terminalLayoutId: "term-layout_0123456789abcdef0123456789abcdef",
 };
 
 const iframeWindow: AppWindow = {
@@ -79,7 +81,23 @@ const iframeWindow: AppWindow = {
 };
 
 describe("CanvasWindow terminal interactivity", () => {
+  it("resizes Terminal from the northwest corner at Canvas zoom without restarting it", () => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const win = { ...terminalWindow, x: 100, y: 100, width: 1100, height: 800 };
+    useWindowManager.setState({ windows: [win] });
+    useCanvasTransform.setState({ zoom: 0.5 });
+    const view = render(<CanvasWindow win={win} />);
+    expect(view.container.querySelectorAll('[data-window-resize]')).toHaveLength(8);
+    fireEvent.pointerDown(view.container.querySelector('[data-window-resize="nw"]')!, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 150 });
+    expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 300, y: 200, width: 900, height: 700 });
+    fireEvent.pointerUp(window);
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+    view.unmount();
+    vi.unstubAllGlobals();
+  });
   beforeEach(() => {
+    useDesktopMode.setState({ mode: "canvas" });
     appViewerRender.mockClear();
     terminalRender.mockClear();
     terminalChildPointerFocusRecorder.mockReset();
@@ -203,6 +221,8 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(container.textContent).toContain("Terminal tab one");
     expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
       launchTargetId: "win-terminal",
+      layoutId: terminalWindow.terminalLayoutId,
+      persistence: "durable",
       windowControls: expect.objectContaining({
         close: expect.any(Function),
         minimize: expect.any(Function),

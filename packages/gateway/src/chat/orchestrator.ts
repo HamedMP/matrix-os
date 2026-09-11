@@ -63,6 +63,12 @@ import {
   CanonicalQueueAdmissionError,
   enqueueCanonicalQueuedTurn,
 } from "./queue-admission.js";
+import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
+import { retryAvailability } from "./retry-preflight.js";
+import { dispatchAdmissionKey, hasStoppingChatExecution } from "./dispatch-ownership.js";
+import { loadChatResumeState } from "./resume-checkpoint.js";
+import { boundedOperation } from "../bounded-operation.js";
+import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, diagnoseChatRunFailure, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
@@ -77,6 +83,7 @@ export class CanonicalChatOrchestrationError extends Error {
 }
 
 interface ActiveRun {
+  admissionKey?: string;
   controller: AbortController;
   adapter: CanonicalChatProviderAdapter;
   owner: ChatOwner;
@@ -278,6 +285,7 @@ export class CanonicalChatOrchestrator {
       | "getAdapterState"
       | "getPendingApproval"
       | "getLatestAdapterStateForChat"
+      | "hasRetryRequest"
       | "getTurnRunContext"
       | "admitRetry"
       | "listActiveRunContexts"
@@ -285,6 +293,9 @@ export class CanonicalChatOrchestrator {
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     executionRoots?: ChatExecutionRootResolver;
+    collaborationGuard?: {
+      assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
+    };
     onAiGeneration?: (input: AiGenerationInput) => void;
     now?: () => Date;
     shutdownDrainMs?: number;
@@ -317,6 +328,19 @@ export class CanonicalChatOrchestrator {
     }
   }
 
+  private async assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void> {
+    if (!this.options.collaborationGuard) return;
+    try {
+      await this.options.collaborationGuard.assertPersonalExecutionAllowed(owner, chatId);
+    } catch (error: unknown) {
+      if (!(error instanceof Error && "code" in error && error.code === "shared_execution_disabled")) throw error;
+      throw new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "AI is unavailable while this shared Chat is in discussion-only mode."),
+        409,
+      );
+    }
+  }
+
   private reservePendingDispatch(runId: string): void {
     if (!this.pendingDispatch.has(runId) && this.pendingDispatch.size >= MAX_ACTIVE_RUNS_GLOBAL) {
       throw new CanonicalChatOrchestrationError(
@@ -334,8 +358,13 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalCreateChatTurnRequest,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
     this.assertOpen();
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     await this.reconcileActiveRuns(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
+    const admissionKey = dispatchAdmissionKey("turn", input.clientRequestId);
+    if (hasStoppingChatExecution(this.active.values(), owner, chatId, admissionKey)) {
+      return mapRepositoryError(new ChatBusyError(chatId));
+    }
     const record = await this.options.repository.get(owner, chatId);
     if (!record) return mapRepositoryError(new ChatNotFoundError(chatId));
     const catalog = await this.options.catalog.getCatalog(principal);
@@ -355,11 +384,6 @@ export class CanonicalChatOrchestrator {
         503,
       );
     }
-    const previousState = await this.options.repository.getLatestAdapterStateForChat(owner, {
-      chatId,
-      driverKind: validated.instance.driverKind,
-      instanceId: validated.instance.id,
-    });
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
     if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
@@ -392,10 +416,12 @@ export class CanonicalChatOrchestrator {
         );
       }
     }
-    const resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
-      && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
-      ? adapter.parseState(previousState.state)
-      : undefined;
+    const resumeState = await loadChatResumeState({
+      repository: this.options.repository, owner, chatId, adapter,
+      instanceId: validated.instance.id,
+      executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
+      mode: "follow_up",
+    });
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),
@@ -476,13 +502,15 @@ export class CanonicalChatOrchestrator {
 
     try {
       if (!admitted.alreadyAccepted) {
-        if (this.atCapacity(owner)) {
+        const stopping = hasStoppingChatExecution(this.active.values(), owner, chatId);
+        if (stopping || this.atCapacity(owner)) {
           await this.options.repository.finishRun(owner, {
             chatId,
             runId: admitted.run.id,
             outcome: "failed",
             completedAt: timestamp,
           });
+          if (stopping) return mapRepositoryError(new ChatBusyError(chatId));
           throw new CanonicalChatOrchestrationError(
             safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
             503,
@@ -495,6 +523,8 @@ export class CanonicalChatOrchestrator {
           adapter,
           resolvedRoot,
           resumeState,
+          undefined,
+          admissionKey,
         );
       }
       return CanonicalChatTurnAdmissionResponseSchema.parse({
@@ -516,6 +546,7 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalQueueChatTurnRequest,
   ): Promise<CanonicalChatQueueAdmissionResponse> {
     this.assertOpen();
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     try {
       return await enqueueCanonicalQueuedTurn({
         principal,
@@ -544,8 +575,13 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalRetryChatTurnRequest,
   ): Promise<CanonicalChatRunAdmissionResponse> {
     this.assertOpen();
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     await this.reconcileActiveRuns(owner);
     const input = CanonicalRetryChatTurnRequestSchema.parse(inputValue);
+    const admissionKey = dispatchAdmissionKey("retry", input.clientRequestId, turnId);
+    if (hasStoppingChatExecution(this.active.values(), owner, chatId, admissionKey)) {
+      return mapRepositoryError(new ChatBusyError(chatId));
+    }
     const context = await this.options.repository.getTurnRunContext(owner, chatId, turnId);
     if (!context) {
       throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
@@ -587,15 +623,21 @@ export class CanonicalChatOrchestrator {
         );
       }
     }
-    const previousState = await this.options.repository.getLatestAdapterStateForChat(owner, {
-      chatId,
-      driverKind: context.latestRun.driverKind,
+    const resumeState = await loadChatResumeState({
+      repository: this.options.repository, owner, chatId, adapter,
       instanceId: context.latestRun.instanceId,
+      executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
+      mode: "retry",
     });
-    const resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
-      && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
-      ? adapter.parseState(previousState.state)
-      : undefined;
+    const availability = await retryAvailability(adapter, owner, resumeState, () => this.options.repository.getAdapterState(owner, {
+      runId: context.latestRun.id, driverKind: context.latestRun.driverKind, instanceId: context.latestRun.instanceId,
+    }), () => this.options.repository.hasRetryRequest(owner, { chatId, turnId, clientRequestId: input.clientRequestId }));
+    if (availability !== "ready") {
+      throw new CanonicalChatOrchestrationError(availability === "busy"
+        ? safeError("chat_busy", "The previous Run is still active. Wait for it to finish.", true, ["retry"])
+        : safeError("run_unavailable", "The previous Run could not be checked. Try again shortly.", true, ["retry"]),
+      availability === "busy" ? 409 : 503);
+    }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),
@@ -653,13 +695,15 @@ export class CanonicalChatOrchestrator {
     }
     try {
       if (!admitted.alreadyAccepted) {
-        if (this.atCapacity(owner)) {
+        const stopping = hasStoppingChatExecution(this.active.values(), owner, chatId);
+        if (stopping || this.atCapacity(owner)) {
           await this.options.repository.finishRun(owner, {
             chatId,
             runId: admitted.run.id,
             outcome: "failed",
             completedAt: timestamp,
           });
+          if (stopping) return mapRepositoryError(new ChatBusyError(chatId));
           throw new CanonicalChatOrchestrationError(
             safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
             503,
@@ -673,6 +717,7 @@ export class CanonicalChatOrchestrator {
           resolvedRoot,
           resumeState,
           retryPromptFor(context.userMessages),
+          admissionKey,
         );
       }
       return CanonicalChatRunAdmissionResponseSchema.parse({
@@ -694,6 +739,7 @@ export class CanonicalChatOrchestrator {
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
     promptOverride?: string,
+    admissionKey?: string,
   ): void {
     const controller = new AbortController();
     const completion = this.dispatch(owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride)
@@ -713,6 +759,7 @@ export class CanonicalChatOrchestrator {
         }
       });
     this.active.set(run.id, {
+      admissionKey,
       controller,
       adapter,
       owner,
@@ -725,6 +772,12 @@ export class CanonicalChatOrchestrator {
 
   private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
     if (this.closing || this.atCapacity(owner)) return;
+    try {
+      await this.assertPersonalExecutionAllowed(owner, chatId);
+    } catch (error: unknown) {
+      if (error instanceof CanonicalChatOrchestrationError) return;
+      throw error;
+    }
     for (const entry of this.active.values()) {
       if (entry.chatId === chatId && entry.owner.type === owner.type
         && entry.owner.ownerId === owner.ownerId) return;
@@ -755,15 +808,12 @@ export class CanonicalChatOrchestrator {
               throw new Error("Queued execution root provenance changed");
             }
           }
-          const previousState = await this.options.repository.getLatestAdapterStateForChat(owner, {
-            chatId,
-            driverKind: claimed.run.driverKind,
+          resumeState = await loadChatResumeState({
+            repository: this.options.repository, owner, chatId, adapter,
             instanceId: claimed.run.instanceId,
+            executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
+            mode: "follow_up",
           });
-          resumeState = previousState?.schemaVersion === adapter.stateSchemaVersion
-            && (previousState.executionRootFingerprint ?? null) === (resolvedRoot?.fingerprint ?? null)
-            ? adapter.parseState(previousState.state)
-            : undefined;
         } catch (error: unknown) {
           console.warn(
             "[chat/orchestrator] Queued Run preparation failed:",
@@ -774,6 +824,7 @@ export class CanonicalChatOrchestrator {
             runId: claimed.run.id,
             outcome: "failed",
             completedAt: timestamp,
+            diagnostic: diagnoseChatRunFailure(error, "preparation"),
           });
           continue;
         }
@@ -803,7 +854,11 @@ export class CanonicalChatOrchestrator {
     promptOverride?: string,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
+    let cleanupUnconfirmed = false;
+    let lastKnownState: unknown;
+    let failureStage: ChatRunFailureDiagnostic["stage"] = "preparation";
     try {
+      await this.assertPersonalExecutionAllowed(owner, run.chatId);
       if (resolvedRoot && this.options.executionRoots) {
         const provenance: ChatExecutionRootProvenance = {
           ref: resolvedRoot.ref!,
@@ -833,13 +888,17 @@ export class CanonicalChatOrchestrator {
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
         signal: controller.signal,
+        onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
+        onCleanupConfirmed: () => { cleanupUnconfirmed = false; },
       };
       let text = "";
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
+      failureStage = "provider";
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
         : adapter.start(input);
       for await (const rawEvent of events) {
+        failureStage = "projection";
         if (controller.signal.aborted) {
           throw new Error("Provider emitted an event after cancellation");
         }
@@ -847,6 +906,8 @@ export class CanonicalChatOrchestrator {
         if (terminal) throw new Error("Provider emitted an event after completion");
         if (event.type === "state.updated") {
           const state = adapter.serializeState(adapter.parseState(event.state));
+          lastKnownState = state;
+          failureStage = "persistence";
           await this.options.repository.updateAdapterState(owner, {
             chatId: run.chatId,
             runId: run.id,
@@ -861,6 +922,7 @@ export class CanonicalChatOrchestrator {
           }
           text += event.delta;
           const messageId = assistantMessageId(run.id, event.messageId);
+          failureStage = "persistence";
           await this.options.repository.appendAssistantDelta(owner, {
             chatId: run.chatId,
             runId: run.id,
@@ -871,8 +933,10 @@ export class CanonicalChatOrchestrator {
         } else if (event.type === "run.completed") {
           terminal = event;
         } else {
+          failureStage = "persistence";
           await this.persistActivities(owner, run, [event]);
         }
+        failureStage = "provider";
       }
       if (!terminal) throw new Error("Provider completed without a terminal event");
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
@@ -880,6 +944,7 @@ export class CanonicalChatOrchestrator {
         ...(terminal.error ? [{ type: "run.error", error: terminal.error }] : []),
         { type: "run.status", status: terminal.outcome },
       ];
+      failureStage = "persistence";
       try {
         await this.persistActivities(owner, run, terminalActivities, completedAt);
       } catch (activityError: unknown) {
@@ -919,6 +984,26 @@ export class CanonicalChatOrchestrator {
       }
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
+      if (cleanupUnconfirmed) {
+        controller.abort();
+        console.warn("[chat/orchestrator] Execution cleanup unconfirmed", { runId: run.id });
+        if (lastKnownState !== undefined) {
+          try {
+            await boundedOperation(() => this.options.repository.updateAdapterState(owner, {
+              chatId: run.chatId, runId: run.id, driverKind: run.driverKind, instanceId: run.instanceId,
+              schemaVersion: adapter.stateSchemaVersion, state: lastKnownState,
+            }), 10_000);
+          } catch (stateError) {
+            console.warn("[chat/orchestrator] Backing identity persistence unconfirmed", {
+              runId: run.id, errorType: stateError instanceof Error ? stateError.name : "UnknownError",
+            });
+          }
+        }
+        await this.persistActivities(owner, run, [{ type: "run.error", error: safeError(
+          "run_unavailable", CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, false,
+        ) }], (this.options.now ?? (() => new Date()))().toISOString());
+        return;
+      }
       const wasAborted = controller.signal.aborted;
       if (!wasAborted) controller.abort();
       if (!wasAborted) {
@@ -949,6 +1034,7 @@ export class CanonicalChatOrchestrator {
           runId: run.id,
           outcome,
           completedAt,
+          ...(outcome === "failed" ? { diagnostic: diagnoseChatRunFailure(error, failureStage) } : {}),
         });
       } catch (finishError: unknown) {
         if (!(finishError instanceof ChatRunNotActiveError)) throw finishError;
@@ -977,6 +1063,7 @@ export class CanonicalChatOrchestrator {
     chatId: string,
     runId: string,
   ): Promise<CanonicalChatRunCancellationResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     const active = this.active.get(runId);
     let providerCancellation: Promise<void> | undefined;
     if (active && active.chatId === chatId && active.owner.type === owner.type
@@ -1034,6 +1121,7 @@ export class CanonicalChatOrchestrator {
     runId: string,
     inputValue: CanonicalSteerChatRunRequest,
   ): Promise<CanonicalChatRunSteeringResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     this.assertOpen();
     const input = CanonicalSteerChatRunRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
@@ -1139,6 +1227,7 @@ export class CanonicalChatOrchestrator {
     queuedTurnId: string,
     inputValue: CanonicalSteerQueuedChatTurnRequest,
   ): Promise<CanonicalChatRunSteeringResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     this.assertOpen();
     const input = CanonicalSteerQueuedChatTurnRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
@@ -1247,6 +1336,7 @@ export class CanonicalChatOrchestrator {
     approvalId: string,
     inputValue: CanonicalSubmitChatApprovalRequest,
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
@@ -1299,9 +1389,9 @@ export class CanonicalChatOrchestrator {
       const oldest = this.reconciliation.keys().next().value;
       if (oldest) this.reconciliation.delete(oldest);
     }
-    const reconciliation = this.reconcileOwnerActiveRuns(owner).catch((error: unknown) => {
-      this.reconciliation.delete(key);
-      throw error;
+    const reconciliation = this.reconcileOwnerActiveRuns(owner).finally(() => {
+      // Coalesce in-flight work, not a permanently cached pending outcome.
+      if (this.reconciliation.get(key) === reconciliation) this.reconciliation.delete(key);
     });
     this.reconciliation.set(key, reconciliation);
     return reconciliation;
@@ -1313,6 +1403,20 @@ export class CanonicalChatOrchestrator {
     for (const context of contexts) {
       if (this.active.has(context.latestRun.id) || this.pendingDispatch.has(context.latestRun.id)) continue;
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
+      try {
+        await this.assertPersonalExecutionAllowed(owner, context.latestRun.chatId);
+      } catch (error: unknown) {
+        if (!(error instanceof CanonicalChatOrchestrationError)) throw error;
+        const finished = await this.options.repository.finishRun(owner, {
+          chatId: context.latestRun.chatId,
+          runId: context.latestRun.id,
+          outcome: "failed",
+          completedAt,
+          diagnostic: diagnoseChatRunFailure(error, "preparation"),
+        });
+        if (finished.transitioned) reconciled += 1;
+        continue;
+      }
       const error = safeError(
         "run_unavailable",
         "The Run was interrupted when Matrix restarted.",
@@ -1320,6 +1424,19 @@ export class CanonicalChatOrchestrator {
         ["retry"],
       );
       try {
+        const recovery = await recoverOrphanedRun({
+          owner,
+          run: context.latestRun,
+          repository: this.options.repository,
+          adapter: this.options.adapters.get(context.latestRun.driverKind),
+          messageId: assistantMessageId,
+          completedAt,
+        });
+        if (recovery === "pending") continue;
+        if (recovery) {
+          reconciled += 1;
+          continue;
+        }
         try {
           await this.persistActivities(owner, context.latestRun, [{ type: "run.error", error }], completedAt);
         } catch (activityError: unknown) {
@@ -1333,6 +1450,7 @@ export class CanonicalChatOrchestrator {
           runId: context.latestRun.id,
           outcome: "failed",
           completedAt,
+          diagnostic: { stage: "recovery", category: "unknown" },
         });
         if (finished.transitioned) reconciled += 1;
       } catch (reconcileError: unknown) {

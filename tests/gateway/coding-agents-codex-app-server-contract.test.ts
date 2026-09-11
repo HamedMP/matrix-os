@@ -54,12 +54,19 @@ describe("Codex app-server contract", () => {
             "linux-x64": expect.stringMatching(/^[a-f0-9]{64}$/),
           },
         },
+        "0.153.4": {
+          schemaSha256ByTarget: {
+            "darwin-arm64": expect.stringMatching(/^[a-f0-9]{64}$/),
+            "linux-x64": expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
       },
       requiredServerMethods: [
         "item/commandExecution/requestApproval",
         "item/fileChange/requestApproval",
         "item/tool/requestUserInput",
         "item/permissions/requestApproval",
+        "mcpServer/elicitation/request",
       ],
       requiredServerNotifications: [
         "item/started",
@@ -79,6 +86,7 @@ describe("Codex app-server contract", () => {
         "item/fileChange/requestApproval": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/tool/requestUserInput": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/permissions/requestApproval": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "mcpServer/elicitation/request": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/started": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/completed": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/agentMessage/delta": expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -153,6 +161,14 @@ describe("Codex app-server contract", () => {
     expect(codexAppServerContractStatus("codex-cli 0.153.3")).toEqual({
       status: "verified",
       version: "0.153.3",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.153.4")).toEqual({
+      status: "verified",
+      version: "0.153.4",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.154.0")).toEqual({
+      status: "verified",
+      version: "0.154.0",
     });
     expect(codexAppServerContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",

@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { createBillingStatusHandler } from './billing-status-route.js';
 import { bodyLimit } from 'hono/body-limit';
 import { createHash, randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
@@ -20,7 +21,6 @@ import {
   getBillingCustomerByStripeCustomerId,
   consumeCardTrial,
   getBillingEntitlement,
-  getBillingEntitlementState,
   getBillingSubscription,
   getBillingSubscriptionByStripeId,
   getActiveUserMachineByClerkId,
@@ -42,14 +42,11 @@ import {
 } from './db.js';
 import {
   DEFAULT_BILLING_PLAN_DEFINITIONS,
-  computeEffectiveEntitlement,
   deriveStripeEntitlement,
   getRuntimeAccessDecision,
   loadRuntimeCatalog,
   loadStripePriceCatalog,
   parseBillingEntitlementRecord,
-  parseBillingOverrideRecord,
-  projectPublicBillingEntitlement,
   resolveServerType,
   type BillingEntitlementStatus,
   type BillingEntitlement,
@@ -58,7 +55,12 @@ import {
   type StripePriceCatalog,
   type StripeSubscriptionProjection,
 } from './billing.js';
-import { DeveloperToolsWithDefaultSchema, type DeveloperToolId } from './developer-tools.js';
+import {
+  DeveloperToolsWithDefaultSchema,
+  defaultDeveloperToolsForServerType,
+  developerToolsAllowedForServerType,
+  type DeveloperToolId,
+} from './developer-tools.js';
 import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 import {
   AiCreditCheckoutRequestSchema,
@@ -143,10 +145,6 @@ const PortalRequestSchema = z.object({
     (value) => value === undefined || resolveReturnPath(value) === value,
     { message: 'Invalid return path' },
   ),
-}).strict();
-
-const BillingStatusQuerySchema = z.object({
-  runtimeSlot: RuntimeSlotSchema.optional(),
 }).strict();
 
 const CheckoutPreparationStatusQuerySchema = z.object({
@@ -378,7 +376,19 @@ export function createBillingRoutes(options: {
     const parsed = CheckoutRequestSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
 
-    const checkoutProperties = buildCheckoutTelemetryProperties(parsed.data);
+    const selectedPlan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((plan) => plan.slug === parsed.data.planSlug);
+    const serverType = selectedPlan
+      ? resolveServerType(loadRuntimeCatalog(env), selectedPlan.defaultCatalogSku, parsed.data.regionSlug)
+        ?? undefined
+      : undefined;
+    const developerToolsWereOmitted = typeof body === 'object'
+      && body !== null
+      && !Object.hasOwn(body, 'developerTools');
+    const developerTools = developerToolsWereOmitted && serverType
+      ? defaultDeveloperToolsForServerType(serverType)
+      : parsed.data.developerTools;
+
+    const checkoutProperties = buildCheckoutTelemetryProperties({ ...parsed.data, developerTools });
     emitTelemetry(BILLING_CHECKOUT_STARTED_EVENT, {
       distinctId: clerkUserId,
       properties: checkoutProperties,
@@ -446,12 +456,10 @@ export function createBillingRoutes(options: {
       ) {
         return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
       }
-      const selectedPlan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((plan) => plan.slug === parsed.data.planSlug);
-      const serverType = selectedPlan
-        ? resolveServerType(loadRuntimeCatalog(env), selectedPlan.defaultCatalogSku, parsed.data.regionSlug)
-          ?? undefined
-        : undefined;
       if (parsed.data.serverType && parsed.data.serverType !== serverType) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      if (serverType && !developerToolsAllowedForServerType(serverType, developerTools)) {
         return c.json({ error: 'Invalid request' }, 400);
       }
       if (primaryPrebillingRequired && parsed.data.runtimeSlot === 'primary' && !options.prebilling) {
@@ -460,7 +468,7 @@ export function createBillingRoutes(options: {
       const checkoutClaim = {
         clerkUserId,
         createdAt: currentTime.toISOString(),
-        developerTools: parsed.data.developerTools,
+        developerTools,
         runtimeSlot: parsed.data.runtimeSlot,
         planSlug: parsed.data.planSlug,
         billingInterval: parsed.data.interval,
@@ -576,7 +584,7 @@ export function createBillingRoutes(options: {
             billingInterval: parsed.data.interval,
             serverType,
             regionSlug: parsed.data.regionSlug,
-            developerTools: parsed.data.developerTools,
+            developerTools,
             now: currentTime.toISOString(),
           });
         } catch (err: unknown) {
@@ -762,97 +770,16 @@ export function createBillingRoutes(options: {
     }
   });
 
-  app.get('/status', async (c) => {
-    const clerkUserId = await resolveRouteClerkUserId(c, 'status');
-    if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
-    try {
-      const currentTime = now();
-      const query = BillingStatusQuerySchema.safeParse(c.req.query());
-      if (!query.success) return c.json({ error: 'Invalid request' }, 400);
-      const runtimeSlot = query.data.runtimeSlot ?? 'primary';
-      const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
-      let stripeEntitlement = parseBillingEntitlementRecord(state.entitlement);
-      const selectedSubscription = await getBillingSubscription(
-        options.db,
-        clerkUserId,
-        runtimeSlot,
-        currentTime.toISOString(),
-      );
-      if (query.data.runtimeSlot) {
-        stripeEntitlement = selectedSubscription
-          ? deriveStripeEntitlement({
-            clerkUserId: selectedSubscription.clerkUserId,
-            stripeCustomerId: selectedSubscription.stripeCustomerId,
-            stripeSubscriptionId: selectedSubscription.stripeSubscriptionId,
-            status: selectedSubscription.status,
-            currentPeriodEnd: selectedSubscription.currentPeriodEnd,
-            trialStartedAt: selectedSubscription.trialStartedAt,
-            trialEndsAt: selectedSubscription.trialEndsAt,
-            trialConvertedAt: selectedSubscription.trialConvertedAt,
-            firstTrialPaymentFailedAt: selectedSubscription.firstTrialPaymentFailedAt,
-            items: [{ priceId: selectedSubscription.stripePriceId, quantity: 1 }],
-          }, {
-            priceCatalog: loadStripePriceCatalog(env),
-            runtimeCatalog: loadRuntimeCatalog(env),
-            now: currentTime,
-          })
-          : null;
-      }
-      const entitlement = computeEffectiveEntitlement({
-        stripeEntitlement,
-        override: parseBillingOverrideRecord(state.override),
-        now: currentTime,
-      });
-      const access = getRuntimeAccessDecision(entitlement, currentTime);
-      const trialsEnabledForSlot = env.MATRIX_CARD_TRIALS_ENABLED === 'true'
-        && runtimeSlot === 'primary';
-      const activeAttempt = await getActiveCheckoutAttempt(options.db, clerkUserId, runtimeSlot);
-      const offerEligible = trialsEnabledForSlot
-        ? await isCardTrialOfferEligible(options.db, clerkUserId)
-        : false;
-      const reservedTrialDays = runtimeSlot === 'primary'
-        ? activeAttempt?.trialPeriodDays ?? null
-        : null;
-      const trialOffer = {
-        eligible: reservedTrialDays !== null || (offerEligible && !activeAttempt),
-        durationDays: reservedTrialDays ?? cardTrialDays,
-      };
-      const recurringPrice = entitlement?.source === 'stripe'
-        && selectedSubscription
-        && selectedSubscription.planSlug === entitlement.planSlug
-        ? await resolvePublicRecurringPrice(
-          options.db,
-          options.stripe,
-          selectedSubscription,
-          currentTime,
-        )
-        : null;
-      const machine = await getActiveUserMachineByClerkId(
-        options.db,
-        clerkUserId,
-        runtimeSlot,
-      );
-      const placement = resolveRuntimePlacement(machine?.location);
-      return c.json({
-        entitlement: entitlement
-          ? projectPublicBillingEntitlement(entitlement, loadRuntimeCatalog(env), {
-            recurringPrice,
-            runtimePlacement: placement ? {
-              regionSlug: placement.slug,
-              label: placement.label,
-              countryLabel: placement.countryLabel,
-              networkZone: placement.networkZone,
-            } : null,
-          })
-          : null,
-        access,
-        trialOffer,
-      }, 200);
-    } catch (err: unknown) {
-      console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
-      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-    }
-  });
+  app.get('/status', createBillingStatusHandler({
+    db: options.db,
+    stripe: options.stripe,
+    env,
+    now,
+    cardTrialDays,
+    resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'status'),
+    resolvePublicRecurringPrice,
+    resolveRuntimePlacement,
+  }));
 
   app.post('/webhooks/stripe', bodyLimit({ maxSize: STRIPE_WEBHOOK_BODY_LIMIT }), async (c) => {
     const signature = c.req.header('stripe-signature');

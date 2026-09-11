@@ -10,6 +10,7 @@ export interface CachedTerminal {
   ws: WebSocket;
   lastSeq: number;
   hasReplayCursor?: boolean;
+  presentationRevision?: number;
   sessionId: string;
   socketRetained?: boolean;
 }

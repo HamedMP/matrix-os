@@ -830,7 +830,7 @@ describe("EmbedService", () => {
 
     await expect(service.retryAuth("embed-app")).resolves.toBe(false);
     expect(open).not.toHaveBeenCalled();
-    expect(emitState).toHaveBeenCalledWith("embed-app", "auth-required");
+    expect(emitState).toHaveBeenCalledWith("embed-app", "failed");
 
     await expect(service.retryAuth("embed-app")).resolves.toBe(true);
     expect(fetchLaunchToken).toHaveBeenCalledTimes(2);

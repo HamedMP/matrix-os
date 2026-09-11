@@ -8,8 +8,8 @@ export interface ConversationAttachmentPresentation {
 
 export type ConversationMessageContentPresentation =
   | { kind: "text"; text: string }
-  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string }
-  | { kind: "image"; id: string; label: string; src: string };
+  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string; path?: string }
+  | { kind: "image"; id: string; label: string; src: string; path?: string };
 
 export interface ConversationMessagePresentation {
   kind: "message";
@@ -19,6 +19,8 @@ export interface ConversationMessagePresentation {
   markdown: string;
   copyText: string;
   timestamp: number;
+  /** The live event stream already delivered content for this message. */
+  wasStreamed?: boolean;
   content?: ConversationMessageContentPresentation[];
   /** @deprecated Use references for new provider-neutral projections. */
   attachments?: ConversationAttachmentPresentation[];
@@ -129,4 +131,6 @@ export interface ConversationPresentationCallbacks {
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
   openFile?: (path: string) => boolean;
+  openAttachment?: (path: string) => boolean;
+  openWebLink?: (url: string) => boolean;
 }

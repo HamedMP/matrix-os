@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
+import { useUi } from "../../stores/ui";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -27,11 +28,15 @@ export default function EmbedHost({
 }: EmbedHostProps) {
   const {
     kind,
-  active = true,
+  active: requestedActive = true,
   refreshRequest,
   layoutRevision,
   visualScale = 1,
   } = props;
+  // Every native host observes overlay leases, including hosts outside the
+  // desktop window tree. Releasing the final lease restores only active hosts.
+  const overlayOpen = useUi((state) => state.rendererOverlayCount > 0);
+  const active = requestedActive && !overlayOpen;
   const slug = props.kind === "app" ? props.slug : undefined;
   const appIdentity = props.kind === "app" ? props.appIdentity : undefined;
   const url = props.kind === "browser" ? props.url : undefined;
@@ -234,7 +239,7 @@ export default function EmbedHost({
                   .then((result) => {
                     if (embedIdRef.current !== id) return;
                     if (result.ok) reportBounds();
-                    else setState("auth-required");
+                    else setState((current) => current === "loading" ? "auth-required" : current);
                   })
                   .catch(() => {
                     if (embedIdRef.current === id) setState("auth-required");

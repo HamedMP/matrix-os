@@ -45,19 +45,49 @@ vi.mock("../../shell/src/components/MissionControl.js", () => ({
     open,
     apps,
     onOpenApp,
+    onClose,
+    onAddToDesktop,
   }: {
     open: boolean;
     apps: Array<{ name: string; path: string }>;
     onOpenApp: (name: string, path: string) => void;
-  }) => open ? (
-    <div data-testid="launcher-destinations">
-      {apps.map((app) => (
-        <button key={app.path} type="button" onClick={() => onOpenApp(app.name, app.path)}>
-          {app.name}
-        </button>
-      ))}
-    </div>
-  ) : null,
+    onClose: () => void;
+    onAddToDesktop: (path: string, bounds: { width: number; height: number }) => Promise<string>;
+  }) => {
+    const [contextApp, setContextApp] = React.useState<{ name: string; path: string } | null>(null);
+    if (!open) return null;
+    return (
+      <div data-testid="launcher-destinations">
+        {apps.map((app) => (
+          <button
+            key={app.path}
+            type="button"
+            onClick={() => onOpenApp(app.name, app.path)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setContextApp(app);
+            }}
+          >
+            {app.name}
+          </button>
+        ))}
+        {contextApp ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              void onAddToDesktop(contextApp.path, { width: window.innerWidth, height: window.innerHeight })
+                .then((result) => {
+                  if (result === "added" || result === "already-present") onClose();
+                });
+            }}
+          >
+            Add {contextApp.name} to Desktop
+          </button>
+        ) : null}
+      </div>
+    );
+  },
 }));
 
 vi.mock("../../shell/src/components/DotGrid.js", () => ({
@@ -145,6 +175,7 @@ let DesktopComponent: DesktopComponentType;
 let desktopModeStore: DesktopModeStore;
 let desktopConfigStore: DesktopConfigStore;
 let windowManagerStore: WindowManagerStore;
+let resetLayoutPersistence: () => void;
 let queryClient: QueryClient;
 
 function renderDesktop(props: React.ComponentProps<DesktopComponentType> = {}) {
@@ -207,12 +238,18 @@ describe("Desktop launcher dock button by mode", () => {
     DesktopComponent = (await import("../../shell/src/components/Desktop.js")).Desktop;
     desktopModeStore = (await import("../../shell/src/stores/desktop-mode.js")).useDesktopMode;
     desktopConfigStore = (await import("../../shell/src/stores/desktop-config.js")).useDesktopConfigStore;
-    windowManagerStore = (await import("../../shell/src/hooks/useWindowManager.js")).useWindowManager;
+    (await import("../../shell/src/stores/desktop-config.js")).resetWebDesktopIconsRuntime();
+    const windowManagerModule = await import("../../shell/src/hooks/useWindowManager.js");
+    windowManagerStore = windowManagerModule.useWindowManager;
+    resetLayoutPersistence = windowManagerModule.resetWindowManagerLayoutPersistenceForTests;
     queryClient = createShellQueryClient();
     queryClient.setDefaultOptions({ queries: { retry: false } });
   });
 
   afterEach(() => {
+    // A module reset does not cancel the previous store's debounced save.
+    resetLayoutPersistence();
+    queryClient.clear();
     vi.unstubAllGlobals();
   });
 
@@ -288,6 +325,72 @@ describe("Desktop launcher dock button by mode", () => {
     )).toEqual(chatWindow);
   });
 
+  it("adds an existing generated app from the launcher and renders its persisted Web Desktop icon", async () => {
+    const sushi = {
+      name: "Sushi Counter",
+      path: "/files/apps/sushi-counter/index.html",
+      icon: "sushi-counter",
+      slug: "sushi-counter",
+    };
+    const patches: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return await jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return await jsonResponse([sushi]);
+      if (url.includes("/api/shell/bootstrap")) {
+        return await jsonResponse({ layout: { windows: [] }, apps: [sushi], modules: [] });
+      }
+      if (url.includes("/api/os-view-state") && init?.method === "PATCH") {
+        patches.push(JSON.parse(String(init.body)));
+        return await jsonResponse({
+          revision: 2,
+          document: {
+            version: 1,
+            apps: [],
+            pinnedApps: [],
+            desktop: { windows: [], icons: [{ path: "apps/sushi-counter/index.html", x: 24, y: 24 }] },
+            canvas: { windows: [], transform: { zoom: 1, panX: 0, panY: 0 } },
+          },
+          updatedAt: "2026-09-08T00:00:00.000Z",
+        });
+      }
+      if (url.includes("/api/os-view-state")) {
+        return await jsonResponse({
+          revision: 1,
+          document: {
+            version: 1,
+            apps: [],
+            pinnedApps: [],
+            desktop: { windows: [], icons: [] },
+            canvas: { windows: [], transform: { zoom: 1, panX: 0, panY: 0 } },
+          },
+          updatedAt: "2026-09-08T00:00:00.000Z",
+        });
+      }
+      return await jsonResponse({});
+    }));
+    resetShellMode("desktop", true);
+
+    renderDesktop();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open App Launcher" }));
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Sushi Counter" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" }));
+
+    await waitFor(() => expect(screen.queryByTestId("launcher-destinations")).toBeNull());
+    expect(screen.getByRole("button", { name: "Sushi Counter" })).toBeTruthy();
+    expect(patches).toEqual([expect.objectContaining({
+      baseRevision: 1,
+      patch: expect.objectContaining({
+        desktop: expect.objectContaining({
+          icons: expect.arrayContaining([
+            expect.objectContaining({ path: "apps/sushi-counter/index.html" }),
+          ]),
+        }),
+      }),
+    })]);
+  });
+
   it("routes an installed Browser command through the dedicated public browser launch", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -316,7 +419,7 @@ describe("Desktop launcher dock button by mode", () => {
     renderDesktop();
 
     const browserCommand = await waitFor(() => {
-      const command = commandStore.getState().commands.get("app:apps/browser/dist/index.html");
+      const command = commandStore.getState().commands.get("app:__browser__");
       expect(command).toBeDefined();
       return command!;
     });
@@ -356,10 +459,10 @@ describe("Desktop launcher dock button by mode", () => {
 
     await waitFor(() => {
       expect(queryClient.getQueryData<ApiAppEntry[]>(appKeys.list())).toEqual(expect.arrayContaining([
-        expect.objectContaining({ path: "/files/apps/browser/dist/index.html" }),
+        expect.objectContaining({ path: "__browser__" }),
       ]));
     });
-    act(() => desktopConfigStore.setState({ pinnedApps: ["apps/browser/dist/index.html"] }));
+    act(() => desktopConfigStore.setState({ pinnedApps: ["__browser__"] }));
     const browserButtons = await screen.findAllByRole("button", { name: "Browser" });
     fireEvent.click(browserButtons.at(-1)!);
 
@@ -494,8 +597,8 @@ describe("Desktop launcher dock button by mode", () => {
 
     await waitFor(() => {
       const paths = (queryClient.getQueryData<ApiAppEntry[]>(appKeys.list()) ?? []).map((app) => app.path);
-      expect(paths).toContain("/files/apps/stickies/dist/index.html");
-      expect(paths).not.toContain("/files/apps/winxp-minesweeper/index.html");
+      expect(paths).toContain("apps/stickies/dist/index.html");
+      expect(paths).not.toContain("apps/winxp-minesweeper/index.html");
     });
   });
 

@@ -1,3 +1,4 @@
+import { canonicalChatApprovals } from "@matrix-os/contracts";
 import type {
   CanonicalChatMessage,
   CanonicalChatRun,
@@ -19,6 +20,7 @@ import type {
 
 const MAX_MESSAGE_PART_PROJECTIONS = 64;
 const MAX_RUN_ACTIVITY_PROJECTIONS = 500;
+const MAX_STREAMED_MESSAGE_PROJECTIONS = 200;
 
 function setBounded<K, V>(map: Map<K, V>, key: K, value: V, limit: number): boolean {
   if (!map.has(key) && map.size >= limit) return false;
@@ -113,6 +115,7 @@ function messageContent(
           id: part.attachmentId,
           label: part.label,
           src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}`,
+          path: part.ownerReference,
         });
       } else {
         unmatched.push({
@@ -120,6 +123,7 @@ function messageContent(
           id: part.attachmentId,
           referenceKind: "file",
           label: part.label,
+          ...(part.ownerReference ? { path: part.ownerReference } : {}),
         });
       }
     }
@@ -327,6 +331,7 @@ function runPresentation(
   activities: CanonicalChatRunActivity[],
   hasFinalAssistantMessage: boolean,
   turnId: string,
+  allowRetry: boolean,
 ): {
   work: ConversationWorkPresentation[];
   streamingFinal?: ConversationMessagePresentation;
@@ -507,7 +512,7 @@ function runPresentation(
     ...projectedActivityGroups,
     ...requestOrder.flatMap((key) => {
       const request = requests.get(key);
-      return request ? [request] : [];
+      return request ? [active ? request : { ...request, state: "resolved" as const, actions: undefined }] : [];
     }),
   ];
   const failed = run.status === "failed" || run.outcome === "failed";
@@ -542,7 +547,7 @@ function runPresentation(
           : canonicalChatSafeFailureReason(runError?.error.code)
             ?? canonicalChatSafeFailureReason("run_failed")!,
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
-        ...(!stopped && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
+        ...(!stopped && allowRetry && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
           ? { actions: [{ kind: "retry" as const, turnId, label: "Retry" }] }
           : {}),
       }
@@ -559,7 +564,19 @@ export function canonicalChatPresentation(input: {
   turns: CanonicalChatTurn[];
   runs: CanonicalChatRun[];
   activities: CanonicalChatRunActivity[];
+  streamedMessageIds?: readonly string[];
 }): ConversationTurnPresentation[] {
+  const streamedMessageIds = new Set(
+    input.streamedMessageIds?.slice(-MAX_STREAMED_MESSAGE_PROJECTIONS) ?? [],
+  ); // Per-detail projection, explicitly capped with the message window.
+  const approvalViews = canonicalChatApprovals(input);
+  const latestTurnId = input.turns.reduce<CanonicalChatTurn | undefined>((latest, turn) => (
+    latest === undefined
+      || turn.baseMessageSeq > latest.baseMessageSeq
+      || (turn.baseMessageSeq === latest.baseMessageSeq && turn.createdAt > latest.createdAt)
+      ? turn
+      : latest
+  ), undefined)?.id;
   return input.turns.map((turn) => {
     const userMessage = input.messages.find((message) => message.id === turn.inputMessageId);
     const userFollowups = input.messages.filter((message) => (
@@ -578,7 +595,13 @@ export function canonicalChatPresentation(input: {
     const terminalFailure = run?.status === "failed" || run?.status === "aborted"
       || run?.outcome === "failed" || run?.outcome === "aborted";
     const finalMessage = terminalFailure || isActiveRun(run) ? undefined : assistantMessages.at(-1);
-    const live = runPresentation(run, input.activities, Boolean(finalMessage), turn.id);
+    const live = runPresentation(
+      run,
+      input.activities,
+      Boolean(finalMessage),
+      turn.id,
+      turn.id === latestTurnId,
+    );
     const modelStatus = activeModelStatus(run);
     const unsortedWork = [
       ...(modelStatus ? [modelStatus] : []),
@@ -613,7 +636,15 @@ export function canonicalChatPresentation(input: {
         otherIndex += 1;
       }
     }
-    const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run));
+    const seenApprovals = new Set<string>(); // Per-turn, bounded by snapshot activities/parts.
+    const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run)).flatMap((item): ConversationWorkPresentation[] => {
+      if (item.kind !== "request") return [item];
+      if (item.requestKind !== "approval") return [isActiveRun(run) ? item : { ...item, state: "resolved", actions: undefined }];
+      if (seenApprovals.has(item.requestId)) return [];
+      seenApprovals.add(item.requestId);
+      const approval = approvalViews.find(view => view.runId === run?.id && view.approvalId === item.requestId);
+      return [approval?.pending ? item : { ...item, state: "resolved", actions: undefined }];
+    });
     const timeline = [
       ...work.map((item, index) => ({
         kind: "work" as const,
@@ -648,7 +679,12 @@ export function canonicalChatPresentation(input: {
       ...(timeline.length > 0 ? { timeline } : {}),
       ...(userFollowups.length > 0 ? { expandedByDefault: true } : {}),
       ...(finalMessage && messageText(finalMessage)
-        ? { final: messagePresentation(finalMessage, "final") }
+        ? {
+            final: {
+              ...messagePresentation(finalMessage, "final"),
+              ...(streamedMessageIds.has(finalMessage.id) ? { wasStreamed: true } : {}),
+            },
+          }
         : live.streamingFinal
           ? { final: live.streamingFinal }
           : live.failure ? { final: live.failure } : {}),

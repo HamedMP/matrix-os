@@ -26,6 +26,10 @@ const execFileAsync = promisify(execFile);
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const baseNow = new Date("2026-07-06T12:00:00.000Z");
 const runtimeCreatedAt = "2026-07-06T12:00:00.500Z";
+const TEST_TERMINAL_REF = {
+  workspaceId: "tws_00000000000000000000000000000001",
+  tabId: "tt_00000000000000000000000000000001",
+} as const;
 
 const createBody = {
   providerId: "codex",
@@ -53,7 +57,7 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
       zellijSession: "matrix-agent-workspace-1",
       createdAt: runtimeCreatedAt,
     },
-    terminalSessionId: "term_sess_workspace_1",
+    terminalRef: TEST_TERMINAL_REF,
     startedAt: baseNow.toISOString(),
     lastActivityAt: baseNow.toISOString(),
     transcriptPath: "/home/matrix/home/system/sessions/sess_workspace_1.jsonl",
@@ -65,6 +69,27 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 }
 
 describe("coding agent workspace provider", () => {
+  it("bounds a hung cancellation without claiming the remote tool stopped", async () => {
+    vi.useFakeTimers();
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex", agent: "codex",
+      runtime: { startSession: vi.fn(), stopSession: vi.fn(() => new Promise(() => undefined)) },
+    });
+    let outcome = "pending";
+    const task = Promise.resolve(provider.abortThread!({
+      principal: ownerPrincipal,
+      thread: AgentThreadSummarySchema.parse({ id: "thread_cancel", providerId: "codex", title: "Cancel", status: "running", attention: "none", createdAt: baseNow.toISOString(), updatedAt: baseNow.toISOString() }),
+      clientRequestId: "req_cancel_hung", now: () => baseNow, nextEventId: () => "evt_cancel",
+    })).then(() => { outcome = "reported_aborted"; }, () => { outcome = "unconfirmed"; });
+    try {
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(outcome).toBe("unconfirmed");
+      await task;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses device authentication for the remote Codex connect action", async () => {
     const provider = createWorkspaceCodingAgentProvider({
       providerId: "codex",
@@ -306,7 +331,7 @@ exec /bin/sh "$@"
       expect.objectContaining({ type: "thread.status", status: "running" }),
       expect.objectContaining({
         type: "terminal.bound",
-        terminalSessionCreatedAt: runtimeCreatedAt,
+        terminalRef: TEST_TERMINAL_REF,
       }),
     ]));
     expect(runtime.startSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -395,7 +420,7 @@ exec /bin/sh "$@"
       providerId: "codex",
       projectId: "repo-main",
       taskId: "task_abc123",
-      terminalSessionId: "matrix-agent-workspace-1",
+      terminalRef: TEST_TERMINAL_REF,
       status: "running",
       attention: "none",
     });
@@ -406,7 +431,7 @@ exec /bin/sh "$@"
       "terminal.bound",
     ]);
     expect(snapshot.events.items.at(-1)).toMatchObject({
-      terminalSessionCreatedAt: runtimeCreatedAt,
+      terminalRef: TEST_TERMINAL_REF,
     });
   });
 
@@ -519,7 +544,7 @@ exec /bin/sh "$@"
       title: "Coding agent run",
       status: "running",
       attention: "none",
-      terminalSessionId: "matrix-agent-workspace-1",
+      terminalRef: TEST_TERMINAL_REF,
       createdAt: baseNow.toISOString(),
       updatedAt: baseNow.toISOString(),
     });
@@ -699,6 +724,7 @@ exec /bin/sh "$@"
       runtime: {
         startSession,
         stopSession: vi.fn(),
+        getSession: vi.fn(async () => ({ ok: true as const, session: workspaceSession({ id: "sess_workspace_dead_1" }) })),
       },
       codexEvents: {
         healthCheck: vi.fn(async () => ({ ok: true })),
@@ -743,6 +769,11 @@ exec /bin/sh "$@"
       nextEventId: () => "evt_workspace_recovered_1",
     } as never)).resolves.toMatchObject({
       outcome: "delivered",
+      events: [expect.objectContaining({
+        type: "terminal.bound",
+        terminalRef: TEST_TERMINAL_REF,
+        terminalSessionCreatedAt: workspaceSession().runtime.createdAt,
+      })],
       resumeState: {
         conversationId: "sess_workspace_dead_1",
         providerThreadId: "native_thread_dead_1",
@@ -751,12 +782,14 @@ exec /bin/sh "$@"
 
     expect(startSession).toHaveBeenCalledWith({
       ownerScope: { type: "user", id: "owner_user" },
+      recoveryThreadId: "thread_workspace_dead_1",
       request: expect.objectContaining({
         sessionId: "sess_workspace_dead_1",
         providerThreadId: "native_thread_dead_1",
         agent: "codex",
         prompt: "Continue after cancellation.",
         projectSlug: "repo-main",
+        worktreeId: "wt_abc123def456",
         model: "gpt-5.6-sol",
         modelOptions: [{ id: "effort", value: "high" }],
         approvalPolicy: "never",
@@ -769,6 +802,36 @@ exec /bin/sh "$@"
       { errorName: "CodexControlUnavailableError" },
     );
     expect(JSON.stringify(warn.mock.calls)).not.toContain("private socket path");
+  });
+
+  it.each(["missing-native", "missing-session", "foreign-owner", "lookup-error", "launch-error", "ambiguous-ack"])("fails cold recovery closed and releases ingestion on %s", async (mode) => {
+    const unwatch = vi.fn();
+    const startSession = vi.fn(async () => { throw new Error("launch failed"); });
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex", agent: "codex",
+      runtime: { startSession, stopSession: vi.fn(), getSession: async () => {
+        if (mode === "lookup-error") throw new Error("lookup failed");
+        return mode === "missing-session" ? { ok: false } : { ok: true, session: workspaceSession({
+          id: "sess_cold", ...(mode === "foreign-owner" ? { ownerId: "someone-else" } : {}),
+        }) };
+      } } as never,
+      codexEvents: { watch: async () => ({ path: "/tmp/events" }), unwatch, markStopped: vi.fn(), healthCheck: async () => ({ ok: true }) },
+      codexControl: { submitTurn: async () => { throw Object.assign(new Error("offline"), {
+        name: mode === "ambiguous-ack" ? "CodexControlTransportError" : "CodexControlUnavailableError",
+      }); } } as never,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(provider.resumeTurn!({
+        principal: ownerPrincipal,
+        thread: { id: "thread_cold", projectId: "repo-main" },
+        turn: { turnId: "turn_cold", message: "continue" },
+        resumeState: { conversationId: "sess_cold", ...(mode === "missing-native" ? {} : { providerThreadId: "native_cold" }) },
+        signal: AbortSignal.timeout(1_000), now: () => baseNow, nextEventId: () => "evt_cold",
+      } as never)).rejects.toThrow();
+      expect(unwatch).toHaveBeenCalledWith("sess_cold");
+      expect(startSession).toHaveBeenCalledTimes(mode === "launch-error" ? 1 : 0);
+    } finally { warn.mockRestore(); }
   });
 
   it("restores Codex event ingestion before resuming a persisted workspace thread", async () => {

@@ -90,7 +90,11 @@ describe("workspace API routes", () => {
       listPullRequests: vi.fn(),
       listBranches: vi.fn(),
     };
-    const app = createWorkspaceRoutes({ homePath, projectManager });
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      terminalRuntime: { listWorkspaces: vi.fn(async () => []) } as never,
+    });
     const res = await app.request(deleteJsonRequest("/api/projects/repo", { padding: "x".repeat(70 * 1024) }));
 
     expect(res.status).toBe(413);
@@ -102,12 +106,16 @@ describe("workspace API routes", () => {
       getGithubStatus: vi.fn(),
       createProject: vi.fn(),
       listManagedProjects: vi.fn(),
-      getProject: vi.fn(),
+      getProject: vi.fn(async () => ({ ok: true as const, project: { id: "proj_repo" } })),
       deleteProject: vi.fn(async () => ({ ok: true as const })),
       listPullRequests: vi.fn(),
       listBranches: vi.fn(),
     };
-    const app = createWorkspaceRoutes({ homePath, projectManager });
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      terminalRuntime: { listWorkspaces: vi.fn(async () => []) } as never,
+    });
     const res = await app.request(bodylessJsonDeleteRequest("/api/projects/repo"));
 
     expect(res.status).toBe(400);
@@ -162,9 +170,17 @@ describe("workspace API routes", () => {
       action: "delete" as const,
       projectSlug: "repo",
     }));
+    const projectManager = {
+      getProject: vi.fn(async () => ({
+        ok: true as const,
+        project: { id: "proj_repo", name: "Repo", slug: "repo" },
+      })),
+    };
     const app = createWorkspaceRoutes({
       homePath,
+      projectManager: projectManager as never,
       projectLifecycleService: { applyProjectLifecycleAction },
+      terminalRuntime: { listWorkspaces: vi.fn(async () => []) } as never,
       getOwnerScope: () => ({ type: "user", id: "user_123" }),
     });
     const res = await app.request(deleteJsonRequest("/api/projects/repo", { confirmation: "Repo" }));
@@ -316,6 +332,50 @@ describe("workspace API routes", () => {
     expect(diff.status).toBe(404);
     expect(listCommits).not.toHaveBeenCalled();
     expect(getCommitDiff).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit confirmation before project deletion terminates running tabs", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(), createProject: vi.fn(), listManagedProjects: vi.fn(),
+      getProject: vi.fn(async () => ({ ok: true as const, project: { id: "proj_repo" } })),
+      deleteProject: vi.fn(async () => ({ ok: true as const })), listPullRequests: vi.fn(), listBranches: vi.fn(),
+    };
+    const terminalRuntime = {
+      listWorkspaces: vi.fn(async () => [{ id: "tws_00000000000000000000000000000001", scope: "project", projectId: "proj_repo" }]),
+      deletionImpact: vi.fn(async () => ({ runningTabs: 2, tabs: [{ id: "tt_00000000000000000000000000000001" }] })),
+      deleteWorkspace: vi.fn(async () => undefined),
+    };
+    const applyProjectLifecycleAction = vi.fn(async () => ({
+      ok: true as const,
+      action: "delete" as const,
+      projectSlug: "repo",
+    }));
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      projectLifecycleService: { applyProjectLifecycleAction },
+      terminalRuntime: terminalRuntime as never,
+    });
+
+    const blocked = await app.request(deleteJsonRequest("/api/projects/repo", { confirmation: "Repo" }));
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: { code: "terminal_termination_confirmation_required" },
+      runningTabs: 2,
+    });
+    expect(applyProjectLifecycleAction).not.toHaveBeenCalled();
+
+    const confirmed = await app.request(deleteJsonRequest("/api/projects/repo", {
+      confirmation: "Repo",
+      confirmTerminate: true,
+    }));
+    expect(confirmed.status).toBe(200);
+    expect(terminalRuntime.deleteWorkspace).not.toHaveBeenCalled();
+    expect(applyProjectLifecycleAction).toHaveBeenCalledWith(
+      { userId: "default", source: "configured-container" },
+      "repo",
+      { type: "delete", confirmation: "Repo", confirmTerminate: true },
+    );
   });
 
   it("allows bodyless worktree deletes even when clients send JSON headers", async () => {
@@ -534,7 +594,7 @@ describe("workspace API routes", () => {
     const session = {
       id: "sess_abc123",
       runtime: { type: "zellij", status: "running", zellijSession: "matrix-sess_abc123" },
-      terminalSessionId: "term_sess_abc123",
+      terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
       nativeAttachCommand: ["zellij", "attach", "matrix-sess_abc123"],
     };
     const projectManager = {
@@ -582,7 +642,11 @@ describe("workspace API routes", () => {
       status: vi.fn(async () => ({ available: true, enforced: true, requiresAdminOverride: false, reason: "ok" })),
     };
     const sessionRuntimeBridge = {
-      registerSession: vi.fn(() => ({ ok: true, mode: "observe", terminalSessionId: "550e8400-e29b-41d4-a716-446655440000" })),
+      registerSession: vi.fn(() => ({
+        ok: true,
+        mode: "observe",
+        terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
+      })),
     };
     const app = createWorkspaceRoutes({
       homePath,
@@ -621,7 +685,7 @@ describe("workspace API routes", () => {
       session: expect.objectContaining({ id: "sess_abc123" }),
     });
     await expect((await app.request(jsonRequest("/api/sessions/sess_abc123/observe", {}))).json()).resolves.toMatchObject({
-      terminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
+      terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
     });
     expect(sessionRuntimeBridge.registerSession).toHaveBeenCalledWith(expect.objectContaining({ id: "sess_abc123" }), { mode: "observe" });
     await expect((await app.request(deleteJsonRequest("/api/sessions/sess_abc123", {}))).json()).resolves.toMatchObject({
@@ -636,33 +700,18 @@ describe("workspace API routes", () => {
     });
   });
 
-  it("wires default workspace session input to the injected Zellij runtime", async () => {
-    const sendInput = vi.fn(async () => undefined);
-    const zellijRuntime: ReturnType<typeof createZellijRuntime> = {
-      generateLayout: vi.fn(async ({ sessionId }) => ({
-        sessionName: `matrix-${sessionId}`,
-        layoutPath: join(homePath, "layouts", `${sessionId}.kdl`),
-      })),
-      start: vi.fn(async ({ sessionId }) => ({
-        ok: true,
-        status: "running",
-        sessionName: `matrix-${sessionId}`,
-        layoutPath: join(homePath, "layouts", `${sessionId}.kdl`),
-      })),
-      attachCommand: vi.fn((sessionId) => ["zellij", "attach", `matrix-${sessionId}`]),
-      observeCommand: vi.fn((sessionId) => ["zellij", "attach", `matrix-${sessionId}`, "--index", "0"]),
-      sendInput,
-      kill: vi.fn(async () => ({ ok: true })),
-      health: vi.fn(async () => ({
-        available: true,
-        status: "ok",
-        fallbackReason: null,
-        version: "zellij test",
-      })),
+  it("wires default workspace session input to the terminal workspace runtime", async () => {
+    const writeInput = vi.fn(async () => undefined);
+    const terminalRuntime = {
+      ensureWorkspace: vi.fn(async () => ({ id: "tws_00000000000000000000000000000001" })),
+      createTab: vi.fn(async () => ({ id: "tt_00000000000000000000000000000001" })),
+      writeInput,
+      terminateTab: vi.fn(async () => undefined),
+      listWorkspaces: vi.fn(async () => []),
     };
     const app = createWorkspaceRoutes({
       homePath,
-      zellijRuntime,
+      terminalRuntime: terminalRuntime as never,
       getOwnerScope: () => ({ type: "user", id: "user_workspace" }),
     });
 
@@ -677,7 +726,10 @@ describe("workspace API routes", () => {
     }));
 
     expect(sent.status).toBe(200);
-    expect(sendInput).toHaveBeenCalledWith("sess_route_input", "pwd\n", undefined);
+    expect(writeInput).toHaveBeenCalledWith({
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    }, "pwd\n");
   });
 
   it("checks default agent installations with the Matrix home without authentication", async () => {

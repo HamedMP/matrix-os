@@ -5,6 +5,7 @@ import {
   CreditCard,
   LogOut,
   Settings,
+  UsersIcon,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useState, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -158,6 +159,10 @@ export default function AccountMenu({
             </DropdownMenu.Label>
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
             <MenuRow icon={<Settings size={14} />} label="Settings" trailing onSelect={() => openSettings("account")} />
+            <MenuRow icon={<UsersIcon size={14} />} label="Shared with me" trailing onSelect={() => {
+              setOpen(false);
+              openTab({ kind: "shared", title: "Shared with me" });
+            }} />
             <MenuRow
               icon={<CircleHelp size={14} />}
               label="Get help"

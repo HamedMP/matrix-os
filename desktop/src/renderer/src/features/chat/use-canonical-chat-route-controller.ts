@@ -7,26 +7,30 @@ import type {
   CanonicalSteerChatRunRequest,
   CanonicalUpdateQueuedChatTurnRequest,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { canonicalChatRunFailure } from "@matrix-os/ui";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   CanonicalChatClient,
-  CanonicalChatEventSource,
+  CanonicalChatEventConsumer,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
+import { canonicalChatRunFailure, createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-os/ui";
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
-const ACTIVE_RUN_POLL_MS = 200;
-const ACTIVE_RUN_MAX_RETRY_MS = 2_000;
+const INITIAL_DETAIL_RETRY_MS = 200;
+const INITIAL_DETAIL_MAX_RETRY_MS = 2_000;
+const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
+const ACTIVE_RUN_FALLBACK_MAX_RETRY_MS = 10_000;
+const STREAM_MESSAGE_REFRESH_COALESCE_MS = 200;
+const MAX_STREAMED_MESSAGE_IDS = 200;
 
 function detailWithRecord(
   detail: CanonicalChatDetailResponse,
   record: CanonicalChatRecord,
 ): CanonicalChatDetailResponse {
-  return { ...detail, record };
+  return detail.record.chat.revision > record.chat.revision ? detail : { ...detail, record };
 }
 
 function shouldApplyAcknowledgement(
@@ -62,7 +66,7 @@ export function useCanonicalChatRouteController({
   active: boolean;
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
-  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
+  eventSource?: CanonicalChatEventConsumer;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -71,14 +75,40 @@ export function useCanonicalChatRouteController({
   const [error, setError] = useState<string | null>(null);
   const activeChatIdRef = useRef<string | null>(initialChatId);
   const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
+  const streamedMessagesRef = useRef<{ chatId: string | null; ids: string[] }>({
+    chatId: initialChatId,
+    ids: [],
+  });
   const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
+  // Keep the stream checkpoint synchronous. React may defer/replay a state
+  // updater after a newer SSE frame has already advanced detailRef.
+  const updateDetail = useCallback((update: (
+    current: CanonicalChatDetailResponse | null,
+  ) => CanonicalChatDetailResponse | null) => {
+    const next = update(detailRef.current);
+    detailRef.current = next;
+    setDetail(next);
+  }, []);
   const acknowledgementAttemptRef = useRef<{
     client: CanonicalChatClient;
     chatId: string;
     runId: string;
   } | null>(null);
+  const subscribeConnectionState = useCallback((notify: () => void) => {
+    const subscription = eventSource?.subscribeConnectionState?.(notify);
+    return () => subscription?.dispose();
+  }, [eventSource]);
+  const getConnectionState = useCallback(
+    () => eventSource?.connectionState?.() ?? "idle",
+    [eventSource],
+  );
+  const eventStreamState = useSyncExternalStore(
+    subscribeConnectionState,
+    getConnectionState,
+    getConnectionState,
+  );
 
   const loadDetail = useCallback(async (
     chatId: string,
@@ -158,23 +188,11 @@ export function useCanonicalChatRouteController({
   useEffect(() => {
     if (!active || !eventSource) return;
     let current = true;
-    let detailRefreshInFlight = false;
-    let detailRefreshPending = false;
     let listRefreshInFlight = false;
     let listRefreshPending = false;
-    const refreshSelectedDetail = async () => {
-      if (detailRefreshInFlight) {
-        detailRefreshPending = true;
-        return;
-      }
-      detailRefreshInFlight = true;
-      do {
-        detailRefreshPending = false;
-        const selectedChatId = activeChatIdRef.current;
-        if (selectedChatId) await loadDetail(selectedChatId, { background: true });
-      } while (current && detailRefreshPending);
-      detailRefreshInFlight = false;
-    };
+    const detailRefresh = createCanonicalChatRefresh(async () => (
+      !activeChatId || Boolean(await loadDetail(activeChatId, { background: true }))
+    ));
     const refreshList = async () => {
       if (listRefreshInFlight) {
         listRefreshPending = true;
@@ -188,20 +206,49 @@ export function useCanonicalChatRouteController({
       listRefreshInFlight = false;
     };
     const subscription = eventSource.subscribe((event) => {
-      if (event.type === "chat.full_refresh") {
-        void refreshList();
-        void refreshSelectedDetail();
+      if (event.type === "chat.changed" && event.content) {
+        const record = event.content.content.record;
+        setItems((current) => current.map((item) => item.chat.id === record.chat.id
+          && item.chat.revision < record.chat.revision ? record : item));
+        if (event.chatId === activeChatIdRef.current) {
+          const streamedMessageId = event.content.content.messageDelta?.message.id;
+          if (streamedMessageId) {
+            const currentStream = streamedMessagesRef.current;
+            const ids = currentStream.chatId === event.chatId
+              ? currentStream.ids.filter((id) => id !== streamedMessageId)
+              : [];
+            streamedMessagesRef.current = {
+              chatId: event.chatId,
+              ids: [...ids, streamedMessageId].slice(-MAX_STREAMED_MESSAGE_IDS),
+            };
+          }
+          const current = detailRef.current;
+          const next = current ? applyCanonicalChatContent(current, event.content) : null;
+          if (next) {
+            detailRef.current = next;
+            setDetail(next);
+          } else detailRefresh.schedule();
+        }
         return;
       }
-      if (event.chatId === activeChatIdRef.current) void refreshSelectedDetail();
+      if (event.type === "chat.full_refresh") {
+        void refreshList();
+        detailRefresh.schedule();
+        return;
+      }
+      if (event.chatId === activeChatIdRef.current) {
+        detailRefresh.schedule(
+          event.eventType === "run.message" ? STREAM_MESSAGE_REFRESH_COALESCE_MS : 0,
+        );
+      }
     });
     return () => {
       current = false;
-      detailRefreshPending = false;
       listRefreshPending = false;
+      detailRefresh.dispose();
       subscription.dispose();
     };
-  }, [active, eventSource, load, loadDetail]);
+  }, [active, activeChatId, eventSource, load, loadDetail]);
 
   useEffect(() => {
     if (!active || !activeChatId || detail?.record.chat.id === activeChatId) return;
@@ -215,8 +262,8 @@ export function useCanonicalChatRouteController({
       timeout = window.setTimeout(
         () => void loadInitialDetail(),
         Math.min(
-          ACTIVE_RUN_POLL_MS * (2 ** consecutiveFailures),
-          ACTIVE_RUN_MAX_RETRY_MS,
+          INITIAL_DETAIL_RETRY_MS * (2 ** consecutiveFailures),
+          INITIAL_DETAIL_MAX_RETRY_MS,
         ),
       );
     };
@@ -282,19 +329,19 @@ export function useCanonicalChatRouteController({
   ]);
 
   useEffect(() => {
-    if (!active || !activeChatId || !detail?.record.activeRun) return;
+    if (!active || !activeChatId || !detail?.record.activeRun || eventStreamState === "open") return;
     let cancelled = false;
     let timeout: number | undefined;
     let consecutiveFailures = 0;
-    const poll = (delay = ACTIVE_RUN_POLL_MS) => {
+    const poll = (delay = ACTIVE_RUN_FALLBACK_POLL_MS) => {
       timeout = window.setTimeout(async () => {
         const loaded = await loadDetail(activeChatId, { background: true });
         if (cancelled) return;
         if (!loaded) {
           consecutiveFailures += 1;
           poll(Math.min(
-            ACTIVE_RUN_POLL_MS * (2 ** consecutiveFailures),
-            ACTIVE_RUN_MAX_RETRY_MS,
+            ACTIVE_RUN_FALLBACK_POLL_MS * (2 ** consecutiveFailures),
+            ACTIVE_RUN_FALLBACK_MAX_RETRY_MS,
           ));
           return;
         }
@@ -307,7 +354,7 @@ export function useCanonicalChatRouteController({
       cancelled = true;
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
-  }, [active, activeChatId, Boolean(detail?.record.activeRun), loadDetail]);
+  }, [active, activeChatId, Boolean(detail?.record.activeRun), eventStreamState, loadDetail]);
 
   const selectChat = useCallback((chatId: string | null) => {
     detailRequestSequence.current += 1;
@@ -332,9 +379,8 @@ export function useCanonicalChatRouteController({
         projectId: targetProjectId,
       });
       if (!isCurrentScope()) return null;
-      setDetail((current) => {
+      updateDetail((current) => {
         const next = current ? detailWithRecord(current, record) : current;
-        detailRef.current = next;
         return next;
       });
       setItems((current) => current.map((item) => (
@@ -349,7 +395,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(detail.record.chat.id);
       return null;
     }
-  }, [client, detail, loadDetail]);
+  }, [client, detail, loadDetail, updateDetail]);
 
   const submitTurn = useCallback(async (
     input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
@@ -385,6 +431,7 @@ export function useCanonicalChatRouteController({
         chatScope: current.record.projectId ? "project" : "global",
       });
       if (!isCurrentScope()) return null;
+      const streamed = detailRef.current;
       const next: CanonicalChatDetailResponse = {
         ...current,
         record: admitted.record,
@@ -392,12 +439,14 @@ export function useCanonicalChatRouteController({
         turns: [...current.turns, admitted.turn],
         runs: [...current.runs, admitted.run],
       };
+      const resolved = streamed?.record.chat.id === next.record.chat.id
+        && streamed.record.chat.revision >= next.record.chat.revision ? streamed : next;
       setActiveChatId(admitted.record.chat.id);
       activeChatIdRef.current = admitted.record.chat.id;
-      detailRef.current = next;
-      setDetail(next);
+      detailRef.current = resolved;
+      setDetail(resolved);
       setItems((existing) => [
-        admitted.record,
+        resolved.record,
         ...existing.filter((item) => item.chat.id !== admitted.record.chat.id),
       ]);
       setError(null);
@@ -445,8 +494,9 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+      updateDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const messages = currentDetail.messages.some((message) => message.id === response.message.id)
           ? currentDetail.messages
           : [...currentDetail.messages, response.message];
@@ -463,7 +513,6 @@ export function useCanonicalChatRouteController({
           } : currentDetail.record,
           messages,
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -475,7 +524,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return null;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const queueTurn = useCallback(async (
     input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision">,
@@ -492,8 +541,9 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+      updateDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const existing = currentDetail.queuedTurns ?? [];
         const queuedTurns = existing.some((turn) => turn.id === response.queuedTurn.id)
           ? existing.map((turn) => turn.id === response.queuedTurn.id ? response.queuedTurn : turn)
@@ -510,7 +560,6 @@ export function useCanonicalChatRouteController({
           },
           queuedTurns,
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -522,7 +571,7 @@ export function useCanonicalChatRouteController({
       setError("The message could not be queued. Refresh and try again.");
       return null;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const updateQueuedTurn = useCallback(async (
     queuedTurnId: string,
@@ -540,8 +589,9 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+      updateDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
           ...currentDetail,
           record: {
@@ -556,7 +606,6 @@ export function useCanonicalChatRouteController({
             turn.id === queuedTurnId ? response.queuedTurn : turn
           )),
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -568,7 +617,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return null;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const steerQueuedTurn = useCallback(async (queuedTurnId: string) => {
     const current = detailRef.current;
@@ -592,8 +641,9 @@ export function useCanonicalChatRouteController({
       );
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+      updateDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const messages = currentDetail.messages.some((message) => message.id === response.message.id)
           ? currentDetail.messages
           : [...currentDetail.messages, response.message];
@@ -611,7 +661,6 @@ export function useCanonicalChatRouteController({
           messages,
           queuedTurns: (currentDetail.queuedTurns ?? []).filter((turn) => turn.id !== queuedTurnId),
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -623,7 +672,7 @@ export function useCanonicalChatRouteController({
       setError("The queued message could not steer this Run. It remains in Queue.");
       return null;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const reorderQueuedTurns = useCallback(async (queuedTurnIds: string[]) => {
     const current = detailRef.current;
@@ -638,8 +687,9 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return false;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+      updateDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
           ...currentDetail,
           record: {
@@ -651,7 +701,6 @@ export function useCanonicalChatRouteController({
           },
           queuedTurns: response.queuedTurns,
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -663,7 +712,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return false;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
     const current = detailRef.current;
@@ -677,8 +726,9 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return false;
       detailRequestSequence.current += 1;
-      setDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id) return currentDetail;
+      updateDetail((currentDetail) => {
+        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
+          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
         const next = {
           ...currentDetail,
           record: response.cancellation === "cancelled" ? {
@@ -690,7 +740,6 @@ export function useCanonicalChatRouteController({
           } : currentDetail.record,
           queuedTurns: (currentDetail.queuedTurns ?? []).filter((turn) => turn.id !== queuedTurnId),
         };
-        detailRef.current = next;
         return next;
       });
       setError(null);
@@ -702,7 +751,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return false;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, updateDetail]);
 
   const submitApproval = useCallback(async (
     approvalId: string,
@@ -743,6 +792,7 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope()) return null;
       const existing = detailRef.current;
       if (!existing || existing.record.chat.id !== admitted.record.chat.id) return null;
+      if (existing.record.chat.revision >= admitted.record.chat.revision) return admitted;
       const next = {
         ...existing,
         record: admitted.record,
@@ -789,6 +839,9 @@ export function useCanonicalChatRouteController({
     items,
     activeChatId,
     detail,
+    streamedMessageIds: streamedMessagesRef.current.chatId === activeChatId
+      ? streamedMessagesRef.current.ids
+      : [],
     status,
     error: error ?? (detail?.record.chat.id === activeChatId ? canonicalChatRunFailure(detail) : null),
     selectChat,

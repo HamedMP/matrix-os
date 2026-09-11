@@ -44,7 +44,12 @@ describe("dock icon resolution", () => {
   });
 
   it("uses the shared icon resolver for mobile dock icons", async () => {
-    const source = await readFile("shell/src/components/mobile/MobileShell.tsx", "utf8");
+    const [source, dockSource] = await Promise.all([
+      readFile("shell/src/components/mobile/MobileAppIcon.tsx", "utf8"),
+      readFile("shell/src/components/mobile/MobileDock.tsx", "utf8"),
+    ]);
+
+    expect(dockSource).toContain('<MobileAppIcon slug={app.iconSlug} size={28} />');
 
     expect(source).toContain("import { iconUrlForSlug } from \"@/lib/app-launch\"");
     expect(source).not.toContain("function iconUrl");

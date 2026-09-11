@@ -20,6 +20,7 @@ export interface TerminalWindowDragHandleProps {
 }
 
 export interface CreateShellSessionTabOptions {
+  tabId?: string;
   cmd?: string;
   agent?: "claude" | "codex" | "opencode" | "pi";
   compatMode?: TerminalCompatMode;

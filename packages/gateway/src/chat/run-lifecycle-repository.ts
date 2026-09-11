@@ -11,6 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
+import { ChatRunFailureDiagnosticSchema, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import type { ChatDatabase, ChatsTable } from "./database.js";
 import {
   ChatBusyError,
@@ -21,6 +22,7 @@ import {
 } from "./errors.js";
 import {
   jsonb,
+  messageAttribution,
   messageSearchText,
   toActivity,
   toMessage,
@@ -40,6 +42,11 @@ type AppendOutbox = (
   payload?: Record<string, unknown>,
 ) => Promise<void>;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
+function recoveredTextParts(text: string) {
+  if (Buffer.byteLength(text) > 96 * 1024) throw new RangeError("Recovered output limit exceeded");
+  return (text.match(/[\s\S]{1,4000}/gu) ?? [""]).map((chunk) =>
+    CanonicalChatMessagePartSchema.parse({ type: "text", text: chunk }));
+}
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
 
@@ -112,6 +119,19 @@ export class ChatRunLifecycleRepository {
     private readonly appendOutbox: AppendOutbox,
   ) {}
 
+  async hasRetryRequest(ownerInput: ChatOwner, input: { chatId: string; turnId: string; clientRequestId: string }): Promise<boolean> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.turnId, input.clientRequestId].forEach(requireSafeRef);
+    const row = await this.kysely.selectFrom("chat_runs")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select("chat_runs.id")
+      .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId).where("chat_runs.turn_id", "=", input.turnId)
+      .where("chat_runs.client_request_id", "=", input.clientRequestId).executeTakeFirst();
+    return row !== undefined;
+  }
+
   async getAdapterState(ownerInput: ChatOwner, input: {
     runId: string;
     driverKind: string;
@@ -140,6 +160,9 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     driverKind: string;
     instanceId: string;
+    schemaVersion: number;
+    executionRootFingerprint: string | null;
+    includeInterrupted?: boolean;
   }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     const owner = validateOwner(ownerInput);
     [input.driverKind, input.instanceId].forEach(requireSafeRef);
@@ -154,10 +177,17 @@ export class ChatRunLifecycleRepository {
       .where("chat_runs.chat_id", "=", input.chatId)
       .where("chat_runs.driver_kind", "=", input.driverKind)
       .where("chat_runs.instance_id", "=", input.instanceId)
-      .where("chat_runs.status", "=", "completed")
+      // A new user turn continues the native conversation even when its last
+      // run failed. Explicit retry callers retain the completed-only boundary.
+      .where("chat_runs.status", "in", input.includeInterrupted
+        ? ["completed", "failed", "aborted"]
+        : ["completed"])
       .where("chat_run_adapter_state.driver_kind", "=", input.driverKind)
       .where("chat_run_adapter_state.instance_id", "=", input.instanceId)
+      .where("chat_run_adapter_state.schema_version", "=", input.schemaVersion)
+      .where("chat_runs.execution_root_fingerprint", input.executionRootFingerprint === null ? "is" : "=", input.executionRootFingerprint)
       .orderBy("chat_runs.completed_at", "desc")
+      .limit(1)
       .executeTakeFirst();
     if (!row) return null;
     return {
@@ -316,6 +346,7 @@ export class ChatRunLifecycleRepository {
       }
       const unseenCount = activityIds.length - existing.length;
       const overflow = Number(count.count) + unseenCount - 500;
+      let removedActivityIds: string[] = [];
       if (overflow > 0) {
         if (!activities.some(isTerminalActivity)) {
           throw new ChatConflictError(chatId, Number(current.revision));
@@ -335,6 +366,7 @@ export class ChatRunLifecycleRepository {
           throw new ChatConflictError(chatId, Number(current.revision));
         }
         await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
+        removedActivityIds = evictedIds;
       }
       const latestSequence = await trx.selectFrom("chat_run_events")
         .select(({ fn }) => fn.max("run_seq").as("sequence"))
@@ -411,7 +443,7 @@ export class ChatRunLifecycleRepository {
           ...(railTransition ? { attention: railTransition.attention } : {}),
           updated_at: sql`now()`,
         }).where("id", "=", chatId).execute();
-        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId });
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId, activityIds, removedActivityIds });
       }
       return changed;
     });
@@ -423,12 +455,15 @@ export class ChatRunLifecycleRepository {
     messageId: string;
     delta: string;
     createdAt: string;
+    /** Full backing text, merged by prefix under the same Run/message locks. */
+    snapshot?: boolean;
   }): Promise<CanonicalChatMessage> {
     const owner = validateOwner(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     [input.runId, input.messageId].forEach(requireSafeRef);
     const createdAt = new Date(input.createdAt).toISOString();
     return this.transact(async (trx) => {
+      let delta = input.delta;
       const chat = await selectOwnedChat(trx, owner, chatId, true);
       if (!chat) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").selectAll()
@@ -457,13 +492,19 @@ export class ChatRunLifecycleRepository {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const last = textParts.at(-1)!;
+        if (input.snapshot) {
+          const persisted = textParts.map((part) => part.text).join("");
+          if (!input.delta.startsWith(persisted)) throw new ChatConflictError(chatId, Number(chat.revision));
+          delta = input.delta.slice(persisted.length);
+          if (delta.length === 0) return current;
+        }
         const combined = CanonicalChatMessagePartSchema.safeParse({
           type: "text",
-          text: `${last.text}${input.delta}`,
+          text: `${last.text}${delta}`,
         });
-        const parts = combined.success
+        const parts = input.snapshot ? recoveredTextParts(input.delta) : combined.success
           ? [...textParts.slice(0, -1), combined.data]
-          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: input.delta })];
+          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: delta })];
         next = CanonicalChatMessageSchema.parse({
           ...current,
           parts,
@@ -487,7 +528,7 @@ export class ChatRunLifecycleRepository {
           state: "pending",
           turnId: run.turn_id,
           runId: input.runId,
-          parts: [{ type: "text", text: input.delta }],
+          parts: input.snapshot ? recoveredTextParts(input.delta) : [{ type: "text", text: input.delta }],
           createdAt,
         });
         await trx.insertInto("chat_messages").values({
@@ -502,6 +543,7 @@ export class ChatRunLifecycleRepository {
           parts: jsonb(next.parts),
           byte_count: encoded.encode(JSON.stringify(next)).byteLength,
           search_text: messageSearchText(next),
+          ...messageAttribution(next),
           created_at: next.createdAt,
         }).execute();
         inserted = true;
@@ -516,6 +558,13 @@ export class ChatRunLifecycleRepository {
       await this.appendOutbox(trx, owner, chatId, revision, "run.message", {
         runId: input.runId,
         messageId: input.messageId,
+        // Recovery can replace part boundaries; use the existing invalidation
+        // fallback rather than pretending it is a single-part live delta.
+        ...(input.snapshot ? {} : { messageDelta: {
+          message: { ...next, parts: [{ type: "text", text: delta }] },
+          partIndex: next.parts.length - 1,
+          offset: (next.parts.at(-1) as { text: string }).text.length - delta.length,
+        } }),
       });
       return next;
     });
@@ -526,6 +575,7 @@ export class ChatRunLifecycleRepository {
     runId: string;
     outcome: "completed" | "failed" | "aborted";
     completedAt: string;
+    diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;
   }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
     const owner = validateOwner(ownerInput);
@@ -598,6 +648,7 @@ export class ChatRunLifecycleRepository {
           parts: jsonb(output.parts),
           byte_count: encoded.encode(JSON.stringify(output)).byteLength,
           search_text: messageSearchText(output),
+          ...messageAttribution(output),
           created_at: output.createdAt,
         }).execute();
         finalizedOutput = output;
@@ -624,7 +675,11 @@ export class ChatRunLifecycleRepository {
         attention: input.outcome === "failed" ? "failed" : "none",
         updated_at: completedAt,
       }).where("id", "=", input.chatId).execute();
-      await this.appendOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, { runId: input.runId });
+      await this.appendOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, {
+        runId: input.runId,
+        ...(input.outcome === "failed" && input.diagnostic
+          ? { failureDiagnostic: ChatRunFailureDiagnosticSchema.parse(input.diagnostic) } : {}),
+      });
       return { run: toRun(updated), transitioned: true };
     });
   }

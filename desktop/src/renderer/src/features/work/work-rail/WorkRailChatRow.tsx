@@ -7,7 +7,7 @@ import {
   PinOffIcon,
   Trash2,
 } from "@renderer/lib/hugeicons";
-import { ContextMenu } from "../../../design/primitives";
+import { ChatContextMenu } from "@matrix-os/ui";
 import { OverflowingChatTitle } from "../OverflowingChatTitle";
 import { ChatTitleEditor } from "../../chat/ChatTitleEditor";
 import {
@@ -61,7 +61,7 @@ export function WorkRailChatRow({
   const pinned = Boolean(record.chat.userState?.pinned);
   const agentState = resolveWorkRailAgentState(record);
   return (
-    <ContextMenu items={[
+    <ChatContextMenu chatId={record.chat.id} items={[
       {
         label: "Rename",
         disabled: renameDisabled,
@@ -156,7 +156,7 @@ export function WorkRailChatRow({
           </button>
         </div> : null}
       </div>
-    </ContextMenu>
+    </ChatContextMenu>
   );
 }
 

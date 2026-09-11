@@ -121,6 +121,31 @@ describe("Chat canonical provider state", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("copies the canonical chat ID from Web Desktop and Web Canvas conversation content", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<ChatApp messages={[{ id: "msg_copy", role: "user", content: "Inspect this run", timestamp: 1000 }]}
+      sessionId="chat_web_content" busy={false} connected onSubmit={vi.fn()} conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} />);
+    fireEvent.contextMenu(screen.getByText("Inspect this run"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy chat ID" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("chat_web_content"));
+    vi.unstubAllGlobals();
+  });
+
+  it("renders attachment-only user messages without an empty text bubble", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const { container } = render(<ChatApp
+      messages={[{ id: "attachment-only", role: "user", content: " \n ", timestamp: 1000,
+        attachments: [{ id: "file", kind: "file", label: "notes.txt", path: "temporary/notes.txt" }] }]}
+      sessionId="chat_shared" busy={false} connected onSubmit={vi.fn()} conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()}
+    />);
+    expect(await screen.findByRole("button", { name: "Preview notes.txt" })).toBeTruthy();
+    expect(container.querySelector(".is-user")?.children).toHaveLength(1);
+  });
+
   it("renames the shared Web Desktop and Web Canvas Chat from the header, rail double-click, and context menu", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     const onSwitchConversation = vi.fn();

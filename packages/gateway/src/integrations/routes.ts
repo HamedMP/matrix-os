@@ -1,9 +1,11 @@
+import { executeIntegrationAction, IntegrationActionNotImplementedError } from "./action-execution.js";
+import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
 import { Hono, type Context } from "hono";
+import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { listServices, getService, getAction } from "./registry.js";
-import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 
@@ -19,10 +21,12 @@ import type { PlatformDb } from "../platform-db.js";
 // label the patch endpoint would later reject. trim() strips whitespace
 // padding so a value of "    " (100 spaces) still counts as empty.
 const LabelField = z.string().trim().min(1).max(100);
+const MOBILE_INTEGRATIONS_REDIRECT_URI = "matrixos://integrations";
 
 const ConnectBodySchema = z.object({
   service: z.string().min(1),
   label: LabelField.optional(),
+  redirectUri: z.literal(MOBILE_INTEGRATIONS_REDIRECT_URI).optional(),
 });
 
 const LabelPatchSchema = z.object({
@@ -66,150 +70,8 @@ function verifyHmac(payload: string, signature: string, secret: string): boolean
 // Per-action param validation
 // ---------------------------------------------------------------------------
 
-export function validateActionParams(
-  actionDef: ServiceAction,
-  params: Record<string, unknown> | undefined,
-): { valid: true } | { valid: false; missing: string[]; typeErrors: string[] } {
-  const missing: string[] = [];
-  const typeErrors: string[] = [];
-
-  for (const [name, def] of Object.entries(actionDef.params)) {
-    const value = params?.[name];
-    if (def.required && (value === undefined || value === null)) {
-      missing.push(name);
-      continue;
-    }
-    if (value !== undefined && value !== null) {
-      const expectedType = def.type;
-      const actualType = typeof value;
-      if (expectedType === "string" && actualType !== "string") {
-        typeErrors.push(`${name}: expected string, got ${actualType}`);
-      } else if (expectedType === "number" && actualType !== "number") {
-        typeErrors.push(`${name}: expected number, got ${actualType}`);
-      } else if (expectedType === "boolean" && actualType !== "boolean") {
-        typeErrors.push(`${name}: expected boolean, got ${actualType}`);
-      } else if (expectedType === "object" && (actualType !== "object" || Array.isArray(value))) {
-        typeErrors.push(`${name}: expected object, got ${actualType}`);
-      } else if (expectedType === "array" && !Array.isArray(value)) {
-        typeErrors.push(`${name}: expected array, got ${actualType}`);
-      }
-    }
-  }
-
-  if (missing.length > 0 || typeErrors.length > 0) {
-    return { valid: false, missing, typeErrors };
-  }
-  return { valid: true };
-}
-
-export class IntegrationActionNotImplementedError extends Error {
-  readonly serviceId: string;
-  readonly actionId: string;
-
-  constructor(serviceId: string, actionId: string) {
-    super(
-      `Action ${serviceId}/${actionId} is not implemented on this gateway. ` +
-      `It has no componentKey (Pipedream Actions API didn't match it) and no directApi block. ` +
-      `Add one to packages/gateway/src/integrations/registry.ts.`,
-    );
-    this.name = "IntegrationActionNotImplementedError";
-    this.serviceId = serviceId;
-    this.actionId = actionId;
-  }
-}
-
-export async function executeIntegrationAction(opts: {
-  pipedream: PipedreamConnectClient;
-  externalUserId: string;
-  connection: { pipedream_account_id: string };
-  def: ServiceDefinition;
-  actionDef: ServiceAction;
-  serviceId: string;
-  actionId: string;
-  params?: Record<string, unknown>;
-}): Promise<{ data: unknown; summary?: string }> {
-  const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params } = opts;
-
-  if (actionDef.componentKey) {
-    const safeParams = Object.fromEntries(
-      Object.entries(params ?? {}).filter(([k]) => k !== def.pipedreamApp),
-    );
-    const configuredProps: Record<string, unknown> = {
-      ...safeParams,
-      [def.pipedreamApp]: { authProvisionId: connection.pipedream_account_id },
-    };
-    const result = await pipedream.runAction({
-      externalUserId,
-      componentKey: actionDef.componentKey,
-      configuredProps,
-    });
-    const exports = result.exports as Record<string, unknown> | undefined;
-    return {
-      data: result.ret,
-      summary: typeof exports?.$summary === "string" ? exports.$summary : undefined,
-    };
-  }
-
-  if (actionDef.directApi) {
-    const api = actionDef.directApi;
-    const url = typeof api.url === "function" ? api.url(params ?? {}) : api.url;
-    const accountId = connection.pipedream_account_id;
-
-    switch (api.method) {
-      case "GET":
-        return {
-          data: await pipedream.proxyGet({
-            externalUserId,
-            accountId,
-            url,
-            params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
-          }),
-        };
-      case "DELETE":
-        return {
-          data: await pipedream.proxyDelete({
-            externalUserId,
-            accountId,
-            url,
-            params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
-          }),
-        };
-      case "POST":
-        return {
-          data: await pipedream.proxyPost({
-            externalUserId,
-            accountId,
-            url,
-            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-          }),
-        };
-      case "PUT":
-        return {
-          data: await pipedream.proxyPut({
-            externalUserId,
-            accountId,
-            url,
-            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-          }),
-        };
-      case "PATCH":
-        return {
-          data: await pipedream.proxyPatch({
-            externalUserId,
-            accountId,
-            url,
-            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-          }),
-        };
-      default: {
-        const _exhaustive: never = api.method;
-        throw new Error(`Unsupported directApi method: ${String(_exhaustive)}`);
-      }
-    }
-  }
-
-  throw new IntegrationActionNotImplementedError(serviceId, actionId);
-}
+export { validateActionParams } from "./parameter-validation.js";
+export { executeIntegrationAction, IntegrationActionNotImplementedError } from "./action-execution.js";
 
 // ---------------------------------------------------------------------------
 // Connection error classification
@@ -358,10 +220,31 @@ export interface IntegrationRoutesOpts {
   webhookSecret: string;
   resolveUserId: (c: Context) => Promise<string | null>;
   broadcast?: IntegrationBroadcast;
+  mcpPresetBroker?: {
+    listConnections(userId: string): Promise<Array<{
+      id: string;
+      service: string;
+      account_label: string;
+      account_email: string | null;
+      scopes: string[];
+      status: string;
+      connected_at: Date | string;
+      last_used_at: Date | string | null;
+    }>>;
+    listAvailableActions?(userId: string, serviceId: string): Promise<readonly string[] | null>;
+    connect(userId: string, service: ServiceDefinition): Promise<{ url: string }>;
+    call(input: {
+      userId: string;
+      service: ServiceDefinition;
+      actionId: string;
+      params?: Record<string, unknown>;
+    }): Promise<unknown>;
+    disconnect(userId: string, connectionId: string): Promise<boolean>;
+  };
 }
 
 export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
-  const { db, pipedream, webhookSecret, resolveUserId, broadcast } = opts;
+  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
 
@@ -482,7 +365,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   }
 
   // -----------------------------------------------------------------------
-  // GET /available -- public, no auth. Enriches registry with Pipedream logos.
+  // GET /available -- public, no auth. Enriches Pipedream-hosted fallback logos.
   // -----------------------------------------------------------------------
 
   const logoCache = new Map<string, string>();
@@ -497,8 +380,12 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const promise = (async () => {
       const services = listServices();
       const results = await Promise.allSettled(
-        services.map(async (s) => {
-          const info = await pipedream.getAppInfo(s.pipedreamApp);
+        services.filter(
+          (service) => service.connectorKind === "pipedream"
+            && service.pipedreamApp
+            && service.logoUrl.startsWith("https://pipedream.com/"),
+        ).map(async (s) => {
+          const info = await pipedream.getAppInfo(s.pipedreamApp!);
           if (info?.imgSrc) {
             if (logoCache.size >= LOGO_CACHE_MAX) logoCache.delete(logoCache.keys().next().value!);
             logoCache.set(s.id, info.imgSrc);
@@ -530,11 +417,48 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     console.warn("[integrations] Startup logo warm failed:", err instanceof Error ? err.message : String(err));
   });
 
-  app.get("/available", (c) => {
-    const services = listServices().map((s) => ({
-      ...s,
-      logoUrl: logoCache.get(s.id) || s.logoUrl,
-    }));
+  app.get("/available", async (c) => {
+    let uid: string | null = null;
+    let capabilityIdentityFailed = false;
+    if (mcpPresetBroker?.listAvailableActions) {
+      try {
+        uid = await resolveUserId(c);
+      } catch (err: unknown) {
+        capabilityIdentityFailed = true;
+        console.warn(
+          "[integrations] Optional capability identity resolution failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    const services = await Promise.all(listServices()
+      .filter((service) => service.connectorKind !== "mcp_preset" || mcpPresetBroker)
+      .map(async (s) => {
+        let actions = s.actions;
+        if (capabilityIdentityFailed && s.connectorKind === "mcp_preset") {
+          actions = {};
+        } else if (uid && s.connectorKind === "mcp_preset" && mcpPresetBroker?.listAvailableActions) {
+          try {
+            const availableActions = await mcpPresetBroker.listAvailableActions(uid, s.id);
+            if (availableActions) {
+              actions = Object.fromEntries(
+                Object.entries(s.actions).filter(([actionId]) => availableActions.includes(actionId)),
+              );
+            }
+          } catch (err: unknown) {
+            console.warn(
+              `[integrations] ${s.id} capability projection failed:`,
+              err instanceof Error ? err.message : String(err),
+            );
+            actions = {};
+          }
+        }
+        return {
+          ...s,
+          actions,
+          logoUrl: logoCache.get(s.id) || s.logoUrl,
+        };
+      }));
     return c.json(services);
   });
 
@@ -545,7 +469,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   app.get("/", async (c) => {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
-    const services = await db.listConnectedServices(uid);
+    const services = [
+      ...await db.listConnectedServices(uid),
+      ...(mcpPresetBroker ? await mcpPresetBroker.listConnections(uid) : []),
+    ];
     return c.json(services.map(({ id, service, account_label, account_email, scopes, status, connected_at, last_used_at }) => ({
       id, service, account_label, account_email, scopes, status, connected_at, last_used_at,
     })));
@@ -567,7 +494,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const existing = await db.listConnectedServices(uid);
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
-      const newAccounts = pdAccounts.filter((acc) => !existingPdIds.has(acc.id) && getService(acc.app));
+      const newAccounts = pdAccounts.filter((acc) => {
+        const service = getService(acc.app);
+        return !existingPdIds.has(acc.id) && service?.connectorKind === "pipedream";
+      });
 
       // Resolve emails for new accounts missing them
       const resolvedEmails = await Promise.all(
@@ -620,7 +550,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         }),
       );
 
-      const services = await db.listConnectedServices(uid);
+      const services = [
+        ...await db.listConnectedServices(uid),
+        ...(mcpPresetBroker ? await mcpPresetBroker.listConnections(uid) : []),
+      ];
       return c.json({ synced, services });
     } catch (err) {
       console.error("[integrations] Sync failed:", err instanceof Error ? err.message : err);
@@ -649,17 +582,34 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, label } = parsed.data;
+    const { service, label, redirectUri } = parsed.data;
     const def = getService(service);
     if (!def) {
       return c.json({ error: `Unknown service: ${service}` }, 400);
     }
 
+    if (def.connectorKind === "mcp_preset") {
+      if (!mcpPresetBroker) return c.json({ error: "Service connection unavailable" }, 503);
+      try {
+        const result = await mcpPresetBroker.connect(uid, def);
+        return c.json({ url: result.url, service });
+      } catch (err) {
+        console.error("[integrations] MCP preset connect failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: "Failed to initiate connection. Please try again." }, 502);
+      }
+    }
+    if (!def.pipedreamApp) return c.json({ error: "Service connection unavailable" }, 503);
+
     const externalId = await getOrCreateExternalId(uid);
 
     let connectLinkUrl: string;
     try {
-      ({ connectLinkUrl } = await pipedream.createConnectToken(externalId));
+      ({ connectLinkUrl } = await pipedream.createConnectToken(
+        externalId,
+        redirectUri
+          ? { successRedirectUri: redirectUri, errorRedirectUri: redirectUri }
+          : undefined,
+      ));
     } catch (err) {
       console.error("[integrations] createConnectToken error:", err instanceof Error ? err.message : err);
       return c.json({ error: "Failed to initiate connection. Please try again." }, 502);
@@ -700,7 +650,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     const { external_user_id, account_id, app: appName, label, email, scopes } = parsed.data;
 
-    if (!getService(appName)) {
+    if (getService(appName)?.connectorKind !== "pipedream") {
       return c.json({ error: "Unsupported app" }, 400);
     }
 
@@ -792,18 +742,28 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     // Validate action params against the registry definition
     const paramValidation = validateActionParams(actionDef, params);
     if (!paramValidation.valid) {
-      const parts: string[] = [];
-      if (paramValidation.missing.length > 0) {
-        parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
-      }
-      if (paramValidation.typeErrors.length > 0) {
-        parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
-      }
       return c.json({
-        error: parts.join(". "),
+        error: formatActionParamValidationError(paramValidation),
         missing: paramValidation.missing.length > 0 ? paramValidation.missing : undefined,
         type_errors: paramValidation.typeErrors.length > 0 ? paramValidation.typeErrors : undefined,
+        value_errors: paramValidation.valueErrors?.length ? paramValidation.valueErrors : undefined,
       }, 400);
+    }
+
+    if (def.connectorKind === "mcp_preset") {
+      if (!mcpPresetBroker) return c.json({ error: "Integration service unavailable" }, 503);
+      try {
+        const data = await mcpPresetBroker.call({
+          userId: uid,
+          service: def,
+          actionId: action,
+          params,
+        });
+        return c.json({ data, service, action });
+      } catch (err) {
+        console.error("[integrations] MCP preset call failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: "Integration call failed" }, 502);
+      }
     }
 
     // Find the user's active connection for this service. On cache miss
@@ -952,15 +912,29 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // DELETE /:id -- disconnect service
   // -----------------------------------------------------------------------
 
-  app.delete("/:id", async (c) => {
+  app.delete("/:id", bodyLimit({ maxSize: 1024 }), async (c) => {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
 
     const id = c.req.param("id");
+    if (!UUID_RE.test(id)) return c.json({ error: "Invalid ID" }, 400);
     const result = await requireOwnedService(c, id, uid);
     if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
-    if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
+
+    if (result === null) {
+      if (!mcpPresetBroker) return c.json({ error: "Not found" }, 404);
+      try {
+        if (await mcpPresetBroker.disconnect(uid, id)) {
+          emit({ type: "integration:disconnected", service: "granola", id });
+          return c.json({ ok: true });
+        }
+      } catch (err: unknown) {
+        console.error("[integrations] MCP preset disconnect error:", err);
+        return c.json({ error: "Integration service unavailable" }, 503);
+      }
+      return c.json({ error: "Not found" }, 404);
+    }
 
     try {
       await pipedream.revokeAccount(result.pipedream_account_id);

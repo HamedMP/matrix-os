@@ -1,3 +1,5 @@
+import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
+import { createChatSharingRoutes } from "./chat/sharing-routes.js";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
@@ -12,6 +14,8 @@ import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
+import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
+import { CanonicalChatIdSchema, TerminalRefSchema, TerminalTabClientFrameSchema } from "@matrix-os/contracts";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import {
   createFundedAiCredentialManager,
@@ -19,14 +23,10 @@ import {
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
-import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
-import { logTerminalDebug } from "./terminal-debug.js";
-import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import {
   createConversationLifecycle,
@@ -59,7 +59,10 @@ import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { resolveAgentCredentialProbe } from "./onboarding/agent-credential-probe.js";
-import { createAgentSessionManager } from "./agent-session-manager.js";
+import {
+  createAgentSessionManager,
+  hasActiveWorkspaceSessionForTerminalRef,
+} from "./agent-session-manager.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import {
@@ -68,10 +71,12 @@ import {
 } from "./workspace-session-orchestrator.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
-import { createZellijRuntime } from "./zellij-runtime.js";
-import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
-import { resolveUserSystemdTerminalActivation } from "./terminal-user-systemd-activation.js";
-import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
+import {
+  createProviderLoginTerminalRegistry,
+  createSessionRuntimeBridge,
+  resolveTerminalAttachmentMode,
+  terminalAttachmentAllowsFrame,
+} from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -105,7 +110,6 @@ import {
   generateIconBatch,
   createUsageTracker,
   createMemoryStore,
-  loadSkills,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import {
@@ -145,15 +149,14 @@ import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/pro
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
-import { createChatProviderCatalogService } from "./chat/provider-catalog.js";
-import { createCodexModelCatalogSource } from "./chat/codex-model-catalog.js";
-import { createNativeCodingModelCatalogSource } from "./chat/native-coding-model-catalog.js";
+import { createGatewayChatProviderCatalog } from "./chat/runtime-provider-catalog.js";
 import { createChatProviderRoutes } from "./chat/provider-routes.js";
 import {
   closeCanonicalChatEventLifecycle,
   createCanonicalChatRoutes,
 } from "./chat/routes.js";
-import { createCanonicalChatEventStream } from "./chat/event-stream.js";
+import { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
+import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
@@ -171,6 +174,12 @@ import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
+import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
+import {
+  createGatewayCollaboration,
+  loadGatewayCollaborationConfig,
+  type GatewayCollaborationRuntime,
+} from "./collaboration/wiring.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -178,6 +187,12 @@ import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/no
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
+import {
+  createChatIdleReaper,
+  isWorkspaceSessionRuntimeAlive,
+} from "./coding-agents/chat-idle-reaper.js";
+import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
+import { terminalTasksUnderPressure } from "@matrix-os/terminal-runtime/user-systemd-capacity";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -224,15 +239,10 @@ import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
-import {
-  createIntegrationRoutes,
-  validateActionParams,
-  getErrorStatusCode,
-  getRetryAfterSeconds,
-  executeIntegrationAction,
-  IntegrationActionNotImplementedError,
-} from "./integrations/routes.js";
-import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
+import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
+import { createIntegrationRoutes } from "./integrations/routes.js";
+import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
+import { discoverComponentKeys } from "./integrations/registry.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
 import {
@@ -285,7 +295,7 @@ import type { Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import { CanvasRepository } from "./canvas/repository.js";
-import { CanvasService } from "./canvas/service.js";
+import { CanvasConfigurationError, CanvasService } from "./canvas/service.js";
 import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
@@ -295,12 +305,8 @@ import {
 } from "./chat/attachment-cleanup.js";
 import { OsViewStateRepository } from "./os-view-state/repository.js";
 import { createOsViewStateRoutes } from "./os-view-state/routes.js";
+import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import { ChatRepository } from "./chat/repository.js";
-import {
-  createGatewayChatTerminalWiring,
-  parseTerminalSizingParams,
-} from "./chat/terminal-wiring.js";
-import { authorizeStandaloneTerminalAttach } from "./chat/terminal-authorization.js";
 import { MessagingKyselyRepository } from "./messages/repository.js";
 import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
@@ -322,6 +328,7 @@ import {
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
+import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -332,18 +339,13 @@ import {
 import {
   createShellRoutes,
   SHELL_SESSION_CREATE_RATE_LIMIT,
-  LayoutStore,
-  ScrollbackStore,
   ShellPreferencesStore,
   createShellCommandRunner,
   createTerminalAcceptanceRoutes,
-  createShellSessionReaper,
-  createShellWsHandler,
-  createZellijAdapter,
-  createUserSystemdTerminalRuntime,
-  createUserSystemdZellijAdapter,
-  loadInstalledTerminalRuntimeGeneration,
-  ShellRegistry as ZellijShellRegistry,
+  createTerminalWindowLayoutRoutes,
+  TerminalWindowLayoutStore,
+  createTerminalWorkspaceRoutes,
+  terminalRuntimeRefAccess,
   shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
@@ -374,16 +376,6 @@ const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 function isSafeIconStem(value: unknown): value is string {
   return typeof value === "string" && SAFE_ICON_STEM.test(value);
 }
-
-// Mirrors CallBodySchema in integrations/routes.ts so the dev-only
-// /api/bridge/service POST validates its body the same way the public
-// /api/integrations/call endpoint does.
-const BridgeCallBodySchema = z.object({
-  service: z.string().min(1),
-  action: z.string().min(1),
-  label: z.string().trim().min(1).max(100).optional(),
-  params: z.record(z.string(), z.unknown()).optional(),
-});
 
 const ApiMessageBodySchema = z.object({
   text: z.string().refine((value) => value.trim().length > 0),
@@ -440,111 +432,18 @@ export async function createGateway(config: GatewayConfig) {
   });
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
-  const terminalSessionsPersistPath = join(homePath, "system", "terminal-sessions.json");
-  // PTY session handles are process-local and cannot survive a gateway restart.
-  // Zellij shell sessions are the canonical durable terminal surface; reset this
-  // legacy compatibility list on every boot so old PTY ids cannot diverge from
-  // the zellij session list used by the shell and CLI.
-  await resetVolatilePtySessionList(terminalSessionsPersistPath).catch((err: unknown) => {
-    logBestEffortFailure("Failed to reset volatile PTY terminal sessions", err);
+  const terminalWorkspaceRuntime = new TerminalRuntimeSocketClient({
+    socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
   });
-  const sessionRegistry = new SessionRegistry(homePath, {
-    maxSessions: 10,
-    bufferSize: 1024 * 1024,
-    persistPath: terminalSessionsPersistPath,
-    autoRestore: false,
-  });
-  const appDir = process.env.MATRIX_APP_DIR ?? process.cwd();
-  const userSystemdTerminalsEnabled = await resolveUserSystemdTerminalActivation({
-    appDir,
-    envValue: process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED,
-  });
-  const terminalRuntimeGeneration = userSystemdTerminalsEnabled
-    ? await loadInstalledTerminalRuntimeGeneration(appDir)
-    : null;
-  const userSystemdTerminalController = terminalRuntimeGeneration
-    ? createUserSystemdTerminalRuntime({
-        homePath,
-        generation: terminalRuntimeGeneration,
-        generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
-      })
-    : null;
-  if (userSystemdTerminalController) {
-    await userSystemdTerminalController.assertInstallationReady();
-  }
-  const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
-    ? createUserSystemdZellijRuntime({
-        homePath,
-        generation: terminalRuntimeGeneration,
-        controller: userSystemdTerminalController,
-      })
-    : createZellijRuntime({ homePath });
-  const workspaceSessionRuntimeBridge = createSessionRuntimeBridge({
-    homePath,
-    registry: sessionRegistry,
-    zellijRuntime: workspaceZellijRuntime,
-  });
-  const shellScrollbackStore = new ScrollbackStore({ homePath });
+  const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
+  const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
-  const zellijAdapter = userSystemdTerminalController && terminalRuntimeGeneration
-    ? createUserSystemdZellijAdapter({
-        homePath,
-        generation: terminalRuntimeGeneration,
-        controller: userSystemdTerminalController,
-      })
-    : createZellijAdapter({ homePath });
-  const chatZellijAdapter = userSystemdTerminalController && terminalRuntimeGeneration
-    ? createUserSystemdZellijAdapter({
-        homePath,
-        generation: terminalRuntimeGeneration,
-        controller: userSystemdTerminalController,
-        includeWorkspaceSessions: true,
-      })
-    : zellijAdapter;
-  const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
-  const zellijShellRegistry = new ZellijShellRegistry({
-    homePath,
-    adapter: zellijAdapter,
-    scrollbackStore: shellScrollbackStore,
-    preferencesStore: shellPreferencesStore,
-  });
-  const chatZellijShellRegistry = chatZellijAdapter === zellijAdapter
-    ? zellijShellRegistry
-    : new ZellijShellRegistry({
-        homePath,
-        adapter: chatZellijAdapter,
-        persistPath: join(homePath, "system", "chat-shell-sessions.json"),
-        scrollbackStore: shellScrollbackStore,
-      });
+  const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
   const symphonyRunner = createSymphonyRunner({ homePath });
   const initialSymphonyPort = await resolveInitialSymphonyPort(symphonyRunner);
   if (initialSymphonyPort) {
     allowedOriginController.updateSymphonyPort(initialSymphonyPort);
   }
-  const zellijShellWs = createShellWsHandler({
-    registry: zellijShellRegistry,
-    adapter: zellijAdapter,
-    scrollbackStore: shellScrollbackStore,
-    persistCanonicalSize: (name, size) => {
-      void zellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
-        console.warn("[shell] canonical size persist failed:", err instanceof Error ? err.message : String(err));
-      });
-    },
-  });
-  const chatZellijShellWs = chatZellijShellRegistry === zellijShellRegistry
-    ? zellijShellWs
-    : createShellWsHandler({
-        registry: chatZellijShellRegistry,
-        adapter: chatZellijAdapter,
-        scrollbackStore: shellScrollbackStore,
-        persistCanonicalSize: (name, size) => {
-          void chatZellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
-            console.warn("[shell] Chat canonical size persist failed:", err instanceof Error ? err.message : String(err));
-          });
-        },
-      });
-  const shellSessionReaper = createShellSessionReaper({ registry: zellijShellRegistry });
-  shellSessionReaper.start();
   const forwardTunnelHub = createForwardTunnelHub();
   // One distinct id for every gateway telemetry event so all events on a
   // dev gateway without owner env vars land under the same person.
@@ -581,15 +480,6 @@ export async function createGateway(config: GatewayConfig) {
   const recordAiGeneration = createAiGenerationRecorder({
     capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
   });
-  const dispatcher: Dispatcher = createDispatcher({
-    homePath,
-    model: config.model,
-    maxTurns: config.maxTurns,
-    spawnFn: config.spawnFn,
-    onAiGeneration: recordAiGeneration,
-    fundedCredentialProvider,
-  });
-
   const watcher: Watcher = createWatcher(homePath);
   const conversationMutationLock = createConversationMutationLock({ maxKeys: 64 });
   const conversations: ConversationStore = createConversationStore(homePath, {
@@ -603,6 +493,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
   const clients = new Set<WSContext>();
+  const clientOwnerIds = new WeakMap<WSContext, string>();
   const readinessRepository = new InMemoryReadinessRepository();
   const toolPackRepository = new InMemoryToolPackRepository();
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
@@ -701,6 +592,13 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
     (id): id is string => Boolean(id),
   );
+  // A terminal runtime belongs to exactly one VPS owner. MATRIX_USER_ID is
+  // canonical when present; MATRIX_CLERK_USER_ID supports VPS-native hosts
+  // provisioned before the canonical variable was added.
+  const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
+  const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
+    ? [terminalRuntimeOwnerId]
+    : process.env.NODE_ENV === "production" ? [] : ["default"];
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentWorktreeManager = createWorktreeManager({ homePath });
@@ -736,15 +634,22 @@ export async function createGateway(config: GatewayConfig) {
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
-      ? createCodexEventBridge({ homePath, codexExecutable })
+      ? createCodexEventBridge({
+        homePath,
+        codexExecutable,
+        isRuntimeAlive: (sessionId: string) => {
+          const sessions = codingAgentWorkspaceRuntime;
+          return sessions
+            ? isWorkspaceSessionRuntimeAlive(sessionId, sessions, terminalWorkspaceRuntime)
+            : Promise.resolve(false);
+        },
+      })
       : undefined;
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: codingAgentWorktreeManager,
       agentLauncher: agentCredentialLauncher,
-      zellijRuntime: workspaceZellijRuntime,
-      inputWriter: (sessionId, input, signal) =>
-        workspaceZellijRuntime.sendInput(sessionId, input, signal),
+      terminalRuntime: terminalWorkspaceRuntime,
     });
     codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       homePath,
@@ -838,7 +743,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
-    terminalRegistry: zellijShellRegistry,
+    terminalRegistry: { list: () => terminalWorkspaceRuntime.listWorkspaces() },
     providerRegistry: codingAgentProviderRegistry,
     threads: codingAgentThreadStore,
     projects: codingAgentProjectSummaryStore,
@@ -968,10 +873,20 @@ export async function createGateway(config: GatewayConfig) {
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let chatRepository: ChatRepository | null = null;
-  let canonicalChatEventStream: ReturnType<typeof createCanonicalChatEventStream> | null = null;
+  let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
+  let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
+  let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
+  let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
+  const collaborationConfig = loadGatewayCollaborationConfig(process.env);
+  if (process.env.MATRIX_COLLABORATION_ENABLED === "true" && !collaborationConfig) {
+    throw new Error("[collaboration] enabled with incomplete configuration");
+  }
+  if (collaborationConfig && !databaseUrl) {
+    throw new Error("[collaboration] enabled without owner Postgres");
+  }
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
@@ -990,8 +905,38 @@ export async function createGateway(config: GatewayConfig) {
       await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
-      canonicalChatEventStream = createCanonicalChatEventStream({ repository: chatRepository });
-      canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
+      canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
+      await bootstrapChatSharing(chatRepository.kysely);
+      if (collaborationConfig) {
+        gatewayCollaboration = await createGatewayCollaboration({
+          db: chatRepository.kysely as Kysely<any>,
+          chatRepository,
+          config: collaborationConfig,
+        });
+      }
+      canonicalChatEventStream = createGatewayChatEventStream({
+        repository: chatRepository,
+        reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
+        capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
+        runtimeVersion: runningVersion,
+        buildSha: process.env.MATRIX_BUILD_SHA,
+      });
+      canvasService = new CanvasService(canvasRepository, {
+        terminalRuntime: terminalWorkspaceRuntime,
+        terminalOwnerIds: terminalRuntimeOwnerIds,
+        homePath,
+        resolveProjectWorkingDirectory: async (ownerId, projectId) => {
+          const result = await codingAgentProjectManager.getProjectById(
+            { type: "user", id: ownerId },
+            projectId,
+          );
+          if (!result.ok) {
+            if (result.status === 404 || result.status === 400) return null;
+            throw new CanvasConfigurationError("project lookup is unavailable");
+          }
+          return codingAgentProjectManager.resolveProjectWorkingDirectory(result.project);
+        },
+      });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       await messagingRepository.bootstrap();
       canvasSubscriptionHub = new CanvasSubscriptionHub({
@@ -1096,7 +1041,10 @@ export async function createGateway(config: GatewayConfig) {
         console.error("[app-db] App registration error:", (regErr as Error).message);
       }
     } catch (err) {
+      await gatewayCollaboration?.shutdown();
+      gatewayCollaboration = null;
       console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
+      if (collaborationConfig) throw err;
       console.log("[app-db] Falling back to file-based storage");
       appDb = null;
       queryEngine = null;
@@ -1109,6 +1057,31 @@ export async function createGateway(config: GatewayConfig) {
       messagingRepository = null;
     }
   }
+
+  const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
+  const osViewTools = osViewStateRepository
+    && trustedOsViewOwnerId
+    && trustedOsViewOwnerId.length <= 160
+    ? createOsViewAgentTools({
+        repository: osViewStateRepository,
+        ownerId: trustedOsViewOwnerId,
+        homePath,
+        onChanged: (state) => broadcastToOwner(trustedOsViewOwnerId, {
+          type: "os-view:changed",
+          revision: state.revision,
+          updatedAt: state.updatedAt,
+        }),
+      })
+    : undefined;
+  const dispatcher: Dispatcher = createDispatcher({
+    homePath,
+    model: config.model,
+    maxTurns: config.maxTurns,
+    spawnFn: config.spawnFn,
+    onAiGeneration: recordAiGeneration,
+    fundedCredentialProvider,
+    osViewTools,
+  });
 
   // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
   let syncR2: R2Client | null = null;
@@ -1250,9 +1223,13 @@ export async function createGateway(config: GatewayConfig) {
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
 
-  function buildIntegrationProxyUrl(c: Context, targetBase: string): string {
+  function buildIntegrationProxyUrl(
+    c: Context,
+    targetBase: string,
+    routePrefix = "/api/integrations",
+  ): string {
     const targetUrl = new URL(targetBase);
-    const suffix = c.req.path.replace("/api/integrations", "") || "";
+    const suffix = c.req.path.replace(routePrefix, "") || "";
     const decodedSuffix = decodeURIComponent(suffix);
     if (decodedSuffix.split("/").some((segment) => segment === "..")) {
       throw new Error("Invalid integration proxy path");
@@ -1288,11 +1265,12 @@ export async function createGateway(config: GatewayConfig) {
   async function proxyIntegrationRequest(
     c: Context,
     targetBase: string,
-    includeInternalAuth: boolean,
+    internalAuthToken?: string,
+    routePrefix = "/api/integrations",
   ): Promise<Response> {
     let upstreamUrl: string;
     try {
-      upstreamUrl = buildIntegrationProxyUrl(c, targetBase);
+      upstreamUrl = buildIntegrationProxyUrl(c, targetBase, routePrefix);
     } catch (err: unknown) {
       console.warn(
         "[integrations] rejected proxy path:",
@@ -1306,8 +1284,8 @@ export async function createGateway(config: GatewayConfig) {
         headers.set(key, value);
       }
     }
-    if (includeInternalAuth && internalPlatformToken) {
-      headers.set("authorization", `Bearer ${internalPlatformToken}`);
+    if (internalAuthToken) {
+      headers.set("authorization", `Bearer ${internalAuthToken}`);
     }
 
     const upstream = await fetch(upstreamUrl, {
@@ -1486,8 +1464,34 @@ export async function createGateway(config: GatewayConfig) {
 
   function broadcast(msg: ServerMessage) {
     const json = JSON.stringify(msg);
+    const dead: WSContext[] = [];
     for (const ws of clients) {
-      ws.send(json);
+      try {
+        ws.send(json);
+      } catch (error: unknown) {
+        console.warn("[gateway] WebSocket broadcast failed:", error instanceof Error ? error.name : "UnknownError");
+        dead.push(ws);
+      }
+    }
+    for (const ws of dead) {
+      if (clients.delete(ws)) wsConnectionsActive.dec();
+    }
+  }
+
+  function broadcastToOwner(ownerId: string, msg: ServerMessage) {
+    const json = JSON.stringify(msg);
+    const dead: WSContext[] = [];
+    for (const ws of clients) {
+      if (clientOwnerIds.get(ws) !== ownerId) continue;
+      try {
+        ws.send(json);
+      } catch (error: unknown) {
+        console.warn("[gateway] Owner WebSocket broadcast failed:", error instanceof Error ? error.name : "UnknownError");
+        dead.push(ws);
+      }
+    }
+    for (const ws of dead) {
+      if (clients.delete(ws)) wsConnectionsActive.dec();
     }
   }
 
@@ -1909,24 +1913,53 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellCommandRunner = createShellCommandRunner({ homePath });
-  const chatTerminalWiring = createGatewayChatTerminalWiring({
-    repository: chatRepository,
-    getPrincipal: (c) => requireRequestPrincipal(c),
-    registry: chatZellijShellRegistry,
-    shellWs: chatZellijShellWs,
-    onUnexpectedSendFailure: logUnexpectedWsSendFailure,
-  });
+  const retiredShellRegistry = {
+    list: () => terminalWorkspaceRuntime.listWorkspaces(),
+    create: async () => { throw new Error("Legacy terminal sessions are retired"); },
+    delete: async () => { throw new Error("Legacy terminal sessions are retired"); },
+  };
+  const chatBoundShellRouteDeps = chatRepository
+    ? {
+        getPrincipal: (c: Context) => requireRequestPrincipal(c),
+        listChatBoundSessionIds: (principal: RequestPrincipal, sessionIds: readonly string[]) =>
+          chatRepository!.listBoundTerminalSessionIds(
+            { type: "personal", ownerId: principal.userId },
+            sessionIds,
+          ),
+      }
+    : {};
+  const chatBoundWorkspaceRouteDeps = chatRepository
+    ? {
+        listChatBoundSessionIds: (ownerScope: { type: "user" | "org"; id: string }, sessionIds: readonly string[]) =>
+          chatRepository!.listBoundTerminalSessionIds(
+            ownerScope.type === "org"
+              ? { type: "organization", ownerId: ownerScope.id }
+              : { type: "personal", ownerId: ownerScope.id },
+            sessionIds,
+          ),
+      }
+    : {};
   const shellRouteDeps = {
     homePath,
-    registry: zellijShellRegistry,
+    registry: retiredShellRegistry,
     preferences: shellPreferencesStore,
-    workspace: zellijAdapter,
-    layouts: shellLayoutStore,
-    shellBackend: zellijAdapter,
-    shellThemeConfig: zellijAdapter,
+    shellBackend: {
+      health: async () => {
+        try {
+          await terminalWorkspaceRuntime.listWorkspaces();
+          return { ok: true as const, code: "ok" as const };
+        } catch (error) {
+          console.error(
+            "[gateway] terminal runtime health check failed",
+            error instanceof Error ? error.name : "unknown_error",
+          );
+          return { ok: false as const, code: "zellij_failed" as const };
+        }
+      },
+    },
     commandRunner: shellCommandRunner,
-    terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
+    sessionLifecycle: terminalWindowLayoutStore,
     chatTerminals: {
       prepare: async (principal: RequestPrincipal, chatId: string) => {
         if (!chatRepository || !canonicalChatExecutionRoots) {
@@ -1953,8 +1986,28 @@ export async function createGateway(config: GatewayConfig) {
           executionRoots: canonicalChatExecutionRoots,
         }).bind(principal, input);
       },
+      authorizePaneAction: async (principal: RequestPrincipal, input: {
+        chatId: string;
+        sessionId: string;
+        sessionCreatedAt: string;
+      }) => {
+        if (!chatRepository) return false;
+        const binding = await chatRepository.getTerminalBinding(
+          { type: "personal", ownerId: principal.userId },
+          input.chatId,
+          input.sessionId,
+        );
+        return binding?.sessionCreatedAt === input.sessionCreatedAt;
+      },
+      listBoundSessionIds: (principal: RequestPrincipal, sessionIds: readonly string[]) => {
+        if (!chatRepository) return Promise.resolve([]);
+        return chatRepository.listBoundTerminalSessionIds(
+          { type: "personal", ownerId: principal.userId },
+          sessionIds,
+        );
+      },
     },
-    ...chatTerminalWiring.shellRouteDeps,
+    ...chatBoundShellRouteDeps,
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();
   const systemActivityHistory = new ActivityHistoryStore({ homePath });
@@ -1978,7 +2031,18 @@ export async function createGateway(config: GatewayConfig) {
     savePolicy: (policy) => systemActivityPolicy.save(policy),
     readHistory: (query) => systemActivityHistory.list(query),
   }));
+  app.route("/api/terminal", createTerminalWorkspaceRoutes({
+    runtime: terminalWorkspaceRuntime,
+    homePath,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    chatTerminals: shellRouteDeps.chatTerminals,
+  }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  app.route(
+    "/api/terminal/window-layouts",
+    createTerminalWindowLayoutRoutes({ store: terminalWindowLayoutStore }),
+  );
   const runtimeHandle = process.env.MATRIX_HANDLE ?? "";
   const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)
     && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
@@ -1988,7 +2052,6 @@ export async function createGateway(config: GatewayConfig) {
       run: (input) => shellCommandRunner.run(input),
     }));
   }
-
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
   // ephemeral process-scoped secret so the HKDF input is never predictable — an
@@ -2014,7 +2077,7 @@ export async function createGateway(config: GatewayConfig) {
     console.log("[platform-db] Integration routes mounted (after auth)");
   } else if (internalIntegrationBaseUrl && internalPlatformToken && internalPlatformUrl) {
     app.all("/api/integrations", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) =>
-      proxyIntegrationRequest(c, internalIntegrationBaseUrl, true),
+      proxyIntegrationRequest(c, internalIntegrationBaseUrl, internalPlatformToken),
     );
     app.all("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) => {
       const isPublic =
@@ -2023,10 +2086,30 @@ export async function createGateway(config: GatewayConfig) {
       const targetBase = isPublic
         ? `${internalPlatformUrl}/api/integrations`
         : internalIntegrationBaseUrl;
-      return proxyIntegrationRequest(c, targetBase, !isPublic);
+      return proxyIntegrationRequest(c, targetBase, isPublic ? undefined : internalPlatformToken);
     });
     console.log("[platform-db] Integration routes proxied via platform internal API");
   }
+  registerCustomMcpGatewayRoutes(app, {
+    homePath,
+    clerkUserId: process.env.MATRIX_CLERK_USER_ID ?? process.env.MATRIX_USER_ID,
+    projectionToken: process.env.UPGRADE_TOKEN,
+    ...(internalPlatformUrl && internalHandle && internalPlatformToken
+      ? {
+          platformProxy: {
+            internalPlatformUrl,
+            handle: internalHandle,
+            token: internalPlatformToken,
+            request: (
+              context: Context,
+              targetBase: string,
+              routePrefix: "/api/mcp-servers",
+              token: string,
+            ) => proxyIntegrationRequest(context, targetBase, token, routePrefix),
+          },
+        }
+      : {}),
+  });
 
   const processManager = registerAppRuntimeRoutes(app, {
     homePath,
@@ -2074,9 +2157,11 @@ export async function createGateway(config: GatewayConfig) {
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
       let conversationOwnerScope: ReturnType<typeof ownerScopeFromPrincipal> | undefined;
+      let connectionOwnerId: string | undefined;
       try {
         const wsPrincipal = requireRequestPrincipal(c);
         const wsSyncUserId = wsPrincipal.userId;
+        connectionOwnerId = wsSyncUserId;
         conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
           ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
@@ -2164,6 +2249,7 @@ export async function createGateway(config: GatewayConfig) {
           syncPeerSocket = ws;
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
+          if (connectionOwnerId) clientOwnerIds.set(ws, connectionOwnerId);
           wsConnectionsActive.inc();
           captureGatewayProductEvent("shell_ws_open", {
             active_clients: clients.size,
@@ -2382,7 +2468,7 @@ export async function createGateway(config: GatewayConfig) {
               };
 
               dispatcher
-                .dispatch(parsed.text, dispatchSessionId, async (event) => {
+              .dispatch(parsed.text, dispatchSessionId, async (event) => {
                   const msg = withReplayId(kernelEventToServerMessage(event, requestId));
 
                   if (msg.type === "kernel:init") {
@@ -2456,11 +2542,12 @@ export async function createGateway(config: GatewayConfig) {
                     conversations.addSystemMessage(activeSessionId, "Stopped.");
                     void finalizeWithSummary(activeSessionId);
                   }
-                }, undefined, abortController, {
+              }, undefined, abortController, {
                 model: parsed.model,
                 effort: parsed.effort,
                 accessSourceId: parsed.accessSourceId,
                 workingDirectory,
+                requestApproval: approvalBridge?.requestApproval,
               })
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
@@ -2535,7 +2622,164 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
-  chatTerminalWiring.registerSessionRoute(app, upgradeWebSocket);
+  app.get(
+    "/ws/terminal/tab",
+    upgradeWebSocket((c) => {
+      const refResult = TerminalRefSchema.safeParse({
+        workspaceId: c.req.query("workspaceId"),
+        tabId: c.req.query("tabId"),
+      });
+      const clientResult = z.enum(["browser", "canvas", "desktop", "electron", "mobile", "cli"])
+        .safeParse(c.req.query("client"));
+      const chatResult = c.req.query("chat") === undefined
+        ? { success: true as const, data: undefined }
+        : CanonicalChatIdSchema.safeParse(c.req.query("chat"));
+      const attachmentTokenResult = c.req.query("attachmentToken") === undefined
+        ? { success: true as const, data: undefined }
+        : z.string().length(48).regex(/^[a-f0-9]+$/).safeParse(c.req.query("attachmentToken"));
+      const fromSeqRaw = c.req.query("fromSeq") ?? "0";
+      const colsRaw = c.req.query("cols") ?? "120";
+      const rowsRaw = c.req.query("rows") ?? "36";
+      const fromSeq = /^\d+$/.test(fromSeqRaw) ? Number(fromSeqRaw) : Number.NaN;
+      const cols = /^\d+$/.test(colsRaw) ? Number(colsRaw) : Number.NaN;
+      const rows = /^\d+$/.test(rowsRaw) ? Number(rowsRaw) : Number.NaN;
+      const validNumbers = Number.isSafeInteger(fromSeq) && fromSeq >= 0
+        && Number.isSafeInteger(cols) && cols >= 20 && cols <= 500
+        && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
+      let stream: ReturnType<TerminalRuntimeSocketClient["attach"]> | null = null;
+      let attachmentMode: "owner" | "observe" | null = null;
+      let closed = false;
+      const pending: unknown[] = [];
+
+      return {
+        onOpen(_event, ws) {
+          if (!refResult.success || !clientResult.success || !chatResult.success
+            || !attachmentTokenResult.success || !validNumbers) {
+            ws.send(JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" }));
+            ws.close();
+            return;
+          }
+          void (async () => {
+            const principal = requireRequestPrincipal(c);
+            const refAccess = await terminalRuntimeRefAccess(
+              principal,
+              terminalRuntimeOwnerIds,
+              terminalWorkspaceRuntime,
+              refResult.data,
+            );
+            if (refAccess === "not_found" || refAccess === "unavailable") {
+              throw new Error("Terminal runtime reference denied");
+            }
+            const owner = { type: "personal" as const, ownerId: principal.userId };
+            const refKey = `${refResult.data.workspaceId}:${refResult.data.tabId}`;
+            const terminalAuthorizationRepository = chatRepository;
+            if (chatResult.data) {
+              if (!terminalAuthorizationRepository) throw new Error("Terminal attachment authorization unavailable");
+              const binding = await terminalAuthorizationRepository.getTerminalBinding(owner, chatResult.data, refKey);
+              if (!binding) throw new Error("Chat terminal attachment denied");
+            } else {
+              if (refAccess === "chat_required") throw new Error("Chat terminal attachment requires Chat context");
+              if (refAccess === "repository_required" && !terminalAuthorizationRepository) {
+                throw new Error("Terminal attachment authorization unavailable");
+              }
+              if (terminalAuthorizationRepository) {
+                const bound = await terminalAuthorizationRepository.listBoundTerminalSessionIds(owner, [refKey]);
+                if (bound.includes(refKey)) throw new Error("Chat terminal attachment requires Chat context");
+              }
+            }
+            attachmentMode = await resolveTerminalAttachmentMode({
+              ...(attachmentTokenResult.data
+                ? { attachmentToken: attachmentTokenResult.data }
+                : {}),
+              ownerId: principal.userId,
+              terminalRef: refResult.data,
+            }, {
+              consumeSessionAttachment: workspaceSessionRuntimeBridge.consumeSessionAttachment,
+              requiresAttachmentToken: (ref) => hasActiveWorkspaceSessionForTerminalRef(homePath, ref),
+            });
+            if (closed) return;
+            const mode = clientResult.data === "cli" ? "hard" as const : "soft" as const;
+            captureTerminalEvent("attach-request", { client: clientResult.data, mode });
+            stream = terminalWorkspaceRuntime.attach({
+              ref: refResult.data,
+              viewerId: `${clientResult.data}:${randomUUID()}`,
+              fromSeq,
+              mode,
+              size: { cols, rows },
+              onFrame: (frame) => {
+                if (closed) return;
+                try { ws.send(JSON.stringify(frame)); }
+                catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
+              },
+              onClose: () => { if (!closed) ws.close(); },
+              onError: (error) => {
+                captureTerminalEvent("runtime-error", { client: clientResult.data });
+                logBestEffortFailure("Terminal tab runtime stream failed", error);
+                if (!closed) {
+                  try { ws.send(JSON.stringify({ type: "error", code: "runtime_unavailable", message: "Terminal unavailable" })); }
+                  catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
+                  ws.close();
+                }
+              },
+            });
+            for (const frame of pending.splice(0)) {
+              const parsedFrame = TerminalTabClientFrameSchema.parse(frame);
+              if (terminalAttachmentAllowsFrame(attachmentMode, parsedFrame)) {
+                stream.send(parsedFrame);
+              } else {
+                ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
+              }
+            }
+          })().catch((error: unknown) => {
+            logBestEffortFailure("Terminal tab authorization failed", error);
+            if (!closed) {
+              try { ws.send(JSON.stringify({ type: "error", code: "attach_failed", message: "Shell attach failed" })); }
+              catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
+              ws.close();
+            }
+          });
+        },
+        onMessage(event, ws) {
+          const raw = shellWsMessageDataToString(event.data);
+          if (raw === null) return;
+          let frame: unknown;
+          try { frame = JSON.parse(raw); }
+          catch (error) {
+            logUnexpectedJsonParseFailure("Failed to parse terminal tab WebSocket message", error);
+            ws.close();
+            return;
+          }
+          const parsed = TerminalTabClientFrameSchema.safeParse(frame);
+          if (!parsed.success) {
+            ws.send(JSON.stringify({ type: "error", code: "invalid_message", message: "Invalid message" }));
+            ws.close();
+            return;
+          }
+          if (attachmentMode && !terminalAttachmentAllowsFrame(attachmentMode, parsed.data)) {
+            ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
+          } else if (stream) stream.send(parsed.data);
+          else if (pending.length < 32) pending.push(parsed.data);
+          else ws.close();
+        },
+        onClose() {
+          if (stream) captureTerminalEvent("close", { client: clientResult.success ? clientResult.data : undefined });
+          closed = true;
+          pending.splice(0);
+          stream?.close();
+          stream = null;
+        },
+      };
+    }),
+  );
+
+  const clientUpgradeRequired = (c: Context) => c.json({
+    error: "client_upgrade_required",
+    message: "Upgrade Matrix OS to use terminal workspaces.",
+  }, 426);
+  app.get("/ws/terminal/session", clientUpgradeRequired);
+  app.get("/ws/terminal", clientUpgradeRequired);
+
+
 
   if (codingAgentThreadStream) {
     app.get(
@@ -2642,326 +2886,6 @@ export async function createGateway(config: GatewayConfig) {
       }),
     );
   }
-
-  app.get(
-    "/ws/terminal",
-    upgradeWebSocket((c) => {
-      const cwdParam = c.req.query("cwd");
-      const namedSession = c.req.query("session");
-      const fromSeqParam = c.req.query("fromSeq");
-      const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
-      const exclusiveLease = c.req.query("lease") === "exclusive";
-      let handle: SessionHandle | null = null;
-      let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
-      let namedSocketClosed = false;
-      let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
-      let autoCreatedSessionId: string | null = null;
-
-      const cleanupAutoCreatedSession = (destroyAutoCreated = true) => {
-        logTerminalDebug("ws-cleanup", {
-          destroyAutoCreated,
-          handleSessionId: handle?.sessionId ?? null,
-          autoCreatedSessionId,
-        });
-        if (handle) {
-          const shouldDestroyAutoCreated = autoCreatedSessionId === handle.sessionId;
-          handle.detach();
-          handle = null;
-          if (destroyAutoCreated && shouldDestroyAutoCreated && autoCreatedSessionId) {
-            sessionRegistry.destroy(autoCreatedSessionId);
-          }
-        } else if (destroyAutoCreated && autoCreatedSessionId) {
-          sessionRegistry.destroy(autoCreatedSessionId);
-        }
-        autoCreatedSessionId = null;
-      };
-
-      return {
-        onOpen(_evt, ws) {
-          logTerminalDebug("ws-open", {
-            cwdParam: cwdParam ?? null,
-            namedSession: namedSession ?? null,
-          });
-          captureTerminalEvent("open", {
-            hasCwdParam: Boolean(cwdParam),
-            namedSession: Boolean(namedSession),
-          });
-          const sendJson = (msg: PtyServerMessage) => {
-            try {
-              ws.send(JSON.stringify(msg));
-            } catch (err: unknown) {
-              logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
-            }
-          };
-
-          if (namedSession) {
-            const fromSeq =
-              typeof fromSeqParam === "string" && /^\d+$/.test(fromSeqParam)
-                ? Number(fromSeqParam)
-                : 0;
-            void (async () => {
-              if (!chatRepository) {
-                throw new Error("Chat terminal repository unavailable");
-              }
-              const principal = requireRequestPrincipal(c);
-              if (!await authorizeStandaloneTerminalAttach({
-                repository: chatRepository,
-                owner: { type: "personal", ownerId: principal.userId },
-                sessionId: namedSession,
-              })) {
-                throw new Error("Standalone terminal attachment denied");
-              }
-              return zellijShellWs.open({
-                ws,
-                session: namedSession,
-                fromSeq,
-                clientClass: sizingParams.clientClass,
-                declaredSize: sizingParams.declaredSize,
-                exclusiveLease,
-              });
-            })().then((session) => {
-              if (namedSocketClosed) {
-                session.onClose();
-                return;
-              }
-              namedHandle = session;
-            }).catch((err: unknown) => {
-              console.warn("[shell] zellij terminal attach failed:", err instanceof Error ? err.message : String(err));
-              captureTerminalEvent("named-attach-failed", {
-                namedSession: true,
-                socketClosed: namedSocketClosed,
-              });
-              if (namedSocketClosed) {
-                return;
-              }
-              try {
-                ws.send(JSON.stringify({
-                  type: "error",
-                  code: "attach_failed",
-                  message: "Shell attach failed",
-                }));
-              } catch (sendErr: unknown) {
-                logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
-              }
-              ws.close();
-            });
-            return;
-          }
-
-          // Backward compat: auto-create session if no attach message within 100ms
-          if (cwdParam && cwdParam.length >= 1 && cwdParam.length <= 4096) {
-            autoCreateTimer = setTimeout(() => {
-              autoCreateTimer = null;
-              if (handle) return;
-              let sessionId: string | null = null;
-              try {
-                sessionId = sessionRegistry.create(cwdParam);
-                logTerminalDebug("auto-create-session", { cwd: cwdParam, sessionId });
-                autoCreatedSessionId = sessionId;
-                handle = sessionRegistry.attach(sessionId);
-                if (handle) {
-                  handle.subscribe(sendJson);
-                  sendJson({ type: "attached", sessionId, state: "running" });
-                  handle.replay(0);
-                } else {
-                  sessionRegistry.destroy(sessionId);
-                  autoCreatedSessionId = null;
-                }
-              } catch (err: unknown) {
-                if (handle) {
-                  handle.detach();
-                  handle = null;
-                }
-                if (sessionId) {
-                  sessionRegistry.destroy(sessionId);
-                  autoCreatedSessionId = null;
-                }
-                console.error("Terminal session create error:", err);
-                captureTerminalEvent("auto-create-failed", {
-                  hasCwdParam: Boolean(cwdParam),
-                });
-                sendJson({ type: "error", message: "Failed to create session" });
-              }
-            }, 100);
-          }
-        },
-
-        onMessage(evt, ws) {
-          const raw = shellWsMessageDataToString(evt.data);
-          if (raw === null) {
-            return;
-          }
-          if (namedSession) {
-            namedHandle?.onMessage(raw);
-            return;
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(raw);
-          } catch (err: unknown) {
-            logUnexpectedJsonParseFailure("Failed to parse terminal WebSocket message", err);
-            captureTerminalEvent("invalid-json");
-            ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
-            return;
-          }
-
-          const result = ClientMessageSchema.safeParse(parsed);
-          if (!result.success) {
-            captureTerminalEvent("invalid-message");
-            ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
-            return;
-          }
-
-          const msg = result.data;
-          const sendJson = (m: PtyServerMessage) => {
-            try {
-              ws.send(JSON.stringify(m));
-            } catch (err: unknown) {
-              logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
-            }
-          };
-
-          switch (msg.type) {
-            case "ping":
-              ws.send(JSON.stringify({ type: "pong" }));
-              break;
-            case "attach": {
-              logTerminalDebug("ws-attach-request", {
-                mode: "cwd" in msg ? "create" : "reattach",
-                cwd: "cwd" in msg ? msg.cwd : null,
-                sessionId: "sessionId" in msg ? msg.sessionId : null,
-                fromSeq: "fromSeq" in msg ? (msg.fromSeq ?? 0) : null,
-              });
-              captureTerminalEvent("attach-request", {
-                mode: "cwd" in msg ? "create" : "reattach",
-                hasFromSeq: "fromSeq" in msg && msg.fromSeq !== undefined,
-              });
-              if (autoCreateTimer) {
-                clearTimeout(autoCreateTimer);
-                autoCreateTimer = null;
-              }
-              if (handle) {
-                cleanupAutoCreatedSession();
-              }
-
-              if ("cwd" in msg) {
-                let sessionId: string | null = null;
-                try {
-                  sessionId = sessionRegistry.create(msg.cwd, msg.shell);
-                  logTerminalDebug("create-session", {
-                    cwd: msg.cwd,
-                    shell: msg.shell ?? null,
-                    sessionId,
-                  });
-                  autoCreatedSessionId = null;
-                  handle = sessionRegistry.attach(sessionId);
-                  if (handle) {
-                    handle.subscribe(sendJson);
-                    sendJson({ type: "attached", sessionId, state: "running" });
-                    handle.replay(0);
-                  } else {
-                    sessionRegistry.destroy(sessionId);
-                  }
-                } catch (err: unknown) {
-                  if (handle) {
-                    handle.detach();
-                    handle = null;
-                  }
-                  if (sessionId) {
-                    sessionRegistry.destroy(sessionId);
-                  }
-                  console.error("Terminal session create error:", err);
-                  captureTerminalEvent("create-failed", {
-                    hasShell: Boolean(msg.shell),
-                  });
-                  sendJson({ type: "error", message: "Failed to create session" });
-                }
-              } else {
-                try {
-                  handle = sessionRegistry.attach(msg.sessionId);
-                  if (handle) {
-                    logTerminalDebug("attach-existing-success", { sessionId: msg.sessionId });
-                    const info = sessionRegistry.getSession(msg.sessionId);
-                    autoCreatedSessionId = null;
-                    handle.subscribe(sendJson);
-                    sendJson({
-                      type: "attached",
-                      sessionId: msg.sessionId,
-                      state: info?.state ?? "running",
-                      exitCode: info?.exitCode,
-                    });
-                    handle.replay(msg.fromSeq ?? 0);
-                  } else {
-                    logTerminalDebug("attach-existing-miss", { sessionId: msg.sessionId });
-                    captureTerminalEvent("attach-miss");
-                    sendJson({ type: "error", message: "Session not found" });
-                  }
-                } catch (err: unknown) {
-                  if (handle) {
-                    handle.detach();
-                    handle = null;
-                  }
-                  console.error("Terminal session attach error:", err);
-                  captureTerminalEvent("attach-failed");
-                  sendJson({ type: "error", message: "Failed to attach session" });
-                }
-              }
-              break;
-            }
-            case "input":
-            case "resize":
-              if (handle) {
-                handle.send(msg);
-              }
-              break;
-            case "detach":
-              if (handle) {
-                logTerminalDebug("ws-detach", { sessionId: handle.sessionId });
-                captureTerminalEvent("detach");
-                handle.detach();
-                handle = null;
-              }
-              break;
-            case "destroy":
-              if (handle) {
-                const sessionId = handle.sessionId;
-                logTerminalDebug("ws-destroy", { sessionId });
-                captureTerminalEvent("destroy");
-                handle.detach();
-                handle = null;
-                sessionRegistry.destroy(sessionId);
-                if (autoCreatedSessionId === sessionId) {
-                  autoCreatedSessionId = null;
-                }
-              }
-              break;
-          }
-        },
-
-        onClose() {
-          namedSocketClosed = true;
-          if (namedHandle) {
-            namedHandle.onClose();
-            namedHandle = null;
-          }
-          logTerminalDebug("ws-close", {
-            handleSessionId: handle?.sessionId ?? null,
-            autoCreatedSessionId,
-          });
-          captureTerminalEvent("close", {
-            hadHandle: Boolean(handle),
-            hadAutoCreatedSession: Boolean(autoCreatedSessionId),
-            namedSession: Boolean(namedSession),
-          });
-          if (autoCreateTimer) {
-            clearTimeout(autoCreateTimer);
-            autoCreateTimer = null;
-          }
-          cleanupAutoCreatedSession(false);
-        },
-      };
-    }),
-  );
 
   // --- Onboarding WebSocket ---
   const onboardingHandler = createOnboardingHandler({
@@ -3103,7 +3027,7 @@ export async function createGateway(config: GatewayConfig) {
   const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
   app.route("/", createWorkspaceRoutes({
     homePath,
-    zellijRuntime: workspaceZellijRuntime,
+    terminalRuntime: terminalWorkspaceRuntime,
     agentLauncher: agentCredentialLauncher,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     eventStore: workspaceEventStore,
@@ -3111,20 +3035,18 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     codingAgentThreadStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-    ...chatTerminalWiring.workspaceRouteDeps,
+    ...chatBoundWorkspaceRouteDeps,
   }));
-  // Workspace sessions own /api/sessions. Keep the legacy shell mount after
-  // that authoritative route so old terminal subroutes remain reachable.
   app.route("/api", createShellRoutes(shellRouteDeps));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
     upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
   }));
-  const workspaceStartupRecovery = await createWorkspaceStartupRecovery({
+  const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
     homePath,
     eventPublisher: workspaceEventPublisher,
     codingAgentThreadStore,
-    zellijRuntime: workspaceZellijRuntime,
-  }).run();
+  });
+  const workspaceStartupRecovery = await workspaceStartupRecoveryController.run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
   }
@@ -3165,8 +3087,6 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Failed to save layout" }, 500);
     }
   });
-
-  registerTerminalSessionRoutes(app, { homePath, sessionRegistry });
 
   app.post("/api/message", apiMessageBodyLimit, async (c) => {
     let rawBody: unknown;
@@ -3467,127 +3387,11 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  // ---------------------------------------------------------------------------
-  // Bridge: Integration service calls (for apps in iframes)
-  // ---------------------------------------------------------------------------
-
-  app.get("/api/bridge/service", async (c) => {
-    if (!platformDb || !resolveIntegrationUserId) {
-      return c.json({ error: "Integrations not configured" }, 503);
-    }
-    const uid = await resolveIntegrationUserId(c);
-    if (!uid) return c.json({ error: "Unauthorized" }, 401);
-    const services = await platformDb.listConnectedServices(uid);
-    return c.json({
-      services: services.map((s) => ({
-        service: s.service,
-        account_label: s.account_label,
-        account_email: s.account_email,
-        status: s.status,
-      })),
-    });
-  });
-
-  app.post("/api/bridge/service", bodyLimit({ maxSize: 65536 }), async (c) => {
-    if (process.env.NODE_ENV === "production") {
-      return c.json({ error: "Bridge not available in production" }, 403);
-    }
-    if (!platformDb || !pipedreamClient || !resolveIntegrationUserId) {
-      return c.json({ error: "Integrations not configured" }, 503);
-    }
-
-    // Mirror CallBodySchema from integrations/routes.ts. The route is dev-only
-    // (production returns 403 above) so the security risk of an unvalidated
-    // body is minimal, but the cast was inconsistent with every other mutating
-    // endpoint in this PR and provided zero runtime protection.
-    let parsedJson: unknown;
-    try {
-      parsedJson = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON" }, 400);
-      }
-      console.error("[bridge/service] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-    const parsed = BridgeCallBodySchema.safeParse(parsedJson);
-    if (!parsed.success) {
-      return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
-    }
-
-    const { service, action, label, params } = parsed.data;
-
-    const def = getService(service);
-    if (!def) return c.json({ error: `Unknown service: ${service}` }, 400);
-    const actionDef = getAction(service, action);
-    if (!actionDef) return c.json({ error: `Unknown action: ${action}` }, 400);
-
-    const paramValidation = validateActionParams(actionDef, params);
-    if (!paramValidation.valid) {
-      const parts: string[] = [];
-      if (paramValidation.missing.length > 0) parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
-      if (paramValidation.typeErrors.length > 0) parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
-      return c.json({ error: parts.join(". ") }, 400);
-    }
-
-    const uid = await resolveIntegrationUserId(c);
-    if (!uid) return c.json({ error: "Unauthorized" }, 401);
-
-    const connections = await platformDb.listConnectedServices(uid);
-    let connection;
-    if (label) {
-      connection = connections.find((s) => s.service === service && s.account_label === label);
-    } else {
-      connection = connections.find((s) => s.service === service);
-    }
-    if (!connection) {
-      return c.json({ error: `Service ${service} is not connected` }, 404);
-    }
-
-    const fullUser = await platformDb.getUserById(uid);
-    const externalId = fullUser?.pipedream_external_id || uid;
-    if (!fullUser?.pipedream_external_id) {
-      await platformDb.updatePipedreamExternalId(uid, externalId);
-    }
-
-    try {
-      const { data, summary } = await executeIntegrationAction({
-        pipedream: pipedreamClient,
-        externalUserId: externalId,
-        connection,
-        def,
-        actionDef,
-        serviceId: service,
-        actionId: action,
-        params,
-      });
-      await platformDb.touchServiceUsage(connection.id);
-      return c.json({ data, service, action, ...(summary ? { summary } : {}) });
-    } catch (err) {
-      if (err instanceof IntegrationActionNotImplementedError) {
-        return c.json({ error: err.message }, 501);
-      }
-      if (getErrorStatusCode(err) === 429) {
-        const retryAfter = getRetryAfterSeconds(err);
-        return c.json(
-          { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
-          { status: 429, headers: { "Retry-After": String(retryAfter) } },
-        );
-      }
-      const isAbort = err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
-      if (isAbort) {
-        console.error(`[bridge/service] ${service}/${action} timeout`);
-        return c.json({ error: "Integration call timed out" }, 504);
-      }
-      const msg = err instanceof Error ? err.message.toLowerCase() : "";
-      if (msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("enetunreach")) {
-        console.error(`[bridge/service] ${service}/${action} connection error:`, err);
-        return c.json({ error: "Integration service unavailable" }, 503);
-      }
-      console.error(`[bridge/service] ${service}/${action} error:`, err instanceof Error ? err.message : err);
-      return c.json({ error: "Integration call failed" }, 502);
-    }
-  });
+  app.route("/api/bridge/service", createIntegrationBridgeRoutes({
+    platformDb,
+    pipedream: pipedreamClient,
+    resolveUserId: resolveIntegrationUserId,
+  }));
 
   registerConversationHistoryRoutes(app, {
     conversations,
@@ -4229,7 +4033,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
     homePath,
-    registry: zellijShellRegistry,
+    registry: providerLoginTerminalRegistry,
     enabledHarnesses: codingAgentWorkspaceAgents.filter(
       (agent): agent is "codex" | "claude" => agent === "codex" || agent === "claude",
     ),
@@ -4282,11 +4086,12 @@ export async function createGateway(config: GatewayConfig) {
       ? ["opencode" as const]
       : []),
   ];
-  const codexModelCatalogSource = codexExecutable
-    ? createCodexModelCatalogSource({ executable: codexExecutable, cwd: homePath })
-    : undefined;
-  const nativeCodingModelCatalogSource = createNativeCodingModelCatalogSource({ homePath });
-  const canonicalChatProviderCatalog = createChatProviderCatalogService({
+  const {
+    catalog: canonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+  } = createGatewayChatProviderCatalog({
+    homePath,
+    codexExecutable,
+    fundedCredentialProvider,
     codingProviders: codingAgentProviderRegistry,
     agentRuntimeSource: agentRuntimeServices.source,
     systemRuntimeSources: agentRuntimeServices.systemRuntimeSources,
@@ -4294,11 +4099,6 @@ export async function createGateway(config: GatewayConfig) {
     harnessSettingsSource: providerSettingsStore,
     executableDriverKinds: canonicalExecutableDriverKinds,
     credentialedDriverKinds: ["pi", "opencode"],
-    skillsSource: () => loadSkills(homePath),
-    codingModelCatalogSource: async (provider) => {
-      const codexModels = await codexModelCatalogSource?.(provider);
-      return codexModels ?? nativeCodingModelCatalogSource(provider);
-    },
   });
   if (chatRepository) {
     canonicalChatExecutionRoots = createChatExecutionRootResolver({
@@ -4314,12 +4114,7 @@ export async function createGateway(config: GatewayConfig) {
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
         homePath,
-        resolveCredentialLaunch: () => buildKernelCredentialLaunch(
-          homePath,
-          process.env,
-          undefined,
-          fundedCredentialProvider,
-        ),
+        resolveCredentialLaunch: resolveClaudeCredentialLaunch,
       }));
     }
     if (codingAgentThreadStore) {
@@ -4347,21 +4142,29 @@ export async function createGateway(config: GatewayConfig) {
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
       executionRoots: canonicalChatExecutionRoots,
+      ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
       onAiGeneration: recordAiGeneration,
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
+    if (codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
+      const repository = chatRepository;
+      const bridge = codexEventBridge;
+      const uid = process.getuid?.();
+      chatIdleReaper = createChatIdleReaper({
+        sessions: codingAgentWorkspaceRuntime,
+        terminalRuntime: terminalWorkspaceRuntime,
+        threads: codingAgentThreadStore,
+        control: createCodexControlClient({ homePath }),
+        admitCanonical: (identity, reclaim) => withCanonicalIdleChat(repository.kysely, identity, reclaim),
+        unwatch: (sessionId) => bridge.unwatch(sessionId),
+        underPressure: () => terminalTasksUnderPressure(
+          `/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/matrix.slice/matrix-terminal.slice`,
+        ),
+      });
+    }
   }
-  app.route("/", createCanonicalChatRoutes({
-    service: chatRepository
-        ? createCanonicalChatService(chatRepository, {
-          ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
-          ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
-        })
-      : createUnavailableCanonicalChatService(),
-    getPrincipal: (c) => requireRequestPrincipal(c),
-  }));
   if (canonicalChatEventStream) {
     registerCanonicalChatEventWebSocketRoute({
       app,
@@ -4369,7 +4172,24 @@ export async function createGateway(config: GatewayConfig) {
       getPrincipal: (context) => requireRequestPrincipal(context as Context),
       stream: canonicalChatEventStream,
     });
+    registerCanonicalChatEventHttpRoute({
+      app,
+      getPrincipal: (context) => requireRequestPrincipal(context as Context),
+      stream: canonicalChatEventStream,
+    });
   }
+  app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
+  gatewayCollaboration?.register({ app, upgradeWebSocket });
+  app.route("/", createCanonicalChatRoutes({
+    service: chatRepository
+        ? createCanonicalChatService(chatRepository, {
+          ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
+          ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
+          ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
+        })
+      : createUnavailableCanonicalChatService(),
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
   app.route("/", createChatProviderRoutes({
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
@@ -4396,6 +4216,11 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/os-view-state", createOsViewStateRoutes({
       repository: osViewStateRepository,
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      onChanged: (ownerId, state) => broadcastToOwner(ownerId, {
+        type: "os-view:changed",
+        revision: state.revision,
+        updatedAt: state.updatedAt,
+      }),
     }));
   } else {
     app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));
@@ -4579,7 +4404,7 @@ export async function createGateway(config: GatewayConfig) {
     },
     memory: {
       rssBytes: process.memoryUsage.rss(),
-      pendingPersistBytes: zellijShellWs.pendingPersistBytes(),
+      pendingPersistBytes: 0,
     },
     browserIde: {
       status: process.env.MATRIX_CODE_SERVER_PORT ? "configured" : "disabled",
@@ -4657,6 +4482,10 @@ export async function createGateway(config: GatewayConfig) {
   void chatAttachmentCleanup.runNow().catch((error: unknown) => {
     logBestEffortFailure("Initial temporary Chat attachment cleanup failed", error);
   });
+  const terminalPasteAssetCleanup = startTerminalPasteAssetCleanup({
+    homePath,
+    onFailure: logBestEffortFailure,
+  });
 
   return {
     app,
@@ -4671,6 +4500,12 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      workspaceStartupRecoveryController.close();
+      await terminalPasteAssetCleanup.close();
+      await chatIdleReaper?.close().catch((error: unknown) => {
+        logBestEffortFailure("Chat idle runtime reconciliation shutdown failed", error);
+      });
+      chatIdleReaper = null;
       chatAttachmentCleanup.close();
       await chatAttachmentCleanup.waitForIdle().catch((error: unknown) => {
         logBestEffortFailure("Temporary Chat attachment cleanup shutdown failed", error);
@@ -4698,10 +4533,13 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await gatewayCollaboration?.shutdown();
+      gatewayCollaboration = null;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
+      workspaceSessionRuntimeBridge.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
       fundedCredentialProvider?.close();
@@ -4717,10 +4555,6 @@ export async function createGateway(config: GatewayConfig) {
       await channelManager.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
-      shellSessionReaper.stop();
-      if (chatZellijShellWs !== zellijShellWs) await chatZellijShellWs.dispose();
-      await zellijShellWs.dispose();
-      await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();
       await homeMirrorStart?.catch((err: unknown) => {

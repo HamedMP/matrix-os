@@ -15,6 +15,7 @@ import {
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
+const TERMINAL_REF_KEY = `tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`;
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const attachmentResize = vi.fn();
@@ -52,6 +53,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     paste: ReturnType<typeof vi.fn>;
     selectAll: ReturnType<typeof vi.fn>;
     clearSelection: ReturnType<typeof vi.fn>;
+    clear: ReturnType<typeof vi.fn>;
     reset: ReturnType<typeof vi.fn>;
   }>,
   resizeObserverCallbacks: [] as ResizeObserverCallback[],
@@ -119,7 +121,7 @@ vi.mock("@xterm/xterm", () => ({
       this.element = root;
     }
     write(): void {}
-    clear(): void {}
+    clear = vi.fn();
     focus = vi.fn();
     blur = vi.fn();
     dispose(): void {}
@@ -424,25 +426,14 @@ describe("TerminalView session switching", () => {
     expect(screen.getByRole("status").textContent).toContain("This session has ended on your computer.");
   });
 
-  it("freezes after a lease takeover and explicitly reacquires on Resume here", () => {
-    render(<TerminalView sessionName="alpha" />);
-    const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
-
-    act(() => events.onLeaseRevoked?.());
-    expect(screen.getByRole("status").textContent).toContain("Live on another device.");
-
-    fireEvent.click(screen.getByRole("button", { name: "Resume here" }));
-    expect(attachMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("resets xterm before rendering a replacement Zellij presentation", () => {
+  it("clears xterm before rendering an authoritative replacement snapshot", () => {
     render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;
     const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
 
-    act(() => events.onPresentationReset?.());
+    act(() => events.onGap());
 
-    expect(terminal.reset).toHaveBeenCalledOnce();
+    expect(terminal.clear).toHaveBeenCalledOnce();
   });
 
   it("re-themes the right-hand shell without changing or following Desktop appearance", () => {
@@ -495,7 +486,7 @@ describe("TerminalView session switching", () => {
 
   it("intercepts primary and secondary link mouseup before xterm can activate it", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const terminal = createdTerminals.at(-1)!;
     const provider = terminal.registeredProviders[0] as {
       provideLinks: (
@@ -696,11 +687,11 @@ describe("TerminalView session switching", () => {
       configurable: true,
       value: { read, readText },
     });
-    const postBytes = vi.fn(async () => ({
-      terminalPath: "/home/matrix/home/data/terminal-paste/clipboard.png",
+    const post = vi.fn(async () => ({
+      assets: [{ terminalPath: "/home/matrix/home/data/terminal-paste/clipboard.png" }],
     }));
-    useConnection.setState({ api: { postBytes } as never });
-    render(<TerminalView sessionName="alpha" />);
+    useConnection.setState({ api: { post } as never });
+    render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const terminal = createdTerminals.at(-1)!;
 
     terminal.customKeyEventHandler?.({
@@ -721,7 +712,11 @@ describe("TerminalView session switching", () => {
     expect(read).toHaveBeenCalledOnce();
     expect(readText).not.toHaveBeenCalled();
     expect(terminal.paste).not.toHaveBeenCalled();
-    expect(postBytes).toHaveBeenCalledOnce();
+    expect(post).toHaveBeenCalledWith(
+      `/api/terminal/workspaces/tws_${"a".repeat(32)}/tabs/tt_${"b".repeat(32)}/paste-assets`,
+      { assets: [{ name: "clipboard-image", mimeType: "image/png", dataBase64: "aW1hZ2U=" }] },
+      { timeoutMs: 30_000 },
+    );
   });
 
   it("keeps clipboard shortcuts pane-local when multiple terminals exist", async () => {
@@ -855,15 +850,15 @@ describe("TerminalView session switching", () => {
   });
 
   it("shows an older paste failure after a newer copy succeeds", async () => {
-    const pendingUpload = deferred<{ terminalPath: string }>();
-    const postBytes = vi.fn(() => pendingUpload.promise);
+    const pendingUpload = deferred<{ assets: Array<{ terminalPath: string }> }>();
+    const post = vi.fn(() => pendingUpload.promise);
     const writeText = vi.fn().mockResolvedValue(undefined);
-    useConnection.setState({ api: { postBytes } as never });
+    useConnection.setState({ api: { post } as never });
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const terminal = createdTerminals.at(-1)!;
     terminal.selection = "copy while upload is pending";
@@ -871,7 +866,7 @@ describe("TerminalView session switching", () => {
     fireEvent.paste(host, {
       clipboardData: { files: [new File(["png"], "failed.png", { type: "image/png" })] },
     });
-    await waitFor(() => expect(postBytes).toHaveBeenCalledOnce());
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
 
     terminal.customKeyEventHandler?.({
       type: "keydown",
@@ -886,7 +881,7 @@ describe("TerminalView session switching", () => {
     } as unknown as KeyboardEvent);
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
 
-    pendingUpload.resolve({ terminalPath: "invalid" });
+    pendingUpload.resolve({ assets: [{ terminalPath: "invalid" }] });
     expect(await screen.findByText("Image paste failed. Try again.")).toBeTruthy();
   });
 
@@ -1054,7 +1049,7 @@ describe("TerminalView session switching", () => {
       configurable: true,
       value: { writeText },
     });
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const terminal = createdTerminals.at(-1)!;
     terminal.selection = "content-type: application/json";
     const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
@@ -1448,15 +1443,15 @@ describe("TerminalView session switching", () => {
       "/home/matrix/home/projects/.matrix-terminal-pastes/first.png",
       "/home/matrix/home/projects/.matrix-terminal-pastes/second.png",
     ];
-    let resolveFirst!: (value: { terminalPath: string }) => void;
-    let resolveSecond!: (value: { terminalPath: string }) => void;
-    const firstUpload = new Promise<{ terminalPath: string }>((resolve) => { resolveFirst = resolve; });
-    const secondUpload = new Promise<{ terminalPath: string }>((resolve) => { resolveSecond = resolve; });
-    const postBytes = vi.fn()
+    let resolveFirst!: (value: { assets: Array<{ terminalPath: string }> }) => void;
+    let resolveSecond!: (value: { assets: Array<{ terminalPath: string }> }) => void;
+    const firstUpload = new Promise<{ assets: Array<{ terminalPath: string }> }>((resolve) => { resolveFirst = resolve; });
+    const secondUpload = new Promise<{ assets: Array<{ terminalPath: string }> }>((resolve) => { resolveSecond = resolve; });
+    const post = vi.fn()
       .mockReturnValueOnce(firstUpload)
       .mockReturnValueOnce(secondUpload);
-    useConnection.setState({ api: { postBytes } as never });
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    useConnection.setState({ api: { post } as never });
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const first = new File(["first"], "first.png", { type: "image/png" });
     const second = new File(["second"], "second.png", { type: "image/png" });
@@ -1465,14 +1460,13 @@ describe("TerminalView session switching", () => {
 
     // Multiple clipboard images start together, while Promise.all preserves
     // their original clipboard order even when the second upload settles first.
-    await waitFor(() => expect(postBytes).toHaveBeenCalledTimes(2));
-    resolveSecond({ terminalPath: paths[1]! });
-    resolveFirst({ terminalPath: paths[0]! });
-    expect(postBytes).toHaveBeenNthCalledWith(
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    resolveSecond({ assets: [{ terminalPath: paths[1]! }] });
+    resolveFirst({ assets: [{ terminalPath: paths[0]! }] });
+    expect(post).toHaveBeenNthCalledWith(
       1,
-      "/api/terminal/sessions/alpha/paste-assets",
-      first,
-      { "Content-Type": "image/png", "X-Matrix-Filename": "first.png" },
+      `/api/terminal/workspaces/tws_${"a".repeat(32)}/tabs/tt_${"b".repeat(32)}/paste-assets`,
+      { assets: [{ name: "first.png", mimeType: "image/png", dataBase64: "Zmlyc3Q=" }] },
       { timeoutMs: 30_000 },
     );
     await waitFor(() => expect(attachmentWrite).toHaveBeenCalledWith(
@@ -1483,9 +1477,9 @@ describe("TerminalView session switching", () => {
   });
 
   it("supports drop but leaves unsupported and inactive terminal paste untouched", async () => {
-    const postBytes = vi.fn(async () => ({ terminalPath: "/home/matrix/home/projects/drop.webp" }));
-    useConnection.setState({ api: { postBytes } as never });
-    const { container, rerender } = render(<TerminalView sessionName="alpha" />);
+    const post = vi.fn(async () => ({ assets: [{ terminalPath: "/home/matrix/home/projects/drop.webp" }] }));
+    useConnection.setState({ api: { post } as never });
+    const { container, rerender } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const unsupported = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(unsupported, "clipboardData", {
@@ -1493,28 +1487,28 @@ describe("TerminalView session switching", () => {
     });
     host.dispatchEvent(unsupported);
     expect(unsupported.defaultPrevented).toBe(false);
-    expect(postBytes).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
 
     fireEvent.drop(host, {
       dataTransfer: { files: [new File(["webp"], "drop.webp", { type: "image/webp" })] },
     });
     await waitFor(() => expect(attachmentWrite).toHaveBeenCalledTimes(1));
 
-    rerender(<TerminalView sessionName="alpha" active={false} />);
+    rerender(<TerminalView sessionName={TERMINAL_REF_KEY} active={false} />);
     const inactivePaste = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(inactivePaste, "clipboardData", {
       value: { files: [new File(["png"], "inactive.png", { type: "image/png" })] },
     });
     host.dispatchEvent(inactivePaste);
     expect(inactivePaste.defaultPrevented).toBe(false);
-    expect(postBytes).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it("logs terminal image upload failures while keeping the user error generic", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const postBytes = vi.fn().mockRejectedValue(new Error("preview gateway offline"));
-    useConnection.setState({ api: { postBytes } as never });
-    const { container } = render(<TerminalView sessionName="alpha" />);
+    const post = vi.fn().mockRejectedValue(new Error("preview gateway offline"));
+    useConnection.setState({ api: { post } as never });
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
 
     fireEvent.paste(host, {
@@ -1530,15 +1524,15 @@ describe("TerminalView session switching", () => {
   });
 
   it("shows a safe error and does not upload an image over 10 MB", async () => {
-    const postBytes = vi.fn();
-    useConnection.setState({ api: { postBytes } as never });
+    const post = vi.fn();
+    useConnection.setState({ api: { post } as never });
     const { container } = render(<TerminalView sessionName="alpha" />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     const large = new File([new Uint8Array(10 * 1024 * 1024 + 1)], "large.png", { type: "image/png" });
     fireEvent.paste(host, { clipboardData: { files: [large] } });
 
     expect(await screen.findByText("Images are limited to 10 MB.")).toBeTruthy();
-    expect(postBytes).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
     expect(attachmentWrite).not.toHaveBeenCalled();
   });
 });

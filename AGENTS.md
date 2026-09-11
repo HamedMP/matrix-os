@@ -250,8 +250,8 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Terminal theme scope is split**: Terminal chrome theme (`appThemeId`) is terminal-local UI state, while shell color theme persists through the global terminal preferences endpoint backed by `system/shell-preferences/terminal-global.json`. Do not wire the Terminal theme menu to the global Matrix OS shell theme or back into per-session preference files.
 - **Transient shell overlays must share one notification host**: use the shared `ShellNotificationStack` / `ShellNotificationPortal` path for connection status, runtime identity, onboarding errors, VocalPanel errors, and similar top-right shell toasts. Do not mount competing fixed stacks at the same viewport anchor.
 - **Shell z-index order is centralized**: reuse shared `SHELL_Z_INDEX` values and keep ordinary app-window z-order compacted below Settings. Do not scatter ad-hoc Tailwind `z-[...]` classes that can drift above Settings, hard gates, or the shell notification stack.
-- **Canonical shell sessions live in `/api/terminal/sessions` across shells**: the web Terminal, macOS Terminal tab, and desktop Command Palette should all use the same named shell-session model instead of separate workspace-local session lists.
-- **Shell session creation is rate-limited, not count-capped**: browser zellij sessions no longer enforce a hard live-session ceiling. If creation starts failing, inspect the shared creation rate limiter across `/api/terminal` and legacy `/api` mounts before reintroducing a `maxSessions` cap.
+- **Canonical terminals are project workspaces with tabs**: every project owns one Zellij-backed workspace, unscoped terminals use `main`, and every OS view uses `TerminalRef { workspaceId, tabId }` through `/api/terminal/workspaces` and `/ws/terminal/tab`. Matrix splits are client-side views, not Zellij panes.
+- **Terminal tab creation is rate-limited, not count-capped**: do not add a user-facing tab ceiling. Bound connections, attachments, observers, buffers, and pending writes with eviction and cgroup limits.
 - **OS-view presentations share product state**: app paths, Chat identity, Settings, terminal sessions, Files state, dock pins, app icons, and restore/focus behavior must survive presentation switches. Web Desktop and Electron Desktop share database-backed logical placement; Web Canvas has its own geometry plus pan/zoom namespace. Add focused tests around shared helpers and switching.
 - **Workspace Canvas is retired non-destructively**: remove its launcher entry, new-document flows, and built-in routing without deleting existing owner data. Preserve export/recovery compatibility until a separately reviewed data-lifecycle migration exists. Canvas now means only the free-form OS view.
 - **Never mutate state in reducers**: `reduceChat` etc. must create new objects via spread, not mutate in-place. Shallow copies share refs; mutating causes streaming text duplication.
@@ -481,6 +481,8 @@ Read these on demand, not every session:
 - N/A; selection, context-menu snapshots, and clipboard operation state are transient and must not be persisted (118-fix-terminal-clipboard)
 - Node.js 24+, TypeScript 5.5+ strict, ES modules + Claude Agent SDK V1 `query()`/`resume`, Hono, Zod 4 (`zod/v4`), Kysely, PostgreSQL, Next.js 16, React 19, Cloudflare AI Gateway, OpenRouter OAuth/API (118-ai-gateway-provider-auth)
 - owner configuration/secret files for provider credentials; owner Postgres only if provider account orchestration needs durable multi-instance state; platform PostgreSQL/Kysely for later entitlements, reservations, and content-free usage records (118-ai-gateway-provider-auth)
+- TypeScript 5.9 strict, ES modules; Node.js 24 production target (published CLI remains compatible with Node.js 20+) + `@modelcontextprotocol/sdk` 1.29, Zod 4, citty, native Fetch/AbortSignal, existing Matrix CLI shell/file/profile clients (120-remote-computer-mcp)
+- No new storage; reads existing owner-scoped Matrix CLI profile/auth files and Matrix computer data (120-remote-computer-mcp)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -508,15 +510,16 @@ Read these on demand, not every session:
 matrix login
 matrix run -it -- claude
 matrix run -it -- codex
-matrix run -it --session setup -- gh auth login
-matrix shell connect -c setup
+matrix run -it --project main -- gh auth login
+matrix shell list
+matrix shell connect --project main --tab <tab-id-or-unique-name>
 ```
 
-- `matrix run -it` starts a zellij-backed Matrix shell session and attaches the local terminal over `/ws/terminal`; use named sessions such as `setup` when multiple humans/agents may need to reattach the same VPS context.
+- `matrix run -it` creates a tab in the resolved project workspace and attaches over `/ws/terminal/tab`. From a known project it defaults to that project; elsewhere it uses the reserved `main` workspace.
 - `matrix login` may stay open while the browser completes signup, trial checkout, and provisioning; approve the CLI in that same browser tab once the instance is ready. For local dev, `matrix login --profile local` or `matrix login --dev` skips the device flow and writes the local dev stub token.
-- Keep auth flows separate: use browser/device approval for `matrix login`, then run `gh auth login` inside the Matrix terminal session for GitHub browser auth. Do not ask users to upload local private SSH keys into Matrix; Matrix-managed SSH keys live on the VPS.
-- Prefer `matrix shell connect` over `matrix shell attach`. `matrix shell connect -c <session>` is the create-if-missing path.
-- If `matrix run -it`, `matrix shell new`, or `matrix shell attach` fails with `zellij_failed`, run `matrix shell ls` and connect to an existing session instead of retrying the same create path.
+- Keep auth flows separate: use browser/device approval for `matrix login`, then run `gh auth login` inside a Matrix terminal tab for GitHub browser auth. Do not ask users to upload local private SSH keys into Matrix; Matrix-managed SSH keys live on the VPS.
+- `matrix shell list` groups tabs by project. `matrix shell connect --project <project> --tab <tab>` attaches to exactly one tab; closing the local client only detaches it.
+- If `matrix run -it` or `matrix shell new` fails with `zellij_failed`, run `matrix shell list` and connect to an existing tab instead of retrying the same create path.
 
 ### Stack review monitor
 
@@ -537,5 +540,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/118-fix-terminal-clipboard/plan.md`.
+Current Spec Kit plan: `specs/121-collaboration-session-sharing/plan.md`.
 <!-- SPECKIT END -->

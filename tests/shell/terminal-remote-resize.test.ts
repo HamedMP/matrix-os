@@ -5,10 +5,19 @@ describe("sendTerminalResize", () => {
   it("sends current terminal dimensions to an open websocket", () => {
     const send = vi.fn();
 
-    const sent = sendTerminalResize({ readyState: 1, send }, { cols: 142, rows: 38 }, true);
+    const terminalKey = "tws_0123456789abcdef0123456789abcdef:tt_0123456789abcdef0123456789abcdef";
+    const sent = sendTerminalResize({ readyState: 1, send }, { cols: 142, rows: 38 }, true, terminalKey);
 
     expect(sent).toBe(true);
-    expect(send).toHaveBeenCalledWith(JSON.stringify({ type: "resize", cols: 142, rows: 38 }));
+    expect(send).toHaveBeenCalledWith(JSON.stringify({
+      type: "resize",
+      terminalRef: {
+        workspaceId: "tws_0123456789abcdef0123456789abcdef",
+        tabId: "tt_0123456789abcdef0123456789abcdef",
+      },
+      mode: "soft",
+      size: { cols: 142, rows: 38 },
+    }));
   });
 
   it("does not send when remote resize is disabled", () => {

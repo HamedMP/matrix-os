@@ -3,6 +3,86 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 
 describe("canonical Chat presentation adapter", () => {
+  it("does not offer an in-place retry after a newer user Turn has started", () => {
+    const { snapshot } = createCanonicalChatFixture("failed");
+    const firstTurn = snapshot.turns[0]!;
+    const firstRun = snapshot.runs[0]!;
+    const secondTurn = {
+      ...firstTurn,
+      id: "cturn_after_failure",
+      clientRequestId: "req_after_failure",
+      baseMessageSeq: 1,
+      inputMessageId: "msg_after_failure",
+      status: "completed" as const,
+      createdAt: "2026-08-25T00:01:00.000Z",
+      updatedAt: "2026-08-25T00:01:05.000Z",
+    };
+    const secondRun = {
+      ...firstRun,
+      id: "run_after_failure",
+      turnId: secondTurn.id,
+      status: "completed" as const,
+      outcome: "completed" as const,
+      createdAt: secondTurn.createdAt,
+      updatedAt: secondTurn.updatedAt,
+      startedAt: secondTurn.createdAt,
+      completedAt: secondTurn.updatedAt,
+    };
+    const messages = [
+      ...snapshot.messages,
+      {
+        id: secondTurn.inputMessageId,
+        chatId: snapshot.chat.id,
+        seq: 2,
+        role: "user" as const,
+        state: "committed" as const,
+        turnId: secondTurn.id,
+        parts: [{ type: "text" as const, text: "continue instead" }],
+        createdAt: secondTurn.createdAt,
+      },
+      {
+        id: "msg_after_failure_answer",
+        chatId: snapshot.chat.id,
+        seq: 3,
+        role: "assistant" as const,
+        state: "committed" as const,
+        turnId: secondTurn.id,
+        runId: secondRun.id,
+        parts: [{ type: "text" as const, text: "continued" }],
+        createdAt: secondTurn.updatedAt,
+      },
+    ];
+
+    const presented = canonicalChatPresentation({
+      messages,
+      turns: [firstTurn, secondTurn],
+      runs: [firstRun, secondRun],
+      activities: [
+        ...snapshot.activities,
+        {
+          id: "activity_retryable_failure",
+          chatId: snapshot.chat.id,
+          runId: firstRun.id,
+          type: "run.error" as const,
+          error: {
+            code: "run_failed",
+            safeMessage: "The Run failed.",
+            retryable: true,
+            recoveryActions: ["retry" as const],
+          },
+          occurredAt: firstRun.updatedAt,
+        },
+      ],
+    });
+
+    expect(presented[0]?.final).toMatchObject({
+      tone: "failed",
+      markdown: "The Run failed.",
+    });
+    expect(presented[0]?.final).not.toHaveProperty("actions");
+    expect(presented[1]?.final).toMatchObject({ markdown: "continued" });
+  });
+
   it("shows the canonical selected model first while a Run is active", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;
@@ -383,7 +463,8 @@ describe("canonical Chat presentation adapter", () => {
         kind: "activity-group",
         activities: [expect.objectContaining({ label: "Run tests", state: "failed", detail: "Focused suite\n\nOne test failed." })],
       }),
-      expect.objectContaining({ kind: "request", requestKind: "approval", state: "waiting", label: "Retry the command" }),
+      // A terminal run cannot execute an old approval, even if older history omitted its resolution.
+      expect.objectContaining({ kind: "request", requestKind: "approval", state: "resolved", actions: undefined, label: "Retry the command" }),
       expect.objectContaining({ kind: "notice", tone: "warning", label: "Partial result" }),
     ]));
     expect(presented?.final).toMatchObject({ markdown: "Finished summary", copyText: "Finished summary" });
@@ -431,6 +512,7 @@ describe("canonical Chat presentation adapter", () => {
         id: "attachment_screenshot",
         label: "Screenshot.png",
         src: "/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png",
+        path: "temporary/desktop-chat/Screenshot.png",
       },
     ]);
   });
@@ -511,6 +593,45 @@ describe("canonical Chat presentation adapter", () => {
       markdown: "I’m checking the build output.",
     }));
     expect(presented?.final).toBeUndefined();
+  });
+
+  it("marks a completed final message when its content arrived through assistant deltas", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const run = snapshot.runs[0]!;
+    const finalMessage = {
+      id: "msg_streamed_result",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: run.id,
+      parts: [{ type: "text" as const, text: "The streamed result is complete." }],
+      createdAt: "2026-08-26T00:00:02.000Z",
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, finalMessage],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      streamedMessageIds: [finalMessage.id],
+      activities: [{
+        id: "activity_streamed_result",
+        chatId: snapshot.chat.id,
+        runId: run.id,
+        sequence: 1,
+        type: "assistant.delta",
+        messageId: finalMessage.id,
+        delta: "The streamed result is complete.",
+        occurredAt: finalMessage.createdAt,
+      }],
+    });
+
+    expect(presented?.final).toMatchObject({
+      id: finalMessage.id,
+      markdown: "The streamed result is complete.",
+      wasStreamed: true,
+    });
   });
 
   it("shows the model first and removes generic Thinking when visible work arrives", () => {

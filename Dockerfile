@@ -16,6 +16,7 @@ WORKDIR /app
 
 # Copy only dependency manifests -- changes here bust the install cache
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY patches/ patches/
 COPY packages/kernel/package.json packages/kernel/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/observability/package.json packages/observability/
@@ -143,7 +144,7 @@ RUN apk add --no-cache \
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
 # AI coding CLIs. Codex advances only after both provider protocols are verified.
-ARG CODEX_VERSION=0.153.3
+ARG CODEX_VERSION=0.154.0
 ARG OPENCODE_AI_VERSION=latest
 ARG PI_CODING_AGENT_VERSION=latest
 RUN npm install -g \
@@ -189,8 +190,8 @@ RUN set -eux; \
 # ZELLIJ_SHA256 must be the SHA-256 of the published .tar.gz (compute with
 # `curl -sL <url> | sha256sum`). The upstream `.sha256sum` file in the
 # release assets refers to the *binary*, not the archive.
-ARG ZELLIJ_VERSION=0.44.1
-ARG ZELLIJ_SHA256=669825021d529fca5d939888263c9d2a90762145191fa07581a15250e8af2b49
+ARG ZELLIJ_VERSION=0.44.3
+ARG ZELLIJ_SHA256=0f7c346788627f506c0a28296517768633cff24fc822a739f8264b640ecad751
 RUN set -eux; \
     wget -qO /tmp/zellij.tgz "https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/zellij-x86_64-unknown-linux-musl.tar.gz"; \
     echo "${ZELLIJ_SHA256}  /tmp/zellij.tgz" | sha256sum -c -; \
