@@ -3,15 +3,19 @@ import { PanelLeftOpenIcon } from "@/lib/hugeicons";
 
 import { DEFAULT_SHELL_SESSION_NAME } from "./TerminalSidebarItems";
 import { useTerminalAppContext } from "./TerminalAppContext";
+import { getFirstPaneId, getPaneSessionId } from "./terminal-layout";
+import { TerminalSharing } from "./TerminalSharing";
 
 function isTerminalChromeControl(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("button,input,textarea,select,a,[role='button']"));
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This pre-existing chrome composes desktop/mobile window controls and drag gating. Terminal sharing is isolated in TerminalSharingSlot; restructuring the established chrome is unrelated to this feature.
 export function TerminalWorkspaceChrome() {
   const ctx = useTerminalAppContext();
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
   const activeName = activeTab?.label === DEFAULT_SHELL_SESSION_NAME ? "matrix-main" : activeTab?.label ?? "Terminal";
+  const terminalId = getActiveTerminalId(ctx);
   const dragHandleProps = ctx.windowControls?.dragHandleProps;
   const handleDragPointerDownCapture: PointerEventHandler<HTMLElement> = (event) => {
     if (ctx.mobile || isTerminalChromeControl(event.target)) return;
@@ -120,7 +124,7 @@ export function TerminalWorkspaceChrome() {
           )}
         </div>
       </div>
-      <span aria-hidden="true" style={{ width: ctx.mobile ? 40 : 0 }} />
+      <TerminalSharingSlot terminalId={terminalId} emptyWidth={ctx.mobile ? 40 : 0} />
     </div>
   );
 }
@@ -133,6 +137,7 @@ export function TerminalWorkspaceChrome() {
  */
 export function TerminalEmbeddedToolbar() {
   const ctx = useTerminalAppContext();
+  const terminalId = getActiveTerminalId(ctx);
   return (
     <div
       className="shrink-0 select-none flex items-center justify-between"
@@ -165,9 +170,21 @@ export function TerminalEmbeddedToolbar() {
           <PanelLeftOpenIcon size={18} strokeWidth={1.9} />
         </button>
       ) : <span />}
-      <span aria-hidden="true" style={{ width: ctx.mobile ? 36 : 0 }} />
+      <TerminalSharingSlot terminalId={terminalId} emptyWidth={ctx.mobile ? 36 : 0} />
     </div>
   );
+}
+
+function getActiveTerminalId(ctx: ReturnType<typeof useTerminalAppContext>): string | null {
+  const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
+  if (!activeTab) return null;
+  const activePaneId = ctx.focusedPaneId ?? getFirstPaneId(activeTab.paneTree);
+  return activePaneId ? getPaneSessionId(activeTab.paneTree, activePaneId) : null;
+}
+
+function TerminalSharingSlot({ terminalId, emptyWidth }: { terminalId: string | null; emptyWidth: number }) {
+  return terminalId ? <TerminalSharing terminalId={terminalId} />
+    : <span aria-hidden="true" style={{ width: emptyWidth }} />;
 }
 
 function TerminalTrafficButton({

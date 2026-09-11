@@ -142,6 +142,40 @@ describe("Chat collaboration sharing", () => {
     expect(screen.getByText("Owner One invited you")).toBeVisible();
   });
 
+  it("opens accepted terminal discovery in the shared terminal surface", async () => {
+    const terminalScope = {
+      id: scopeId, ownerId: "user_owner", kind: "terminal" as const, resourceId: "terminal_release",
+      membershipMode: "direct" as const, lifecycle: "shared" as const, revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "viewer" as const,
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false,
+        observeTerminal: true, controlTerminal: false, stopTerminal: false },
+    };
+    const terminal = {
+      id: "terminal_release", scopeId, incarnation: `terminal-${"a".repeat(32)}`,
+      executionGeneration: "4", status: "active" as const,
+      createdBy: { actorId: "user_owner", displayName: "Nima" }, createdAt: "2026-09-11T12:00:00.000Z",
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.endsWith("/inbox") ? { items: [] } : path.endsWith("/shared")
+        ? { items: [{ scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "terminal",
+          authorityGeneration: 1, status: "accepted", resource: { scope: terminalScope, terminal } }] }
+        : path.endsWith(`/scopes/${scopeId}`) ? terminalScope : terminal),
+      post: vi.fn(), delete: vi.fn(),
+      subscribeTerminal: vi.fn(() => () => undefined),
+    };
+    const openTerminal = vi.fn();
+    const { rerender } = render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_viewer"
+      openTerminal={openTerminal} />);
+    expect(await screen.findByText("terminal_release")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open terminal" }));
+    expect(openTerminal).toHaveBeenCalledWith(scopeId);
+
+    rerender(<ChatCollaboration view={{ kind: "terminal", scopeId }} api={api} actorId="user_viewer"
+      openTerminal={openTerminal} />);
+    expect(await screen.findByText("Watching only")).toBeVisible();
+  });
+
   it("renders attributed canonical history and preserves a private draft after failure", async () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "chat" as const, resourceId: chatId,

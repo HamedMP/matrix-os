@@ -1,4 +1,9 @@
-import { CollaborationActorIdSchema, CollaborationMemberSchema, CollaborationScopeSchema } from "@matrix-os/contracts";
+import {
+  CollaborationActorIdSchema,
+  CollaborationMemberSchema,
+  CollaborationScopeSchema,
+  type CollaborationTerminalFrame,
+} from "@matrix-os/contracts";
 import { useRef, useState } from "react";
 import type { z } from "zod/v4";
 import { Dialog } from "../Dialog.js";
@@ -13,6 +18,13 @@ export interface CollaborationApi {
   patch?(path: string, body: unknown): Promise<unknown>;
   delete(path: string, body?: unknown): Promise<unknown>;
   subscribe?(scopeId: string, onEvent: () => void | Promise<void>, onUnavailable: () => void): () => void;
+  subscribeTerminal?(scopeId: string, handlers: {
+    onReady(frame: Extract<CollaborationTerminalFrame, { type: "terminal.ready" }>): void;
+    onOutput(frame: Extract<CollaborationTerminalFrame, { type: "terminal.output" }>): void;
+    onState(frame: Extract<CollaborationTerminalFrame, { type: "terminal.state" }>): void;
+    onRefreshRequired(): void | Promise<void>;
+    onUnavailable(): void;
+  }): () => void;
 }
 
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
@@ -24,6 +36,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
   onRefresh: () => Promise<{ scope: Scope; members: Member[] }>;
   onClose: () => void;
 }) {
+  const resourceLabel = scope.kind === "chat" ? "Chat" : scope.kind === "terminal" ? "terminal" : "project";
   const currentScope = useRef(scope);
   const [currentMembers, setCurrentMembers] = useState(members);
   const [targetActorId, setTargetActorId] = useState("");
@@ -110,7 +123,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       <div>
         <h2 className="text-lg font-semibold">Invite collaborators</h2>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-          Invite access applies only to this ongoing Chat. It does not grant access to its project, other Chats, files, apps, or terminals.
+          Invite access applies only to this ongoing {resourceLabel}. It does not grant access to its project, sibling Chats or terminals, files, or apps.
         </p>
       </div>
       <button type="button" className={buttonClass} disabled={pending} onClick={onClose}>Close</button>
@@ -134,7 +147,9 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
         </button>
       </div>
       <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
-        Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.
+        {scope.kind === "terminal"
+          ? "Editors can watch and request input control. Viewers watch only. Owners may take over control."
+          : "Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals."}
       </p>
     </section>
     <section aria-labelledby="people-heading">

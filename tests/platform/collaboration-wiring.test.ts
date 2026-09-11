@@ -35,8 +35,31 @@ describe("platform collaboration wiring", () => {
   });
 
   it("registers local and exact proxy routes after migrations", async () => {
+    const terminalScopeId = "10000000-0000-4000-8000-000000000002";
     const upstream = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
-      String(input).endsWith("/chat")
+      String(input).endsWith("/terminal")
+        ? {
+          id: "terminal_release", scopeId: terminalScopeId, incarnation: `terminal-${"a".repeat(32)}`,
+          executionGeneration: "4", status: "active",
+          createdBy: { actorId: platformCollaborationActors.owner, displayName: "Owner" },
+          createdAt: "2026-09-07T12:00:00.000Z",
+        }
+        : String(input).includes(terminalScopeId)
+          ? {
+            id: terminalScopeId,
+            ownerId: platformCollaborationActors.owner,
+            kind: "terminal",
+            resourceId: "terminal_release",
+            membershipMode: "direct",
+            lifecycle: "shared",
+            revision: "2",
+            authEpoch: "1",
+            authorityGeneration: "1",
+            role: "viewer",
+            capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false,
+              observeTerminal: true, controlTerminal: false, stopTerminal: false },
+          }
+          : String(input).endsWith("/chat")
         ? { id: "chat_one", scopeId, title: "Shared planning", lifecycle: "active", revision: "2", messageCount: "3" }
         : {
           id: scopeId,
@@ -60,7 +83,7 @@ describe("platform collaboration wiring", () => {
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
         allowedOrigins: ["https://app.matrix-os.com"],
-        enabledPurposes: ["events"],
+        enabledPurposes: ["events", "terminal"],
       },
       resolveActor: async (c) => c.req.header("x-test-actor") ?? null,
       authenticateRuntime: async () => null,
@@ -109,6 +132,34 @@ describe("platform collaboration wiring", () => {
       scope: { id: scopeId, role: "editor" },
       chat: { id: "chat_one", title: "Shared planning" },
     } }] });
+
+    await runtime.repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000002",
+      scopeId: terminalScopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "terminal",
+      authorityGeneration: 1,
+      metadataRevision: 1,
+      recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
+    });
+    await runtime.repository.setPolicy({
+      milestone: "m3",
+      expectedRevision: 0,
+      mode: "enabled",
+      cohort: [],
+      changedBy: "operator_test",
+    });
+    const terminalDiscovery = await app.request("/api/collaboration/shared", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(terminalDiscovery.status).toBe(200);
+    expect(await terminalDiscovery.json()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({
+      resource: expect.objectContaining({
+        scope: expect.objectContaining({ id: terminalScopeId, kind: "terminal", role: "viewer" }),
+        terminal: expect.objectContaining({ id: "terminal_release", status: "active" }),
+      }),
+    })]) });
     await runtime.shutdown();
   });
 });

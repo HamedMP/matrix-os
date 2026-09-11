@@ -401,7 +401,7 @@ const CollaborationDirectoryBaseSchema = z.object({
   scopeId: CollaborationIdSchema,
   runtimeId: CollaborationRuntimeIdSchema,
   ownerId: CollaborationActorIdSchema,
-  kind: z.literal("chat"),
+  kind: CollaborationScopeKindSchema,
   authorityGeneration: z.number().int().positive(),
 });
 
@@ -413,12 +413,27 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
   }).strict(),
   CollaborationDirectoryBaseSchema.extend({
     status: z.literal("accepted"),
-    resource: z.object({
-      scope: CollaborationScopeSchema,
-      chat: CollaborationChatSchema,
-    }).strict(),
+    resource: z.union([
+      z.object({
+        scope: CollaborationScopeSchema.refine((scope) => scope.kind === "chat"),
+        chat: CollaborationChatSchema,
+      }).strict(),
+      z.object({
+        scope: CollaborationScopeSchema.refine((scope) => scope.kind === "terminal"),
+        terminal: z.lazy(() => CollaborationTerminalSchema),
+      }).strict(),
+    ]),
   }).strict(),
-]);
+]).superRefine((item, context) => {
+  const kind = item.status === "invited" ? item.resource.scopeKind : item.resource.scope.kind;
+  if (item.kind !== kind) context.addIssue({ code: "custom", path: ["kind"], message: "Directory kind mismatch" });
+  if (item.status === "invited" && item.scopeId !== item.resource.scopeId) {
+    context.addIssue({ code: "custom", path: ["scopeId"], message: "Directory scope mismatch" });
+  }
+  if (item.status === "accepted" && item.scopeId !== item.resource.scope.id) {
+    context.addIssue({ code: "custom", path: ["scopeId"], message: "Directory scope mismatch" });
+  }
+});
 
 export const CollaborationDiscoveryResponseSchema = z.object({
   items: z.array(CollaborationDiscoveryItemSchema).max(100),

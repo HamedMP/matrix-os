@@ -424,6 +424,36 @@ describe("collaboration contracts", () => {
       items: [{ resource: { scope, chat } }],
     });
 
+    const terminalScope = CollaborationScopeSchema.parse({
+      ...scope,
+      kind: "terminal",
+      resourceId: "terminal_release",
+      capabilities: {
+        read: true,
+        discuss: false,
+        manageMembers: false,
+        requestAi: false,
+        observeTerminal: true,
+        controlTerminal: true,
+        stopTerminal: false,
+      },
+    });
+    expect(CollaborationDiscoveryResponseSchema.parse({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "terminal",
+      authorityGeneration: 1, status: "accepted", resource: {
+        scope: terminalScope,
+        terminal: {
+          id: "terminal_release",
+          scopeId,
+          incarnation: `terminal-${"a".repeat(32)}`,
+          executionGeneration: "4",
+          status: "active",
+          createdBy: { actorId: "user_owner", displayName: "Nima" },
+          createdAt: now,
+        },
+      },
+    }] })).toMatchObject({ items: [{ kind: "terminal", resource: { terminal: { status: "active" } } }] });
+
     expect(CollaborationSharedChatMessageSchema.parse({
       id: "msg_one", chatId: "chat_release", sequence: "1", role: "user",
       state: "committed", purpose: "discussion",
