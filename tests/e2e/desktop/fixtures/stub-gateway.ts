@@ -6,11 +6,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { WebSocketServer, type WebSocket } from "ws";
 import { resolve } from "node:path";
 import { readBuildSource } from "../../../../scripts/release/build-source.mjs";
+import { createSystemInfoFixture } from "./system-info";
 import {
   AgentThreadSnapshotSchema,
   ProjectAgentWorkspaceSchema,
   RuntimeSummarySchema,
-  RUNNING_RUNTIME_COMPATIBILITY,
   type AgentThreadSnapshot,
   type ProjectAgentWorkspace,
   type RuntimeSummary,
@@ -24,6 +24,7 @@ export interface StubGateway {
   setProjectLifecycle(lifecycle: "active" | "archived" | "deleted"): void;
   setKernelResponseDelay(delayMs: number): void;
   setBuildCommit(commit: string): void;
+  setSystemInfo(info: Record<string, unknown>): void;
   disconnectKernel(): void;
   close(): Promise<void>;
   state: {
@@ -579,7 +580,7 @@ export function codingAgentSummary(): RuntimeSummary {
 }
 
 export async function startStubGateway(options: StubGatewayOptions = {}): Promise<StubGateway> {
-  let buildCommit = readBuildSource(resolve(__dirname, "../../../.."))?.commit ?? "unknown";
+  const systemInfo = createSystemInfoFixture(readBuildSource(resolve(__dirname, "../../../.."))?.commit ?? "unknown");
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   const terminalTabs: Array<Record<string, unknown>> = [
     {
@@ -1265,14 +1266,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       return;
     }
     if (path === "/api/system/info") {
-      json(res, 200, {
-        version: "stub",
-        build: { sha: buildCommit },
-        runtimeCompatibility: RUNNING_RUNTIME_COMPATIBILITY,
-        uptime: 1,
-        runtime: { handle: "neo", runtimeSlot: "primary" },
-        resources: { cpuCount: 8, memoryTotal: 8e9, memoryFree: 4e9, diskTotal: 1e11, diskFree: 5e10 },
-      });
+      json(res, 200, systemInfo.read());
       return;
     }
     json(res, 404, { error: "not found" });
@@ -1428,7 +1422,8 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     url: `http://127.0.0.1:${port}`,
     port,
     state,
-    setBuildCommit: (commit) => { buildCommit = commit; },
+    setBuildCommit: systemInfo.setBuildCommit,
+    setSystemInfo: systemInfo.setSystemInfo,
     sendTerminalOutput: (data, session = "matrix-task-1") => activeTerminalOutputs[session]?.(data),
     setConversationBusy: (id, busy) => {
       if (busy) busyHermesConversations.add(id);

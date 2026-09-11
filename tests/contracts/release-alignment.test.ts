@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { evaluateReleaseAlignment, evaluateDesktopReleaseState, BuildSourceSchema } from "../../packages/contracts/src/release-alignment";
+import hostInfo from "../fixtures/host-release-system-info.json";
 
 const oldCommit = "a".repeat(40);
 const newCommit = "b".repeat(40);
@@ -9,6 +10,29 @@ const info = (sha: string) => ({ version: "v2026.09.09-1199", build: { sha },
   runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1 } });
 
 describe("released source comparison", () => {
+  it("compares the captured VPS-native response with no image build environment", () => {
+    expect(evaluateDesktopReleaseState(hostInfo, {
+      commit: newCommit, ancestors: [hostInfo.release.gitCommit],
+    }).status).toBe("runtime-update-required");
+    expect(evaluateReleaseAlignment(hostInfo, {
+      commit: hostInfo.release.gitCommit, ancestors: [],
+    })).toBe("aligned");
+  });
+  it.each([
+    { runningVersion: undefined },
+    { runningVersion: "v2026.09.09-1199" },
+    { version: "v2026.09.10-1206" },
+    { release: { ...hostInfo.release, version: "v2026.09.10-1206" } },
+    { release: { ...hostInfo.release, gitCommit: "unknown" } },
+    { release: { ...hostInfo.release, kind: "container" } },
+    { release: { ...hostInfo.release, schemaVersion: 2 } },
+  ])("does not infer running provenance from an unverified installed bundle: %j", (override) => {
+    expect(evaluateReleaseAlignment({ ...hostInfo, ...override }, source)).toBe("unavailable");
+  });
+  it("prefers explicit running build identity over installed host metadata", () => {
+    expect(evaluateReleaseAlignment({ ...hostInfo, build: { sha: oldCommit },
+      release: { ...hostInfo.release, gitCommit: newCommit } }, source)).toBe("runtime-update-required");
+  });
   it("recognizes a shared source even when product versions and channels differ", () => {
     expect(evaluateReleaseAlignment(info(newCommit), source)).toBe("aligned");
   });
