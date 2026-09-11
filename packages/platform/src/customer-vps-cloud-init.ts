@@ -15,6 +15,7 @@ export interface CustomerHostConfig {
   platformVerificationToken: string;
   fundedAiRuntimeToken: string;
   registrationToken: string;
+  registrationTokenExpiresAt: string;
   postgresPassword: string;
   posthogToken: string;
   posthogProjectToken: string;
@@ -34,7 +35,7 @@ const SECRET_KEYS = [
   'platformVerificationToken',
   'fundedAiRuntimeToken',
 ] as const;
-const REQUIRED_KEYS = ['hostBundleUrl', ...SECRET_KEYS] as const;
+const REQUIRED_KEYS = ['hostBundleUrl', 'registrationTokenExpiresAt', ...SECRET_KEYS] as const;
 
 function assertRenderable(input: CustomerHostConfig): void {
   for (const key of REQUIRED_KEYS) {
