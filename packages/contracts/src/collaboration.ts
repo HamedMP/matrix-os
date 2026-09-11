@@ -105,6 +105,8 @@ export const CollaborationScopePreflightResponseSchema = z.object({
   reason: z.enum(["active_work", "unsupported", "unavailable"]).optional(),
   resourceRevision: CollaborationRevisionSchema,
   confirmationToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/).optional(),
+  existingScopeId: CollaborationIdSchema.optional(),
+  existingLifecycle: CollaborationLifecycleSchema.optional(),
 }).strict().superRefine((value, context) => {
   if (value.eligible !== (value.confirmationToken !== undefined)) {
     context.addIssue({ code: "custom", message: "Eligible preflights require confirmation" });
@@ -276,6 +278,19 @@ export const CollaborationProjectTransitionSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   errorCode: z.enum(["inventory_changed", "resource_blocked", "unavailable"]).optional(),
+}).strict();
+
+export const CollaborationProjectSchema = z.object({
+  id: CollaborationResourceIdSchema,
+  scopeId: CollaborationIdSchema,
+  status: z.enum(["active", "archived"]),
+  resources: z.array(z.object({
+    kind: z.enum(["file", "chat", "app", "layout", "terminal"]),
+    id: z.string().min(1).max(4_096),
+    revision: CollaborationRevisionSchema,
+    readiness: z.enum(["ready", "blocked"]),
+    incarnation: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  }).strict()).max(100_000),
 }).strict();
 
 const CollaborationExportMemberSchema = z.object({
@@ -496,6 +511,10 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
       z.object({
         scope: CollaborationScopeSchema.refine((scope) => scope.kind === "terminal"),
         terminal: z.lazy(() => CollaborationTerminalSchema),
+      }).strict(),
+      z.object({
+        scope: CollaborationScopeSchema.refine((scope) => scope.kind === "project"),
+        project: CollaborationProjectSchema,
       }).strict(),
     ]),
   }).strict(),
@@ -745,6 +764,7 @@ export type CollaborationPolicy = z.infer<typeof CollaborationPolicySchema>;
 export type CollaborationProjectConfirmRequest = z.infer<typeof CollaborationProjectConfirmRequestSchema>;
 export type CollaborationProjectInventory = z.infer<typeof CollaborationProjectInventorySchema>;
 export type CollaborationProjectInventoryItem = z.infer<typeof CollaborationProjectInventoryItemSchema>;
+export type CollaborationProject = z.infer<typeof CollaborationProjectSchema>;
 export type CollaborationProjectMembershipEffect = z.infer<typeof CollaborationProjectMembershipEffectSchema>;
 export type CollaborationProjectTransition = z.infer<typeof CollaborationProjectTransitionSchema>;
 export type CollaborationRole = z.infer<typeof CollaborationRoleSchema>;

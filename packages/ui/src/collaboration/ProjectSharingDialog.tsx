@@ -20,6 +20,7 @@ export function ProjectSharingDialog({
   projectName,
   inventory,
   refreshInventory,
+  onManageMembers,
   onClose,
 }: {
   api: CollaborationApi;
@@ -27,6 +28,7 @@ export function ProjectSharingDialog({
   projectName: string;
   inventory: CollaborationProjectInventory;
   refreshInventory: () => Promise<CollaborationProjectInventory>;
+  onManageMembers?: () => void;
   onClose: () => void;
 }) {
   const [currentInventory, setCurrentInventory] = useState(() =>
@@ -133,6 +135,8 @@ export function ProjectSharingDialog({
     {feedback ? <p role="status" className="rounded-xl border p-3 text-sm">{feedback}</p> : null}
 
     <footer className="flex justify-end gap-2">
+      {onManageMembers ? <button type="button" className={buttonClass} disabled={pending}
+        onClick={onManageMembers}>Manage collaborators</button> : null}
       <button type="button" className={buttonClass} disabled={pending} onClick={onClose}>Cancel</button>
       <button type="button" className={buttonClass} disabled={pending || !presentation.canConfirm}
         onClick={() => void confirm()}>{pending ? "Confirming…" : "Share whole project"}</button>

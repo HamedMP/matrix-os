@@ -176,6 +176,43 @@ describe("Chat collaboration sharing", () => {
     expect(await screen.findByText("Watching only")).toBeVisible();
   });
 
+  it("opens an accepted whole project with inherited resources and read-only role state", async () => {
+    const projectScope = {
+      id: scopeId, ownerId: "user_owner", kind: "project" as const, resourceId: "proj_launch",
+      membershipMode: "direct" as const, lifecycle: "shared" as const, revision: "5", authEpoch: "2",
+      authorityGeneration: "2", role: "viewer" as const,
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    };
+    const project = {
+      id: "proj_launch", scopeId, status: "active" as const,
+      resources: [
+        { kind: "file" as const, id: "README.md", revision: "0", readiness: "ready" as const },
+        { kind: "chat" as const, id: "chat_launch", revision: "4", readiness: "ready" as const },
+      ],
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.endsWith("/inbox") ? { items: [] } : path.endsWith("/shared")
+        ? { items: [{ scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "project",
+          authorityGeneration: 2, status: "accepted", resource: { scope: projectScope, project } }] }
+        : path.endsWith(`/scopes/${scopeId}`) ? projectScope : project),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    const openProject = vi.fn();
+    const { rerender } = render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_viewer"
+      openProject={openProject} />);
+    expect(await screen.findByText("proj_launch")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open project" }));
+    expect(openProject).toHaveBeenCalledWith(scopeId);
+
+    rerender(<ChatCollaboration view={{ kind: "project", scopeId }} api={api} actorId="user_viewer"
+      openProject={openProject} />);
+    expect(await screen.findByRole("heading", { name: "proj_launch" })).toBeVisible();
+    expect(screen.getByText("README.md")).toBeVisible();
+    expect(screen.getByText(/Viewer · read only/i)).toBeVisible();
+  });
+
   it("renders attributed canonical history and preserves a private draft after failure", async () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "chat" as const, resourceId: chatId,

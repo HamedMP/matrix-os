@@ -68,6 +68,8 @@ export class CollaborationProjectScopeService {
     eligible: true;
     projectRevision: number;
     confirmationToken: string;
+    existingScopeId?: string;
+    existingLifecycle?: CollaborationScopeRecord["lifecycle"];
   }> {
     const ownerId = ActorIdSchema.parse(input.ownerId);
     const projectId = ProjectIdSchema.parse(input.projectId);
@@ -79,10 +81,15 @@ export class CollaborationProjectScopeService {
       projectRevision: project.revision,
       expiresAt: new Date(this.now().getTime() + PREFLIGHT_LIFETIME_MS).toISOString(),
     });
+    const existing = await findProjectScope(this.db, ownerId, projectId);
     return {
       eligible: true,
       projectRevision: project.revision,
       confirmationToken: sign(payload, this.options.preflightSecret),
+      ...(existing ? {
+        existingScopeId: existing.id,
+        existingLifecycle: existing.lifecycle,
+      } : {}),
     };
   }
 
@@ -193,19 +200,6 @@ export class CollaborationProjectScopeService {
             outcome: "completed",
             revision: 0,
             reason_code: null,
-            created_at: now,
-          }).execute();
-          await trx.insertInto("collaboration_directory_outbox").values({
-            event_id: eventId,
-            scope_id: scope.id,
-            recipient_actor_ids: jsonb([{ actorId: parsed.ownerId }]),
-            authority_runtime_id: this.options.runtimeId,
-            authority_generation: 1,
-            resource_kind: "project",
-            discovery_state: "accepted",
-            retry_after: now,
-            attempts: 0,
-            delivered_at: null,
             created_at: now,
           }).execute();
         } else {

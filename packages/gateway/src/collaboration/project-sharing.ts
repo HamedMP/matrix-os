@@ -87,6 +87,45 @@ export function createProjectSharingService(options: {
   }
 
   return {
+    async read(input: { scopeId: string }) {
+      const scopeId = ScopeIdSchema.parse(input.scopeId);
+      try {
+        const scope = await options.db.selectFrom("collaboration_scopes").selectAll()
+          .where("id", "=", scopeId)
+          .where("kind", "=", "project")
+          .where("lifecycle", "in", ["shared", "archived"])
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+        if (!scope) throw new ProjectSharingError("not_found");
+        const resources = await options.db.selectFrom("collaboration_resource_bindings")
+          .select(["resource_kind", "resource_id", "revision", "readiness", "incarnation"])
+          .where("project_scope_id", "=", scope.id)
+          .where("authority_runtime_id", "=", scope.authority_runtime_id)
+          .where("authority_generation", "=", Number(scope.authority_generation))
+          .orderBy("resource_kind", "asc")
+          .orderBy("resource_id", "asc")
+          .limit(100_001)
+          .execute();
+        if (resources.length > 100_000) throw new ProjectSharingError("capacity");
+        return {
+          id: scope.resource_id,
+          scopeId: scope.id,
+          status: scope.lifecycle === "archived" ? "archived" as const : "active" as const,
+          resources: resources.map((resource) => ({
+            kind: resource.resource_kind,
+            id: resource.resource_id,
+            revision: String(resource.revision),
+            readiness: resource.readiness,
+            ...(resource.incarnation ? { incarnation: resource.incarnation } : {}),
+          })),
+        };
+      } catch (error: unknown) {
+        if (error instanceof ProjectSharingError) throw error;
+        console.warn("[collaboration-project] shared project projection failed", error instanceof Error ? error.name : "UnknownError");
+        throw new ProjectSharingError("unavailable");
+      }
+    },
+
     async preview(input: { scopeId: string; actorId: string }) {
       const scopeId = ScopeIdSchema.parse(input.scopeId);
       const actorId = ActorIdSchema.parse(input.actorId);

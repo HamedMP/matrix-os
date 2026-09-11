@@ -12,6 +12,7 @@ import {
   CollaborationIdSchema,
   CollaborationInvitationSchema,
   CollaborationPageRequestSchema,
+  CollaborationProjectSchema,
   CollaborationRevisionSchema,
   CollaborationResourceIdSchema,
   CollaborationScopeSchema,
@@ -72,6 +73,16 @@ export function acceptCollaborationInvitation(token: string, invitationId: strin
 export function fetchCollaborationScope(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
   return fetchAuthenticatedJson({ url: url(`/api/collaboration/scopes/${id}`), token, schema: CollaborationScopeSchema, errorMessage: ERROR });
+}
+
+export function fetchSharedProject(token: string, scopeId: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/project`),
+    token,
+    schema: CollaborationProjectSchema,
+    errorMessage: ERROR,
+  });
 }
 
 export function fetchSharedChat(token: string, scopeId: string) {

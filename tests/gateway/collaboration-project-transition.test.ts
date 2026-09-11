@@ -237,6 +237,81 @@ describe("project collaboration transition journal", () => {
       .executeTakeFirstOrThrow()).toEqual({ count: 1 });
   });
 
+  it("publishes accepted and pending members only after activation at the destination authority", async () => {
+    const editorId = "user_project_editor";
+    const inviteeId = "user_project_invitee";
+    const invitationId = "40000000-0000-4000-8000-000000000051";
+    for (const member of [
+      {
+        scope_id: SCOPE_ID,
+        actor_id: OWNER_ID,
+        role: "owner" as const,
+        status: "accepted" as const,
+        invitation_id: null,
+        accepted_at: NOW,
+      },
+      {
+        scope_id: SCOPE_ID,
+        actor_id: editorId,
+        role: "editor" as const,
+        status: "accepted" as const,
+        invitation_id: null,
+        accepted_at: NOW,
+      },
+      {
+        scope_id: SCOPE_ID,
+        actor_id: inviteeId,
+        role: "viewer" as const,
+        status: "pending" as const,
+        invitation_id: invitationId,
+        accepted_at: null,
+        expires_at: new Date("2026-09-18T12:00:00.000Z"),
+      },
+    ]) {
+      await fixture.db.insertInto("collaboration_members").values({
+        ...member,
+        invited_by: OWNER_ID,
+        expires_at: "expires_at" in member ? member.expires_at : null,
+        revision: 1,
+        joined_at: member.status === "accepted" ? member.accepted_at : null,
+        updated_at: NOW,
+      }).execute();
+    }
+    const transitions = journal();
+    await prepare();
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({
+      transitionId: TRANSITION_ID,
+      sourceFenceEpoch: 8,
+      currentInventoryRevision: 7,
+      currentInventoryHash: INVENTORY_HASH,
+      currentMembershipHash: MEMBERSHIP_HASH,
+    });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox")
+      .select("event_id").where("scope_id", "=", SCOPE_ID).execute()).toEqual([]);
+    await transitions.activate(TRANSITION_ID);
+    await expect(fixture.db.selectFrom("collaboration_directory_outbox")
+      .select(["recipient_actor_ids", "authority_runtime_id", "authority_generation", "discovery_state"])
+      .where("scope_id", "=", SCOPE_ID).orderBy("discovery_state", "asc").execute()).resolves.toEqual([
+      {
+        recipient_actor_ids: [{ actorId: OWNER_ID }, { actorId: editorId }],
+        authority_runtime_id: DESTINATION_RUNTIME,
+        authority_generation: 1,
+        discovery_state: "accepted",
+      },
+      {
+        recipient_actor_ids: [{ actorId: inviteeId, invitationId }],
+        authority_runtime_id: DESTINATION_RUNTIME,
+        authority_generation: 1,
+        discovery_state: "invited",
+      },
+    ]);
+  });
+
   it("invalidates stale confirmation under the fence and preserves the source authority", async () => {
     const transitions = journal();
     await prepare();

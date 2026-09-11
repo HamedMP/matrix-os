@@ -17,6 +17,7 @@ export default function DesktopChatCollaboration() {
     <ChatCollaboration view={view} api={api} actorId={actorId}
       openInvitation={(invitationId) => setView({ kind: "invitation", invitationId })}
       openChat={(scopeId) => setView({ kind: "chat", scopeId })}
-      openTerminal={(scopeId) => setView({ kind: "terminal", scopeId })} />
+      openTerminal={(scopeId) => setView({ kind: "terminal", scopeId })}
+      openProject={(scopeId) => setView({ kind: "project", scopeId })} />
   </div>;
 }

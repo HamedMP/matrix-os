@@ -93,6 +93,7 @@ export function SharedTerminalScreen({ scopeId, actorId, getToken, onBack }: {
     return () => { active = false; };
   }, [loadCanonical]);
 
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- cleanup below cancels reconnect/heartbeat timers and closes the current socket; clearHeartbeat is a local cleanup helper.
   useEffect(() => {
     let closed = false;
     let socket: WebSocket | null = null;

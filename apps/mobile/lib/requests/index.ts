@@ -59,6 +59,7 @@ export {
   fetchCollaborationInbox,
   fetchCollaborationInvitation,
   fetchCollaborationScope,
+  fetchSharedProject,
   fetchSharedChat,
   fetchSharedChatMessages,
   fetchSharedAiRequests,

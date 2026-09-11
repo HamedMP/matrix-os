@@ -236,9 +236,9 @@
 ### Tests and implementation — PR6
 
 - [x] T097 [P] [US1] (PR6) Write red complete inventory/no-exclusions/reconfirmation/member-effects UI tests in `tests/ui/collaboration-project-sharing.test.tsx`
-- [ ] T098 [P] [US1] (PR6) Write red mixed-project two-account all-role journey tests in `tests/e2e/collaboration-project.spec.ts`
+- [x] T098 [P] [US1] (PR6) Write red mixed-project two-account all-role journey tests in `tests/e2e/collaboration-project.spec.ts`
 - [x] T099 [US1] (PR6) Add full inventory confirmation, blockers, no-exclusion copy, membership effects, progress, and recovery UI in `packages/ui/src/collaboration/ProjectSharingDialog.tsx`
-- [ ] T100 [US1] (PR6) Wire project sharing and inherited-access display across project entrypoints in `shell/src/components/projects/ProjectSharing.tsx`
+- [x] T100 [US1] (PR6) Wire project sharing and inherited-access display across project entrypoints in `shell/src/components/projects/ProjectSharing.tsx`
 
 **Checkpoint**: PR6/M4 is the first point whole-project sharing may be enabled; empty or partial inventories do not pass.
 
@@ -281,7 +281,7 @@
 - [ ] T115 (PR1) Run the disposable VPS-native two-account M1 journey, rollback drill, no-computer recipient flow, and snapshot regressions; record exact versions/results in `specs/121-collaboration-session-sharing/quickstart.md`
 - [x] T116 [P] (PR3) Wire shared AI queue/controls across Web Canvas, Web Desktop, Electron Desktop, Web Mobile, Native Mobile, and CLI using `packages/ui/src/collaboration/SharedChatControls.tsx`
 - [x] T117 [P] (PR4) Wire terminal invitation/watch/control state across applicable Web/Electron/mobile/CLI clients using `packages/ui/src/collaboration/SharedTerminalControls.tsx`
-- [ ] T118 [P] (PR6) Wire whole-project inventory/membership/lifecycle across applicable Web/Electron/mobile/CLI clients using `packages/ui/src/collaboration/ProjectSharingDialog.tsx`
+- [x] T118 [P] (PR6) Wire whole-project inventory/membership/lifecycle across applicable Web/Electron/mobile/CLI clients using `packages/ui/src/collaboration/ProjectSharingDialog.tsx`
 - [ ] T119 (PR3) Validate M2 on the release artifact and record isolation/profile/queue/control/rollback evidence in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T120 (PR4) Validate M3 on the release artifact and record same-process/control/revoke/rollback evidence in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T121 (PR6) Validate M4 on the release artifact and record mixed-project/authority/recovery/rollback evidence in `specs/121-collaboration-session-sharing/quickstart.md`

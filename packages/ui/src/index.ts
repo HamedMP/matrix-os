@@ -70,6 +70,7 @@ export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
+export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
 export {
   deriveProjectPresentation,
   projectInventoryItemLabel,

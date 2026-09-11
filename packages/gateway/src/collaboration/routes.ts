@@ -18,6 +18,7 @@ import {
   CollaborationInvitationSchema,
   CollaborationLifecycleRequestSchema,
   CollaborationOperationSchema,
+  CollaborationProjectSchema,
   CollaborationProjectConfirmRequestSchema,
   CollaborationProjectInventorySchema,
   CollaborationProjectTransitionSchema,
@@ -135,6 +136,9 @@ export function createCollaborationRoutes(options: {
         ? result.chatRevision
         : "projectRevision" in result ? result.projectRevision : result.resourceRevision),
       ...(result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
+      ...(input.kind === "project" && "existingScopeId" in result && result.existingScopeId
+        ? { existingScopeId: result.existingScopeId, existingLifecycle: result.existingLifecycle }
+        : {}),
     }));
   }));
 
@@ -430,6 +434,15 @@ export function createCollaborationRoutes(options: {
       policy,
       action,
     }));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/project", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    requireM4Policy(options.verifier, c, context.actorId, context.ownerId, false);
+    return c.json(CollaborationProjectSchema.parse(
+      await requireProjectSharing(options.projectSharing).read({ scopeId }),
+    ));
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId/project/inventory", async (c) => handle(c, async () => {
