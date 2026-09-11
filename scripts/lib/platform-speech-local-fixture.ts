@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { join } from "node:path";
+import pg from "pg";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 export const LOCAL_SPEECH_FIXTURE_PORTS = {
@@ -32,6 +33,7 @@ export class LocalFixtureInterruptedError extends Error {
 
 export class LocalFixtureSignalController {
   #activeChild: ChildProcess | undefined;
+  #activeCancellation: (() => void) | undefined;
   #receivedSignal: "SIGINT" | "SIGTERM" | undefined;
 
   get exitCode(): 130 | 143 | undefined {
@@ -49,10 +51,20 @@ export class LocalFixtureSignalController {
     if (this.#activeChild === child) this.#activeChild = undefined;
   }
 
+  attachCancellation(cancel: () => void): void {
+    this.#activeCancellation = cancel;
+    if (this.#receivedSignal) cancel();
+  }
+
+  detachCancellation(cancel: () => void): void {
+    if (this.#activeCancellation === cancel) this.#activeCancellation = undefined;
+  }
+
   receive(signal: "SIGINT" | "SIGTERM"): void {
     if (this.#receivedSignal) return;
     this.#receivedSignal = signal;
     this.#signalActive(signal);
+    this.#activeCancellation?.();
   }
 
   throwIfReceived(): void {
@@ -107,6 +119,39 @@ export function parseLocalPostgresAdminUrl(value: string): URL {
     throw new Error("Speech fixture admin URL must name an administrative database");
   }
   return url;
+}
+
+export function createBoundedLocalPostgresAdminClient(
+  value: string,
+  overrides: { connectionTimeoutMillis?: number } = {},
+): pg.Client {
+  const url = parseLocalPostgresAdminUrl(value);
+  const connectionTimeoutMillis = overrides.connectionTimeoutMillis ?? 5_000;
+  if (!Number.isSafeInteger(connectionTimeoutMillis)
+    || connectionTimeoutMillis < 100
+    || connectionTimeoutMillis > 30_000) {
+    throw new Error("Local PostgreSQL connection timeout is out of bounds");
+  }
+  return new pg.Client({
+    connectionString: url.toString(),
+    connectionTimeoutMillis,
+    query_timeout: 10_000,
+    statement_timeout: 10_000,
+    lock_timeout: 5_000,
+  });
+}
+
+export function cancelBoundedLocalPostgresAdminClient(client: pg.Client): Promise<void> {
+  // node-postgres end() waits for its connect timeout during an incomplete startup
+  // handshake, so close this task-owned loopback socket before ending the client.
+  const connection = client as pg.Client & {
+    connection?: { stream?: { destroy: (error?: Error) => void; destroyed?: boolean } };
+  };
+  const stream = connection.connection?.stream;
+  if (stream && !stream.destroyed) {
+    stream.destroy(new Error("Local speech fixture PostgreSQL administration interrupted"));
+  }
+  return client.end().catch(() => undefined);
 }
 
 function runtimeToken(identity: {
@@ -224,7 +269,9 @@ function assertPortAvailable(port: number): Promise<void> {
   });
 }
 
-export async function assertFixturePortsAvailable(ports = Object.values(LOCAL_SPEECH_FIXTURE_PORTS)): Promise<void> {
+export async function assertFixturePortsAvailable(
+  ports: readonly number[] = Object.values(LOCAL_SPEECH_FIXTURE_PORTS),
+): Promise<void> {
   for (const port of ports) {
     if (!Number.isSafeInteger(port) || port < 1_024 || port > 65_535) {
       throw new Error("Speech fixture ports must be unprivileged TCP ports");
