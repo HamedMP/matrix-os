@@ -129,14 +129,7 @@ suite("Electron Desktop keeps cloud updates out of the workspace", () => {
     await expect.poll(() => composer.textContent()).toBe(draft);
     await composer.fill(`${draft} — still editable`);
 
-    const sidebar = window.locator("aside");
-    const settings = sidebar.getByRole("button", { name: "Settings", exact: true }).first();
-    if (await settings.isVisible()) {
-      await settings.click();
-    } else {
-      await sidebar.getByRole("button", { name: "Open account menu" }).click();
-      await window.getByRole("menu", { name: "Account" }).getByRole("menuitem", { name: "Settings" }).click();
-    }
+    await window.getByRole("button", { name: "Settings", exact: true }).dblclick();
     const systemResponse = window.waitForResponse((response) => new URL(response.url()).pathname === "/api/system/info");
     await window.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "System", exact: true }).click();
     const response = await systemResponse;
