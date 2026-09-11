@@ -5,6 +5,8 @@ import {
   COLLABORATION_HTTP_BODY_LIMIT,
   COLLABORATION_POLICY_HEADER,
   CollaborationDeleteConditionSchema,
+  CollaborationCreateScopeRequestSchema,
+  CollaborationScopePreflightRequestSchema,
 } from "@matrix-os/contracts";
 import type { CollaborationProofSigner } from "./proof.js";
 import type { PlatformCollaborationRepository } from "./repository.js";
@@ -44,6 +46,20 @@ const SCOPE_ROUTES = [
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/approvals/${RESOURCE}/decision$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/terminal$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/terminal/actions$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/inventory$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/confirm$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/files$`)],
+  ["PUT", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/files$`)],
+  ["DELETE", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/files$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/git$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/git/actions$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/apps/${RESOURCE}$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/apps/${RESOURCE}/actions$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/layout$`)],
+  ["PATCH", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/layout$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/chats$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/terminals$`)],
 ] as const;
 
 const M2_SCOPE_ROUTES = [
@@ -57,6 +73,16 @@ const M2_SCOPE_ROUTES = [
 const M3_SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/terminal$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/terminal/actions$`)],
+] as const;
+
+const M4_SCOPE_ROUTES = [
+  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/project(?:/inventory|/files|/git|/layout)?$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/project/(?:confirm|git/actions|chats|terminals)$`)],
+  ["PUT", new RegExp(`^/api/collaboration/scopes/${UUID}/project/files$`)],
+  ["DELETE", new RegExp(`^/api/collaboration/scopes/${UUID}/project/files$`)],
+  ["PATCH", new RegExp(`^/api/collaboration/scopes/${UUID}/project/layout$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/project/apps/${RESOURCE}$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/project/apps/${RESOURCE}/actions$`)],
 ] as const;
 
 const INVITATION_ROUTES = [
@@ -94,11 +120,12 @@ export function parseCollaborationProxyRoute(
 export function collaborationMilestoneForRoute(
   method: string,
   path: string,
-): "m1" | "m2" | "m3" | null {
+): "m1" | "m2" | "m3" | "m4" | null {
   const route = parseCollaborationProxyRoute(method, path);
   if (!route) return null;
   if (M2_SCOPE_ROUTES.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path))) return "m2";
   if (M3_SCOPE_ROUTES.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path))) return "m3";
+  if (M4_SCOPE_ROUTES.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path))) return "m4";
   return "m1";
 }
 
@@ -153,7 +180,11 @@ export class CollaborationProxy {
       if (route.kind !== "runtime" && !directory) return safeResponse("Collaboration route not found", 404);
       const ownerId = runtime?.ownerId ?? directory!.ownerId;
       const scopeId = directory?.scopeId;
-      const milestone = collaborationMilestoneForRoute(input.method, input.path);
+      const milestone = route.kind === "runtime"
+        ? runtimeMilestone(input.path, input.body)
+        : directory?.kind === "project"
+          ? "m4"
+          : collaborationMilestoneForRoute(input.method, input.path);
       if (!milestone) return safeResponse("Collaboration route not found", 404);
       const policy = await this.options.repository.getPolicy(milestone);
       const participants = scopeId
@@ -191,7 +222,7 @@ export class CollaborationProxy {
       }
       headers.set("accept", "application/json");
       headers.set(PROOF_HEADER, Buffer.from(JSON.stringify(signedProof)).toString("base64url"));
-      if (milestone === "m2" || milestone === "m3") {
+      if (milestone !== "m1") {
         const issuedAt = (this.options.now ?? (() => new Date()))();
         const signedPolicy = this.options.signer.signPolicy({
           milestone: policy.milestone,
@@ -253,6 +284,21 @@ export class CollaborationProxy {
       console.warn("[collaboration-proxy] upstream unavailable", error instanceof Error ? error.name : "UnknownError");
       return safeResponse("Collaboration unavailable", 503);
     }
+  }
+}
+
+function runtimeMilestone(path: string, body: Uint8Array): "m1" | "m4" {
+  try {
+    const value = JSON.parse(new TextDecoder().decode(body)) as unknown;
+    const parsed = path.endsWith("/scopes/preflight")
+      ? CollaborationScopePreflightRequestSchema.safeParse(value)
+      : CollaborationCreateScopeRequestSchema.safeParse(value);
+    return parsed.success && parsed.data.kind === "project" ? "m4" : "m1";
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[collaboration-proxy] runtime route classification failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return "m1";
   }
 }
 
