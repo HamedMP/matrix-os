@@ -88,6 +88,7 @@ describe('Reddit Stripe attribution', () => {
               metadata: {
                 clerk_user_id: 'user_123',
                 matrix_attr_reddit_pending: '1',
+                matrix_attr_reddit_expires_at: '2026-12-31T00:00:00.000Z',
                 matrix_attr_rdt_cid: 'reddit-click',
                 matrix_attr_landing_path: '/pricing?utm_source=reddit',
               },
@@ -130,6 +131,8 @@ describe('Reddit Stripe attribution', () => {
               subscription: 'sub_reddit_purchase',
               metadata: {
                 clerk_user_id: 'user_123',
+                matrix_attr_reddit_pending: '1',
+                matrix_attr_reddit_expires_at: '2026-06-01T00:00:00.000Z',
                 matrix_attr_rdt_cid: 'reddit-click',
               },
             },

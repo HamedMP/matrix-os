@@ -14,6 +14,27 @@ export interface RedditSubscriptionAttributionLifecycle {
   clearSubscriptionAttribution(subscriptionId: string): Promise<void>;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const REDDIT_FIRST_PAYMENT_GRACE_DAYS = 7;
+
+export function createRedditAttributionExpiry(
+  checkoutCreatedAt: string,
+  trialPeriodDays: number | null | undefined,
+): string {
+  const checkoutCreatedAtMs = Date.parse(checkoutCreatedAt);
+  if (!Number.isFinite(checkoutCreatedAtMs)) {
+    throw new Error('Invalid checkout attribution timestamp');
+  }
+  const boundedTrialDays = Number.isInteger(trialPeriodDays)
+    && (trialPeriodDays as number) >= 0
+    && (trialPeriodDays as number) <= 30
+    ? trialPeriodDays as number
+    : 0;
+  return new Date(
+    checkoutCreatedAtMs + (boundedTrialDays + REDDIT_FIRST_PAYMENT_GRACE_DAYS) * DAY_MS,
+  ).toISOString();
+}
+
 export async function deliverRedditAttribution(
   event: StripeEventForRedditAttribution,
   client: RedditConversionsClient | undefined,
@@ -114,11 +135,15 @@ function readRedditInvoicePurchase(
     'sub',
   );
   const metadata = readMetadata(invoice.parent?.subscription_details?.metadata);
+  const attributionExpiresAt = readBoundedString(metadata.matrix_attr_reddit_expires_at, 64);
+  const attributionExpiresAtMs = attributionExpiresAt ? Date.parse(attributionExpiresAt) : Number.NaN;
   const clerkUserId = readClerkUserId(undefined, metadata);
   if (
     !conversionId
     || !subscriptionId
     || metadata.matrix_attr_reddit_pending !== '1'
+    || !Number.isFinite(attributionExpiresAtMs)
+    || event.created * 1_000 > attributionExpiresAtMs
     || (invoice.billing_reason !== 'subscription_create'
       && invoice.billing_reason !== 'subscription_cycle')
     || !clerkUserId

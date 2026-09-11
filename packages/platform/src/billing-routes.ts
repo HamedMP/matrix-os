@@ -76,6 +76,7 @@ import {
 import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
 import type { RedditConversionsClient } from './reddit-conversions.js';
 import {
+  createRedditAttributionExpiry,
   deliverRedditAttribution,
   isSafeMarketingLandingPath,
 } from './reddit-purchase-attribution.js';
@@ -181,6 +182,7 @@ export interface StripeCheckoutSessionInput {
   allowPromotionCodes: boolean;
   regionSlug: string;
   runtimeSlot: string;
+  redditAttributionExpiresAt: string;
   trialPeriodDays?: number | null;
   paymentMethodMode?: 'card_required' | 'dynamic';
   prebillingIntentId?: string;
@@ -628,6 +630,10 @@ export function createBillingRoutes(options: {
         allowPromotionCodes: true,
         regionSlug: parsed.data.regionSlug,
         runtimeSlot: parsed.data.runtimeSlot,
+        redditAttributionExpiresAt: createRedditAttributionExpiry(
+          attempt.attempt.createdAt,
+          attempt.attempt.trialPeriodDays,
+        ),
         trialPeriodDays: attempt.attempt.trialPeriodDays,
         paymentMethodMode: attempt.attempt.trialPeriodDays ? 'card_required' : 'dynamic',
         ...(preparation ? {

@@ -24,6 +24,7 @@ describe('platform/stripe-billing', () => {
       allowPromotionCodes: true,
       regionSlug: 'region_nbg1',
       runtimeSlot: 'studio',
+      redditAttributionExpiresAt: '2026-06-06T00:00:00.000Z',
       attribution: {
         rdt_cid: 'reddit-click',
         utm_source: 'reddit',
@@ -53,6 +54,7 @@ describe('platform/stripe-billing', () => {
         matrix_region_slug: 'region_nbg1',
         matrix_runtime_slot: 'studio',
         matrix_attr_reddit_pending: '1',
+        matrix_attr_reddit_expires_at: '2026-06-06T00:00:00.000Z',
         matrix_attr_rdt_cid: 'reddit-click',
         matrix_attr_utm_source: 'reddit',
         matrix_attr_utm_medium: 'cpc',
@@ -65,6 +67,7 @@ describe('platform/stripe-billing', () => {
           matrix_region_slug: 'region_nbg1',
           matrix_runtime_slot: 'studio',
           matrix_attr_reddit_pending: '1',
+          matrix_attr_reddit_expires_at: '2026-06-06T00:00:00.000Z',
           matrix_attr_rdt_cid: 'reddit-click',
           matrix_attr_utm_source: 'reddit',
           matrix_attr_utm_medium: 'cpc',
@@ -323,6 +326,7 @@ describe('platform/stripe-billing', () => {
     expect(subscriptionsUpdate).toHaveBeenCalledWith('sub_123', {
       metadata: {
         matrix_attr_reddit_pending: '',
+        matrix_attr_reddit_expires_at: '',
         matrix_attr_rdt_cid: '',
         matrix_attr_utm_source: '',
         matrix_attr_utm_medium: '',

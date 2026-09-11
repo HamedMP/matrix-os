@@ -112,6 +112,7 @@ describe('platform billing routes', () => {
       allowPromotionCodes: true,
       regionSlug: 'region_nbg1',
       runtimeSlot: 'studio',
+      redditAttributionExpiresAt: '2026-06-06T00:00:00.000Z',
       attribution: expect.objectContaining({
         rdt_cid: 'reddit-click',
         utm_source: 'reddit',

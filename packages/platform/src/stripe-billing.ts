@@ -59,6 +59,7 @@ export function createStripeBillingClient(options: {
       const metadata = {
         clerk_user_id: input.clerkUserId,
         matrix_attr_reddit_pending: '1',
+        matrix_attr_reddit_expires_at: input.redditAttributionExpiresAt,
         matrix_region_slug: input.regionSlug,
         matrix_runtime_slot: input.runtimeSlot,
         ...(input.prebillingIntentId
@@ -118,6 +119,7 @@ export function createStripeBillingClient(options: {
       await stripe.subscriptions.update(subscriptionId, {
         metadata: {
           matrix_attr_reddit_pending: '',
+          matrix_attr_reddit_expires_at: '',
           matrix_attr_rdt_cid: '',
           matrix_attr_utm_source: '',
           matrix_attr_utm_medium: '',
