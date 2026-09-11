@@ -11,6 +11,7 @@ export function validateChatInputAnswer(request: Pick<Request, "questions" | "ex
   const values = answer.structuredAnswers;
   if (!values) {
     if (request.questions.length !== 1 || request.questions[0].options?.length || !answer.answer?.trim()) throw new ChatInputAnswerValidationError("Structured answers required");
+    if (!buildCanonicalChatInputAnswer(request, { [request.questions[0].questionId]: [answer.answer] })) throw new ChatInputAnswerValidationError("Invalid answers");
     return;
   }
   if (!buildCanonicalChatInputAnswer(request, values)) throw new ChatInputAnswerValidationError("Invalid answers");

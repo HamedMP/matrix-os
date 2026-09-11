@@ -123,7 +123,7 @@ export function CanonicalInputMessage({ request, chatId, gatewayUrl, onSettled }
         disabled={submitting || !complete} onPress={() => void submit()} style={styles.button}>
         <Text style={styles.text}>{submitting ? "Submitting…" : "Submit answer"}</Text>
       </Pressable>
-    </> : <Text style={styles.text}>{request.resolved ? request.reason === "expired" ? "This question has expired." : request.reason === "cancelled" ? "Input cancelled" : "Answer submitted" : submitted ? "Answer submitted" : request.submitted ? "Answer submitted; awaiting confirmation." : expired ? "This question has expired." : request.questions?.length ? "Input closed" : "Answering is unavailable for this request. Stop the run and try again."}</Text>}
+    </> : <Text style={styles.text}>{request.resolved ? request.reason === "expired" ? "This question has expired." : request.reason === "cancelled" ? "Input cancelled" : "Answer submitted" : submitted || request.submitted ? "Answer submitted; awaiting confirmation." : expired ? "This question has expired." : request.questions?.length ? "Input closed" : "Answering is unavailable for this request. Stop the run and try again."}</Text>}
     {error ? <Text accessibilityRole="alert" style={styles.text}>{error}</Text> : null}
   </View>;
 }

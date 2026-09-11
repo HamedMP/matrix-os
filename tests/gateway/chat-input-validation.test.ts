@@ -27,3 +27,10 @@ it("keeps a pending question actionable while another control waits for approval
   const result = canonicalChatInputs({ runs: [{ id: "run_1", status: "waiting_for_approval" }], turns: [], messages: [], activities: [{ id: "act_1", runId: "run_1", type: "input.requested", requestId: "req_1", title: "Input", questions, occurredAt: "2026-09-11T00:00:00Z" }] } as never);
   expect(result[0].pending).toBe(true);
 });
+
+it("validates legacy free-text bounds before admitting native input delivery", () => {
+  const request = { questions: [{ questionId: "text", header: "Text", question: "Your answer?", allowOther: true, secret: false }] };
+  expect(() => validateChatInputAnswer(request, { clientRequestId: "req_text", answer: "a".repeat(400) })).not.toThrow();
+  expect(() => validateChatInputAnswer(request, { clientRequestId: "req_text", answer: "a".repeat(401) })).toThrow();
+  expect(() => validateChatInputAnswer(request, { clientRequestId: "req_text", answer: "你".repeat(233) + "ab" })).toThrow();
+});

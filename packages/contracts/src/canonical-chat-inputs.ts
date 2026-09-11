@@ -1,5 +1,5 @@
-import { CanonicalSubmitChatInputRequestSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatDetailResponse } from "./canonical-chat-api.js";
-import type { CanonicalChatRunActivity } from "./canonical-chat.js";
+import { CanonicalSubmitChatInputRequestSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatDetailResponse } from "#canonical-chat-api";
+import type { CanonicalChatRunActivity } from "#canonical-chat";
 type Request = Extract<CanonicalChatRunActivity, { type: "input.requested" }>;
 export interface CanonicalChatInputView {
   id: string;

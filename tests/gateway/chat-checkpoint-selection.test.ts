@@ -57,6 +57,7 @@ beforeEach(async () => {
       const resumed = args.indexOf("--resume");
       const sessionId = resumed < 0 ? "native_empty" : args[resumed + 1];
       const child = Object.assign(new EventEmitter(), {
+        stdin: { write(_frame: string, callback?: (error?: Error | null) => void) { callback?.(); return true; } },
         stdout: new EventEmitter(), stderr: new EventEmitter(),
         kill() { queueMicrotask(() => child.emit("exit", null, "SIGTERM")); return true; },
       });

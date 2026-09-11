@@ -29,3 +29,10 @@ describe("input delivery fencing", () => {
     expect(options.submitInput).not.toHaveBeenCalled();
   });
 });
+
+it("rejects oversized legacy free text without claiming or calling the provider", async () => {
+  const options = fixture();
+  await expect(submitCanonicalInput({ ...options, input: { clientRequestId: "req_large", answer: "a".repeat(401) } } as never)).rejects.toMatchObject({ status: 409 });
+  expect(options.repository.appendRunActivities).not.toHaveBeenCalled();
+  expect(options.submitInput).not.toHaveBeenCalled();
+});

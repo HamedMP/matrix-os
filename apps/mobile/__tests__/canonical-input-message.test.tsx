@@ -72,3 +72,17 @@ it("reuses the request identity when a local answer changes after unknown delive
   expect(second.clientRequestId).toBe(first.clientRequestId);
   expect(second.structuredAnswers).toEqual({ direction: ["South"] });
 });
+
+it.each(["accepted", "already_submitted"])("awaits canonical confirmation after %s then shows resolved receipt", async submission => {
+  jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ requestId: "input_test", submission }) } as Response);
+  const { rerender } = render(<CanonicalInputMessage {...props} request={request} />);
+  fireEvent.press(screen.getByText("North"));
+  fireEvent.press(screen.getByText("Submit answer"));
+  await waitFor(() => expect(screen.getByText("Answer submitted; awaiting confirmation.")).toBeTruthy());
+  expect(screen.queryByText("Answer submitted", { exact: true })).toBeNull();
+  rerender(<CanonicalInputMessage {...props} request={{ ...request, pending: false, submitted: true }} />);
+  expect(screen.getByText("Answer submitted; awaiting confirmation.")).toBeTruthy();
+  rerender(<CanonicalInputMessage {...props} request={{ ...request, pending: false, submitted: true, resolved: true, reason: "answered", expiresAt: "2000-01-01T00:00:00.000Z" }} />);
+  expect(screen.getByText("Answer submitted", { exact: true })).toBeTruthy();
+  expect(screen.queryByText("This question has expired.")).toBeNull();
+});

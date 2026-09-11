@@ -53,3 +53,20 @@ it("handles question IDs that match object prototype properties", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Submit answer" }));
   await waitFor(() => expect(submit).toHaveBeenCalledWith({ structuredAnswers: { constructor: ["Inbox"] } }));
 });
+
+it("awaits canonical confirmation after local success and claimed replay", async () => {
+  const { rerender } = render(<CanonicalChatInputForm request={request} onSubmit={vi.fn().mockResolvedValue(true)} />);
+  fireEvent.click(screen.getByRole("radio", { name: /Inbox/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Submit answer" }));
+  await screen.findByText("Answer submitted; awaiting confirmation.");
+  expect(screen.queryByText("Answer submitted", { exact: true })).toBeNull();
+  rerender(<CanonicalChatInputForm request={{ ...request, pending: false, submitted: true }} />);
+  expect(screen.getByText("Answer submitted; awaiting confirmation.")).toBeTruthy();
+  rerender(<CanonicalChatInputForm request={{ ...request, pending: false, submitted: true, resolved: true, reason: "answered" }} />);
+  expect(screen.getByText("Answer submitted", { exact: true })).toBeTruthy();
+});
+it("keeps a confirmed answer resolved after its original expiry time", () => {
+  render(<CanonicalChatInputForm request={{ ...request, pending: false, submitted: true, resolved: true, reason: "answered", expiresAt: "2000-01-01T00:00:00.000Z" }} />);
+  expect(screen.getByText("Answer submitted", { exact: true })).toBeTruthy();
+  expect(screen.queryByText("This question has expired.")).toBeNull();
+});

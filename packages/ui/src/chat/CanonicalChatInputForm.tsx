@@ -67,10 +67,11 @@ function InputForm({ request, onSubmit }: CanonicalChatInputFormProps) {
       if (mounted.current) setPending(false);
     }
   };
-  const closedLabel = request.reason === "expired" || expired ? "This question has expired."
-    : request.reason === "cancelled" ? "Input cancelled"
-    : request.resolved || submitted ? "Answer submitted"
-    : request.submitted ? "Answer submitted; awaiting confirmation."
+  const closedLabel = request.resolved
+    ? request.reason === "expired" ? "This question has expired."
+      : request.reason === "cancelled" ? "Input cancelled" : "Answer submitted"
+    : request.submitted || submitted ? "Answer submitted; awaiting confirmation."
+    : expired ? "This question has expired."
     : !hasQuestion ? "Answering is unavailable for this request. Stop the run and try again."
     : !request.pending ? "Input closed"
     : "Answering is unavailable for this request. Stop the run and try again.";
