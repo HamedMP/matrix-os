@@ -163,14 +163,14 @@
 - [x] T066 [P] [US7] (PR1) Write red invitation/member/lifecycle HTTP contract tests including body limits, Zod boundary validation, generic not-found, expected revisions, and safe errors in `tests/gateway/collaboration-routes.test.ts`
 - [x] T067 [P] [US7] (PR1) Write red real-Postgres simultaneous invite/accept/downgrade/revoke tests and final-owner protection in `tests/gateway/collaboration-membership-races.test.ts`
 - [x] T068 [P] [US7] (PR1) Write red audit retention/content-exclusion, scope export, soft-delete, and unrelated-data preservation tests in `tests/gateway/collaboration-lifecycle.test.ts`
-- [ ] T069 [P] [US7] (PR6) Write red project archive/restore/transfer/delete/recovery integration tests in `tests/gateway/collaboration-project-lifecycle.test.ts`
+- [x] T069 [P] [US7] (PR6) Write red project archive/restore/transfer/delete/recovery integration tests in `tests/gateway/collaboration-project-lifecycle.test.ts`
 
 ### Implementation
 
 - [x] T070 [US7] (PR1) Implement invitation preview/accept/revoke, role change, leave/revoke, own user state, lifecycle, operation, and export routes in `packages/gateway/src/collaboration/routes.ts`
 - [x] T071 [US7] (PR1) Publish membership/audit/directory events atomically and invalidate scoped connections on downgrade/revoke through the collaboration repository, routes, and event registry
 - [x] T072 [US7] (PR1) Implement platform inbox/shared discovery hydration for recipients without a provisioned computer in `packages/platform/src/collaboration/routes.ts`
-- [ ] T073 [US7] (PR6) Complete project transfer/archive/delete/recovery orchestration without an ownerless or dual-authority state in `packages/gateway/src/collaboration/project-lifecycle.ts`
+- [x] T073 [US7] (PR6) Complete project transfer/archive/delete/recovery orchestration without an ownerless or dual-authority state in `packages/gateway/src/collaboration/project-lifecycle.ts`
 
 **Checkpoint**: PR1 provides complete Chat membership management and revocation; lifecycle extensions reuse the authority rather than creating per-resource grants.
 
