@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -33,6 +33,13 @@ describe('customer VPS production runtime loader', () => {
       },
     );
     expect(build.status, build.stderr || build.stdout).toBe(0);
+
+    const sourceAppRuntime = join(root, 'packages/gateway/src/app-runtime');
+    const builtAppRuntime = join(root, 'packages/gateway/dist/app-runtime');
+    mkdirSync(builtAppRuntime, { recursive: true });
+    for (const name of readdirSync(sourceAppRuntime).filter((entry) => entry.endsWith('.html'))) {
+      copyFileSync(join(sourceAppRuntime, name), join(builtAppRuntime, name));
+    }
 
     const result = spawnSync('node', ['--import=tsx', smokePath], {
       cwd: root,
