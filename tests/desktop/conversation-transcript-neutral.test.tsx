@@ -596,6 +596,57 @@ describe("provider-neutral conversation transcript", () => {
     }
   });
 
+  it("shows a streamed work message immediately when completion promotes it to the final response", () => {
+    vi.useFakeTimers();
+    const text = `${"promoted_stream_output_".repeat(100)}done`;
+    const streamedMessage = {
+      kind: "message" as const,
+      id: "message-streamed-work",
+      role: "assistant" as const,
+      phase: "commentary" as const,
+      markdown: "Earlier streamed work",
+      copyText: "Earlier streamed work",
+      timestamp: 1_000,
+    };
+    const activeTurn: ConversationTurnPresentation = {
+      id: "turn-promoted-stream",
+      startedAt: 1_000,
+      endedAt: 1_000,
+      active: true,
+      work: [streamedMessage],
+    };
+
+    try {
+      const { container, rerender } = render(
+        <ConversationTranscript turns={[activeTurn]} callbacks={{ copyText: vi.fn() }} />,
+      );
+      expect(container.querySelector('[data-selectable]')?.textContent).toBe("Earlier streamed work");
+
+      rerender(
+        <ConversationTranscript
+          turns={[{
+            ...activeTurn,
+            active: false,
+            endedAt: 2_000,
+            work: [],
+            final: {
+              ...streamedMessage,
+              id: "message-promoted-final",
+              phase: "final",
+              markdown: text,
+              copyText: text,
+            },
+          }]}
+          callbacks={{ copyText: vi.fn() }}
+        />,
+      );
+
+      expect(container.querySelector('[data-selectable]')?.textContent).toBe(text);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps durable partial output visible beside an aborted terminal notice", () => {
     vi.useFakeTimers();
     const partial = "Durable partial output that must remain visible after cancellation.";

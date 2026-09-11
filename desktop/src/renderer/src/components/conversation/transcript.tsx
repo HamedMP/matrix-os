@@ -383,6 +383,7 @@ function ConversationTurn({
   initialFinalIds: ReadonlySet<string>;
 }) {
   const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
+  const renderedLiveOutput = useRef(false);
   const showWork = turn.active || expanded;
   const hasWork = turn.work.length > 0;
   const terminalPartial = !turn.active
@@ -395,6 +396,12 @@ function ConversationTurn({
   const visibleTimeline = timeline?.filter((entry) => (
     entry.kind === "user-followup" || showWork || (terminalPartial !== undefined && entry.item.id === terminalPartial.id)
   ));
+  useEffect(() => {
+    if (turn.active && (
+      turn.final?.kind === "message"
+      || turn.work.some((item) => item.kind === "message")
+    )) renderedLiveOutput.current = true;
+  }, [turn.active, turn.final, turn.work]);
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={callbacks} /> : null}
@@ -432,7 +439,7 @@ function ConversationTurn({
           callbacks={callbacks}
           showMetadata={!turn.active}
           streaming={turn.active}
-          animateOnMount={!initialFinalIds.has(turn.final.id)}
+          animateOnMount={!initialFinalIds.has(turn.final.id) && !renderedLiveOutput.current}
         />
       ) : null}
     </>
