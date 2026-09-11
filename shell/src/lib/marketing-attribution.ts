@@ -61,11 +61,12 @@ export function captureMarketingAttribution(): MarketingAttribution {
   const landingPath = allowedQuery.size > 0
     ? `${url.pathname}?${allowedQuery.toString()}`.slice(0, MAX_PATH_LENGTH)
     : undefined;
-  const attribution: MarketingAttribution = {
-    ...readStored(),
-    ...incoming,
-    ...(hasIncomingCampaign && landingPath ? { landing_path: landingPath } : {}),
-  };
+  const attribution: MarketingAttribution = hasIncomingCampaign
+    ? {
+        ...incoming,
+        ...(landingPath ? { landing_path: landingPath } : {}),
+      }
+    : readStored();
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(attribution));
   } catch (err: unknown) {

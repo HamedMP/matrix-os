@@ -47,4 +47,17 @@ describe("marketing attribution", () => {
       landing_path: expect.stringContaining("rdt_cid=reddit-click"),
     }));
   });
+
+  it("replaces a stored campaign atomically when a later campaign arrives", () => {
+    window.history.replaceState({}, "", "/?rdt_cid=old-click&utm_source=reddit&utm_campaign=old");
+    captureMarketingAttribution();
+    window.history.replaceState({}, "", "/pricing?utm_source=google&utm_campaign=new");
+
+    expect(captureMarketingAttribution()).toEqual({
+      utm_source: "google",
+      utm_campaign: "new",
+      landing_path: "/pricing?utm_source=google&utm_campaign=new",
+    });
+    expect(getCheckoutAttribution()).not.toHaveProperty("rdt_cid");
+  });
 });

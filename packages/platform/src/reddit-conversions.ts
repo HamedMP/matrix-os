@@ -105,7 +105,8 @@ function validEventSourceUrl(value: string | undefined): value is string {
   try {
     const url = new URL(value);
     return url.protocol === "https:" && url.hostname === "matrix-os.com";
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) return false;
     return false;
   }
 }

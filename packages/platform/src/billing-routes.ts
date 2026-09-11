@@ -74,7 +74,11 @@ import {
   prepareAiCreditCheckoutClaim,
 } from './ai-credit-checkout-store.js';
 import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
-import type { RedditConversionsClient, RedditPurchaseInput } from './reddit-conversions.js';
+import type { RedditConversionsClient } from './reddit-conversions.js';
+import {
+  deliverRedditPurchaseAttribution,
+  isSafeMarketingLandingPath,
+} from './reddit-purchase-attribution.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -1123,10 +1127,7 @@ export function createBillingRoutes(options: {
           );
         });
       }
-      const redditPurchase = event.type === 'checkout.session.completed'
-        ? readRedditPurchase(event)
-        : null;
-      if (redditPurchase) await options.redditConversions?.sendPurchase(redditPurchase);
+      await deliverRedditPurchaseAttribution(event, options.redditConversions);
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));
@@ -1579,68 +1580,6 @@ function isFirstPostTrialInvoice(
     && trialEndsAt !== null
     && trialConvertedAt === null
     && Date.parse(invoice.createdAt) >= Date.parse(trialEndsAt);
-}
-
-function isSafeMarketingLandingPath(value: string): boolean {
-  if (!value.startsWith('/') || value.startsWith('//')) return false;
-  try {
-    const url = new URL(value, 'https://matrix-os.com');
-    return url.origin === 'https://matrix-os.com';
-  } catch {
-    return false;
-  }
-}
-
-function readRedditPurchase(event: StripeWebhookEvent): RedditPurchaseInput | null {
-  if (!event.data.object || typeof event.data.object !== 'object') return null;
-  const session = event.data.object as {
-    id?: unknown;
-    client_reference_id?: unknown;
-    amount_total?: unknown;
-    currency?: unknown;
-    metadata?: unknown;
-  };
-  const checkoutSessionId = readStripeObjectId(session);
-  const clerkUserId = readClerkUserIdFromCheckoutSession(session);
-  if (
-    !checkoutSessionId
-    || !clerkUserId
-    || !Number.isSafeInteger(session.amount_total)
-    || (session.amount_total as number) < 0
-    || typeof session.currency !== 'string'
-    || !/^[a-z]{3}$/.test(session.currency)
-    || !Number.isSafeInteger(event.created)
-    || event.created <= 0
-  ) {
-    return null;
-  }
-  const metadata = session.metadata && typeof session.metadata === 'object'
-    ? session.metadata as Record<string, unknown>
-    : {};
-  const clickId = readBoundedMetadataString(metadata.matrix_attr_rdt_cid, 256);
-  const landingPath = readBoundedMetadataString(metadata.matrix_attr_landing_path, 512);
-  const sourceUrl = new URL(
-    landingPath && isSafeMarketingLandingPath(landingPath) ? landingPath : '/',
-    'https://matrix-os.com',
-  );
-  if (clickId && !sourceUrl.searchParams.has('rdt_cid')) {
-    sourceUrl.searchParams.set('rdt_cid', clickId);
-  }
-  return {
-    eventAt: event.created * 1_000,
-    checkoutSessionId,
-    clerkUserId,
-    ...(clickId ? { clickId } : {}),
-    eventSourceUrl: sourceUrl.toString(),
-    currency: session.currency,
-    value: (session.amount_total as number) / 100,
-  };
-}
-
-function readBoundedMetadataString(value: unknown, maxLength: number): string | undefined {
-  return typeof value === 'string' && value.length > 0 && value.length <= maxLength
-    ? value
-    : undefined;
 }
 
 function readExpandableStripeId(value: unknown): string | null {
