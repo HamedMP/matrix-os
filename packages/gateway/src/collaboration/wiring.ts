@@ -22,6 +22,8 @@ import { TerminalControlCoordinator } from "./terminal-control.js";
 import { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
+import { createProjectTransitionJournal } from "./project-transition.js";
+import { createProjectFence } from "./project-fence.js";
 
 const MAX_PROOF_KEYS = 8;
 const ARTIFACT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
@@ -98,6 +100,8 @@ export async function createGatewayCollaboration(options: {
     runtimeId: options.config.runtimeId,
     preflightSecret: options.config.preflightSecret,
   });
+  const projectTransitions = createProjectTransitionJournal({ db: options.db });
+  const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
   const outbox = new CollaborationDirectoryOutbox({
     db: options.db,
     platformBaseUrl: options.config.platformBaseUrl,
@@ -141,6 +145,21 @@ export async function createGatewayCollaboration(options: {
     chatAdapter,
     outbox,
     collaborationGuard: chatScope,
+    projectTransitions,
+    projectFence,
+    projectOperationAdmission: {
+      withLegacyAdmission<T>(input: {
+        ownerType: "personal" | "organization";
+        ownerId: string;
+        projectId: string;
+        kind: "write" | "run";
+      }, operation: () => Promise<T>): Promise<T> {
+        return projectFence.withLegacyAdmission({
+          ...input,
+          authorityRuntimeId: options.config.runtimeId,
+        }, () => operation());
+      },
+    },
     async enableSharedAi(input: {
       orchestrator: CanonicalChatOrchestrator;
       homePath: string;

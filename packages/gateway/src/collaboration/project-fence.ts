@@ -25,6 +25,14 @@ type AdmissionInput = {
   path: "legacy" | "scoped";
 };
 
+type LegacyAdmissionInput = {
+  ownerType: "personal" | "organization";
+  ownerId: string;
+  projectId: string;
+  authorityRuntimeId: string;
+  kind: "write" | "run";
+};
+
 export interface ProjectAdmission {
   fenceEpoch: number;
   authorityGeneration: number;
@@ -63,6 +71,22 @@ function parseAdmission(input: AdmissionInput): AdmissionInput {
   return parsed.data;
 }
 
+function parseLegacyAdmission(input: LegacyAdmissionInput): LegacyAdmissionInput {
+  const parsed = z.object({
+    ownerType: z.enum(["personal", "organization"]),
+    ownerId: ActorIdSchema,
+    projectId: ProjectIdSchema,
+    authorityRuntimeId: RuntimeIdSchema,
+    kind: z.enum(["write", "run"]),
+  }).strict().safeParse(input);
+  if (!parsed.success) throw new ProjectFenceError("invalid");
+  return parsed.data;
+}
+
+function projectCoordinatorKey(ownerId: string, projectId: string): string {
+  return `${ownerId.length}:${ownerId}${projectId}`;
+}
+
 export function createProjectFence(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   transitions: ProjectTransitionJournal;
@@ -74,12 +98,12 @@ export function createProjectFence(options: {
   }
   const coordinators = new Map<string, Coordinator>();
 
-  async function acquire(scopeId: string): Promise<() => void> {
-    let coordinator = coordinators.get(scopeId);
+  async function acquire(key: string): Promise<() => void> {
+    let coordinator = coordinators.get(key);
     if (!coordinator) {
       if (coordinators.size >= capacity) throw new ProjectFenceError("capacity");
       coordinator = { tail: Promise.resolve(), pending: 0 };
-      coordinators.set(scopeId, coordinator);
+      coordinators.set(key, coordinator);
     }
     coordinator.pending += 1;
     const previous = coordinator.tail;
@@ -94,8 +118,8 @@ export function createProjectFence(options: {
       released = true;
       releaseCurrent();
       coordinator!.pending -= 1;
-      if (coordinator!.pending === 0 && coordinators.get(scopeId) === coordinator) {
-        coordinators.delete(scopeId);
+      if (coordinator!.pending === 0 && coordinators.get(key) === coordinator) {
+        coordinators.delete(key);
       }
     };
   }
@@ -159,9 +183,44 @@ export function createProjectFence(options: {
     operation: (admission: ProjectAdmission) => Promise<T>,
   ): Promise<T> {
     const input = parseAdmission(rawInput);
-    const release = await acquire(input.projectScopeId);
+    const release = await acquire(projectCoordinatorKey(input.ownerId, input.projectId));
     try {
       return await operation(await authorize(input));
+    } finally {
+      release();
+    }
+  }
+
+  async function withLegacyAdmission<T>(
+    rawInput: LegacyAdmissionInput,
+    operation: (admission: ProjectAdmission | null) => Promise<T>,
+  ): Promise<T> {
+    const input = parseLegacyAdmission(rawInput);
+    const release = await acquire(projectCoordinatorKey(input.ownerId, input.projectId));
+    try {
+      let scope;
+      try {
+        scope = await options.db.selectFrom("collaboration_scopes").selectAll()
+          .where("owner_type", "=", input.ownerType)
+          .where("owner_id", "=", input.ownerId)
+          .where("kind", "=", "project")
+          .where("resource_id", "=", input.projectId)
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+      } catch (error: unknown) {
+        console.warn("[collaboration-project] legacy project lookup failed", error instanceof Error ? error.name : "UnknownError");
+        throw new ProjectFenceError("unavailable");
+      }
+      if (!scope) return operation(null);
+      return operation(await authorize({
+        projectScopeId: scope.id,
+        ownerId: input.ownerId,
+        projectId: input.projectId,
+        authorityRuntimeId: input.authorityRuntimeId,
+        authorityGeneration: Number(scope.authority_generation),
+        kind: input.kind,
+        path: "legacy",
+      }));
     } finally {
       release();
     }
@@ -190,7 +249,7 @@ export function createProjectFence(options: {
       projectId: rawInput.projectId,
     });
     if (!parsed.success) throw new ProjectFenceError("invalid");
-    const release = await acquire(parsed.data.projectScopeId);
+    const release = await acquire(projectCoordinatorKey(parsed.data.ownerId, parsed.data.projectId));
     try {
       const scope = await options.db.selectFrom("collaboration_scopes")
         .select(["id", "owner_id", "resource_id", "kind", "lifecycle", "auth_epoch"])
@@ -225,5 +284,5 @@ export function createProjectFence(options: {
     }
   }
 
-  return { withAdmission, fenceTransition };
+  return { withAdmission, withLegacyAdmission, fenceTransition };
 }
