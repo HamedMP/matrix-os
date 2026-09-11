@@ -5,10 +5,8 @@ import {
   SCOPE_RUNTIME_PROFILE_VERSION,
 } from "@matrix-os/scope-runtime/profile";
 import type { Kysely } from "kysely";
-import {
-  SharedChatRunPreparationError,
-  type CanonicalChatOrchestrator,
-} from "../chat/orchestrator.js";
+import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import { SharedChatRunPreparationError } from "../chat/shared-execution-coordinator.js";
 import { CollaborationChatCommands } from "../chat/collaboration-commands.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
