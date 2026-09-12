@@ -221,6 +221,37 @@ describe('Preview VPS provisioning workflow', () => {
     }
   });
 
+  it('restricts the real-customer release smoke to nimanaderi and the pinned release', () => {
+    const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+    const decide = workflow.jobs.gate.steps.find((step: { name?: string }) => step.name === 'Decide action').run as string;
+    const smoke = workflow.jobs.customer_release_smoke.steps.find(
+      (step: { name?: string }) => step.name === 'Verify stable, deploy, and prove the new terminal architecture',
+    ).run as string;
+
+    expect(workflow.on.workflow_dispatch.inputs.customer_release_smoke).toEqual(expect.objectContaining({
+      type: 'boolean',
+      default: false,
+    }));
+    expect(decide).toContain('action="customer_smoke"');
+    expect(decide).toContain('handle="nimanaderi"');
+    expect(decide).toContain('refs/heads/release-smoke-vps');
+    expect(decide).toContain('v2026.09.12-1237');
+    expect(workflow.jobs.customer_release_smoke.if).toContain("needs.gate.outputs.action == 'customer_smoke'");
+    expect(smoke).toContain('Stable preflight verified');
+    expect(smoke).toContain('select(.channel == "stable") | .version');
+    expect(smoke).toContain('/vps/deploy');
+    expect(smoke).toContain('deploy_body="{\\"version\\":\\"${VERSION}\\",\\"handle\\":\\"${HANDLE}\\"}"');
+    expect(smoke).toContain('/api/terminal/workspaces/ensure');
+    expect(smoke).toContain('Post-upgrade verification');
+    expect(smoke).toContain('Terminal architecture verified');
+    expect(smoke).toContain('Migration remained committed after the observation window');
+    expect(smoke).not.toContain('MATRIX_AUTH_TOKEN');
+
+    const shellSyntax = spawnSync('bash', ['-n', '-c', smoke], { encoding: 'utf8' });
+    expect(shellSyntax.stderr).toBe('');
+    expect(shellSyntax.status).toBe(0);
+  });
+
   it('returns successfully when the accepted machine is running', async () => {
     const result = await runWaitScript({
       handle: 'pr-1340',
