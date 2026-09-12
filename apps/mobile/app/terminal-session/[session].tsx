@@ -112,10 +112,6 @@ export default function TerminalSessionScreen() {
         },
         onStatus: (nextStatus) => {
           if (connectionAttemptRef.current !== attempt) return;
-          if (nextStatus === "open") {
-            clearHandshakeTimeout();
-            setStatus("attached");
-          }
           if (nextStatus === "closed") {
             clearHandshakeTimeout();
             setStatus((current) => current === "ended" || current === "error" ? current : "detached");
@@ -175,6 +171,14 @@ export default function TerminalSessionScreen() {
     }
   }, []);
 
+  const sendBinary = useCallback((data: string) => {
+    if (!data) return;
+    if (!connectionRef.current?.sendBinary(data)) {
+      setStatus("error");
+      setError("Terminal unavailable. Try again.");
+    }
+  }, []);
+
   const handleResize = useCallback((cols: number, rows: number) => {
     gridRef.current = { cols, rows };
     connectionRef.current?.resize(cols, rows);
@@ -196,6 +200,7 @@ export default function TerminalSessionScreen() {
           ref={surfaceRef}
           fontScale={fontScale}
           onInput={sendData}
+          onBinary={sendBinary}
           onResize={handleResize}
         />
 

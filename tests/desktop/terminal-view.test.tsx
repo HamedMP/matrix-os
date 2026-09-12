@@ -18,6 +18,7 @@ const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "p
 const TERMINAL_REF_KEY = `tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`;
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
+const attachmentWriteBinary = vi.fn();
 const attachmentResize = vi.fn();
 
 function deferred<T>() {
@@ -202,9 +203,11 @@ describe("TerminalView session switching", () => {
     attachMock.mockImplementation((_sessionName: string, _events: ShellSocketEvents) => ({
       resize: attachmentResize,
       write: attachmentWrite,
+      writeBinary: attachmentWriteBinary,
     }));
     attachmentResize.mockReset();
     attachmentWrite.mockReset();
+    attachmentWriteBinary.mockReset();
     useAppearance.setState({ mode: "light", themeId: "operator", hydrated: true });
     useTerminalAppearance.setState({
       ...useTerminalAppearance.getInitialState(),
@@ -347,7 +350,8 @@ describe("TerminalView session switching", () => {
 
     act(() => terminal.binaryCallback?.(mouseReport));
 
-    expect(attachmentWrite).toHaveBeenCalledWith(mouseReport);
+    expect(attachmentWriteBinary).toHaveBeenCalledWith(mouseReport);
+    expect(attachmentWrite).not.toHaveBeenCalled();
   });
 
   it("copies a valid OSC 52 payload without reading clipboard contents", async () => {

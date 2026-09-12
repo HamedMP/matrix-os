@@ -20,6 +20,7 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/999/bus",
     };
     const spawnPty = vi.fn((): RuntimePty => ({
+      write: vi.fn(),
       resize: vi.fn(),
       kill: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
@@ -207,6 +208,7 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       return "";
     });
     const pty: RuntimePty = {
+      write: vi.fn(),
       resize: vi.fn(),
       kill: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
@@ -458,12 +460,14 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       if (args.includes("dump-screen")) return "history\nready$ ";
       return "";
     });
-    const pty: RuntimePty = {
+    const ptyWrite = vi.fn();
+    const pty = {
+      write: ptyWrite,
       resize: vi.fn(),
       kill: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
       onExit: vi.fn(() => ({ dispose: vi.fn() })),
-    };
+    } satisfies RuntimePty & { write(data: Buffer): void };
     let emitSubscription = (_line: string) => undefined;
     const subscription: RuntimeSubscriptionProcess = {
       close: vi.fn(async () => undefined),
@@ -500,10 +504,9 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       onExit: () => undefined,
     });
     await attachment.write(new TextEncoder().encode("echo hi\r"));
-    expect(commands).toContainEqual([
-      "--session", "matrix-w-0123456789abcdef0123456789abcdef",
-      "action", "write-chars", "--pane-id", "terminal_12", "--", "echo hi\r",
-    ]);
+    expect(ptyWrite).toHaveBeenCalledOnce();
+    expect(Buffer.from(ptyWrite.mock.calls[0]![0] as Uint8Array)).toEqual(Buffer.from("echo hi\r"));
+    expect(commands.some((args) => args.includes("write-chars"))).toBe(false);
 
     const events: unknown[] = [];
     await adapter.subscribeWorkspace("matrix-w-0123456789abcdef0123456789abcdef", {

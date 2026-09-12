@@ -50,7 +50,7 @@ export interface TerminalRuntimeControlApi {
     viewerId: string;
     send(data: Uint8Array): void | Promise<void>;
     onExit(exitCode: number | null): void | Promise<void>;
-  }): Promise<{ write(data: string): Promise<void>; touch(): void; detach(): Promise<void> }>;
+  }): Promise<{ write(data: string | Uint8Array): Promise<void>; touch(): void; detach(): Promise<void> }>;
 }
 
 type TerminalServerFrame = z.infer<typeof TerminalTabServerFrameSchema>;
@@ -251,6 +251,7 @@ export class TerminalRuntimeSocketServer {
       canonicalSize: resized.canonicalSize,
       revision,
       nextSeq,
+      capabilities: ["binary-input-v1"],
     });
     if (snapshot) {
       send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
@@ -296,6 +297,7 @@ export class TerminalRuntimeSocketServer {
         throw new Error("Terminal reference mismatch");
       }
       if (frame.type === "input") await viewer.write(frame.data);
+      if (frame.type === "binary") await viewer.write(Buffer.from(frame.dataBase64, "base64"));
       if (frame.type === "resize") {
         const workspace = await this.options.runtime.resize(ref, frame);
         revision = workspace.revision;
