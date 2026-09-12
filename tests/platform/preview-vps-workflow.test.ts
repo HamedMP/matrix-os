@@ -174,6 +174,8 @@ describe('Preview VPS provisioning workflow', () => {
     expect(diagnose).toContain('syncAgentLifecycle');
     expect(diagnose).toContain('privilegedGatewayActions');
     expect(diagnose).toContain('terminalMigration');
+    expect(diagnose).toContain('hostServiceState');
+    expect(diagnose).toContain('hostActorWindows');
     expect(diagnose).toContain('gzip -c | base64 -w0');
     expect(diagnose).toContain('"${#diagnostic_payload}" -gt 4096');
     expect(diagnose).toContain('gzip.decompress(base64.b64decode(sys.argv[1]))');
@@ -193,7 +195,7 @@ describe('Preview VPS provisioning workflow', () => {
       expect(pythonSyntax.status).toBe(0);
     }
     const diagnosticPythonBlocks = [...diagnose.matchAll(/<<'PYTHON'[^\n]*\n([\s\S]*?)\nPYTHON/g)];
-    expect(diagnosticPythonBlocks).toHaveLength(1);
+    expect(diagnosticPythonBlocks).toHaveLength(2);
     for (const [, source] of diagnosticPythonBlocks) {
       const pythonSyntax = spawnSync('python3', [
         '-c',

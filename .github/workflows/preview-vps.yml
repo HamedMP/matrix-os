@@ -1136,6 +1136,91 @@ jobs:
             /tmp/release-smoke-lifecycle.json >/dev/null
           jq -r '.stdout' /tmp/release-smoke-lifecycle.json
 
+          read -r -d '' host_script <<'PYTHON' || true
+          import datetime
+          import json
+          import re
+          import subprocess
+
+          since = "2026-09-12 05:34:00 UTC"
+          units = (
+              "cloud-final.service",
+              "matrix-developer-tools.service",
+              "matrix-code-server.service",
+              "matrix-linux-tools.service",
+              "matrix-sync-agent.service",
+              "matrix-shell.service",
+          )
+          allowed_states = {"active", "inactive", "failed", "activating", "deactivating", "dead", "running", "exited"}
+
+          def bounded_timestamp(value):
+              return value[:64] if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9:+. -]{0,64}", value) else "unknown"
+
+          def entry_timestamp(entry):
+              value = entry.get("__REALTIME_TIMESTAMP")
+              if isinstance(value, str) and value.isdigit():
+                  return datetime.datetime.fromtimestamp(int(value) / 1_000_000, datetime.timezone.utc).isoformat()
+              return "unknown"
+
+          service_state = {}
+          for unit in units:
+              output = subprocess.run([
+                  "/usr/bin/systemctl", "show", unit,
+                  "--property=ActiveState", "--property=SubState", "--property=Result",
+                  "--property=NRestarts", "--property=ExecMainStartTimestamp",
+                  "--property=ExecMainExitTimestamp", "--property=ActiveEnterTimestamp",
+              ], check=True, timeout=10, capture_output=True, text=True).stdout
+              values = dict(line.partition("=")[::2] for line in output.splitlines() if "=" in line)
+              service_state[unit] = {
+                  "activeState": values.get("ActiveState") if values.get("ActiveState") in allowed_states else "unknown",
+                  "subState": values.get("SubState") if values.get("SubState") in allowed_states else "unknown",
+                  "result": values.get("Result") if re.fullmatch(r"[a-z-]{1,32}", values.get("Result", "")) else "unknown",
+                  "nRestarts": int(values.get("NRestarts", "-1")) if values.get("NRestarts", "").isdigit() else -1,
+                  "startedAt": bounded_timestamp(values.get("ExecMainStartTimestamp", "")),
+                  "exitedAt": bounded_timestamp(values.get("ExecMainExitTimestamp", "")),
+                  "activeAt": bounded_timestamp(values.get("ActiveEnterTimestamp", "")),
+              }
+
+          actor_windows = {}
+          for actor in ("needrestart", "cloud-init", "apt-get", "dpkg", "unattended-upgr"):
+              output = subprocess.run([
+                  "/usr/bin/journalctl", f"_COMM={actor}", "--since", since,
+                  "--output=json", "--no-pager",
+              ], check=True, timeout=15, capture_output=True, text=True).stdout
+              entries = []
+              for raw in output.splitlines():
+                  try:
+                      entries.append(json.loads(raw))
+                  except json.JSONDecodeError:
+                      continue
+              actor_windows[actor] = {
+                  "count": min(len(entries), 100000),
+                  "firstAt": entry_timestamp(entries[0]) if entries else "none",
+                  "lastAt": entry_timestamp(entries[-1]) if entries else "none",
+              }
+
+          print(json.dumps({"hostServiceState": service_state, "hostActorWindows": actor_windows}, sort_keys=True))
+          PYTHON
+          host_payload="$(printf '%s' "$host_script" | gzip -c | base64 -w0)"
+          if [ "${#host_payload}" -gt 4096 ]; then
+            echo "Compressed host diagnostic exceeds the terminal command argument limit." >&2
+            exit 1
+          fi
+          body="$(jq -cn --arg payload "$host_payload" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-c",
+              "import base64,gzip,sys;exec(gzip.decompress(base64.b64decode(sys.argv[1])))",
+              $payload],timeoutMs:30000}')"
+          curl --fail --silent --show-error --max-time 45 --insecure \
+            --resolve "app.matrix-os.com:443:${address}" \
+            -o /tmp/release-smoke-host.json -X POST 'https://app.matrix-os.com/api/terminal/run' \
+            -H "authorization: Bearer ${runtime_token}" \
+            -H 'content-type: application/json' --data-binary "$body"
+          jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) |
+            .stdout | fromjson |
+            select((.hostServiceState | type == "object") and (.hostActorWindows | type == "object"))' \
+            /tmp/release-smoke-host.json >/dev/null
+          jq -r '.stdout' /tmp/release-smoke-host.json
+
   verify_inventory:
     name: Verify preview computer inventory
     needs: gate
