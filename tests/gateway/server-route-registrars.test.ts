@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -86,5 +86,42 @@ describe("gateway server route registrars", () => {
       kind: "write",
     }, expect.any(Function));
     await expect(stat(join(projectRoot, "blocked.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("empties a large stored trash manifest under one deduplicated project admission", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "gateway-trash-fence-"));
+    cleanupPaths.push(homePath);
+    const projectRoot = join(homePath, "projects", "repo");
+    const trashRoot = join(homePath, ".trash");
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(trashRoot, { recursive: true });
+    const entries = Array.from({ length: 65 }, (_, index) => ({
+      name: `file-${index}.txt`,
+      originalPath: `projects/repo/file-${index}.txt`,
+      deletedAt: new Date(0).toISOString(),
+      trashPath: `.trash/file-${index}.txt`,
+    }));
+    await Promise.all(entries.map((entry) => writeFile(join(homePath, entry.trashPath), entry.name)));
+    await writeFile(join(trashRoot, ".manifest.json"), JSON.stringify(entries));
+    const projectOperationAdmission = {
+      withLegacyAdmission: vi.fn(async (_input, operation: () => Promise<Response>) => operation()),
+    };
+    const app = new Hono();
+    const projectPathAdmission = createLegacyProjectPathAdmission({
+      homePath,
+      listOwnerProjects: async () => [{ id: "proj_repo", localPath: projectRoot }],
+      projectOperationAdmission,
+    });
+    registerFileRoutes(app, {
+      homePath,
+      getOwnerId: () => "user_owner",
+      projectPathAdmission,
+    });
+
+    const response = await app.request("/api/files/trash/empty", { method: "POST" });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, deleted: 65 });
+    expect(projectOperationAdmission.withLegacyAdmission).toHaveBeenCalledTimes(1);
   });
 });

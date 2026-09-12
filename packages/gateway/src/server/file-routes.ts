@@ -39,6 +39,7 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     c: Context,
     paths: readonly string[],
     operation: () => Promise<Response>,
+    storedPaths = false,
   ): Promise<Response> {
     if (!deps.projectPathAdmission) return operation();
     if (!deps.getOwnerId) {
@@ -46,7 +47,10 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     }
     try {
       const ownerId = deps.getOwnerId(c);
-      return await deps.projectPathAdmission.withPaths({
+      const admit = storedPaths
+        ? deps.projectPathAdmission.withStoredPaths.bind(deps.projectPathAdmission)
+        : deps.projectPathAdmission.withPaths.bind(deps.projectPathAdmission);
+      return await admit({
         ownerType: "personal",
         ownerId,
         paths,
@@ -184,7 +188,7 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     return withProjectFileAdmission(c, entries.entries.map((entry) => entry.originalPath), async () => {
       const result = await trashEmpty(homePath);
       return c.json(result);
-    });
+    }, true);
   });
 
   app.get("/api/projects", async (c) => {

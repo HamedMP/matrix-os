@@ -8,6 +8,7 @@ import {
 
 const MAX_MATCHED_PROJECTS = 32;
 const MAX_OWNER_PROJECTS = 10_000;
+const MAX_STORED_PATHS = 10_000;
 const PathSchema = z.string().min(1).max(4_096);
 const OwnerIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const ProjectSchema = z.object({
@@ -17,6 +18,12 @@ const ProjectSchema = z.object({
 
 export interface LegacyProjectPathAdmission {
   withPaths<T>(input: {
+    ownerType: "personal" | "organization";
+    ownerId: string;
+    paths: readonly string[];
+    kind: "write" | "run";
+  }, operation: () => Promise<T>): Promise<T>;
+  withStoredPaths<T>(input: {
     ownerType: "personal" | "organization";
     ownerId: string;
     paths: readonly string[];
@@ -39,48 +46,69 @@ export function createLegacyProjectPathAdmission(options: {
 }): LegacyProjectPathAdmission {
   const homePath = resolve(options.homePath);
 
+  async function admit<T>(
+    rawInput: {
+      ownerType: "personal" | "organization";
+      ownerId: string;
+      paths: readonly string[];
+      kind: "write" | "run";
+    },
+    maxPaths: number,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const input = z.object({
+      ownerType: z.enum(["personal", "organization"]),
+      ownerId: OwnerIdSchema,
+      paths: z.array(PathSchema).max(maxPaths),
+      kind: z.enum(["write", "run"]),
+    }).strict().safeParse({ ...rawInput, paths: [...rawInput.paths] });
+    if (!input.success) throw new ProjectFenceError("invalid");
+
+    const targets = input.data.paths
+      .map((path) => resolveWritableFileApiPath(homePath, path))
+      .filter((path): path is string => path !== null);
+    if (targets.length === 0) return operation();
+
+    const projects = z.array(ProjectSchema).max(MAX_OWNER_PROJECTS).safeParse(
+      await options.listOwnerProjects(input.data.ownerType, input.data.ownerId),
+    );
+    if (!projects.success) throw new ProjectFenceError("unavailable");
+    const matched = projects.data.filter((project) => {
+      const root = resolveWithinHome(homePath, project.localPath);
+      return root !== null && targets.some((target) => containsPath(root, target));
+    }).sort((left, right) => left.id.localeCompare(right.id));
+    const unique = matched.filter((project, index) => index === 0 || project.id !== matched[index - 1]!.id);
+    if (unique.length > MAX_MATCHED_PROJECTS) throw new ProjectFenceError("capacity");
+
+    const run = async (index: number): Promise<T> => {
+      const project = unique[index];
+      if (!project) return operation();
+      return options.projectOperationAdmission.withLegacyAdmission({
+        ownerType: input.data.ownerType,
+        ownerId: input.data.ownerId,
+        projectId: project.id,
+        kind: input.data.kind,
+      }, () => run(index + 1));
+    };
+    return run(0);
+  }
+
   return {
-    async withPaths<T>(rawInput: {
+    withPaths<T>(rawInput: {
       ownerType: "personal" | "organization";
       ownerId: string;
       paths: readonly string[];
       kind: "write" | "run";
     }, operation: () => Promise<T>): Promise<T> {
-      const input = z.object({
-        ownerType: z.enum(["personal", "organization"]),
-        ownerId: OwnerIdSchema,
-        paths: z.array(PathSchema).max(64),
-        kind: z.enum(["write", "run"]),
-      }).strict().safeParse({ ...rawInput, paths: [...rawInput.paths] });
-      if (!input.success) throw new ProjectFenceError("invalid");
-
-      const targets = input.data.paths
-        .map((path) => resolveWritableFileApiPath(homePath, path))
-        .filter((path): path is string => path !== null);
-      if (targets.length === 0) return operation();
-
-      const projects = z.array(ProjectSchema).max(MAX_OWNER_PROJECTS).safeParse(
-        await options.listOwnerProjects(input.data.ownerType, input.data.ownerId),
-      );
-      if (!projects.success) throw new ProjectFenceError("unavailable");
-      const matched = projects.data.filter((project) => {
-        const root = resolveWithinHome(homePath, project.localPath);
-        return root !== null && targets.some((target) => containsPath(root, target));
-      }).sort((left, right) => left.id.localeCompare(right.id));
-      const unique = matched.filter((project, index) => index === 0 || project.id !== matched[index - 1]!.id);
-      if (unique.length > MAX_MATCHED_PROJECTS) throw new ProjectFenceError("capacity");
-
-      const run = async (index: number): Promise<T> => {
-        const project = unique[index];
-        if (!project) return operation();
-        return options.projectOperationAdmission.withLegacyAdmission({
-          ownerType: input.data.ownerType,
-          ownerId: input.data.ownerId,
-          projectId: project.id,
-          kind: input.data.kind,
-        }, () => run(index + 1));
-      };
-      return run(0);
+      return admit(rawInput, 64, operation);
+    },
+    withStoredPaths<T>(rawInput: {
+      ownerType: "personal" | "organization";
+      ownerId: string;
+      paths: readonly string[];
+      kind: "write" | "run";
+    }, operation: () => Promise<T>): Promise<T> {
+      return admit(rawInput, MAX_STORED_PATHS, operation);
     },
   };
 }
