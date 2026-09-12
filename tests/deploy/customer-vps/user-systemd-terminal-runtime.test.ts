@@ -153,10 +153,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
   });
 
   it("updates and rolls back the current generation without stopping user terminal units", () => {
-    const updater = readFileSync(
-      join(root, "distro/customer-vps/host-bin/matrix-sync-agent"),
-      "utf8",
-    );
+    const updater = [
+      readFileSync(join(root, "distro/customer-vps/host-bin/matrix-sync-agent"), "utf8"),
+      readFileSync(join(root, "distro/customer-vps/host-bin/matrix-sync-agent-recovery"), "utf8"),
+    ].join("\n");
     const generationGc = readFileSync(
       join(root, "distro/customer-vps/host-bin/matrix-terminal-generation-gc.py"),
       "utf8",
@@ -190,10 +190,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
   });
 
   it("treats host replacement and migration as one recoverable update transaction", () => {
-    const updater = readFileSync(
-      join(root, "distro/customer-vps/host-bin/matrix-sync-agent"),
-      "utf8",
-    );
+    const updater = [
+      readFileSync(join(root, "distro/customer-vps/host-bin/matrix-sync-agent"), "utf8"),
+      readFileSync(join(root, "distro/customer-vps/host-bin/matrix-sync-agent-recovery"), "utf8"),
+    ].join("\n");
     const prepare = updater.indexOf('prepare_update_transaction "$extract_dir"');
     const seal = updater.indexOf("seal_update_transaction", prepare);
     const stop = updater.indexOf("if ! stop_runtime_services; then", seal);
