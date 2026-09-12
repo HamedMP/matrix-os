@@ -50,6 +50,7 @@ import {
   CanonicalChatProviderRegistry,
 } from "./provider-adapter.js";
 import {
+  ChatBusyError,
   ChatConflictError,
   ChatNotFoundError,
   ChatRunNotActiveError,
@@ -260,6 +261,7 @@ export class CanonicalChatOrchestrator {
           message,
           run,
           adapter,
+          undefined,
           undefined,
           undefined,
           undefined,
