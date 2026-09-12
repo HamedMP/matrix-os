@@ -706,6 +706,64 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
+  it("purges only the exact exited tab record without touching sibling sessions", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const disposable = await runtime.createTab(workspace.id, { name: "verification", cwd: "projects/matrix-os" });
+    const customer = await runtime.createTab(workspace.id, { name: "customer-shell", cwd: "projects/matrix-os" });
+    await runtime.terminateTab({ workspaceId: workspace.id, tabId: disposable.id });
+    zellij.closedTabs.length = 0;
+
+    await runtime.deleteTab({ workspaceId: workspace.id, tabId: disposable.id });
+
+    expect((await runtime.listWorkspaces())[0]?.tabs).toEqual([
+      expect.objectContaining({ id: customer.id, name: "customer-shell", status: "running" }),
+    ]);
+    expect(zellij.closedTabs).toEqual([]);
+    await runtime.shutdown();
+  });
+
+  it("closes an exited record when its exact Zellij tab is still alive", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const disposable = await runtime.createTab(workspace.id, { name: "verification", cwd: "projects/matrix-os" });
+    const customer = await runtime.createTab(workspace.id, { name: "customer-shell", cwd: "projects/matrix-os" });
+    const internalWorkspace = await store.getRuntimeWorkspace(workspace.id);
+    const liveTabId = internalWorkspace?.tabs[disposable.id]?.zellijTabId;
+    expect(liveTabId).not.toBeNull();
+    await store.markTabExited({ workspaceId: workspace.id, tabId: disposable.id });
+
+    await runtime.deleteTab({ workspaceId: workspace.id, tabId: disposable.id });
+
+    expect(zellij.closedTabs).toEqual([liveTabId]);
+    expect((await runtime.listWorkspaces())[0]?.tabs).toEqual([
+      expect.objectContaining({ id: customer.id, name: "customer-shell", status: "running" }),
+    ]);
+    await runtime.shutdown();
+  });
+
+  it("closes a running tab before purging its canonical record", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "temporary", cwd: "projects/matrix-os" });
+
+    await runtime.deleteTab({ workspaceId: workspace.id, tabId: tab.id });
+
+    expect(zellij.closedTabs).toHaveLength(1);
+    expect((await runtime.listWorkspaces())[0]?.tabs).toEqual([]);
+    await runtime.shutdown();
+  });
+
   it("rejects agent input while a pane-close checkpoint is pending", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
