@@ -1112,8 +1112,15 @@ jobs:
               "currentStart": current.get("ExecMainStartTimestamp", "unknown")[:64],
           }, sort_keys=True))
           PYTHON
-          body="$(jq -cn --arg script "$lifecycle_script" \
-            '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script],timeoutMs:30000}')"
+          diagnostic_payload="$(printf '%s' "$lifecycle_script" | gzip -c | base64 -w0)"
+          if [ "${#diagnostic_payload}" -gt 4096 ]; then
+            echo "Compressed diagnostic exceeds the terminal command argument limit." >&2
+            exit 1
+          fi
+          body="$(jq -cn --arg payload "$diagnostic_payload" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-c",
+              "import base64,gzip,sys;exec(gzip.decompress(base64.b64decode(sys.argv[1])))",
+              $payload],timeoutMs:30000}')"
           curl --fail --silent --show-error --max-time 45 --insecure \
             --resolve "app.matrix-os.com:443:${address}" \
             -o /tmp/release-smoke-lifecycle.json -X POST 'https://app.matrix-os.com/api/terminal/run' \

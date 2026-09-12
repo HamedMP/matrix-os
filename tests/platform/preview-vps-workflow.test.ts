@@ -174,6 +174,9 @@ describe('Preview VPS provisioning workflow', () => {
     expect(diagnose).toContain('syncAgentLifecycle');
     expect(diagnose).toContain('privilegedGatewayActions');
     expect(diagnose).toContain('terminalMigration');
+    expect(diagnose).toContain('gzip -c | base64 -w0');
+    expect(diagnose).toContain('"${#diagnostic_payload}" -gt 4096');
+    expect(diagnose).toContain('gzip.decompress(base64.b64decode(sys.argv[1]))');
 
     const shellSyntax = spawnSync('bash', ['-n', '-c', deploy], { encoding: 'utf8' });
     expect(shellSyntax.stderr).toBe('');
