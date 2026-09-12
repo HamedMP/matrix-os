@@ -249,7 +249,7 @@ describe('Preview VPS provisioning workflow', () => {
     expect(smoke).toContain('__MATRIX_OSC_OK__');
     expect(smoke).toContain('osc_feedback_loop_detected');
     expect(smoke).toContain('keyboardRoundTrips: 2');
-    expect(smoke).toContain('runtime_request DELETE "/api/terminal/workspaces/${workspace_id}/tabs/${tab_id}"');
+    expect(smoke).toContain('delete_exact_test_tab "$workspace_id" "$tab_id"');
     expect(smoke).toContain('Temporary terminal removed by exact workspace/tab ID.');
     expect(smoke).toContain('Terminal architecture verified');
     expect(smoke).toContain('Migration remained committed after the observation window');
