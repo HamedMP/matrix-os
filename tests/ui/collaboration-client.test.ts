@@ -63,7 +63,7 @@ describe("collaboration browser client", () => {
     const api = createCollaborationBrowserApi({
       baseUrl: "https://app.matrix-os.com",
       fetchImpl: async () => new Response(JSON.stringify({
-        ticket: "t".repeat(43), expiresAt: "2026-09-07T12:00:30.000Z",
+        ticket: "t".repeat(43), actorId: "user_editor", expiresAt: "2026-09-07T12:00:30.000Z",
       }), { headers: { "content-type": "application/json" } }),
       webSocketFactory: (url) => {
         urls.push(url);
@@ -128,7 +128,7 @@ describe("collaboration browser client", () => {
     const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(JSON.parse(String(init?.body))).toMatchObject({ purpose: "terminal" });
       return new Response(JSON.stringify({
-        ticket: "t".repeat(43), expiresAt: "2026-09-07T12:00:30.000Z",
+        ticket: "t".repeat(43), actorId: "user_editor", expiresAt: "2026-09-07T12:00:30.000Z",
       }), { headers: { "content-type": "application/json" } });
     });
     const api = createCollaborationBrowserApi({
@@ -147,9 +147,10 @@ describe("collaboration browser client", () => {
     const onReady = vi.fn();
     const onOutput = vi.fn();
     const onState = vi.fn();
+    const onDisconnected = vi.fn();
     const unsubscribe = api.subscribeTerminal!(
       "10000000-0000-4000-8000-000000000001",
-      { onReady, onOutput, onState, onRefreshRequired: vi.fn(), onUnavailable: vi.fn() },
+      { onReady, onOutput, onState, onRefreshRequired: vi.fn(), onUnavailable: vi.fn(), onDisconnected },
     );
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     expect(new URL(urls[0]!).pathname).toBe(
@@ -199,7 +200,8 @@ describe("collaboration browser client", () => {
     expect(onOutput).toHaveBeenCalledWith(expect.objectContaining({ data: "hello\n", sequence: "1" }));
     expect(onOutput).toHaveBeenCalledWith(expect.objectContaining({ data: escapedTerminalOutput, sequence: "2" }));
     expect(onState).not.toHaveBeenCalled();
+    sockets[0]!.onclose?.();
+    expect(onDisconnected).toHaveBeenCalledOnce();
     unsubscribe();
-    expect(sockets[0]!.close).toHaveBeenCalledWith(1000, "Closed");
   });
 });

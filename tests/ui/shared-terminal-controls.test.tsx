@@ -46,6 +46,7 @@ type TerminalHandlers = {
   onState(frame: unknown): void;
   onRefreshRequired(): void;
   onUnavailable(): void;
+  onDisconnected(): void;
 };
 
 function apiFixture() {
@@ -102,6 +103,19 @@ describe("shared terminal controls", () => {
 
   it("binds editor input and release to the issued connection and lease epoch", async () => {
     const { api, handlers } = apiFixture();
+    api.post.mockImplementation(async (_path, body) => {
+      const action = body as { type?: string };
+      const controlled = {
+        ...terminal,
+        controller: {
+          actor: { actorId: "user_editor", displayName: "Ada" },
+          leaseEpoch: "7",
+          expiresAt: "2026-09-11T12:00:30.000Z",
+        },
+      };
+      if (action.type === "release") return { terminal, action: "released" };
+      return { terminal: controlled, action: action.type === "acquire" ? "acquired" : "accepted" };
+    });
     render(<SharedTerminalControls api={api} scope={scope("editor")} actorId="user_editor" />);
     await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
     act(() => handlers().onReady(readyFrame("connection_editor")));
@@ -185,6 +199,26 @@ describe("shared terminal controls", () => {
     ));
     act(() => handlers().onUnavailable());
     expect(await screen.findByRole("alert")).toHaveTextContent("terminal is no longer available");
+    expect(screen.getByLabelText("Terminal input")).toBeDisabled();
+  });
+
+  it("stops without a socket and clears local control when the socket disconnects", async () => {
+    const { api, handlers } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("owner")} actorId="user_owner" />);
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole("button", { name: "Stop terminal" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scopeId}/terminal/actions`,
+      expect.not.objectContaining({ connectionId: expect.anything() }),
+    ));
+
+    act(() => handlers().onReady(readyFrame("connection_owner")));
+    fireEvent.click(await screen.findByRole("button", { name: "Request control" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scopeId}/terminal/actions`,
+      expect.objectContaining({ type: "acquire", connectionId: "connection_owner" }),
+    ));
+    act(() => handlers().onDisconnected());
     expect(screen.getByLabelText("Terminal input")).toBeDisabled();
   });
 });

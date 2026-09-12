@@ -54,7 +54,9 @@ describe("CLI shared terminal", () => {
   });
 
   it("acquires, sends, and releases one input with issued connection and lease fences", async () => {
-    const request = vi.fn(async () => ({ ticket: "t".repeat(43), expiresAt: "2026-09-11T12:00:30.000Z" }));
+    const request = vi.fn(async () => ({
+      ticket: "t".repeat(43), actorId: "user_editor", expiresAt: "2026-09-11T12:00:30.000Z",
+    }));
     const watching = watchCollaborationTerminal({
       platformUrl: "https://app.matrix-os.com",
       token: "actor-token",
@@ -73,6 +75,10 @@ describe("CLI shared terminal", () => {
     expect(JSON.parse(socket.sent[0]!)).toMatchObject({
       type: "acquire", connectionId: "connection_cli", incarnation,
     });
+    socket.emit("message", JSON.stringify(frame("terminal.state", terminal({
+      actorId: "user_other", displayName: "Grace", leaseEpoch: "6",
+    }))));
+    expect(socket.sent).toHaveLength(1);
     socket.emit("message", JSON.stringify(frame("terminal.state", terminal({
       actorId: "user_editor", displayName: "Ada", leaseEpoch: "7",
     }))));

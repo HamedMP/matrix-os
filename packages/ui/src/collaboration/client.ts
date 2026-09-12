@@ -92,6 +92,7 @@ export function createCollaborationBrowserApi(options: {
           const wsUrl = new URL(`/ws/collaboration/scopes/${parsedScopeId}/events`, baseUrl);
           wsUrl.protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
           wsUrl.searchParams.set("ticket", ticket.ticket);
+          wsUrl.searchParams.set("after", sequence.toString());
           wsUrl.searchParams.set("after", sequence);
           const next = (options.webSocketFactory ?? ((url: string) => new WebSocket(url)))(wsUrl.href);
           socket = next;
@@ -237,6 +238,7 @@ export function createCollaborationBrowserApi(options: {
             clearHeartbeat();
             if (socket === next) socket = null;
             if (closed) return;
+            handlers.onDisconnected();
             const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
             retryTimer = setTimeout(() => { void connect(); }, delay);
           };

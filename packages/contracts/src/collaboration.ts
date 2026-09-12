@@ -491,6 +491,7 @@ export const CollaborationConnectionTicketRequestSchema = z.object({
 
 export const CollaborationConnectionTicketResponseSchema = z.object({
   ticket: z.string().min(43).max(256).regex(/^[A-Za-z0-9_-]+$/),
+  actorId: CollaborationActorIdSchema,
   expiresAt: z.iso.datetime(),
 }).strict();
 

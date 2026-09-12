@@ -19,7 +19,7 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
   terminalId: string;
 }) {
   const [surface, setSurface] = useState<"confirm" | "collaborators" | null>(null);
-  const [preflight, setPreflight] = useState<Preflight | null>(null);
+  const preflight = useRef<Preflight | null>(null);
   const [scope, setScope] = useState<Scope | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [pending, setPending] = useState(false);
@@ -54,7 +54,7 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
         if (alive.current) setError(result.reason === "unsupported" ? "unsupported" : "unavailable");
         return;
       }
-      if (alive.current) { setPreflight(result); setSurface("confirm"); }
+      if (alive.current) { preflight.current = result; setSurface("confirm"); }
     } catch (failure: unknown) {
       console.warn("[terminal-collaboration] preflight failed", failure instanceof Error ? failure.name : "UnknownError");
       if (alive.current) setError("unavailable");
@@ -64,7 +64,7 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
   };
 
   const confirm = async () => {
-    if (!runtimeId || !preflight?.confirmationToken) return;
+    if (!runtimeId || !preflight.current?.confirmationToken) return;
     setPending(true);
     setError(null);
     try {
@@ -74,8 +74,8 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
           kind: "terminal",
           resourceId: terminalId,
           clientRequestId: crypto.randomUUID(),
-          expectedRevision: preflight.resourceRevision,
-          confirmationToken: preflight.confirmationToken,
+          expectedRevision: preflight.current.resourceRevision,
+          confirmationToken: preflight.current.confirmationToken,
         },
       ));
       await refresh(created.id);
@@ -88,7 +88,14 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
     }
   };
 
-  const close = () => { if (!pending) { setSurface(null); setPreflight(null); setScope(null); setError(null); } };
+  const close = () => {
+    if (!pending) {
+      setSurface(null);
+      preflight.current = null;
+      setScope(null);
+      setError(null);
+    }
+  };
   return <div className="relative inline-flex shrink-0 items-center">
     <button type="button" className={buttonClass} aria-label="Share terminal" disabled={pending}
       aria-expanded={surface !== null} onClick={() => surface ? close() : void begin()}>

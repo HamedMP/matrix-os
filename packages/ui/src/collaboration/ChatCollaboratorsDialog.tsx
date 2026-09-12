@@ -24,6 +24,7 @@ export interface CollaborationApi {
     onState(frame: Extract<CollaborationTerminalFrame, { type: "terminal.state" }>): void;
     onRefreshRequired(): void | Promise<void>;
     onUnavailable(): void;
+    onDisconnected(): void;
   }): () => void;
 }
 

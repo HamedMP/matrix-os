@@ -17,6 +17,8 @@ type Scope = z.infer<typeof CollaborationScopeSchema>;
 type State = {
   terminal: CollaborationTerminal | null;
   connectionId: string | null;
+  controlConnectionId: string | null;
+  controlLeaseEpoch: string | null;
   output: string;
   loading: boolean;
   pending: boolean;
@@ -30,12 +32,16 @@ type Action =
   | { type: "output"; data: string }
   | { type: "refresh"; terminal: CollaborationTerminal }
   | { type: "pending"; value: boolean }
+  | { type: "accepted"; terminal: CollaborationTerminal; connectionId: string | null; leaseEpoch: string | null }
+  | { type: "disconnected" }
   | { type: "error" }
   | { type: "unavailable" };
 
 const initialState: State = {
   terminal: null,
   connectionId: null,
+  controlConnectionId: null,
+  controlLeaseEpoch: null,
   output: "",
   loading: true,
   pending: false,
@@ -43,6 +49,7 @@ const initialState: State = {
   error: false,
 };
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This is one lease-bound UI state machine: its branches are role, connection, and epoch guards covered by shared-terminal-controls tests. Splitting them would duplicate security-sensitive derived authority across components.
 export function SharedTerminalControls({ api, scope, actorId }: {
   api: CollaborationApi;
   scope: Scope;
@@ -87,19 +94,22 @@ export function SharedTerminalControls({ api, scope, actorId }: {
       },
       onRefreshRequired: refresh,
       onUnavailable: () => { if (active) dispatch({ type: "unavailable" }); },
+      onDisconnected: () => { if (active) dispatch({ type: "disconnected" }); },
     });
     return () => { active = false; unsubscribe(); };
   }, [api, refresh, scope.id]);
 
   const controller = state.terminal?.controller;
-  const holdsControl = controller?.actor.actorId === actorId;
+  const holdsControl = controller?.actor.actorId === actorId
+    && state.controlConnectionId === state.connectionId
+    && state.controlLeaseEpoch === controller.leaseEpoch;
   const canControl = scope.capabilities.controlTerminal && scope.role !== "viewer"
     && state.terminal?.status === "active" && !state.unavailable;
   const canStop = state.terminal?.status === "active" && !state.unavailable
     && (scope.capabilities.stopTerminal
       || (scope.role === "editor" && state.terminal.createdBy.actorId === actorId));
   const sendAction = useCallback(async (action: Record<string, unknown>) => {
-    if (!state.terminal || !state.connectionId) return;
+    if (!state.terminal || (action.type !== "stop" && !state.connectionId)) return;
     dispatch({ type: "pending", value: true });
     try {
       const result = CollaborationTerminalActionResultSchema.parse(await api.post(
@@ -111,13 +121,20 @@ export function SharedTerminalControls({ api, scope, actorId }: {
           ...(action.type === "stop" ? {} : { connectionId: state.connectionId }),
         },
       ));
-      dispatch({ type: "state", terminal: result.terminal });
+      const ownsResult = result.terminal.controller?.actor.actorId === actorId
+        && ["acquired", "taken_over", "renewed", "accepted"].includes(result.action);
+      dispatch({
+        type: "accepted",
+        terminal: result.terminal,
+        connectionId: ownsResult ? state.connectionId : null,
+        leaseEpoch: ownsResult ? result.terminal.controller?.leaseEpoch ?? null : null,
+      });
       dispatch({ type: "pending", value: false });
     } catch (error: unknown) {
       console.warn("[terminal-collaboration] action failed", error instanceof Error ? error.name : "UnknownError");
       dispatch({ type: "error" });
     }
-  }, [api, scope.id, state.connectionId, state.terminal]);
+  }, [actorId, api, scope.id, state.connectionId, state.terminal]);
 
   useEffect(() => {
     if (!holdsControl || !controller || !canControl) return;
@@ -188,13 +205,18 @@ export function SharedTerminalControls({ api, scope, actorId }: {
 
 function reduce(state: State, action: Action): State {
   if (action.type === "ready") return { ...state, terminal: action.terminal, connectionId: action.connectionId,
-    loading: false, unavailable: false, error: false };
+    controlConnectionId: null, controlLeaseEpoch: null, loading: false, unavailable: false, error: false };
   if (action.type === "state") return { ...state, terminal: action.terminal, pending: false, error: false };
+  if (action.type === "accepted") return { ...state, terminal: action.terminal,
+    controlConnectionId: action.connectionId, controlLeaseEpoch: action.leaseEpoch, pending: false, error: false };
+  if (action.type === "disconnected") return { ...state, connectionId: null,
+    controlConnectionId: null, controlLeaseEpoch: null, pending: false };
   if (action.type === "refresh") return { ...state, terminal: action.terminal, loading: false, error: false };
   if (action.type === "output") return { ...state, output: appendBounded(state.output, action.data) };
   if (action.type === "pending") return { ...state, pending: action.value, error: false };
   if (action.type === "error") return { ...state, loading: false, pending: false, error: true };
-  return { ...state, loading: false, pending: false, unavailable: true, connectionId: null };
+  return { ...state, loading: false, pending: false, unavailable: true, connectionId: null,
+    controlConnectionId: null, controlLeaseEpoch: null };
 }
 
 function appendBounded(current: string, addition: string): string {

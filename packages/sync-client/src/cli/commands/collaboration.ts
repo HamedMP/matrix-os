@@ -141,7 +141,7 @@ export async function watchCollaborationTerminal(options: {
           }
           return;
         }
-        if (phase === "acquiring" && frame.terminal.controller) {
+        if (phase === "acquiring" && frame.terminal.controller?.actor.actorId === ticket.actorId) {
           leaseEpoch = frame.terminal.controller.leaseEpoch;
           if (options.input !== undefined) {
             phase = "sending";

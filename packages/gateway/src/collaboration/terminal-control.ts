@@ -102,7 +102,6 @@ export class TerminalControlCoordinator {
   async renew(identity: TerminalControlIdentity & { epoch: number }): Promise<TerminalControlLease> {
     const entry = this.requireHeld(identity);
     entry.lease!.expiresAt = new Date(this.now().getTime() + this.leaseMs).toISOString();
-    entry.lease!.disconnected = false;
     entry.lastTouchedAt = this.now().getTime();
     this.changed(entry);
     return publicLease(entry.lease!);
@@ -205,7 +204,8 @@ export class TerminalControlCoordinator {
     const entry = this.entries.get(keyFor(identity.scopeId, identity.terminalId, identity.incarnation));
     if (!entry) throw new CollaborationTerminalControlError("stale_lease");
     this.expireEntry(entry);
-    if (!entry.lease || entry.lease.epoch !== identity.epoch || !sameHolder(entry.lease, identity)) {
+    if (!entry.lease || entry.lease.disconnected || entry.lease.epoch !== identity.epoch
+      || !sameHolder(entry.lease, identity)) {
       throw new CollaborationTerminalControlError("stale_lease");
     }
     this.touch(entry);

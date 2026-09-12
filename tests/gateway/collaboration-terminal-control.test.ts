@@ -100,6 +100,14 @@ describe("TerminalControlCoordinator", () => {
     const first = await coordinator.acquire(holder("user_editor_a", "editor", "connection_a"));
     coordinator.markDisconnected(scopeId, "connection_a");
     expect(coordinator.current(scopeId, terminalId, incarnation)).toMatchObject({ epoch: first.epoch });
+    await expect(coordinator.assertHeld({
+      ...holder("user_editor_a", "editor", "connection_a"),
+      epoch: first.epoch,
+    })).rejects.toMatchObject({ code: "stale_lease" });
+    await expect(coordinator.renew({
+      ...holder("user_editor_a", "editor", "connection_a"),
+      epoch: first.epoch,
+    })).rejects.toMatchObject({ code: "stale_lease" });
     vi.advanceTimersByTime(30_001);
     expect(coordinator.sweep()).toBe(1);
     expect(coordinator.current(scopeId, terminalId, incarnation)).toBeNull();
