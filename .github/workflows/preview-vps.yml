@@ -1213,6 +1213,9 @@ jobs:
           since = "2026-09-12 05:34:00 UTC"
           units = (
               "cloud-final.service",
+              "apt-daily.service",
+              "apt-daily-upgrade.service",
+              "unattended-upgrades.service",
               "matrix-developer-tools.service",
               "matrix-code-server.service",
               "matrix-linux-tools.service",
@@ -1250,6 +1253,7 @@ jobs:
               }
 
           actor_windows = {}
+          actor_entries = {}
           for actor in ("needrestart", "cloud-init", "apt-get", "dpkg", "unattended-upgr"):
               output = subprocess.run([
                   "/usr/bin/journalctl", f"_COMM={actor}", "--since", since,
@@ -1266,8 +1270,83 @@ jobs:
                   "firstAt": entry_timestamp(entries[0]) if entries else "none",
                   "lastAt": entry_timestamp(entries[-1]) if entries else "none",
               }
+              actor_entries[actor] = entries
 
-          print(json.dumps({"hostServiceState": service_state, "hostActorWindows": actor_windows}, sort_keys=True))
+          maintenance_patterns = (
+              (r"starting unattended", "starting"),
+              (r"packages? (?:that will be|to be) upgraded", "packages_selected"),
+              (r"package.*(?:upgrade|install)", "package_activity"),
+              (r"dpkg", "dpkg_activity"),
+              (r"lock", "package_lock"),
+              (r"sigterm|signal 15", "sigterm"),
+              (r"shut(?:ting)? down|stopping", "stopping"),
+              (r"restart", "restart"),
+              (r"reboot", "reboot"),
+              (r"finished|complete", "completed"),
+          )
+          maintenance_lifecycle = []
+          for actor, entries in actor_entries.items():
+              for entry in entries:
+                  message = entry.get("MESSAGE")
+                  if not isinstance(message, str):
+                      continue
+                  for pattern, category in maintenance_patterns:
+                      if re.search(pattern, message, re.IGNORECASE):
+                          maintenance_lifecycle.append({
+                              "at": entry_timestamp(entry), "actor": actor, "category": category,
+                          })
+                          break
+
+          observed_units = (
+              "apt-daily.service", "apt-daily-upgrade.service", "unattended-upgrades.service",
+              "matrix-developer-tools.service", "matrix-gateway.service",
+              "matrix-shell.service", "matrix-sync-agent.service",
+          )
+          manager_lifecycle = []
+          boot_ids = set()
+          output = subprocess.run([
+              "/usr/bin/journalctl", "--since", since, "--output=json", "--no-pager",
+          ], check=True, timeout=20, capture_output=True, text=True).stdout
+          for raw in output.splitlines():
+              try:
+                  entry = json.loads(raw)
+              except json.JSONDecodeError:
+                  continue
+              boot_id = entry.get("_BOOT_ID")
+              if isinstance(boot_id, str) and re.fullmatch(r"[0-9a-f]{32}", boot_id):
+                  boot_ids.add(boot_id)
+              message = entry.get("MESSAGE")
+              if not isinstance(message, str) or (entry.get("_COMM") != "systemd" and entry.get("SYSLOG_IDENTIFIER") != "systemd"):
+                  continue
+              matched_unit = next((unit for unit in observed_units if unit.removesuffix(".service") in message), None)
+              category = None
+              if "daemon-reload" in message.lower() or "reloading" in message.lower():
+                  category = "reload"
+              elif "reexecut" in message.lower():
+                  category = "reexecute"
+              elif message.startswith("Stopping "):
+                  category = "stopping"
+              elif message.startswith("Stopped "):
+                  category = "stopped"
+              elif message.startswith("Starting "):
+                  category = "starting"
+              elif message.startswith("Started "):
+                  category = "started"
+              elif "Main process exited" in message:
+                  category = "main_process_exited"
+              if category and (matched_unit or category in {"reload", "reexecute"}):
+                  manager_lifecycle.append({
+                      "at": entry_timestamp(entry), "category": category,
+                      "unit": matched_unit or "system-manager",
+                  })
+
+          print(json.dumps({
+              "hostServiceState": service_state,
+              "hostActorWindows": actor_windows,
+              "hostManagerLifecycle": manager_lifecycle[-80:],
+              "maintenanceLifecycle": maintenance_lifecycle[-80:],
+              "bootIdCount": len(boot_ids),
+          }, sort_keys=True))
           PYTHON
           host_payload="$(printf '%s' "$host_script" | gzip -c | base64 -w0)"
           if [ "${#host_payload}" -gt 4096 ]; then
@@ -1285,7 +1364,11 @@ jobs:
             -H 'content-type: application/json' --data-binary "$body"
           jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) |
             .stdout | fromjson |
-            select((.hostServiceState | type == "object") and (.hostActorWindows | type == "object"))' \
+            select((.hostServiceState | type == "object") and
+              (.hostActorWindows | type == "object") and
+              (.hostManagerLifecycle | type == "array") and
+              (.maintenanceLifecycle | type == "array") and
+              (.bootIdCount | type == "number"))' \
             /tmp/release-smoke-host.json >/dev/null
           jq -r '.stdout' /tmp/release-smoke-host.json
 

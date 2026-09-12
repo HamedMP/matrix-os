@@ -182,6 +182,10 @@ describe('Preview VPS provisioning workflow', () => {
     expect(diagnose).toContain('terminalMigration');
     expect(diagnose).toContain('hostServiceState');
     expect(diagnose).toContain('hostActorWindows');
+    expect(diagnose).toContain('hostManagerLifecycle');
+    expect(diagnose).toContain('maintenanceLifecycle');
+    expect(diagnose).toContain('bootIdCount');
+    expect(diagnose).toContain('apt-daily-upgrade.service');
     expect(diagnose).toContain('gzip -c | base64 -w0');
     expect(diagnose).toContain('"${#diagnostic_payload}" -gt 4096');
     expect(diagnose).toContain('gzip.decompress(base64.b64decode(sys.argv[1]))');
