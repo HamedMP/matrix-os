@@ -16,7 +16,7 @@ describe("collaboration owner database", () => {
     await fixture.destroy();
   });
 
-  it("adds every M1 authority table and index idempotently", async () => {
+  it("adds every collaboration authority and transition table and index idempotently", async () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
 
@@ -36,6 +36,7 @@ describe("collaboration owner database", () => {
       "collaboration_operations",
       "collaboration_schema_migrations",
       "collaboration_scopes",
+      "collaboration_transitions",
     ]);
 
     const indexes = await sql<{ indexname: string }>`
@@ -48,6 +49,8 @@ describe("collaboration owner database", () => {
       "idx_collaboration_invitation_identity",
       "idx_collaboration_outbox_delivery",
       "idx_collaboration_scope_binding",
+      "idx_collaboration_transition_in_progress",
+      "idx_collaboration_transition_recovery",
     ]));
   });
 

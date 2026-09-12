@@ -105,6 +105,27 @@ export interface CollaborationSchemaMigrationsTable {
   applied_at: Timestamp;
 }
 
+export interface CollaborationTransitionsTable {
+  id: string;
+  scope_id: string;
+  source_authority_runtime_id: string;
+  source_authority_generation: number;
+  destination_authority_runtime_id: string;
+  destination_authority_generation: number;
+  requested_by: string;
+  inventory_revision: number;
+  inventory_hash: string;
+  intended_membership_hash: string;
+  status: "prepared" | "staging" | "fenced" | "committing" | "active" | "failed" | "recovering";
+  source_fence_epoch: number | null;
+  staged_manifest_ref: string | null;
+  publication_marker: string | null;
+  retry_count: ColumnType<number, number | undefined, number>;
+  error_code: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface ChatCollaborationCommandsTable {
   id: string;
   scope_id: string;
@@ -134,6 +155,7 @@ export interface CollaborationDatabase {
   collaboration_audit: CollaborationAuditTable;
   collaboration_directory_outbox: CollaborationDirectoryOutboxTable;
   collaboration_schema_migrations: CollaborationSchemaMigrationsTable;
+  collaboration_transitions: CollaborationTransitionsTable;
   chat_collaboration_commands: ChatCollaborationCommandsTable;
 }
 
@@ -306,6 +328,37 @@ export async function bootstrapCollaborationDatabase(
       CHECK (jsonb_typeof(recipient_actor_ids) = 'array')
     )
   `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_transitions (
+      id UUID PRIMARY KEY,
+      scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+      source_authority_runtime_id TEXT NOT NULL CHECK (char_length(source_authority_runtime_id) BETWEEN 1 AND 128),
+      source_authority_generation BIGINT NOT NULL CHECK (source_authority_generation > 0),
+      destination_authority_runtime_id TEXT NOT NULL CHECK (char_length(destination_authority_runtime_id) BETWEEN 1 AND 128),
+      destination_authority_generation BIGINT NOT NULL CHECK (destination_authority_generation > 0),
+      requested_by TEXT NOT NULL CHECK (char_length(requested_by) BETWEEN 1 AND 128),
+      inventory_revision BIGINT NOT NULL CHECK (inventory_revision >= 0),
+      inventory_hash TEXT NOT NULL CHECK (inventory_hash ~ '^[a-f0-9]{64}$'),
+      intended_membership_hash TEXT NOT NULL CHECK (intended_membership_hash ~ '^[a-f0-9]{64}$'),
+      status TEXT NOT NULL CHECK (status IN (
+        'prepared', 'staging', 'fenced', 'committing', 'active', 'failed', 'recovering'
+      )),
+      source_fence_epoch BIGINT CHECK (source_fence_epoch > 0),
+      staged_manifest_ref TEXT CHECK (
+        staged_manifest_ref IS NULL OR staged_manifest_ref ~ '^manifest_[A-Za-z0-9_-]{1,128}$'
+      ),
+      publication_marker TEXT CHECK (
+        publication_marker IS NULL OR publication_marker ~ '^publication_[A-Za-z0-9_-]{1,128}$'
+      ),
+      retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count BETWEEN 0 AND 20),
+      error_code TEXT CHECK (error_code IS NULL OR error_code ~ '^[a-z][a-z0-9_]{0,79}$'),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (source_authority_runtime_id <> destination_authority_runtime_id),
+      CHECK (status NOT IN ('fenced', 'committing', 'active') OR source_fence_epoch IS NOT NULL),
+      CHECK (status <> 'active' OR publication_marker IS NOT NULL)
+    )
+  `.execute(db);
 
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS actor_id TEXT`.execute(db);
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS purpose TEXT`.execute(db);
@@ -354,8 +407,23 @@ export async function bootstrapCollaborationDatabase(
     ON collaboration_exports(expires_at)
   `.execute(db);
   await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_transition_in_progress
+    ON collaboration_transitions(scope_id)
+    WHERE status IN ('prepared', 'staging', 'fenced', 'committing', 'recovering')
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_transition_recovery
+    ON collaboration_transitions(status, updated_at)
+    WHERE status IN ('prepared', 'staging', 'fenced', 'committing', 'recovering')
+  `.execute(db);
+  await sql`
     INSERT INTO collaboration_schema_migrations (version)
     VALUES (1)
+    ON CONFLICT (version) DO NOTHING
+  `.execute(db);
+  await sql`
+    INSERT INTO collaboration_schema_migrations (version)
+    VALUES (2)
     ON CONFLICT (version) DO NOTHING
   `.execute(db);
 }
