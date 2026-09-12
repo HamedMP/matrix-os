@@ -470,6 +470,65 @@ jobs:
               sleep 15
             done
           }
+          wait_for_stable_host_settled() {
+            local body response=/tmp/preview-host-settled.json settle_script deadline consecutive_idle=0
+            read -r -d '' settle_script <<'PYTHON' || true
+          import json
+          import subprocess
+
+          required = (
+              "cloud-final.service",
+              "matrix-developer-tools.service",
+              "matrix-linux-tools.service",
+              "unattended-upgrades.service",
+          )
+          busy = []
+          for unit in required:
+              output = subprocess.run([
+                  "/usr/bin/systemctl", "show", unit,
+                  "--property=LoadState", "--property=ActiveState", "--property=SubState",
+                  "--property=Result", "--property=ExecMainExitTimestamp",
+              ], check=True, timeout=10, capture_output=True, text=True).stdout
+              values = dict(line.partition("=")[::2] for line in output.splitlines() if "=" in line)
+              if (values.get("LoadState") != "loaded" or
+                  values.get("ActiveState") in {"activating", "deactivating", "failed"} or
+                  values.get("SubState") not in {"dead", "exited"} or
+                  values.get("Result") != "success" or
+                  not values.get("ExecMainExitTimestamp")):
+                  busy.append(unit.removesuffix(".service"))
+
+          for process_name in ("apt", "apt-get", "dpkg", "unattended-upgr"):
+              result = subprocess.run(
+                  ["/usr/bin/pgrep", "-x", process_name], timeout=5,
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+              )
+              if result.returncode == 0:
+                  busy.append(process_name)
+              elif result.returncode != 1:
+                  raise RuntimeError("process readiness check failed")
+
+          print(json.dumps({"ready": not busy, "busy": sorted(set(busy))}))
+          PYTHON
+            body="$(jq -cn --arg script "$settle_script" \
+              '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script],timeoutMs:30000}')"
+            deadline=$((SECONDS + 600))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              send_runtime_command "$body" "$response"
+              if jq -e '.stdout | fromjson | .ready == true' "$response" >/dev/null; then
+                consecutive_idle=$((consecutive_idle + 1))
+                if [ "$consecutive_idle" -ge 3 ]; then
+                  echo "Stable host provisioning is settled."
+                  return 0
+                fi
+              else
+                consecutive_idle=0
+                echo "Waiting for stable host provisioning: $(jq -cer '.stdout | fromjson | .busy' "$response")"
+              fi
+              sleep 10
+            done
+            echo "Stable host provisioning did not settle before the upgrade test." >&2
+            return 1
+          }
           seed_legacy_sessions() {
             local body response=/tmp/preview-legacy-seed.json seed_script
             read -r -d '' seed_script <<'PYTHON' || true
@@ -762,6 +821,7 @@ jobs:
           }
           if [ "$RELEASE_SMOKE" = "true" ]; then
             wait_for_stable_baseline
+            wait_for_stable_host_settled
             seed_legacy_sessions
           fi
           code="$(attempt)"

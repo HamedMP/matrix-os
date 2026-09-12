@@ -162,6 +162,10 @@ describe('Preview VPS provisioning workflow', () => {
     expect(decide).toContain('/system-bundles/channels/dev.json');
     expect(decide).toContain('Requested release is not the current dev bundle');
     expect(deploy).toContain('Stable baseline ready for ${HANDLE}: ${stable_version}');
+    expect(deploy).toContain('wait_for_stable_host_settled()');
+    expect(deploy).toContain('unattended-upgrades.service');
+    expect(deploy).toContain('consecutive_idle');
+    expect(deploy).toContain('Stable host provisioning is settled');
     expect(deploy).toContain('verify_terminal_migration()');
     expect(deploy).toContain('journalStatus');
     expect(deploy).toContain('stateSchemaVersion');
