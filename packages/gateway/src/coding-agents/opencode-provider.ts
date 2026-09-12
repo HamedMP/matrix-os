@@ -23,7 +23,10 @@ import type {
   CodingHarnessCredentialLaunch,
   CodingHarnessCredentialResolver,
 } from "./harness-credentials.js";
-import { buildPiChildEnvironment } from "./pi-process-environment.js";
+import {
+  buildPiChildEnvironment,
+  resolveOpenCodeCommand,
+} from "./pi-process-environment.js";
 import { prepareOpenCodeRunEnvironment } from "./managed-harness-process-config.js";
 import type {
   CodingAgentProviderAdapter,
@@ -379,7 +382,7 @@ export function createOpenCodeCodingAgentProvider(
   options: OpenCodeCodingAgentProviderOptions,
 ): CodingAgentProviderAdapter {
   const providerId = ProviderIdSchema.parse(options.providerId ?? "opencode");
-  const command = options.command ?? "opencode";
+  const command = resolveOpenCodeCommand(options.command, options.env);
   const spawnFn = options.spawnFn ?? defaultSpawn;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const runTimeoutMs = Math.max(1, Math.min(options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS));

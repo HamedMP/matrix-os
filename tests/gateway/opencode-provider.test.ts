@@ -186,7 +186,7 @@ describe("OpenCode coding-agent provider", () => {
       "--model", "anthropic/claude-sonnet-5", "Inspect the project",
     ]);
     expect(fake.calls[0]!.env).toMatchObject({
-      PATH: "/runtime/bin",
+      PATH: "/opt/matrix/runtime/node/bin:/runtime/bin",
       ANTHROPIC_API_KEY: "selected-key",
       OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
@@ -313,7 +313,10 @@ describe("OpenCode coding-agent provider", () => {
         nextEventId: ids(),
       });
 
-      expect(fake.calls[0]!.env).toMatchObject({ HOME: homePath, PATH: "/runtime/bin" });
+      expect(fake.calls[0]!.env).toMatchObject({
+        HOME: homePath,
+        PATH: "/opt/matrix/runtime/node/bin:/runtime/bin",
+      });
       expect(fake.calls[0]!.env).not.toHaveProperty("ANTHROPIC_API_KEY");
       expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
         "--pure", "--model", "anthropic/claude-sonnet-5",
@@ -997,7 +1000,17 @@ describe("OpenCode coding-agent provider", () => {
         installStatus: "installed",
         authStatus: "unknown",
       });
-    expect(runCommand).toHaveBeenCalledWith("opencode", ["--version"], expect.objectContaining({ timeout: 1_500 }));
+    expect(runCommand).toHaveBeenCalledWith(
+      "/opt/matrix/runtime/node/bin/opencode",
+      ["--version"],
+      expect.objectContaining({
+        timeout: 1_500,
+        env: expect.objectContaining({
+          MATRIX_NODE_PREFIX: "/opt/matrix/runtime/node",
+          PATH: expect.stringContaining("/opt/matrix/runtime/node/bin"),
+        }),
+      }),
+    );
   });
 
   it("reports the fixed owner-local OpenCode auth profile as authenticated without reading credentials", async () => {
