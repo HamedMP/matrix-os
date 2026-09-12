@@ -238,6 +238,9 @@ describe('Preview VPS provisioning workflow', () => {
     expect(decide).toContain('v2026.09.12-1237');
     expect(workflow.jobs.customer_release_smoke.if).toContain("needs.gate.outputs.action == 'customer_smoke'");
     expect(smoke).toContain('Stable preflight verified');
+    expect(smoke).toContain('"coreServicesActive": all(services[name] for name in core_service_names)');
+    expect(smoke).toContain('.coreServicesActive == true');
+    expect(smoke).toContain('.terminalRuntimeActive == true');
     expect(smoke).toContain('select(.channel == "stable") | .version');
     expect(smoke).toContain('/vps/deploy');
     expect(smoke).toContain('deploy_body="{\\"version\\":\\"${VERSION}\\",\\"handle\\":\\"${HANDLE}\\"}"');

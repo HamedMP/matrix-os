@@ -1072,7 +1072,8 @@ jobs:
 
           app_version = read_text("/opt/matrix/app/BUNDLE_VERSION", 256).strip()
           release_version = read_json("/opt/matrix/release.json", 65536).get("version")
-          service_names = ("matrix-gateway", "matrix-shell", "matrix-sync-agent", "matrix-terminal-runtime")
+          core_service_names = ("matrix-gateway", "matrix-shell", "matrix-sync-agent")
+          service_names = (*core_service_names, "matrix-terminal-runtime")
           services = {}
           for name in service_names:
               result = subprocess.run(
@@ -1125,11 +1126,13 @@ jobs:
           print(json.dumps({
               "activeWorkspaceServices": active_workspace_services,
               "appVersion": app_version if re.fullmatch(r"v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]+", app_version) else "invalid",
+              "coreServicesActive": all(services[name] for name in core_service_names),
               "migrationStatus": migration_status,
               "releaseVersion": release_version if isinstance(release_version, str) else "invalid",
               "schemaVersion": schema_version,
               "servicesActive": all(services.values()),
               "tabCount": tab_count,
+              "terminalRuntimeActive": services["matrix-terminal-runtime"],
               "updateError": update_error,
               "workspaceCount": workspace_count,
           }, sort_keys=True))
@@ -1145,12 +1148,12 @@ jobs:
 
           before="$(collect_state /tmp/nimanaderi-before.json)"
           if ! jq -e --arg stable "$stable_version" '
-            .appVersion == $stable and .releaseVersion == $stable and .servicesActive == true
+            .appVersion == $stable and .releaseVersion == $stable and .coreServicesActive == true
           ' <<< "$before" >/dev/null; then
             echo "Stable host preflight failed; no deployment was triggered." >&2
             exit 1
           fi
-          echo "Stable preflight verified: $(jq -c '{appVersion,releaseVersion,servicesActive,workspaceCount,tabCount}' <<< "$before")"
+          echo "Stable preflight verified: $(jq -c '{appVersion,releaseVersion,coreServicesActive,terminalRuntimeActive,workspaceCount,tabCount}' <<< "$before")"
 
           deploy_body="{\"version\":\"${VERSION}\",\"handle\":\"${HANDLE}\"}"
           curl --fail --silent --show-error --max-time 30 \
@@ -1184,7 +1187,8 @@ jobs:
             if after="$(collect_state /tmp/nimanaderi-after.json 2>/dev/null)" &&
               jq -e --arg target "$VERSION" '
                 .appVersion == $target and .releaseVersion == $target and
-                .servicesActive == true and .schemaVersion == 2 and
+                .coreServicesActive == true and .terminalRuntimeActive == true and
+                .schemaVersion == 2 and
                 .migrationStatus == "committed" and .updateError == "none"
               ' <<< "$after" >/dev/null; then
               break
@@ -1209,7 +1213,8 @@ jobs:
           final="$(collect_state /tmp/nimanaderi-final.json)"
           if ! jq -e --arg target "$VERSION" '
             .appVersion == $target and .releaseVersion == $target and
-            .servicesActive == true and .schemaVersion == 2 and
+            .coreServicesActive == true and .terminalRuntimeActive == true and
+            .schemaVersion == 2 and
             .migrationStatus == "committed" and .activeWorkspaceServices >= 1 and
             .tabCount >= 1 and .updateError == "none"
           ' <<< "$final" >/dev/null; then
@@ -1225,7 +1230,8 @@ jobs:
           observed="$(collect_state /tmp/nimanaderi-observed-final.json)"
           jq -e --arg target "$VERSION" '
             .appVersion == $target and .releaseVersion == $target and
-            .servicesActive == true and .schemaVersion == 2 and
+            .coreServicesActive == true and .terminalRuntimeActive == true and
+            .schemaVersion == 2 and
             .migrationStatus == "committed" and .activeWorkspaceServices >= 1
           ' <<< "$observed" >/dev/null
           echo "Migration remained committed after the observation window: $(jq -c '{appVersion,releaseVersion,migrationStatus,activeWorkspaceServices}' <<< "$observed")"
