@@ -607,6 +607,9 @@ export class CollaborationRepository {
     const operationExpiresAt = new Date(nowDate.getTime() + OPERATION_RETENTION_MS).toISOString();
     return this.db.transaction().execute(async (trx) => {
       const scope = await lockDirectScope(trx, input.scopeId);
+      if (scope.lifecycle !== "shared") {
+        throw new CollaborationRepositoryError("conflict", "Scope membership is not mutable");
+      }
       const actingMember = await trx.selectFrom("collaboration_members")
         .select(["role", "status"])
         .where("scope_id", "=", input.scopeId)

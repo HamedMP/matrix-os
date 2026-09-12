@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { createCollaborationProjectLifecycle } from "../../packages/gateway/src/collaboration/project-lifecycle.js";
+import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import {
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -154,6 +155,85 @@ describe("collaboration project lifecycle", () => {
     await expect(lifecycle.recoverPending()).resolves.toEqual({ recovered: 1, failed: 0 });
     await expect(lifecycle.getOperation(PROJECT_SCOPE_ID, OWNER_ID, request(4)))
       .resolves.toMatchObject({ type: "transfer", status: "completed", revision: "6" });
+  });
+
+  it("fences successor membership while an ownership transfer is staged", async () => {
+    let releaseStage!: () => void;
+    let markStageEntered!: () => void;
+    const stageEntered = new Promise<void>((resolve) => { markStageEntered = resolve; });
+    const stageGate = new Promise<void>((resolve) => { releaseStage = resolve; });
+    const lifecycle = service(fixture, {
+      stageTransfer: async () => {
+        markStageEntered();
+        await stageGate;
+        return {
+          destinationAuthorityRuntimeId: DESTINATION_RUNTIME,
+          destinationAuthorityGeneration: 1,
+          publicationMarker: "publication_owner_transfer",
+        };
+      },
+    });
+    const transfer = lifecycle.apply({
+      scopeId: PROJECT_SCOPE_ID,
+      actorId: OWNER_ID,
+      type: "transfer",
+      successorActorId: SUCCESSOR_ID,
+      expectedMemberRevision: 1,
+      clientRequestId: request(6),
+      expectedRevision: 4,
+      payloadHash: "f".repeat(64),
+    });
+    await stageEntered;
+    const repository = new CollaborationRepository(fixture.db, { now: () => NOW });
+
+    await expect(repository.changeMemberRole({
+      scopeId: PROJECT_SCOPE_ID,
+      actorId: OWNER_ID,
+      targetActorId: SUCCESSOR_ID,
+      role: "viewer",
+      clientRequestId: request(7),
+      expectedRevision: 5,
+      expectedMemberRevision: 1,
+      payloadHash: "1".repeat(64),
+    })).rejects.toMatchObject({ code: "conflict" });
+    releaseStage();
+
+    await expect(transfer).resolves.toMatchObject({ type: "transfer", status: "completed" });
+  });
+
+  it("persists a successful external transfer stage before retrying its database commit", async () => {
+    const stageTransfer = vi.fn(async () => {
+      await fixture.db.updateTable("collaboration_members").set({ revision: 2 })
+        .where("scope_id", "=", PROJECT_SCOPE_ID)
+        .where("actor_id", "=", SUCCESSOR_ID)
+        .execute();
+      return {
+        destinationAuthorityRuntimeId: DESTINATION_RUNTIME,
+        destinationAuthorityGeneration: 1,
+        publicationMarker: "publication_owner_transfer",
+      };
+    });
+    const lifecycle = service(fixture, { stageTransfer });
+    const accepted = await lifecycle.apply({
+      scopeId: PROJECT_SCOPE_ID,
+      actorId: OWNER_ID,
+      type: "transfer",
+      successorActorId: SUCCESSOR_ID,
+      expectedMemberRevision: 1,
+      clientRequestId: request(8),
+      expectedRevision: 4,
+      payloadHash: "2".repeat(64),
+    });
+    expect(accepted).toMatchObject({ type: "transfer", status: "accepted" });
+    await fixture.db.updateTable("collaboration_members").set({ revision: 1 })
+      .where("scope_id", "=", PROJECT_SCOPE_ID)
+      .where("actor_id", "=", SUCCESSOR_ID)
+      .execute();
+
+    await expect(lifecycle.recoverPending()).resolves.toEqual({ recovered: 1, failed: 0 });
+    expect(stageTransfer).toHaveBeenCalledTimes(1);
+    await expect(lifecycle.getOperation(PROJECT_SCOPE_ID, OWNER_ID, request(8)))
+      .resolves.toMatchObject({ type: "transfer", status: "completed" });
   });
 
   it("keeps deletion fenced until cleanup succeeds and removes no unrelated scope", async () => {

@@ -47,6 +47,7 @@ import {
 import type { CollaborationChatAdapter } from "./chat-adapter.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationChatScopeError, type CollaborationChatScopeService } from "./chat-scope.js";
+import type { createCollaborationProjectLifecycle } from "./project-lifecycle.js";
 import {
   CollaborationTerminalAdapterError,
   type CollaborationTerminalAdapter,
@@ -81,6 +82,10 @@ export function createCollaborationRoutes(options: {
   chatExecutionAdapter?: CollaborationChatExecutionAdapter;
   terminalAdapter?: CollaborationTerminalAdapter;
   terminalDispatcher?: CollaborationTerminalDispatcher;
+  projectLifecycle?: Pick<
+    ReturnType<typeof createCollaborationProjectLifecycle>,
+    "apply" | "getOperation"
+  >;
   resolveParticipant(actorId: string): Promise<Participant>;
   onScopeCommitted?(scopeId: string): Promise<void>;
   onRevoked?(scopeId: string, actorId: string): void;
@@ -408,6 +413,31 @@ export function createCollaborationRoutes(options: {
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerLifecycleProof(proof, scopeId);
     const input = CollaborationLifecycleRequestSchema.parse(value);
+    const scope = await options.repository.getScope(scopeId);
+    if (!scope) throw new CollaborationRepositoryError("not_found", "Collaboration scope not found");
+    if (scope.kind === "project") {
+      if (input.type === "export" || input.type === "recover") {
+        throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
+      }
+      const lifecycle = requireProjectLifecycle(options.projectLifecycle);
+      const common = {
+        scopeId,
+        actorId: proof.actorId,
+        clientRequestId: input.clientRequestId,
+        expectedRevision: Number(input.expectedRevision),
+        payloadHash: digest(bytes),
+      };
+      const result = input.type === "transfer"
+        ? await lifecycle.apply({
+          ...common,
+          type: "transfer",
+          successorActorId: input.successorActorId,
+          expectedMemberRevision: Number(input.expectedMemberRevision),
+        })
+        : await lifecycle.apply({ ...common, type: input.type });
+      await notifyScope(options, scopeId);
+      return c.json(CollaborationOperationSchema.parse(result));
+    }
     if (["transfer", "recover"].includes(input.type)) {
       throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
     }
@@ -428,7 +458,11 @@ export function createCollaborationRoutes(options: {
     const operationId = CollaborationIdSchema.parse(c.req.param("operationId"));
     const proof = await verifyHttp(options.verifier, c, new Uint8Array());
     requireOwnerLifecycleProof(proof, scopeId);
-    const operation = await options.repository.getLifecycleOperation(scopeId, proof.actorId, operationId);
+    const projectOperation = options.projectLifecycle
+      ? await options.projectLifecycle.getOperation(scopeId, proof.actorId, operationId)
+      : null;
+    const operation = projectOperation
+      ?? await options.repository.getLifecycleOperation(scopeId, proof.actorId, operationId);
     if (!operation) throw new CollaborationRepositoryError("not_found", "Lifecycle operation not found");
     return c.json(CollaborationOperationSchema.parse(operation));
   }));
@@ -575,6 +609,13 @@ function requireOwnerLifecycleProof(
   if (proof.scopeId !== scopeId || proof.actorId !== proof.ownerId) {
     throw new CollaborationAuthorizationError("forbidden", "Owner lifecycle access is required");
   }
+}
+
+function requireProjectLifecycle(
+  lifecycle: Pick<ReturnType<typeof createCollaborationProjectLifecycle>, "apply" | "getOperation"> | undefined,
+) {
+  if (!lifecycle) throw new CollaborationAuthorizationError("unavailable", "Project lifecycle is unavailable");
+  return lifecycle;
 }
 
 function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCollaborationContext) {

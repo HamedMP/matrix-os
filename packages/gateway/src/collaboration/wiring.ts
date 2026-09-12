@@ -24,6 +24,11 @@ import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
 import { createProjectTransitionJournal } from "./project-transition.js";
 import { createProjectFence } from "./project-fence.js";
+import {
+  createCollaborationProjectLifecycle,
+  type ProjectDeletionDriver,
+  type ProjectTransferStager,
+} from "./project-lifecycle.js";
 
 const MAX_PROOF_KEYS = 8;
 const ARTIFACT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
@@ -78,6 +83,10 @@ export async function createGatewayCollaboration(options: {
   config: GatewayCollaborationConfig;
   resolveParticipant?(actorId: string): Promise<{ actorId: string; displayName: string }>;
   outboxFetch?: typeof fetch;
+  projectLifecycleDrivers?: {
+    stageTransfer: ProjectTransferStager;
+    deleteProject: ProjectDeletionDriver;
+  };
   startTimers?: boolean;
 }) {
   await bootstrapCollaborationDatabase(options.db);
@@ -102,6 +111,10 @@ export async function createGatewayCollaboration(options: {
   });
   const projectTransitions = createProjectTransitionJournal({ db: options.db });
   const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
+  const projectLifecycle = options.projectLifecycleDrivers
+    ? createCollaborationProjectLifecycle({ db: options.db, ...options.projectLifecycleDrivers })
+    : undefined;
+  if (projectLifecycle) await projectLifecycle.recoverPending();
   const outbox = new CollaborationDirectoryOutbox({
     db: options.db,
     platformBaseUrl: options.config.platformBaseUrl,
@@ -239,6 +252,7 @@ export async function createGatewayCollaboration(options: {
         ...(chatExecutionAdapter ? { chatExecutionAdapter } : {}),
         ...(terminalAdapter ? { terminalAdapter } : {}),
         ...(terminalDispatcher ? { terminalDispatcher } : {}),
+        ...(projectLifecycle ? { projectLifecycle } : {}),
         resolveParticipant,
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {

@@ -237,8 +237,17 @@ export function createCollaborationProjectLifecycle(options: {
         if (!successorActorId || journal.expectedSuccessorRevision === undefined) {
           throw new CollaborationRepositoryError("conflict", "Transfer journal is incomplete");
         }
-        const transfer = TransferResultSchema.parse(await runBounded(externalTimeoutMs, (signal) =>
-          options.stageTransfer({
+        const persistedTransfer = journal.destinationAuthorityRuntimeId
+          && journal.destinationAuthorityGeneration
+          && journal.publicationMarker
+          ? TransferResultSchema.parse({
+              destinationAuthorityRuntimeId: journal.destinationAuthorityRuntimeId,
+              destinationAuthorityGeneration: journal.destinationAuthorityGeneration,
+              publicationMarker: journal.publicationMarker,
+            })
+          : null;
+        const transfer = persistedTransfer ?? TransferResultSchema.parse(
+          await runBounded(externalTimeoutMs, (signal) => options.stageTransfer({
             scopeId: journal.operation.scopeId,
             projectId: journal.projectId,
             operationId: journal.operation.id,
@@ -246,11 +255,13 @@ export function createCollaborationProjectLifecycle(options: {
             sourceAuthorityRuntimeId: journal.sourceAuthorityRuntimeId,
             sourceAuthorityGeneration: journal.sourceAuthorityGeneration,
             signal,
-          })));
+          })),
+        );
         if (transfer.destinationAuthorityRuntimeId === journal.sourceAuthorityRuntimeId) {
           throw new CollaborationRepositoryError("conflict", "Transfer authority did not change");
         }
-        return completeTransfer(journal, transfer);
+        const staged = persistedTransfer ? journal : await recordStagedTransfer(journal, transfer);
+        return await completeTransfer(staged, transfer);
       }
       await runBounded(externalTimeoutMs, (signal) => options.deleteProject({
         scopeId: journal.operation.scopeId,
@@ -260,13 +271,52 @@ export function createCollaborationProjectLifecycle(options: {
         authorityGeneration: journal.sourceAuthorityGeneration,
         signal,
       }));
-      return completeDeletion(journal);
+      return await completeDeletion(journal);
     } catch (error: unknown) {
       if (!(error instanceof CollaborationRepositoryError)) {
         console.warn("[collaboration-project] lifecycle recovery deferred", error instanceof Error ? error.name : "UnknownError");
       }
       return journal.operation;
     }
+  }
+
+  async function recordStagedTransfer(
+    journal: Journal,
+    transfer: z.infer<typeof TransferResultSchema>,
+  ): Promise<Journal> {
+    return options.db.transaction().execute(async (trx) => {
+      const scope = await lockProjectScope(trx, journal.operation.scopeId);
+      const current = await lockJournal(trx, journal);
+      if (current.operation.status === "completed") return current;
+      if (scope.owner_id !== current.sourceOwnerId || scope.lifecycle !== "recovering"
+        || Number(scope.revision) !== current.fencedRevision) {
+        throw new CollaborationRepositoryError("conflict", "Transfer state changed");
+      }
+      if (current.destinationAuthorityRuntimeId || current.destinationAuthorityGeneration
+        || current.publicationMarker) {
+        const matches = current.destinationAuthorityRuntimeId === transfer.destinationAuthorityRuntimeId
+          && current.destinationAuthorityGeneration === transfer.destinationAuthorityGeneration
+          && current.publicationMarker === transfer.publicationMarker;
+        if (!matches) throw new CollaborationRepositoryError("conflict", "Transfer publication changed");
+        return current;
+      }
+      const staged = JournalSchema.parse({
+        ...current,
+        destinationAuthorityRuntimeId: transfer.destinationAuthorityRuntimeId,
+        destinationAuthorityGeneration: transfer.destinationAuthorityGeneration,
+        publicationMarker: transfer.publicationMarker,
+      });
+      const updated = await trx.updateTable("collaboration_operations").set({
+        result_ref: jsonb(staged),
+      }).where("scope_id", "=", current.operation.scopeId)
+        .where("actor_id", "=", current.sourceOwnerId)
+        .where("client_request_id", "=", current.operation.id)
+        .where("operation_kind", "=", "project.transfer")
+        .where("status", "=", "accepted")
+        .returning("client_request_id").executeTakeFirst();
+      if (!updated) throw new CollaborationRepositoryError("conflict", "Transfer operation changed");
+      return staged;
+    });
   }
 
   async function completeTransfer(
