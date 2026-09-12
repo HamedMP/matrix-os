@@ -1226,7 +1226,7 @@ jobs:
             tt_f6a74b98c96ea99728cb40aad85636e4; do
             stale_test_ref="$(jq -cr --arg tab "$stale_test_tab" '
               [.workspaces[] as $workspace | $workspace.tabs[] |
-                select(.id == $tab and .name == "Matrix terminal smoke") |
+                select(.id == $tab) |
                 {workspaceId:$workspace.id,tabId:.id}] |
               if length == 0 then null elif length == 1 then .[0] else error("duplicate test tab") end
             ' /tmp/nimanaderi-stale-test-tab.json)"
@@ -1234,6 +1234,7 @@ jobs:
               stale_workspace="$(jq -er .workspaceId <<< "$stale_test_ref")"
               delete_exact_test_tab "$stale_workspace" "$stale_test_tab" /tmp/nimanaderi-stale-test-tab-delete.json
               echo "Removed an exact temporary tab left by an earlier probe."
+              sleep 1
             fi
           done
           runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-after-stale-cleanup.json
