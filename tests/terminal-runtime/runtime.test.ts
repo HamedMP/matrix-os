@@ -531,6 +531,52 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
+  it("restores every tab in a dense workspace with one batch runtime lookup", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    let batchLookups = 0;
+    let singleLookups = 0;
+    class BatchRestoreZellij extends FakeZellij {
+      override async findTabByInternalName(): Promise<never> {
+        singleLookups += 1;
+        throw new Error("dense restore must not inspect tabs one at a time");
+      }
+
+      async findTabsByInternalName(
+        sessionName: string,
+        internalNames: string[],
+      ): Promise<Record<string, { tabId: number; paneId: string }>> {
+        batchLookups += 1;
+        const requested = new Set(internalNames);
+        return Object.fromEntries(
+          [...(this.sessions.get(sessionName)?.entries() ?? [])]
+            .filter(([, tab]) => requested.has(tab.name))
+            .map(([tabId, tab]) => [tab.name, { tabId, paneId: tab.paneId }]),
+        );
+      }
+    }
+    const zellij = new BatchRestoreZellij();
+    const firstRuntime = new TerminalRuntime({ store, zellij });
+    const workspace = await firstRuntime.ensureWorkspace({ projectId: "matrix-os" });
+    await firstRuntime.createTab(workspace.id, { name: "one", cwd: "projects/matrix-os" });
+    await firstRuntime.createTab(workspace.id, { name: "two", cwd: "projects/matrix-os" });
+    await firstRuntime.createTab(workspace.id, { name: "three", cwd: "projects/matrix-os" });
+    await firstRuntime.shutdown();
+    batchLookups = 0;
+
+    const restartedRuntime = new TerminalRuntime({
+      store: new TerminalWorkspaceStore({ homePath }),
+      zellij,
+    });
+    await restartedRuntime.restoreAll();
+
+    expect(batchLookups).toBe(1);
+    expect(singleLookups).toBe(0);
+    expect((await restartedRuntime.listWorkspaces())[0]?.tabs).toHaveLength(3);
+    await restartedRuntime.shutdown();
+  });
+
   it("retires an unrecoverable legacy starting tab so it cannot consume capacity", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);

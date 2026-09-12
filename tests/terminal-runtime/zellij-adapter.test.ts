@@ -160,6 +160,37 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     )).resolves.toEqual({ tabId: 7, paneId: "terminal_12" });
   });
 
+  it("finds a dense set of tabs with one tab inventory and one pane inventory", async () => {
+    const first = "matrix-tab-0123456789abcdef0123456789abcdef";
+    const second = "matrix-tab-fedcba9876543210fedcba9876543210";
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-tabs")) {
+        return JSON.stringify([
+          { tab_id: 7, name: first },
+          { tab_id: 8, name: second },
+        ]);
+      }
+      if (args.includes("list-panes")) {
+        return JSON.stringify([
+          { id: 12, is_plugin: false, tab_id: 7, pane_title: first },
+          { id: 13, is_plugin: false, tab_id: 8, pane_title: second },
+        ]);
+      }
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+
+    await expect(adapter.findTabsByInternalName(
+      "matrix-w-0123456789abcdef0123456789abcdef",
+      [first, second],
+    )).resolves.toEqual({
+      [first]: { tabId: 7, paneId: "terminal_12" },
+      [second]: { tabId: 8, paneId: "terminal_13" },
+    });
+    expect(run.mock.calls.filter(([args]) => args.includes("list-tabs"))).toHaveLength(1);
+    expect(run.mock.calls.filter(([args]) => args.includes("list-panes"))).toHaveLength(1);
+  });
+
   it("promotes a remaining pane through the pinned generation when the primary closes", async () => {
     const logicalName = "matrix-w-0123456789abcdef0123456789abcdef";
     const ownedName = "matrix-rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -385,6 +416,57 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       cwd: "projects/matrix-os",
     })).resolves.toEqual({ tabId: 7, paneId: "terminal_12" });
     expect(tabReads).toBe(2);
+  });
+
+  it("reconciles a dense workspace with one pane inventory", async () => {
+    const logicalName = "matrix-w-0123456789abcdef0123456789abcdef";
+    const ownedName = "matrix-rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const binaryPath = `/opt/matrix/terminal-runtime/generations/gen_${"b".repeat(64)}/zellij`;
+    const existingName = "matrix-tab-0123456789abcdef0123456789abcdef";
+    const missingName = "matrix-tab-fedcba9876543210fedcba9876543210";
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-tabs")) {
+        return JSON.stringify([
+          { tab_id: 0, name: "matrix-bootstrap" },
+          { tab_id: 7, name: existingName },
+        ]);
+      }
+      if (args.includes("new-tab")) return "8\n";
+      if (args.includes("list-panes")) {
+        return JSON.stringify([
+          { id: 12, is_plugin: false, tab_id: 7, pane_title: existingName },
+          { id: 13, is_plugin: false, tab_id: 8, pane_title: "shell" },
+        ]);
+      }
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix",
+      run,
+      resolveRealpath: lexicalRealpath,
+      workspaceLifecycle: {
+        resolveWorkspaceTarget: vi.fn(async () => ({ sessionName: ownedName, binaryPath })),
+        ensureWorkspaceSession: vi.fn(),
+        deleteWorkspaceSession: vi.fn(),
+      },
+    });
+
+    await expect(adapter.prepareShellTabs(logicalName, [
+      { internalName: existingName, cwd: "" },
+      { internalName: missingName, cwd: "projects/matrix-os" },
+    ])).resolves.toEqual({
+      [existingName]: { tabId: 7, paneId: "terminal_12" },
+      [missingName]: { tabId: 8, paneId: "terminal_13" },
+    });
+
+    expect(run.mock.calls.filter(([args]) => args.includes("list-tabs"))).toHaveLength(1);
+    expect(run.mock.calls.filter(([args]) => args.includes("list-panes"))).toHaveLength(1);
+    expect(run).toHaveBeenCalledWith([
+      "--session", ownedName, "action", "close-tab", "--tab-id", "0",
+    ], binaryPath);
+    expect(run).toHaveBeenCalledWith([
+      "--session", ownedName, "action", "rename-pane", "--pane-id", "terminal_13", missingName,
+    ], binaryPath);
   });
 
   it("resolves tab cwd inside Matrix home and rejects missing or symlink-escaped paths", async () => {

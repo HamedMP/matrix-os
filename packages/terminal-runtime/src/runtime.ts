@@ -34,6 +34,10 @@ export interface ZellijRuntimeAdapter {
     onEvent: (event: ZellijObserverEvent) => void;
   }): Promise<ZellijObserver>;
   findTabByInternalName?(sessionName: string, internalName: string): Promise<{ tabId: number; paneId: string } | undefined>;
+  findTabsByInternalName?(
+    sessionName: string,
+    internalNames: string[],
+  ): Promise<Record<string, { tabId: number; paneId: string }>>;
   renameTab?(sessionName: string, tabId: number, name: string): Promise<void>;
   closeTab?(sessionName: string, tabId: number): Promise<void>;
   deleteSession?(sessionName: string): Promise<void>;
@@ -270,9 +274,19 @@ export class TerminalRuntime {
       : () => undefined;
     try {
       await this.zellij.ensureSession(workspace.zellijSessionName, workspace.canonicalSize);
-      for (const tab of Object.values(workspace.tabs).sort((left, right) => left.order - right.order)) {
-        if (tab.status === "exited" || tab.status === "failed") continue;
-        let ids = await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
+      const restorableTabs = Object.values(workspace.tabs)
+        .filter((tab) => tab.status !== "exited" && tab.status !== "failed")
+        .sort((left, right) => left.order - right.order);
+      const recoveredTabs = restorableTabs.length > 0 && this.zellij.findTabsByInternalName
+        ? await this.zellij.findTabsByInternalName(
+            workspace.zellijSessionName,
+            restorableTabs.map((tab) => tab.zellijTabName),
+          )
+        : undefined;
+      for (const tab of restorableTabs) {
+        let ids = recoveredTabs
+          ? recoveredTabs[tab.zellijTabName]
+          : await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
         if (tab.status === "starting" && tab.startupCommand === undefined) {
           // Records without startup intent predate stable client-supplied tab
           // IDs. Recover an already-created Zellij tab when possible; an
