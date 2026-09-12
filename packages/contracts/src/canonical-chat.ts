@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
-import { MAX_AGENT_ATTACHMENT_BYTES } from "#agent-thread-contracts";
+import { UserInputQuestionListSchema, MAX_AGENT_ATTACHMENT_BYTES } from "#agent-thread-contracts";
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalProviderDriverKindSchema,
@@ -532,10 +532,19 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     type: z.literal("input.requested"),
     requestId: canonicalReferenceId(128),
     title: canonicalSafeLabel(160, 640),
+    safeDescription: canonicalSafeLabel(600, 2_400).optional(),
+    questions: UserInputQuestionListSchema.optional(),
+    expiresAt: z.iso.datetime().optional(),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("input.submitted"),
+    requestId: canonicalReferenceId(128),
+    clientRequestId: CanonicalChatRequestIdSchema,
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.resolved"),
     requestId: canonicalReferenceId(128),
+    reason: z.enum(["answered", "cancelled", "expired"]).optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("resource.changed"),

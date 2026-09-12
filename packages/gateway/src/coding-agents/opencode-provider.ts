@@ -1,3 +1,4 @@
+import { createOpenCodeServerProcess } from "./opencode-server-process.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -9,6 +10,7 @@ import {
   type AgentAttachment,
   type AgentThreadEvent,
   type SafeSetupAction,
+  type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
 import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
@@ -31,7 +33,6 @@ import type {
   CodingAgentProviderEventPublisher,
 } from "./provider-adapter.js";
 import { hasNativeHarnessAuth } from "./native-harness-auth.js";
-import { spawnIsolatedProviderProcess } from "./provider-process-isolation.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
@@ -51,7 +52,7 @@ const OpenCodeResumeStateSchema = z.object({
 }).strict();
 
 interface SpawnOptions { cwd: string; env: Record<string, string> }
-interface ChildProcess {
+export interface OpenCodeProcess {
   stdout: {
     on(event: "data", listener: (chunk: Buffer) => void): void;
     once(event: "end" | "close", listener: () => void): void;
@@ -60,8 +61,9 @@ interface ChildProcess {
   once(event: "exit", listener: (code: number | null) => void): void;
   once(event: "error", listener: (error: Error) => void): void;
   kill(signal: NodeJS.Signals): void;
+  submitInput?(requestId: string, input: UserInputAnswerRequest): Promise<void>;
 }
-export type OpenCodeSpawnFn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+export type OpenCodeSpawnFn = (command: string, args: string[], options: SpawnOptions) => OpenCodeProcess;
 type RunCommand = (
   command: string,
   args: string[],
@@ -83,11 +85,7 @@ export interface OpenCodeCodingAgentProviderOptions {
 }
 
 const execFileAsync = promisify(execFile);
-const defaultSpawn: OpenCodeSpawnFn = (command, args, options) =>
-  spawnIsolatedProviderProcess(command, args, {
-    ...options,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+const defaultSpawn: OpenCodeSpawnFn = createOpenCodeServerProcess;
 const defaultRunCommand: RunCommand = async (command, args, options) => {
   const result = await execFileAsync(command, args, {
     ...options,
@@ -161,6 +159,7 @@ function readOnlyConfig(baseUrl: string | undefined): string {
       glob: "allow",
       grep: "allow",
       list: "allow",
+      question: "allow",
     },
     ...(baseUrl ? { provider: { anthropic: { options: { baseURL: baseUrl } } } } : {}),
   });
@@ -302,6 +301,18 @@ function collectLine(input: {
     ? record.sessionID
     : undefined;
   if (record.type === "error") return { sessionId, failed: true };
+  if (record.type === "matrix.input.requested" || record.type === "matrix.input.resolved") {
+    if (input.events.length >= MAX_EVENTS) return { sessionId, limitExceeded: true };
+    input.events.push(AgentThreadEventSchema.parse({
+      ...eventBase(input.threadId, input.now, input.nextEventId),
+      ...(record.type === "matrix.input.requested" ? {
+        type: "user_input.requested",
+        request: { requestId: record.requestId, threadId: input.threadId, correlationId: record.correlationId,
+          title: "Input needed", safeDescription: "Answer the questions to continue.", questions: record.questions },
+      } : { type: "user_input.answered", requestId: record.requestId, correlationId: record.correlationId, reason: record.reason }),
+    }));
+    return { sessionId };
+  }
   const part = record.part;
   if (!part || typeof part !== "object") return { sessionId };
   const value = part as Record<string, unknown>;
@@ -377,6 +388,7 @@ export function createOpenCodeCodingAgentProvider(
     abort: () => void;
     evict: () => void;
     steer: (message: string) => void;
+    submitInput: (requestId: string, request: UserInputAnswerRequest) => Promise<void>;
   }>();
   const resolveProjectPath = options.resolveProjectPath ?? (async (slug: string) => {
     const result = await createProjectManager({ homePath: options.homePath }).getProject(slug);
@@ -425,7 +437,7 @@ export function createOpenCodeCodingAgentProvider(
     const configuredTimeoutMs = launch.maxRunMs ? Math.min(runTimeoutMs, launch.maxRunMs) : runTimeoutMs;
     const timeoutMs = Math.max(1, Math.min(configuredTimeoutMs, runDeadline - Date.now()));
     return await new Promise((resolve) => {
-      let child: ChildProcess;
+      let child: OpenCodeProcess;
       try { child = spawnFn(command, args, { cwd: input.cwd, env }); } catch (error: unknown) {
         logCodingAgentWarning("OpenCode spawn failed", error);
         resolve({ events: [], outcome: "failed" });
@@ -486,6 +498,10 @@ export function createOpenCodeCodingAgentProvider(
         killTimer.unref?.();
       };
       const tracked = {
+        submitInput: async (requestId: string, request: UserInputAnswerRequest) => {
+          if (!child.submitInput || settled || terminationReason) throw new Error("OpenCode input unavailable");
+          await child.submitInput(requestId, request);
+        },
         abort: () => stop("user_abort"),
         evict: () => stop("failure"),
         steer: (message: string) => {
@@ -750,6 +766,11 @@ export function createOpenCodeCodingAgentProvider(
       running.steer(message);
     },
     submitApproval() { return []; },
-    submitInput() { return []; },
+    async submitInput({ thread, inputRequestId, request }) {
+      const running = active.get(thread.id);
+      if (!running) throw new Error("OpenCode input unavailable");
+      await running.submitInput(inputRequestId, request);
+      return [];
+    },
   };
 }

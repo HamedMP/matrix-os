@@ -1328,6 +1328,10 @@ export class ChatRepository {
     return this.runLifecycle.getAdapterState(ownerInput, input);
   }
 
+  async getInputState(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string }) {
+    return this.runLifecycle.getInputState(owner, input);
+  }
+
   async getPendingApproval(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;

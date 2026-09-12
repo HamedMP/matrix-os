@@ -1264,6 +1264,48 @@ describe("CanonicalChatOrchestrator", () => {
     )).toBe(false);
   });
 
+  it("persists structured input and submits it exactly once across concurrent retries", async () => {
+    await repository.create(owner, { id: "chat_input", clientRequestId: "req_create_input", title: "Input" });
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const submitInput = vi.fn(async () => {});
+    const provider = {
+      ...adapter(async function* () {
+        yield { type: "state.updated" as const, state: { sessionId: "native_input" } };
+        yield { type: "input.requested" as const, requestId: "input_color", title: "Choose color", questions: [{ questionId: "color", header: "Color", question: "Choose a color", options: [{ label: "Red", description: "Red color" }, { label: "Blue", description: "Blue color" }], allowOther: false, secret: false }] };
+        await released;
+        yield { type: "run.completed" as const, outcome: "completed" as const };
+      }), submitInput,
+    };
+    const orchestrator = new CanonicalChatOrchestrator({ repository, catalog: { getCatalog: async () => catalog() }, adapters: new CanonicalChatProviderRegistry([provider]) });
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_input", {
+      clientRequestId: "req_input_turn", baseRevision: 0, parts: [{ type: "text", text: "choose" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "supervised",
+    });
+    await vi.waitFor(async () => expect((await repository.exportChat(owner, "chat_input"))?.runs[0].status).toBe("waiting_for_input"));
+    const answer = { clientRequestId: "req_answer", structuredAnswers: { color: ["Red"] } };
+    await expect(orchestrator.submitInput({ ...owner, ownerId: "other" }, "chat_input", admitted.run.id, "input_color", answer)).rejects.toBeDefined();
+    await expect(orchestrator.submitInput(owner, "chat_input", admitted.run.id, "input_color", { ...answer, structuredAnswers: { color: ["Green"] } })).rejects.toMatchObject({ status: 409 });
+    const results = await Promise.all([1, 2].map(() => orchestrator.submitInput(owner, "chat_input", admitted.run.id, "input_color", answer)));
+    expect(results.map(result => result.submission).sort()).toEqual(["accepted", "already_submitted"]);
+    expect(submitInput).toHaveBeenCalledTimes(1);
+    expect(submitInput).toHaveBeenCalledWith(expect.objectContaining({ runId: admitted.run.id, requestId: "input_color", structuredAnswers: { color: ["Red"] }, state: { sessionId: "native_input" } }));
+    expect((await repository.getInputState(owner, { chatId: "chat_input", runId: admitted.run.id, requestId: "input_color" })).resolved).toBe(true);
+    await expect(orchestrator.submitInput(owner, "chat_input", admitted.run.id, "input_color", { ...answer, clientRequestId: "req_answer_2" })).rejects.toMatchObject({ status: 409 });
+    await repository.appendRunActivities(owner, "chat_input", admitted.run.id, [
+      { id: "activity_new_question", chatId: "chat_input", runId: admitted.run.id, occurredAt: new Date().toISOString(), type: "input.requested", requestId: "input_next", title: "Next question" },
+      { id: "activity_late_resolution", chatId: "chat_input", runId: admitted.run.id, occurredAt: new Date().toISOString(), type: "input.resolved", requestId: "input_color", reason: "answered" },
+    ]);
+    expect((await repository.exportChat(owner, "chat_input"))?.runs[0].status).toBe("waiting_for_input");
+    await repository.appendRunActivities(owner, "chat_input", admitted.run.id, [
+      { id: "activity_late_approval", chatId: "chat_input", runId: admitted.run.id, occurredAt: new Date().toISOString(), type: "approval.resolved", approvalId: "appr_old", decision: "approve" },
+    ]);
+    expect((await repository.exportChat(owner, "chat_input"))?.runs[0].status).toBe("waiting_for_input");
+    release();
+    await orchestrator.drain();
+    await expect(orchestrator.submitInput(owner, "chat_input", admitted.run.id, "input_color", answer)).resolves.toEqual({ requestId: "input_color", submission: "already_submitted" });
+  });
+
   it("submits only a pending allowed approval decision through the active Provider Run", async () => {
     await repository.create(owner, {
       id: "chat_approval",

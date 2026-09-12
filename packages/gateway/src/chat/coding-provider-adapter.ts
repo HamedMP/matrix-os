@@ -31,7 +31,7 @@ const MAX_ACTIVE_STEER_RUNS = 64;
 
 type CodingThreads = Pick<
   CodingAgentThreadStore & CodingAgentTurnStore,
-  "createThread" | "acceptTurn" | "steerTurn" | "getThread" | "abortThread" | "submitApproval" | "registerEventSink"
+  "createThread" | "acceptTurn" | "steerTurn" | "getThread" | "abortThread" | "submitApproval" | "submitInput" | "registerEventSink"
 >;
 
 type CodingState = CodingChatState;
@@ -211,7 +211,11 @@ function normalizeEvent(
   if (event.type === "user_input.requested") {
     return [CanonicalProviderRunEventSchema.parse({
       type: "input.requested", requestId: event.request.requestId, title: event.request.title,
+      questions: event.request.questions, safeDescription: event.request.safeDescription, expiresAt: event.request.expiresAt,
     })];
+  }
+  if (event.type === "user_input.answered") {
+    return [CanonicalProviderRunEventSchema.parse({ type: "input.resolved", requestId: event.requestId, reason: event.reason ?? "answered" })];
   }
   if (event.type === "thread.error") {
     return [...settled, CanonicalProviderRunEventSchema.parse({
@@ -333,13 +337,14 @@ export function createCanonicalCodingChatProviderAdapter(options: {
   const kind = driverKind(options.providerId);
   const activeSteerRuns = new Map<string, {
     ownerId: string;
+    chatId: string;
     threadId: string;
     legacyTurnId?: string;
   }>();
 
   function registerSteerRun(
     runId: string,
-    value: { ownerId: string; threadId: string; legacyTurnId?: string },
+    value: { ownerId: string; chatId: string; threadId: string; legacyTurnId?: string },
   ): () => void {
     if (!activeSteerRuns.has(runId) && activeSteerRuns.size >= MAX_ACTIVE_STEER_RUNS) {
       throw new Error("Canonical coding steering registry exceeded");
@@ -434,6 +439,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         targetThreadId = created.snapshot.thread.id;
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
+          chatId: input.chatId,
           threadId: targetThreadId,
         });
         for (const published of buffered) {
@@ -484,6 +490,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         admittedTurnId = accepted.turnId;
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
+          chatId: input.chatId,
           threadId: targetThreadId,
           legacyTurnId: accepted.turnId,
         });
@@ -529,6 +536,24 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         state.conversationId,
         legacyRequestId(input.runId),
       );
+    },
+    async submitInput(input) {
+      const active = activeSteerRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) {
+        throw new Error("Input Run unavailable");
+      }
+      const current = await options.threads.getThread(principal(input.owner.ownerId), active.threadId);
+      let correlationId: string | undefined;
+      for (const event of current.events.items) {
+        if (event.type === "user_input.requested" && event.request.requestId === input.requestId) correlationId = event.request.correlationId;
+        if (event.type === "user_input.answered" && event.requestId === input.requestId) correlationId = undefined;
+      }
+      if (!correlationId) throw new Error("Input request unavailable");
+      await options.threads.submitInput(principal(input.owner.ownerId), active.threadId, input.requestId, {
+        answer: input.answer ?? Object.values(input.structuredAnswers ?? {}).flat().join("\n"),
+        ...(input.structuredAnswers ? { structuredAnswers: input.structuredAnswers } : {}),
+        clientRequestId: input.clientRequestId, correlationId,
+      });
     },
     async submitApproval(input) {
       if (!input.state) throw new Error("Canonical coding Provider approval state unavailable");

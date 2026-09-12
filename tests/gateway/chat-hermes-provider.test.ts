@@ -475,7 +475,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
         risk: "high",
         allowedDecisions: ["approve", "approve_for_session", "decline"],
       },
-      { type: "input.requested", requestId: "input_1", title: "Hermes needs input" },
+      { type: "input.requested", requestId: "input_1", title: "Input needed", questions: [{ questionId: "q0", header: "Question 1", question: "Enter the requested sensitive value.", multiSelect: false, allowOther: true, secret: true }] },
       { type: "agent.activity", activityId: "status_planning", kind: "plan", label: "Planning", status: "completed" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },

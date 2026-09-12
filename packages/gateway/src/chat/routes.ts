@@ -1,3 +1,5 @@
+import { ChatInputWireVersionSchema } from "@matrix-os/contracts";
+import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import {
   ChatMessageWireVersionSchema,
   projectChatMessageResponse,
@@ -193,6 +195,13 @@ export interface CanonicalChatRouteService {
     runId: string,
     input: CanonicalCancelChatRunRequest,
   ): Promise<CanonicalChatRunCancellationResponse>;
+  submitInput(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    requestId: string,
+    input: CanonicalSubmitChatInputRequest,
+  ): Promise<CanonicalChatInputSubmissionResponse>;
   submitApproval(
     owner: ChatOwner,
     chatId: string,
@@ -281,7 +290,8 @@ export function createCanonicalChatRoutes(options: {
 }): Hono {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
-    if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success) {
+    if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
+      || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success) {
       return validationError(context);
     }
     await next();
@@ -463,6 +473,7 @@ export function createCanonicalChatRoutes(options: {
       return context.json(projectChatMessageResponse(
         CanonicalChatDetailResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+        ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -484,6 +495,7 @@ export function createCanonicalChatRoutes(options: {
       return context.json(projectChatMessageResponse(
         CanonicalChatTurnAdmissionResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+        ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
       ), 202);
     } catch (error: unknown) {
       return handleError(context, error);
@@ -575,6 +587,7 @@ export function createCanonicalChatRoutes(options: {
       return context.json(projectChatMessageResponse(
         CanonicalChatRunSteeringResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+        ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -601,6 +614,7 @@ export function createCanonicalChatRoutes(options: {
         return context.json(projectChatMessageResponse(
         CanonicalChatRunSteeringResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+        ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
       ));
       } catch (error: unknown) {
         return handleError(context, error);
@@ -622,6 +636,28 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       return context.json(CanonicalChatRunCancellationResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/runs/:runId/inputs/:requestId", bodyLimit({ maxSize: 40 * 1024 }), async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+      const requestId = z.string().trim().min(1).max(128)
+        .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/)
+        .parse(context.req.param("requestId"));
+      const parsed = CanonicalSubmitChatInputRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.submitInput(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        runId,
+        requestId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatInputSubmissionResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }

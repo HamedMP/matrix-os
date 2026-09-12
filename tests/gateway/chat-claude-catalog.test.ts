@@ -154,6 +154,7 @@ describe("Claude catalog selection and CLI handoff", () => {
       spawnFn: (_command, args) => {
         launches.push([...args]);
         const child = Object.assign(new EventEmitter(), {
+      stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } },
           stdout: new EventEmitter(), stderr: new EventEmitter(),
           kill(signal: NodeJS.Signals) { this.emit("exit", null, signal); },
         });

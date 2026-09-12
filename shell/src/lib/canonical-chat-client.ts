@@ -1,6 +1,10 @@
 import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatDetailResponseSchema,
+  CanonicalSubmitChatInputRequestSchema,
+  CanonicalChatInputSubmissionResponseSchema,
+  type CanonicalSubmitChatInputRequest,
+  type CanonicalChatInputSubmissionResponse,
   CanonicalChatApprovalDecisionSchema,
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalChatIdSchema,
@@ -41,6 +45,7 @@ export interface CanonicalShellChatClient {
   cancelRun(chatId: string, runId: string, clientRequestId: string): Promise<CanonicalChatRunCancellationResponse>;
   uploadAttachment(file: ShellAttachmentInput): Promise<CanonicalAttachmentReference>;
   deleteAttachment(ownerReference: string): Promise<void>;
+  submitInput(chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse>;
   submitApproval(
     chatId: string,
     runId: string,
@@ -223,6 +228,16 @@ export function createCanonicalShellChatClient(options: {
         || !("deleted" in response) || typeof response.deleted !== "boolean") {
         throw new Error("InvalidAttachmentDeleteResponse");
       }
+    },
+    async submitInput(chatId, runId, requestId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const parsedRequestId = safeReference(requestId);
+      const body = CanonicalSubmitChatInputRequestSchema.parse(input);
+      return CanonicalChatInputSubmissionResponseSchema.parse(await request(
+        `/api/chats/${encodeURIComponent(id)}/runs/${encodeURIComponent(parsedRunId)}/inputs/${encodeURIComponent(parsedRequestId)}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      ));
     },
     async submitApproval(chatId, runId, approvalId, decision, clientRequestId) {
       const id = CanonicalChatIdSchema.parse(chatId);

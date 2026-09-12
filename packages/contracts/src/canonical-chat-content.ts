@@ -63,3 +63,5 @@ export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalCha
     }];
   });
 }
+
+export { buildCanonicalChatInputAnswer, canonicalChatInputs, type CanonicalChatInputView } from "#canonical-chat-inputs";

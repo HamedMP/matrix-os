@@ -1,3 +1,4 @@
+import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
   CanonicalChatApprovalDecision,
@@ -753,6 +754,8 @@ export function useCanonicalChatRouteController({
     }
   }, [client, loadDetail, updateDetail]);
 
+  const submitInput = useCanonicalInputSubmission({ client, detailRef, scopeRef: routeScopeRef, loadDetail, setError });
+
   const submitApproval = useCallback(async (
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
@@ -857,6 +860,7 @@ export function useCanonicalChatRouteController({
     reorderQueuedTurns,
     cancelQueuedTurn,
     submitApproval,
+    submitInput,
     retryTurn,
     deleteChat,
     startNewChat: () => selectChat(null),

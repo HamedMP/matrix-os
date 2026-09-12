@@ -1,3 +1,4 @@
+import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
   CanonicalChatIdSchema,
   CanonicalChatMessagePartSchema,
@@ -196,6 +197,13 @@ export class ChatRunLifecycleRepository {
         executionRootFingerprint: row.execution_root_fingerprint,
       }),
     };
+  }
+
+  async getInputState(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string }) {
+    validateOwner(owner);
+    CanonicalChatIdSchema.parse(input.chatId);
+    [input.runId, input.requestId].forEach(requireSafeRef);
+    return getChatInputState(this.kysely, owner, input);
   }
 
   async getPendingApproval(ownerInput: ChatOwner, input: {
@@ -399,6 +407,7 @@ export class ChatRunLifecycleRepository {
           changed += 1;
           continue;
         }
+        await assertInputClaim(trx, owner, activity);
         nextSequence += 1;
         const sequenced = CanonicalChatRunActivitySchema.parse({
           ...activity,
@@ -432,6 +441,7 @@ export class ChatRunLifecycleRepository {
       if (changed > 0) {
         const revision = Number(current.revision) + 1;
         if (railTransition) {
+          if (activities.some(activity => activity.type === "input.resolved" || activity.type === "approval.resolved")) railTransition = await pendingInputTransition(trx, runId);
           await trx.updateTable("chat_runs").set({
             status: railTransition.runStatus,
             updated_at: sql`now()`,

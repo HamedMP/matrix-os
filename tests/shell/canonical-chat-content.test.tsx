@@ -16,7 +16,7 @@ it("renders streamed content and completion without any per-event detail request
   const record = { chat, activeRun: { runId: "run_content", turnId: "cturn_content", status: "running" } };
   const detail = vi.fn(async () => Response.json({ record, messages: [], runs: [], turns: [], activities: [] }));
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/api/chats/events?messageVersion=2")) return stream;
+    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1")) return stream;
     if (url.includes("/api/chats?")) return Response.json({ items: [record] });
     return detail();
   }));

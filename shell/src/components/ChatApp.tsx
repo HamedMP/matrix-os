@@ -1,4 +1,6 @@
 "use client";
+import { CanonicalChatInputForm } from "@matrix-os/ui";
+import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { ChatSharing } from "./chat/ChatSharing";
@@ -134,6 +136,7 @@ interface ChatAppProps {
     },
   ) => void;
   providerSelection?: CanonicalChatModelSelection;
+  onSubmitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   onSubmitApproval?: (
     runId: string,
     approvalId: string,
@@ -188,6 +191,7 @@ export function ChatApp({
   onSubmit,
   providerSelection,
   onSubmitApproval,
+  onSubmitInput,
   composerDraftRequest,
   onComposerDraftConsumed,
   onProviderSetupAction,
@@ -520,6 +524,15 @@ export function ChatApp({
                             <span className="whitespace-pre-wrap">{msg.content}</span>
                           </MessageContent> : null}
                         </Message>
+                      ) : msg.metadata?.canonicalInput ? (
+                        <CanonicalChatInputForm
+                          key={`${sessionId}:${msg.id}`}
+                          request={msg.metadata.canonicalInput as CanonicalChatInputView}
+                          onSubmit={async (input) => {
+                            const request = msg.metadata!.canonicalInput as CanonicalChatInputView;
+                            return onSubmitInput ? onSubmitInput(request.runId, request.requestId, input) : false;
+                          }}
+                        />
                       ) : msg.role === "system" ? (
                         <CanonicalApprovalMessage
                           message={msg}
