@@ -2,13 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { readBuildSource } from "../../../scripts/release/build-source.mjs";
 import { closeElectronApp } from "./fixtures/close-electron";
 import hostInfo from "../../fixtures/host-release-system-info.json";
 
+// Keep this filename and evidence directory: CI requires this built Electron suite.
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
 const evidence = join(root, "output/playwright/release-alignment");
@@ -17,107 +18,129 @@ if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !existsSync(main)) {
   throw new Error("Required Desktop build is missing");
 }
 const suite = existsSync(main) ? describe : describe.skip;
+const scenarios = ["source-mismatch", "incompatible", "502"] as const;
 
-suite("Desktop release alignment through the built IPC and gateway", () => {
-  let app: ElectronApplication;
-  let page: Page;
-  let gateway: StubGateway;
-  let profile: string;
-  const source = readBuildSource(root)!;
-
-  async function recheck() {
-    const response = page.waitForResponse((value) => value.url().endsWith("/api/system/info"));
-    await page.evaluate(() => window.dispatchEvent(new Event("matrix:runtime-reconnected")));
-    await (await response).finished();
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
-  }
-
-  beforeAll(async () => {
-    if (!source) throw new Error("Release alignment E2E requires a committed source checkout");
-    gateway = await startStubGateway();
-    profile = mkdtempSync(join(tmpdir(), "matrix-release-alignment-"));
-    app = await _electron.launch({ executablePath: requireDesktop("electron") as string, args: [main],
-      env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
-    page = await app.firstWindow();
-    page.setDefaultTimeout(8_000);
-    // Authentication is confined to the loopback fixture's fake device flow.
-    const initialInfo = page.waitForResponse((value) => value.url().endsWith("/api/system/info"));
-    await page.getByRole("button", { name: /continue in browser/i }).click();
-    await (await initialInfo).finished();
-    await page.getByRole("button", { name: "Chat", exact: true }).waitFor({ timeout: 15_000 });
-  }, 60_000);
+suite("Electron Desktop keeps cloud updates out of the workspace", () => {
+  let app: ElectronApplication | undefined;
+  let page: Page | undefined;
+  let gateway: StubGateway | undefined;
+  let profile: string | undefined;
+  let scenarioName = "startup";
 
   afterEach(async ({ task }) => {
-    if (task.result?.state === "fail" && page && !page.isClosed()) {
-      mkdirSync(evidence, { recursive: true });
-      await page.screenshot({ path: join(evidence, "failure.png") });
-    }
-  });
-
-  afterAll(async () => {
     try {
-      if (app) await closeElectronApp(app);
+      if (task.result?.state === "fail" && page && !page.isClosed()) {
+        mkdirSync(evidence, { recursive: true });
+        await page.screenshot({ path: join(evidence, `${scenarioName}-failure.png`) });
+      }
     } finally {
-      await gateway?.close();
-      if (profile) rmSync(profile, { recursive: true, force: true });
+      try {
+        if (app) await closeElectronApp(app);
+      } finally {
+        await gateway?.close();
+        if (profile) rmSync(profile, { recursive: true, force: true });
+        app = undefined;
+        page = undefined;
+        gateway = undefined;
+        profile = undefined;
+      }
     }
   }, 20_000);
 
-  it("embeds the actual source and prompts only after the running cloud source differs", async () => {
-    const installed = await page.evaluate(() => (window as unknown as {
+  it.each(scenarios)("%s never offers cloud repair, while Chat and local Software Update work", async (scenario) => {
+    scenarioName = scenario;
+    const source = readBuildSource(root);
+    if (!source) throw new Error("Electron E2E requires a committed source checkout");
+    const otherCommit = source.commit === "a".repeat(40) ? "b".repeat(40) : "a".repeat(40);
+    const info = {
+      ...structuredClone(hostInfo),
+      build: { ...hostInfo.build, sha: scenario === "source-mismatch" ? otherCommit : source.commit },
+      release: { ...hostInfo.release, gitCommit: scenario === "source-mismatch" ? otherCommit : source.commit },
+      runtimeCompatibility: scenario === "incompatible"
+        ? { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 }
+        : hostInfo.runtimeCompatibility,
+    };
+    gateway = await startStubGateway({ systemInfo: {
+      status: scenario === "502" ? 502 : 200, availableVersion: "v2099.01.01-0001",
+    } });
+    gateway.setSystemInfo(info);
+    profile = mkdtempSync(join(tmpdir(), "matrix-release-alignment-"));
+    app = await _electron.launch({
+      executablePath: requireDesktop("electron") as string,
+      args: [main],
+      env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile },
+    });
+    const window = page = await app.firstWindow();
+    window.setDefaultTimeout(8_000);
+    await window.setViewportSize({ width: 1280, height: 800 });
+    // Reject stale or dirty-built artifacts, even when the checkout is now clean.
+    const installed = await window.evaluate(() => (window as unknown as {
       operator: { invoke: (channel: string, payload: object) => Promise<unknown> };
     }).operator.invoke("app:get-version", {}));
     expect(installed).toMatchObject({ source });
-    expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
 
-    gateway.setBuildCommit(source.ancestors[0] ?? "a".repeat(40));
-    await recheck();
-    await page.getByRole("dialog", { name: "Update Matrix OS" }).waitFor();
-    await page.getByRole("rowheader", { name: /^Cloud computer/ }).waitFor();
-    await page.getByRole("button", { name: "Check again", exact: true }).waitFor();
+    // Authentication is confined to the loopback fixture's fake device flow.
+    await window.getByRole("button", { name: /continue in browser/i }).click();
+    const chat = window.getByRole("button", { name: "Chat", exact: true });
+    await chat.waitFor({ timeout: 15_000 });
+    const cloudDialog = window.getByRole("dialog", { name: "Update Matrix OS", exact: true });
+    const assertNoCloudUpdate = async () => {
+      expect(await cloudDialog.count()).toBe(0);
+      expect(gateway!.cloudUpdatePosts()).toBe(0);
+    };
+    await chat.dblclick();
+    await window.getByRole("button", { name: "New chat", exact: true }).click();
+    const composer = window.getByRole("textbox", { name: "Start a chat" });
+    const draft = `Unsent ${scenario} regression draft`;
+    await composer.fill(draft);
+
+    // Removed listeners need not make a request. Observe a bounded interval after
+    // reconnect/online/focus instead of waiting forever for the deleted gate probe.
+    await window.evaluate(() => {
+      for (const event of ["matrix:runtime-reconnected", "online", "focus"]) {
+        window.dispatchEvent(new Event(event));
+      }
+    });
+    await window.waitForTimeout(750);
+    await assertNoCloudUpdate();
+    await expect.poll(() => composer.textContent()).toBe(draft);
+    await composer.fill(`${draft} — still editable`);
+
+    await window.getByRole("button", { name: "Settings", exact: true }).dblclick();
+    const systemResponse = window.waitForResponse((response) => new URL(response.url()).pathname === "/api/system/info");
+    await window.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "System", exact: true }).click();
+    const response = await systemResponse;
+    expect(response.status()).toBe(scenario === "502" ? 502 : 200);
+    await response.finished();
+    await window.waitForTimeout(250);
+    expect(await window.getByRole("combobox", { name: "Release channel" }).count()).toBe(0);
+    expect(await window.getByRole("button", { name: "Refresh releases", exact: true }).count()).toBe(0);
+    expect(await window.getByRole("button", { name: /^(Upgrade|Downgrade|Install update)(\b|$)/i }).count()).toBe(0);
+    await assertNoCloudUpdate();
     mkdirSync(evidence, { recursive: true });
-    await page.screenshot({ path: join(evidence, "source-mismatch.png") });
-    await page.getByRole("button", { name: "Later", exact: true }).click();
-    await page.getByRole("button", { name: "Chat", exact: true }).waitFor();
-    await page.screenshot({ path: join(evidence, "dismissed-workspace.png") });
+    await window.screenshot({ path: join(evidence, `${scenario}-system.png`) });
 
-    await recheck();
-    expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
-    gateway.setBuildCommit(source.ancestors[1] ?? "d".repeat(40));
-    await recheck();
-    await page.getByRole("dialog", { name: "Update Matrix OS" }).waitFor();
-    await page.getByRole("button", { name: "Later", exact: true }).click();
-    gateway.setBuildCommit(source.commit);
-    await recheck();
-    expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
-  });
-
-  it("shows the host-bundle replay and preserves a draft after dismissal", async () => {
-    const dialog = page.getByRole("dialog", { name: "Update Matrix OS" });
-    await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
-    await page.getByRole("button", { name: "New chat", exact: true }).click();
-    const composer = page.getByRole("textbox", { name: "Start a chat" });
-    await composer.fill("Unsent release alignment regression draft");
-    let response = structuredClone(hostInfo);
-    gateway.setSystemInfo(response);
-    await recheck();
-    await dialog.waitFor();
-    await page.screenshot({ path: join(evidence, "host-bundle-mismatch.png") });
-    await dialog.getByRole("button", { name: "Later", exact: true }).click();
-    await expect.poll(() => composer.textContent()).toBe("Unsent release alignment regression draft");
-    await recheck();
-    expect(await dialog.count()).toBe(0);
-
-    // A different installed release is not proof that the running process changed.
-    response = { ...hostInfo, version: "v2026.09.10-1209",
-      release: { ...hostInfo.release, version: "v2026.09.10-1209", gitCommit: source.commit } };
-    gateway.setSystemInfo(response);
-    await recheck();
-    expect(await dialog.count()).toBe(0);
-    response.runningVersion = response.version;
-    gateway.setSystemInfo(response);
-    await recheck();
-    expect(await dialog.count()).toBe(0);
-    await composer.fill("");
-  });
+    // Exercise the actual main-process application menu and preload IPC, without
+    // synthesizing update state. Unpackaged builds should show the preview status.
+    const opened = await app.evaluate(({ Menu }) => {
+      const item = Menu.getApplicationMenu()?.items[0]?.submenu?.items
+        .find((candidate) => candidate.label === "Check for Updates…");
+      if (!item) return false;
+      item.click();
+      return true;
+    });
+    expect(opened).toBe(true);
+    const localDialog = window.getByRole("dialog", { name: "Software Update", exact: true });
+    await localDialog.waitFor();
+    await localDialog.getByRole("heading", { name: "Updates are unavailable in this preview" }).waitFor();
+    await assertNoCloudUpdate();
+    await window.screenshot({ path: join(evidence, `${scenario}-local-update.png`) });
+    await localDialog.getByRole("button", { name: "Close", exact: true }).click();
+    await localDialog.waitFor({ state: "hidden" });
+    await chat.dblclick();
+    await expect.poll(() => composer.textContent()).toBe(`${draft} — still editable`);
+    await composer.fill(`${draft} — usable after local update dialog`);
+    await assertNoCloudUpdate();
+    await window.screenshot({ path: join(evidence, `${scenario}-workspace.png`) });
+  }, 60_000);
 });
