@@ -50,6 +50,7 @@ const SubscribeEventSchema = z.discriminatedUnion("event", [
 ]);
 
 export interface RuntimePty {
+  write(data: string | Buffer): void;
   resize(cols: number, rows: number): void;
   kill(): void;
   onData(listener: (data: string) => void): { dispose(): void };
@@ -150,8 +151,11 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   async ensureSession(sessionNameInput: string, size = { cols: 120, rows: 36 }): Promise<void> {
     const logicalSessionName = z.string().regex(SESSION_NAME).parse(sessionNameInput);
     if (this.workspaceLifecycle) {
-      const target = await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
-      await this.waitForSession(target.sessionName, target.binaryPath);
+      // The systemd lifecycle does its own invocation-fenced readiness check
+      // before returning. Re-probing with `list-panes` scales with every pane
+      // in a migrated workspace and can exceed this adapter's fixed timeout
+      // even though the owned runtime is already ready.
+      await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
       return;
     }
     const sessionName = logicalSessionName;
@@ -255,10 +259,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     return {
       write: async (data) => {
         if (closed) throw new Error("Terminal attachment closed");
-        await this.run([
-          "--session", sessionName, "action", "write-chars", "--pane-id", paneId, "--",
-          new TextDecoder().decode(data),
-        ], binaryPath);
+        pty.write(Buffer.from(data));
       },
       resize: async (cols, rows) => { if (!closed) pty.resize(cols, rows); },
       close: async () => {

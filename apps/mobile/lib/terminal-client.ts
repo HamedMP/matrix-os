@@ -4,9 +4,11 @@ export { isSafeSessionId, parseTerminalSessions } from "@/lib/terminal-state";
 
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
+const TERMINAL_INPUT_CHUNK_CHARS = 32_768;
 
 export type TerminalClientFrame =
   | { type: "input"; terminalRef: TerminalRef; data: string }
+  | { type: "binary"; terminalRef: TerminalRef; dataBase64: string }
   | { type: "resize"; terminalRef: TerminalRef; mode: "soft"; size: { cols: number; rows: number } }
   | { type: "detach"; terminalRef: TerminalRef }
   | { type: "ping"; terminalRef: TerminalRef };
@@ -14,7 +16,7 @@ export type TerminalClientFrame =
 type TerminalRef = { workspaceId: string; tabId: string };
 
 export type TerminalServerFrame =
-  | { type: "attached"; terminalRef: TerminalRef; canonicalSize: { cols: number; rows: number }; revision: number; nextSeq: number }
+  | { type: "attached"; terminalRef: TerminalRef; canonicalSize: { cols: number; rows: number }; revision: number; nextSeq: number; capabilities?: string[] }
   | { type: "snapshot"; terminalRef: TerminalRef; ansi: string; seq: number; revision: number }
   | { type: "output"; terminalRef: TerminalRef; data: string; seq: number; revision: number }
   | { type: "replay-start"; fromSeq?: number; toSeq?: number }
@@ -72,6 +74,7 @@ export class MobileTerminalConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSeq: number;
+  private binaryInputSupported = false;
 
   constructor(
     private ws: WebSocket,
@@ -92,6 +95,7 @@ export class MobileTerminalConnection {
   }
 
   private bindSocket(ws: WebSocket): void {
+    this.binaryInputSupported = false;
     // The TerminalRef is supplied in the WS query; announce the viewport once open.
     ws.onopen = () => {
       if (this.ws !== ws || this.disposed) return;
@@ -108,6 +112,9 @@ export class MobileTerminalConnection {
       if (this.ws !== ws || this.disposed) return;
       const frame = parseTerminalServerFrame(event.data);
       if (frame) {
+        if (frame.type === "attached") {
+          this.binaryInputSupported = frame.capabilities?.includes("binary-input-v1") ?? false;
+        }
         if ((frame.type === "snapshot" || frame.type === "output") && typeof frame.seq === "number") {
           this.lastSeq = Math.max(this.lastSeq, frame.seq);
         }
@@ -131,6 +138,25 @@ export class MobileTerminalConnection {
 
   sendInput(data: string): boolean {
     return this.sendFrame({ type: "input", terminalRef: this.terminalRef, data });
+  }
+
+  sendBinary(data: string): boolean {
+    if (data.length === 0) return false;
+    for (const value of data) {
+      if (value.charCodeAt(0) > 0xff) return false;
+    }
+    let sent = true;
+    for (let offset = 0; offset < data.length; offset += TERMINAL_INPUT_CHUNK_CHARS) {
+      const chunk = data.slice(offset, offset + TERMINAL_INPUT_CHUNK_CHARS);
+      sent = (this.binaryInputSupported
+        ? this.sendFrame({
+            type: "binary",
+            terminalRef: this.terminalRef,
+            dataBase64: binaryStringToBase64(chunk),
+          })
+        : this.sendInput(chunk)) && sent;
+    }
+    return sent;
   }
 
   resize(cols: number, rows: number): boolean {
@@ -218,12 +244,32 @@ export class MobileTerminalConnection {
   }
 }
 
+function binaryStringToBase64(value: string): string {
+  if (typeof btoa === "function") return btoa(value);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let output = "";
+  for (let index = 0; index < value.length; index += 3) {
+    const a = value.charCodeAt(index);
+    const hasB = index + 1 < value.length;
+    const hasC = index + 2 < value.length;
+    const b = hasB ? value.charCodeAt(index + 1) : 0;
+    const c = hasC ? value.charCodeAt(index + 2) : 0;
+    const triple = (a << 16) | (b << 8) | c;
+    output += alphabet[(triple >> 18) & 63];
+    output += alphabet[(triple >> 12) & 63];
+    output += hasB ? alphabet[(triple >> 6) & 63] : "=";
+    output += hasC ? alphabet[triple & 63] : "=";
+  }
+  return output;
+}
+
 export function buildTerminalWebSocketUrl(baseUrl: string, refKey: string, token?: string | null): string {
   const [workspaceId, tabId] = refKey.split(":");
   const url = new URL(`${baseUrl.replace(/\/+$/, "").replace(/^http/, "ws")}/ws/terminal/tab`);
   url.searchParams.set("workspaceId", workspaceId ?? "");
   url.searchParams.set("tabId", tabId ?? "");
   url.searchParams.set("client", "mobile");
+  url.searchParams.set("inputCapability", "binary-input-v1");
   if (token) url.searchParams.set("token", token);
   return url.toString();
 }
@@ -233,7 +279,13 @@ function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
   try {
     const frame = JSON.parse(data) as TerminalServerFrame;
     if (!frame || typeof frame !== "object" || typeof frame.type !== "string") return null;
-    if (frame.type === "attached" && frame.terminalRef && typeof frame.nextSeq === "number") return frame;
+    if (frame.type === "attached" && frame.terminalRef && typeof frame.nextSeq === "number") {
+      const capabilities = Array.isArray(frame.capabilities)
+        ? frame.capabilities.slice(0, 8)
+          .filter((value): value is string => value === "binary-input-v1")
+        : undefined;
+      return { ...frame, ...(capabilities ? { capabilities } : {}) };
+    }
     if (frame.type === "snapshot" && typeof frame.ansi === "string") return frame;
     if (frame.type === "output" && typeof frame.data === "string") return frame;
     if (frame.type === "replay-start" || frame.type === "replay-end" || frame.type === "exit") return frame;

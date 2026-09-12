@@ -8,6 +8,12 @@ import {
 } from "../lib/terminal-client";
 import { jsonResponse } from "./mobile-shell-test-utils";
 
+// The terminal client does not exercise Markdown rendering. Keep this focused
+// React Native Jest suite from loading the ESM-only micromark implementation
+// re-exported by the shared contracts package.
+jest.mock("micromark", () => ({ micromark: jest.fn() }));
+jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+
 const WORKSPACE_ID = "tws_00000000000000000000000000000001";
 const TAB_ID = "tt_00000000000000000000000000000001";
 const SESSION_ID = `${WORKSPACE_ID}:${TAB_ID}`;
@@ -98,7 +104,7 @@ describe("mobile terminal client", () => {
 
   it("builds token-authenticated terminal websocket URLs", () => {
     expect(buildTerminalWebSocketUrl("https://app.matrix-os.test/", SESSION_ID, "ws token")).toBe(
-      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&token=ws+token`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&token=ws+token`,
     );
     expect(isSafeSessionId(SESSION_ID)).toBe(true);
     expect(isSafeSessionId("../bad")).toBe(false);
@@ -134,6 +140,94 @@ describe("mobile terminal client", () => {
     expect((ws as unknown as MockWebSocket).closed).toBe(true);
   });
 
+  it("preserves binary emulator replies when the runtime advertises byte input", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      onMessage: jest.fn(),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({
+        type: "attached",
+        terminalRef: TERMINAL_REF,
+        canonicalSize: { cols: 80, rows: 24 },
+        revision: 1,
+        nextSeq: 0,
+        capabilities: ["binary-input-v1"],
+      }),
+    });
+
+    expect(connection.sendBinary("\x1b]10;?\x07\x80\xff")).toBe(true);
+    expect(JSON.parse((ws as unknown as MockWebSocket).sent.at(-1)!)).toEqual({
+      type: "binary",
+      terminalRef: TERMINAL_REF,
+      dataBase64: "G10xMDs/B4D/",
+    });
+    connection.close();
+  });
+
+  it("uses text input for emulator replies when connected to an older runtime", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      onMessage: jest.fn(),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({
+        type: "attached",
+        terminalRef: TERMINAL_REF,
+        canonicalSize: { cols: 80, rows: 24 },
+        revision: 1,
+        nextSeq: 0,
+      }),
+    });
+
+    expect(connection.sendBinary("\x1b]10;rgb:1111/2222/3333\x07")).toBe(true);
+    expect(JSON.parse((ws as unknown as MockWebSocket).sent.at(-1)!)).toEqual({
+      type: "input",
+      terminalRef: TERMINAL_REF,
+      data: "\x1b]10;rgb:1111/2222/3333\x07",
+    });
+    connection.close();
+  });
+
+  it("validates a complete binary reply before sending bounded chunks", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      onMessage: jest.fn(),
+    });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({
+        type: "attached",
+        terminalRef: TERMINAL_REF,
+        canonicalSize: { cols: 80, rows: 24 },
+        revision: 1,
+        nextSeq: 0,
+        capabilities: ["binary-input-v1"],
+      }),
+    });
+    const before = (ws as unknown as MockWebSocket).sent.length;
+
+    expect(connection.sendBinary(`${"x".repeat(32_768)}\u{100}`)).toBe(false);
+    expect((ws as unknown as MockWebSocket).sent).toHaveLength(before);
+
+    expect(connection.sendBinary("x".repeat(70_000))).toBe(true);
+    const chunks = (ws as unknown as MockWebSocket).sent
+      .slice(before)
+      .map((value) => JSON.parse(value) as { type: string; dataBase64: string });
+    expect(chunks.map((frame) => atob(frame.dataBase64).length)).toEqual([32_768, 32_768, 4_464]);
+    connection.close();
+  });
+
   it("opens terminal sockets with browser-compatible query auth and native bearer headers", async () => {
     const webSocketMock = jest.fn().mockImplementation(() => new MockWebSocket());
     global.WebSocket = webSocketMock as unknown as typeof WebSocket;
@@ -148,7 +242,7 @@ describe("mobile terminal client", () => {
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&token=ws-token`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&token=ws-token`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );
@@ -168,7 +262,7 @@ describe("mobile terminal client", () => {
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );

@@ -74,6 +74,12 @@ import {
   prepareAiCreditCheckoutClaim,
 } from './ai-credit-checkout-store.js';
 import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
+import type { RedditConversionsClient } from './reddit-conversions.js';
+import {
+  createRedditAttributionExpiry,
+  deliverRedditAttribution,
+  isSafeMarketingLandingPath,
+} from './reddit-purchase-attribution.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -123,6 +129,20 @@ const HistoricalBillingRegionSlugSchema = z.enum([
   'region_hil',
 ]);
 
+const MarketingAttributionSchema = z.object({
+  rdt_cid: z.string().min(1).max(256).optional(),
+  utm_source: z.string().min(1).max(256).optional(),
+  utm_medium: z.string().min(1).max(256).optional(),
+  utm_campaign: z.string().min(1).max(256).optional(),
+  utm_content: z.string().min(1).max(256).optional(),
+  utm_term: z.string().min(1).max(256).optional(),
+  landing_path: z.string().min(1).max(512).refine(
+    (value) => isSafeMarketingLandingPath(value),
+    { message: 'Invalid marketing landing path' },
+  ).optional(),
+}).strict();
+export type MarketingAttribution = z.infer<typeof MarketingAttributionSchema>;
+
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.literal('monthly').default('monthly'),
@@ -130,6 +150,7 @@ const CheckoutRequestSchema = z.object({
   serverType: HetznerServerTypeSchema.optional(),
   developerTools: DeveloperToolsWithDefaultSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
+  attribution: MarketingAttributionSchema.optional(),
   returnPath: z.string().min(1).max(2048).optional().refine(
     // Safe iff it is already a same-origin allowlisted path (origins.ts is the
     // single source of truth for redirect-target validation).
@@ -161,9 +182,11 @@ export interface StripeCheckoutSessionInput {
   allowPromotionCodes: boolean;
   regionSlug: string;
   runtimeSlot: string;
+  redditAttributionExpiresAt: string;
   trialPeriodDays?: number | null;
   paymentMethodMode?: 'card_required' | 'dynamic';
   prebillingIntentId?: string;
+  attribution?: MarketingAttribution;
   expiresAt?: string;
   successUrl: string;
   cancelUrl: string;
@@ -211,6 +234,7 @@ export interface StripeBillingClient {
     id: string;
     expiresAt?: string;
   }>;
+  clearSubscriptionAttribution?(subscriptionId: string): Promise<void>;
   createAiCreditCheckoutSession(input: StripeAiCreditCheckoutSessionInput): Promise<{
     url: string;
     id: string;
@@ -280,6 +304,7 @@ export function createBillingRoutes(options: {
   upsertEntitlement?: typeof upsertBillingEntitlement;
   prebilling?: PrebillingCheckoutCoordinator;
   fundedAiRepository?: Pick<import('./ai-funded-policy-repository.js').AiFundedPolicyRepository, 'grantCreditInTransaction'>;
+  redditConversions?: RedditConversionsClient;
   /**
    * Optional product telemetry sink. Fire-and-forget: implementations must
    * never throw into the request path. Properties are PII-free product facts
@@ -605,12 +630,17 @@ export function createBillingRoutes(options: {
         allowPromotionCodes: true,
         regionSlug: parsed.data.regionSlug,
         runtimeSlot: parsed.data.runtimeSlot,
+        redditAttributionExpiresAt: createRedditAttributionExpiry(
+          attempt.attempt.createdAt,
+          attempt.attempt.trialPeriodDays,
+        ),
         trialPeriodDays: attempt.attempt.trialPeriodDays,
         paymentMethodMode: attempt.attempt.trialPeriodDays ? 'card_required' : 'dynamic',
         ...(preparation ? {
           prebillingIntentId: preparation.intentId,
           expiresAt: preparation.expiresAt,
         } : {}),
+        attribution: parsed.data.attribution,
         successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
       });
@@ -1104,6 +1134,12 @@ export function createBillingRoutes(options: {
           );
         });
       }
+      const clearSubscriptionAttribution = options.stripe.clearSubscriptionAttribution?.bind(options.stripe);
+      await deliverRedditAttribution(
+        event,
+        options.redditConversions,
+        clearSubscriptionAttribution ? { clearSubscriptionAttribution } : undefined,
+      );
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));
@@ -1148,6 +1184,12 @@ function buildCheckoutTelemetryProperties(data: CheckoutRequest): Record<string,
     return_path_present: Boolean(data.returnPath),
     developer_tools_count: data.developerTools.length,
     selected_catalog_price_usd: planPriceUsd(data.planSlug, data.interval),
+    utm_source: data.attribution?.utm_source,
+    utm_medium: data.attribution?.utm_medium,
+    utm_campaign: data.attribution?.utm_campaign,
+    utm_content: data.attribution?.utm_content,
+    utm_term: data.attribution?.utm_term,
+    reddit_click_present: Boolean(data.attribution?.rdt_cid),
   };
 }
 

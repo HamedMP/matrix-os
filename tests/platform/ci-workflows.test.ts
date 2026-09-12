@@ -647,6 +647,16 @@ describe('CI workflows', () => {
     expect(workflow).not.toContain('PORTAL_CONFIGURATION_SECRET_BINDINGS');
   });
 
+  it('preflights and mounts Reddit conversion attribution in platform Cloud Run', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Verify Reddit Conversions API secret');
+    expect(workflow).toContain('REDDIT_PIXEL_ID=a2_jo0odxapssmi');
+    expect(workflow).toContain('REDDIT_CONVERSIONS_ACCESS_TOKEN=reddit-conversions-access-token:latest');
+    expect(workflow).toContain('roles/secretmanager.secretAccessor');
+  });
+
   it('wires Pipedream integration secrets into platform Cloud Run', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

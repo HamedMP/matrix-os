@@ -65,6 +65,7 @@ mean immediate rotation.
 | JWT/HMAC seeds, `MATRIX_AUTH_TOKEN`, Matrix appservice tokens | Secret Manager / per-VPS env | per-deployment | git, logs |
 | PostHog **project** token (`NEXT_PUBLIC_POSTHOG_KEY`) | Vercel / build env | **publishable** (ships to browser by design) | — (not a secret) |
 | PostHog **personal API** key | Secret Manager / personal | account | git, chat |
+| Reddit conversion access token | Secret Manager (**platform only**) | Reddit CAPI | browser bundle, git, logs, customer VPS |
 
 Note the two PostHog keys are different: the `NEXT_PUBLIC_` project token is *meant*
 to be public (it's in the browser bundle); the personal API key is a real secret.

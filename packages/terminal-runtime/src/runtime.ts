@@ -72,7 +72,7 @@ export interface TerminalRuntimeOptions {
   observerCloseTimeoutMs?: number;
 }
 export interface TerminalViewer {
-  write(data: string): Promise<void>;
+  write(data: string | Uint8Array): Promise<void>;
   touch(): void;
   detach(): Promise<void>;
 }
@@ -781,14 +781,19 @@ export class TerminalRuntime {
 
   private async enqueueWrite(
     ref: TerminalRef,
-    dataInput: string,
+    dataInput: string | Uint8Array,
     writer: (data: Uint8Array) => Promise<void>,
   ): Promise<void> {
     if (this.shuttingDown) throw new TerminalRuntimeError("unavailable");
     if (this.deletingWorkspaceId === ref.workspaceId) {
       throw new TerminalRuntimeError("conflict", "Terminal workspace deletion in progress");
     }
-    const data = new TextEncoder().encode(z.string().min(1).max(64 * 1024).parse(dataInput));
+    const data = typeof dataInput === "string"
+      ? new TextEncoder().encode(z.string().min(1).max(64 * 1024).parse(dataInput))
+      : Uint8Array.from(dataInput);
+    if (data.byteLength < 1 || data.byteLength > 64 * 1024) {
+      throw new TerminalRuntimeError("invalid_request");
+    }
     const key = refKey(ref);
     this.assertTabAcceptsInput(key);
     let queue = this.inputQueues.get(key);

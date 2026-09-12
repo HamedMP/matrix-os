@@ -11,6 +11,7 @@ const posthogMock = vi.hoisted(() => ({
   identify: vi.fn(),
   reset: vi.fn(),
   captureException: vi.fn(),
+  register: vi.fn(),
   setPersonProperties: vi.fn(),
   has_opted_out_capturing: vi.fn(() => false),
   opt_in_capturing: vi.fn(),
@@ -34,6 +35,7 @@ async function importShellPostHog() {
 describe("shell session replay init", () => {
   beforeEach(() => {
     posthogMock.init.mockClear();
+    posthogMock.register.mockClear();
     posthogMock.setPersonProperties.mockClear();
     posthogMock.has_opted_out_capturing.mockReset();
     posthogMock.has_opted_out_capturing.mockReturnValue(false);

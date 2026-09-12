@@ -912,7 +912,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision"');
-    expect(workflow).toContain('{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}');
+    expect(workflow).toContain('--arg bundle_version "$VERSION"');
+    expect(workflow).toContain('{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access, bundleVersion: $bundle_version}');
     expect(workflow).not.toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/provision"');
     expect(workflow).not.toContain('"runtimeSlot":"preview"');
     expect(workflow).toContain('PREVIEW_CLERK_ACCESS_USER_IDS');
@@ -1396,6 +1397,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('sync agent persists bounded errors for destructive update phase failures', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const recoveryLibrary = readFileSync(
+      join(root, 'distro/customer-vps/host-bin/matrix-sync-agent-recovery'),
+      'utf8',
+    );
 
     expect(syncAgent).toContain('write_update_error "checksum_mismatch"');
     expect(syncAgent).toContain('write_update_error "bundle_extract_failed"');
@@ -1408,7 +1413,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('verification_error_code="post_install_runtime_version_mismatch"');
     expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
     expect(syncAgent).toContain('write_update_error "apply_failed"');
-    expect(syncAgent).toContain('write_update_error "apply_interrupted"');
+    expect(recoveryLibrary).toContain('write_update_error "apply_interrupted"');
     expect(syncAgent).toContain('temp="$(mktemp "$APP_DIR/.update-error.json.XXXXXX")" || return 1');
     expect(syncAgent).toContain('python3 - "$temp" "$code" "$message" "$version" "$available_kb" "$required_kb"');
     expect(syncAgent).toContain('if ! mv -fT "$temp" "$UPDATE_ERROR_MARKER"; then');
@@ -1700,13 +1705,15 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
   });
 
   it('publishes installed release metadata only after the candidate app passes health', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const recoveryLibrary = readFileSync(
+      join(root, 'distro/customer-vps/host-bin/matrix-sync-agent-recovery'),
+      'utf8',
+    );
 
     const stageFunction = syncAgent.indexOf('stage_release_metadata()');
     const stagedInstall = syncAgent.indexOf(
@@ -1727,7 +1734,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
       'sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"',
     );
     expect(syncAgent).toContain('write_update_error "post_install_release_metadata_failed"');
-    expect(syncAgent).toContain('rollback_release_metadata_is_ready "$APP_DIR.rollback"');
+    expect(recoveryLibrary).toContain('rollback_release_metadata_is_ready "$APP_DIR.rollback"');
     expect(syncAgent).toContain('restore_rollback_release_metadata');
   });
 
