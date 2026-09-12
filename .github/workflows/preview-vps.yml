@@ -37,6 +37,11 @@ on:
         required: false
         default: false
         type: boolean
+      diagnose_smoke:
+        description: "Collect sanitized lifecycle evidence from the released-bundle smoke VPS"
+        required: false
+        default: false
+        type: boolean
       verify_inventory:
         description: "Only verify the deployed preview in the authenticated computer inventory"
         required: false
@@ -86,6 +91,7 @@ jobs:
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
           RELEASE_SMOKE: ${{ inputs.release_smoke }}
+          DIAGNOSE_SMOKE: ${{ inputs.diagnose_smoke }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
           TEARDOWN_PREVIEW: ${{ inputs.teardown_preview }}
           GH_TOKEN: ${{ github.token }}
@@ -112,7 +118,9 @@ jobs:
             if [ "$TEARDOWN_PREVIEW" = "true" ]; then
               action="teardown"
             else
-              if [ "$VERIFY_INVENTORY" = "true" ]; then
+              if [ "$DIAGNOSE_SMOKE" = "true" ]; then
+                action="diagnose"
+              elif [ "$VERIFY_INVENTORY" = "true" ]; then
                 action="verify"
               elif [ "$RELEASE_SMOKE" = "true" ]; then
                 if [ -z "$REQUESTED_VERSION" ]; then
@@ -160,6 +168,13 @@ jobs:
               grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$" ||
               [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then
               echo "Invalid pinned preview version" >&2
+              exit 1
+            fi
+          fi
+          if [ "$action" = "diagnose" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/release-smoke-vps" ] ||
+              [ "$REQUESTED_VERSION" != "v2026.09.12-1237" ]; then
+              echo "Release diagnostics are restricted to the isolated exact-release test branch." >&2
               exit 1
             fi
           fi
@@ -859,6 +874,126 @@ jobs:
           else
              gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" > /dev/null
            fi
+
+  diagnose_release:
+    name: Diagnose released-bundle smoke lifecycle
+    needs: gate
+    if: needs.gate.outputs.action == 'diagnose'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      HANDLE: ${{ needs.gate.outputs.handle }}
+      VERSION: ${{ needs.gate.outputs.requested_version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - name: Collect sanitized gateway lifecycle evidence
+        run: |
+          set -euo pipefail
+          runtime="$(curl --fail --silent --show-error --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL%/}/vps/fleet" |
+            jq -c --arg h "$HANDLE" --arg v "$VERSION" '
+              [.machines[] | select(.handle == $h and .runtimeSlot == $h and .status == "running"
+                and .healthy == true and .runtimeVersion == $v and .deletedAt == null)] |
+              if length == 1 then .[0] else error("released smoke runtime unavailable") end')"
+          address="$(jq -er '.publicIPv4 | select(type == "string" and test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' \
+            <<< "$runtime")"
+          runtime_token="$(PLATFORM_SIGNING_SECRET="$PLATFORM_SECRET" node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.env.PLATFORM_SIGNING_SECRET).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE")"
+          echo "::add-mask::$runtime_token"
+          read -r -d '' lifecycle_script <<'PYTHON' || true
+          import datetime
+          import json
+          import re
+          import subprocess
+
+          properties = subprocess.run([
+              "/usr/bin/systemctl", "show", "matrix-gateway.service",
+              "--property=ActiveState", "--property=SubState", "--property=Result",
+              "--property=NRestarts", "--property=ExecMainCode", "--property=ExecMainStatus",
+              "--property=ExecMainStartTimestamp",
+          ], check=True, timeout=10, capture_output=True, text=True).stdout
+          current = {}
+          for line in properties.splitlines():
+              key, separator, value = line.partition("=")
+              if separator:
+                  current[key] = value
+
+          journal = subprocess.run([
+              "/usr/bin/journalctl", "--unit=matrix-gateway.service",
+              "--since=2026-09-12 05:34:00 UTC", "--output=json", "--no-pager",
+          ], check=True, timeout=15, capture_output=True, text=True).stdout
+          events = []
+          invocations = set()
+          for raw in journal.splitlines():
+              try:
+                  entry = json.loads(raw)
+              except json.JSONDecodeError:
+                  continue
+              invocation = entry.get("_SYSTEMD_INVOCATION_ID")
+              if isinstance(invocation, str) and re.fullmatch(r"[0-9a-f]{32}", invocation):
+                  invocations.add(invocation)
+              if entry.get("SYSLOG_IDENTIFIER") != "systemd" and entry.get("_COMM") != "systemd":
+                  continue
+              message = entry.get("MESSAGE")
+              if not isinstance(message, str):
+                  continue
+              category = None
+              if message.startswith("Starting "):
+                  category = "starting"
+              elif message.startswith("Started "):
+                  category = "started"
+              elif message.startswith("Stopping "):
+                  category = "stopping"
+              elif message.startswith("Stopped "):
+                  category = "stopped"
+              elif "Main process exited" in message:
+                  category = "main_process_exited"
+              elif "Failed with result" in message:
+                  category = "failed"
+              elif "Scheduled restart job" in message:
+                  category = "automatic_restart_scheduled"
+              if category is None:
+                  continue
+              timestamp = entry.get("__REALTIME_TIMESTAMP")
+              if isinstance(timestamp, str) and timestamp.isdigit():
+                  at = datetime.datetime.fromtimestamp(int(timestamp) / 1_000_000, datetime.timezone.utc).isoformat()
+              else:
+                  at = "unknown"
+              events.append({"at": at, "category": category})
+
+          def bounded_int(value):
+              return int(value) if isinstance(value, str) and value.isdigit() and int(value) <= 1_000_000 else -1
+
+          print(json.dumps({
+              "gatewayLifecycle": events[-20:],
+              "gatewayInvocationCount": len(invocations),
+              "activeState": current.get("ActiveState", "unknown") if current.get("ActiveState") in {"active", "inactive", "failed"} else "unknown",
+              "subState": current.get("SubState", "unknown") if current.get("SubState") in {"running", "dead", "failed", "auto-restart"} else "unknown",
+              "result": current.get("Result", "unknown") if re.fullmatch(r"[a-z-]{1,32}", current.get("Result", "")) else "unknown",
+              "nRestarts": bounded_int(current.get("NRestarts")),
+              "execMainCode": bounded_int(current.get("ExecMainCode")),
+              "execMainStatus": bounded_int(current.get("ExecMainStatus")),
+              "currentStart": current.get("ExecMainStartTimestamp", "unknown")[:64],
+          }, sort_keys=True))
+          PYTHON
+          body="$(jq -cn --arg script "$lifecycle_script" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script],timeoutMs:30000}')"
+          curl --fail --silent --show-error --max-time 45 --insecure \
+            --resolve "app.matrix-os.com:443:${address}" \
+            -o /tmp/release-smoke-lifecycle.json -X POST 'https://app.matrix-os.com/api/terminal/run' \
+            -H "authorization: Bearer ${runtime_token}" \
+            -H 'content-type: application/json' --data-binary "$body"
+          jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) |
+            .stdout | fromjson | select(.gatewayLifecycle | type == "array")' \
+            /tmp/release-smoke-lifecycle.json >/dev/null
+          jq -r '.stdout' /tmp/release-smoke-lifecycle.json
 
   verify_inventory:
     name: Verify preview computer inventory

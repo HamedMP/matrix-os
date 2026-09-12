@@ -154,6 +154,10 @@ describe('Preview VPS provisioning workflow', () => {
       type: 'boolean',
       default: false,
     }));
+    expect(workflow.on.workflow_dispatch.inputs.diagnose_smoke).toEqual(expect.objectContaining({
+      type: 'boolean',
+      default: false,
+    }));
     expect(decide).toContain('RELEASE_SMOKE');
     expect(decide).toContain('/system-bundles/channels/dev.json');
     expect(decide).toContain('Requested release is not the current dev bundle');
@@ -163,6 +167,8 @@ describe('Preview VPS provisioning workflow', () => {
     expect(deploy).toContain('stateSchemaVersion');
     expect(deploy).toContain('activeWorkspaceServices');
     expect(deploy).toContain('Terminal migration verified');
+    expect(workflow.jobs.diagnose_release.if).toContain("needs.gate.outputs.action == 'diagnose'");
+    expect(workflow.jobs.diagnose_release.steps[1].run).toContain('gatewayLifecycle');
 
     const shellSyntax = spawnSync('bash', ['-n', '-c', deploy], { encoding: 'utf8' });
     expect(shellSyntax.stderr).toBe('');
