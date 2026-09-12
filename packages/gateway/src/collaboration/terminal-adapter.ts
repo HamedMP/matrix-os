@@ -94,7 +94,8 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     resourceRevision: number;
     confirmationToken?: string;
   }> {
-    const session = await this.readSession(input.terminalId);
+    let session = await this.readSession(input.terminalId);
+    session = await this.repairOrphanedPrivateBinding(input.ownerId, input.terminalId, session);
     const resourceRevision = session?.executionGeneration ?? 0;
     if (!session) return { eligible: false, reason: "unavailable", resourceRevision };
     if (!eligiblePrivateSession(session, input.ownerId)) {
@@ -124,7 +125,8 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     confirmationToken: string;
   }): Promise<CollaborationScopeRecord> {
     const confirmation = this.verifyConfirmation(input);
-    const session = await this.readSession(input.terminalId);
+    let session = await this.readSession(input.terminalId);
+    session = await this.repairOrphanedPrivateBinding(input.ownerId, input.terminalId, session);
     if (!session || !eligiblePrivateSession(session, input.ownerId)
       || session.sessionIncarnation !== confirmation.incarnation
       || session.executionGeneration !== input.expectedResourceRevision) {
@@ -188,16 +190,19 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
 
   async input(input: Parameters<CollaborationTerminalRuntime["input"]>[0]): Promise<void> {
     await this.requireRuntimeBinding(input);
+    await input.revalidate();
     await this.options.runtime.input({ terminalId: input.terminalId, data: input.data });
   }
 
   async paste(input: Parameters<CollaborationTerminalRuntime["paste"]>[0]): Promise<void> {
     await this.requireRuntimeBinding(input);
+    await input.revalidate();
     await this.options.runtime.paste({ terminalId: input.terminalId, data: input.data });
   }
 
   async resize(input: Parameters<CollaborationTerminalRuntime["resize"]>[0]): Promise<void> {
     await this.requireRuntimeBinding(input);
+    await input.revalidate();
     await this.options.runtime.resize({ terminalId: input.terminalId, cols: input.cols, rows: input.rows });
   }
 
@@ -228,6 +233,31 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         error instanceof Error ? error.name : "UnknownError",
       );
       return null;
+    }
+  }
+
+  private async repairOrphanedPrivateBinding(
+    ownerId: string,
+    terminalId: string,
+    session: RegistrySession | null,
+  ): Promise<RegistrySession | null> {
+    if (!session?.collaborationScopeId || !session.sessionIncarnation || session.sharedControlMode !== "shared"
+      || session.creatorActorId !== ownerId) return session;
+    const scope = await this.options.repository.getScope(session.collaborationScopeId);
+    if (!scope || scope.ownerId !== ownerId || scope.kind !== "terminal"
+      || scope.resourceId !== terminalId || scope.lifecycle !== "private") return session;
+    try {
+      await this.options.registry.unbindCollaboration(terminalId, {
+        scopeId: session.collaborationScopeId,
+        sessionIncarnation: session.sessionIncarnation,
+      });
+      return await this.readSession(terminalId);
+    } catch (error: unknown) {
+      console.warn(
+        "[collaboration-terminal] orphaned registry binding cleanup failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      return session;
     }
   }
 
