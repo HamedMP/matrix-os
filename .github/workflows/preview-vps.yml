@@ -1031,7 +1031,8 @@ jobs:
 
           runtime_request() {
             local method="$1" path="$2" output="$3" data="${4:-}"
-            local args=(--fail --silent --show-error --max-time 45 --insecure
+            local timeout_seconds="${5:-45}"
+            local args=(--fail --silent --show-error --max-time "$timeout_seconds" --insecure
               --resolve "app.matrix-os.com:443:${address}"
               -X "$method" "https://app.matrix-os.com${path}"
               -H "authorization: Bearer ${runtime_token}"
@@ -1183,6 +1184,7 @@ jobs:
             fi
             sleep 15
           done
+          echo "Fleet reports the exact healthy target version."
 
           after=""
           for _ in $(seq 1 12); do
@@ -1202,6 +1204,7 @@ jobs:
             echo "The target release did not expose a healthy committed terminal migration." >&2
             exit 1
           fi
+          echo "Installed target state verified: $(jq -c '{appVersion,releaseVersion,migrationStatus,terminalRuntimeActive}' <<< "$after")"
 
           runtime_request POST /api/terminal/workspaces/ensure /tmp/nimanaderi-workspace.json '{}'
           workspace_id="$(jq -er '.workspace.id | select(type == "string" and test("^tws_[0-9a-f]{32}$"))' /tmp/nimanaderi-workspace.json)"
@@ -1371,7 +1374,7 @@ jobs:
           websocket_body="$(jq -cn --arg script "$websocket_probe" --arg token "$runtime_token" \
             --arg workspace "$workspace_id" --arg tab "$tab_id" \
             '{command:["/opt/matrix/runtime/node/bin/node","-e",$script,$token,$workspace,$tab],timeoutMs:150000}')"
-          runtime_request POST /api/terminal/run /tmp/nimanaderi-websocket-probe.json "$websocket_body"
+          runtime_request POST /api/terminal/run /tmp/nimanaderi-websocket-probe.json "$websocket_body" 180
           jq -e '.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null' /tmp/nimanaderi-websocket-probe.json >/dev/null
           websocket_result="$(jq -er '.stdout | fromjson' /tmp/nimanaderi-websocket-probe.json)"
           jq -e '.binaryInput == true and .keyboardRoundTrips == 2 and .oscReplies >= 1 and
