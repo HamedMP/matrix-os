@@ -262,6 +262,29 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     expect(lifecycle.deleteWorkspaceSession).toHaveBeenCalledWith(logicalName);
   });
 
+  it("trusts the systemd lifecycle readiness fence when ensuring a workspace", async () => {
+    const logicalName = "matrix-w-0123456789abcdef0123456789abcdef";
+    const ownedName = "matrix-rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const binaryPath = `/opt/matrix/terminal-runtime/generations/gen_${"b".repeat(64)}/zellij`;
+    const run = vi.fn(async () => "[]");
+    const ensureWorkspaceSession = vi.fn(async () => ({ sessionName: ownedName, binaryPath }));
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix",
+      run,
+      workspaceLifecycle: {
+        resolveWorkspaceTarget: vi.fn(),
+        ensureWorkspaceSession,
+        deleteWorkspaceSession: vi.fn(),
+      },
+    });
+
+    await expect(adapter.ensureSession(logicalName, { cols: 120, rows: 36 }))
+      .resolves.toBeUndefined();
+
+    expect(ensureWorkspaceSession).toHaveBeenCalledWith(logicalName, { cols: 120, rows: 36 });
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("skips rollback cleanup for workspace sessions that were never created", async () => {
     const existingSession = "matrix-w-0123456789abcdef0123456789abcdef";
     const missingSession = "matrix-w-fedcba9876543210fedcba9876543210";
