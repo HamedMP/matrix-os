@@ -13,7 +13,10 @@ import type { z } from "zod/v4";
 import { terminalRuntimeErrorDetails } from "./errors.js";
 import type { TerminalSnapshot } from "./workspace-store.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
-import { MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES } from "./limits.js";
+import {
+  MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
+  TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS,
+} from "./limits.js";
 import {
   TerminalRuntimeRequestSchema,
   type TerminalRuntimeRequest,
@@ -132,7 +135,10 @@ export class TerminalRuntimeSocketServer {
       return;
     }
     this.connections.add(socket);
-    socket.setTimeout(this.options.idleTimeoutMs ?? 30_000, () => socket.destroy());
+    socket.setTimeout(
+      this.options.idleTimeoutMs ?? TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS,
+      () => socket.destroy(),
+    );
     const decoder = new SocketFrameDecoder();
     let handled = false;
     let streamMessage: ((raw: unknown) => Promise<void>) | null = null;
