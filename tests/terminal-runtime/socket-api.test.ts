@@ -255,6 +255,80 @@ describe("terminal runtime Unix socket API", () => {
     await server.close();
   });
 
+  it("preserves binary terminal input bytes across the gateway-runtime socket", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-binary-"));
+    directories.push(directory);
+    const socketPath = join(directory, "terminal-runtime.sock");
+    const terminalRef = {
+      workspaceId: "tws_0123456789abcdef0123456789abcdef",
+      tabId: "tt_0123456789abcdef0123456789abcdef",
+    };
+    const tab = {
+      id: terminalRef.tabId,
+      workspaceId: terminalRef.workspaceId,
+      name: "main",
+      cwd: "",
+      status: "running" as const,
+      revision: 1,
+      order: 0,
+      createdAt: "2026-08-11T12:00:00.000Z",
+      updatedAt: "2026-08-11T12:00:00.000Z",
+    };
+    const workspace = {
+      id: terminalRef.workspaceId,
+      scope: "main" as const,
+      canonicalSize: { cols: 120, rows: 36 },
+      status: "running" as const,
+      revision: 1,
+      createdAt: tab.createdAt,
+      updatedAt: tab.updatedAt,
+      tabs: [tab],
+    };
+    const received = Promise.withResolvers<Uint8Array>();
+    const server = new TerminalRuntimeSocketServer({
+      socketPath,
+      runtime: {
+        listWorkspaces: async () => [workspace],
+        ensureWorkspace: async () => workspace,
+        createTab: async () => tab,
+        getSnapshot: async () => undefined,
+        resize: async () => workspace,
+        attach: async () => ({
+          write: async (data) => { received.resolve(Uint8Array.from(data as Uint8Array)); },
+          touch: () => undefined,
+          detach: async () => undefined,
+        }),
+        updateTabUiState: async () => tab,
+      },
+    });
+    await server.start();
+    const client = new TerminalRuntimeSocketClient({ socketPath });
+    const stream = client.attach({
+      ref: terminalRef,
+      viewerId: "desktop-binary-test",
+      fromSeq: Number.MAX_SAFE_INTEGER,
+      mode: "soft",
+      size: { cols: 120, rows: 36 },
+      onFrame: (frame) => {
+        if (frame.type === "attached") {
+          stream.send({ type: "binary", terminalRef, dataBase64: "G10xMDs/BxtcG1s8NjQ7MTU7NU2A/w==" });
+        }
+      },
+      onClose: () => undefined,
+      onError: received.reject,
+    });
+
+    await expect(received.promise).resolves.toEqual(
+      Uint8Array.from([
+        0x1b, 0x5d, 0x31, 0x30, 0x3b, 0x3f, 0x07, 0x1b, 0x5c,
+        0x1b, 0x5b, 0x3c, 0x36, 0x34, 0x3b, 0x31, 0x35, 0x3b, 0x35, 0x4d,
+        0x80, 0xff,
+      ]),
+    );
+    stream.close();
+    await server.close();
+  });
+
   it("preserves typed domain failures across the socket boundary", async () => {
     const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-errors-"));
     directories.push(directory);

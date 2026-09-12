@@ -673,11 +673,25 @@ export const TerminalServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("safe-error"), error: SafeClientErrorSchema }).strict(),
 ]);
 
+const TerminalBinaryInputSchema = z.string()
+  .min(4)
+  .max(Math.ceil((64 * 1024) / 3) * 4)
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
+  .refine((value) => {
+    const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+    return (value.length / 4) * 3 - padding <= 64 * 1024;
+  });
+
 export const TerminalTabClientFrameSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("input"),
     terminalRef: TerminalRefSchema,
     data: z.string().min(1).max(64 * 1024),
+  }).strict(),
+  z.object({
+    type: z.literal("binary"),
+    terminalRef: TerminalRefSchema,
+    dataBase64: TerminalBinaryInputSchema,
   }).strict(),
   z.object({
     type: z.literal("resize"),

@@ -1005,6 +1005,28 @@ describe("ShellSocket resize coalescing", () => {
 });
 
 describe("ShellSocket input", () => {
+  it("preserves xterm binary reports in a dedicated base64 frame", () => {
+    const h = createHarness();
+    connectAndAttach(h);
+    h.socket.sendBinary("\x1b]10;?\x07\x1b\\\x1b[<64;15;5M\x80\xff");
+
+    expect(h.latest().sentFrames()).toContainEqual({
+      type: "binary",
+      terminalRef: TERMINAL_REF,
+      dataBase64: "G10xMDs/BxtcG1s8NjQ7MTU7NU2A/w==",
+    });
+  });
+
+  it("rejects an invalid binary report before sending any partial chunks", () => {
+    const h = createHarness();
+    connectAndAttach(h);
+    const before = h.latest().sent.length;
+
+    h.socket.sendBinary(`${"x".repeat(32_768)}\u{100}`);
+
+    expect(h.latest().sent).toHaveLength(before);
+  });
+
   it("chunks large input into <=32768-char pieces", () => {
     const h = createHarness();
     connectAndAttach(h);
@@ -1023,6 +1045,27 @@ describe("ShellSocket input", () => {
     h.latest().open();
     h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
     expect(h.latest().inputFrames()).toEqual(["hel", "lo"]);
+  });
+
+  it("keeps text and terminal protocol replies ordered while an attachment connects", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.socket.sendInput("a");
+    h.socket.sendBinary("\x1b]10;rgb:1111/2222/3333\x07");
+    h.socket.sendInput("b");
+
+    h.latest().open();
+    h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+
+    expect(h.latest().sentFrames().slice(0, 3)).toEqual([
+      { type: "input", terminalRef: TERMINAL_REF, data: "a" },
+      {
+        type: "binary",
+        terminalRef: TERMINAL_REF,
+        dataBase64: "G10xMDtyZ2I6MTExMS8yMjIyLzMzMzMH",
+      },
+      { type: "input", terminalRef: TERMINAL_REF, data: "b" },
+    ]);
   });
 
   it("flushes pending input before the attached state callback runs", () => {

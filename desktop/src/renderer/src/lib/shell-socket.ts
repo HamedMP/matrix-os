@@ -122,7 +122,10 @@ export class ShellSocket {
   private readonly terminalRef: TerminalRef;
   private detachPending = false;
   private failedAttempts = 0;
-  private pendingInput: string[] = [];
+  private pendingInput: Array<
+    | { type: "input"; data: string }
+    | { type: "binary"; dataBase64: string }
+  > = [];
   private lastKnownDims: Dims | null = null;
   private lastSentDims: Dims | null = null;
   private resizeSentSinceAttach = false;
@@ -171,10 +174,29 @@ export class ShellSocket {
       if (this.currentState === "attached" && this.socket !== null) {
         this.sendFrame({ type: "input", terminalRef: this.terminalRef, data: chunk });
       } else {
-        this.pendingInput.push(chunk);
+        this.pendingInput.push({ type: "input", data: chunk });
         if (this.pendingInput.length > PENDING_INPUT_MAX_CHUNKS) {
           this.pendingInput.shift();
         }
+      }
+    }
+  }
+
+  sendBinary(data: string): void {
+    if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
+    if (data.length === 0) return;
+    if ([...data].some((value) => value.charCodeAt(0) > 0xff)) {
+      console.warn("[shell-socket] ignoring invalid binary terminal input");
+      return;
+    }
+    for (let offset = 0; offset < data.length; offset += INPUT_CHUNK_CHARS) {
+      const chunk = data.slice(offset, offset + INPUT_CHUNK_CHARS);
+      const frame = { type: "binary" as const, dataBase64: btoa(chunk) };
+      if (this.currentState === "attached" && this.socket !== null) {
+        this.sendFrame({ ...frame, terminalRef: this.terminalRef });
+      } else {
+        this.pendingInput.push(frame);
+        if (this.pendingInput.length > PENDING_INPUT_MAX_CHUNKS) this.pendingInput.shift();
       }
     }
   }
@@ -536,7 +558,7 @@ export class ShellSocket {
     const chunks = this.pendingInput;
     this.pendingInput = [];
     for (const chunk of chunks) {
-      this.sendFrame({ type: "input", terminalRef: this.terminalRef, data: chunk });
+      this.sendFrame({ ...chunk, terminalRef: this.terminalRef });
     }
   }
 

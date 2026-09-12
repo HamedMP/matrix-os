@@ -111,10 +111,22 @@ const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
   fontSize: 13,
   boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
 };
+const TERMINAL_INPUT_CHUNK_CHARS = 32_768;
+
 function sendTerminalInputFrame(ws: WebSocket, terminalKey: string | null, data: string): boolean {
   const terminalRef = parseTerminalRefKey(terminalKey);
   if (!terminalRef || ws.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify({ type: "input", terminalRef, data }));
+  return true;
+}
+
+function sendTerminalBinaryFrame(ws: WebSocket, terminalKey: string | null, data: string): boolean {
+  const terminalRef = parseTerminalRefKey(terminalKey);
+  if (!terminalRef || ws.readyState !== WebSocket.OPEN || data.length === 0) return false;
+  for (const value of data) {
+    if (value.charCodeAt(0) > 0xff) return false;
+  }
+  ws.send(JSON.stringify({ type: "binary", terminalRef, dataBase64: btoa(data) }));
   return true;
 }
 
@@ -196,6 +208,7 @@ export function TerminalPane({
   const webglContextLossDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const webglRecreateAttemptedRef = useRef(false);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const onBinaryDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1627,6 +1640,26 @@ export function TerminalPane({
         }
       });
 
+      onBinaryDisposableRef.current?.dispose();
+      onBinaryDisposableRef.current = term.onBinary((data: string) => {
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if ([...data].some((value) => value.charCodeAt(0) > 0xff)) {
+          console.warn("[terminal] Rejected invalid binary terminal input");
+          return;
+        }
+        for (let offset = 0; offset < data.length; offset += TERMINAL_INPUT_CHUNK_CHARS) {
+          if (!sendTerminalBinaryFrame(
+            ws,
+            sessionIdRef.current,
+            data.slice(offset, offset + TERMINAL_INPUT_CHUNK_CHARS),
+          )) {
+            console.warn("[terminal] Rejected invalid binary terminal input");
+            return;
+          }
+        }
+      });
+
       onResizeDisposableRef.current?.dispose();
       onResizeDisposableRef.current = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
         if (usesCanonicalGrid()) {
@@ -1702,6 +1735,8 @@ export function TerminalPane({
         teardownWebglSubscription();
         onDataDisposableRef.current?.dispose();
         onDataDisposableRef.current = null;
+        onBinaryDisposableRef.current?.dispose();
+        onBinaryDisposableRef.current = null;
         onResizeDisposableRef.current?.dispose();
         onResizeDisposableRef.current = null;
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);

@@ -45,6 +45,7 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   focus: ReturnType<typeof vi.fn>;
   flushWrites: () => void;
   emitData: (data: string) => void;
+  emitBinary: (data: string) => void;
   resize: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
   reset: ReturnType<typeof vi.fn>;
@@ -102,6 +103,7 @@ const restorePlan = vi.hoisted(() => ({
         write: ReturnType<typeof vi.fn>;
         dispose: ReturnType<typeof vi.fn>;
         onData: ReturnType<typeof vi.fn>;
+        onBinary: ReturnType<typeof vi.fn>;
         onResize: ReturnType<typeof vi.fn>;
         attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
         clearSelection: ReturnType<typeof vi.fn>;
@@ -216,6 +218,12 @@ vi.mock("@xterm/xterm", () => ({
       return { dispose: vi.fn(() => { this.dataListener = null; }) };
     });
     emitData = (data: string) => this.dataListener?.(data);
+    private binaryListener: ((data: string) => void) | null = null;
+    onBinary = vi.fn((listener: (data: string) => void) => {
+      this.binaryListener = listener;
+      return { dispose: vi.fn(() => { this.binaryListener = null; }) };
+    });
+    emitBinary = (data: string) => this.binaryListener?.(data);
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
     attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
       this.customKeyEventHandler = handler;
@@ -451,6 +459,7 @@ function createCachedTerminal() {
       resize: vi.fn(),
       dispose: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
+      onBinary: vi.fn(() => ({ dispose: vi.fn() })),
       onResize: vi.fn(() => ({ dispose: vi.fn() })),
       attachCustomKeyEventHandler: vi.fn(),
       clearSelection: vi.fn(),
@@ -891,6 +900,15 @@ describe("TerminalPane scrolling", () => {
 
     terminal.emitData("x");
     expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", terminalRef: TERMINAL_REF, data: "x" }));
+    terminal.emitBinary("\x1b]10;?\x07\x1b\\\x1b[<64;15;5M\x80\xff");
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "binary",
+      terminalRef: TERMINAL_REF,
+      dataBase64: "G10xMDs/BxtcG1s8NjQ7MTU7NU2A/w==",
+    }));
+    const sentBeforeInvalidBinary = stubWs.send.mock.calls.length;
+    terminal.emitBinary(`${"x".repeat(32_768)}\u{100}`);
+    expect(stubWs.send).toHaveBeenCalledTimes(sentBeforeInvalidBinary);
 
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 1_600 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 900 });
@@ -1840,7 +1858,14 @@ describe("TerminalPane scrolling", () => {
 
     expect(createdTerminals).toHaveLength(1);
     expect(terminal.write.mock.calls.filter(([data]) => data === "cached-output\r\n")).toHaveLength(1);
-    expect(new URL(WebSocketMock.instances[1]!.url).searchParams.get("fromSeq")).toBe("8");
+    const restoredSocket = WebSocketMock.instances[1]!;
+    expect(new URL(restoredSocket.url).searchParams.get("fromSeq")).toBe("8");
+    await act(async () => {
+      restoredSocket.onmessage?.({ data: JSON.stringify(attachedFrame(8)) });
+    });
+    stubWs.send.mockClear();
+    terminal.emitBinary("\x1b]10;rgb:1111/2222/3333\x07");
+    expect(stubWs.send).toHaveBeenCalledOnce();
   });
 
   it("detaches and restores a suspended canonical pane with replay and current dimensions", async () => {
