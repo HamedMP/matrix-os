@@ -116,7 +116,7 @@ describe("project collaboration inheritance", () => {
       .where("resource_id", "=", "chat_future").executeTakeFirstOrThrow()).toEqual({ count: 1 });
   });
 
-  it("does not silently convert or promote an existing direct item-only scope", async () => {
+  it("reserves an existing direct item scope for publication without converting or promoting it early", async () => {
     const directScopeId = "10000000-0000-4000-8000-000000000072";
     await fixture.db.insertInto("collaboration_scopes").values({
       id: directScopeId,
@@ -160,7 +160,18 @@ describe("project collaboration inheritance", () => {
       authorityGeneration: 2,
       revision: 2,
       readiness: "ready",
-    })).rejects.toBeInstanceOf(ProjectInheritanceError);
+    })).resolves.toMatchObject({
+      projectScopeId: PROJECT_SCOPE_ID,
+      resourceScopeId: directScopeId,
+      membershipScopeId: PROJECT_SCOPE_ID,
+    });
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select(["membership_mode", "parent_scope_id", "authority_runtime_id"])
+      .where("id", "=", directScopeId).executeTakeFirstOrThrow()).resolves.toEqual({
+      membership_mode: "direct",
+      parent_scope_id: null,
+      authority_runtime_id: "runtime_item_only",
+    });
     await expect(fixture.db.selectFrom("collaboration_members").selectAll()
       .where("scope_id", "=", directScopeId).execute()).resolves.toHaveLength(1);
   });

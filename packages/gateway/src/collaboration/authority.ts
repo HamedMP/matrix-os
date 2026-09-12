@@ -112,7 +112,8 @@ export class CollaborationAuthority {
     }
     const parent = await this.loadScope(scope.parent_scope_id);
     if (parent.kind !== "project" || parent.membership_mode !== "direct"
-      || parent.lifecycle !== "shared" || parent.owner_id !== scope.owner_id
+      || (parent.lifecycle !== "shared" && parent.lifecycle !== "archived")
+      || parent.lifecycle !== scope.lifecycle || parent.owner_id !== scope.owner_id
       || parent.authority_runtime_id !== scope.authority_runtime_id) {
       throw new CollaborationAuthorizationError("unavailable", "Inherited authority is unavailable");
     }

@@ -5,6 +5,10 @@ import type {
   CollaborationTransitionsTable,
   OwnerCollaborationDatabase,
 } from "./database.js";
+import {
+  ProjectMembershipTransitionError,
+  reconcileProjectMembershipAtPublication,
+} from "./project-membership-transition.js";
 
 const MAX_RECOVERY_BATCH = 100;
 const DEFAULT_RECOVERY_TIMEOUT_MS = 30_000;
@@ -383,6 +387,23 @@ export function createProjectTransitionJournal(options: {
             expression("authority_generation", "!=", Number(row.destination_authority_generation)),
           ])).limit(1).executeTakeFirst();
         if (incompatibleBinding) throw new ProjectTransitionError("conflict");
+        try {
+          await reconcileProjectMembershipAtPublication(trx, {
+            projectScopeId: scope.id,
+            ownerType: scope.owner_type,
+            ownerId: scope.owner_id,
+            requestedBy: row.requested_by,
+            destinationAuthorityRuntimeId: row.destination_authority_runtime_id,
+            destinationAuthorityGeneration: Number(row.destination_authority_generation),
+            now: now(),
+            createEventId,
+          });
+        } catch (error: unknown) {
+          if (error instanceof ProjectMembershipTransitionError) {
+            throw new ProjectTransitionError(error.code);
+          }
+          throw error;
+        }
         const nextRevision = Number(scope.revision) + 1;
         const updatedScope = await trx.updateTable("collaboration_scopes").set({
           lifecycle: "shared",
@@ -398,17 +419,6 @@ export function createProjectTransitionJournal(options: {
           .where("authority_generation", "=", Number(row.source_authority_generation))
           .returningAll().executeTakeFirst();
         if (!updatedScope) throw new ProjectTransitionError("conflict");
-        await trx.updateTable("collaboration_scopes").set({
-          lifecycle: "shared",
-          authority_runtime_id: row.destination_authority_runtime_id,
-          authority_generation: Number(row.destination_authority_generation),
-          auth_epoch: Number(scope.auth_epoch) + 1,
-          updated_at: now(),
-        }).where("parent_scope_id", "=", scope.id)
-          .where("membership_mode", "=", "inherited")
-          .where("lifecycle", "in", ["preparing", "recovering"])
-          .where("deleted_at", "is", null)
-          .execute();
         const updated = await trx.updateTable("collaboration_transitions").set({
           status: "active",
           error_code: null,
