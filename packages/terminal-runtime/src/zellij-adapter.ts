@@ -404,32 +404,49 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     sessionNameInput: string,
     internalNameInput: string,
   ): Promise<{ tabId: number; paneId: string } | undefined> {
-    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
     const internalName = z.string().regex(TAB_NAME).parse(internalNameInput);
+    return (await this.findTabsByInternalName(sessionNameInput, [internalName]))[internalName];
+  }
+
+  async findTabsByInternalName(
+    sessionNameInput: string,
+    internalNamesInput: string[],
+  ): Promise<Record<string, { tabId: number; paneId: string }>> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const internalNames = z.array(z.string().regex(TAB_NAME)).max(10_000).parse(internalNamesInput);
+    if (new Set(internalNames).size !== internalNames.length) {
+      throw new Error("Terminal tab names must be unique");
+    }
+    if (internalNames.length === 0) return {};
+    const requested = new Set(internalNames);
     const tabs = await this.readStructuredJson(
       ["--session", sessionName, "action", "list-tabs", "--json"],
       z.array(TabSchema).max(10_000),
       binaryPath,
     );
-    const tab = tabs.find((candidate) => candidate.name === internalName);
-    if (!tab) return undefined;
+    const requestedTabs = tabs.filter((tab) => requested.has(tab.name));
+    if (requestedTabs.length === 0) return {};
     const panes = await this.readStructuredJson(
       ["--session", sessionName, "action", "list-panes", "--all", "--json"],
       z.array(PaneSchema).max(10_000),
       binaryPath,
     );
-    const managedPanes = panes.filter((pane) => pane.tab_id === tab.tab_id && !pane.is_plugin);
-    const primaryPane = managedPanes.find((pane) => pane.pane_title === internalName)
-      ?? managedPanes.toSorted((left, right) => left.id - right.id)[0];
-    if (!primaryPane) throw new Error("Managed terminal tab primary pane is unavailable");
-    const paneId = `terminal_${primaryPane.id}`;
-    if (primaryPane.pane_title !== internalName) {
-      await this.run(
-        ["--session", sessionName, "action", "rename-pane", "--pane-id", paneId, internalName],
-        binaryPath,
-      );
+    const found: Record<string, { tabId: number; paneId: string }> = {};
+    for (const tab of requestedTabs) {
+      const managedPanes = panes.filter((pane) => pane.tab_id === tab.tab_id && !pane.is_plugin);
+      const primaryPane = managedPanes.find((pane) => pane.pane_title === tab.name)
+        ?? managedPanes.toSorted((left, right) => left.id - right.id)[0];
+      if (!primaryPane) throw new Error("Managed terminal tab primary pane is unavailable");
+      const paneId = `terminal_${primaryPane.id}`;
+      if (primaryPane.pane_title !== tab.name) {
+        await this.run(
+          ["--session", sessionName, "action", "rename-pane", "--pane-id", paneId, tab.name],
+          binaryPath,
+        );
+      }
+      found[tab.name] = { tabId: tab.tab_id, paneId };
     }
-    return { tabId: tab.tab_id, paneId };
+    return found;
   }
 
   async subscribeWorkspace(sessionNameInput: string, input: {

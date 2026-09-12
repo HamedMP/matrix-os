@@ -160,6 +160,37 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     )).resolves.toEqual({ tabId: 7, paneId: "terminal_12" });
   });
 
+  it("finds a dense set of tabs with one tab inventory and one pane inventory", async () => {
+    const first = "matrix-tab-0123456789abcdef0123456789abcdef";
+    const second = "matrix-tab-fedcba9876543210fedcba9876543210";
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-tabs")) {
+        return JSON.stringify([
+          { tab_id: 7, name: first },
+          { tab_id: 8, name: second },
+        ]);
+      }
+      if (args.includes("list-panes")) {
+        return JSON.stringify([
+          { id: 12, is_plugin: false, tab_id: 7, pane_title: first },
+          { id: 13, is_plugin: false, tab_id: 8, pane_title: second },
+        ]);
+      }
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+
+    await expect(adapter.findTabsByInternalName(
+      "matrix-w-0123456789abcdef0123456789abcdef",
+      [first, second],
+    )).resolves.toEqual({
+      [first]: { tabId: 7, paneId: "terminal_12" },
+      [second]: { tabId: 8, paneId: "terminal_13" },
+    });
+    expect(run.mock.calls.filter(([args]) => args.includes("list-tabs"))).toHaveLength(1);
+    expect(run.mock.calls.filter(([args]) => args.includes("list-panes"))).toHaveLength(1);
+  });
+
   it("promotes a remaining pane through the pinned generation when the primary closes", async () => {
     const logicalName = "matrix-w-0123456789abcdef0123456789abcdef";
     const ownedName = "matrix-rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
