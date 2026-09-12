@@ -874,6 +874,8 @@ suite("packaged Electron production-mode terminal selection", () => {
         screenBox.y + screenBox.height / 2,
       );
       await page.mouse.wheel(0, -100_000);
+      await expect.poll(async () => (await readTerminalDiagnostics()).viewportY).toBe(0);
+      await waitForRenderFrames(2);
       const clickTop = await expectTerminalPoint(point(2, 2), "mouse-edge-top-click");
       await page.mouse.click(clickTop.x, clickTop.y);
       gateway.sendTerminalOutput("\u001b[?1003h\u001b[?1006h");
