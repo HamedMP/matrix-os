@@ -10,6 +10,8 @@ import { boundedDisplayText, boundedText, referenceId } from "#legacy-contract-p
 export const COLLABORATION_HTTP_BODY_LIMIT = 96 * 1024;
 export const COLLABORATION_MESSAGE_BYTE_LIMIT = 64 * 1024;
 export const COLLABORATION_PAGE_LIMIT = 100;
+export const COLLABORATION_TERMINAL_INPUT_BYTE_LIMIT = 32 * 1024;
+export const COLLABORATION_TERMINAL_FRAME_BYTE_LIMIT = 64 * 1024;
 export const COLLABORATION_CLIENT_REQUEST_ID_HEADER = "x-matrix-client-request-id";
 export const COLLABORATION_EXPECTED_REVISION_HEADER = "x-matrix-expected-revision";
 export const COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER = "x-matrix-expected-member-revision";
@@ -66,6 +68,9 @@ export const CollaborationCapabilitiesSchema = z.object({
   discuss: z.boolean(),
   manageMembers: z.boolean(),
   requestAi: z.boolean(),
+  observeTerminal: z.boolean().default(false),
+  controlTerminal: z.boolean().default(false),
+  stopTerminal: z.boolean().default(false),
 }).strict();
 
 export const CollaborationScopeSchema = z.object({
@@ -474,6 +479,100 @@ export const CollaborationConnectionTicketResponseSchema = z.object({
   expiresAt: z.iso.datetime(),
 }).strict();
 
+export const CollaborationTerminalIncarnationSchema = CollaborationResourceIdSchema;
+export const CollaborationTerminalConnectionIdSchema = CollaborationResourceIdSchema;
+
+const CollaborationTerminalActionBaseSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  incarnation: CollaborationTerminalIncarnationSchema,
+}).strict();
+
+const CollaborationTerminalConnectionActionBaseSchema = CollaborationTerminalActionBaseSchema.extend({
+  connectionId: CollaborationTerminalConnectionIdSchema,
+}).strict();
+
+const CollaborationTerminalLeaseActionBaseSchema = CollaborationTerminalConnectionActionBaseSchema.extend({
+  leaseEpoch: CollaborationRevisionSchema,
+}).strict();
+
+export const CollaborationTerminalActionSchema = z.discriminatedUnion("type", [
+  CollaborationTerminalConnectionActionBaseSchema.extend({ type: z.literal("acquire") }).strict(),
+  CollaborationTerminalLeaseActionBaseSchema.extend({ type: z.literal("release") }).strict(),
+  CollaborationTerminalLeaseActionBaseSchema.extend({ type: z.literal("renew") }).strict(),
+  CollaborationTerminalConnectionActionBaseSchema.extend({ type: z.literal("takeover") }).strict(),
+  CollaborationTerminalLeaseActionBaseSchema.extend({
+    type: z.literal("input"),
+    data: boundedText(COLLABORATION_TERMINAL_INPUT_BYTE_LIMIT, COLLABORATION_TERMINAL_INPUT_BYTE_LIMIT),
+  }).strict(),
+  CollaborationTerminalLeaseActionBaseSchema.extend({
+    type: z.literal("paste"),
+    data: boundedText(COLLABORATION_TERMINAL_INPUT_BYTE_LIMIT, COLLABORATION_TERMINAL_INPUT_BYTE_LIMIT),
+  }).strict(),
+  CollaborationTerminalLeaseActionBaseSchema.extend({
+    type: z.literal("resize"),
+    cols: z.number().int().min(1).max(1_000),
+    rows: z.number().int().min(1).max(1_000),
+  }).strict(),
+  CollaborationTerminalActionBaseSchema.extend({ type: z.literal("stop") }).strict(),
+]);
+
+export const CollaborationTerminalControllerSchema = z.object({
+  actor: CollaborationParticipantSchema,
+  leaseEpoch: CollaborationRevisionSchema,
+  expiresAt: z.iso.datetime(),
+}).strict();
+
+export const CollaborationTerminalSchema = z.object({
+  id: CollaborationResourceIdSchema,
+  scopeId: CollaborationIdSchema,
+  incarnation: CollaborationTerminalIncarnationSchema,
+  executionGeneration: CollaborationRevisionSchema,
+  status: z.enum(["active", "exited"]),
+  createdBy: CollaborationParticipantSchema,
+  controller: CollaborationTerminalControllerSchema.optional(),
+  createdAt: z.iso.datetime(),
+  exitedAt: z.iso.datetime().optional(),
+}).strict();
+
+export const CollaborationTerminalActionResultSchema = z.object({
+  terminal: CollaborationTerminalSchema,
+  action: z.enum(["acquired", "released", "renewed", "taken_over", "accepted", "stopped"]),
+}).strict();
+
+const CollaborationTerminalFrameBaseSchema = z.object({
+  version: z.literal(1),
+  scopeId: CollaborationIdSchema,
+  resourceId: CollaborationResourceIdSchema,
+  authorityGeneration: CollaborationRevisionSchema,
+  incarnation: CollaborationTerminalIncarnationSchema,
+}).strict();
+
+export const CollaborationTerminalFrameSchema = z.discriminatedUnion("type", [
+  CollaborationTerminalFrameBaseSchema.extend({
+    type: z.literal("terminal.ready"),
+    sequence: CollaborationRevisionSchema,
+    terminal: CollaborationTerminalSchema,
+  }).strict(),
+  CollaborationTerminalFrameBaseSchema.extend({
+    type: z.literal("terminal.output"),
+    sequence: CollaborationRevisionSchema,
+    data: boundedText(COLLABORATION_TERMINAL_FRAME_BYTE_LIMIT, COLLABORATION_TERMINAL_FRAME_BYTE_LIMIT),
+  }).strict(),
+  CollaborationTerminalFrameBaseSchema.extend({
+    type: z.literal("terminal.state"),
+    sequence: CollaborationRevisionSchema,
+    terminal: CollaborationTerminalSchema,
+  }).strict(),
+  CollaborationTerminalFrameBaseSchema.extend({
+    type: z.literal("terminal.refresh_required"),
+    sequence: CollaborationRevisionSchema,
+  }).strict(),
+  CollaborationTerminalFrameBaseSchema.extend({
+    type: z.literal("terminal.unavailable"),
+    code: z.enum(["revoked", "expired", "disabled", "exited", "unavailable"]),
+  }).strict(),
+]);
+
 export const CollaborationDirectoryEventSchema = z.object({
   eventId: CollaborationIdSchema,
   scopeId: CollaborationIdSchema,
@@ -550,8 +649,14 @@ export type CollaborationInvitation = z.infer<typeof CollaborationInvitationSche
 export type CollaborationLifecycleRequest = z.infer<typeof CollaborationLifecycleRequestSchema>;
 export type CollaborationMember = z.infer<typeof CollaborationMemberSchema>;
 export type CollaborationOperation = z.infer<typeof CollaborationOperationSchema>;
+export type CollaborationParticipant = z.infer<typeof CollaborationParticipantSchema>;
 export type CollaborationPolicy = z.infer<typeof CollaborationPolicySchema>;
 export type CollaborationRole = z.infer<typeof CollaborationRoleSchema>;
 export type CollaborationScope = z.infer<typeof CollaborationScopeSchema>;
 export type CollaborationScopeExport = z.infer<typeof CollaborationScopeExportSchema>;
+export type CollaborationTerminal = z.infer<typeof CollaborationTerminalSchema>;
+export type CollaborationTerminalAction = z.infer<typeof CollaborationTerminalActionSchema>;
+export type CollaborationTerminalActionResult = z.infer<typeof CollaborationTerminalActionResultSchema>;
+export type CollaborationTerminalController = z.infer<typeof CollaborationTerminalControllerSchema>;
+export type CollaborationTerminalFrame = z.infer<typeof CollaborationTerminalFrameSchema>;
 export type CollaborationUserState = z.infer<typeof CollaborationUserStateSchema>;

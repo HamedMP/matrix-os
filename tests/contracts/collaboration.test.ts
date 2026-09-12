@@ -21,6 +21,9 @@ import {
   CollaborationRoleSchema,
   CollaborationScopeSchema,
   CollaborationScopePreflightRequestSchema,
+  CollaborationTerminalActionSchema,
+  CollaborationTerminalFrameSchema,
+  CollaborationTerminalSchema,
   CollaborationUserStatePatchSchema,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
@@ -275,6 +278,81 @@ describe("collaboration contracts", () => {
     expect(CollaborationConnectionTicketRequestSchema.safeParse({
       clientRequestId: requestId,
       purpose: "owner-terminal",
+    }).success).toBe(false);
+  });
+
+  it("keeps shared terminal actions incarnation, connection, and lease-epoch fenced", () => {
+    const incarnation = "terminal-incarnation-7";
+    expect(CollaborationTerminalActionSchema.parse({
+      type: "input",
+      clientRequestId: requestId,
+      incarnation,
+      connectionId: "connection_editor_1",
+      leaseEpoch: "9",
+      data: "pwd\n",
+    })).toMatchObject({ type: "input", leaseEpoch: "9" });
+    expect(CollaborationTerminalActionSchema.safeParse({
+      type: "input",
+      clientRequestId: requestId,
+      incarnation,
+      connectionId: "connection_editor_1",
+      data: "pwd\n",
+    }).success).toBe(false);
+    expect(CollaborationTerminalActionSchema.safeParse({
+      type: "resize",
+      clientRequestId: requestId,
+      incarnation,
+      connectionId: "connection_editor_1",
+      leaseEpoch: "9",
+      cols: 1001,
+      rows: 40,
+    }).success).toBe(false);
+    expect(CollaborationTerminalActionSchema.safeParse({
+      type: "paste",
+      clientRequestId: requestId,
+      incarnation,
+      connectionId: "connection_editor_1",
+      leaseEpoch: "9",
+      data: "x".repeat(32 * 1024 + 1),
+      actorId: "user_owner",
+    }).success).toBe(false);
+  });
+
+  it("projects bounded terminal identity, controller state, output, and recovery frames", () => {
+    const terminal = CollaborationTerminalSchema.parse({
+      id: "terminal_release",
+      scopeId,
+      incarnation: "terminal-incarnation-7",
+      executionGeneration: "4",
+      status: "active",
+      createdBy: { actorId: "user_owner", displayName: "Nima" },
+      controller: {
+        actor: { actorId: "user_editor", displayName: "Ada" },
+        leaseEpoch: "9",
+        expiresAt: "2026-09-07T12:00:30.000Z",
+      },
+      createdAt: now,
+    });
+    expect(terminal.controller?.actor.actorId).toBe("user_editor");
+    expect(CollaborationTerminalFrameSchema.parse({
+      version: 1,
+      type: "terminal.output",
+      scopeId,
+      resourceId: "terminal_release",
+      authorityGeneration: "1",
+      incarnation: "terminal-incarnation-7",
+      sequence: "12",
+      data: "hello\r\n",
+    }).type).toBe("terminal.output");
+    expect(CollaborationTerminalFrameSchema.safeParse({
+      version: 1,
+      type: "terminal.output",
+      scopeId,
+      resourceId: "terminal_release",
+      authorityGeneration: "1",
+      incarnation: "terminal-incarnation-7",
+      sequence: "12",
+      data: "x".repeat(64 * 1024 + 1),
     }).success).toBe(false);
   });
 

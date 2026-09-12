@@ -125,7 +125,7 @@ export class CollaborationAuthority {
     executionPolicy?: CollaborationPolicy,
   ): void {
     if (action === "request_ai" || action === "control_execution") {
-      if (!this.aiAllowed(scope, actorId, executionPolicy)) {
+      if (!this.executionAllowed(scope, actorId, action, executionPolicy)) {
         throw new CollaborationAuthorizationError("unavailable", "Shared execution is unavailable");
       }
     }
@@ -143,15 +143,19 @@ export class CollaborationAuthority {
     executionPolicy?: CollaborationPolicy,
   ): boolean {
     return role !== "viewer" && scope.lifecycle === "shared"
-      && this.aiAllowed(scope, actorId, executionPolicy);
+      && this.executionAllowed(scope, actorId, "request_ai", executionPolicy);
   }
 
-  private aiAllowed(
+  private executionAllowed(
     scope: Selectable<CollaborationScopesTable>,
     actorId: string,
+    action: "request_ai" | "control_execution",
     policy?: CollaborationPolicy,
   ): boolean {
-    if (!policy || policy.milestone !== "m2" || policy.mode === "off" || policy.mode === "read_only"
+    if (action === "request_ai" && scope.kind !== "chat") return false;
+    if (action === "control_execution" && scope.kind !== "chat" && scope.kind !== "terminal") return false;
+    const requiredMilestone = scope.kind === "terminal" ? "m3" : "m2";
+    if (!policy || policy.milestone !== requiredMilestone || policy.mode === "off" || policy.mode === "read_only"
       || scope.execution_generation === null || scope.execution_eligibility === null) return false;
     if (policy.mode === "enabled") return true;
     if (policy.cohort.length > 1_000) return false;

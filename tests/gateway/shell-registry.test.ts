@@ -2029,4 +2029,82 @@ describe("shell registry", () => {
     await expect(registry.create({ name: "main" })).rejects.toBeInstanceOf(Error);
     expect(adapter.deleteSession).toHaveBeenCalledWith("main", { force: true });
   });
+
+  it("persists collaboration-ready terminal identity and binds only the exact incarnation", async () => {
+    const root = await tempRoot();
+    const live = new Set<string>();
+    const createdAt = "2026-09-11T12:00:00.000Z";
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      getSessionCreatedAt: vi.fn(async () => createdAt),
+      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+    const created = await registry.create({
+      name: "shared-shell",
+      collaboration: { creatorActorId: "user_owner", executionGeneration: 4 },
+    });
+    expect(created).toMatchObject({
+      creatorActorId: "user_owner",
+      executionGeneration: 4,
+      sharedControlMode: "eligible",
+      incarnationVerified: true,
+    });
+    expect(created.sessionIncarnation).toMatch(/^terminal-[a-f0-9]{32}$/);
+
+    await expect(registry.bindCollaboration("shared-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      sessionIncarnation: `terminal-${"0".repeat(32)}`,
+      executionGeneration: 4,
+    })).rejects.toMatchObject({ code: "session_incarnation_changed" });
+    const bound = await registry.bindCollaboration("shared-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      sessionIncarnation: created.sessionIncarnation!,
+      executionGeneration: 4,
+    });
+    expect(bound).toMatchObject({
+      collaborationScopeId: "10000000-0000-4000-8000-000000000001",
+      sharedControlMode: "shared",
+      sessionIncarnation: created.sessionIncarnation,
+    });
+
+    const reloaded = new ShellRegistry({ homePath: root, adapter });
+    await expect(reloaded.get("shared-shell")).resolves.toMatchObject({
+      collaborationScopeId: "10000000-0000-4000-8000-000000000001",
+      sessionIncarnation: created.sessionIncarnation,
+      sharedControlMode: "shared",
+    });
+  });
+
+  it("invalidates collaboration metadata when the runtime process is recreated", async () => {
+    const root = await tempRoot();
+    let runtimeCreatedAt = "2026-09-11T12:00:00.000Z";
+    const live = new Set<string>();
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      getSessionCreatedAt: vi.fn(async () => runtimeCreatedAt),
+      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+    const created = await registry.create({
+      name: "shared-shell",
+      collaboration: { creatorActorId: "user_owner", executionGeneration: 4 },
+    });
+    await registry.bindCollaboration("shared-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      sessionIncarnation: created.sessionIncarnation!,
+      executionGeneration: 4,
+    });
+
+    runtimeCreatedAt = "2026-09-11T12:01:00.000Z";
+    const recreated = await registry.get("shared-shell");
+    expect(recreated.incarnationVerified).toBe(true);
+    expect(recreated.sharedControlMode).toBeUndefined();
+    expect(recreated.collaborationScopeId).toBeUndefined();
+    expect(recreated.creatorActorId).toBeUndefined();
+    expect(recreated.executionGeneration).toBeUndefined();
+    expect(recreated.sessionIncarnation).toBeUndefined();
+  });
 });
