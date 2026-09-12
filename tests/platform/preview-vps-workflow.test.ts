@@ -249,8 +249,8 @@ describe('Preview VPS provisioning workflow', () => {
     expect(smoke).toContain('__MATRIX_OSC_OK__');
     expect(smoke).toContain('osc_feedback_loop_detected');
     expect(smoke).toContain('keyboardRoundTrips: 2');
-    expect(smoke).toContain('delete_exact_test_tab "$workspace_id" "$tab_id"');
-    expect(smoke).toContain('Temporary terminal removed by exact workspace/tab ID.');
+    expect(smoke).toContain('delete_exact_test_workspace "$workspace_id"');
+    expect(smoke).toContain('Temporary terminal workspace removed by exact ID.');
     expect(smoke).toContain('Terminal architecture verified');
     expect(smoke).toContain('Migration remained committed after the observation window');
     expect(smoke).not.toContain('MATRIX_AUTH_TOKEN');

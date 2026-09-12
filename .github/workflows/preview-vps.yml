@@ -1044,17 +1044,19 @@ jobs:
             fi
             curl "${args[@]}"
           }
-          delete_exact_test_tab() {
-            local workspace="$1" tab="$2" output="$3" code
+          delete_exact_test_workspace() {
+            local workspace="$1" output="$2" code
             code="$(curl --silent --show-error --max-time 45 --insecure \
               --resolve "app.matrix-os.com:443:${address}" \
-              -X DELETE "https://app.matrix-os.com/api/terminal/workspaces/${workspace}/tabs/${tab}" \
+              -X DELETE "https://app.matrix-os.com/api/terminal/workspaces/${workspace}" \
               -H "authorization: Bearer ${runtime_token}" \
               -H "x-platform-user-id: ${owner_id}" \
               -H "x-platform-verified: ${owner_proof}" \
+              -H 'content-type: application/json' \
+              --data-binary '{"confirmTerminate":true}' \
               -o "$output" -w '%{http_code}')" || return 1
             [ "$code" = "204" ] || [ "$code" = "404" ] || {
-              echo "Exact test-tab cleanup returned HTTP ${code}." >&2
+              echo "Exact test-workspace cleanup returned HTTP ${code}." >&2
               return 1
             }
           }
@@ -1220,41 +1222,19 @@ jobs:
           fi
           echo "Installed target state verified: $(jq -c '{appVersion,releaseVersion,migrationStatus,terminalRuntimeActive}' <<< "$after")"
 
-          runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-stale-test-tab.json
-          for stale_test_tab in \
-            tt_88fea4c456bd0112bed13fc20c9af8006 \
-            tt_f6a74b98c96ea99728cb40aad85636e4; do
-            stale_test_ref="$(jq -cr --arg tab "$stale_test_tab" '
-              [.workspaces[] as $workspace | $workspace.tabs[] |
-                select(.id == $tab) |
-                {workspaceId:$workspace.id,tabId:.id}] |
-              if length == 0 then null elif length == 1 then .[0] else error("duplicate test tab") end
-            ' /tmp/nimanaderi-stale-test-tab.json)"
-            if [ "$stale_test_ref" != "null" ]; then
-              stale_workspace="$(jq -er .workspaceId <<< "$stale_test_ref")"
-              delete_exact_test_tab "$stale_workspace" "$stale_test_tab" /tmp/nimanaderi-stale-test-tab-delete.json
-              echo "Removed an exact temporary tab left by an earlier probe."
-              sleep 1
-            fi
-          done
-          runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-after-stale-cleanup.json
-          jq -e '
-            all(.workspaces[].tabs[];
-              .id != "tt_88fea4c456bd0112bed13fc20c9af8006" and
-              .id != "tt_f6a74b98c96ea99728cb40aad85636e4")
-          ' /tmp/nimanaderi-after-stale-cleanup.json >/dev/null
-
-          runtime_request POST /api/terminal/workspaces/ensure /tmp/nimanaderi-workspace.json '{}'
+          test_project="matrix-terminal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          workspace_body="$(jq -cn --arg project "$test_project" '{projectId:$project}')"
+          runtime_request POST /api/terminal/workspaces/ensure /tmp/nimanaderi-workspace.json "$workspace_body"
           workspace_id="$(jq -er '.workspace.id | select(type == "string" and test("^tws_[0-9a-f]{32}$"))' /tmp/nimanaderi-workspace.json)"
           tab_id="tt_$(printf '%s' "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${VERSION}" | sha256sum | cut -c1-32)"
           probe_path="/tmp/matrix-terminal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.py"
-          tab_created=false
-          cleanup_test_tab() {
-            if [ "$tab_created" = true ]; then
-              delete_exact_test_tab "$workspace_id" "$tab_id" /tmp/nimanaderi-tab-delete.json || true
+          workspace_created=true
+          cleanup_test_workspace() {
+            if [ "$workspace_created" = true ]; then
+              delete_exact_test_workspace "$workspace_id" /tmp/nimanaderi-workspace-delete.json || true
             fi
           }
-          trap cleanup_test_tab EXIT
+          trap cleanup_test_workspace EXIT
 
           read -r -d '' osc_probe_script <<'PYTHON' || true
           import os
@@ -1308,7 +1288,6 @@ jobs:
             '{tabId:$tab,name:"Matrix terminal smoke",cwd:"",command:["/usr/bin/python3",$path]}')"
           runtime_request POST "/api/terminal/workspaces/${workspace_id}/tabs" /tmp/nimanaderi-tab.json "$tab_body"
           jq -e --arg tab "$tab_id" '.tab.id == $tab and .tab.status == "running"' /tmp/nimanaderi-tab.json >/dev/null
-          tab_created=true
           runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-workspaces.json
           jq -e --arg workspace "$workspace_id" --arg tab "$tab_id" '
             any(.workspaces[]; .id == $workspace and any(.tabs[]; .id == $tab and .status == "running"))
@@ -1475,14 +1454,14 @@ jobs:
           ' <<< "$observed" >/dev/null
           echo "Migration remained committed after the observation window: $(jq -c '{appVersion,releaseVersion,migrationStatus,activeWorkspaceServices}' <<< "$observed")"
 
-          delete_exact_test_tab "$workspace_id" "$tab_id" /tmp/nimanaderi-tab-delete.json
-          tab_created=false
+          delete_exact_test_workspace "$workspace_id" /tmp/nimanaderi-workspace-delete.json
+          workspace_created=false
           trap - EXIT
           runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-workspaces-after-cleanup.json
-          jq -e --arg workspace "$workspace_id" --arg tab "$tab_id" '
-            all(.workspaces[]; .id != $workspace or all(.tabs[]; .id != $tab))
+          jq -e --arg workspace "$workspace_id" '
+            all(.workspaces[]; .id != $workspace)
           ' /tmp/nimanaderi-workspaces-after-cleanup.json >/dev/null
-          echo "Temporary terminal removed by exact workspace/tab ID."
+          echo "Temporary terminal workspace removed by exact ID."
 
   diagnose_release:
     name: Diagnose released-bundle smoke lifecycle
