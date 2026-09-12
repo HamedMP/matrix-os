@@ -16,6 +16,7 @@ import {
   renameSessionInTree,
   setPaneSessionId,
   splitPaneInTree,
+  terminalSessionName,
   type TerminalLayout,
 } from "@/components/terminal/terminal-layout";
 
@@ -33,6 +34,11 @@ const splitTree: PaneNode = {
 };
 
 describe("terminal layout helpers", () => {
+  it("turns the generic Shell action into a friendly generated session name", () => {
+    expect(terminalSessionName("Shell")).toMatch(/^[a-z]+-[a-z]+$/);
+    expect(terminalSessionName("  Build logs  ")).toBe("Build logs");
+  });
+
   it("splits, closes, and finds panes without mutating the original tree", () => {
     const split = splitPaneInTree(splitTree, "left", "vertical");
 

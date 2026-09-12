@@ -145,8 +145,9 @@ export function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
 
-export function terminalSessionName() {
-  return twoWordSessionName();
+export function terminalSessionName(requestedLabel = "") {
+  const label = requestedLabel.trim();
+  return label && label.toLowerCase() !== "shell" ? label : twoWordSessionName();
 }
 
 export function splitPaneInTree(node: PaneNode, paneId: string, dir: "horizontal" | "vertical"): PaneNode {

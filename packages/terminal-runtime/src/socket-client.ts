@@ -75,6 +75,10 @@ export class TerminalRuntimeSocketClient {
     await this.call("TerminateTab", ref);
   }
 
+  async deleteTab(ref: { workspaceId: string; tabId: string }): Promise<void> {
+    await this.call("DeleteTab", ref);
+  }
+
   async paneAction(ref: { workspaceId: string; tabId: string }, action: TerminalPaneAction): Promise<void> {
     await this.call("PaneAction", { ...ref, action });
   }
