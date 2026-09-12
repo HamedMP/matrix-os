@@ -9,7 +9,7 @@ import type {
 const BindingIdSchema = z.uuid();
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
-const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/);
 const ResourceKindSchema = z.enum(["file", "chat", "app", "layout", "terminal"]);
 const ResourceIdSchema = z.string().min(1).max(4_096).regex(/^[^\0\r\n]+$/);
 const IncarnationSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);

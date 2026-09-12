@@ -67,11 +67,11 @@ export type ProjectInventoryResourceRecord = z.input<typeof ResourceRecordSchema
 export type ProjectInventoryMembershipEffect = z.infer<typeof MembershipEffectSchema>;
 
 export interface ProjectInventoryResourceSource {
-  getProject(projectId: string): Promise<z.input<typeof ProjectRecordSchema> | null>;
-  listChats(projectId: string): Promise<ProjectInventoryResourceRecord[]>;
-  listApps(projectId: string): Promise<ProjectInventoryResourceRecord[]>;
-  getLayout(projectId: string): Promise<ProjectInventoryResourceRecord | null>;
-  listTerminals(projectId: string): Promise<ProjectInventoryResourceRecord[]>;
+  getProject(ownerId: string, projectId: string): Promise<z.input<typeof ProjectRecordSchema> | null>;
+  listChats(ownerId: string, projectId: string): Promise<ProjectInventoryResourceRecord[]>;
+  listApps(ownerId: string, projectId: string): Promise<ProjectInventoryResourceRecord[]>;
+  getLayout(ownerId: string, projectId: string): Promise<ProjectInventoryResourceRecord | null>;
+  listTerminals(ownerId: string, projectId: string): Promise<ProjectInventoryResourceRecord[]>;
 }
 
 export interface ProjectInventoryItem {
@@ -411,7 +411,7 @@ export function createProjectInventoryService(options: {
       const effects = sortedEffects(input.membershipEffects);
       let project;
       try {
-        project = ProjectRecordSchema.parse(await options.source.getProject(projectId));
+        project = ProjectRecordSchema.parse(await options.source.getProject(ownerId, projectId));
       } catch (error: unknown) {
         if (!(error instanceof z.ZodError)) {
           console.warn("[collaboration-project] project inventory lookup failed", error instanceof Error ? error.name : "UnknownError");
@@ -446,10 +446,10 @@ export function createProjectInventoryService(options: {
       try {
         const files = await collectFiles(rootPath);
         const [chats, apps, layout, terminals] = await Promise.all([
-          options.source.listChats(projectId),
-          options.source.listApps(projectId),
-          options.source.getLayout(projectId),
-          options.source.listTerminals(projectId),
+          options.source.listChats(ownerId, projectId),
+          options.source.listApps(ownerId, projectId),
+          options.source.getLayout(ownerId, projectId),
+          options.source.listTerminals(ownerId, projectId),
         ]);
         const ownedItems = [...files.items];
         const externalReferences: ProjectInventoryReference[] = [];
@@ -474,7 +474,7 @@ export function createProjectInventoryService(options: {
           || await realpath(configuredRoot) !== rootPath) {
           throw new ProjectInventoryError("project_changed");
         }
-        const currentProject = ProjectRecordSchema.parse(await options.source.getProject(projectId));
+        const currentProject = ProjectRecordSchema.parse(await options.source.getProject(ownerId, projectId));
         if (currentProject.ownerId !== ownerId || currentProject.rootPath !== project.rootPath
           || currentProject.revision !== project.revision) {
           throw new ProjectInventoryError("project_changed");

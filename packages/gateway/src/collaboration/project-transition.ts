@@ -257,9 +257,11 @@ export function createProjectTransitionJournal(options: {
           if (!existing) throw new ProjectTransitionError("unavailable");
           return rowToTransition(existing);
         }
+        const sameRuntime = scope.authority_runtime_id === parsed.destinationAuthorityRuntimeId;
         if (scope.membership_mode !== "direct"
           || scope.lifecycle !== "private" || Number(scope.revision) !== parsed.expectedScopeRevision
-          || scope.authority_runtime_id === parsed.destinationAuthorityRuntimeId) {
+          || (sameRuntime
+            && parsed.destinationAuthorityGeneration !== Number(scope.authority_generation) + 1)) {
           throw new ProjectTransitionError("conflict");
         }
         const updatedScope = await trx.updateTable("collaboration_scopes").set({
@@ -473,10 +475,11 @@ export function createProjectTransitionJournal(options: {
           .select("scope_seq").where("scope_id", "=", scope.id)
           .orderBy("scope_seq", "desc").limit(1).executeTakeFirst();
         const scopeSequence = Number(latestEvent?.scope_seq ?? 0) + 1;
+        const eventId = z.uuid().parse(createEventId());
         await trx.insertInto("collaboration_events").values({
           scope_id: scope.id,
           scope_seq: scopeSequence,
-        event_id: z.uuid().parse(createEventId()),
+          event_id: eventId,
           resource_kind: "project",
           resource_id: scope.resource_id,
           revision: nextRevision,
@@ -485,6 +488,32 @@ export function createProjectTransitionJournal(options: {
           payload: {},
           created_at: now(),
         }).execute();
+        const acceptedMembers = await trx.selectFrom("collaboration_members")
+          .select("actor_id")
+          .where("scope_id", "=", scope.id)
+          .where("status", "=", "accepted")
+          .orderBy("actor_id", "asc")
+          .execute();
+        acceptedMembers.sort((left, right) => {
+          if (left.actor_id === scope.owner_id) return -1;
+          if (right.actor_id === scope.owner_id) return 1;
+          return left.actor_id.localeCompare(right.actor_id);
+        });
+        if (acceptedMembers.length > 0) {
+          await trx.insertInto("collaboration_directory_outbox").values({
+            event_id: eventId,
+            scope_id: scope.id,
+            recipient_actor_ids: jsonb(acceptedMembers.map((member) => ({ actorId: member.actor_id }))),
+            authority_runtime_id: row.destination_authority_runtime_id,
+            authority_generation: Number(row.destination_authority_generation),
+            resource_kind: "project",
+            discovery_state: "accepted",
+            retry_after: now(),
+            attempts: 0,
+            delivered_at: null,
+            created_at: now(),
+          }).execute();
+        }
         await trx.insertInto("collaboration_audit").values({
           scope_id: scope.id,
           actor_id: row.requested_by,
