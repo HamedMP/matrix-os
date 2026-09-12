@@ -26,7 +26,7 @@ suite("OM-243 built Electron download", () => {
   let destinationDir: string;
 
   async function launch() {
-    return _electron.launch({ executablePath, args: [desktopMain], env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: userData } });
+    return _electron.launch({ executablePath, args: [resolve(__dirname, "fixtures/download-electron.mjs")], env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: userData } });
   }
   beforeAll(async () => {
     gateway = await startDownloadGateway();
@@ -35,7 +35,10 @@ suite("OM-243 built Electron download", () => {
     app = await launch();
     // Seed only a synthetic fixture credential using Electron encryption. No
     // external authentication flow or real user profile is opened or modified.
-    const encrypted = await app.evaluate(({ safeStorage }) => Array.from(safeStorage.encryptString(JSON.stringify({ accessToken: "stub-token-1", expiresAt: Date.now() + 3_600_000, userId: "fixture-user", handle: "fixture" }))));
+    const encrypted = await app.evaluate(async ({ app, safeStorage }) => {
+      await app.whenReady();
+      return Array.from(safeStorage.encryptString(JSON.stringify({ accessToken: "stub-token-1", expiresAt: Date.now() + 3_600_000, userId: "fixture-user", handle: "fixture" })));
+    });
     await writeFile(join(userData, "credential.bin"), Buffer.from(encrypted));
     await writeFile(join(userData, "state.json"), JSON.stringify({ profile: { platformHost: gateway.url, runtimeSlot: "primary", userId: "fixture-user", handle: "fixture" } }));
     await app.close();
