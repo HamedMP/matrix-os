@@ -1249,6 +1249,9 @@ jobs:
               os.unlink(__file__)
           except FileNotFoundError:
               pass
+          print("__MATRIX_OSC_ARMED__", flush=True)
+          if sys.stdin.buffer.readline().rstrip(b"\r\n") != b"__MATRIX_START_OSC__":
+              raise SystemExit(8)
           fd = sys.stdin.fileno()
           previous = termios.tcgetattr(fd)
           response = bytearray()
@@ -1371,6 +1374,8 @@ jobs:
 
           try {
             let socket = await attach(0);
+            await deadline(() => allOutput.includes("__MATRIX_OSC_ARMED__"), 20_000, "osc_arm_timeout");
+            socket.send(JSON.stringify({ type: "input", terminalRef, data: "__MATRIX_START_OSC__\r" }));
             await deadline(() => allOutput.includes("__MATRIX_OSC_OK__"), 25_000, "osc_round_trip_timeout");
             if (allOutput.includes("rgb:")) throw new Error("osc_reply_rendered_as_output");
             socket.send(JSON.stringify({ type: "input", terminalRef, data: "echo $((81234 + 9))\r" }));
@@ -1401,6 +1406,7 @@ jobs:
               "attach_timeout",
               "binary_input_capability_missing",
               "terminal_websocket_error",
+              "osc_arm_timeout",
               "osc_round_trip_timeout",
               "osc_reply_rendered_as_output",
               "keyboard_round_trip_failed",

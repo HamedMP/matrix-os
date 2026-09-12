@@ -246,6 +246,8 @@ describe('Preview VPS provisioning workflow', () => {
     expect(smoke).toContain('/api/terminal/workspaces/ensure');
     expect(smoke).toContain('Matrix terminal smoke');
     expect(smoke).toContain('binary-input-v1');
+    expect(smoke).toContain('__MATRIX_OSC_ARMED__');
+    expect(smoke).toContain('__MATRIX_START_OSC__\\r');
     expect(smoke).toContain('__MATRIX_OSC_OK__');
     expect(smoke).toContain('osc_feedback_loop_detected');
     expect(smoke).toContain('keyboardRoundTrips: 2');
