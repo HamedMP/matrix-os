@@ -13,8 +13,9 @@ import remarkGfm from "remark-gfm";
 import { z } from "zod/v4";
 import { ChatAttachments, type ChatMessageAttachment } from "../chat/ChatAttachments.js";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
-import { collaborationDraftKey, createCollaborationDraftStore, type CollaborationDraft } from "./chat-state.js";
+import { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore, type CollaborationDraft } from "./chat-state.js";
 import { deriveChatPermissions } from "./permissions.js";
+import { SharedChatControls } from "./SharedChatControls.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -195,11 +196,11 @@ function InvitationView({ api, invitationId, openChat }: {
       <p className="mt-3">{invitation.owner.displayName} invited you as an {invitation.role}.</p>
       <div className="mt-5 rounded-xl border p-4 text-sm">
         <p className="font-medium">What you’ll get</p>
-        <p className="mt-1" style={{ color: "var(--text-secondary)" }}>Access to this ongoing Chat’s history and human discussion.</p>
+        <p className="mt-1" style={{ color: "var(--text-secondary)" }}>Access to this ongoing Chat’s history, human discussion, and its ordered AI queue when shared AI is available.</p>
         <p className="mt-3 font-medium">What stays private</p>
         <p className="mt-1" style={{ color: "var(--text-secondary)" }}>This does not include its project, sibling Chats, files, apps, terminals, or anyone’s private drafts.</p>
       </div>
-      <p className="mt-4 text-sm" style={{ color: "var(--text-secondary)" }}>AI requests are unavailable in shared Chats during this milestone.</p>
+      <p className="mt-4 text-sm" style={{ color: "var(--text-secondary)" }}>Editors can discuss and request AI. Viewers remain read-only. Owners decide any AI approvals.</p>
       {error ? <p role="alert" className="mt-4 text-sm">Invitation could not be accepted. Refresh and try again.</p> : null}
       <button type="button" className={`${buttonClass} mt-6 w-full`} disabled={pending || invitation.status !== "pending"} onClick={() => void accept()}>
         {pending ? "Accepting…" : invitation.status === "pending" ? "Accept invitation" : "Invitation unavailable"}
@@ -230,6 +231,7 @@ interface SharedChatState {
   loading: boolean;
   sending: boolean;
   error: SharedChatError;
+  refreshVersion: number;
 }
 
 type SharedChatAction =
@@ -258,6 +260,7 @@ const initialSharedChatState: SharedChatState = {
   loading: true,
   sending: false,
   error: null,
+  refreshVersion: 0,
 };
 
 function reduceSharedChat(state: SharedChatState, action: SharedChatAction): SharedChatState {
@@ -267,6 +270,7 @@ function reduceSharedChat(state: SharedChatState, action: SharedChatAction): Sha
       return { ...state, scope: action.scope, chat: action.chat, messages: action.messages,
         hasMoreMessages: BigInt(action.chat.messageCount) > BigInt(action.messages.length),
         loadingMoreMessages: false, historyPageError: false, loading: false,
+        refreshVersion: state.refreshVersion + 1,
         error: action.clearForegroundError || state.error === "load" || state.error === "unavailable" ? null : state.error };
     case "load_failed": return { ...state, loading: false, error: "load" };
     case "page_started": return { ...state, loadingMoreMessages: true, historyPageError: false };
@@ -383,13 +387,17 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
     dispatch({ type: "draft_changed", draft: draftStore.load(key) });
   }, [actorId, draftStore, runtimeId, state.scope, scopeId]);
   useEffect(() => api.subscribe?.(scopeId, recoverCanonical, () => dispatch({ type: "unavailable" })), [api, recoverCanonical, scopeId]);
-  const updateDraft = (text: string) => {
-    const next = { text, mode: "discussion" as const };
+  const updateDraft = (text: string, mode: CollaborationDraft["mode"] = state.draft.mode) => {
+    const next = { text, mode };
     dispatch({ type: "draft_changed", draft: next });
-    if (state.scope) draftStore.save(draftKey, next);
+    if (state.scope) draftStore.save(collaborationDraftModeKey(draftKey, mode), next);
+  };
+  const changeDraftMode = (mode: CollaborationDraft["mode"]) => {
+    dispatch({ type: "draft_changed", draft: draftStore.load(collaborationDraftModeKey(draftKey, mode), mode) });
   };
   const send = async () => {
-    if (!state.scope || !state.draft.text.trim() || !deriveChatPermissions(state.scope).canDiscuss) return;
+    if (!state.scope || state.draft.mode !== "discussion" || !state.draft.text.trim()
+      || !deriveChatPermissions(state.scope).canDiscuss) return;
     dispatch({ type: "send_started" });
     try {
       await api.post(`/api/collaboration/scopes/${encodeURIComponent(scopeId)}/chat/messages`, {
@@ -411,11 +419,11 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
       return;
     }
   };
-  return { state, loadMoreMessages, updateDraft, send };
+  return { state, loadMoreMessages, updateDraft, changeDraftMode, send };
 }
 
 function SharedChatView(props: Parameters<typeof useSharedChatController>[0]) {
-  const { state, loadMoreMessages, updateDraft, send } = useSharedChatController(props);
+  const { state, loadMoreMessages, updateDraft, changeDraftMode, send } = useSharedChatController(props);
   if (state.loading) return <p role="status" className="p-8">Loading shared Chat…</p>;
   if (!state.scope || !state.chat || state.error === "load" || state.error === "unavailable") {
     return <SafeError title="Shared Chat unavailable" />;
@@ -426,11 +434,15 @@ function SharedChatView(props: Parameters<typeof useSharedChatController>[0]) {
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0"><h1 className="truncate text-lg font-semibold">{state.chat.title}</h1>
           <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Shared Chat · {permissions.roleLabel}</p></div>
-        <span className="rounded-full border px-2.5 py-1 text-xs">Discussion only</span>
+        <span className="rounded-full border px-2.5 py-1 text-xs">Live collaboration</span>
       </div>
     </header>
     <SharedChatHistory state={state} loadMoreMessages={loadMoreMessages} />
-    <SharedChatComposer state={state} permissions={permissions} updateDraft={updateDraft} send={send} />
+    <SharedChatControls key={state.scope.id} api={props.api} scope={state.scope} actorId={props.actorId}
+      resourceRevision={state.chat.revision} draft={state.draft} updateDraft={updateDraft}
+      changeDraftMode={changeDraftMode}
+      discussionSending={state.sending} discussionError={state.error === "send"}
+      sendDiscussion={send} refreshVersion={state.refreshVersion} />
   </main>;
 }
 
@@ -449,30 +461,6 @@ function SharedChatHistory({ state, loadMoreMessages }: {
       {state.loadingMoreMessages ? "Loading…" : "Load more messages"}
     </button></div> : null}
   </section>;
-}
-
-function SharedChatComposer({ state, permissions, updateDraft, send }: {
-  state: SharedChatState;
-  permissions: ReturnType<typeof deriveChatPermissions>;
-  updateDraft: (text: string) => void;
-  send: () => Promise<void>;
-}) {
-  return <footer className="border-t p-4 sm:px-6">
-    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
-      <span>{permissions.composerExplanation}</span><span>{permissions.aiExplanation}</span>
-    </div>
-    {state.error === "send" ? <p role="alert" className="mb-2 text-sm">Message was not sent. Your draft is still here—try again.</p> : null}
-    <div className="flex items-end gap-2">
-      <label className="min-w-0 flex-1"><span className="sr-only">Message everyone</span>
-        <textarea aria-label="Message everyone" rows={3} value={state.draft.text} disabled={!permissions.canDiscuss || state.sending}
-          placeholder={permissions.canDiscuss ? "Message everyone…" : "Read-only access"}
-          onChange={(event) => updateDraft(event.target.value)} className="block w-full resize-none rounded-xl border bg-transparent px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" />
-      </label>
-      <button type="button" className={buttonClass} disabled={!permissions.canDiscuss || state.sending || !state.draft.text.trim()} onClick={() => void send()}>
-        {state.sending ? "Sending…" : "Send message"}
-      </button>
-    </div>
-  </footer>;
 }
 
 function markRead(api: CollaborationApi, base: string, messages: readonly SharedMessage[]): void {

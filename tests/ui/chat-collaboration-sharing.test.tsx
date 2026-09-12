@@ -178,7 +178,7 @@ describe("Chat collaboration sharing", () => {
       actorId="user_editor" runtimeId="runtime_owner" />);
     expect(await screen.findByText("Nima")).toBeVisible();
     expect(screen.getByText("Welcome")).toBeVisible();
-    expect(screen.getByText(/AI requests are unavailable/i)).toBeVisible();
+    expect(await screen.findByText(/AI requests are unavailable/i)).toBeVisible();
     fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ready" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Message was not sent");
@@ -426,6 +426,62 @@ describe("Chat collaboration sharing", () => {
 
     expect(screen.getByText("Newest message")).toBeVisible();
     expect(screen.queryByText("Shared Chat unavailable")).toBeNull();
+  });
+
+  it("keeps a healthy Chat visible when a post-send recovery is superseded", async () => {
+    const scope = {
+      id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+    };
+    const message = { id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text: "Still healthy" }],
+      createdAt: "2026-09-07T12:00:00.000Z" };
+    let refresh!: () => Promise<void>;
+    let resolveSendChat!: (value: unknown) => void;
+    let resolveLiveMessages!: (value: unknown) => void;
+    let chatReads = 0;
+    let messageReads = 0;
+    const chat = { id: chatId, scopeId, title: "Overlap Chat", lifecycle: "active", revision: "1", messageCount: "1" };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.includes("/messages?")) {
+          messageReads += 1;
+          if (messageReads === 2) return new Promise((resolve) => { resolveLiveMessages = resolve; });
+          return { messages: [message] };
+        }
+        if (path.endsWith("/chat")) {
+          chatReads += 1;
+          if (chatReads === 2) return new Promise((resolve) => { resolveSendChat = resolve; });
+          return chat;
+        }
+        return scope;
+      }),
+      post: vi.fn(async () => ({})), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" />);
+    expect(await screen.findByRole("heading", { name: "Overlap Chat" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ship it" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(resolveSendChat).toBeTypeOf("function"));
+    const liveRefresh = refresh();
+    await waitFor(() => expect(resolveLiveMessages).toBeTypeOf("function"));
+    await act(async () => {
+      resolveSendChat(chat);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", { name: "Overlap Chat" })).toBeVisible();
+    await act(async () => {
+      resolveLiveMessages({ messages: [message] });
+      await liveRefresh;
+    });
   });
 
   it("keeps viewer discussion controls read-only", async () => {

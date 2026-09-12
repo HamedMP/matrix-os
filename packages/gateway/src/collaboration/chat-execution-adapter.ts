@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestSchema,
+  CollaborationApprovalSchema,
   CollaborationCreateAiRequestSchema,
+  CollaborationRevisionSchema,
+  type CollaborationAiRequestAcceptedResponse,
   type CollaborationAiRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -39,10 +43,12 @@ export class CollaborationChatExecutionAdapter {
   private readonly createQueuedTurnId: () => string;
 
   constructor(private readonly options: {
-    repository: Pick<ChatRepository, "enqueueSharedQueuedTurn" | "listSharedQueuedTurns">;
+    repository: Pick<ChatRepository,
+      "enqueueSharedQueuedTurn" | "listSharedQueuedTurns" | "listSharedPendingApprovals">;
     commands: Pick<CollaborationChatCommands, "cancel" | "retry" | "decideApproval">;
     resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
     resolveEligibility(scopeId: string): Promise<unknown>;
+    resolveResourceRevision(scopeId: string, chatId: string): Promise<number | null>;
     requestDispatch(scopeId: string, chatId: string): Promise<void>;
     onCommitted?(scopeId: string): Promise<void>;
     now?: () => Date;
@@ -53,16 +59,54 @@ export class CollaborationChatExecutionAdapter {
       ?? (() => `qturn_${randomUUID().replaceAll("-", "")}`);
   }
 
+  async capability(
+    context: AuthorizedCollaborationContext,
+    requests: readonly CollaborationAiRequest[],
+  ) {
+    requireChatContext(context, "read");
+    const pending = await this.options.repository.listSharedPendingApprovals(
+      ownerFor(context), context.resourceId, context.scopeId,
+    );
+    const approvals = pending.flatMap((approval) => {
+      const request = requests.find((candidate) => candidate.id === approval.requestId
+        && candidate.runId === approval.runId);
+      if (!request) return [];
+      return [CollaborationApprovalSchema.parse({
+        approvalId: approval.approvalId,
+        runId: approval.runId,
+        requestId: request.id,
+        title: approval.title,
+        risk: approval.risk,
+        allowedDecisions: approval.allowedDecisions,
+        state: "pending",
+      })];
+    }).slice(0, 100);
+    return {
+      defaultSelection: {
+        instanceId: "claude_shared",
+        model: "claude-opus-4-6",
+      },
+      approvals,
+    };
+  }
+
   async list(context: AuthorizedCollaborationContext): Promise<CollaborationAiRequest[]> {
     requireChatContext(context, "read");
     const rows = await this.options.repository.listSharedQueuedTurns(ownerFor(context), context.resourceId);
     return Promise.all(rows.map((row) => this.project(row)));
   }
 
+  async resourceRevision(context: AuthorizedCollaborationContext): Promise<string> {
+    requireChatContext(context, "read");
+    const revision = await this.options.resolveResourceRevision(context.scopeId, context.resourceId);
+    if (revision === null) throw new CollaborationAuthorizationError("not_found", "Shared Chat access is required");
+    return CollaborationRevisionSchema.parse(String(revision));
+  }
+
   async submit(
     context: AuthorizedCollaborationContext,
     inputValue: unknown,
-  ): Promise<CollaborationAiRequest> {
+  ): Promise<CollaborationAiRequestAcceptedResponse> {
     requireChatContext(context, "request_ai");
     const input = CollaborationCreateAiRequestSchema.parse(inputValue);
     const eligibility = ScopeEligibilitySchema.parse(await this.options.resolveEligibility(context.scopeId));
@@ -99,7 +143,10 @@ export class CollaborationChatExecutionAdapter {
     });
     await this.notify(context.scopeId);
     if (!queued.alreadyAccepted) this.kickDispatch(context.scopeId, context.resourceId);
-    return this.project(queued);
+    return CollaborationAiRequestAcceptedResponseSchema.parse({
+      request: await this.project(queued),
+      resourceRevision: String(queued.resourceRevision),
+    });
   }
 
   async cancel(
@@ -176,6 +223,7 @@ export class CollaborationChatExecutionAdapter {
       text,
       selection: row.selection,
       ...(row.retryOfRequestId ? { retryOfRequestId: row.retryOfRequestId } : {}),
+      ...(row.runId ? { runId: row.runId } : {}),
       acceptedAt: row.createdAt,
       updatedAt: row.updatedAt,
     });

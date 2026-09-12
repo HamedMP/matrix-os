@@ -104,6 +104,7 @@ describe("unified CLI command tree", () => {
     expect(PUBLISHED_CLI_COMMANDS.has("send")).toBe(false);
     expect(PUBLISHED_CLI_COMMANDS.has("port")).toBe(true);
     expect(PUBLISHED_CLI_COMMANDS.has("forward")).toBe(true);
+    expect(PUBLISHED_CLI_COMMANDS.has("collaboration")).toBe(true);
     expect(resolvePublishedCliRedirect(["start", "--shell"])).toBeNull();
     expect(resolvePublishedCliRedirect(["send", "hello"])).toBeNull();
   });

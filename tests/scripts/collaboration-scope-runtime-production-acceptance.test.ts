@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { SCOPE_RUNTIME_PROFILE_DIGEST } from "../../packages/scope-runtime/src/profile.js";
+import {
+  SCOPE_RUNTIME_HARNESS_VERSION,
+  SCOPE_RUNTIME_PROFILE_DIGEST,
+  SCOPE_RUNTIME_PROFILE_ID,
+} from "../../packages/scope-runtime/src/profile.js";
 
 const acceptancePath = "scripts/spikes/collaboration/production-supervisor-acceptance.mjs";
 
@@ -13,6 +17,7 @@ describe("collaboration production scope-runtime acceptance", () => {
 
     expect(workflow).toContain("timeout-minutes: 60");
     expect(workflow).toContain("deadline=$((SECONDS + 2100))");
+    expect(workflow).toContain('contains("scope_runtime_chat=passed")');
   });
 
   it("refuses to change a host without the disposable acceptance marker", async () => {
@@ -60,6 +65,7 @@ describe("collaboration production scope-runtime acceptance", () => {
 
     expect(source).toContain("capability.get");
     expect(source).toContain("runtime.create");
+    expect(source).toContain("runtime.chat");
     expect(source).toContain("runtime.stop");
     expect(source).toContain("malformed_frame=closed");
     expect(source).toContain("multi_frame=closed");
@@ -74,6 +80,18 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).not.toContain("eval(");
     expect(source).not.toContain("execSync(");
     expect(source).not.toMatch(/import\s+\{\s*exec\s*\}/);
+  });
+
+  it("runs the installed Agent SDK worker through a bounded fake inference broker", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    expect(source).toContain('action !== "inference.messages"');
+    expect(source).toContain('request.method === "HEAD"');
+    expect(source).toContain('request.method !== "POST"');
+    expect(source).toContain("scope-sdk-ok");
+    expect(source).toContain("scope_runtime_chat=passed");
+    expect(source).toContain("MAX_BROKER_REQUEST_BYTES");
+    expect(source).toContain("BROKER_SOCKET_TIMEOUT_MS");
   });
 
   it("reports only bounded systemd launch diagnostics when runtime creation fails", async () => {
@@ -120,6 +138,9 @@ describe("collaboration production scope-runtime acceptance", () => {
     const source = await readFile(acceptancePath, "utf8");
 
     expect(source).toContain(SCOPE_RUNTIME_PROFILE_DIGEST);
+    expect(source).toContain(SCOPE_RUNTIME_PROFILE_ID);
+    expect(source).toContain(SCOPE_RUNTIME_HARNESS_VERSION);
+    expect(source).not.toContain('EXPECTED_PROFILE_ID = "scope-runtime-proof-v1"');
     expect(source).toContain("scope_runtime_production_acceptance=passed");
     expect(source).toContain("supervisor_version=1.0.0");
     expect(source).toContain("profile_digest=");

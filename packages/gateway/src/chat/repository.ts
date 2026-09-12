@@ -12,6 +12,7 @@ import {
   CanonicalChatRunSchema,
   CanonicalChatTurnSchema,
   CanonicalOwnerScopeSchema,
+  CollaborationIdSchema,
   TerminalSessionIdSchema,
   type CanonicalChatCollaboration,
   type CanonicalChatMessage,
@@ -39,6 +40,7 @@ import {
   jsonb,
   messageAttribution,
   messageSearchText,
+  parseJson,
   toActivities,
   toChatRecord,
   toLegacyImport,
@@ -166,6 +168,15 @@ export interface ChatTurnRunContext {
   userMessages: CanonicalChatMessage[];
   turn: CanonicalChatTurn;
   latestRun: CanonicalChatRun;
+}
+
+export interface SharedPendingApproval {
+  approvalId: string;
+  runId: string;
+  requestId: string;
+  title: string;
+  risk: "low" | "medium" | "high";
+  allowedDecisions: Array<"approve" | "approve_for_session" | "decline" | "cancel">;
 }
 
 export interface ChatListCursor {
@@ -1133,6 +1144,58 @@ export class ChatRepository {
 
   async listSharedQueuedTurns(owner: ChatOwner, chatId: string): Promise<SharedQueuedTurn[]> {
     return this.queue.listShared(owner, chatId);
+  }
+
+  async listSharedPendingApprovals(
+    ownerInput: ChatOwner,
+    chatIdInput: string,
+    scopeIdInput: string,
+  ): Promise<SharedPendingApproval[]> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(chatIdInput);
+    const scopeId = CollaborationIdSchema.parse(scopeIdInput);
+    const rows = await this.kysely.selectFrom("chat_run_events as events")
+      .innerJoin("chat_runs as runs", "runs.id", "events.run_id")
+      .innerJoin("chat_queued_turns as queued", "queued.claimed_run_id", "runs.id")
+      .innerJoin("chats", "chats.id", "runs.chat_id")
+      .select(["events.event", "events.run_id", "queued.id as request_id"])
+      .where("runs.chat_id", "=", chatId)
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("queued.collaboration_scope_id", "=", scopeId)
+      .orderBy("events.occurred_at", "desc")
+      .orderBy("events.run_seq", "desc")
+      .limit(500)
+      .execute();
+    const pending: SharedPendingApproval[] = [];
+    for (const row of rows.reverse()) {
+      const parsed = CanonicalChatRunActivitySchema.safeParse(parseJson(row.event));
+      if (!parsed.success) {
+        console.warn("[chat/repository] invalid shared approval activity");
+        continue;
+      }
+      const activity = parsed.data;
+      if (activity.type === "approval.requested") {
+        const projected: SharedPendingApproval = {
+          approvalId: activity.approvalId,
+          runId: row.run_id,
+          requestId: row.request_id,
+          title: activity.title,
+          risk: activity.risk,
+          allowedDecisions: activity.allowedDecisions,
+        };
+        const existing = pending.findIndex((candidate) => candidate.runId === row.run_id
+          && candidate.approvalId === activity.approvalId);
+        if (existing === -1) pending.push(projected);
+        else pending[existing] = projected;
+      }
+      if (activity.type === "approval.resolved") {
+        const existing = pending.findIndex((candidate) => candidate.runId === row.run_id
+          && candidate.approvalId === activity.approvalId);
+        if (existing !== -1) pending.splice(existing, 1);
+      }
+    }
+    return pending.slice(-100);
   }
 
   async listQueuedTurns(owner: ChatOwner, chatId: string): Promise<CanonicalChatQueuedTurn[]> {

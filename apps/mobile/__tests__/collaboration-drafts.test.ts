@@ -19,6 +19,17 @@ describe("mobile collaboration drafts", () => {
     await expect(loadCollaborationDraft(store, { actorId: "actor-b", scopeId: "scope-a", chatId: "chat-a" })).resolves.toBe("");
   });
 
+  it("keeps discussion and AI drafts separate without changing the discussion key", async () => {
+    const store = storage();
+    const identity = { actorId: "actor-a", scopeId: "scope-a", chatId: "chat-a" };
+    await saveCollaborationDraft(store, { ...identity, text: "for people" });
+    await saveCollaborationDraft(store, { ...identity, mode: "ai", text: "for AI" });
+
+    await expect(loadCollaborationDraft(store, identity)).resolves.toBe("for people");
+    await expect(loadCollaborationDraft(store, { ...identity, mode: "discussion" })).resolves.toBe("for people");
+    await expect(loadCollaborationDraft(store, { ...identity, mode: "ai" })).resolves.toBe("for AI");
+  });
+
   it("caps stored drafts and evicts the least recently saved key", async () => {
     const store = storage();
     for (let index = 0; index < 21; index += 1) {

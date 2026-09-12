@@ -335,7 +335,8 @@ jobs:
             }' >"$evidence"
           jq -e 'select(.exitCode == 0 and .timedOut == false and
             .truncated == false and .signal == null and
-            (.stdout | contains("scope_runtime_production_acceptance=passed")))' \
+            (.stdout | contains("scope_runtime_production_acceptance=passed")) and
+            (.stdout | contains("scope_runtime_chat=passed")))' \
             "$production_response" >/dev/null
 
       - name: Upload public-safe native evidence

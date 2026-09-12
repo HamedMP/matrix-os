@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCollaborationDraftStore,
   collaborationDraftKey,
+  collaborationDraftModeKey,
 } from "../../packages/ui/src/collaboration/chat-state.js";
 import { deriveChatPermissions } from "../../packages/ui/src/collaboration/permissions.js";
 
@@ -48,6 +49,21 @@ describe("shared Chat client state", () => {
     expect(drafts.load(otherAccountKey)).toEqual({ text: "", mode: "discussion" });
     drafts.clear(editorKey);
     expect(drafts.load(editorKey)).toEqual({ text: "", mode: "discussion" });
+  });
+
+  it("keeps discussion and AI drafts separate for one actor and Chat", () => {
+    const storage = new MemoryStorage();
+    const drafts = createCollaborationDraftStore(storage);
+    const base = collaborationDraftKey({
+      actorId: "user_editor", runtimeId: "runtime", scopeId: scope.id, chatId: scope.resourceId,
+    });
+    const aiKey = collaborationDraftModeKey(base, "ai");
+
+    drafts.save(base, { text: "for people", mode: "discussion" });
+    drafts.save(aiKey, { text: "for AI", mode: "ai" });
+
+    expect(drafts.load(base, "discussion")).toEqual({ text: "for people", mode: "discussion" });
+    expect(drafts.load(aiKey, "ai")).toEqual({ text: "for AI", mode: "ai" });
   });
 
   it("caps retained draft records and rejects oversized draft content", () => {
