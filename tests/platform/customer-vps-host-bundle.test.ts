@@ -288,6 +288,7 @@ describe('customer VPS host bundle', () => {
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
     expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode');
+    expect(gatewayUnit).toContain('Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node');
     expect(gatewayUnit).not.toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');

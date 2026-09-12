@@ -204,6 +204,7 @@ exit 99
       'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     );
     expect(rendered).toContain('MATRIX_RUNTIME_SLOT=staging');
+    expect(rendered).toContain('MATRIX_NODE_PREFIX=/opt/matrix/runtime/node');
     expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
     expect(rendered).toContain('MATRIX_IMAGE_VERSION=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
