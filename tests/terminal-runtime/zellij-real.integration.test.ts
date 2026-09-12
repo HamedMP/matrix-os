@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ZellijCliRuntimeAdapter } from "../../packages/terminal-runtime/src/zellij-adapter.js";
+import { createTerminalRuntimeEnvironment } from "../../packages/terminal-runtime/src/runtime-environment.js";
 
 const execFileAsync = promisify(execFile);
 const binaryPath = process.env.MATRIX_TEST_ZELLIJ_BIN ?? "/usr/local/bin/zellij";
@@ -16,6 +17,7 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
   let homePath = "";
   let sessionName = "";
   let adapter: ZellijCliRuntimeAdapter;
+  let runtimeEnv: Record<string, string>;
   const extraSessionNames: string[] = [];
 
   beforeAll(async () => {
@@ -23,7 +25,8 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     expect(version.stdout.trim()).toBe("zellij 0.44.3");
     homePath = await mkdtemp(join(tmpdir(), "matrix-zellij-real-"));
     sessionName = `matrix-w-${randomBytes(16).toString("hex")}`;
-    adapter = new ZellijCliRuntimeAdapter({ homePath, binaryPath });
+    runtimeEnv = createTerminalRuntimeEnvironment({ homePath, uid: process.getuid?.() ?? 0 });
+    adapter = new ZellijCliRuntimeAdapter({ homePath, binaryPath, env: runtimeEnv });
     await adapter.ensureSession(sessionName, { cols: 100, rows: 30 });
   }, 20_000);
 
@@ -63,7 +66,7 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     await Promise.race([observed, new Promise<never>((_, reject) => setTimeout(async () => {
       const dump = await execFileAsync(binaryPath, ["--session", sessionName, "action", "dump-screen", "--pane-id", first.paneId, "--full", "--ansi"], {
         timeout: 5_000,
-        env: { ...process.env, HOME: homePath, MATRIX_HOME: homePath, ZELLIJ_CONFIG_DIR: join(homePath, "system", "zellij") },
+        env: runtimeEnv,
       }).catch(() => ({ stdout: "<dump failed>" }));
       reject(new Error(`observer did not receive targeted output; dump=${dump.stdout}; updates=${JSON.stringify(paneUpdates)}`));
     }, 15_000))]);
@@ -73,6 +76,51 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     await adapter.renameTab(sessionName, second.tabId, "renamed");
     await adapter.closeTab(sessionName, second.tabId);
     expect(await adapter.findTabByInternalName(sessionName, secondName)).toBeUndefined();
+  }, 30_000);
+
+  it("routes keyboard and terminal-emulator replies through the attached PTY", async () => {
+    const internalName = `matrix-tab-${randomBytes(16).toString("hex")}`;
+    const tab = await adapter.createTab(sessionName, { internalName, cwd: "", command: ["sh"] });
+    let output = "";
+    let attachmentExitCode: number | null | undefined;
+    const commandObserved = Promise.withResolvers<void>();
+    const paletteQueryObserved = Promise.withResolvers<void>();
+    const attachment = await adapter.openAttachment(sessionName, {
+      paneId: tab.paneId,
+      size: { cols: 100, rows: 30 },
+      onData: (data) => {
+        output = `${output}${new TextDecoder().decode(data)}`.slice(-64 * 1024);
+        if (output.split("matrix-pty-round-trip").length >= 3) commandObserved.resolve();
+        if (output.includes("\x1b]10;?")) paletteQueryObserved.resolve();
+      },
+      onExit: (exitCode) => { attachmentExitCode = exitCode; },
+    });
+
+    await attachment.write(new TextEncoder().encode("printf 'matrix-pty-round-trip\\n'\r"));
+    await Promise.race([
+      commandObserved.promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("attached PTY ignored keyboard input")), 10_000)),
+    ]);
+    await Promise.race([
+      paletteQueryObserved.promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Zellij emitted no OSC 10 query: ${JSON.stringify(output.slice(0, 4096))}`)), 2_000)),
+    ]);
+    expect(await adapter.findTabByInternalName(sessionName, internalName)).toEqual(tab);
+    expect(attachmentExitCode).toBeUndefined();
+    const oscReply = Buffer.from("\x1b]10;rgb:1111/2222/3333\x07", "latin1");
+    await attachment.write(oscReply);
+    await new Promise<void>((resolve) => setTimeout(resolve, 250));
+    expect(await adapter.findTabByInternalName(sessionName, internalName)).toEqual(tab);
+    expect(attachmentExitCode).toBeUndefined();
+    const dump = await execFileAsync(binaryPath, [
+      "--session", sessionName, "action", "dump-screen", "--pane-id", tab.paneId, "--full", "--ansi",
+    ], {
+      timeout: 5_000,
+      env: runtimeEnv,
+    });
+    await attachment.close();
+
+    expect(dump.stdout).not.toContain("rgb:1111/2222/3333");
   }, 30_000);
 
   it("uses one substantially smaller Zellij server for 23 idle tabs", async () => {

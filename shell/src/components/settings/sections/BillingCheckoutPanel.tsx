@@ -11,6 +11,7 @@ import {
   MATRIX_BILLING_SERVER_PROFILES,
 } from "@/lib/billing";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
+import { getCheckoutAttribution } from "@/lib/marketing-attribution";
 import {
   captureBillingTelemetry,
   type BillingInterval,
@@ -136,6 +137,7 @@ export function BillingCheckoutPanel({
           interval: billingInterval,
           regionSlug,
           developerTools,
+          attribution: getCheckoutAttribution(),
           ...(checkoutRuntimeSlot ? { runtimeSlot: checkoutRuntimeSlot } : {}),
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),

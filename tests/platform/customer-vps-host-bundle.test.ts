@@ -86,6 +86,7 @@ describe('customer VPS host bundle', () => {
 
     expect(script).toContain('matrix-host-bundle.tar.gz');
     expect(script).toContain('matrix-gateway');
+    expect(script).toContain('matrix-register-vps');
     expect(script).toContain('matrix-shell');
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
@@ -1275,6 +1276,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
     expect(syncAgent).toContain('sudo systemctl enable matrix-developer-tools.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-developer-tools.service || true');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-vps-registration.service');
+    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-vps-registration.service || true');
     expect(syncAgent).toContain('Code-server runtime service enabled');
     expect(syncAgent).toContain('sudo systemctl enable matrix-code.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code.service || true');
@@ -1393,6 +1396,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('sync agent persists bounded errors for destructive update phase failures', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const recoveryLibrary = readFileSync(
+      join(root, 'distro/customer-vps/host-bin/matrix-sync-agent-recovery'),
+      'utf8',
+    );
 
     expect(syncAgent).toContain('write_update_error "checksum_mismatch"');
     expect(syncAgent).toContain('write_update_error "bundle_extract_failed"');
@@ -1405,7 +1412,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('verification_error_code="post_install_runtime_version_mismatch"');
     expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
     expect(syncAgent).toContain('write_update_error "apply_failed"');
-    expect(syncAgent).toContain('write_update_error "apply_interrupted"');
+    expect(recoveryLibrary).toContain('write_update_error "apply_interrupted"');
     expect(syncAgent).toContain('temp="$(mktemp "$APP_DIR/.update-error.json.XXXXXX")" || return 1');
     expect(syncAgent).toContain('python3 - "$temp" "$code" "$message" "$version" "$available_kb" "$required_kb"');
     expect(syncAgent).toContain('if ! mv -fT "$temp" "$UPDATE_ERROR_MARKER"; then');
@@ -1697,13 +1704,15 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
   });
 
   it('publishes installed release metadata only after the candidate app passes health', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const recoveryLibrary = readFileSync(
+      join(root, 'distro/customer-vps/host-bin/matrix-sync-agent-recovery'),
+      'utf8',
+    );
 
     const stageFunction = syncAgent.indexOf('stage_release_metadata()');
     const stagedInstall = syncAgent.indexOf(
@@ -1724,7 +1733,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
       'sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"',
     );
     expect(syncAgent).toContain('write_update_error "post_install_release_metadata_failed"');
-    expect(syncAgent).toContain('rollback_release_metadata_is_ready "$APP_DIR.rollback"');
+    expect(recoveryLibrary).toContain('rollback_release_metadata_is_ready "$APP_DIR.rollback"');
     expect(syncAgent).toContain('restore_rollback_release_metadata');
   });
 
@@ -1739,25 +1748,30 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(syncAgent).not.toContain('sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \\;');
   });
 
-  it('gateway launcher performs the customer VPS registration callback', () => {
+  it('gateway launcher leaves registration to the independent host service', () => {
     const root = process.cwd();
     const launcher = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
+    const registrationClient = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-register-vps'), 'utf8');
 
-    expect(launcher).toContain('MATRIX_PLATFORM_REGISTER_URL');
-    expect(launcher).toContain('/hetzner/v1/metadata/instance-id');
-    expect(launcher).toContain('/hetzner/v1/metadata/public-ipv4');
-    expect(launcher).toContain('/vps/register');
-    expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
-    expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
-    expect(launcher).toContain('runtime_ready()');
-    expect(launcher).toContain('selected_developer_tools_settled()');
-    expect(launcher).toContain('/api/terminal/health');
-    expect(launcher).toContain('/var/lib/matrix-developer-tools/installed-tools');
-    expect(launcher).toContain('/var/lib/matrix-developer-tools/failed-tools');
-    expect(launcher).toContain('grep -qxF "$tool" "$failed_file" && continue');
-    expect(launcher).toContain('authorization: Bearer ${MATRIX_AUTH_TOKEN}');
-    expect(launcher).toContain('if ! runtime_ready; then');
-    expect(launcher).not.toContain('MATRIX_OPTIONAL_TOOLS_START_DELAY_SECONDS');
+    expect(launcher).not.toContain('MATRIX_PLATFORM_REGISTER_URL');
+    expect(launcher).not.toContain('MATRIX_REGISTER_CLIENT');
+    expect(launcher).not.toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(launcher).not.toContain('registration.env');
+    expect(registrationClient).toContain('MATRIX_PLATFORM_REGISTER_URL');
+    expect(registrationClient).toContain('/hetzner/v1/metadata/instance-id');
+    expect(registrationClient).toContain('/hetzner/v1/metadata/public-ipv4');
+    expect(registrationClient).toContain('/vps/register');
+    expect(registrationClient).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(registrationClient).toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(registrationClient).toContain('runtime_ready()');
+    expect(registrationClient).toContain('selected_developer_tools_settled()');
+    expect(registrationClient).toContain('/api/terminal/health');
+    expect(registrationClient).toContain('/var/lib/matrix-developer-tools/installed-tools');
+    expect(registrationClient).toContain('/var/lib/matrix-developer-tools/failed-tools');
+    expect(registrationClient).toContain('grep -qxF "$tool" "$failed_file" && continue');
+    expect(registrationClient).toContain('authorization: Bearer ${MATRIX_AUTH_TOKEN}');
+    expect(registrationClient).toContain('if ! runtime_ready; then');
+    expect(registrationClient).not.toContain('MATRIX_OPTIONAL_TOOLS_START_DELAY_SECONDS');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');

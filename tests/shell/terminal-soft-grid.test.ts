@@ -97,6 +97,7 @@ describe("terminal soft-client canonical grid", () => {
       exitCode: null,
       fromSeq: 0,
       canonicalSize: { cols: 140, rows: 40 },
+      capabilities: [],
     });
     expect(parseTerminalServerMessage(JSON.stringify({
       type: "canonical-size",

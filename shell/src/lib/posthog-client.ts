@@ -11,6 +11,7 @@ import {
   type SupportChatProperties,
 } from "@matrix-os/contracts";
 import { getGatewayUrl } from "./gateway";
+import { getMarketingAttributionProperties } from "./marketing-attribution";
 
 type ClientProperties = Record<string, string | number | boolean | undefined>;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
@@ -92,7 +93,10 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
   if (!config) return;
   try {
     ensurePostHogInitialized(config);
-    posthog.capture(event, sanitizeProperties(properties));
+    posthog.capture(event, sanitizeProperties({
+      ...getMarketingAttributionProperties(),
+      ...properties,
+    }));
   } catch (err: unknown) {
     console.warn("[posthog] Failed to capture client event:", err instanceof Error ? err.name : typeof err);
   }
@@ -275,6 +279,7 @@ export function initializeShellPostHog(
       serviceVersion: process.env.NEXT_PUBLIC_MATRIX_BUILD_SHA,
     },
   } as PostHogInitOptions);
+  posthog.register(getMarketingAttributionProperties());
   migrateLegacyPostHogConsent();
   initialized = true;
 }

@@ -531,7 +531,7 @@ export default function TerminalView({
       attachment.write(data);
     });
     const binaryDisposable = terminal.onBinary((data) => {
-      attachment.write(data);
+      attachment.writeBinary(data);
     });
     const proposed = proposedTerminalDimensions(fit, terminal);
     attachment.resize(proposed.cols, proposed.rows);

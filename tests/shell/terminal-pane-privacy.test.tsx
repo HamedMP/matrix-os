@@ -21,6 +21,7 @@ const stubTerminal = vi.hoisted(() => ({
   rows: 24,
   options: {} as Record<string, unknown>,
   onData: vi.fn(() => ({ dispose: vi.fn() })),
+  onBinary: vi.fn(() => ({ dispose: vi.fn() })),
   onResize: vi.fn(() => ({ dispose: vi.fn() })),
   attachCustomKeyEventHandler: vi.fn(),
   customKeyEventHandler: null as ((event: KeyboardEvent) => boolean) | null,
