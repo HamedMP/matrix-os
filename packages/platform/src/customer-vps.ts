@@ -14,8 +14,6 @@ import {
   completeUserMachineBillingSuspend,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
-  getHostBundleRelease,
-  getHostBundleReleaseByChannel,
   getUserMachine,
   insertUserMachine,
   insertProviderDeletion,
@@ -71,6 +69,11 @@ import {
   type ResizeMachineRequest,
 } from './customer-vps-schema.js';
 import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
+import {
+  hostBundleUrlForImageVersion,
+  resolveHostBundleRef,
+  type HostBundleRef,
+} from './customer-vps-host-bundle.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
 import {
   getRuntimeAccessDecision,
@@ -121,7 +124,6 @@ import {
   bindTestSnapshotToPreviewProvisionInTransaction,
   createPreviewTestSnapshotCreateIntent,
   isPreviewTestSnapshotDecision,
-  resolvePinnedPreviewTestSnapshotBundle,
   resolvePersistedProvisioningImage,
 } from './golden-snapshot-preview-test.js';
 
@@ -387,87 +389,8 @@ function buildHostConfig(
   };
 }
 
-const HOST_BUNDLE_CHANNELS = new Set(['stable', 'canary', 'beta', 'dev']);
 const MAX_LOCAL_PROVISION_LOCKS = 1_024;
 const MAX_LOCAL_PROVISION_QUEUE_DEPTH = 20;
-
-interface HostBundleRef {
-  imageVersion: string;
-  hostBundleUrl: string;
-  sha256?: string | null;
-}
-
-function tryPinHostBundleUrlForImageVersion(
-  config: CustomerVpsConfig,
-  imageVersion: string,
-): string | undefined {
-  const currentSegment = `/system-bundles/${encodeURIComponent(config.imageVersion)}/`;
-  const url = new URL(config.hostBundleUrl);
-  if (!url.pathname.includes(currentSegment)) return undefined;
-  const pinnedSegment = `/system-bundles/${encodeURIComponent(imageVersion)}/`;
-  url.pathname = url.pathname.replaceAll(currentSegment, pinnedSegment);
-  return url.toString();
-}
-
-function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: string): string {
-  const pinnedUrl = tryPinHostBundleUrlForImageVersion(config, imageVersion);
-  if (pinnedUrl) return pinnedUrl;
-  // Defensive fallback for future URL-template changes. The current generated
-  // URL always contains the encoded image-version segment above.
-  const url = new URL(config.hostBundleUrl);
-  url.pathname = `/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`;
-  return url.toString();
-}
-
-async function resolveHostBundleRef(
-  db: PlatformDB,
-  config: CustomerVpsConfig,
-  previewTestSnapshotId?: string,
-  previewBundleVersion?: string,
-): Promise<HostBundleRef> {
-  if (previewTestSnapshotId) {
-    return resolvePinnedPreviewTestSnapshotBundle({
-      db,
-      snapshotId: previewTestSnapshotId,
-      currentBundleVersion: config.imageVersion,
-      currentBundleUrl: config.hostBundleUrl,
-    });
-  }
-  if (previewBundleVersion) {
-    const release = await getHostBundleRelease(db, previewBundleVersion);
-    if (!release) {
-      throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
-    }
-    return {
-      imageVersion: release.version,
-      hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
-      sha256: release.sha256,
-    };
-  }
-  if (config.hostBundleUrlOverride || !HOST_BUNDLE_CHANNELS.has(config.imageVersion)) {
-    const release = await getHostBundleRelease(db, config.imageVersion);
-    return {
-      imageVersion: config.imageVersion,
-      hostBundleUrl: config.hostBundleUrl,
-      sha256: release?.sha256 ?? null,
-    };
-  }
-
-  const release = await getHostBundleReleaseByChannel(db, config.imageVersion);
-  if (!release) {
-    logCustomerVpsError(
-      `host bundle channel missing release channel=${config.imageVersion}`,
-      new Error('falling back to configured host bundle URL without immutable version pin'),
-    );
-    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl, sha256: null };
-  }
-
-  return {
-    imageVersion: release.version,
-    hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
-    sha256: release.sha256,
-  };
-}
 
 function buildServerName(handle: string): string {
   return `matrix-${handle}`;
