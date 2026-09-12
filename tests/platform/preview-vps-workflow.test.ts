@@ -249,6 +249,9 @@ describe('Preview VPS provisioning workflow', () => {
     expect(smoke).toContain('__MATRIX_OSC_OK__');
     expect(smoke).toContain('osc_feedback_loop_detected');
     expect(smoke).toContain('keyboardRoundTrips: 2');
+    expect(smoke).toContain('content = "".join(sys.argv[2:])');
+    expect(smoke).toContain('[range(0; length; 3000) as $offset | .[$offset:$offset + 3000]]');
+    expect(smoke).not.toContain('["/opt/matrix/runtime/node/bin/node","-e",$script');
     expect(smoke).toContain('delete_exact_test_workspace "$workspace_id"');
     expect(smoke).toContain('Temporary terminal workspace removed by exact ID.');
     expect(smoke).toContain('Terminal architecture verified');

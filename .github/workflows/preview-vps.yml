@@ -1273,7 +1273,8 @@ jobs:
           read -r -d '' write_probe_script <<'PYTHON' || true
           import os
           import sys
-          path, content = sys.argv[1], sys.argv[2]
+          path = sys.argv[1]
+          content = "".join(sys.argv[2:])
           fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
           try:
               os.write(fd, content.encode("utf-8"))
@@ -1297,7 +1298,13 @@ jobs:
           ' /tmp/nimanaderi-workspaces.json >/dev/null
 
           read -r -d '' websocket_probe <<'JAVASCRIPT' || true
-          const [token, workspaceId, tabId] = process.argv.slice(1);
+          import { unlink } from "node:fs/promises";
+          const [scriptPath, token, workspaceId, tabId] = process.argv.slice(1);
+          try {
+            await unlink(scriptPath);
+          } catch (error) {
+            if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
+          }
           const terminalRef = { workspaceId, tabId };
           const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           const deadline = async (predicate, timeoutMs, code) => {
@@ -1418,9 +1425,18 @@ jobs:
             }
           }
           JAVASCRIPT
-          websocket_body="$(jq -cn --arg script "$websocket_probe" --arg token "$runtime_token" \
+          websocket_path="/tmp/matrix-terminal-websocket-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.mjs"
+          websocket_write_body="$(jq -cn --arg script "$write_probe_script" --arg path "$websocket_path" \
+            --arg content "$websocket_probe" '
+              ($content | [range(0; length; 3000) as $offset | .[$offset:$offset + 3000]]) as $chunks |
+              {command:(["/usr/bin/python3","-c",$script,$path] + $chunks),timeoutMs:30000}
+            ')"
+          runtime_request POST /api/terminal/run /tmp/nimanaderi-write-websocket-probe.json "$websocket_write_body"
+          jq -e '.exitCode == 0 and .timedOut == false and .truncated == false' \
+            /tmp/nimanaderi-write-websocket-probe.json >/dev/null
+          websocket_body="$(jq -cn --arg path "$websocket_path" --arg token "$runtime_token" \
             --arg workspace "$workspace_id" --arg tab "$tab_id" \
-            '{command:["/opt/matrix/runtime/node/bin/node","-e",$script,$token,$workspace,$tab],timeoutMs:150000}')"
+            '{command:["/opt/matrix/runtime/node/bin/node",$path,$token,$workspace,$tab],timeoutMs:150000}')"
           runtime_request POST /api/terminal/run /tmp/nimanaderi-websocket-probe.json "$websocket_body" 180
           if ! jq -e '.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null' /tmp/nimanaderi-websocket-probe.json >/dev/null; then
             jq -c '{exitCode,timedOut,truncated,signal,diagnostic:(.stderr | fromjson? // {code:"missing_probe_diagnostic"})}' /tmp/nimanaderi-websocket-probe.json >&2
