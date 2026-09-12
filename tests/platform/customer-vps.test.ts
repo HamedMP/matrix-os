@@ -1435,6 +1435,28 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).not.toHaveBeenCalled();
   });
 
+  it('rejects an unpublished explicit bundle before resuming an existing preview', async () => {
+    const { service, hetzner } = createService();
+    await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-1607',
+      runtimeSlot: 'pr-1607',
+    });
+    vi.mocked(hetzner.createServer).mockClear();
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-1607',
+      runtimeSlot: 'pr-1607',
+      bundleVersion: 'v2026.09.11-pr1607-unknown',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning unavailable',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
   it('can provision an isolated staging runtime for the same Clerk user', async () => {
     let nextId = 0;
     const ids = [

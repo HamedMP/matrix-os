@@ -1898,6 +1898,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       throw new CustomerVpsError(400, 'invalid_state', 'Invalid request');
     }
 
+    // Validate operator-selected preview bundles before the idempotent existing
+    // machine return so retries cannot bypass the immutable release registry.
+    const explicitPreviewBundleRef = previewBundleVersion
+      ? await resolveHostBundleRef(deps.db, deps.config, undefined, previewBundleVersion)
+      : undefined;
+
     // A non-failed active machine (provisioning/running converge; recovering
     // is rejected by activeProvisionResponse). A `failed` row is retryable, so
     // it must NOT short-circuit here — it is retired inside the transaction.
@@ -1923,12 +1929,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
 
-    const bundleRef = await resolveHostBundleRef(
-      deps.db,
-      deps.config,
-      testSnapshotId,
-      previewBundleVersion,
-    );
+    const bundleRef = explicitPreviewBundleRef
+      ?? await resolveHostBundleRef(deps.db, deps.config, testSnapshotId);
 
     let provisionRow: { existing: UserMachineRecord | null };
     try {
