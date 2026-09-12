@@ -160,6 +160,108 @@ describe("shared terminal WebSocket", () => {
     await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1008, "Invalid frame"));
     expect(terminal.input).not.toHaveBeenCalled();
   });
+
+  it("allows read-only replay with a route-bound cursor but rejects control frames", async () => {
+    const repository = new CollaborationRepository(fixture.db, { now: () => now });
+    const authority = new CollaborationAuthority(repository, { now: () => now });
+    const terminal = {
+      get: vi.fn(async () => ({
+        scopeId: collaborationIds.scope,
+        terminalId,
+        incarnation,
+        executionGeneration: 4,
+        creatorActorId: collaborationActors.owner,
+        createdAt: now.toISOString(),
+        status: "active" as const,
+      })),
+      input: vi.fn(async () => undefined),
+      paste: vi.fn(async () => undefined),
+      resize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+    };
+    control = new TerminalControlCoordinator({ startTimer: false });
+    const dispatcher = new CollaborationTerminalDispatcher({
+      authority,
+      terminal,
+      control,
+      resolveParticipant: async (actorId) => ({ actorId, displayName: "Ada" }),
+    });
+    registry = new CollaborationTerminalEventRegistry({
+      authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
+      getTerminal: terminal.get,
+      projectTerminal: (value) => dispatcher.project(value),
+      now: () => now,
+      startTimers: false,
+    });
+    const open = vi.spyOn(registry, "open");
+    let socketEvents: WSEvents<unknown> | undefined;
+    const upgradeWebSocket = ((factory: (context: Context) => WSEvents<unknown>) => (
+      async (context: Context) => {
+        socketEvents = factory(context);
+        return context.text("upgrade captured");
+      }
+    )) as unknown as UpgradeWebSocket;
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: collaborationIds.runtime,
+      keys: { "collaboration-key-1": key },
+      now: () => now,
+      authority,
+    });
+    const app = new Hono();
+    registerCollaborationTerminalWebSocketRoute({
+      app,
+      upgradeWebSocket,
+      verifier,
+      authority,
+      dispatcher,
+      registry,
+      control,
+      createConnectionId: () => "connection_read_only",
+      now: () => now,
+    });
+    const signer = new CollaborationProofSigner({
+      activeKeyId: "collaboration-key-1",
+      keys: { "collaboration-key-1": key },
+      now: () => now,
+      createNonce: () => "b".repeat(32),
+    });
+    const proof = signer.signSocket({
+      actorId: collaborationActors.editor,
+      ownerId: collaborationActors.owner,
+      runtimeId: collaborationIds.runtime,
+      scopeId: collaborationIds.scope,
+      purpose: "terminal",
+      path,
+      query: "after=2",
+    });
+    const policy = signer.signPolicy({
+      milestone: "m3",
+      revision: "1",
+      mode: "read_only",
+      cohort: [],
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+    });
+    await app.request(`${path}?after=2`, { headers: {
+      "x-matrix-collaboration-proof": encoded(proof),
+      "x-matrix-collaboration-policy": encoded(policy),
+    } });
+    const ws = { send: vi.fn(), close: vi.fn(), bufferedAmount: 0 };
+    socketEvents!.onOpen?.({} as never, ws as never);
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith(expect.objectContaining({ afterSequence: 2 })));
+    await vi.waitFor(() => expect(parsedFrames(ws)).toContainEqual(expect.objectContaining({
+      type: "terminal.ready",
+      connectionId: "connection_read_only",
+    })));
+
+    socketEvents!.onMessage?.({ data: JSON.stringify({
+      type: "acquire",
+      clientRequestId: "50000000-0000-4000-8000-000000000003",
+      incarnation,
+      connectionId: "connection_read_only",
+    }) } as never, ws as never);
+    await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1008, "Invalid frame"));
+  });
 });
 
 async function seed(fixture: CollaborationTestDatabase): Promise<void> {

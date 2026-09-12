@@ -1,11 +1,13 @@
 import {
   CollaborationClientFrameSchema,
   CollaborationIdSchema,
+  CollaborationRevisionSchema,
   CollaborationTerminalActionSchema,
 } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
+import { z } from "zod/v4";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { CollaborationAuthority } from "./authority.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
@@ -16,6 +18,7 @@ const PROOF_HEADER = "x-matrix-collaboration-proof";
 const POLICY_HEADER = "x-matrix-collaboration-policy";
 const MAX_FRAME_BYTES = 64 * 1024;
 const MAX_PENDING_FRAMES = 8;
+const TerminalQuerySchema = z.object({ after: CollaborationRevisionSchema.default("0") }).strict();
 
 type TerminalSession = Awaited<ReturnType<CollaborationTerminalEventRegistry["open"]>>;
 
@@ -36,6 +39,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
     "/ws/collaboration/scopes/:scopeId/terminal",
     options.upgradeWebSocket((context) => {
       const scopeId = CollaborationIdSchema.parse(context.req.param("scopeId"));
+      const query = parseQuery(context);
       let session: TerminalSession | null = null;
       let actorId: string | null = null;
       let connectionId: string | null = null;
@@ -55,7 +59,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
           }
           const action = CollaborationTerminalActionSchema.parse(parsed);
           const policy = options.verifier.verifyPolicy(decodeHeader(context, POLICY_HEADER));
-          requireM3Policy(policy, actorId);
+          requireM3Policy(policy, actorId, undefined, true);
           await options.dispatcher.dispatch({ scopeId, actorId, connectionId, policy, action });
           await options.registry.publishState(scopeId);
           session.touch();
@@ -73,7 +77,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
               signedProof: decodeHeader(context, PROOF_HEADER),
               purpose: "terminal",
               path: context.req.path,
-              query: "",
+              query: rawQuery(context),
             });
             if (proof.scopeId !== scopeId) throw new Error("scope mismatch");
             const policy = options.verifier.verifyPolicy(decodeHeader(context, POLICY_HEADER));
@@ -91,6 +95,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
               scopeId,
               actorId: proof.actorId,
               authorityGeneration: authorized.authorityGeneration,
+              afterSequence: Number(query.after),
               socket: {
                 send: (value) => { ws.send(value); },
                 close: (code, reason) => { ws.close(code, reason); },
@@ -154,10 +159,24 @@ function requireM3Policy(
   policy: { milestone: string; mode: string; cohort: string[] },
   actorId: string,
   ownerId?: string,
+  control = false,
 ): void {
-  if (policy.milestone !== "m3" || policy.mode === "off" || policy.mode === "read_only"
+  if (policy.milestone !== "m3" || policy.mode === "off" || (control && policy.mode === "read_only")
     || (policy.mode === "internal" && (!policy.cohort.includes(actorId)
       || (ownerId !== undefined && !policy.cohort.includes(ownerId))))) throw new Error("policy unavailable");
+}
+
+function parseQuery(context: Context): z.infer<typeof TerminalQuerySchema> {
+  const params = new URL(context.req.url).searchParams;
+  const keys = [...params.keys()];
+  if (keys.some((key) => key !== "after") || keys.filter((key) => key === "after").length > 1) {
+    throw new SyntaxError("Invalid terminal cursor");
+  }
+  return TerminalQuerySchema.parse(Object.fromEntries(params.entries()));
+}
+
+function rawQuery(context: Context): string {
+  return new URL(context.req.url).search.slice(1);
 }
 
 function decodeHeader(context: Context, name: string): unknown {

@@ -61,6 +61,62 @@ describe("CollaborationTerminalEventRegistry", () => {
     fixture.registry.shutdown();
   });
 
+  it("reauthorizes after terminal lookup before admitting a connection", async () => {
+    let revoked = false;
+    let releaseLookup!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    let finishLookup!: () => void;
+    const lookupBlocked = new Promise<void>((resolve) => {
+      finishLookup = resolve;
+    });
+    const authorize = vi.fn(async () => {
+      if (revoked) throw new Error("revoked");
+      return {
+        actorId: "user_alice",
+        ownerId: "user_owner",
+        scopeId: scopeA,
+        membershipScopeId: scopeA,
+        resourceKind: "terminal" as const,
+        resourceId: "terminal_a",
+        role: "editor" as const,
+        authEpoch: 1,
+        authorityRuntimeId: "runtime_owner",
+        authorityGeneration: 1,
+        capability: "read" as const,
+      };
+    });
+    const registry = new CollaborationTerminalEventRegistry({
+      authorize,
+      startTimers: false,
+      getTerminal: async () => {
+        releaseLookup();
+        await lookupBlocked;
+        return {
+          scopeId: scopeA,
+          terminalId: "terminal_a",
+          incarnation,
+          executionGeneration: 4,
+          creatorActorId: "user_owner",
+          createdAt: "2026-09-11T11:00:00.000Z",
+          status: "active" as const,
+        };
+      },
+      projectTerminal: async () => { throw new Error("connection must not be projected"); },
+    });
+
+    const opening = registry.open(connection(scopeA, "user_alice", "racing", socket()));
+    await lookupStarted;
+    revoked = true;
+    finishLookup();
+
+    await expect(opening).rejects.toThrow("revoked");
+    expect(authorize).toHaveBeenCalledTimes(2);
+    expect(registry.connectionCount).toBe(0);
+    registry.shutdown();
+  });
+
   it("reports exit, refuses a changed incarnation, and drains on shutdown", async () => {
     const fixture = setup();
     const client = socket();

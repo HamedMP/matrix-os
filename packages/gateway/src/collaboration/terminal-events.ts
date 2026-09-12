@@ -113,9 +113,14 @@ export class CollaborationTerminalEventRegistry {
     if (context.resourceKind !== "terminal" || context.authorityGeneration !== input.authorityGeneration) {
       throw new CollaborationTerminalEventError("unavailable");
     }
-    this.requireCapacity(input);
     const metadata = await this.options.getTerminal(context.scopeId, context.resourceId);
     if (!metadata || metadata.status !== "active") throw new CollaborationTerminalEventError("unavailable");
+    const current = await this.options.authorize(input.scopeId, input.actorId);
+    if (current.resourceKind !== "terminal" || current.authorityGeneration !== input.authorityGeneration
+      || current.scopeId !== metadata.scopeId || current.resourceId !== metadata.terminalId) {
+      throw new CollaborationTerminalEventError("unavailable");
+    }
+    this.requireCapacity(input);
     const runtime = this.runtimeFor(metadata);
     const existing = this.connections.get(input.connectionId);
     if (existing) this.remove(existing, 1000, "Replaced");
