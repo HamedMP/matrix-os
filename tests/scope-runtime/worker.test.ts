@@ -3,9 +3,11 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  createSingleUseCommandSocketSlot,
   parseScopeRuntimeWorkerArguments,
+  parseScopeRuntimeChatRequest,
   prepareScopeRuntimeWorkerEnvironment,
   scrubScopeRuntimeWorkerEnvironment,
   scopeRuntimeWorkerFailureExitCode,
@@ -20,10 +22,28 @@ const argumentsFixture = [
   "chat_ai",
   "claude-code",
   "2.1.240",
+  "7",
 ];
 const execFileAsync = promisify(execFile);
 
 describe("scope runtime worker boundary", () => {
+  it("caps command sockets at one and drains the active socket on shutdown", () => {
+    const slot = createSingleUseCommandSocketSlot<{ destroy(): void }>();
+    let closeFirst = () => undefined;
+    const first = { destroy: vi.fn() };
+    const second = { destroy: vi.fn() };
+
+    expect(slot.claim(first, (listener) => { closeFirst = listener; })).toBe(true);
+    expect(slot.claim(second, () => undefined)).toBe(false);
+    expect(second.destroy).toHaveBeenCalledOnce();
+    slot.destroyActive();
+    expect(first.destroy).toHaveBeenCalledOnce();
+
+    closeFirst();
+    expect(slot.claim(second, () => undefined)).toBe(false);
+    expect(second.destroy).toHaveBeenCalledTimes(2);
+  });
+
   it("is a standalone entrypoint inside the minimal root", async () => {
     const source = await readFile("packages/scope-runtime/src/worker.ts", "utf8");
     const imports = [...source.matchAll(/from\s+["']([^"']+)["']/g)]
@@ -40,12 +60,40 @@ describe("scope runtime worker boundary", () => {
       workload: "chat_ai",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
+      executionGeneration: "7",
     });
     expect(() => parseScopeRuntimeWorkerArguments([...argumentsFixture, "/bin/sh"]))
       .toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
     expect(() => parseScopeRuntimeWorkerArguments([
-      argumentsFixture[0]!, argumentsFixture[1]!, "terminal", "claude-code", "2.1.240",
+      argumentsFixture[0]!, argumentsFixture[1]!, "terminal", "claude-code", "2.1.240", "7",
     ])).toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
+  });
+
+  it("accepts only one bounded Chat job for its exact runtime generation", () => {
+    const invocation = parseScopeRuntimeWorkerArguments(argumentsFixture);
+    expect(parseScopeRuntimeChatRequest({
+      version: 1,
+      type: "runtime.chat",
+      runtimeHandle: argumentsFixture[0],
+      executionGeneration: "7",
+      model: "claude-opus-4-6",
+      prompt: "Shared prompt",
+    }, invocation)).toMatchObject({ model: "claude-opus-4-6", prompt: "Shared prompt" });
+    for (const injected of [
+      { executionGeneration: "8" },
+      { ownerHome: "/home/matrix/home" },
+      { prompt: "x".repeat(65 * 1024) },
+    ]) {
+      expect(() => parseScopeRuntimeChatRequest({
+        version: 1,
+        type: "runtime.chat",
+        runtimeHandle: argumentsFixture[0],
+        executionGeneration: "7",
+        model: "claude-opus-4-6",
+        prompt: "Shared prompt",
+        ...injected,
+      }, invocation)).toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
+    }
   });
 
   it("re-execs once with only the fixed environment before validating the boundary", () => {

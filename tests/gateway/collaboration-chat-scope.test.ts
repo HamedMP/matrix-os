@@ -161,6 +161,49 @@ describe("CollaborationChatScopeService", () => {
       collaborationIds.chat,
     )).rejects.toMatchObject({ code: "shared_execution_disabled" });
   });
+
+  it("atomically reconciles the proven execution profile and generation for existing shared Chats", async () => {
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    await service.shareChat({
+      ownerId: collaborationActors.owner,
+      chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
+      expectedChatRevision: 0,
+      confirmationToken: preflight.confirmationToken!,
+    });
+    const eligibility = {
+      profileId: "scope-runtime-chat-v1",
+      profileVersion: 1,
+      profileDigest: "b".repeat(64),
+      adapterId: "claude-code" as const,
+      harnessVersion: "2.1.240",
+    };
+
+    await expect(service.reconcileExecutionEligibility({
+      executionGeneration: 9,
+      eligibility,
+    })).resolves.toEqual({ updated: 1 });
+    const scope = await fixture.db.selectFrom("collaboration_scopes")
+      .select(["execution_generation", "execution_eligibility", "revision"])
+      .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow();
+    expect(scope).toMatchObject({
+      execution_generation: 9,
+      execution_eligibility: eligibility,
+      revision: 2,
+    });
+    expect(await fixture.db.selectFrom("collaboration_events").select("event_type")
+      .where("scope_id", "=", collaborationIds.scope).orderBy("scope_seq").execute())
+      .toEqual([
+        { event_type: "scope.shared" },
+        { event_type: "scope.execution_eligibility_changed" },
+      ]);
+
+    await expect(service.reconcileExecutionEligibility({
+      executionGeneration: 9,
+      eligibility,
+    })).resolves.toEqual({ updated: 0 });
+  });
 });
 
 async function seedChat(fixture: CollaborationTestDatabase): Promise<void> {

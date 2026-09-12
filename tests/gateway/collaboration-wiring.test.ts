@@ -1,6 +1,17 @@
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  SCOPE_RUNTIME_HARNESS_VERSION,
+  SCOPE_RUNTIME_PROFILE_DIGEST,
+  SCOPE_RUNTIME_PROFILE_ID,
+  SCOPE_RUNTIME_PROFILE_VERSION,
+} from "@matrix-os/scope-runtime/profile";
+import type { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import {
@@ -126,4 +137,177 @@ describe("gateway collaboration wiring", () => {
     expect(await fixture.db.selectFrom("collaboration_exports").select("id").execute()).toEqual([]);
     await runtime.shutdown();
   });
+
+  it("enables M2 only after the exact scope-runtime profile is available", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-wiring-"));
+    const supervisorSocket = join(temp, "supervisor.sock");
+    const brokerSocket = join(temp, "broker.sock");
+    const supervisor = await startSupervisor(supervisorSocket);
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedChat(fixture);
+    const runtime = await createGatewayCollaboration({
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    try {
+      await expect(runtime.enableSharedAi({
+        orchestrator: {} as unknown as CanonicalChatOrchestrator,
+        homePath: temp,
+        supervisorSocket,
+        brokerSocket,
+      })).resolves.toEqual({ available: true });
+      await expect(fixture.db.selectFrom("collaboration_scopes")
+        .select(["execution_generation", "execution_eligibility"])
+        .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow())
+        .resolves.toMatchObject({
+          execution_generation: 7,
+          execution_eligibility: {
+            profileId: SCOPE_RUNTIME_PROFILE_ID,
+            profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+          },
+        });
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps collaboration available with M2 disabled when the broker socket cannot start", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-broker-failure-"));
+    const supervisorSocket = join(temp, "supervisor.sock");
+    const brokerSocket = join(temp, "broker.sock");
+    const supervisor = await startSupervisor(supervisorSocket);
+    await writeFile(brokerSocket, "unsafe non-socket path", { flag: "wx" });
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedChat(fixture);
+    const runtime = await createGatewayCollaboration({
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    try {
+      await expect(runtime.enableSharedAi({
+        orchestrator: {} as unknown as CanonicalChatOrchestrator,
+        homePath: temp,
+        supervisorSocket,
+        brokerSocket,
+      })).resolves.toEqual({ available: false });
+      await expect(fixture.db.selectFrom("collaboration_scopes")
+        .select(["execution_generation", "execution_eligibility"])
+        .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow())
+        .resolves.toMatchObject({ execution_generation: null, execution_eligibility: null });
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
 });
+
+async function startSupervisor(path: string): Promise<Server> {
+  const server = createServer((socket) => {
+    socket.setEncoding("utf8");
+    let body = "";
+    socket.on("data", (chunk) => { body += chunk; });
+    socket.once("end", () => {
+      const request = JSON.parse(body.trim()) as { requestId: string; type: string };
+      if (request.type !== "capability.get") return socket.destroy();
+      socket.end(`${JSON.stringify({
+        version: 1,
+        type: "capability.result",
+        requestId: request.requestId,
+        ok: true,
+        supervisorVersion: "1.0.0",
+        profile: {
+          profileId: SCOPE_RUNTIME_PROFILE_ID,
+          profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
+          profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+          executionGeneration: "7",
+          identity: { mode: "dynamic", uidMin: 61_184, uidMax: 65_519 },
+          limits: {
+            memoryMaxBytes: 1_073_741_824,
+            cpuQuotaPercent: 200,
+            tasksMax: 256,
+            storageMaxBytes: 10_737_418_240,
+          },
+          adapters: [{
+            adapterId: "claude-code",
+            harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+            workloads: ["chat_ai"],
+          }],
+        },
+      })}\n`);
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(path, resolve);
+  });
+  return server;
+}
+
+async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void> {
+  await fixture.db.insertInto("chats").values({
+    id: collaborationIds.chat,
+    owner_type: "personal",
+    owner_id: "user_owner",
+    create_request_id: "req_shared_wiring",
+    project_id: null,
+    title: "Shared wiring",
+    lifecycle: "active",
+    attention: "none",
+    collaboration: {
+      scopeId: collaborationIds.scope,
+      mode: "discussion_only",
+      executionFenced: true,
+    },
+    user_state: null,
+    shell_state: null,
+    fork_provenance: null,
+    last_message_preview: null,
+    current_selection: null,
+    bound_driver_kind: null,
+    bound_instance_id: null,
+    bound_at_turn_id: null,
+    created_at: "2026-09-10T00:00:00.000Z",
+    updated_at: "2026-09-10T00:00:00.000Z",
+  }).execute();
+  await fixture.db.insertInto("collaboration_scopes").values({
+    id: collaborationIds.scope,
+    owner_type: "personal",
+    owner_id: "user_owner",
+    kind: "chat",
+    resource_id: collaborationIds.chat,
+    parent_scope_id: null,
+    membership_mode: "direct",
+    lifecycle: "shared",
+    authority_runtime_id: collaborationIds.runtime,
+    execution_generation: null,
+    execution_eligibility: null,
+    created_at: "2026-09-10T00:00:00.000Z",
+    updated_at: "2026-09-10T00:00:00.000Z",
+    deleted_at: null,
+  }).execute();
+}

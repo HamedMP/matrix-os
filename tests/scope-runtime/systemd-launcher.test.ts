@@ -84,6 +84,7 @@ describe("scope runtime systemd launcher", () => {
       workerFile: "/opt/matrix/app/packages/scope-runtime/dist/worker.js",
       brokerSocket: "/run/matrix-scope-runtime/broker.sock",
       readinessFile: "/var/lib/matrix-scope-runtime/runtimes/222/ready",
+      commandDirectory: "/var/lib/matrix-scope-runtime/runtimes/222/command",
       nodeBinary: "/opt/matrix/runtime/node/bin/node",
     });
 
@@ -94,6 +95,7 @@ describe("scope runtime systemd launcher", () => {
     expect(args).toContain("--property=TasksMax=256");
     expect(args).toContain("--property=BindReadOnlyPaths=/usr/bin/env");
     expect(args).toContain("--property=BindPaths=/var/lib/matrix-scope-runtime/runtimes/222/ready:/run/matrix-scope-readiness/ready");
+    expect(args).toContain("--property=BindPaths=/var/lib/matrix-scope-runtime/runtimes/222/command:/run/matrix-scope-command");
     expect(args).not.toContain("--collect");
     expect(args.slice(args.indexOf("--") + 1)).toEqual([
       "/usr/bin/env",
@@ -108,6 +110,7 @@ describe("scope runtime systemd launcher", () => {
       "chat_ai",
       "claude-code",
       "2.1.240",
+      "7",
     ]);
     expect(JSON.stringify(args)).not.toMatch(/OWNER_TOKEN|\/home\/matrix|\/run\/systemd\/private/);
   });
@@ -152,6 +155,7 @@ describe("scope runtime systemd launcher", () => {
     const runtimeRoot = join(paths.stateRoot, "runtimes", "22222222222222222222222222222222");
     const sandboxRoot = join(runtimeRoot, "root");
     expect((await stat(runtimeRoot)).mode & 0o777).toBe(0o700);
+    expect((await stat(join(runtimeRoot, "command"))).mode & 0o777).toBe(0o733);
     for (const path of [
       sandboxRoot,
       join(sandboxRoot, "opt"),
@@ -173,6 +177,44 @@ describe("scope runtime systemd launcher", () => {
     )).isFile()).toBe(true);
     expect((await lstat(join(sandboxRoot, "usr/bin/env"))).isFile()).toBe(true);
     expect(calls.some((call) => call.command === "/usr/bin/systemd-run")).toBe(true);
+    let workerFrame: Record<string, unknown> | undefined;
+    const worker = createServer({ allowHalfOpen: true }, (socket) => {
+      let input = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => { input += chunk; });
+      socket.once("end", () => {
+        workerFrame = JSON.parse(input) as Record<string, unknown>;
+        socket.end(`${JSON.stringify({
+          version: 1,
+          type: "runtime.chat.result",
+          requestId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1",
+          ok: true,
+          runtimeHandle: RUNTIME_HANDLE,
+          executionGeneration: "7",
+          text: "Scoped answer",
+        })}\n`);
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      worker.once("error", reject);
+      worker.listen(join(runtimeRoot, "command", "worker.sock"), resolve);
+    });
+    cleanup.push(() => new Promise<void>((resolve) => worker.close(() => resolve())));
+    await expect(launcher.runChat({
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "7",
+      model: "claude-opus-4-6",
+      prompt: "Shared prompt",
+    })).resolves.toEqual({ text: "Scoped answer" });
+    expect(workerFrame).toMatchObject({
+      type: "runtime.chat",
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "7",
+      model: "claude-opus-4-6",
+      prompt: "Shared prompt",
+    });
+    await new Promise<void>((resolve) => worker.close(() => resolve()));
+    cleanup.pop();
     await expect(launcher.stop(RUNTIME_HANDLE)).resolves.toBeUndefined();
     expect(calls.some((call) => call.args.includes("matrix-scope-runtime-22222222222222222222222222222222.service")))
       .toBe(true);

@@ -8,6 +8,10 @@ const AdapterIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const SemanticVersionSchema = z.string().regex(/^[0-9]+\.[0-9]+\.[0-9]+$/);
 const GenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const BoundedPromptSchema = z.string().min(1).refine(
+  (value) => Buffer.byteLength(value, "utf8") <= 64 * 1024,
+  "Prompt exceeds scope runtime limit",
+);
 
 const CapabilityRequestSchema = z.object({
   version: z.literal(1),
@@ -33,10 +37,21 @@ const RuntimeStopRequestSchema = z.object({
   runtimeHandle: RuntimeHandleSchema,
 }).strict();
 
+const RuntimeChatRequestSchema = z.object({
+  version: z.literal(1),
+  type: z.literal("runtime.chat"),
+  requestId: RequestIdSchema,
+  runtimeHandle: RuntimeHandleSchema,
+  executionGeneration: GenerationSchema,
+  model: z.string().min(1).max(256).regex(/^[A-Za-z0-9._:/-]+$/),
+  prompt: BoundedPromptSchema,
+}).strict();
+
 export const ScopeRuntimeRequestSchema = z.discriminatedUnion("type", [
   CapabilityRequestSchema,
   RuntimeCreateRequestSchema,
   RuntimeStopRequestSchema,
+  RuntimeChatRequestSchema,
 ]);
 
 const RuntimeLimitsSchema = z.object({
@@ -112,11 +127,39 @@ const RuntimeErrorSchema = z.object({
   ]),
 }).strict();
 
+const RuntimeChatResultSchema = z.object({
+  version: z.literal(1),
+  type: z.literal("runtime.chat.result"),
+  requestId: RequestIdSchema,
+  ok: z.literal(true),
+  runtimeHandle: RuntimeHandleSchema,
+  executionGeneration: GenerationSchema,
+  text: z.string().refine(
+    (value) => Buffer.byteLength(value, "utf8") <= 96 * 1024,
+    "Response exceeds scope runtime limit",
+  ),
+}).strict();
+
+const RuntimeChatErrorSchema = z.object({
+  version: z.literal(1),
+  type: z.literal("runtime.chat.result"),
+  requestId: RequestIdSchema,
+  ok: z.literal(false),
+  error: z.enum([
+    "invalid_request",
+    "runtime_not_found",
+    "runtime_unavailable",
+    "generation_mismatch",
+  ]),
+}).strict();
+
 export const ScopeRuntimeResponseSchema = z.union([
   CapabilityResultSchema,
   CapabilityErrorSchema,
   RuntimeResultSchema,
   RuntimeErrorSchema,
+  RuntimeChatResultSchema,
+  RuntimeChatErrorSchema,
 ]);
 
 export type ScopeRuntimeRequest = z.infer<typeof ScopeRuntimeRequestSchema>;

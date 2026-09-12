@@ -4135,10 +4135,21 @@ export async function createGateway(config: GatewayConfig) {
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
+      ...(gatewayCollaboration ? {
+        onSharedEvent: (scopeId: string) => gatewayCollaboration!.eventRegistry.broadcastScope(scopeId),
+      } : {}),
       onAiGeneration: recordAiGeneration,
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
+    }
+    if (gatewayCollaboration) {
+      const sharedAi = await gatewayCollaboration.enableSharedAi({
+        orchestrator: canonicalChatOrchestrator,
+        homePath,
+        ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      });
+      console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
     }
     if (codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
       const repository = chatRepository;
@@ -4525,10 +4536,10 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
-      await gatewayCollaboration?.shutdown();
-      gatewayCollaboration = null;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await gatewayCollaboration?.shutdown();
+      gatewayCollaboration = null;
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();
