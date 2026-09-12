@@ -295,6 +295,17 @@ describe("collaboration gateway routes", () => {
       role: "owner",
       capabilities: { read: false, manageMembers: true },
     });
+    const reopened = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      body,
+      m4Policy: true,
+    });
+    await expect(reopened.json()).resolves.toMatchObject({
+      existingScopeId: collaborationIds.scope,
+      existingLifecycle: "private",
+    });
   });
 
   it("returns one owner-derived inventory and accepts only its exact M4 confirmation", async () => {
@@ -360,6 +371,42 @@ describe("collaboration gateway routes", () => {
     });
     expect(confirmed.status).toBe(202);
     expect(await confirmed.json()).toMatchObject({ status: "prepared", inventoryRevision: "7" });
+
+    await fixture.db.updateTable("collaboration_scopes").set({
+      lifecycle: "shared",
+      revision: 1,
+      authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 2,
+    }).where("id", "=", collaborationIds.scope).execute();
+    await fixture.db.insertInto("collaboration_resource_bindings").values({
+      id: "80000000-0000-4000-8000-000000000001",
+      project_scope_id: collaborationIds.scope,
+      resource_scope_id: null,
+      resource_kind: "file",
+      resource_id: "README.md",
+      authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 2,
+      revision: 1,
+      readiness: "ready",
+      blocker: null,
+      incarnation: null,
+      created_at: now,
+      updated_at: now,
+    }).execute();
+    const project = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/project`,
+      m4Policy: true,
+    });
+    expect(project.status).toBe(200);
+    await expect(project.json()).resolves.toMatchObject({
+      id: "proj_alpha",
+      scopeId: collaborationIds.scope,
+      status: "active",
+      resources: [{ kind: "file", id: "README.md", readiness: "ready" }],
+    });
   });
 
   it("preflights, shares, reads, and controls a terminal only with signed M3 policy", async () => {

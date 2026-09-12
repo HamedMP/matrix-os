@@ -1,6 +1,6 @@
 # Implementation and Internal Acceptance Guide
 
-This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented in the Graphite review stack #1571–#1578, topped by `codex/collaboration-chat-validation`; the review layers remain one PR1 product milestone and exist only to satisfy repository size limits. PR2's isolated execution foundation is merged and dormant. PR3/M2 is published as review stack #1601–#1603, but has not been enabled for a cohort or validated on a production-equivalent VPS. Later milestones remain unimplemented and disabled.
+This guide covers implementation and internal acceptance for the six-PR delivery plan. PR1/M1 is implemented in the Graphite review stack #1571–#1578, topped by `codex/collaboration-chat-validation`; the review layers remain one PR1 product milestone and exist only to satisfy repository size limits. PR2's isolated execution foundation is merged and dormant. PR3/M2 is review stack #1601–#1603, PR4/M3 is draft review stack #1635–#1637, dormant PR5 is #1638–#1641, and PR6/M4 is #1642–#1645. These extra review layers are the minimum split needed to keep each actual diff below 3,000 additions and 50 files; the six product PR scopes and four milestones are unchanged. No new milestone has been enabled for a cohort or validated on a production-equivalent VPS in this guide.
 
 ## PR1 local evidence — 2026-09-07
 
@@ -54,6 +54,33 @@ Validation results:
 | Exact release acceptance harness | The labeled disposable-preview workflow pins `scope-runtime-chat-v1`, its source-controlled digest and harness version, executes a real `runtime.chat` Agent SDK round trip through a bounded fake inference broker, and restores the dormant systemd/marker state. Two disposable preview attempts accepted the requested deployment but remained on the bootstrap bundle instead of installing the exact PR artifact, so the harness correctly did not claim a pass. This remains a preview updater/platform blocker rather than M2 acceptance evidence. |
 
 Still required before M2 is internally enabled: repair the disposable preview's exact-version install path, rerun the exact-head VPS workflow and record its profile generation/artifact, exercise the complete two-account AI journey on the named production surfaces, and perform the M2-off/read-only rollback drill while confirming M1 discussion remains available. No release-artifact pass or production enablement is claimed here.
+
+## PR6 M4 local evidence — 2026-09-11
+
+PR6 exposes one all-or-nothing owner confirmation, activation-time directory publication, existing-scope reopening, accepted project discovery and read-only inventory across common Web, Electron, native mobile and CLI clients. Private preparation is not discoverable; accepted and pending members are routed to the destination authority only in the final activation transaction.
+
+Current public-safe component evidence:
+
+- [Whole-project inventory and membership confirmation](evidence/m4-project-sharing.png)
+
+The screenshot was captured at 1440×900 from a temporary self-hosted Next.js route rendering the production `ProjectSharingDialog` with a mixed file/Chat/app/layout/terminal inventory, external reference disclosure and explicit membership effects. The temporary route was removed after capture. This is local component evidence, not release-artifact or named-surface acceptance.
+
+Validation results:
+
+| Check | Result |
+| --- | --- |
+| Project backend suites | 14 files / 63 tests passed; one opt-in real-Postgres concurrency test remained skipped because `MATRIX_TEST_POSTGRES_URL` is unset. Coverage includes boundaries, inventory, staging/fencing/publication recovery, inheritance, apps, layout, viewer denial, lifecycle, production inventory source and the integrated activation path. |
+| Gateway route boundary | `tests/gateway/collaboration-routes.test.ts` passed 12/12, including M4 policy enforcement, owner preflight/create/reopen, exact confirmation and authenticated shared-project projection. |
+| Common project UI | 22 tests passed across loading state, the complete inventory dialog, whole-project invitation copy, changed-inventory reconfirmation, private preparation, accepted project discovery/opening and scope-safe invitation routing. |
+| Native mobile project UI | `apps/mobile/__tests__/shared-screen.test.tsx` passed 16/16, including accepted project discovery, read-only inventory, and cancellation of a stale project load after returning to discovery. |
+| Platform projection | `tests/platform/collaboration-wiring.test.ts` passed 2/2, including content-free project directory routing and authenticated destination hydration for a recipient without a computer. |
+| Two-account journey | `tests/e2e/collaboration-project.spec.ts` defines owner invite, second-account acceptance, confirmation/activation, downgrade and revocation. Its fixture and spec compile; it has not run because authenticated two-account/VPS environment variables are not available locally. |
+| Package TypeScript | Contracts, gateway, platform, UI, web shell, Electron desktop and CLI checks passed. Native mobile still reports only the pre-existing drawer, terminal style and theme-preference errors outside the collaboration diff. |
+| Pattern scan | `pnpm run check:patterns` passed with 0 violations and the same 5 repository warning groups. |
+| React Doctor, changed scope | Exited 0 with no errors. The 25 reported warnings are inherited complexity/effect/serial-boundary warnings in the full stacked diff; the new project sharing component has no finding after documenting one Zod 4 analyzer false positive. |
+| Root test suite | A root `pnpm run test` invocation begun before the final UI amendments completed with 1,263 files / 14,401 tests passed, 59 files / 222 tests failed, 7 files / 39 tests skipped, and 20 worker errors. The failures are dominated by this sandbox denying child-process spawn, TCP/Unix listeners and Git operations, plus native app-build timeouts. It also loaded stale versions of the two UI files amended during the run; both affected focused suites passed cleanly afterward (`tests/desktop/draft-chat-send.test.tsx` 15/15 and common project UI 22/22). This is not a clean-head full-suite pass; CI remains authoritative. |
+
+Still required before M4 is internally enabled: run the exact release artifact on a disposable VPS, exercise the mixed-project two-account journey on every applicable named surface, run the real-Postgres concurrency variants, and perform the M4 read-only/off rollback and crash-recovery drill. The local branch does not claim those results and does not enable M4 by itself.
 
 ## Prepare a slice
 

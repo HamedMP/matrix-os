@@ -123,7 +123,9 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       <div>
         <h2 className="text-lg font-semibold">Invite collaborators</h2>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-          Invite access applies only to this ongoing {resourceLabel}. It does not grant access to its project, sibling Chats or terminals, files, or apps.
+          {scope.kind === "project"
+            ? "Invite access applies to this whole project and its future project-owned contents. External references and unrelated resources stay outside the share."
+            : `Invite access applies only to this ongoing ${resourceLabel}. It does not grant access to its project, sibling Chats or terminals, files, or apps.`}
         </p>
       </div>
       <button type="button" className={buttonClass} disabled={pending} onClick={onClose}>Close</button>
@@ -149,7 +151,9 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
         {scope.kind === "terminal"
           ? "Editors can watch and request input control. Viewers watch only. Owners may take over control."
-          : "Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals."}
+          : scope.kind === "project"
+            ? "Editors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals."
+            : "Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals."}
       </p>
     </section>
     <section aria-labelledby="people-heading">
@@ -176,7 +180,9 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     </section>
     {error ? <p role="alert" className="text-sm">{error}</p> : <p role="status" className="text-sm">{feedback}</p>}
     <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-      Removing a collaborator does not revoke snapshot links. Revoking a snapshot link does not remove collaborators.
+      {scope.kind === "project"
+        ? "Removing a collaborator revokes the whole project membership without changing independently shared external items."
+        : "Removing a collaborator does not revoke snapshot links. Revoking a snapshot link does not remove collaborators."}
     </p>
   </Dialog>;
 }

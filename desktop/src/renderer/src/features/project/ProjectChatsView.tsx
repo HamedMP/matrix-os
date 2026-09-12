@@ -43,6 +43,7 @@ import { ProjectThreadList } from "./ProjectThreadList";
 import { ChatUnavailableState, HermesPane } from "../chat/ChatTab";
 import { CanonicalChatRoute } from "../chat/CanonicalChatRoute";
 import { useBoard } from "../../stores/board";
+import { DesktopProjectSharing } from "./DesktopProjectSharing";
 
 export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/composer-seed";
 
@@ -637,6 +638,7 @@ function LegacyProjectChatsView({ projectId, active }: { projectId: string; acti
         onNewChat={(taskId) => void openNewChat(taskId)}
         onRetry={() => void refreshWorkspace(projectId)}
         onLoadMore={() => void loadMoreWorkspace(projectId)}
+        headerAction={<DesktopProjectSharing projectId={projectId} projectName={projectLabel} />}
       />
       {draftVisible || selectedHermesConversationId ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

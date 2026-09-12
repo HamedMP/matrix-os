@@ -1,5 +1,5 @@
 import { AlertCircle, MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import type { ProjectWorkspaceStatus } from "../../stores/project-workspaces";
 import type { HermesConversationSummary } from "../../stores/hermes-chat";
@@ -140,6 +140,7 @@ export function ProjectThreadList({
   onNewChat,
   onRetry,
   onLoadMore,
+  headerAction,
 }: {
   projectId: string;
   projectLabel: string;
@@ -157,6 +158,7 @@ export function ProjectThreadList({
   onNewChat: (taskId?: string) => void;
   onRetry: () => void;
   onLoadMore?: () => void;
+  headerAction?: ReactNode;
 }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ThreadRailFilter>("all");
@@ -202,7 +204,9 @@ export function ProjectThreadList({
         <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
           Chats
         </span>
-        <button
+        <div className="flex items-center gap-1">
+          {headerAction}
+          <button
           type="button"
           aria-label={`New chat in ${projectLabel}`}
           title={`New chat in ${projectLabel}`}
@@ -210,9 +214,10 @@ export function ProjectThreadList({
           onClick={() => onNewChat()}
           className="rounded p-1 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
           style={{ color: "var(--text-tertiary)" }}
-        >
-          <Plus size={13} />
-        </button>
+          >
+            <Plus size={13} />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5 px-2 pb-2">

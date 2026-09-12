@@ -514,6 +514,44 @@ export function createProjectTransitionJournal(options: {
             created_at: now(),
           }).execute();
         }
+        const pendingMembers = await trx.selectFrom("collaboration_members")
+          .select(["actor_id", "invitation_id"])
+          .where("scope_id", "=", scope.id)
+          .where("status", "=", "pending")
+          .where("invitation_id", "is not", null)
+          .orderBy("actor_id", "asc")
+          .execute();
+        if (pendingMembers.length > 0) {
+          const invitedEventId = z.uuid().parse(createEventId());
+          await trx.insertInto("collaboration_events").values({
+            scope_id: scope.id,
+            scope_seq: scopeSequence + 1,
+            event_id: invitedEventId,
+            resource_kind: "project",
+            resource_id: scope.resource_id,
+            revision: nextRevision,
+            authority_generation: Number(updatedScope.authority_generation),
+            event_type: "project.transition.invited",
+            payload: {},
+            created_at: now(),
+          }).execute();
+          await trx.insertInto("collaboration_directory_outbox").values({
+            event_id: invitedEventId,
+            scope_id: scope.id,
+            recipient_actor_ids: jsonb(pendingMembers.map((member) => ({
+              actorId: member.actor_id,
+              invitationId: member.invitation_id!,
+            }))),
+            authority_runtime_id: row.destination_authority_runtime_id,
+            authority_generation: Number(row.destination_authority_generation),
+            resource_kind: "project",
+            discovery_state: "invited",
+            retry_after: now(),
+            attempts: 0,
+            delivered_at: null,
+            created_at: now(),
+          }).execute();
+        }
         await trx.insertInto("collaboration_audit").values({
           scope_id: scope.id,
           actor_id: row.requested_by,

@@ -5,6 +5,7 @@ const mockFetchInvitation = jest.fn();
 const mockAcceptInvitation = jest.fn();
 const mockFetchScope = jest.fn();
 const mockFetchChat = jest.fn();
+const mockFetchProject = jest.fn();
 const mockFetchMessages = jest.fn();
 const mockPostDiscussion = jest.fn();
 const mockFetchAiRequests = jest.fn();
@@ -21,6 +22,7 @@ jest.mock("@/lib/requests/collaboration", () => ({
   acceptCollaborationInvitation: (...args: unknown[]) => mockAcceptInvitation(...args),
   fetchCollaborationScope: (...args: unknown[]) => mockFetchScope(...args),
   fetchSharedChat: (...args: unknown[]) => mockFetchChat(...args),
+  fetchSharedProject: (...args: unknown[]) => mockFetchProject(...args),
   fetchSharedChatMessages: (...args: unknown[]) => mockFetchMessages(...args),
   postSharedChatDiscussion: (...args: unknown[]) => mockPostDiscussion(...args),
   fetchSharedAiRequests: (...args: unknown[]) => mockFetchAiRequests(...args),
@@ -97,6 +99,10 @@ describe("native shared Chat screen", () => {
       capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true },
     });
     mockFetchChat.mockResolvedValue({ id: "chat_one", scopeId, title: "Launch plan", lifecycle: "active", revision: "1", messageCount: "1" });
+    mockFetchProject.mockResolvedValue({
+      id: "project_launch", scopeId, status: "active",
+      resources: [{ kind: "file", id: "README.md", revision: "1", readiness: "ready" }],
+    });
     mockFetchMessages.mockResolvedValue({ messages: [{
       id: "msg_one", chatId: "chat_one", sequence: "1", role: "user", state: "committed", purpose: "discussion",
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text: "Welcome" }],
@@ -185,6 +191,54 @@ describe("native shared Chat screen", () => {
     expect(await screen.findByText("Shared terminal")).toBeTruthy();
     fireEvent.press(screen.getByLabelText("Open shared terminal terminal_release"));
     expect(await screen.findByText(`Terminal surface ${scopeId}`)).toBeTruthy();
+  });
+
+  it("discovers and opens an accepted whole project", async () => {
+    const projectScope = {
+      ...(await mockFetchScope()),
+      kind: "project",
+      resourceId: "project_launch",
+      role: "viewer",
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+    };
+    mockFetchScope.mockResolvedValue(projectScope);
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "project", authorityGeneration: 1,
+      status: "accepted", resource: { scope: projectScope, project: await mockFetchProject() },
+    }] });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open shared project project_launch"));
+    expect(await screen.findByText("README.md")).toBeTruthy();
+    expect(screen.getByText("Viewer · read only")).toBeTruthy();
+    expect(mockFetchChat).not.toHaveBeenCalled();
+  });
+
+  it("ignores a project load failure after returning to discovery", async () => {
+    const projectScope = {
+      ...(await mockFetchScope()),
+      kind: "project",
+      resourceId: "project_launch",
+      role: "viewer",
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+    };
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "project", authorityGeneration: 1,
+      status: "accepted", resource: { scope: projectScope, project: await mockFetchProject() },
+    }] });
+    let rejectProject!: (reason: Error) => void;
+    mockFetchScope.mockResolvedValue(projectScope);
+    mockFetchProject.mockImplementationOnce(() => new Promise((_, reject) => { rejectProject = reject; }));
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open shared project project_launch"));
+    fireEvent.press(await screen.findByLabelText("Back to Shared with me"));
+    await act(async () => rejectProject(new Error("old project failed")));
+
+    expect(await screen.findByText("Shared with me")).toBeTruthy();
+    expect(screen.queryByText("This shared project is unavailable. Your access may have changed.")).toBeNull();
   });
 
   it("keeps a failed AI draft and shows the accepted ordered queue", async () => {
