@@ -25,6 +25,10 @@ import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator }
 import { requestHasBody } from "./http-body.js";
 import { createProjectLifecycleService, ProjectLifecycleActionSchema } from "./project-lifecycle.js";
 import type { CodingAgentThreadStore } from "./coding-agents/thread-store.js";
+import {
+  ProjectFenceError,
+  type LegacyProjectOperationAdmission,
+} from "./collaboration/project-fence.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type ProjectFolders = ReturnType<typeof createProjectFolders>;
@@ -241,6 +245,7 @@ export function createWorkspaceRoutes(options: {
   eventPublisher?: WorkspaceEventPublisher;
   sessionOrchestrator?: WorkspaceSessionOrchestrator;
   projectLifecycleService?: ProjectLifecycleService;
+  projectOperationAdmission?: LegacyProjectOperationAdmission;
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "getProjectLifecycleState" | "deleteProjectThreads">;
   getOwnerScope?: (c: Context) => OwnerScope;
   listChatBoundSessionIds?: (
@@ -346,6 +351,54 @@ export function createWorkspaceRoutes(options: {
       return c.json(errorBody("unauthorized", "Unauthorized"), 401);
     }
     return c.json(errorBody("server_misconfigured", mapped.body.error), 500);
+  }
+
+  async function withLegacyProjectOperation<T>(input: {
+    ownerScope: OwnerScope;
+    projectSlug: string;
+    kind: "write" | "run";
+    operation(): Promise<T>;
+  }): Promise<
+    | { ok: true; value: T }
+    | { ok: false; status: number; body: { error: unknown } }
+  > {
+    if (!options.projectOperationAdmission) {
+      return { ok: true, value: await input.operation() };
+    }
+    const project = await projectManager.getProject(input.projectSlug, input.ownerScope);
+    if (!project.ok) {
+      return { ok: false, status: project.status, body: { error: project.error } };
+    }
+    try {
+      const value = await options.projectOperationAdmission.withLegacyAdmission({
+        ownerType: input.ownerScope.type === "org" ? "organization" : "personal",
+        ownerId: input.ownerScope.id,
+        projectId: project.project.id,
+        kind: input.kind,
+      }, input.operation);
+      return { ok: true, value };
+    } catch (err: unknown) {
+      if (err instanceof ProjectFenceError) {
+        if (["fenced", "scope_required", "conflict", "not_found"].includes(err.code)) {
+          return {
+            ok: false,
+            status: 409,
+            body: { error: { code: "project_shared", message: "Use the shared project route" } },
+          };
+        }
+        return {
+          ok: false,
+          status: 503,
+          body: { error: { code: "project_unavailable", message: "Project operation is unavailable" } },
+        };
+      }
+      console.error("[workspace-routes] Project admission failed:", err instanceof Error ? err.name : "UnknownError");
+      return {
+        ok: false,
+        status: 503,
+        body: { error: { code: "project_unavailable", message: "Project operation is unavailable" } },
+      };
+    }
   }
 
   app.get("/api/github/status", async (c) => c.json(await projectManager.getGithubStatus()));
@@ -489,11 +542,18 @@ export function createWorkspaceRoutes(options: {
       );
       if (confirmation) return confirmation;
     }
-    const result = await projectLifecycleService.applyProjectLifecycleAction(
-      lifecyclePrincipal(ownerScope),
-      c.req.param("slug"),
-      body.value,
-    );
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: c.req.param("slug"),
+      kind: "write",
+      operation: () => projectLifecycleService.applyProjectLifecycleAction(
+        lifecyclePrincipal(ownerScope),
+        c.req.param("slug"),
+        body.value,
+      ),
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json(result);
   });
@@ -542,17 +602,24 @@ export function createWorkspaceRoutes(options: {
       body.value.confirmTerminate ?? false,
     );
     if (confirmation) return confirmation;
-    const result = await projectLifecycleService.applyProjectLifecycleAction(
-      lifecyclePrincipal(ownerScope),
-      c.req.param("slug"),
-      {
-        type: "delete",
-        confirmation: body.value.confirmation,
-        ...(body.value.confirmTerminate === undefined
-          ? {}
-          : { confirmTerminate: body.value.confirmTerminate }),
-      },
-    );
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: c.req.param("slug"),
+      kind: "write",
+      operation: () => projectLifecycleService.applyProjectLifecycleAction(
+        lifecyclePrincipal(ownerScope),
+        c.req.param("slug"),
+        {
+          type: "delete",
+          confirmation: body.value.confirmation,
+          ...(body.value.confirmTerminate === undefined
+            ? {}
+            : { confirmTerminate: body.value.confirmTerminate }),
+        },
+      ),
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json(result);
   });
@@ -643,12 +710,19 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await worktreeManager.createWorktree({
-      projectSlug: c.req.param("slug"),
+    const admitted = await withLegacyProjectOperation({
       ownerScope,
-      branch: body.value.branch,
-      pr: body.value.pr,
+      projectSlug: c.req.param("slug"),
+      kind: "write",
+      operation: () => worktreeManager.createWorktree({
+        projectSlug: c.req.param("slug"),
+        ownerScope,
+        branch: body.value.branch,
+        pr: body.value.pr,
+      }),
     });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ worktree: result.worktree }, result.status);
   });
@@ -670,12 +744,19 @@ export function createWorkspaceRoutes(options: {
     }
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await worktreeManager.deleteWorktree({
-      projectSlug: c.req.param("slug"),
-      worktreeId: c.req.param("worktreeId"),
-      confirmDirtyDelete,
+    const admitted = await withLegacyProjectOperation({
       ownerScope,
+      projectSlug: c.req.param("slug"),
+      kind: "write",
+      operation: () => worktreeManager.deleteWorktree({
+        projectSlug: c.req.param("slug"),
+        worktreeId: c.req.param("worktreeId"),
+        confirmDirtyDelete,
+        ownerScope,
+      }),
     });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });
   });
@@ -686,9 +767,19 @@ export function createWorkspaceRoutes(options: {
     const projectSlug = c.req.param("slug");
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await taskManager.createTask(projectSlug, body.value, ownerScope);
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await taskManager.createTask(projectSlug, body.value, ownerScope);
+        if (result.ok) await eventPublisher.publishTaskCreated(result.task);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await eventPublisher.publishTaskCreated(result.task);
     return c.json({ task: result.task }, status(result.status ?? 201));
   });
 
@@ -711,9 +802,19 @@ export function createWorkspaceRoutes(options: {
     const projectSlug = c.req.param("slug");
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await taskManager.updateTask(projectSlug, c.req.param("taskId"), body.value, ownerScope);
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await taskManager.updateTask(projectSlug, c.req.param("taskId"), body.value, ownerScope);
+        if (result.ok) await eventPublisher.publishTaskUpdated(result.task);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await eventPublisher.publishTaskUpdated(result.task);
     return c.json({ task: result.task });
   });
 
@@ -724,9 +825,19 @@ export function createWorkspaceRoutes(options: {
     const taskId = c.req.param("taskId");
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await taskManager.deleteTask(projectSlug, taskId, ownerScope);
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await taskManager.deleteTask(projectSlug, taskId, ownerScope);
+        if (result.ok) await eventPublisher.publishTaskDeleted(projectSlug, taskId);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await eventPublisher.publishTaskDeleted(projectSlug, taskId);
     return c.json({ ok: true });
   });
 
@@ -736,9 +847,19 @@ export function createWorkspaceRoutes(options: {
     const projectSlug = c.req.param("slug");
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await previewManager.createPreview(projectSlug, body.value, ownerScope);
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await previewManager.createPreview(projectSlug, body.value, ownerScope);
+        if (result.ok) await eventPublisher.publishPreviewCreated(result.preview);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await eventPublisher.publishPreviewCreated(result.preview);
     return c.json({ preview: result.preview }, status(result.status ?? 201));
   });
 
@@ -762,9 +883,19 @@ export function createWorkspaceRoutes(options: {
     const projectSlug = c.req.param("slug");
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await previewManager.updatePreview(projectSlug, c.req.param("previewId"), body.value, ownerScope);
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await previewManager.updatePreview(projectSlug, c.req.param("previewId"), body.value, ownerScope);
+        if (result.ok) await eventPublisher.publishPreviewUpdated(result.preview);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await eventPublisher.publishPreviewUpdated(result.preview);
     return c.json({ preview: result.preview });
   });
 
@@ -775,9 +906,19 @@ export function createWorkspaceRoutes(options: {
     const previewId = c.req.param("previewId");
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await previewManager.deletePreview(projectSlug, previewId, ownerScope);
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await previewManager.deletePreview(projectSlug, previewId, ownerScope);
+        if (result.ok) await eventPublisher.publishPreviewDeleted(projectSlug, previewId);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await eventPublisher.publishPreviewDeleted(projectSlug, previewId);
     return c.json({ ok: true });
   });
 
@@ -790,10 +931,16 @@ export function createWorkspaceRoutes(options: {
     } catch (err: unknown) {
       return principalError(c, err);
     }
-    const result = await sessionOrchestrator.startSession({
-      ownerScope,
-      request: body.value,
-    });
+    const admitted = body.value.projectSlug
+      ? await withLegacyProjectOperation({
+          ownerScope,
+          projectSlug: body.value.projectSlug,
+          kind: "run",
+          operation: () => sessionOrchestrator.startSession({ ownerScope, request: body.value }),
+        })
+      : { ok: true as const, value: await sessionOrchestrator.startSession({ ownerScope, request: body.value }) };
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) {
       if ("sandboxStatus" in result) {
         return c.json({ error: result.error, sandboxStatus: result.sandboxStatus }, status(result.status));
@@ -906,13 +1053,24 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/reviews", limited, async (c) => {
     const body = await parseJson(c, CreateReviewSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const ownerScope = options.getOwnerScope?.(c);
-    const review = createReviewLoopRecord({
-      id: `rev_${randomUUID()}`,
-      ownerId: ownerScope?.id,
-      ...body.value,
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: body.value.projectSlug,
+      kind: "write",
+      operation: async () => {
+        const review = createReviewLoopRecord({
+          id: `rev_${randomUUID()}`,
+          ownerId: ownerScope.id,
+          ...body.value,
+        });
+        const saved = await reviewStore.saveReview(review);
+        return { review, saved };
+      },
     });
-    const saved = await reviewStore.saveReview(review);
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const { review, saved } = admitted.value;
     if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
     return c.json({ review }, 201);
   });
@@ -939,9 +1097,22 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const current = await reviewStore.getReview(c.req.param("reviewId"));
     if (!current.ok) return c.json({ error: current.error }, status(current.status));
-    const next = startNextReviewRound(current.review, { sessionId: `sess_${randomUUID()}` });
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: current.review.projectSlug,
+      kind: "run",
+      operation: async () => {
+        const next = startNextReviewRound(current.review, { sessionId: `sess_${randomUUID()}` });
+        if (!next.ok) return { next, saved: null };
+        return { next, saved: await reviewStore.saveReview(next.review) };
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const { next, saved } = admitted.value;
     if (!next.ok) return c.json({ error: next.error }, status(next.status));
-    const saved = await reviewStore.saveReview(next.review);
+    if (!saved) return c.json(errorBody("review_unavailable", "Review is unavailable"), 503);
     if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
     return c.json({ review: next.review });
   });
@@ -951,9 +1122,22 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const current = await reviewStore.getReview(c.req.param("reviewId"));
     if (!current.ok) return c.json({ error: current.error }, status(current.status));
-    const approved = approveReview(current.review, {});
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: current.review.projectSlug,
+      kind: "write",
+      operation: async () => {
+        const approved = approveReview(current.review, {});
+        if (!approved.ok) return { approved, saved: null };
+        return { approved, saved: await reviewStore.saveReview(approved.review) };
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const { approved, saved } = admitted.value;
     if (!approved.ok) return c.json({ error: approved.error }, status(approved.status));
-    const saved = await reviewStore.saveReview(approved.review);
+    if (!saved) return c.json(errorBody("review_unavailable", "Review is unavailable"), 503);
     if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
     return c.json({ review: approved.review });
   });
@@ -963,9 +1147,22 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const current = await reviewStore.getReview(c.req.param("reviewId"));
     if (!current.ok) return c.json({ error: current.error }, status(current.status));
-    const stopped = stopReview(current.review, {});
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: current.review.projectSlug,
+      kind: "write",
+      operation: async () => {
+        const stopped = stopReview(current.review, {});
+        if (!stopped.ok) return { stopped, saved: null };
+        return { stopped, saved: await reviewStore.saveReview(stopped.review) };
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const { stopped, saved } = admitted.value;
     if (!stopped.ok) return c.json({ error: stopped.error }, status(stopped.status));
-    const saved = await reviewStore.saveReview(stopped.review);
+    if (!saved) return c.json(errorBody("review_unavailable", "Review is unavailable"), 503);
     if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
     return c.json({ review: stopped.review });
   });
@@ -984,7 +1181,14 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const result = await stateOps.deleteWorkspaceData({ ...body.value, ownerScope });
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: body.value.projectSlug,
+      kind: "write",
+      operation: () => stateOps.deleteWorkspaceData({ ...body.value, ownerScope }),
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });
   });

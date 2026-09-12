@@ -7,6 +7,7 @@ import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-rout
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 import { createZellijRuntime } from "../../packages/gateway/src/zellij-runtime.js";
+import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
@@ -142,6 +143,76 @@ describe("workspace API routes", () => {
       "repo",
       { type: "archive" },
     );
+  });
+
+  it("blocks owner project mutations when collaboration requires the scoped route", async () => {
+    const applyProjectLifecycleAction = vi.fn();
+    const getProject = vi.fn(async () => ({
+      ok: true as const,
+      project: { id: "proj_repo", slug: "repo" },
+    }));
+    const projectOperationAdmission = {
+      withLegacyAdmission: vi.fn(async () => {
+        throw new ProjectFenceError("scope_required");
+      }),
+    };
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager: { getProject } as any,
+      projectLifecycleService: { applyProjectLifecycleAction },
+      projectOperationAdmission,
+      getOwnerScope: () => ({ type: "user", id: "user_123" }),
+    });
+
+    const response = await app.request(jsonRequest("/api/projects/repo/actions", { type: "archive" }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "project_shared", message: "Use the shared project route" },
+    });
+    expect(projectOperationAdmission.withLegacyAdmission).toHaveBeenCalledWith({
+      ownerType: "personal",
+      ownerId: "user_123",
+      projectId: "proj_repo",
+      kind: "write",
+    }, expect.any(Function));
+    expect(applyProjectLifecycleAction).not.toHaveBeenCalled();
+  });
+
+  it("wraps owner project session starts in run admission", async () => {
+    const getProject = vi.fn(async () => ({
+      ok: true as const,
+      project: { id: "proj_repo", slug: "repo" },
+    }));
+    const projectOperationAdmission = {
+      withLegacyAdmission: vi.fn(async (_input: unknown, operation: () => Promise<unknown>) => operation()),
+    };
+    const startSession = vi.fn(async () => ({
+      ok: true as const,
+      status: 201,
+      session: { id: "sess_one", projectSlug: "repo" },
+    }));
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager: { getProject } as any,
+      sessionOrchestrator: { startSession } as any,
+      projectOperationAdmission,
+      getOwnerScope: () => ({ type: "org", id: "org_123" }),
+    });
+
+    const response = await app.request(jsonRequest("/api/sessions", {
+      projectSlug: "repo",
+      kind: "shell",
+    }));
+
+    expect(response.status).toBe(201);
+    expect(projectOperationAdmission.withLegacyAdmission).toHaveBeenCalledWith({
+      ownerType: "organization",
+      ownerId: "org_123",
+      projectId: "proj_repo",
+      kind: "run",
+    }, expect.any(Function));
+    expect(startSession).toHaveBeenCalledTimes(1);
   });
 
   it("wires the real project lifecycle service from HTTP action to archived projection", async () => {

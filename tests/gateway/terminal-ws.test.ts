@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
+import type { Context } from "hono";
 import {
   ClientMessageSchema,
   AttachNewSchema,
@@ -18,12 +19,17 @@ import {
   TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
   type TerminalSessionRouteRegistry,
 } from "../../packages/gateway/src/server.js";
+import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 const SESSION_ID = "550e8400-e29b-41d4-a716-446655440000";
 
-function appWithTerminalRegistry(registry: TerminalSessionRouteRegistry, homePath = "/home/matrix/home") {
+function appWithTerminalRegistry(
+  registry: TerminalSessionRouteRegistry,
+  homePath = "/home/matrix/home",
+  withProjectAdmission?: <T>(context: Context, cwd: string, operation: () => Promise<T>) => Promise<T>,
+) {
   const app = new Hono();
-  registerTerminalSessionRoutes(app, { homePath, sessionRegistry: registry });
+  registerTerminalSessionRoutes(app, { homePath, sessionRegistry: registry, withProjectAdmission });
   return app;
 }
 
@@ -278,6 +284,36 @@ describe("Terminal session REST routes", () => {
 
     expect(res.status).toBe(413);
     expect(registry.getSession).not.toHaveBeenCalled();
+    expect(registry.destroy).not.toHaveBeenCalled();
+  });
+
+  it("blocks legacy REST deletion of a pty rooted in a shared project", async () => {
+    const registry = {
+      list: () => [],
+      getSession: vi.fn(() => ({
+        sessionId: SESSION_ID,
+        cwd: "/home/matrix/home/projects/repo",
+      })),
+      destroy: vi.fn(),
+    };
+    const withProjectAdmission = vi.fn(async (_context: Context, _cwd: string, _operation: () => Promise<unknown>) => {
+      throw new ProjectFenceError("scope_required");
+    });
+    const app = appWithTerminalRegistry(registry as never, "/home/matrix/home", withProjectAdmission);
+
+    const response = await app.request(`/api/terminal/pty-sessions/${SESSION_ID}`, {
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: { code: "project_shared", message: "Use the shared project route" },
+    });
+    expect(withProjectAdmission).toHaveBeenCalledWith(
+      expect.anything(),
+      "/home/matrix/home/projects/repo",
+      expect.any(Function),
+    );
     expect(registry.destroy).not.toHaveBeenCalled();
   });
 });

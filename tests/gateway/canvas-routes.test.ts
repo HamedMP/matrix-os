@@ -7,11 +7,13 @@ import {
   MissingRequestPrincipalError,
   RequestPrincipalMisconfiguredError,
 } from "../../packages/gateway/src/request-principal.js";
+import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 function createApp(
   service: CanvasRouteService,
   userIdOrResolver: string | null | (() => string) = "user_a",
   broadcastCanvasUpdate?: Parameters<typeof createCanvasRoutes>[0]["broadcastCanvasUpdate"],
+  projectOperationAdmission?: Parameters<typeof createCanvasRoutes>[0]["projectOperationAdmission"],
 ) {
   const app = new Hono();
   app.route("/api/canvases", createCanvasRoutes({
@@ -22,6 +24,7 @@ function createApp(
       return userIdOrResolver;
     },
     broadcastCanvasUpdate,
+    projectOperationAdmission,
   }));
   return app;
 }
@@ -148,6 +151,46 @@ describe("canvas routes", () => {
 
     const deleteRes = await app.request("/api/canvases/cnv_0123456789abcdef", { method: "DELETE" });
     expect(deleteRes.status).toBe(200);
+  });
+
+  it("blocks legacy writes to a project-owned canvas after sharing", async () => {
+    const replaceCanvas = vi.fn();
+    const projectOperationAdmission = {
+      withLegacyAdmission: vi.fn(async () => {
+        throw new ProjectFenceError("scope_required");
+      }),
+    };
+    const app = createApp({
+      ...service,
+      getCanvas: vi.fn().mockResolvedValue({
+        document: {
+          id: "cnv_0123456789abcdef",
+          scopeType: "project",
+          scopeRef: { projectId: "proj_repo" },
+        },
+        linkedState: {},
+      }),
+      replaceCanvas,
+    }, "user_a", undefined, projectOperationAdmission);
+
+    const response = await app.request("/api/canvases/cnv_0123456789abcdef", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseRevision: 1,
+        document: { schemaVersion: 1, nodes: [], edges: [], viewStates: [], displayOptions: {} },
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Use the shared project route" });
+    expect(projectOperationAdmission.withLegacyAdmission).toHaveBeenCalledWith({
+      ownerType: "personal",
+      ownerId: "user_a",
+      projectId: "proj_repo",
+      kind: "write",
+    }, expect.any(Function));
+    expect(replaceCanvas).not.toHaveBeenCalled();
   });
 
   it("validates list query parameters at the route boundary", async () => {

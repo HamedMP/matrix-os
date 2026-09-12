@@ -4,7 +4,7 @@ import {
   writeFile as writeFileAsync,
 } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import type { Hono, MiddlewareHandler } from "hono";
+import type { Context, Hono, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
@@ -20,14 +20,49 @@ import { createFileBlobRoutes } from "../file-blob-routes.js";
 import { fileSearch } from "../file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "../trash.js";
 import { listProjects } from "../projects.js";
+import {
+  ProjectFenceError,
+} from "../collaboration/project-fence.js";
+import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 
 export interface FileRouteDeps {
   homePath: string;
+  getOwnerId?: (c: Context) => string;
+  projectPathAdmission?: LegacyProjectPathAdmission;
 }
 
 export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   const { homePath } = deps;
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
+
+  async function withProjectFileAdmission(
+    c: Context,
+    paths: readonly string[],
+    operation: () => Promise<Response>,
+  ): Promise<Response> {
+    if (!deps.projectPathAdmission) return operation();
+    if (!deps.getOwnerId) {
+      return c.json({ error: "File service unavailable" }, 503);
+    }
+    try {
+      const ownerId = deps.getOwnerId(c);
+      return await deps.projectPathAdmission.withPaths({
+        ownerType: "personal",
+        ownerId,
+        paths,
+        kind: "write",
+      }, operation);
+    } catch (err: unknown) {
+      if (err instanceof ProjectFenceError) {
+        if (["fenced", "scope_required", "conflict", "not_found"].includes(err.code)) {
+          return c.json({ error: "Use the shared project route" }, 409);
+        }
+        return c.json({ error: "File service unavailable" }, 503);
+      }
+      console.error("[file-routes] Project admission failed:", err instanceof Error ? err.name : "UnknownError");
+      return c.json({ error: "File service unavailable" }, 503);
+    }
+  }
 
   app.get("/api/files/tree", async (c) => {
     const pathParam = c.req.query("path") ?? "";
@@ -73,48 +108,60 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     });
     return c.json(result);
   });
-  app.route("/api/files", createFileBlobRoutes({ homePath }));
+  app.route("/api/files", createFileBlobRoutes({ homePath, withProjectFileAdmission }));
 
   app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileMkdir(homePath, body.path);
-    return c.json(result, result.ok ? 200 : 400);
+    return withProjectFileAdmission(c, [body.path], async () => {
+      const result = await fileMkdir(homePath, body.path);
+      return c.json(result, result.ok ? 200 : 400);
+    });
   });
 
   app.post("/api/files/touch", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string; content?: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileTouch(homePath, body.path, body.content);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    return withProjectFileAdmission(c, [body.path], async () => {
+      const result = await fileTouch(homePath, body.path, body.content);
+      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    });
   });
 
   app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDuplicate(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    return withProjectFileAdmission(c, [body.path], async () => {
+      const result = await fileDuplicate(homePath, body.path);
+      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    });
   });
 
   app.post("/api/files/rename", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    return withProjectFileAdmission(c, [body.from, body.to], async () => {
+      const result = await fileRename(homePath, body.from, body.to);
+      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    });
   });
 
   app.post("/api/files/copy", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileCopy(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    return withProjectFileAdmission(c, [body.from, body.to], async () => {
+      const result = await fileCopy(homePath, body.from, body.to);
+      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    });
   });
 
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDelete(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    return withProjectFileAdmission(c, [body.path], async () => {
+      const result = await fileDelete(homePath, body.path);
+      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    });
   });
 
   app.get("/api/files/trash", async (c) => {
@@ -125,13 +172,19 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
     const body = await parseJson<{ trashPath: string }>(c);
     if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
-    const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    const entry = (await trashList(homePath)).entries.find((candidate) => candidate.trashPath === body.trashPath);
+    return withProjectFileAdmission(c, entry ? [entry.originalPath] : [], async () => {
+      const result = await trashRestore(homePath, body.trashPath);
+      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    });
   });
 
   app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
-    const result = await trashEmpty(homePath);
-    return c.json(result);
+    const entries = await trashList(homePath);
+    return withProjectFileAdmission(c, entries.entries.map((entry) => entry.originalPath), async () => {
+      const result = await trashEmpty(homePath);
+      return c.json(result);
+    });
   });
 
   app.get("/api/projects", async (c) => {
@@ -217,11 +270,13 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveWritableFileApiPath(homePath, filePath);
     if (!fullPath) return c.text("Invalid path", 403);
-    const content = await c.req.text();
-    const dir = dirname(fullPath);
-    await mkdirAsync(dir, { recursive: true });
-    await writeFileAsync(fullPath, content, "utf-8");
-    return c.json({ ok: true });
+    return withProjectFileAdmission(c, [filePath], async () => {
+      const content = await c.req.text();
+      const dir = dirname(fullPath);
+      await mkdirAsync(dir, { recursive: true });
+      await writeFileAsync(fullPath, content, "utf-8");
+      return c.json({ ok: true });
+    });
   });
 }
 

@@ -100,6 +100,8 @@ export interface ShellWsOpenOptions {
   clientClass?: Exclude<ShellClientClass, "legacy">;
   declaredSize?: TerminalSize;
   exclusiveLease?: boolean;
+  /** Reauthorizes every legacy input/resize under the caller's project fence. */
+  withMutationAdmission?: (operation: () => Promise<void>) => Promise<void>;
 }
 
 export interface ShellWsSession {
@@ -609,7 +611,15 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     }
   }
 
-  async function open({ ws, session, fromSeq = 0, clientClass: openOptionsClass, declaredSize, exclusiveLease = false }: ShellWsOpenOptions): Promise<ShellWsSession> {
+  async function open({
+    ws,
+    session,
+    fromSeq = 0,
+    clientClass: openOptionsClass,
+    declaredSize,
+    exclusiveLease = false,
+    withMutationAdmission,
+  }: ShellWsOpenOptions): Promise<ShellWsSession> {
     const safeName = validateSessionName(session);
     if (await options.isSessionTombstoned?.(safeName)) {
       sendJson(ws, {
@@ -842,6 +852,45 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return renewed;
     };
 
+    const MAX_PENDING_AUTHORIZED_MUTATIONS = 64;
+    let pendingAuthorizedMutations = 0;
+    let authorizedMutationTail = Promise.resolve();
+    const dispatchAuthorizedMutation = (operation: () => void): void => {
+      if (!withMutationAdmission) {
+        operation();
+        return;
+      }
+      if (pendingAuthorizedMutations >= MAX_PENDING_AUTHORIZED_MUTATIONS) {
+        sendJson(ws, {
+          type: "error",
+          code: "input_overloaded",
+          message: "Too many pending terminal actions",
+        });
+        void closeSession().finally(() => ws.close?.());
+        return;
+      }
+      pendingAuthorizedMutations += 1;
+      authorizedMutationTail = authorizedMutationTail.then(async () => {
+        if (conn.closed) return;
+        await withMutationAdmission(async () => {
+          if (!conn.closed) operation();
+        });
+      }).catch((err: unknown) => {
+        console.warn(
+          "[shell] legacy terminal mutation admission failed:",
+          err instanceof Error ? err.name : "UnknownError",
+        );
+        sendJson(ws, {
+          type: "error",
+          code: "session_shared",
+          message: "Use the shared terminal route",
+        });
+        return closeSession().finally(() => ws.close?.());
+      }).finally(() => {
+        pendingAuthorizedMutations -= 1;
+      });
+    };
+
     return {
       onMessage(raw: string) {
         if (conn.closed) {
@@ -877,30 +926,34 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "input") {
-          if (!mayMutate()) return;
-          runtime.child?.write(msg.data);
+          dispatchAuthorizedMutation(() => {
+            if (!mayMutate()) return;
+            runtime.child?.write(msg.data);
+          });
           return;
         }
         if (msg.type === "resize") {
           const requested = { cols: msg.cols, rows: msg.rows };
-          if (!mayMutate(requested)) return;
-          if (clientClass === "hard") {
-            // A desktop-web or CLI hard client changed size: update its
-            // declaration and let the arbiter re-pin the shared attach pty
-            // (spec 107 FR-008/9).
-            sizing.declared(connId, requested);
-            return;
-          }
-          if (clientClass === "soft") {
-            // Soft viewports render the canonical grid scaled; their resize
-            // frames are hints only and never touch the pty.
-            return;
-          }
-          // Legacy clients keep resize-follow behavior only while no
-          // classified client is attached (spec 107 FR-007).
-          if (sizing.legacyResizeAllowed()) {
-            runtime.child?.resize(msg.cols, msg.rows);
-          }
+          dispatchAuthorizedMutation(() => {
+            if (!mayMutate(requested)) return;
+            if (clientClass === "hard") {
+              // A desktop-web or CLI hard client changed size: update its
+              // declaration and let the arbiter re-pin the shared attach pty
+              // (spec 107 FR-008/9).
+              sizing.declared(connId, requested);
+              return;
+            }
+            if (clientClass === "soft") {
+              // Soft viewports render the canonical grid scaled; their resize
+              // frames are hints only and never touch the pty.
+              return;
+            }
+            // Legacy clients keep resize-follow behavior only while no
+            // classified client is attached (spec 107 FR-007).
+            if (sizing.legacyResizeAllowed()) {
+              runtime.child?.resize(msg.cols, msg.rows);
+            }
+          });
         }
       },
       onClose() {

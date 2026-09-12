@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import type { RequestPrincipal } from "../../packages/gateway/src/request-princi
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
+import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 const now = "2026-07-06T12:00:00.000Z";
 const worktreeId = "wt_abc123def456";
@@ -41,6 +42,8 @@ async function createRouteHarness(options: {
   projectOwnerId?: string;
   projectOwnerType?: "user" | "org";
   readLimitBytes?: number;
+  projectOperationAdmission?: Parameters<typeof createCodingAgentRoutes>[0]["projectOperationAdmission"];
+  resolveProjectId?: Parameters<typeof createCodingAgentRoutes>[0]["resolveProjectId"];
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-files-"));
   const projectRoot = join(homePath, "projects", projectId, "repo");
@@ -80,11 +83,55 @@ async function createRouteHarness(options: {
       if (options.principal === null) throw new MissingRequestPrincipalError();
       return options.principal ?? testPrincipal;
     },
+    projectOperationAdmission: options.projectOperationAdmission,
+    resolveProjectId: options.resolveProjectId,
   }));
   return { app, homePath, projectRoot, worktreeRoot };
 }
 
 describe("coding agent file read route", () => {
+  it("blocks legacy coding-agent file writes after project sharing", async () => {
+    const projectOperationAdmission = {
+      withLegacyAdmission: vi.fn(async () => {
+        throw new ProjectFenceError("scope_required");
+      }),
+    };
+    const resolveProjectId = vi.fn(async () => "proj_matrix_os");
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      projectOperationAdmission,
+      resolveProjectId,
+    });
+    const target = join(harness.worktreeRoot, "src", "blocked.ts");
+    try {
+      const response = await harness.app.request("/api/coding-agents/files/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          path: "src/blocked.ts",
+          content: "blocked\n",
+          encoding: "utf8",
+          baseEtag: null,
+          clientRequestId: "req_blocked_shared_write",
+        }),
+      });
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ error: { code: "project_shared" } });
+      expect(projectOperationAdmission.withLegacyAdmission).toHaveBeenCalledWith({
+        ownerType: "personal",
+        ownerId: testPrincipal.userId,
+        projectId: "proj_matrix_os",
+        kind: "write",
+      }, expect.any(Function));
+      await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("browses, searches, and reads the primary project checkout when worktreeId is omitted", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],

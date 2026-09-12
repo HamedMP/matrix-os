@@ -18,6 +18,10 @@ import {
 import type { Context } from "hono";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
 import type { RequestPrincipal } from "../request-principal.js";
+import {
+  ProjectFenceError,
+  type LegacyProjectOperationAdmission,
+} from "../collaboration/project-fence.js";
 import { z } from "zod/v4";
 import {
   saveTerminalPasteAsset,
@@ -86,6 +90,58 @@ export interface TerminalWorkspaceRouteRuntime {
 export type TerminalRuntimeOwnerAccess = "allowed" | "not_found" | "unavailable";
 export type TerminalRuntimeRefAccess = TerminalRuntimeOwnerAccess | "chat_required" | "repository_required";
 
+export interface TerminalWorkspaceProjectAdmission {
+  withProject<T>(
+    principal: RequestPrincipal,
+    projectId: string | undefined,
+    kind: "write" | "run",
+    operation: () => Promise<T>,
+  ): Promise<T>;
+  withWorkspace<T>(
+    principal: RequestPrincipal,
+    workspaceId: string,
+    kind: "write" | "run",
+    operation: () => Promise<T>,
+  ): Promise<T>;
+}
+
+export function createTerminalWorkspaceProjectAdmission(options: {
+  runtime: Pick<TerminalWorkspaceRouteRuntime, "listWorkspaces">;
+  projectOperationAdmission?: LegacyProjectOperationAdmission;
+}): TerminalWorkspaceProjectAdmission {
+  async function withProject<T>(
+    principal: RequestPrincipal,
+    projectId: string | undefined,
+    kind: "write" | "run",
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    if (!projectId || !options.projectOperationAdmission) return operation();
+    return options.projectOperationAdmission.withLegacyAdmission({
+      ownerType: "personal",
+      ownerId: principal.userId,
+      projectId,
+      kind,
+    }, operation);
+  }
+
+  return {
+    withProject,
+    async withWorkspace<T>(
+      principal: RequestPrincipal,
+      workspaceId: string,
+      kind: "write" | "run",
+      operation: () => Promise<T>,
+    ): Promise<T> {
+      if (!options.projectOperationAdmission) return operation();
+      const workspace = (await options.runtime.listWorkspaces())
+        .find((candidate) => candidate.id === workspaceId);
+      if (!workspace) throw new TerminalRuntimeError("not_found");
+      const projectId = workspace.scope === "project" ? workspace.projectId : undefined;
+      return withProject(principal, projectId, kind, operation);
+    },
+  };
+}
+
 export function terminalRuntimeOwnerAccess(
   principal: RequestPrincipal,
   terminalOwnerIds: readonly string[],
@@ -120,6 +176,7 @@ export function createTerminalWorkspaceRoutes(options: {
   homePath?: string;
   getPrincipal: (context: Context) => RequestPrincipal;
   terminalOwnerIds: readonly string[];
+  projectOperationAdmission?: LegacyProjectOperationAdmission;
   chatTerminals?: {
     prepare(principal: RequestPrincipal, chatId: string): Promise<{ runId?: string; cwd?: string }>;
     bind(principal: RequestPrincipal, input: {
@@ -136,6 +193,7 @@ export function createTerminalWorkspaceRoutes(options: {
     listBoundSessionIds?(principal: RequestPrincipal, sessionIds: readonly string[]): Promise<readonly string[]>;
   };
 }): Hono {
+  const projectAdmission = createTerminalWorkspaceProjectAdmission(options);
   const terminateTabForChat = options.chatTerminals
     ? options.runtime.terminateTab?.bind(options.runtime)
     : undefined;
@@ -162,7 +220,10 @@ export function createTerminalWorkspaceRoutes(options: {
   app.post("/workspaces/ensure", mutationLimit, async (c) => {
     try {
       const body = EnsureWorkspaceSchema.parse(await c.req.json());
-      return c.json({ workspace: await options.runtime.ensureWorkspace(body) });
+      const principal = options.getPrincipal(c);
+      return await projectAdmission.withProject(principal, body.projectId, "run", async () => (
+        c.json({ workspace: await options.runtime.ensureWorkspace(body) })
+      ));
     } catch (error) { return requestFailure(c, error); }
   });
 
@@ -170,36 +231,38 @@ export function createTerminalWorkspaceRoutes(options: {
     try {
       const workspaceId = TerminalWorkspaceIdSchema.parse(c.req.param("workspaceId"));
       const body = CreateTabSchema.parse(await c.req.json());
-      const principal = body.chatId ? options.getPrincipal(c) : undefined;
+      const principal = options.getPrincipal(c);
       if (body.chatId && (!principal || !options.chatTerminals)) {
         throw new Error("Chat terminal dependencies are unavailable");
       }
       const binding = body.chatId && principal && options.chatTerminals
         ? await options.chatTerminals.prepare(principal, body.chatId)
         : null;
-      const tab = await options.runtime.createTab(workspaceId, {
-        ...(body.tabId ? { tabId: body.tabId } : {}),
-        name: body.name,
-        cwd: binding?.cwd ?? body.cwd,
-        accessScope: body.chatId ? "chat" : "owner",
-        ...(body.command ? { command: body.command } : {}),
-        ...(body.agent ? { agent: body.agent } : {}),
-      });
-      if (body.chatId && principal && binding && options.chatTerminals && terminateTabForChat) {
-        try {
-          await options.chatTerminals.bind(principal, {
-            chatId: body.chatId,
-            ...(binding.runId ? { runId: binding.runId } : {}),
-            sessionId: `${workspaceId}:${tab.id}`,
-            sessionCreatedAt: tab.createdAt,
-          });
-        } catch (error: unknown) {
-          try { await terminateTabForChat({ workspaceId, tabId: tab.id }); }
-          catch (cleanupError: unknown) { console.error("[gateway] Chat terminal cleanup failed", cleanupError); }
-          throw error;
+      return await projectAdmission.withWorkspace(principal, workspaceId, "run", async () => {
+        const tab = await options.runtime.createTab(workspaceId, {
+          ...(body.tabId ? { tabId: body.tabId } : {}),
+          name: body.name,
+          cwd: binding?.cwd ?? body.cwd,
+          accessScope: body.chatId ? "chat" : "owner",
+          ...(body.command ? { command: body.command } : {}),
+          ...(body.agent ? { agent: body.agent } : {}),
+        });
+        if (body.chatId && binding && options.chatTerminals && terminateTabForChat) {
+          try {
+            await options.chatTerminals.bind(principal, {
+              chatId: body.chatId,
+              ...(binding.runId ? { runId: binding.runId } : {}),
+              sessionId: `${workspaceId}:${tab.id}`,
+              sessionCreatedAt: tab.createdAt,
+            });
+          } catch (error: unknown) {
+            try { await terminateTabForChat({ workspaceId, tabId: tab.id }); }
+            catch (cleanupError: unknown) { console.error("[gateway] Chat terminal cleanup failed", cleanupError); }
+            throw error;
+          }
         }
-      }
-      return c.json({ tab }, 201);
+        return c.json({ tab }, 201);
+      });
     } catch (error) { return requestFailure(c, error); }
   });
 
@@ -207,7 +270,10 @@ export function createTerminalWorkspaceRoutes(options: {
     try {
       if (!options.runtime.renameTab) return c.json({ error: "Terminal operation unavailable" }, 503);
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
-      return c.json({ tab: await options.runtime.renameTab(ref, RenameTabSchema.parse(await c.req.json())) });
+      const input = RenameTabSchema.parse(await c.req.json());
+      return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "write", async () => (
+        c.json({ tab: await options.runtime.renameTab!(ref, input) })
+      ));
     } catch (error) { return requestFailure(c, error); }
   });
 
@@ -215,15 +281,21 @@ export function createTerminalWorkspaceRoutes(options: {
     try {
       if (!options.runtime.reorderTabs) return c.json({ error: "Terminal operation unavailable" }, 503);
       const workspaceId = TerminalWorkspaceIdSchema.parse(c.req.param("workspaceId"));
-      return c.json({ workspace: await options.runtime.reorderTabs(workspaceId, ReorderTabsSchema.parse(await c.req.json())) });
+      const input = ReorderTabsSchema.parse(await c.req.json());
+      return await projectAdmission.withWorkspace(options.getPrincipal(c), workspaceId, "write", async () => (
+        c.json({ workspace: await options.runtime.reorderTabs!(workspaceId, input) })
+      ));
     } catch (error) { return requestFailure(c, error); }
   });
 
   app.delete("/workspaces/:workspaceId/tabs/:tabId", deleteLimit, async (c) => {
     try {
       if (!options.runtime.terminateTab) return c.json({ error: "Terminal operation unavailable" }, 503);
-      await options.runtime.terminateTab(terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId")));
-      return c.body(null, 204);
+      const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
+      return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "run", async () => {
+        await options.runtime.terminateTab!(ref);
+        return c.body(null, 204);
+      });
     } catch (error) { return requestFailure(c, error); }
   });
 
@@ -255,8 +327,10 @@ export function createTerminalWorkspaceRoutes(options: {
         const bound = await options.chatTerminals.listBoundSessionIds(principal, [sessionId]);
         if (bound.includes(sessionId)) return c.json({ error: "Terminal operation failed" }, 404);
       }
-      await options.runtime.paneAction(ref, action);
-      return c.json({ ok: true });
+      return await projectAdmission.withWorkspace(principal, ref.workspaceId, "run", async () => {
+        await options.runtime.paneAction!(ref, action);
+        return c.json({ ok: true });
+      });
     } catch (error) { return requestFailure(c, error); }
   });
 
@@ -264,7 +338,10 @@ export function createTerminalWorkspaceRoutes(options: {
     try {
       if (!options.runtime.updateTabUiState) return c.json({ error: "Terminal operation unavailable" }, 503);
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
-      return c.json({ tab: await options.runtime.updateTabUiState(ref, UiStateSchema.parse(await c.req.json())) });
+      const input = UiStateSchema.parse(await c.req.json());
+      return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "write", async () => (
+        c.json({ tab: await options.runtime.updateTabUiState!(ref, input) })
+      ));
     } catch (error) { return requestFailure(c, error); }
   });
 
@@ -273,21 +350,23 @@ export function createTerminalWorkspaceRoutes(options: {
       if (!options.homePath) return c.json({ error: "Terminal operation unavailable" }, 503);
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
       const input = PasteAssetsSchema.parse(await c.req.json());
-      const workspace = (await options.runtime.listWorkspaces()).find((candidate) => candidate.id === ref.workspaceId);
-      const tab = workspace?.tabs.find((candidate) => candidate.id === ref.tabId);
-      if (!tab) return c.json({ error: "Terminal operation failed" }, 404);
-      const assets = [];
-      for (const asset of input.assets) {
-        const bytes = decodeBase64(asset.dataBase64);
-        assets.push(await saveTerminalPasteAsset({
-          homePath: options.homePath,
-          cwd: tab.cwd,
-          bytes,
-          contentType: asset.mimeType,
-          filename: asset.name,
-        }));
-      }
-      return c.json({ assets });
+      return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "write", async () => {
+        const workspace = (await options.runtime.listWorkspaces()).find((candidate) => candidate.id === ref.workspaceId);
+        const tab = workspace?.tabs.find((candidate) => candidate.id === ref.tabId);
+        if (!tab) return c.json({ error: "Terminal operation failed" }, 404);
+        const assets = [];
+        for (const asset of input.assets) {
+          const bytes = decodeBase64(asset.dataBase64);
+          assets.push(await saveTerminalPasteAsset({
+            homePath: options.homePath!,
+            cwd: tab.cwd,
+            bytes,
+            contentType: asset.mimeType,
+            filename: asset.name,
+          }));
+        }
+        return c.json({ assets });
+      });
     } catch (error) { return requestFailure(c, error); }
   });
 
@@ -302,12 +381,14 @@ export function createTerminalWorkspaceRoutes(options: {
     try {
       const workspaceId = TerminalWorkspaceIdSchema.parse(c.req.param("workspaceId"));
       const body = DeleteWorkspaceSchema.parse(await c.req.json());
-      const impact = await options.runtime.deletionImpact(workspaceId);
-      if (impact.runningTabs > 0 && !body.confirmTerminate) {
-        return c.json({ error: "terminal_termination_confirmation_required", ...impact }, 409);
-      }
-      await options.runtime.deleteWorkspace(workspaceId, body);
-      return c.body(null, 204);
+      return await projectAdmission.withWorkspace(options.getPrincipal(c), workspaceId, "run", async () => {
+        const impact = await options.runtime.deletionImpact(workspaceId);
+        if (impact.runningTabs > 0 && !body.confirmTerminate) {
+          return c.json({ error: "terminal_termination_confirmation_required", ...impact }, 409);
+        }
+        await options.runtime.deleteWorkspace(workspaceId, body);
+        return c.body(null, 204);
+      });
     } catch (error) { return requestFailure(c, error); }
   });
 
@@ -339,6 +420,13 @@ function runtimeFailure(c: {
   json: (body: { error: string }, status: 400 | 404 | 409 | 413 | 500 | 503) => Response;
 }, error: unknown) {
   console.error("[gateway] terminal workspace request failed", error);
+  if (error instanceof ProjectFenceError) {
+    if (error.code === "invalid") return c.json({ error: "Invalid request" }, 400);
+    if (["not_found", "conflict", "fenced", "scope_required"].includes(error.code)) {
+      return c.json({ error: "Terminal operation unavailable" }, 409);
+    }
+    return c.json({ error: "Terminal operation unavailable" }, 503);
+  }
   if (error instanceof TerminalRuntimeError) {
     if (error.code === "invalid_request") return c.json({ error: "Invalid request" }, 400);
     if (error.code === "not_found") return c.json({ error: "Terminal operation failed" }, 404);

@@ -255,4 +255,38 @@ describe("project collaboration writer fence", () => {
     release();
     await held;
   });
+
+  it("allows ordinary projects but blocks legacy owner bypass after sharing", async () => {
+    const projectFence = fence();
+    const ordinary = vi.fn(async () => "ordinary");
+    await expect(projectFence.withLegacyAdmission({
+      ownerType: "personal",
+      ownerId: OWNER_ID,
+      projectId: "proj_without_scope",
+      authorityRuntimeId: SOURCE_RUNTIME,
+      kind: "write",
+    }, ordinary)).resolves.toBe("ordinary");
+
+    await stage();
+    await projectFence.fenceTransition({
+      transitionId: TRANSITION_ID,
+      projectScopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      inspectCurrent: async () => ({
+        inventoryRevision: 7,
+        inventoryHash: INVENTORY_HASH,
+        membershipHash: MEMBERSHIP_HASH,
+      }),
+    });
+    const operation = vi.fn(async () => undefined);
+    await expect(projectFence.withLegacyAdmission({
+      ownerType: "personal",
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      authorityRuntimeId: SOURCE_RUNTIME,
+      kind: "run",
+    }, operation)).rejects.toMatchObject({ code: "fenced" });
+    expect(operation).not.toHaveBeenCalled();
+  });
 });
