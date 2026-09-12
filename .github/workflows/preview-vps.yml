@@ -1222,10 +1222,11 @@ jobs:
           fi
           echo "Installed target state verified: $(jq -c '{appVersion,releaseVersion,migrationStatus,terminalRuntimeActive}' <<< "$after")"
 
-          test_project="matrix-terminal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test_project="matrix-terminal-smoke-34697544878-1"
           workspace_body="$(jq -cn --arg project "$test_project" '{projectId:$project}')"
           runtime_request POST /api/terminal/workspaces/ensure /tmp/nimanaderi-workspace.json "$workspace_body"
           workspace_id="$(jq -er '.workspace.id | select(type == "string" and test("^tws_[0-9a-f]{32}$"))' /tmp/nimanaderi-workspace.json)"
+          echo "Exact temporary workspace is ready."
           tab_id="tt_$(printf '%s' "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${VERSION}" | sha256sum | cut -c1-32)"
           probe_path="/tmp/matrix-terminal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.py"
           workspace_created=true
@@ -1283,11 +1284,13 @@ jobs:
             '{command:["/usr/bin/python3","-c",$script,$path,$content],timeoutMs:30000}')"
           runtime_request POST /api/terminal/run /tmp/nimanaderi-write-probe.json "$write_probe_body"
           jq -e '.exitCode == 0 and .timedOut == false and .truncated == false' /tmp/nimanaderi-write-probe.json >/dev/null
+          echo "Bounded OSC probe file is ready."
 
           tab_body="$(jq -cn --arg tab "$tab_id" --arg path "$probe_path" \
-            '{tabId:$tab,name:"Matrix terminal smoke",cwd:"",command:["/usr/bin/python3",$path]}')"
+            '{tabId:$tab,name:"Matrix terminal smoke",cwd:"projects",command:["/usr/bin/python3",$path]}')"
           runtime_request POST "/api/terminal/workspaces/${workspace_id}/tabs" /tmp/nimanaderi-tab.json "$tab_body"
           jq -e --arg tab "$tab_id" '.tab.id == $tab and .tab.status == "running"' /tmp/nimanaderi-tab.json >/dev/null
+          echo "Temporary terminal tab is running."
           runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-workspaces.json
           jq -e --arg workspace "$workspace_id" --arg tab "$tab_id" '
             any(.workspaces[]; .id == $workspace and any(.tabs[]; .id == $tab and .status == "running"))
