@@ -16,10 +16,11 @@ export function CollaborationPage({ view }: { view: ChatCollaborationView }) {
   if (!isLoaded || !browserOrigin) return <p role="status" className="p-8">Loading collaboration…</p>;
   if (!userId) return <main className="m-auto max-w-lg p-8 text-center">
     <h1 className="text-xl font-semibold">Sign in to collaborate</h1>
-    <p className="mt-2 text-sm">Shared Chats are tied to your Matrix account.</p>
+    <p className="mt-2 text-sm">Shared Chats and terminals are tied to your Matrix account.</p>
     <Link href="/sign-in" className="mt-5 inline-block rounded-xl border px-4 py-2">Sign in</Link>
   </main>;
   return <ChatCollaboration view={view} api={api!} actorId={userId}
     openInvitation={(invitationId) => router.push(`/shared/invitations/${encodeURIComponent(invitationId)}`)}
-    openChat={(scopeId) => router.push(`/shared/chat/${encodeURIComponent(scopeId)}`)} />;
+    openChat={(scopeId) => router.push(`/shared/chat/${encodeURIComponent(scopeId)}`)}
+    openTerminal={(scopeId) => router.push(`/shared/terminal/${encodeURIComponent(scopeId)}`)} />;
 }

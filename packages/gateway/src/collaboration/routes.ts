@@ -579,6 +579,7 @@ function requireOwnerLifecycleProof(
 
 function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCollaborationContext) {
   const mutable = scope.lifecycle === "shared";
+  const terminal = scope.kind === "terminal";
   return CollaborationScopeSchema.parse({
     id: scope.id,
     ownerId: scope.ownerId,
@@ -596,6 +597,9 @@ function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCol
       discuss: context.role !== "viewer" && mutable,
       manageMembers: context.role === "owner" && scope.membershipMode === "direct" && mutable,
       requestAi: false,
+      observeTerminal: terminal && mutable,
+      controlTerminal: terminal && context.role !== "viewer" && mutable,
+      stopTerminal: terminal && context.role === "owner" && mutable,
     },
   });
 }

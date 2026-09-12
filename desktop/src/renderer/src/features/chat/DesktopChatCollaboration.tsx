@@ -16,6 +16,7 @@ export default function DesktopChatCollaboration() {
       onClick={() => setView({ kind: "home" })}>Back to Shared with me</button> : null}
     <ChatCollaboration view={view} api={api} actorId={actorId}
       openInvitation={(invitationId) => setView({ kind: "invitation", invitationId })}
-      openChat={(scopeId) => setView({ kind: "chat", scopeId })} />
+      openChat={(scopeId) => setView({ kind: "chat", scopeId })}
+      openTerminal={(scopeId) => setView({ kind: "terminal", scopeId })} />
   </div>;
 }

@@ -73,7 +73,7 @@
 - [x] T030 [P] [US2] (PR1) Write red Chat preflight/create tests for unique scope creation, active/private-work conversion fence, whole-history semantics, and no project grant in `tests/gateway/collaboration-chat-scope.test.ts`
 - [x] T031 [P] [US2] (PR1) Write red boundary tests denying parent/sibling access and unsafe attachment destinations from a standalone Chat in `tests/gateway/collaboration-chat-scope.test.ts` and `tests/gateway/collaboration-chat-discussion.test.ts`
 - [x] T032 [P] [US2] (PR1) Write red snapshot-token/live-proof substitution and independent snapshot/member revocation tests in `tests/gateway/chat-sharing-routes.test.ts` and `tests/gateway/collaboration-lifecycle.test.ts`
-- [ ] T033 [P] [US2] (PR4) Write red standalone terminal scope, same-incarnation, and sibling/session-creation denial tests in `tests/gateway/collaboration-terminal-scope.test.ts`
+- [x] T033 [P] [US2] (PR4) Write red standalone terminal scope, same-incarnation, and sibling/session-creation denial tests in `tests/gateway/collaboration-terminal-scope.test.ts`
 - [ ] T034 [P] [US2] (PR6) Write red direct-item-to-project inheritance transition tests that never promote item-only participants in `tests/gateway/collaboration-membership-transition.test.ts`
 
 ### Implementation
@@ -81,7 +81,7 @@
 - [x] T035 [US2] (PR1) Implement Chat scope preflight/create binding with active-work settlement and personal-dispatch fencing in `packages/gateway/src/collaboration/chat-scope.ts`
 - [x] T036 [US2] (PR1) Implement canonical Chat-only read/history projection with inert unauthorized references in `packages/gateway/src/collaboration/chat-adapter.ts`
 - [x] T037 [US2] (PR1) Register validated/body-limited standalone Chat scope and member routes in `packages/gateway/src/collaboration/routes.ts`
-- [ ] T038 [US2] (PR4) Implement eligible terminal scope binding without replacement or sibling authority in `packages/gateway/src/collaboration/terminal-adapter.ts`
+- [x] T038 [US2] (PR4) Implement eligible terminal scope binding without replacement or sibling authority in `packages/gateway/src/collaboration/terminal-adapter.ts`
 - [ ] T039 [US2] (PR6) Reconcile direct Chat/terminal grants into sole project inheritance at the publication point in `packages/gateway/src/collaboration/project-membership-transition.ts`
 
 **Checkpoint**: At M1, a standalone Chat is independently shareable. Terminal and project conversion paths remain unavailable until their later PRs.
@@ -138,14 +138,14 @@
 ### Tests first
 
 - [x] T059 [P] [US5] (PR1) Write red viewer/pending/revoked/outsider route-matrix tests for Chat discussion, state ownership, publishing, and direct legacy calls in `tests/gateway/collaboration-routes.test.ts`, `tests/gateway/collaboration-authority.test.ts`, and `tests/gateway/collaboration-m1-ai-gate.test.ts`
-- [ ] T060 [P] [US5] (PR4) Write red viewer terminal input/paste/resize/takeover/stop/create denial tests in `tests/gateway/collaboration-terminal-authorization.test.ts`
+- [x] T060 [P] [US5] (PR4) Write red viewer terminal input/paste/resize/takeover/stop/create denial tests in `tests/gateway/collaboration-terminal-authorization.test.ts`
 - [ ] T061 [P] [US5] (PR5) Write red viewer indirect-write denial tests for files, Git, apps, agents, layout, search, stale links, and exports in `tests/gateway/collaboration-project-viewer.test.ts`
 
 ### Implementation
 
 - [x] T062 [US5] (PR1) Enforce Chat viewer/pending/revoked/outsider permissions and owner-only snapshot publishing in `packages/gateway/src/collaboration/chat-adapter.ts`
 - [x] T063 [US5] (PR1) Derive stable viewer controls, disabled explanations, and safe error presentation once for all clients in `packages/ui/src/collaboration/permissions.ts`
-- [ ] T064 [US5] (PR4) Enforce observation-only terminal access in the shared terminal dispatcher in `packages/gateway/src/collaboration/terminal-dispatcher.ts`
+- [x] T064 [US5] (PR4) Enforce observation-only terminal access in the shared terminal dispatcher in `packages/gateway/src/collaboration/terminal-dispatcher.ts`
 - [ ] T065 [US5] (PR5) Enforce viewer-safe project resource adapters and unavailable unsafe apps in `packages/gateway/src/collaboration/project-adapters.ts`
 
 **Checkpoint**: Every enabled resource has server-enforced viewer semantics; later resources remain unavailable until their adapter passes this phase.
@@ -199,15 +199,15 @@
 
 ### Tests first — PR4
 
-- [ ] T083 [P] [US4] (PR4) Write red lease concurrency, owner takeover, editor wait, expiry, disconnect, epoch, and stale-incarnation tests in `tests/gateway/collaboration-terminal-control.test.ts`
-- [ ] T084 [P] [US4] (PR4) Write red scoped replay/live ordering, caps, slow-client eviction, exit/restore, and shutdown tests in `tests/gateway/collaboration-terminal-events.test.ts`
+- [x] T083 [P] [US4] (PR4) Write red lease concurrency, owner takeover, editor wait, expiry, disconnect, epoch, and stale-incarnation tests in `tests/gateway/collaboration-terminal-control.test.ts`
+- [x] T084 [P] [US4] (PR4) Write red scoped replay/live ordering, caps, slow-client eviction, exit/restore, and shutdown tests in `tests/gateway/collaboration-terminal-events.test.ts`
 
 ### Implementation — PR4
 
-- [ ] T085 [US4] (PR4) Extend stable terminal metadata with creator, scope, incarnation, execution generation, and shared-control mode in `packages/gateway/src/shell/registry.ts`
-- [ ] T086 [US4] (PR4) Implement capped per-session controller coordination and epoch-fenced acquire/release/renew/takeover in `packages/gateway/src/collaboration/terminal-control.ts`
-- [ ] T087 [US4] (PR4) Route validated input/paste/resize/stop through current authority, creator rules, incarnation, connection, and lease epoch checks in `packages/gateway/src/collaboration/terminal-dispatcher.ts`
-- [ ] T088 [US4] (PR4) Deliver bounded scope-only replay/live output and terminal state frames in `packages/gateway/src/collaboration/terminal-events.ts`
+- [x] T085 [US4] (PR4) Extend stable terminal metadata with creator, scope, incarnation, execution generation, and shared-control mode in `packages/gateway/src/shell/registry.ts`
+- [x] T086 [US4] (PR4) Implement capped per-session controller coordination and epoch-fenced acquire/release/renew/takeover in `packages/gateway/src/collaboration/terminal-control.ts`
+- [x] T087 [US4] (PR4) Route validated input/paste/resize/stop through current authority, creator rules, incarnation, connection, and lease epoch checks in `packages/gateway/src/collaboration/terminal-dispatcher.ts`
+- [x] T088 [US4] (PR4) Deliver bounded scope-only replay/live output and terminal state frames in `packages/gateway/src/collaboration/terminal-events.ts`
 
 **Checkpoint**: PR2 remains dormant; PR4/M3 enables one real supported terminal adapter after M2 rollout, never an unrestricted fallback.
 
@@ -280,7 +280,7 @@
 - [ ] T114 (PR1) Capture current Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile M1 screenshots/recordings and link public-safe evidence in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T115 (PR1) Run the disposable VPS-native two-account M1 journey, rollback drill, no-computer recipient flow, and snapshot regressions; record exact versions/results in `specs/121-collaboration-session-sharing/quickstart.md`
 - [x] T116 [P] (PR3) Wire shared AI queue/controls across Web Canvas, Web Desktop, Electron Desktop, Web Mobile, Native Mobile, and CLI using `packages/ui/src/collaboration/SharedChatControls.tsx`
-- [ ] T117 [P] (PR4) Wire terminal invitation/watch/control state across applicable Web/Electron/mobile/CLI clients using `packages/ui/src/collaboration/SharedTerminalControls.tsx`
+- [x] T117 [P] (PR4) Wire terminal invitation/watch/control state across applicable Web/Electron/mobile/CLI clients using `packages/ui/src/collaboration/SharedTerminalControls.tsx`
 - [ ] T118 [P] (PR6) Wire whole-project inventory/membership/lifecycle across applicable Web/Electron/mobile/CLI clients using `packages/ui/src/collaboration/ProjectSharingDialog.tsx`
 - [ ] T119 (PR3) Validate M2 on the release artifact and record isolation/profile/queue/control/rollback evidence in `specs/121-collaboration-session-sharing/quickstart.md`
 - [ ] T120 (PR4) Validate M3 on the release artifact and record same-process/control/revoke/rollback evidence in `specs/121-collaboration-session-sharing/quickstart.md`

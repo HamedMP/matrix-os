@@ -18,6 +18,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { z } from "zod/v4";
 import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
 import { loadCollaborationDraft, saveCollaborationDraft } from "@/lib/collaboration-drafts";
+import { SharedTerminalScreen } from "@/components/collaboration/SharedTerminalScreen";
 import {
   acceptCollaborationInvitation,
   collaborationEventsUrl,
@@ -41,7 +42,8 @@ type Invitation = z.infer<typeof CollaborationInvitationSchema>;
 type Scope = z.infer<typeof CollaborationScopeSchema>;
 type Chat = z.infer<typeof CollaborationChatSchema>;
 type Message = z.infer<typeof CollaborationSharedChatMessageSchema>;
-type ViewState = { kind: "home" } | { kind: "invitation"; invitation: Invitation } | { kind: "chat"; scopeId: string };
+type ViewState = { kind: "home" } | { kind: "invitation"; invitation: Invitation }
+  | { kind: "chat"; scopeId: string } | { kind: "terminal"; scopeId: string };
 type ScreenState = {
   view: ViewState;
   items: DiscoveryItem[];
@@ -473,7 +475,10 @@ export default function SharedScreen() {
     dispatch({ type: "patch", patch: { loading: true, error: "" } });
     try {
       const result = await acceptCollaborationInvitation(await token(), invitation.id, invitation.revision, randomUuid());
-      await loadChat(result.scopeId);
+      if (invitation.scopeKind === "chat") await loadChat(result.scopeId);
+      else if (invitation.scopeKind === "terminal") {
+        dispatch({ type: "patch", patch: { view: { kind: "terminal", scopeId: result.scopeId }, loading: false } });
+      }
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] invitation acceptance failed", failure instanceof Error ? failure.name : "UnknownError");
       dispatch({ type: "patch", patch: { error: "Invitation could not be accepted. Try again.", loading: false } });
@@ -601,7 +606,18 @@ export default function SharedScreen() {
       onRequestAi={requestAi} onControlAi={controlAi} onDecideApproval={decideApproval} />;
   }
 
-  return <CollaborationHomeScreen state={state} onReview={review} onOpen={loadChat} onLoadMore={loadMoreItems} />;
+  if (view.kind === "terminal") {
+    return <SharedTerminalScreen scopeId={view.scopeId} actorId={userId ?? ""} getToken={token}
+      onBack={() => {
+        dispatch({ type: "patch", patch: { view: { kind: "home" }, error: "" } });
+        void loadHome();
+      }} />;
+  }
+
+  return <CollaborationHomeScreen state={state} onReview={review}
+    onOpen={(item) => item.kind === "terminal"
+      ? Promise.resolve(dispatch({ type: "patch", patch: { view: { kind: "terminal", scopeId: item.scopeId } } }))
+      : loadChat(item.scopeId)} onLoadMore={loadMoreItems} />;
 }
 
 function InvitationScreen({ invitation, state, onBack, onAccept }: {
@@ -612,11 +628,18 @@ function InvitationScreen({ invitation, state, onBack, onAccept }: {
 }) {
   return <ScrollView contentContainerStyle={styles.page}>
     <Back onPress={onBack} />
-    <Text style={styles.title}>Join this shared Chat?</Text>
+    <Text style={styles.title}>Join this shared {invitation.scopeKind === "terminal" ? "terminal" : "Chat"}?</Text>
     <Text style={styles.body}>{invitation.owner.displayName} invited you as an {invitation.role}.</Text>
-    <View style={styles.card}><Text style={styles.cardTitle}>This share includes</Text><Text style={styles.body}>The ongoing Chat history, human discussion, and shared AI queue.</Text>
-      <Text style={styles.cardTitle}>This stays private</Text><Text style={styles.body}>Its project, sibling Chats, files, apps, terminals, and private drafts.</Text></View>
-    <Text style={styles.muted}>Editors can discuss and request AI. Viewers have read-only access.</Text>
+    <View style={styles.card}><Text style={styles.cardTitle}>This share includes</Text>
+      <Text style={styles.body}>{invitation.scopeKind === "terminal"
+        ? "This terminal session, its retained output, and attributed control while the session remains active."
+        : "The ongoing Chat history, human discussion, and shared AI queue."}</Text>
+      <Text style={styles.cardTitle}>This stays private</Text><Text style={styles.body}>{invitation.scopeKind === "terminal"
+        ? "Its project, sibling terminals, files, apps, Chats, credentials, and unrelated runtime access."
+        : "Its project, sibling Chats, files, apps, terminals, and private drafts."}</Text></View>
+    <Text style={styles.muted}>{invitation.scopeKind === "terminal"
+      ? "Editors can request control. Viewers can only watch. Owners may take over control."
+      : "Editors can discuss and request AI. Viewers have read-only access."}</Text>
     {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
     <Action label={state.loading ? "Accepting…" : "Accept invitation"} disabled={state.loading} onPress={() => void onAccept(invitation)} />
   </ScrollView>;
@@ -811,7 +834,7 @@ function ChatMessageCard({ message, markdownTheme }: { message: Message; markdow
 function CollaborationHomeScreen({ state, onReview, onOpen, onLoadMore }: {
   state: ScreenState;
   onReview: (invitationId: string) => Promise<void>;
-  onOpen: (scopeId: string) => Promise<void>;
+  onOpen: (item: Extract<DiscoveryItem, { status: "accepted" }>) => Promise<void>;
   onLoadMore: () => Promise<void>;
 }) {
   const renderDiscovery = useCallback(({ item }: ListRenderItemInfo<DiscoveryItem>) => (
@@ -820,11 +843,11 @@ function CollaborationHomeScreen({ state, onReview, onOpen, onLoadMore }: {
   return <FlatList data={state.items} keyExtractor={discoveryKey} contentContainerStyle={styles.page}
     ListHeaderComponent={<>
       <Text style={styles.title}>Shared with me</Text>
-      <Text style={styles.muted}>Invitations and ongoing Chats shared with your Matrix account.</Text>
-      {state.loading ? <ActivityIndicator accessibilityLabel="Loading shared Chats" /> : null}
+      <Text style={styles.muted}>Invitations, Chats, and terminals shared with your Matrix account.</Text>
+      {state.loading ? <ActivityIndicator accessibilityLabel="Loading shared items" /> : null}
       {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
       {!state.loading && !state.error && state.items.length === 0 ? <View style={styles.empty}>
-        <Text style={styles.cardTitle}>Nothing shared yet</Text><Text style={styles.muted}>Invitations and accepted Chats will appear here.</Text>
+        <Text style={styles.cardTitle}>Nothing shared yet</Text><Text style={styles.muted}>Invitations and accepted shared items will appear here.</Text>
       </View> : null}
     </>}
     renderItem={renderDiscovery}
@@ -838,17 +861,22 @@ function CollaborationHomeScreen({ state, onReview, onOpen, onLoadMore }: {
 function DiscoveryCard({ item, onReview, onOpen }: {
   item: DiscoveryItem;
   onReview: (invitationId: string) => Promise<void>;
-  onOpen: (scopeId: string) => Promise<void>;
+  onOpen: (item: Extract<DiscoveryItem, { status: "accepted" }>) => Promise<void>;
 }) {
   if (item.status === "invited") return <View style={styles.card}>
     <Text style={styles.cardTitle}>{item.resource.owner.displayName} invited you</Text>
-    <Text style={styles.muted}>Shared Chat · {roleLabel(item.resource.role)}</Text>
+    <Text style={styles.muted}>Shared {item.kind === "terminal" ? "terminal" : "Chat"} · {roleLabel(item.resource.role)}</Text>
     <Action label={`Review invitation from ${item.resource.owner.displayName}`} onPress={() => void onReview(item.invitationId)} />
+  </View>;
+  if ("terminal" in item.resource) return <View style={styles.card}>
+    <Text style={styles.cardTitle}>Shared terminal</Text>
+    <Text style={styles.muted}>{item.resource.terminal.id} · {roleLabel(item.resource.scope.role)}</Text>
+    <Action label={`Open shared terminal ${item.resource.terminal.id}`} onPress={() => void onOpen(item)} />
   </View>;
   return <View style={styles.card}>
     <Text style={styles.cardTitle}>{item.resource.chat.title}</Text>
     <Text style={styles.muted}>Shared Chat · {roleLabel(item.resource.scope.role)}</Text>
-    <Action label={`Open ${item.resource.chat.title}`} onPress={() => void onOpen(item.scopeId)} />
+    <Action label={`Open ${item.resource.chat.title}`} onPress={() => void onOpen(item)} />
   </View>;
 }
 
