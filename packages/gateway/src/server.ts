@@ -916,6 +916,20 @@ export async function createGateway(config: GatewayConfig) {
           db: chatRepository.kysely as Kysely<any>,
           chatRepository,
           config: collaborationConfig,
+          projectSource: {
+            getProject: async (ownerId, projectId) => {
+              const result = await codingAgentProjectManager.getProjectById(
+                { type: "user", id: ownerId },
+                projectId,
+              );
+              if (!result.ok) return null;
+              const revision = Date.parse(result.project.updatedAt);
+              if (!Number.isSafeInteger(revision) || revision < 0) {
+                throw new Error("ProjectRevisionUnavailable");
+              }
+              return { id: result.project.id, ownerId, revision };
+            },
+          },
         });
       }
       canonicalChatEventStream = createGatewayChatEventStream({

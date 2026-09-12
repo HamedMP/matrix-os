@@ -9,6 +9,7 @@ import {
   ProjectMembershipTransitionError,
   reconcileProjectMembershipAtPublication,
 } from "./project-membership-transition.js";
+import { jsonb, OPERATION_RETENTION_MS, parseJson } from "./repository-shared.js";
 
 const MAX_RECOVERY_BATCH = 100;
 const DEFAULT_RECOVERY_TIMEOUT_MS = 30_000;
@@ -16,8 +17,10 @@ const MAX_RECOVERY_TIMEOUT_MS = 60_000;
 const TransitionIdSchema = z.uuid();
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
-const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const ClientRequestIdSchema = z.uuid();
+const PreparationResultSchema = z.object({ transitionId: TransitionIdSchema }).strict();
 const ManifestRefSchema = z.string().regex(/^manifest_[A-Za-z0-9_-]{1,128}$/);
 const PublicationMarkerSchema = z.string().regex(/^publication_[A-Za-z0-9_-]{1,128}$/);
 const PositiveGenerationSchema = z.number().int().positive();
@@ -202,6 +205,8 @@ export function createProjectTransitionJournal(options: {
     scopeId: string;
     ownerId: string;
     requestedBy: string;
+    clientRequestId: string;
+    payloadHash: string;
     expectedScopeRevision: number;
     inventoryRevision: number;
     inventoryHash: string;
@@ -213,6 +218,8 @@ export function createProjectTransitionJournal(options: {
       scopeId: ScopeIdSchema,
       ownerId: ActorIdSchema,
       requestedBy: ActorIdSchema,
+      clientRequestId: ClientRequestIdSchema,
+      payloadHash: DigestSchema,
       expectedScopeRevision: NonnegativeRevisionSchema,
       inventoryRevision: NonnegativeRevisionSchema,
       inventoryHash: DigestSchema,
@@ -227,7 +234,30 @@ export function createProjectTransitionJournal(options: {
       return await options.db.transaction().execute(async (trx) => {
         const scope = await trx.selectFrom("collaboration_scopes").selectAll()
           .where("id", "=", parsed.scopeId).forUpdate().executeTakeFirst();
-        if (!scope || scope.kind !== "project" || scope.owner_id !== parsed.ownerId
+        if (!scope || scope.kind !== "project" || scope.owner_id !== parsed.ownerId) {
+          throw new ProjectTransitionError("conflict");
+        }
+        const replay = await trx.selectFrom("collaboration_operations")
+          .select(["payload_hash", "status", "result_ref"])
+          .where("scope_id", "=", scope.id)
+          .where("actor_id", "=", parsed.requestedBy)
+          .where("client_request_id", "=", parsed.clientRequestId)
+          .where("operation_kind", "=", "project.confirm")
+          .executeTakeFirst();
+        if (replay) {
+          if (replay.payload_hash !== parsed.payloadHash || replay.status !== "completed") {
+            throw new ProjectTransitionError("conflict");
+          }
+          const result = PreparationResultSchema.safeParse(parseJson(replay.result_ref));
+          if (!result.success) throw new ProjectTransitionError("unavailable");
+          const existing = await trx.selectFrom("collaboration_transitions").selectAll()
+            .where("id", "=", result.data.transitionId)
+            .where("scope_id", "=", scope.id)
+            .executeTakeFirst();
+          if (!existing) throw new ProjectTransitionError("unavailable");
+          return rowToTransition(existing);
+        }
+        if (scope.membership_mode !== "direct"
           || scope.lifecycle !== "private" || Number(scope.revision) !== parsed.expectedScopeRevision
           || scope.authority_runtime_id === parsed.destinationAuthorityRuntimeId) {
           throw new ProjectTransitionError("conflict");
@@ -262,6 +292,19 @@ export function createProjectTransitionJournal(options: {
           created_at: createdAt,
           updated_at: createdAt,
         }).returningAll().executeTakeFirstOrThrow();
+        await trx.insertInto("collaboration_operations").values({
+          scope_id: scope.id,
+          actor_id: parsed.requestedBy,
+          client_request_id: parsed.clientRequestId,
+          operation_kind: "project.confirm",
+          payload_hash: parsed.payloadHash,
+          status: "completed",
+          result_ref: jsonb({ transitionId: row.id }),
+          expected_revision: parsed.expectedScopeRevision,
+          accepted_auth_epoch: Number(scope.auth_epoch),
+          created_at: createdAt,
+          expires_at: new Date(createdAt.getTime() + OPERATION_RETENTION_MS),
+        }).execute();
         return rowToTransition(row);
       });
     } catch (error: unknown) {

@@ -203,6 +203,81 @@ export const CollaborationOperationSchema = z.object({
   createdAt: z.iso.datetime(),
 }).strict();
 
+export const CollaborationProjectInventoryItemSchema = z.object({
+  kind: z.enum(["file", "chat", "app", "layout", "terminal"]),
+  id: z.string().min(1).max(4_096),
+  revision: CollaborationRevisionSchema,
+  compatibility: z.enum(["ready", "blocked"]),
+  blocker: z.string().min(1).max(96).regex(/^[a-z][a-z0-9_]{0,95}$/).optional(),
+  incarnation: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  byteCount: z.number().int().nonnegative().max(100 * 1024 * 1024 * 1024).optional(),
+}).strict().superRefine((item, context) => {
+  if (item.compatibility === "blocked" && !item.blocker) {
+    context.addIssue({ code: "custom", path: ["blocker"], message: "Blocked project items require a reason" });
+  }
+  if (item.compatibility === "ready" && item.blocker) {
+    context.addIssue({ code: "custom", path: ["blocker"], message: "Ready project items cannot have a blocker" });
+  }
+});
+
+export const CollaborationProjectExternalReferenceSchema = z.object({
+  kind: z.enum(["chat", "app", "layout", "terminal"]),
+  id: z.string().min(1).max(4_096),
+  revision: CollaborationRevisionSchema,
+}).strict();
+
+export const CollaborationProjectMembershipEffectSchema = z.object({
+  actor: CollaborationParticipantSchema,
+  role: CollaborationInviteRoleSchema,
+  effect: z.enum(["join_project", "retain_item_only", "end_item_grant"]),
+  resourceKind: z.enum(["chat", "terminal"]).optional(),
+  resourceId: z.string().min(1).max(4_096).optional(),
+}).strict().superRefine((effect, context) => {
+  const itemEffect = effect.effect !== "join_project";
+  if (itemEffect !== (effect.resourceKind !== undefined && effect.resourceId !== undefined)) {
+    context.addIssue({ code: "custom", message: "Item membership effects require one affected resource" });
+  }
+});
+
+export const CollaborationProjectInventorySchema = z.object({
+  scopeId: CollaborationIdSchema,
+  projectId: CollaborationResourceIdSchema,
+  projectRevision: CollaborationRevisionSchema,
+  scopeRevision: CollaborationRevisionSchema,
+  ownedItems: z.array(CollaborationProjectInventoryItemSchema).max(100_000),
+  externalReferences: z.array(CollaborationProjectExternalReferenceSchema).max(100_000),
+  blockers: z.array(z.object({
+    kind: z.enum(["file", "chat", "app", "layout", "terminal"]),
+    id: z.string().min(1).max(4_096),
+    code: z.string().min(1).max(96).regex(/^[a-z][a-z0-9_]{0,95}$/),
+  }).strict()).max(100_000),
+  membershipEffects: z.array(CollaborationProjectMembershipEffectSchema).max(1_000),
+  inventoryHash: z.string().regex(/^[a-f0-9]{64}$/),
+  membershipHash: z.string().regex(/^[a-f0-9]{64}$/),
+  inventoryToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/),
+  expiresAt: z.iso.datetime(),
+}).strict();
+
+export const CollaborationProjectConfirmRequestSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  expectedScopeRevision: CollaborationRevisionSchema,
+  expectedProjectRevision: CollaborationRevisionSchema,
+  inventoryHash: z.string().regex(/^[a-f0-9]{64}$/),
+  membershipHash: z.string().regex(/^[a-f0-9]{64}$/),
+  inventoryToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/),
+}).strict();
+
+export const CollaborationProjectTransitionSchema = z.object({
+  id: CollaborationIdSchema,
+  scopeId: CollaborationIdSchema,
+  status: z.enum(["prepared", "staging", "fenced", "committing", "active", "failed", "recovering"]),
+  inventoryRevision: CollaborationRevisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  errorCode: z.enum(["inventory_changed", "resource_blocked", "unavailable"]).optional(),
+}).strict();
+
 const CollaborationExportMemberSchema = z.object({
   actorId: CollaborationActorIdSchema,
   role: CollaborationRoleSchema,
@@ -667,6 +742,11 @@ export type CollaborationMember = z.infer<typeof CollaborationMemberSchema>;
 export type CollaborationOperation = z.infer<typeof CollaborationOperationSchema>;
 export type CollaborationParticipant = z.infer<typeof CollaborationParticipantSchema>;
 export type CollaborationPolicy = z.infer<typeof CollaborationPolicySchema>;
+export type CollaborationProjectConfirmRequest = z.infer<typeof CollaborationProjectConfirmRequestSchema>;
+export type CollaborationProjectInventory = z.infer<typeof CollaborationProjectInventorySchema>;
+export type CollaborationProjectInventoryItem = z.infer<typeof CollaborationProjectInventoryItemSchema>;
+export type CollaborationProjectMembershipEffect = z.infer<typeof CollaborationProjectMembershipEffectSchema>;
+export type CollaborationProjectTransition = z.infer<typeof CollaborationProjectTransitionSchema>;
 export type CollaborationRole = z.infer<typeof CollaborationRoleSchema>;
 export type CollaborationScope = z.infer<typeof CollaborationScopeSchema>;
 export type CollaborationScopeExport = z.infer<typeof CollaborationScopeExportSchema>;

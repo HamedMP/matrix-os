@@ -18,6 +18,9 @@ import {
   CollaborationInvitationSchema,
   CollaborationLifecycleRequestSchema,
   CollaborationOperationSchema,
+  CollaborationProjectConfirmRequestSchema,
+  CollaborationProjectInventorySchema,
+  CollaborationProjectTransitionSchema,
   CollaborationMemberPatchRequestSchema,
   CollaborationMemberSchema,
   CollaborationRevisionSchema,
@@ -47,6 +50,13 @@ import {
 import type { CollaborationChatAdapter } from "./chat-adapter.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationChatScopeError, type CollaborationChatScopeService } from "./chat-scope.js";
+import {
+  CollaborationProjectScopeError,
+  type CollaborationProjectScopeService,
+} from "./project-scope.js";
+import { ProjectSharingError, type ProjectSharingService } from "./project-sharing.js";
+import { ProjectInventoryError } from "./project-inventory.js";
+import { ProjectTransitionError } from "./project-transition.js";
 import {
   CollaborationTerminalAdapterError,
   type CollaborationTerminalAdapter,
@@ -81,6 +91,8 @@ export function createCollaborationRoutes(options: {
   chatExecutionAdapter?: CollaborationChatExecutionAdapter;
   terminalAdapter?: CollaborationTerminalAdapter;
   terminalDispatcher?: CollaborationTerminalDispatcher;
+  projectScope?: CollaborationProjectScopeService;
+  projectSharing?: ProjectSharingService;
   resolveParticipant(actorId: string): Promise<Participant>;
   onScopeCommitted?(scopeId: string): Promise<void>;
   onRevoked?(scopeId: string, actorId: string): void;
@@ -104,6 +116,7 @@ export function createCollaborationRoutes(options: {
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationScopePreflightRequestSchema.parse(value);
+    if (input.kind === "project") requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
     const result = input.kind === "chat"
       ? await options.chatScope.preflight({ ownerId: proof.ownerId, chatId: input.resourceId })
       : input.kind === "terminal"
@@ -111,11 +124,16 @@ export function createCollaborationRoutes(options: {
             ownerId: proof.ownerId,
             terminalId: input.resourceId,
           })
-        : { eligible: false as const, reason: "unsupported" as const, resourceRevision: 0 };
+        : await requireProjectScope(options.projectScope).preflight({
+            ownerId: proof.ownerId,
+            projectId: input.resourceId,
+          });
     return c.json(CollaborationScopePreflightResponseSchema.parse({
       eligible: result.eligible,
-      ...(result.reason ? { reason: result.reason } : {}),
-      resourceRevision: String("chatRevision" in result ? result.chatRevision : result.resourceRevision),
+      ...("reason" in result && result.reason ? { reason: result.reason } : {}),
+      resourceRevision: String("chatRevision" in result
+        ? result.chatRevision
+        : "projectRevision" in result ? result.projectRevision : result.resourceRevision),
       ...(result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
     }));
   }));
@@ -125,6 +143,7 @@ export function createCollaborationRoutes(options: {
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationCreateScopeRequestSchema.parse(value);
+    if (input.kind === "project") requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
     const scope = input.kind === "chat"
       ? await options.chatScope.shareChat({
           ownerId: proof.ownerId,
@@ -143,7 +162,18 @@ export function createCollaborationRoutes(options: {
             expectedResourceRevision: Number(input.expectedRevision),
             confirmationToken: input.confirmationToken,
           })
-        : (() => { throw new CollaborationAuthorizationError("unavailable", "Scope kind is unavailable"); })();
+        : await requireProjectScope(options.projectScope).prepare({
+            ownerId: proof.ownerId,
+            projectId: input.resourceId,
+            clientRequestId: input.clientRequestId,
+            payloadHash: digest(bytes),
+            expectedProjectRevision: Number(input.expectedRevision),
+            confirmationToken: input.confirmationToken,
+          });
+    if (scope.kind === "project") {
+      await notifyScope(options, scope.id);
+      return c.json(projectPreparationProjection(scope), 201);
+    }
     const context = await options.authority.authorize({
       scopeId: scope.id,
       actorId: proof.actorId,
@@ -402,6 +432,61 @@ export function createCollaborationRoutes(options: {
     }));
   }));
 
+  routes.get("/api/collaboration/scopes/:scopeId/project/inventory", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
+    requireOwnerLifecycleProof(proof, scopeId);
+    requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, false);
+    const inventory = await requireProjectSharing(options.projectSharing).preview({
+      scopeId,
+      actorId: proof.actorId,
+    });
+    const membershipEffects = await Promise.all(inventory.membershipEffects.map(async (effect) => ({
+      actor: await options.resolveParticipant(effect.actorId),
+      role: effect.role,
+      effect: effect.effect,
+      ...(effect.resourceKind ? { resourceKind: effect.resourceKind } : {}),
+      ...(effect.resourceId ? { resourceId: effect.resourceId } : {}),
+    })));
+    return c.json(CollaborationProjectInventorySchema.parse({
+      ...inventory,
+      projectRevision: String(inventory.projectRevision),
+      scopeRevision: String(inventory.scopeRevision),
+      membershipEffects,
+    }));
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/project/confirm", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const proof = await verifyHttp(options.verifier, c, bytes);
+    requireOwnerLifecycleProof(proof, scopeId);
+    requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
+    const input = CollaborationProjectConfirmRequestSchema.parse(value);
+    const transition = await requireProjectSharing(options.projectSharing).confirm({
+      scopeId,
+      actorId: proof.actorId,
+      clientRequestId: input.clientRequestId,
+      payloadHash: digest(bytes),
+      expectedScopeRevision: Number(input.expectedScopeRevision),
+      expectedProjectRevision: Number(input.expectedProjectRevision),
+      inventoryHash: input.inventoryHash,
+      membershipHash: input.membershipHash,
+      inventoryToken: input.inventoryToken,
+    });
+    return c.json(CollaborationProjectTransitionSchema.parse({
+      id: transition.id,
+      scopeId: transition.scopeId,
+      status: transition.status,
+      inventoryRevision: String(transition.inventoryRevision),
+      createdAt: transition.createdAt,
+      updatedAt: transition.updatedAt,
+      ...(transition.errorCode && ["inventory_changed", "resource_blocked", "unavailable"].includes(transition.errorCode)
+        ? { errorCode: transition.errorCode }
+        : {}),
+    }), 202);
+  }));
+
   routes.post("/api/collaboration/scopes/:scopeId/lifecycle", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
@@ -552,6 +637,30 @@ function requireTerminalDispatcher(
   return dispatcher;
 }
 
+function requireProjectScope(service: CollaborationProjectScopeService | undefined): CollaborationProjectScopeService {
+  if (!service) throw new CollaborationAuthorizationError("unavailable", "Shared project is unavailable");
+  return service;
+}
+
+function requireProjectSharing(service: ProjectSharingService | undefined): ProjectSharingService {
+  if (!service) throw new CollaborationAuthorizationError("unavailable", "Shared project is unavailable");
+  return service;
+}
+
+function requireM4Policy(
+  verifier: CollaborationActorProofVerifier,
+  c: Context,
+  actorId: string,
+  ownerId: string,
+  mutation: boolean,
+): void {
+  const policy = verifier.verifyPolicy(decodePolicy(c));
+  if (policy.milestone !== "m4" || policy.mode === "off" || (mutation && policy.mode === "read_only")
+    || (policy.mode === "internal" && (!policy.cohort.includes(actorId) || !policy.cohort.includes(ownerId)))) {
+    throw new CollaborationAuthorizationError("unavailable", "Whole-project collaboration is unavailable");
+  }
+}
+
 async function readJson(c: Context): Promise<{ value: unknown; bytes: Uint8Array }> {
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   return { value: JSON.parse(new TextDecoder().decode(bytes)) as unknown, bytes };
@@ -600,6 +709,30 @@ function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCol
       observeTerminal: terminal && mutable,
       controlTerminal: terminal && context.role !== "viewer" && mutable,
       stopTerminal: terminal && context.role === "owner" && mutable,
+    },
+  });
+}
+
+function projectPreparationProjection(scope: CollaborationScopeRecord) {
+  return CollaborationScopeSchema.parse({
+    id: scope.id,
+    ownerId: scope.ownerId,
+    kind: "project",
+    resourceId: scope.resourceId,
+    membershipMode: "direct",
+    lifecycle: scope.lifecycle,
+    revision: String(scope.revision),
+    authEpoch: String(scope.authEpoch),
+    authorityGeneration: String(scope.authorityGeneration),
+    role: "owner",
+    capabilities: {
+      read: false,
+      discuss: false,
+      manageMembers: true,
+      requestAi: false,
+      observeTerminal: false,
+      controlTerminal: false,
+      stopTerminal: false,
     },
   });
 }
@@ -717,6 +850,22 @@ async function handle(c: Context, operation: () => Promise<Response>): Promise<R
         : error.code === "active_work" || error.code === "conflict" || error.code === "invalid_confirmation" ? 409
           : 503;
       return c.json({ error: "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof CollaborationProjectScopeError) {
+      const status = error.code === "not_found" ? 404
+        : error.code === "conflict" || error.code === "invalid_confirmation" ? 409 : 503;
+      return c.json({ error: "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof ProjectSharingError || error instanceof ProjectInventoryError
+      || error instanceof ProjectTransitionError) {
+      const code = error instanceof ProjectInventoryError
+        ? error.code === "project_changed" ? "conflict" : error.code === "invalid_confirmation" ? "conflict" : "unavailable"
+        : error.code;
+      const status = code === "not_found" ? 404
+        : code === "forbidden" ? 403
+          : code === "capacity" ? 429
+            : code === "conflict" || code === "resource_blocked" ? 409 : 503;
+      return c.json({ error: "Collaboration state changed", code }, status);
     }
     if (error instanceof CollaborationTerminalAdapterError
       || error instanceof CollaborationTerminalDispatcherError) {

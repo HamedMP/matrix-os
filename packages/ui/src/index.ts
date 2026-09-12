@@ -69,6 +69,12 @@ export { ChatCollaboration, type ChatCollaborationView } from "./collaboration/C
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
+export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
+export {
+  deriveProjectPresentation,
+  projectInventoryItemLabel,
+  projectMembershipEffectLabel,
+} from "./collaboration/project-state.js";
 export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
