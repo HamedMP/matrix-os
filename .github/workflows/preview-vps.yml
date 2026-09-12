@@ -472,6 +472,16 @@ jobs:
           }
           wait_for_stable_host_settled() {
             local body response=/tmp/preview-host-settled.json settle_script deadline consecutive_idle=0
+            echo "Draining pending Ubuntu package maintenance before the release smoke test."
+            body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","--no-block","apt-daily-upgrade.service"],"timeoutMs":30000}'
+            deadline=$((SECONDS + 300))
+            until send_runtime_command "$body" "$response"; do
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "Could not start the bounded Ubuntu maintenance drain." >&2
+                return 1
+              fi
+              sleep 10
+            done
             read -r -d '' settle_script <<'PYTHON' || true
           import json
           import subprocess
@@ -521,8 +531,8 @@ jobs:
               '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script],timeoutMs:30000}')"
             deadline=$((SECONDS + 600))
             while [ "$SECONDS" -lt "$deadline" ]; do
-              send_runtime_command "$body" "$response"
-              if jq -e '.stdout | fromjson | .ready == true' "$response" >/dev/null; then
+              if send_runtime_command "$body" "$response" &&
+                jq -e '.stdout | fromjson | .ready == true' "$response" >/dev/null; then
                 consecutive_idle=$((consecutive_idle + 1))
                 if [ "$consecutive_idle" -ge 3 ]; then
                   echo "Stable host provisioning is settled."
@@ -530,7 +540,11 @@ jobs:
                 fi
               else
                 consecutive_idle=0
-                echo "Waiting for stable host provisioning: $(jq -cer '.stdout | fromjson | .busy' "$response")"
+                if [ -s "$response" ]; then
+                  echo "Waiting for stable host provisioning: $(jq -cer '.stdout | fromjson | .busy // [\"runtime-unavailable\"]' "$response" 2>/dev/null || echo '[\"runtime-unavailable\"]')"
+                else
+                  echo 'Waiting for stable host provisioning: ["runtime-unavailable"]'
+                fi
               fi
               sleep 10
             done

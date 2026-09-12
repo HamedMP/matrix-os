@@ -165,9 +165,13 @@ describe('Preview VPS provisioning workflow', () => {
     expect(deploy).toContain('wait_for_stable_host_settled()');
     expect(deploy).toContain('apt-daily-upgrade.service');
     expect(deploy).not.toContain('"unattended-upgr"');
+    expect(deploy).toContain('Draining pending Ubuntu package maintenance before the release smoke test.');
+    expect(deploy).toContain('systemctl","start","--no-block","apt-daily-upgrade.service');
     expect(deploy).toContain('consecutive_idle');
     expect(deploy).toContain('deadline=$((SECONDS + 600))');
     expect(deploy).toContain('Stable host provisioning is settled');
+    expect(deploy.indexOf('Stable host provisioning is settled'))
+      .toBeLessThan(deploy.indexOf('seed_legacy_sessions'));
     expect(deploy).toContain('verify_terminal_migration()');
     expect(deploy).toContain('journalStatus');
     expect(deploy).toContain('stateSchemaVersion');
