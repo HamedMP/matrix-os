@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
@@ -232,6 +232,10 @@ suite("packaged Electron terminal clipboard", () => {
     await page.keyboard.press(copyShortcut);
     await expect.poll(clipboardText).toContain(firstLine);
     const selectAllSnapshot = await clipboardText();
+    // Intentional stability soak (not output-readiness sync): with mouse
+    // reporting enabled, roam the pointer to prove stray motion reports do
+    // not disturb the Select All snapshot. Keep the fixed dwell so each of
+    // the 20 positions gets time to emit before the re-copy assertion.
     for (let move = 0; move < 20; move += 1) {
       await page.mouse.move(
         screenBox.x + 10 + ((move * 31) % Math.max(20, screenBox.width - 20)),
@@ -283,6 +287,206 @@ suite("packaged Electron production-mode terminal selection", () => {
     .getByTestId("desktop-terminal-app")
     .locator('[data-retained-pane][data-active="true"] [data-terminal-surface]');
 
+  async function clipboardText(): Promise<string> {
+    return app.evaluate(({ clipboard }) => clipboard.readText());
+  }
+
+  async function writeClipboard(text: string): Promise<void> {
+    await app.evaluate(({ clipboard }, value) => clipboard.writeText(value), text);
+  }
+
+  interface TerminalDiagnostics {
+    cols: number;
+    rows: number;
+    viewportY: number;
+    baseY: number;
+    cursorY: number;
+    cursorX: number;
+    bufferLength: number;
+    mouseTrackingMode: string;
+    selection: string;
+    hasActiveLink: boolean;
+    activeElement?: {
+      tagName: string;
+      className: string;
+      id: string;
+    } | null;
+    hitTarget?: {
+      tagName: string;
+      className: string;
+      id: string;
+      isTerminalSurface: boolean;
+    } | null;
+  }
+
+  async function readTerminalDiagnostics(
+    point?: { x: number; y: number },
+  ): Promise<TerminalDiagnostics> {
+    return page.evaluate(({ pt }) => {
+      const host = document.querySelector<HTMLElement>("[data-terminal-viewport]");
+      const diagFn = (host as any)?.__terminalDiagnostics;
+      const baseDiag = typeof diagFn === "function" ? diagFn() : {};
+      const hit = pt ? document.elementFromPoint(pt.x, pt.y) : null;
+      const active = document.activeElement;
+      return {
+        cols: baseDiag.cols ?? 0,
+        rows: baseDiag.rows ?? 0,
+        viewportY: baseDiag.viewportY ?? -1,
+        baseY: baseDiag.baseY ?? -1,
+        cursorY: baseDiag.cursorY ?? -1,
+        cursorX: baseDiag.cursorX ?? -1,
+        bufferLength: baseDiag.bufferLength ?? 0,
+        mouseTrackingMode: baseDiag.mouseTrackingMode ?? "unknown",
+        selection: baseDiag.selection ?? "",
+        hasActiveLink: Boolean(baseDiag.hasActiveLink),
+        activeElement: active ? {
+          tagName: active.tagName,
+          className: active.className,
+          id: active.id,
+        } : null,
+        hitTarget: hit ? {
+          tagName: hit.tagName,
+          className: hit.className,
+          id: hit.id,
+          isTerminalSurface: Boolean(hit.closest("[data-terminal-surface]")),
+        } : null,
+      };
+    }, { pt: point });
+  }
+
+  async function waitForTerminalOutput(
+    marker: string,
+    options?: { timeout?: number },
+  ): Promise<void> {
+    await expect.poll(async () => {
+      return page.evaluate((text) => {
+        const host = document.querySelector<HTMLElement>("[data-terminal-viewport]");
+        const term = (host as any)?.__xtermTerminal;
+        if (!term?.buffer?.active) return false;
+        const buffer = term.buffer.active;
+        const totalLines = buffer.length;
+        const start = Math.max(0, totalLines - 250);
+        for (let i = totalLines - 1; i >= start; i--) {
+          const line = buffer.getLine(i)?.translateToString(true) ?? "";
+          if (line.includes(text)) return true;
+        }
+        return false;
+      }, marker);
+    }, {
+      timeout: options?.timeout ?? 15_000,
+      message: `Terminal output marker "${marker}" did not appear in buffer within timeout`,
+    }).toBe(true);
+  }
+
+  async function waitForRenderFrames(count = 2): Promise<void> {
+    await page.evaluate(async (frames) => {
+      for (let i = 0; i < frames; i++) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+    }, count);
+  }
+
+  async function waitForMouseTrackingMode(
+    expected: "none" | "!none",
+    options?: { timeout?: number },
+  ): Promise<void> {
+    await expect.poll(async () => {
+      const diag = await readTerminalDiagnostics();
+      return expected === "none"
+        ? diag.mouseTrackingMode === "none"
+        : diag.mouseTrackingMode !== "none";
+    }, {
+      timeout: options?.timeout ?? 10_000,
+      message: `Terminal mouseTrackingMode did not settle to "${expected}"`,
+    }).toBe(true);
+  }
+
+  async function readTerminalSelection(): Promise<string> {
+    return page.evaluate(() => {
+      const host = document.querySelector<HTMLElement>("[data-terminal-viewport]");
+      const reader = (host as any)?.__readTerminalSelection;
+      if (typeof reader === "function") return reader();
+      const term = (host as any)?.__xtermTerminal;
+      return term?.getSelection?.() ?? "";
+    });
+  }
+
+  async function clearTerminalSelectionForTest(): Promise<void> {
+    await page.evaluate(() => {
+      const host = document.querySelector<HTMLElement>("[data-terminal-viewport]");
+      // Prefer the renderer hook: it clears xterm selection plus the
+      // confirmed* fallback refs that readTerminalSelection() consults when
+      // xterm/DOM selection are empty. Fall back to direct clears for older
+      // builds without the hook.
+      const clearer = (host as any)?.__clearTerminalSelection;
+      if (typeof clearer === "function") {
+        clearer();
+        return;
+      }
+      const term = (host as any)?.__xtermTerminal;
+      term?.clearSelection?.();
+      window.getSelection()?.removeAllRanges();
+    });
+  }
+
+  async function scrollTerminalToBottom(): Promise<void> {
+    await page.evaluate(() => {
+      const host = document.querySelector<HTMLElement>("[data-terminal-viewport]");
+      (host as any)?.__xtermTerminal?.scrollToBottom?.();
+    });
+    await waitForRenderFrames(1);
+  }
+
+  async function waitForMarkerAtVisibleRow(
+    marker: string,
+    expectedVisibleRow: number,
+    options?: { timeout?: number },
+  ): Promise<void> {
+    // terminalGrid().point(col,row) maps visible rows, but
+    // waitForTerminalOutput() scans the last 250 buffer lines. Without this
+    // check a surviving scrollback could leave point(0,0) aimed at stale
+    // content while the marker wait still passes.
+    await expect.poll(async () => {
+      return page.evaluate(({ text }) => {
+        const host = document.querySelector<HTMLElement>("[data-terminal-viewport]");
+        const term = (host as any)?.__xtermTerminal;
+        if (!term?.buffer?.active) return -999;
+        const buffer = term.buffer.active;
+        for (let i = buffer.length - 1; i >= 0; i--) {
+          const line = buffer.getLine(i)?.translateToString(true) ?? "";
+          if (line.includes(text)) return i - buffer.viewportY;
+        }
+        return -998;
+      }, { text: marker });
+    }, {
+      timeout: options?.timeout ?? 10_000,
+      message: `Marker "${marker}" did not settle at visible row ${expectedVisibleRow}`,
+    }).toBe(expectedVisibleRow);
+  }
+
+  async function expectTerminalPoint(
+    point: CellPoint,
+    label: string,
+  ): Promise<CellPoint> {
+    const diag = await readTerminalDiagnostics(point);
+    if (!diag.hitTarget || !diag.hitTarget.isTerminalSurface) {
+      const screenshotPath = join(EVIDENCE_DIR, `target-miss-${label}-${Date.now()}.png`);
+      await page.screenshot({ path: screenshotPath }).catch(() => null);
+      throw new Error(
+        `Intended pointer target "${label}" at (${point.x}, ${point.y}) is outside terminal surface or obstructed: ${JSON.stringify(diag.hitTarget)}. Diagnostics: ${JSON.stringify(diag)}`,
+      );
+    }
+    return point;
+  }
+
+  async function dismissOpenContextMenu(): Promise<void> {
+    const menu = page.getByRole("menu", { name: "Terminal actions" });
+    if (await menu.isVisible().catch(() => false)) {
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => null);
+    }
+  }
+
   async function terminalGrid() {
     await expect.poll(
       () => gateway.state.terminalResizeEvents.findLast(
@@ -290,19 +494,26 @@ suite("packaged Electron production-mode terminal selection", () => {
       ),
       { timeout: 10_000 },
     ).toBeTruthy();
-    const [screenBox, resize] = await Promise.all([
+    const [screenBox, resize, liveDimensions] = await Promise.all([
       terminalSurface().locator(".xterm-screen").boundingBox(),
       Promise.resolve(gateway.state.terminalResizeEvents.findLast(
         (event) => event.session === "matrix-task-1",
       )),
+      page.evaluate(() => {
+        const host = document.querySelector<HTMLElement>("[data-terminal-viewport]");
+        const term = (host as any)?.__xtermTerminal;
+        return term ? { cols: term.cols, rows: term.rows } : null;
+      }),
     ]);
     if (!screenBox || !resize) throw new Error("production terminal geometry is unavailable");
+    const cols = liveDimensions?.cols ?? resize.cols;
+    const rows = liveDimensions?.rows ?? resize.rows;
     return {
       screenBox,
-      resize,
+      resize: { cols, rows },
       point: (column: number, row: number) => ({
-        x: screenBox.x + (column + 0.5) * (screenBox.width / resize.cols),
-        y: screenBox.y + (row + 0.5) * (screenBox.height / resize.rows),
+        x: screenBox.x + (column + 0.5) * (screenBox.width / cols),
+        y: screenBox.y + (row + 0.5) * (screenBox.height / rows),
       }),
     };
   }
@@ -337,84 +548,103 @@ suite("packaged Electron production-mode terminal selection", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
+  beforeEach(async () => {
+    await dismissOpenContextMenu();
+    const diag = await readTerminalDiagnostics();
+    if (diag.mouseTrackingMode !== "none") {
+      gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
+      await waitForMouseTrackingMode("none");
+    }
+    await clearTerminalSelectionForTest();
+    await scrollTerminalToBottom();
+    // Guard test isolation: the renderer keeps confirmed* fallbacks after a
+    // programmatic clear, so poll until the observable selection is empty.
+    await expect.poll(readTerminalSelection, {
+      timeout: 5_000,
+      message: "Terminal selection did not reset between cases",
+    }).toBe("");
+    await writeClipboard(`sentinel-${Math.random().toString(36).slice(2)}`);
+  });
+
   it("copies a real mouse selection when webdriver accessibility rendering is disabled", async () => {
     expect(await page.evaluate(() => navigator.webdriver)).toBe(false);
     const firstLine = "PRODUCTION-FIRST alpha beta";
     const secondLine = "PRODUCTION-SECOND gamma delta";
     const expected = `${firstLine}\n${secondLine}`;
     gateway.sendTerminalOutput(`\u001bc${firstLine}\r\n${secondLine}`);
-    await page.waitForTimeout(250);
+    await waitForTerminalOutput(secondLine);
+    await scrollTerminalToBottom();
+    await waitForMarkerAtVisibleRow(firstLine, 0);
+    await waitForMarkerAtVisibleRow(secondLine, 1);
+    await waitForRenderFrames(2);
     const { point } = await terminalGrid();
 
-    const start = point(0, 0);
-    const end = point(secondLine.length, 1);
-    const hitTargets = await page.evaluate(({ startPoint, endPoint }) => {
-      const describe = (pointValue: { x: number; y: number }) => {
-        const target = document.elementFromPoint(pointValue.x, pointValue.y);
-        return target instanceof HTMLElement
-          ? { tag: target.tagName, className: target.className, terminalSurface: Boolean(target.closest("[data-terminal-surface]")) }
-          : null;
-      };
-      return { start: describe(startPoint), end: describe(endPoint) };
-    }, { startPoint: start, endPoint: end });
-    expect(hitTargets).toEqual({
-      start: expect.objectContaining({ terminalSurface: true }),
-      end: expect.objectContaining({ terminalSurface: true }),
-    });
+    const start = await expectTerminalPoint(point(0, 0), "prod-sel-start");
+    const end = await expectTerminalPoint(point(secondLine.length, 1), "prod-sel-end");
+
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
     await page.mouse.move(end.x, end.y, { steps: 8 });
     await page.mouse.up();
 
-    await app.evaluate(({ clipboard }) => clipboard.writeText("stale clipboard value"));
+    await expect.poll(readTerminalSelection).toContain(firstLine);
+    await writeClipboard("stale clipboard value");
     await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
-    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(expected);
+    await expect.poll(clipboardText).toBe(expected);
 
-    const insideSelection = point(4, 0);
+    const insideSelection = await expectTerminalPoint(point(4, 0), "context-menu-inside-selection");
     await page.mouse.click(insideSelection.x, insideSelection.y, { button: "right" });
     const copy = page.getByRole("menuitem", { name: "Copy", exact: true });
-    await copy.waitFor();
+    await copy.waitFor({ timeout: 10_000 });
     expect(await copy.isEnabled()).toBe(true);
+    await dismissOpenContextMenu();
   }, 60_000);
 
   it("creates a copyable drag selection while TUI mouse reporting remains enabled", async () => {
     const line = "MOUSE-MODE-SELECTION alpha beta gamma";
     gateway.sendTerminalOutput(`\u001bc${line}\u001b[?1003h\u001b[?1006h`);
-    await page.waitForTimeout(250);
+    await waitForTerminalOutput(line);
+    await waitForMouseTrackingMode("!none");
+    await scrollTerminalToBottom();
+    await waitForMarkerAtVisibleRow(line, 0);
+    await waitForRenderFrames(2);
     const { point } = await terminalGrid();
-    const start = point(0, 0);
-    const end = point(line.length, 0);
+    const start = await expectTerminalPoint(point(0, 0), "mouse-mode-drag-start");
+    const end = await expectTerminalPoint(point(line.length, 0), "mouse-mode-drag-end");
 
     try {
       const beforeProbeClick = gateway.state.terminalInputs.length;
-      await page.mouse.click(point(2, 0).x, point(2, 0).y);
+      const probePoint = await expectTerminalPoint(point(2, 0), "mouse-mode-probe-click");
+      await page.mouse.click(probePoint.x, probePoint.y);
       await expect.poll(() => gateway.state.terminalInputs.length).toBeGreaterThan(beforeProbeClick);
       expect(gateway.state.terminalInputs.slice(beforeProbeClick).some((data) => data.includes("\u001b[<")))
         .toBe(true);
 
       await page.mouse.move(start.x, start.y);
-      await page.waitForTimeout(100);
+      await waitForRenderFrames(1);
       const beforeDrag = gateway.state.terminalInputs.length;
       await page.mouse.down();
       await page.mouse.move(end.x, end.y, { steps: 8 });
       await page.mouse.up();
-      await page.waitForTimeout(100);
+      await waitForRenderFrames(1);
       expect(gateway.state.terminalInputs.slice(beforeDrag)).toEqual([]);
 
-      await app.evaluate(({ clipboard }) => clipboard.writeText("stale clipboard value"));
+      await expect.poll(readTerminalSelection).toBe(line);
+      await writeClipboard("stale clipboard value");
       await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
-      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(line);
+      await expect.poll(clipboardText).toBe(line);
 
-      const insideSelection = point(4, 0);
+      const insideSelection = await expectTerminalPoint(point(4, 0), "mouse-mode-context-menu");
       await page.mouse.click(insideSelection.x, insideSelection.y, { button: "right" });
       const copy = page.getByRole("menuitem", { name: "Copy", exact: true });
-      await copy.waitFor();
+      await copy.waitFor({ timeout: 10_000 });
       expect(await copy.isEnabled()).toBe(true);
       await copy.click();
-      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(line);
+      await expect.poll(clipboardText).toBe(line);
 
       const beforeClick = gateway.state.terminalInputs.length;
-      await page.mouse.click(point(2, 0).x, point(2, 0).y);
+      const resumeClick = await expectTerminalPoint(point(2, 0), "mouse-mode-resume-click");
+      await page.mouse.click(resumeClick.x, resumeClick.y);
       await expect.poll(() => gateway.state.terminalInputs.length).toBeGreaterThan(beforeClick);
       expect(gateway.state.terminalInputs.slice(beforeClick).some((data) => data.includes("\u001b[<")))
         .toBe(true);
@@ -424,14 +654,21 @@ suite("packaged Electron production-mode terminal selection", () => {
       gateway.sendTerminalOutput(
         `\u001bc${prefix}${word} suffix\u001b[?1003h\u001b[?1006h`,
       );
-      await page.waitForTimeout(250);
-      const wordPoint = point(prefix.length + 3, 0);
+      await waitForTerminalOutput(word);
+      await waitForMouseTrackingMode("!none");
+      await scrollTerminalToBottom();
+      await waitForMarkerAtVisibleRow(word, 0);
+      await waitForRenderFrames(2);
+      const wordPoint = await expectTerminalPoint(point(prefix.length + 3, 0), "mouse-mode-dblclick");
       await page.mouse.dblclick(wordPoint.x, wordPoint.y);
-      await app.evaluate(({ clipboard }) => clipboard.writeText("stale clipboard value"));
+      await expect.poll(readTerminalSelection).toBe(word);
+      await writeClipboard("stale clipboard value");
       await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
-      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(word);
+      await expect.poll(clipboardText).toBe(word);
     } finally {
       gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
+      await waitForMouseTrackingMode("none");
+      await dismissOpenContextMenu();
     }
   }, 60_000);
 
@@ -442,31 +679,59 @@ suite("packaged Electron production-mode terminal selection", () => {
       (_, index) => `SCROLLBACK-${String(index).padStart(3, "0")}`,
     );
     gateway.sendTerminalOutput(`\u001bc${lines.join("\r\n")}`);
-    await page.waitForTimeout(300);
+    await waitForTerminalOutput(lines.at(-1)!);
+    await waitForTerminalOutput(lines.at(0)!);
+    await scrollTerminalToBottom();
+    await waitForRenderFrames(2);
 
-    const menuPoint = point(2, resize.rows - 2);
+    const menuPoint = await expectTerminalPoint(point(2, resize.rows - 2), "scrollback-select-all-click");
     await page.mouse.click(menuPoint.x, menuPoint.y, { button: "right" });
-    await page.getByRole("menuitem", { name: "Select All", exact: true }).click();
-    await page.waitForTimeout(50);
+
+    const menu = page.getByRole("menu", { name: "Terminal actions" });
+    const selectAllItem = page.getByRole("menuitem", { name: "Select All", exact: true });
+    try {
+      await menu.waitFor({ state: "visible", timeout: 10_000 });
+      await selectAllItem.waitFor({ state: "visible", timeout: 10_000 });
+    } catch (err: unknown) {
+      const diag = await readTerminalDiagnostics(menuPoint);
+      const screenshotPath = join(EVIDENCE_DIR, `select-all-menu-miss-${Date.now()}.png`);
+      await page.screenshot({ path: screenshotPath }).catch(() => null);
+      throw new Error(
+        `Terminal actions menu or "Select All" failed to open on right-click at (${menuPoint.x}, ${menuPoint.y}). `
+        + `Diagnostics: ${JSON.stringify(diag)}. Evidence: ${screenshotPath}`,
+        { cause: err },
+      );
+    }
+
+    await selectAllItem.click();
+    await expect.poll(readTerminalSelection, {
+      timeout: 10_000,
+      message: "Select All did not populate terminal selection",
+    }).toContain(lines.at(0)!);
+    expect(await readTerminalSelection()).toContain(lines.at(-1)!);
+
+    await writeClipboard("sentinel-before-scrollback-copy");
     await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
-    await expect.poll(
-      () => app.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toContain(lines.at(0));
-    const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
-    expect(copied).toContain(lines.at(-1));
+    await expect.poll(clipboardText).toContain(lines.at(0)!);
+    const copied = await clipboardText();
+    expect(copied).toContain(lines.at(-1)!);
   }, 60_000);
 
   it("selects and copies a word immediately on double click without pointer movement", async () => {
     const prefix = "DOUBLECLICK prefix ";
     const word = "targetword";
     gateway.sendTerminalOutput(`\u001bc${prefix}${word} suffix`);
-    await page.waitForTimeout(250);
+    await waitForTerminalOutput(word);
+    await scrollTerminalToBottom();
+    await waitForMarkerAtVisibleRow(word, 0);
+    await waitForRenderFrames(2);
     const { point } = await terminalGrid();
-    const wordPoint = point(prefix.length + 3, 0);
+    const wordPoint = await expectTerminalPoint(point(prefix.length + 3, 0), "dblclick-targetword");
     await page.mouse.dblclick(wordPoint.x, wordPoint.y);
-    await app.evaluate(({ clipboard }) => clipboard.writeText("stale clipboard value"));
+    await expect.poll(readTerminalSelection).toBe(word);
+    await writeClipboard("stale clipboard value");
     await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
-    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(word);
+    await expect.poll(clipboardText).toBe(word);
   }, 60_000);
 
   it("extends a drag selection by auto-scrolling beyond both terminal edges", async () => {
@@ -476,23 +741,47 @@ suite("packaged Electron production-mode terminal selection", () => {
       (_, index) => `EDGE-SCROLL-${String(index).padStart(3, "0")}`,
     );
     gateway.sendTerminalOutput(`\u001bc${lines.join("\r\n")}`);
-    await page.waitForTimeout(300);
+    await waitForTerminalOutput(lines.at(-1)!);
+    await waitForTerminalOutput(lines[0]!);
+    await scrollTerminalToBottom();
+    await waitForRenderFrames(2);
 
-    const upwardStart = point(5, resize.rows - 2);
+    await writeClipboard("sentinel-before-upward-drag");
+    const upwardStart = await expectTerminalPoint(point(5, resize.rows - 2), "upward-edge-drag-start");
     await page.mouse.move(upwardStart.x, upwardStart.y);
     await page.mouse.down();
     await page.mouse.move(upwardStart.x, screenBox.y - 32, { steps: 8 });
-    await page.waitForTimeout(1_500);
-    await page.mouse.up();
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
-    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-      .toContain(lines[20]);
 
-    await page.mouse.click(point(2, 2).x, point(2, 2).y);
+    // Poll until auto-scroll extends selection upward past line 20
+    try {
+      await expect.poll(readTerminalSelection, {
+        timeout: 10_000,
+        message: `Upward auto-scroll did not extend selection to "${lines[20]}"`,
+      }).toContain(lines[20]);
+    } finally {
+      await page.mouse.up();
+    }
+
+    // Assert selection exists before invoking copy so stale clipboard values cannot obscure failure
+    const upwardSelection = await readTerminalSelection();
+    expect(upwardSelection).toContain(lines[20]);
+
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
+    await expect.poll(clipboardText).toContain(lines[20]);
+
+    // Reset selection and clipboard for downward test
+    await writeClipboard("sentinel-before-downward-drag");
+    const resetClick = await expectTerminalPoint(point(2, 2), "reset-drag-click");
+    await page.mouse.click(resetClick.x, resetClick.y);
+    await expect.poll(readTerminalSelection).toBe("");
+
     await page.mouse.move(screenBox.x + screenBox.width / 2, screenBox.y + screenBox.height / 2);
     await page.mouse.wheel(0, -100_000);
+    // Wait until viewport scrolled to top
+    await expect.poll(async () => (await readTerminalDiagnostics()).viewportY).toBe(0);
+    await waitForRenderFrames(2);
 
-    const downwardStart = point(5, 1);
+    const downwardStart = await expectTerminalPoint(point(5, 1), "downward-edge-drag-start");
     await page.mouse.move(downwardStart.x, downwardStart.y);
     await page.mouse.down();
     await page.mouse.move(
@@ -500,11 +789,22 @@ suite("packaged Electron production-mode terminal selection", () => {
       screenBox.y + screenBox.height + 32,
       { steps: 8 },
     );
-    await page.waitForTimeout(1_500);
-    await page.mouse.up();
+
+    // Poll until auto-scroll extends selection downward past last line
+    try {
+      await expect.poll(readTerminalSelection, {
+        timeout: 10_000,
+        message: `Downward auto-scroll did not extend selection to "${lines.at(-1)}"`,
+      }).toContain(lines.at(-1)!);
+    } finally {
+      await page.mouse.up();
+    }
+
+    const downwardSelection = await readTerminalSelection();
+    expect(downwardSelection).toContain(lines.at(-1)!);
+
     await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
-    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-      .toContain(lines.at(-1));
+    await expect.poll(clipboardText).toContain(lines.at(-1)!);
   }, 60_000);
 
   it("extends a mouse-reporting selection by auto-scrolling beyond both edges", async () => {
@@ -533,39 +833,55 @@ suite("packaged Electron production-mode terminal selection", () => {
       (_, index) => `MOUSE-EDGE-SCROLL-${String(index).padStart(3, "0")}`,
     );
     gateway.sendTerminalOutput(`\u001bc${lines.join("\r\n")}`);
-    await page.waitForTimeout(300);
+    await waitForTerminalOutput(lines.at(-1)!);
+    await waitForTerminalOutput(lines[0]!);
+    await scrollTerminalToBottom();
+    await waitForRenderFrames(2);
 
-    await page.mouse.click(point(2, resize.rows - 2).x, point(2, resize.rows - 2).y);
+    const probePoint = await expectTerminalPoint(point(2, resize.rows - 2), "mouse-edge-probe-point");
+    await page.mouse.click(probePoint.x, probePoint.y);
     gateway.sendTerminalOutput("\u001b[?1003h\u001b[?1006h");
-    await page.waitForTimeout(100);
+    await waitForMouseTrackingMode("!none");
+    await waitForRenderFrames(1);
 
     try {
       const upwardInputCount = gateway.state.terminalInputs.length;
-      const upwardStart = point(5, resize.rows - 2);
+      const upwardStart = await expectTerminalPoint(point(5, resize.rows - 2), "mouse-upward-drag-start");
       await page.mouse.move(upwardStart.x, upwardStart.y);
       await page.mouse.down();
       await page.mouse.move(upwardStart.x, screenBox.y - 32, { steps: 8 });
-      await page.waitForTimeout(1_500);
-      await page.mouse.up();
+
+      try {
+        await expect.poll(readTerminalSelection, {
+          timeout: 10_000,
+          message: `Mouse-reporting upward auto-scroll did not reach "${lines[70]}"`,
+        }).toContain(lines[70]);
+      } finally {
+        await page.mouse.up();
+      }
+
+      await writeClipboard("sentinel-before-mouse-upward-copy");
       await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
-      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-        .toContain(lines[70]);
+      await expect.poll(clipboardText).toContain(lines[70]);
       expect(gateway.state.terminalInputs.slice(upwardInputCount).some(
         (data) => data.includes("\u001b[<64;"),
       )).toBe(true);
 
       gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
+      await waitForMouseTrackingMode("none");
       await page.mouse.move(
         screenBox.x + screenBox.width / 2,
         screenBox.y + screenBox.height / 2,
       );
       await page.mouse.wheel(0, -100_000);
-      await page.mouse.click(point(2, 2).x, point(2, 2).y);
+      const clickTop = await expectTerminalPoint(point(2, 2), "mouse-edge-top-click");
+      await page.mouse.click(clickTop.x, clickTop.y);
       gateway.sendTerminalOutput("\u001b[?1003h\u001b[?1006h");
-      await page.waitForTimeout(100);
+      await waitForMouseTrackingMode("!none");
+      await waitForRenderFrames(1);
 
       const downwardInputCount = gateway.state.terminalInputs.length;
-      const downwardStart = point(5, 1);
+      const downwardStart = await expectTerminalPoint(point(5, 1), "mouse-downward-drag-start");
       await page.mouse.move(downwardStart.x, downwardStart.y);
       await page.mouse.down();
       await page.mouse.move(
@@ -573,19 +889,29 @@ suite("packaged Electron production-mode terminal selection", () => {
         screenBox.y + screenBox.height + 32,
         { steps: 8 },
       );
-      await page.waitForTimeout(1_500);
-      await page.mouse.up();
+
+      try {
+        await expect.poll(readTerminalSelection, {
+          timeout: 10_000,
+          message: `Mouse-reporting downward auto-scroll did not reach "${lines[82]}"`,
+        }).toContain(lines[82]);
+      } finally {
+        await page.mouse.up();
+      }
+
+      await writeClipboard("sentinel-before-mouse-downward-copy");
       await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
       // The stub gateway does not redraw a TUI viewport in response to the wheel report,
       // so assert a stable full row immediately after the column-trimmed anchor here;
       // the binary report below proves the app-facing path.
-      await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-        .toContain(lines[82]);
+      await expect.poll(clipboardText).toContain(lines[82]);
       expect(gateway.state.terminalInputs.slice(downwardInputCount).some(
         (data) => data.includes("\u001b[<65;"),
       )).toBe(true);
     } finally {
       gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
+      await waitForMouseTrackingMode("none");
+      await dismissOpenContextMenu();
       await page.mouse.move(
         screenBox.x + screenBox.width / 2,
         screenBox.y + screenBox.height / 2,
