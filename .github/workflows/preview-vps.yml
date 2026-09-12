@@ -1056,7 +1056,7 @@ jobs:
             const terminalRef = { workspaceId, tabId };
             const url = new URL("ws://127.0.0.1:4000/ws/terminal/tab");
             for (const [key, value] of Object.entries({ workspaceId, tabId, client: "browser", inputCapability: "binary-input-v1", fromSeq: "0", token })) url.searchParams.set(key, value);
-            const result = { outcome: "pending", opened: false, attached: 0, state: null, binaryInput: false, snapshots: 0, snapshotBytes: 0, outputs: 0, outputBytes: 0, exits: 0, errors: 0, errorCode: null, closeCode: null };
+            const result = { outcome: "pending", opened: false, attached: 0, binaryInput: false, snapshots: 0, snapshotBytes: 0, outputs: 0, outputBytes: 0, replayStarts: 0, replayEnds: 0, pongs: 0, escBytes: 0, bellBytes: 0, printableBytes: 0, rgbFragments: 0, exits: 0, errors: 0, errorCode: null, closeCode: null };
             const allowedCodes = new Set(["attach_failed", "not_found", "unavailable", "capacity", "invalid_request"]);
             let finished = false;
             const ws = new WebSocket(url);
@@ -1067,24 +1067,38 @@ jobs:
               if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
               console.log(JSON.stringify(result));
             };
+            const account = (data) => {
+              if (typeof data !== "string") return;
+              result.escBytes += (data.match(/\x1b/g) || []).length;
+              result.bellBytes += (data.match(/\x07/g) || []).length;
+              const printable = data.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+              result.printableBytes += printable.length;
+              result.rgbFragments += (printable.match(/rgb:/g) || []).length;
+            };
             ws.addEventListener("open", () => { result.opened = true; });
             ws.addEventListener("message", (event) => {
               let frame;
               try { frame = JSON.parse(String(event.data)); }
               catch (error) { result.errors += 1; if (!(error instanceof SyntaxError)) result.errorCode = "other"; return; }
-              if (frame.type === "attached") { result.attached += 1; result.state = frame.state ?? null; result.binaryInput = Array.isArray(frame.capabilities) && frame.capabilities.includes("binary-input-v1"); }
-              else if (frame.type === "snapshot") { result.snapshots += 1; result.snapshotBytes += typeof frame.ansi === "string" ? frame.ansi.length : 0; }
-              else if (frame.type === "output") { result.outputs += 1; result.outputBytes += typeof frame.data === "string" ? frame.data.length : 0; }
+              if (frame.type === "attached") { result.attached += 1; result.binaryInput = Array.isArray(frame.capabilities) && frame.capabilities.includes("binary-input-v1"); }
+              else if (frame.type === "snapshot") { result.snapshots += 1; result.snapshotBytes += typeof frame.ansi === "string" ? frame.ansi.length : 0; account(frame.ansi); }
+              else if (frame.type === "output") { result.outputs += 1; result.outputBytes += typeof frame.data === "string" ? frame.data.length : 0; account(frame.data); }
+              else if (frame.type === "replay-start") result.replayStarts += 1;
+              else if (frame.type === "replay-end") result.replayEnds += 1;
+              else if (frame.type === "pong") result.pongs += 1;
               else if (frame.type === "exit") result.exits += 1;
               else if (frame.type === "error" || frame.type === "safe-error") { result.errors += 1; result.errorCode = allowedCodes.has(frame.code) ? frame.code : "other"; }
             });
             ws.addEventListener("error", () => { result.errors += 1; });
             ws.addEventListener("close", (event) => { result.closeCode = event.code; finish("closed"); });
-            setTimeout(() => finish("observed"), 12_000);
+            const ping = () => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping", terminalRef })); };
+            setTimeout(ping, 3_000);
+            setTimeout(ping, 10_000);
+            setTimeout(() => finish("observed"), 22_000);
           JAVASCRIPT
             observe_body="$(jq -cn --arg script "$observe_script" --arg token "$runtime_token" \
               --arg workspace "$workspace_id" --arg tab "$tab_id" \
-              '{command:["/opt/matrix/runtime/node/bin/node","-e",$script,$token,$workspace,$tab],timeoutMs:20000}')"
+              '{command:["/opt/matrix/runtime/node/bin/node","-e",$script,$token,$workspace,$tab],timeoutMs:30000}')"
             runtime_request_read_only POST /api/terminal/run /tmp/nimanaderi-read-only-observe.json "$observe_body"
             observation="$(jq -cer 'select(.exitCode == 0 and .timedOut == false and .truncated == false) | .stdout | fromjson' /tmp/nimanaderi-read-only-observe.json)"
             echo "Read-only latest Shell attachment: $observation"
@@ -1093,7 +1107,7 @@ jobs:
           import json
           import subprocess
           result = subprocess.run(
-              ["/usr/bin/journalctl", "-u", "matrix-gateway.service", "-u", "matrix-terminal-runtime.service", "--since", "-30 minutes", "--no-pager", "-o", "cat"],
+              ["/usr/bin/journalctl", "-u", "matrix-gateway.service", "-u", "matrix-terminal-runtime.service", "--since", "-10 minutes", "--no-pager", "-o", "cat"],
               capture_output=True, text=True, timeout=15,
           )
           text = result.stdout[-1000000:]

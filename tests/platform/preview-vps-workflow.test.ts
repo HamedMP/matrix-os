@@ -241,6 +241,10 @@ describe('Preview VPS provisioning workflow', () => {
     expect(smoke).toContain('Read-only customer terminal inventory:');
     expect(smoke).toContain('Read-only latest Shell attachment:');
     expect(smoke).toContain('Read-only terminal log categories:');
+    expect(smoke).toContain('printableBytes: 0');
+    expect(smoke).toContain('replayEnds: 0');
+    expect(smoke).toContain('pongs: 0');
+    expect(smoke).toContain('"-10 minutes"');
     expect(smoke.indexOf('exit 0 # read-only customer diagnostic')).toBeLessThan(smoke.indexOf('/vps/deploy'));
     expect(smoke).toContain('Source preflight verified');
     expect(smoke).toContain('"coreServicesActive": all(services[name] for name in core_service_names)');
