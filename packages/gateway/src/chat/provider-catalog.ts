@@ -847,7 +847,12 @@ export function createChatProviderCatalogService(options: {
         instances: instances.map((instance) => ({ ...instance, catalogRevision: revision })),
       });
       if (!parsed.success) {
-        console.warn("[chat-providers] Canonical Provider projection failed validation");
+        console.warn(
+          "[chat-providers] Canonical Provider projection failed validation",
+          parsed.error.issues.slice(0, 16).map((issue) => (
+            `${issue.path.join(".") || "catalog"}:${issue.code}`
+          )),
+        );
         throw new ProviderCatalogUnavailableError(false);
       }
       return parsed.data;
