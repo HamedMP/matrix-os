@@ -58,7 +58,9 @@ export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalCha
     if (!run || (run.status !== "failed" && run.status !== "aborted")) return [];
     return [{ id: `${run.id}:terminal`, runId: run.id,
       beforeMessageId: inputs[index + 1]?.turn.inputMessageId,
-      text: run.status === "failed" ? "Agent work failed. Please try again." : "Agent work stopped.",
+      text: run.status === "failed"
+        ? "The agent could not complete its reply. Try again or check Agents & providers."
+        : "Agent work stopped.",
       timestamp: Date.parse(run.completedAt ?? run.updatedAt),
     }];
   });

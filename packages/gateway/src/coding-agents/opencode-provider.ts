@@ -22,9 +22,10 @@ import type {
   CodingHarnessCredentialResolver,
 } from "./harness-credentials.js";
 import {
-  addPortableProviderCredentials,
   buildPiChildEnvironment,
+  resolveOpenCodeCommand,
 } from "./pi-process-environment.js";
+import { prepareOpenCodeRunEnvironment } from "./managed-harness-process-config.js";
 import type {
   CodingAgentProviderAdapter,
   CodingAgentProviderEventBatch,
@@ -149,36 +150,16 @@ function modelSlug(reference: string | undefined): string | undefined {
   return separator > 0 ? `${reference.slice(0, separator)}/${reference.slice(separator + 1)}` : reference;
 }
 
-function readOnlyConfig(baseUrl: string | undefined): string {
-  return JSON.stringify({
-    // Canonical Chat already limits OpenCode to non-mutating tools. Disabling
-    // snapshots avoids indexing the owner's entire Matrix HOME (which may
-    // contain nested repositories and transient lock files) before each turn.
-    snapshot: false,
-    permission: {
-      "*": "deny",
-      read: "allow",
-      glob: "allow",
-      grep: "allow",
-      list: "allow",
-    },
-    ...(baseUrl ? { provider: { anthropic: { options: { baseURL: baseUrl } } } } : {}),
-  });
-}
-
 function childEnvironment(
   base: Record<string, string> | undefined,
   credentialEnv: Record<string, string>,
   homePath: string,
 ): Record<string, string> {
-  const ownerEnvironment = buildPiChildEnvironment({ ...base, HOME: homePath });
-  ownerEnvironment.HOME = homePath;
-  const env = addPortableProviderCredentials(ownerEnvironment, credentialEnv);
-  env.OPENCODE_DISABLE_PROJECT_CONFIG = "1";
-  env.OPENCODE_DISABLE_AUTOUPDATE = "1";
-  env.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER = "1";
-  env.OPENCODE_CONFIG_CONTENT = readOnlyConfig(env.ANTHROPIC_BASE_URL);
-  return env;
+  return prepareOpenCodeRunEnvironment({
+    homePath,
+    baseEnvironment: base,
+    credentials: credentialEnv,
+  });
 }
 
 type CredentialResolution =
@@ -368,7 +349,7 @@ export function createOpenCodeCodingAgentProvider(
   options: OpenCodeCodingAgentProviderOptions,
 ): CodingAgentProviderAdapter {
   const providerId = ProviderIdSchema.parse(options.providerId ?? "opencode");
-  const command = options.command ?? "opencode";
+  const command = resolveOpenCodeCommand(options.command, options.env);
   const spawnFn = options.spawnFn ?? defaultSpawn;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const runTimeoutMs = Math.max(1, Math.min(options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS));

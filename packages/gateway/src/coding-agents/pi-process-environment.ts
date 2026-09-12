@@ -17,6 +17,7 @@ const PI_ENV_ALLOWLIST = new Set([
 
 const MatrixNodePrefixSchema = z.string().trim().min(1).max(400)
   .refine((value) => isAbsolute(value) && !value.includes("\0"));
+const DEFAULT_MATRIX_NODE_PREFIX = "/opt/matrix/runtime/node";
 
 export function buildPiChildEnvironment(overrides: Record<string, string> | undefined): Record<string, string> {
   const env: Record<string, string> = {};
@@ -24,8 +25,11 @@ export function buildPiChildEnvironment(overrides: Record<string, string> | unde
     const value = overrides?.[key] ?? process.env[key];
     if (typeof value === "string") env[key] = value;
   }
-  const prefix = MatrixNodePrefixSchema.safeParse(env.MATRIX_NODE_PREFIX);
+  const prefix = MatrixNodePrefixSchema.safeParse(
+    env.MATRIX_NODE_PREFIX ?? DEFAULT_MATRIX_NODE_PREFIX,
+  );
   if (prefix.success) {
+    env.MATRIX_NODE_PREFIX = prefix.data;
     const prefixBin = join(prefix.data, "bin");
     const pathEntries = (env.PATH ?? "").split(delimiter).filter(Boolean);
     env.PATH = [prefixBin, ...pathEntries.filter((entry) => entry !== prefixBin)].join(delimiter);
@@ -51,6 +55,23 @@ export function resolvePiCommand(
   env: Record<string, string> | undefined,
 ): string {
   if (explicit) return explicit;
-  const prefix = MatrixNodePrefixSchema.safeParse(env?.MATRIX_NODE_PREFIX ?? process.env.MATRIX_NODE_PREFIX);
-  return prefix.success ? join(prefix.data, "bin", "pi") : "pi";
+  return resolveMatrixNodeCommand("pi", env);
+}
+
+export function resolveOpenCodeCommand(
+  explicit: string | undefined,
+  env: Record<string, string> | undefined,
+): string {
+  if (explicit) return explicit;
+  return resolveMatrixNodeCommand("opencode", env);
+}
+
+function resolveMatrixNodeCommand(
+  executable: "pi" | "opencode",
+  env: Record<string, string> | undefined,
+): string {
+  const prefix = MatrixNodePrefixSchema.safeParse(
+    env?.MATRIX_NODE_PREFIX ?? process.env.MATRIX_NODE_PREFIX ?? DEFAULT_MATRIX_NODE_PREFIX,
+  );
+  return prefix.success ? join(prefix.data, "bin", executable) : executable;
 }

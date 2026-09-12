@@ -1,5 +1,7 @@
 import { z } from "zod/v4";
 import { priceActualUsageMicrousd, type FundedTokenUsage } from "./funded-relay-model.js";
+import { FUNDED_GLM_FLASH } from "./funded-relay-model.js";
+import { createFundedOpenAiUsageTracker } from "./funded-relay-openai-usage.js";
 
 const DEFAULT_CAPTURE_LIMIT = 1024 * 1024;
 const TokenSchema = z.number().int().nonnegative().max(10_000_000);
@@ -60,6 +62,7 @@ export function createFundedUsageTracker(options: {
   pricingVersion: string;
   maxCaptureBytes?: number;
 }): FundedUsageTracker {
+  if (options.nativeModelId === FUNDED_GLM_FLASH) return createFundedOpenAiUsageTracker(options);
   const maxCaptureBytes = options.maxCaptureBytes ?? DEFAULT_CAPTURE_LIMIT;
   const isSse = options.contentType.toLowerCase().startsWith("text/event-stream");
   const decoder = new TextDecoder("utf-8", { fatal: true });

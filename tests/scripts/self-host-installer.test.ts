@@ -29,6 +29,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("MATRIX_CODE_PROXY_TOKEN=${code_token}");
     expect(script).toContain("DATABASE_URL=postgresql://matrix:${postgres_password}@127.0.0.1:5432/matrix");
     expect(script).toContain("NEXT_PUBLIC_GATEWAY_WS=/ws");
+    expect(script).toContain("MATRIX_NODE_PREFIX=/opt/matrix/runtime/node");
     expect(script).toContain("validate_config");
     expect(script).toContain("MATRIX_HOST_BUNDLE_URL must be https");
     expect(script).toContain("MATRIX_HOME must stay under /home/matrix");

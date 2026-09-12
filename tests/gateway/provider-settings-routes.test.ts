@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import {
   ProviderSettingsMutationResponseSchema,
+  ProviderSettingsSnapshotSchema,
   type ProviderSettingsMutation,
   type ProviderSettingsMutationResponse,
   type ProviderSettingsSnapshot,
@@ -108,13 +109,46 @@ function createApp(options: {
 }
 
 describe("provider settings routes", () => {
+  it("negotiates atomic connection support without changing legacy snapshot responses", async () => {
+    const { app } = createApp();
+    const legacy = await (await app.request("/api/ai/provider-settings")).json();
+    expect(legacy).not.toHaveProperty("atomicConnectSupported");
+    const modern = await (await app.request("/api/ai/provider-settings?includeCapabilities=true")).json();
+    expect(modern).toHaveProperty("atomicConnectSupported", true);
+    expect(ProviderSettingsSnapshotSchema.safeParse(modern).success).toBe(true);
+    expect((await app.request("/api/ai/provider-settings?includeCapabilities=maybe")).status).toBe(400);
+  });
+
+  it("retains negotiated capabilities after a mutation and rejects invalid negotiation before writing", async () => {
+    const { app, mutate } = createApp();
+    const request = { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "set_harness_enabled", harnessInstanceId: "harness_pi", enabled: true,
+        expectedRevision: 0, idempotencyKey: "enable_pi" }) };
+    const response = await app.request("/api/ai/provider-settings/actions?includeCapabilities=true", request);
+    expect(response.status).toBe(200);
+    expect((await response.json()).snapshot.atomicConnectSupported).toBe(true);
+    mutate.mockClear();
+    expect((await app.request("/api/ai/provider-settings/actions?includeCapabilities=maybe", request)).status).toBe(400);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
   it("authenticates reads and returns the secret-free snapshot", async () => {
     const { app, getPrincipal, getSnapshot } = createApp();
     const response = await app.request("/api/ai/provider-settings");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(snapshot);
     expect(getPrincipal).toHaveBeenCalledOnce();
-    expect(getSnapshot).toHaveBeenCalledOnce();
+    expect(getSnapshot).toHaveBeenCalledWith({ refresh: false });
+  });
+
+  it("forces live provider discovery only for a validated refresh query", async () => {
+    const { app, getSnapshot } = createApp();
+    expect((await app.request("/api/ai/provider-settings?refresh=true")).status).toBe(200);
+    expect(getSnapshot).toHaveBeenCalledWith({ refresh: true });
+
+    getSnapshot.mockClear();
+    expect((await app.request("/api/ai/provider-settings?refresh=maybe")).status).toBe(400);
+    expect(getSnapshot).not.toHaveBeenCalled();
   });
 
   it("validates each revisioned action before mutation", async () => {

@@ -8,6 +8,41 @@ import type { ProviderSettingsConfiguration } from "../../packages/gateway/src/a
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 describe("provider settings configuration mutations", () => {
+  it.each(["hermes", "openclaw"] as const)("rejects Matrix AI for %s before changing configuration", (harness) => {
+    const original = {
+      version: 1, revision: 0, accountProfiles: [], gatewayPolicy: null, receipts: [],
+      harnesses: [{ id: "generic", driverId: harness, harness, displayName: harness, accentColor: null,
+        enabled: false, selectedAccountId: null, accessSourceId: "matrix_included",
+        route: { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" } }],
+    } satisfies ProviderSettingsConfiguration;
+    const snapshot = { accessSources: [{ id: "matrix_included", kind: "matrix_gateway", fundingKind: "matrix_included",
+      providerId: "anthropic", accountId: null, eligibleModelIds: ["claude-sonnet-5"] }], accounts: [],
+      gatewayPolicy: { accessSourceId: "matrix_included", allowedModelIds: ["claude-sonnet-5"] } } as unknown as ProviderSettingsSnapshot;
+    const base = { expectedRevision: 0, idempotencyKey: "unsupported_matrix" };
+    for (const mutation of [
+      { ...base, type: "add_harness" as const, harness, displayName: harness, route: original.harnesses[0]!.route, accessSourceId: "matrix_included", accountId: null },
+      { ...base, type: "set_route" as const, harnessInstanceId: "generic", route: original.harnesses[0]!.route, accessSourceId: "matrix_included", accountId: null },
+      { ...base, type: "select_access_source" as const, harnessInstanceId: "generic", accessSourceId: "matrix_included" },
+    ]) {
+      const config = structuredClone(original);
+      expect(() => applyProviderConfigurationMutation({ mutation, config, snapshot, canonical: providerSettingsCanonicalFixture(), id: () => "new" })).toThrow("invalid_route");
+      expect(config).toEqual(original);
+    }
+  });
+
+  it.each(["pi", "opencode"] as const)("preserves supported Matrix AI add and route for %s", (harness) => {
+    const config = { version: 1, revision: 0, accountProfiles: [], gatewayPolicy: null, receipts: [], harnesses: [] } as ProviderSettingsConfiguration;
+    const route = { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" };
+    const snapshot = { accessSources: [{ id: "matrix_included", kind: "matrix_gateway", fundingKind: "matrix_included",
+      providerId: "anthropic", accountId: null, eligibleModelIds: [route.modelId] }], accounts: [],
+      gatewayPolicy: { accessSourceId: "matrix_included", allowedModelIds: [route.modelId] } } as unknown as ProviderSettingsSnapshot;
+    const base = { expectedRevision: 0, idempotencyKey: "supported_matrix", route, accessSourceId: "matrix_included", accountId: null };
+    expect(applyProviderConfigurationMutation({ mutation: { ...base, type: "add_harness", harness, displayName: harness }, config,
+      snapshot, canonical: providerSettingsCanonicalFixture(), id: () => "new" })).toBe(true);
+    expect(applyProviderConfigurationMutation({ mutation: { ...base, type: "set_route", harnessInstanceId: "harness_new" }, config,
+      snapshot, canonical: providerSettingsCanonicalFixture(), id: () => "unused" })).toBe(true);
+  });
+
   it("switches provider, model, source, and account as one route mutation", () => {
     const config = {
       version: 1,
@@ -146,6 +181,61 @@ describe("provider settings configuration mutations", () => {
       })).toThrow("invalid_route");
     },
   );
+
+  it("accepts an OpenCode-native model without pretending it is a portable API key", () => {
+    const config = {
+      schemaVersion: 1,
+      revision: 0,
+      harnesses: [{
+        id: "harness_opencode",
+        driverId: "opencode",
+        harness: "opencode" as const,
+        displayName: "OpenCode",
+        accentColor: null,
+        enabled: false,
+        selectedAccountId: null,
+        accessSourceId: "matrix_included",
+        route: { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" },
+      }],
+      accountProfiles: [],
+      gatewayPolicy: null,
+      receipts: [],
+    } satisfies ProviderSettingsConfiguration;
+    const snapshot = {
+      accessSources: [{
+        id: "harness_opencode_baseten",
+        kind: "harness_profile",
+        harness: "opencode",
+        fundingKind: "owner_account",
+        providerId: "baseten",
+        accountId: null,
+        eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+      }],
+      accounts: [],
+      gatewayPolicy: null,
+    } as unknown as ProviderSettingsSnapshot;
+
+    expect(applyProviderConfigurationMutation({
+      mutation: {
+        type: "set_route",
+        expectedRevision: 0,
+        idempotencyKey: "route_opencode_native_1",
+        harnessInstanceId: "harness_opencode",
+        route: { kind: "configurable", providerId: "baseten", modelId: "baseten:zai-org/GLM-5.3" },
+        accessSourceId: "harness_opencode_baseten",
+        accountId: null,
+      },
+      config,
+      canonical: providerSettingsCanonicalFixture(),
+      snapshot,
+      id: () => "unused",
+    })).toBe(true);
+    expect(config.harnesses[0]).toMatchObject({
+      route: { providerId: "baseten", modelId: "baseten:zai-org/GLM-5.3" },
+      accessSourceId: "harness_opencode_baseten",
+      selectedAccountId: null,
+    });
+  });
 
   it("rejects an incoherent final account/source tuple without partially changing the harness", () => {
     const originalHarness = {

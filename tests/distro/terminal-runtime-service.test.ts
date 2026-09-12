@@ -45,4 +45,35 @@ describe("matrix terminal runtime host service", () => {
     expect(service).toContain("process.exit(1)");
     expect(service).not.toContain("process.exitCode = 1");
   });
+
+  it("ships compiled terminal runtime entrypoints before building the gateway", async () => {
+    const [runtimePackageSource, gatewayPackageSource] = await Promise.all([
+      readFile(new URL("../../packages/terminal-runtime/package.json", import.meta.url), "utf8"),
+      readFile(new URL("../../packages/gateway/package.json", import.meta.url), "utf8"),
+    ]);
+    const runtimePackage = JSON.parse(runtimePackageSource) as {
+      exports: Record<string, { types: string; development: string; default: string }>;
+    };
+    const gatewayPackage = JSON.parse(gatewayPackageSource) as { scripts: { build: string } };
+
+    expect(runtimePackage.exports["."]).toEqual({
+      types: "./src/index.ts",
+      development: "./src/index.ts",
+      default: "./dist/index.js",
+    });
+    expect(runtimePackage.exports["./user-systemd-capacity"]?.development)
+      .toBe("./src/user-systemd-capacity.ts");
+    expect(runtimePackage.exports["./user-systemd-capacity"]?.default)
+      .toBe("./dist/user-systemd-capacity.js");
+    expect(runtimePackage.exports["./user-systemd-readiness"]?.development)
+      .toBe("./src/user-systemd-readiness.ts");
+    expect(runtimePackage.exports["./user-systemd-readiness"]?.default)
+      .toBe("./dist/user-systemd-readiness.js");
+    expect(runtimePackage.exports["./user-systemd-controller"]?.development)
+      .toBe("./src/user-systemd-controller.ts");
+    expect(runtimePackage.exports["./user-systemd-controller"]?.default)
+      .toBe("./dist/user-systemd-controller.js");
+    expect(gatewayPackage.scripts.build.indexOf("@matrix-os/terminal-runtime"))
+      .toBeLessThan(gatewayPackage.scripts.build.indexOf("tsc"));
+  });
 });

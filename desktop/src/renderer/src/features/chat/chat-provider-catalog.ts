@@ -24,7 +24,7 @@ export async function fetchCanonicalProviderCatalog(
   refresh = false,
 ): Promise<CanonicalProviderCatalog> {
   return CanonicalProviderCatalogSchema.parse(await api.get<unknown>(
-    refresh ? "/api/chat-providers?refresh=true" : "/api/chat-providers",
+    refresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true" : "/api/chat-providers?includeConnectionLabels=true",
   ));
 }
 

@@ -19,7 +19,13 @@ function fixture(status: "failed" | "aborted", retry = false): CanonicalChatDeta
 describe("terminal notice parity", () => {
   it.each(["failed", "aborted"] as const)("shows safe %s outcome in the same turn on Web and Native Mobile", (status) => {
     const detail = fixture(status);
-    const expected = ["Prompt 1", status === "failed" ? "Agent work failed. Please try again." : "Agent work stopped.", "Prompt 2"];
+    const expected = [
+      "Prompt 1",
+      status === "failed"
+        ? "The agent could not complete its reply. Try again or check Agents & providers."
+        : "Agent work stopped.",
+      "Prompt 2",
+    ];
     expect(projectCanonicalTranscript(detail).map((message) => message.content)).toEqual(expected);
     expect(buildTranscript(detail).reverse().map((message) => message.text)).toEqual(expected);
   });

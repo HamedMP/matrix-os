@@ -17,6 +17,7 @@ import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
   createCanonicalShellChatClient,
+  canonicalShellChatFailureMessage,
   isDefinitiveCanonicalChatRejection,
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
@@ -305,7 +306,7 @@ export function useCanonicalChatState(): ChatState {
           await Promise.allSettled(uploadedReferences.map((reference) => client.deleteAttachment(reference)));
         }
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("Message could not be sent. Try again.");
+        setSafeError(canonicalShellChatFailureMessage(error));
       } finally {
         setSubmitting(false);
       }
@@ -409,8 +410,9 @@ export function useCanonicalChatState(): ChatState {
   }, [client, records]);
 
   const messages = detail ? projectCanonicalTranscript(detail) : [];
-  if (safeError) {
-    messages.push({ id: "canonical-safe-error", role: "system", content: safeError, timestamp: Date.now() });
+  const visibleError = safeError;
+  if (visibleError) {
+    messages.push({ id: "canonical-safe-error", role: "system", content: visibleError, timestamp: Date.now() });
   }
   const activeRecord = detail && detail.record.chat.id === activeChatId
     ? detail.record

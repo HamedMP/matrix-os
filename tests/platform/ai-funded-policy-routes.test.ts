@@ -11,7 +11,7 @@ import {
   FundedAiSettlementResponseSchema,
   FundedAiStartResponseSchema,
 } from "@matrix-os/contracts";
-import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
+import { AiFundedPolicyError, createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import {
   createAiFundedRelayRoutes,
   createAiFundedOperatorRoutes,
@@ -83,6 +83,14 @@ describe("funded AI policy routes", () => {
       entryId: "grant_routes_addon", identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
       kind: "addon_grant", amountMicrousd: 500, sourceReference: "route-addon-fixture",
     });
+    const promotionalGrant = options.promotionalGrantEnabled
+      ? {
+          enabled: true as const,
+          campaignId: "first-launch-2026",
+          amountMicrousd: 250,
+          expiresAt: "2026-09-30T20:00:00.000Z",
+        }
+      : { enabled: false as const };
     return {
       repository,
       app: createApp({
@@ -94,6 +102,8 @@ describe("funded AI policy routes", () => {
           platformSecret,
           repository,
           topUpEnabled: options.topUpEnabled,
+          promotionalGrant,
+          now: () => new Date(now),
         }),
         internalFundedAiRelayRoutes: createAiFundedRelayRoutes({ relayControlToken, repository }),
         internalFundedAiOperatorRoutes: createAiFundedOperatorRoutes({
@@ -101,18 +111,36 @@ describe("funded AI policy routes", () => {
           operatorSecret: platformSecret,
           repository,
           now: () => new Date(now),
-          promotionalGrant: options.promotionalGrantEnabled
-            ? {
-                enabled: true,
-                campaignId: "first-launch-2026",
-                amountMicrousd: 250,
-                expiresAt: "2026-09-30T20:00:00.000Z",
-              }
-            : { enabled: false },
+          promotionalGrant,
         }),
       }),
     };
   }
+
+  it("normalizes relay control token transport whitespace without changing identity or hash secrets", () => {
+    expect(loadAiFundedControlPlaneConfig({
+      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true",
+      PLATFORM_SECRET: `${platformSecret}\n`,
+      AI_RELAY_CONTROL_TOKEN: ` ${relayControlToken}\r\n`,
+      AI_FUNDED_CREDENTIAL_HASH_SECRET: `${hashSecret}\n`,
+    })).toMatchObject({
+      enabled: true,
+      relayControlToken,
+      platformSecret: `${platformSecret}\n`,
+      credentialHashSecret: `${hashSecret}\n`,
+    });
+  });
+
+  it("validates relay token length and separation after whitespace normalization", () => {
+    for (const token of [" ".repeat(32), ` short${" ".repeat(32)}`, ` ${platformSecret}\n`]) {
+      expect(() => loadAiFundedControlPlaneConfig({
+        MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true",
+        PLATFORM_SECRET: platformSecret,
+        AI_RELAY_CONTROL_TOKEN: token,
+        AI_FUNDED_CREDENTIAL_HASH_SECRET: hashSecret,
+      })).toThrow(/misconfigured/i);
+    }
+  });
 
   it("fails closed unless dedicated, distinct secrets are configured", () => {
     expect(loadAiFundedControlPlaneConfig({})).toEqual({ enabled: false });
@@ -271,7 +299,20 @@ describe("funded AI policy routes", () => {
     );
   });
 
-  it("creates one configured promotional grant per campaign/runtime and stays disabled by default", async () => {
+  it("defaults enabled starter credit to five dollars and accepts a ten dollar override", () => {
+    const env = {
+      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true", PLATFORM_SECRET: platformSecret,
+      AI_RELAY_CONTROL_TOKEN: relayControlToken, AI_FUNDED_CREDENTIAL_HASH_SECRET: hashSecret,
+      AI_FUNDED_PROMOTIONAL_GRANT_ENABLED: "true",
+      AI_FUNDED_PROMOTIONAL_GRANT_CAMPAIGN_ID: "starter-2026",
+      AI_FUNDED_PROMOTIONAL_GRANT_EXPIRES_AT: "2026-09-30T20:00:00.000Z",
+    };
+    expect(loadAiFundedControlPlaneConfig(env)).toMatchObject({ promotionalGrant: { amountMicrousd: 5_000_000 } });
+    expect(loadAiFundedControlPlaneConfig({ ...env, AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD: "10000000" }))
+      .toMatchObject({ promotionalGrant: { amountMicrousd: 10_000_000 } });
+  });
+
+  it("creates one configured promotional grant per campaign/owner and stays disabled by default", async () => {
     const enabled = await createTestApp({ promotionalGrantEnabled: true });
     const disabledApp = createApp({
       db,
@@ -315,6 +356,21 @@ describe("funded AI policy routes", () => {
       body: "{}",
     });
     expect(await replay.json()).toEqual(firstBody);
+    await insertUserMachine(db, {
+      machineId: "machine_second", clerkUserId: "user_alice", handle: "alice-second", runtimeSlot: "preview",
+      status: "running", imageVersion: "v1", provisionedAt: "2026-08-30T19:00:00.000Z",
+      activationState: "authorized",
+    });
+    await enabled.repository.setRuntimePolicy({
+      identity: { ownerId: "user_alice", machineId: "machine_second", runtimeSlot: "preview" },
+      expectedRevision: 0, enabled: true, allowedModelIds: [modelId], expiresAt: null,
+      monthlyBudgetMicrousd: 1_000,
+    });
+    const otherMachine = await app.request("/api/operator/ai/funded/runtimes/alice-second/promotional-grant", {
+      method: "POST", headers, body: "{}",
+    });
+    expect(otherMachine.status).toBe(200);
+    expect(await otherMachine.json()).toEqual(firstBody);
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
       .selectAll().where("source_reference", "=", "first-launch-2026").execute()).toHaveLength(1);
 
@@ -324,6 +380,22 @@ describe("funded AI policy routes", () => {
       body: JSON.stringify({ padding: "x".repeat(2_000) }),
     });
     expect(oversized.status).toBe(413);
+  });
+
+  it("claims the configured owner starter grant when Matrix AI funding first loads", async () => {
+    const { app } = await createTestApp({ promotionalGrantEnabled: true });
+    const request = () => app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    const first = await request();
+    expect(first.status).toBe(200);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.parse(await first.json()).funding)
+      .toMatchObject({ promotionalBalanceMicrousd: 1_250, creditBalanceMicrousd: 1_750 });
+    expect((await request()).status).toBe(200);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .selectAll().where("source_reference", "=", "first-launch-2026").execute()).toHaveLength(1);
   });
 
   it("issues a scoped credential from the authenticated running machine record", async () => {
@@ -593,6 +665,17 @@ describe("funded AI policy routes", () => {
     expect(finalized.status).toBe(200);
     expect(FundedAiFinalizationResponseSchema.parse(await finalized.json()))
       .toMatchObject({ finalizationMode: "conservative", actualCostMicrousd: 100, releasedMicrousd: 0 });
+  });
+
+  it("returns temporary unavailability for unresolved usage instead of disabling access", async () => {
+    const { app, repository } = await createTestApp();
+    vi.spyOn(repository, "finalizeReservation").mockRejectedValueOnce(new AiFundedPolicyError("unavailable"));
+    const response = await app.request("/internal/ai/funded/finalize", {
+      method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ reservationId: "reservation_test", tokenId: "credential_123", mode: "conservative" }),
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: { code: "unavailable" } });
   });
 
   it("checks policy through service auth without reserving credit", async () => {

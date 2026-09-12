@@ -52,7 +52,7 @@ function instance(driverKind: CanonicalProviderDriverKind): CanonicalProviderIns
   };
 }
 
-function Harness({ driverKind }: { driverKind: "hermes" | "openclaw" }) {
+function Harness({ driverKind }: { driverKind: CanonicalProviderDriverKind }) {
   const provider = instance(driverKind);
   const setup = useProviderSetup([]);
   return (
@@ -106,6 +106,16 @@ describe("system harness setup routing", () => {
       expect(useUi.getState().requestedSettingsSection).toBeNull();
       expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(false);
     });
+  });
+
+  it.each(["pi", "opencode", "codex", "claude_code"] as const)("opens %s account setup in Agents & providers without a Terminal round trip", async (driverKind) => {
+    render(<Harness driverKind={driverKind} />);
+    fireEvent.click(screen.getByRole("button", { name: "Configure" }));
+    await waitFor(() => {
+      expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
+      expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
+    });
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminals")).toBe(false);
   });
 
   it("opens a catalog-owned missing harness action in a foreground Terminal", async () => {

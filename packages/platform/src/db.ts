@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ensureFundedReservationIndexes } from './ai-funded-reservation-indexes.js';
 import {
   Kysely,
   PostgresDialect,
@@ -1498,10 +1499,7 @@ async function migrateSchema(db: Executor): Promise<void> {
     ADD COLUMN IF NOT EXISTS finalization_mode TEXT
     CHECK (finalization_mode IN ('exact', 'conservative'))
   `.execute(db);
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_ai_funded_reservations_runtime_status
-    ON ai_funded_usage_reservations(machine_id, runtime_slot, status, expires_at)
-  `.execute(db);
+  await ensureFundedReservationIndexes(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_credit_ledger (
       entry_id TEXT PRIMARY KEY,

@@ -11,6 +11,7 @@ User=matrix
 Group=matrix
 EnvironmentFile=/opt/matrix/env/host.env
 Environment=SYMPHONY_PORT=4766
+Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
 Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode
 WorkingDirectory=/opt/matrix
 ExecStartPre=+/opt/matrix/bin/matrix-install-developer-tools --sandbox-only

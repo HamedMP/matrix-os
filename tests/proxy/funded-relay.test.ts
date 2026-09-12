@@ -14,6 +14,16 @@ const GATEWAY_URL =
 const PLATFORM_URL = "https://platform.internal.example";
 const NATIVE_MODEL = "claude-sonnet-5";
 const CANONICAL_MODEL = "anthropic/claude-sonnet-5";
+const CLAUDE_CODE_BETAS = [
+  "claude-code-20250219",
+  "interleaved-thinking-2025-05-14",
+  "fine-grained-tool-streaming-2025-05-14",
+  "thinking-token-count-2026-05-13",
+  "context-management-2025-06-27",
+  "prompt-caching-scope-2026-01-05",
+  "mid-conversation-system-2026-04-07",
+  "effort-2025-11-24",
+] as const;
 const RESERVED_MICROUSD = 6_000;
 const CREDENTIAL = `sk-matrix-funded-credential_123.${"s".repeat(43)}`;
 const NOW = new Date("2026-08-30T20:00:00.000Z");
@@ -127,6 +137,12 @@ function fundedRequest(body = requestBody(), headers: Record<string, string> = {
 }
 
 describe("funded relay configuration and pricing", () => {
+  it("explicitly selects usage admission without provider credentials", () => {
+    expect(resolveFundedRelayConfig(enabledEnv({ MATRIX_FUNDED_AI_RESERVATION_MODE: "usage" })))
+      .toHaveProperty("reservationMode", "usage");
+    expect(resolveFundedRelayConfig(enabledEnv())).toHaveProperty("reservationMode", "cloudflare-count");
+    expect(() => resolveFundedRelayConfig(enabledEnv({ MATRIX_FUNDED_AI_RESERVATION_MODE: "guess" }))).toThrow();
+  });
   it("stays disabled by default and fails closed without distinct dedicated authority", () => {
     expect(resolveFundedRelayConfig({})).toBeNull();
     expect(resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: "0" })).toBeNull();
@@ -168,7 +184,8 @@ describe("funded relay configuration and pricing", () => {
 });
 
 describe("Cloudflare funded relay control-plane ordering", () => {
-  it("checks policy, counts, reserves, acquires, starts, then generates with five opaque metadata fields", async () => {
+  it.each(["cloudflare-count", "usage"])("reserves before Cloudflare generation and settles actual usage (%s)", async (reservationMode) => {
+    const reservedMicrousd = reservationMode === "usage" ? 4_801_200 : RESERVED_MICROUSD;
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -187,9 +204,18 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         if (action === "authorize") {
           expect(body).toEqual({
             credential: CREDENTIAL, requestId: "request_123",
-            modelId: CANONICAL_MODEL, maxCostMicrousd: RESERVED_MICROUSD,
+            modelId: CANONICAL_MODEL, maxCostMicrousd: reservedMicrousd,
+            ...(reservationMode === "usage" ? { billingMode: "usage" } : {}),
           });
-          return json(authorizationResponse("request_123"));
+          const authorized = authorizationResponse("request_123");
+          authorized.reservation.reservedMicrousd = reservedMicrousd;
+          if (reservationMode === "usage") {
+            Object.assign(authorized.reservation, {
+              billingMode: "usage",
+              maxCostMicrousd: reservedMicrousd,
+            });
+          }
+          return json(authorized);
         }
         if (action === "start") {
           expect(body).toEqual({ reservationId: "reservation_123", tokenId: "credential_123" });
@@ -232,21 +258,45 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         return json({ input_tokens: 1_000 });
       }
       expect(forwarded.max_tokens).toBe(100);
+      expect(forwarded.context_management).toEqual({
+        edits: [{ type: "clear_thinking_20251015", keep: "all" }],
+      });
+      expect(forwarded.tools).toEqual([expect.objectContaining({
+        name: "read",
+        eager_input_streaming: true,
+      })]);
+      expect(headers.get("anthropic-beta")).toBe(CLAUDE_CODE_BETAS.join(","));
+      expect(url).toBe(`${GATEWAY_URL}/v1/messages?beta=true`);
       events.push("cloudflare_generate");
       return json({
         id: "msg_1", type: "message", model: NATIVE_MODEL,
         usage: { input_tokens: 1_000, output_tokens: 10 },
       });
     });
-    const relay = configuredRelay(fetchMock as typeof fetch);
+    const relay = configuredRelay(fetchMock as typeof fetch, {
+      reservationMode,
+      allowedBetas: new Set(CLAUDE_CODE_BETAS),
+    });
     const app = new Hono();
     relay.register(app);
     const bodyWithCallerMetadata = JSON.stringify({
       ...JSON.parse(requestBody()),
       metadata: { user_id: "raw-caller-id" },
+      tools: [{
+        name: "read",
+        description: "Read a file",
+        input_schema: { type: "object", properties: { path: { type: "string" } } },
+        eager_input_streaming: true,
+      }],
+      thinking: { type: "adaptive" },
+      context_management: {
+        edits: [{ type: "clear_thinking_20251015", keep: "all" }],
+      },
+      output_config: { effort: "low" },
     });
-    const response = await app.request("/v1/messages", fundedRequest(bodyWithCallerMetadata, {
+    const response = await app.request("/v1/messages?beta=true", fundedRequest(bodyWithCallerMetadata, {
       authorization: "Bearer caller-secret",
+      "anthropic-beta": CLAUDE_CODE_BETAS.join(","),
       "cf-aig-authorization": "Bearer caller-cloudflare",
       "cf-aig-api-token": "caller-token",
       "cf-aig-metadata": JSON.stringify({ prompt: "secret" }),
@@ -255,7 +305,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     expect(response.status).toBe(200);
     await response.text();
     await vi.waitFor(() => expect(events).toContain("finalize"));
-    expect(events).toEqual(["check", "cloudflare_count", "authorize", "start", "cloudflare_generate", "finalize"]);
+    expect(events).toEqual(["check", ...(reservationMode === "cloudflare-count" ? ["cloudflare_count"] : []), "authorize", "start", "cloudflare_generate", "finalize"]);
     await relay.close();
   });
 
@@ -358,6 +408,36 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     const response = await app.request("/v1/messages", fundedRequest(requestBody({ model: "claude-opus-5" })));
     expect(response.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
+  it("logs bounded field-only diagnostics for invalid request schemas", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn();
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+    const response = await app.request("/v1/messages", fundedRequest(JSON.stringify({
+      ...JSON.parse(requestBody()),
+      tools: [{
+        name: "read",
+        input_schema: { type: "object" },
+        future_streaming_mode: true,
+        secret_token: "must-not-be-logged",
+      }],
+    })));
+    expect(response.status).toBe(400);
+    expect(warn).toHaveBeenCalledWith("[proxy] Funded AI request rejected", {
+      errorName: "ZodError",
+      issues: [{
+        code: "unrecognized_keys",
+        path: "tools.0",
+        keys: ["future_streaming_mode", "<redacted>"],
+      }],
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("must-not-be-logged");
+    expect(fetchMock).not.toHaveBeenCalled();
+    warn.mockRestore();
     await relay.close();
   });
 

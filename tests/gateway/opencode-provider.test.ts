@@ -160,13 +160,22 @@ describe("OpenCode coding-agent provider", () => {
     });
   });
 
-  it("runs the verified JSON contract with exact model, safe config, and selected credentials", async () => {
+  it.each([
+    ["https://relay.example.test", "https://relay.example.test/v1"],
+    ["https://relay.example.test/", "https://relay.example.test/v1"],
+    ["https://relay.example.test/v1", "https://relay.example.test/v1"],
+    ["https://relay.example.test/v1/", "https://relay.example.test/v1"],
+    ["https://relay.example.test/anthropic", "https://relay.example.test/anthropic/v1"],
+  ])("runs the JSON contract with the API prefix for %s", async (baseUrl, expectedBaseUrl) => {
     const fake = fakeSpawn([
       line("step_start", { part: { id: "part_step", type: "step-start" } }),
       line("text", { part: { id: "part_text", type: "text", text: "Done", time: { end: 1 } } }),
     ]);
     const adapter = provider(fake.spawnFn, {
       env: { PATH: "/runtime/bin", UPGRADE_TOKEN: "gateway-secret" },
+      resolveCredentialLaunch: async () => ({
+        env: { ANTHROPIC_API_KEY: "selected-key", ANTHROPIC_BASE_URL: baseUrl },
+      }),
     });
 
     const result = await adapter.startThread({ principal, thread: thread(), request: request(), now: () => now, nextEventId: ids() });
@@ -177,7 +186,7 @@ describe("OpenCode coding-agent provider", () => {
       "--model", "anthropic/claude-sonnet-5", "Inspect the project",
     ]);
     expect(fake.calls[0]!.env).toMatchObject({
-      PATH: "/runtime/bin",
+      PATH: "/opt/matrix/runtime/node/bin:/runtime/bin",
       ANTHROPIC_API_KEY: "selected-key",
       OPENCODE_DISABLE_PROJECT_CONFIG: "1",
       OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
@@ -188,8 +197,10 @@ describe("OpenCode coding-agent provider", () => {
     expect(config).toMatchObject({
       snapshot: false,
       permission: { "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow" },
-      provider: { anthropic: { options: { baseURL: "https://relay.example.test" } } },
+      provider: { anthropic: { options: { baseURL: expectedBaseUrl } } },
     });
+    expect(fake.calls[0]!.env.ANTHROPIC_BASE_URL).toBe(baseUrl);
+    expect(`${config.provider.anthropic.options.baseURL}/messages`).toBe(`${expectedBaseUrl}/messages`);
     expect(config.permission).not.toHaveProperty("webfetch");
     expect(config.permission).not.toHaveProperty("websearch");
     expect(result).toMatchObject({
@@ -302,7 +313,10 @@ describe("OpenCode coding-agent provider", () => {
         nextEventId: ids(),
       });
 
-      expect(fake.calls[0]!.env).toMatchObject({ HOME: homePath, PATH: "/runtime/bin" });
+      expect(fake.calls[0]!.env).toMatchObject({
+        HOME: homePath,
+        PATH: "/opt/matrix/runtime/node/bin:/runtime/bin",
+      });
       expect(fake.calls[0]!.env).not.toHaveProperty("ANTHROPIC_API_KEY");
       expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
         "--pure", "--model", "anthropic/claude-sonnet-5",
@@ -986,7 +1000,17 @@ describe("OpenCode coding-agent provider", () => {
         installStatus: "installed",
         authStatus: "unknown",
       });
-    expect(runCommand).toHaveBeenCalledWith("opencode", ["--version"], expect.objectContaining({ timeout: 1_500 }));
+    expect(runCommand).toHaveBeenCalledWith(
+      "/opt/matrix/runtime/node/bin/opencode",
+      ["--version"],
+      expect.objectContaining({
+        timeout: 1_500,
+        env: expect.objectContaining({
+          MATRIX_NODE_PREFIX: "/opt/matrix/runtime/node",
+          PATH: expect.stringContaining("/opt/matrix/runtime/node/bin"),
+        }),
+      }),
+    );
   });
 
   it("reports the fixed owner-local OpenCode auth profile as authenticated without reading credentials", async () => {

@@ -14,6 +14,8 @@ import {
   type CanonicalComposerSelection,
 } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
 import { insertSharedComposerTextAtSelection } from "./shared-chat-composer-test-utils";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 function catalogFixture(): CanonicalProviderCatalog {
   const support = {
@@ -245,7 +247,7 @@ describe("SharedChatComposer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
 
-    expect(screen.getByRole("listbox", { name: "Models and providers" }).closest(".prompt-card"))
+    expect(screen.getByRole("listbox", { name: "Models and connections" }).closest(".prompt-card"))
       .toBeNull();
   });
 
@@ -255,7 +257,7 @@ describe("SharedChatComposer", () => {
     const picker = screen.getByRole("button", { name: "Choose model and provider" });
     expect(picker.hasAttribute("disabled")).toBe(true);
     fireEvent.click(picker);
-    expect(screen.queryByRole("listbox", { name: "Models and providers" })).toBeNull();
+    expect(screen.queryByRole("listbox", { name: "Models and connections" })).toBeNull();
   });
 
   it("uses a compact inline harness glyph for each model row", () => {
@@ -265,8 +267,19 @@ describe("SharedChatComposer", () => {
     const option = screen.getByRole("option", { name: /GPT-5.6-Sol/ });
     const glyph = option.querySelector<HTMLElement>('[data-provider-glyph="codex"]');
 
-    expect(glyph?.getAttribute("width")).toBe("13");
+    expect(glyph?.style.width).toBe("13px");
+    expect(glyph?.querySelector("img")?.getAttribute("src")).toBe("/agent-logos/codex.png");
     expect(glyph?.parentElement?.getAttribute("data-slot")).toBe("model-provider-glyph");
+  });
+
+  it("opens Agents & providers directly from the settings gear, not the model menu", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useUi.setState({ requestedSettingsSection: null });
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Open Agents & providers settings" }));
+    expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
+    expect(screen.queryByRole("listbox", { name: "Models and connections" })).toBeNull();
   });
 
   it.each([
@@ -398,7 +411,7 @@ describe("SharedChatComposer", () => {
     render(<Harness menuSide="bottom" initialValue="/" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    expect(screen.getByRole("listbox", { name: "Models and providers" })
+    expect(screen.getByRole("listbox", { name: "Models and connections" })
       .closest('[data-slot="provider-model-picker"]')?.getAttribute("data-preferred-side"))
       .toBe("bottom");
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
@@ -456,8 +469,8 @@ describe("SharedChatComposer", () => {
     const model = screen.getByRole("option", { name: /gpt-5.3-codex-spark/ });
 
     expect(model.textContent).toContain("OpenAI Codex");
-    expect(model.querySelector('[data-provider-glyph="codex"]')).toBeTruthy();
-    expect(model.querySelector('[data-provider-glyph="hermes"]')).toBeNull();
+    expect(model.textContent).toContain("Hermes");
+    expect(model.querySelector('[data-provider-glyph="hermes"]')).toBeTruthy();
   });
 
   it("hides models that are not available from an otherwise available system harness", () => {
@@ -494,9 +507,8 @@ describe("SharedChatComposer", () => {
     render(<Harness />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    expect(screen.queryByRole("option", { name: /Claude Opus 4.6/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Claude Code harness, Available" }));
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search models" }), {
+    expect(screen.getByRole("option", { name: /Claude Opus 4.6/ })).toBeTruthy();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search models and connections" }), {
       target: { value: "opus" },
     });
     fireEvent.click(screen.getByRole("option", { name: /Claude Opus 4.6/ }));
@@ -511,15 +523,8 @@ describe("SharedChatComposer", () => {
     render(<Harness onProviderSetup={onProviderSetup} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const opencode = screen.getByRole("button", { name: "OpenCode harness, Authentication required" });
-
-    expect(opencode.getAttribute("aria-disabled")).toBe("false");
-    expect(opencode.hasAttribute("disabled")).toBe(false);
-    expect(opencode.className).toContain("opacity-35");
-    expect(opencode.getAttribute("title")).toContain("OpenCode — Authentication required");
-    fireEvent.click(opencode);
-    expect(screen.getByText("No models found.")).toBeTruthy();
-    expect(screen.queryByRole("option")).toBeNull();
+    fireEvent.click(screen.getByText("Manage agents"));
+    expect(screen.getByText("OpenCode — Authentication required")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
     expect(onProviderSetup).toHaveBeenCalledWith("opencode_default", "opencode_connect");
   });
@@ -529,41 +534,21 @@ describe("SharedChatComposer", () => {
     render(<Harness onProviderSetup={onProviderSetup} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(screen.getByRole("button", { name: "Hermes harness, Unavailable" }));
+    fireEvent.click(screen.getByText("Manage agents"));
     fireEvent.click(screen.getByRole("button", { name: "Configure Hermes" }));
 
     expect(onProviderSetup).toHaveBeenCalledWith("hermes_default", "hermes_settings");
-    expect(screen.queryByRole("listbox", { name: "Models and providers" })).toBeNull();
+    expect(screen.queryByRole("listbox", { name: "Models and connections" })).toBeNull();
   });
 
-  it("uses a recognizable product glyph for every Harness rail item", () => {
+  it("keeps unavailable agents under Manage agents instead of mixing them with ready model choices", () => {
     render(<Harness />);
-
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const generalAgents = screen.getByRole("group", { name: "General agents" });
-    const codingAgents = screen.getByRole("group", { name: "Coding agents" });
-    expect(within(generalAgents).getByRole("button", { name: "Hermes harness, Unavailable" })).toBeTruthy();
-    expect(within(generalAgents).getByRole("button", { name: "OpenClaw harness, Unavailable" })).toBeTruthy();
-    expect(within(codingAgents).getByRole("button", { name: "Codex harness, Available" })).toBeTruthy();
-    expect(within(codingAgents).getByRole("button", { name: "Claude Code harness, Available" })).toBeTruthy();
-    expect(within(codingAgents).getByRole("button", { name: "OpenCode harness, Authentication required" })).toBeTruthy();
-    expect(within(codingAgents).getByRole("button", { name: "Pi harness, Unavailable" })).toBeTruthy();
-    const harnesses = [
-      ["Hermes harness, Unavailable", "hermes"],
-      ["OpenClaw harness, Unavailable", "openclaw"],
-      ["Codex harness, Available", "codex"],
-      ["Claude Code harness, Available", "claude_code"],
-      ["OpenCode harness, Authentication required", "opencode"],
-      ["Pi harness, Unavailable", "pi"],
-    ] as const;
-
-    for (const [name, kind] of harnesses) {
-      expect(screen.getByRole("button", { name }).querySelector(`[data-provider-glyph="${kind}"]`))
-        .toBeTruthy();
-    }
-    expect(screen.getByRole("button", { name: "Hermes harness, Unavailable" })
-      .querySelector('img[data-provider-glyph="hermes"]')?.getAttribute("src"))
-      .toContain("hermes-provider.png");
+    expect(screen.getByText("Manage agents").parentElement?.hasAttribute("open")).toBe(false);
+    expect(screen.getAllByRole("option").every((option) => !option.textContent?.includes("OpenCode"))).toBe(true);
+    fireEvent.click(screen.getByText("Manage agents"));
+    expect(screen.getByRole("button", { name: "Connect OpenCode" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Configure Hermes" })).toBeTruthy();
   });
 
   it("keeps model selection available but explains the locked Instance", () => {
@@ -571,14 +556,14 @@ describe("SharedChatComposer", () => {
     render(<Harness locked onNewChat={onNewChat} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    expect(screen.getByText("Provider Instance is locked after the first Turn.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Claude Code harness, Available" }).getAttribute("aria-disabled"))
-      .toBe("true");
+    expect(screen.getByText("This chat keeps its agent. Start a new chat to switch.")).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Claude Opus 4.6/ }).hasAttribute("disabled")).toBe(true);
     fireEvent.click(screen.getByRole("option", { name: /GPT-5.6-Terra/ }));
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("GPT-5.6-Terra");
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByText("Manage agents"));
     fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
     expect(onNewChat).toHaveBeenCalledOnce();
   });
@@ -588,10 +573,8 @@ describe("SharedChatComposer", () => {
     render(<Harness locked onProviderSetup={onProviderSetup} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const opencode = screen.getByRole("button", { name: "OpenCode harness, Authentication required" });
-    expect(opencode.getAttribute("aria-disabled")).toBe("false");
-
-    fireEvent.click(opencode);
+    fireEvent.click(screen.getByText("Manage agents"));
+    expect(screen.getByText("OpenCode — Authentication required")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
 
     expect(onProviderSetup).toHaveBeenCalledWith("opencode_default", "opencode_connect");
@@ -921,7 +904,7 @@ describe("SharedChatComposer", () => {
   it("navigates the model picker from its search field", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const search = screen.getByRole("searchbox", { name: "Search models" });
+    const search = screen.getByRole("searchbox", { name: "Search models and connections" });
 
     fireEvent.keyDown(search, { key: "ArrowDown" });
     expect(document.activeElement).toBe(screen.getByRole("option", { name: /GPT-5.6-Sol/ }));

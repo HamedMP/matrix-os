@@ -2171,6 +2171,7 @@ describe("ChatRepository", () => {
         chat_id: created.chat.id,
         seq,
         role: "assistant" as const,
+        purpose: "assistant" as const,
         state: "committed" as const,
         turn_id: null,
         run_id: null,

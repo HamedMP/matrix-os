@@ -364,10 +364,10 @@ describe("draft chat implicit thread creation", () => {
     fireEvent.keyDown(composer, { key: "Enter" });
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const harness = screen.getByRole("button", { name: `Codex harness, ${availability}` });
-    expect(harness.className).toContain("opacity-35");
+    expect(screen.getByRole("status").textContent).toContain("No ready connections");
+    fireEvent.click(screen.getByText("Manage agents"));
+    if (providers.length > 0) expect(screen.getByText(`Codex — ${availability}`)).toBeTruthy();
     if (action) {
-      fireEvent.click(harness);
       expect(screen.getByRole("button", { name: action })).toBeTruthy();
     }
     expect(composer.getAttribute("contenteditable")).toBe("true");

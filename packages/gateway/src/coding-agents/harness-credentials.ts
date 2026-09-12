@@ -1,4 +1,5 @@
 import {
+  isNativeGenericHarnessCredentialRoute,
   isPortableGenericHarnessCredentialRoute,
   type ProviderHarnessKind,
   type ProviderSettingsSnapshot,
@@ -75,8 +76,14 @@ export function createCodingHarnessCredentialResolver(options: {
       throw new Error(SAFE_ERROR);
     }
     const source = snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+    if (isNativeGenericHarnessCredentialRoute(harness, source)) {
+      // Pi/OpenCode own this profile under HOME. The child environment remains
+      // allowlisted by the adapter and receives no gateway/provider secrets.
+      return { env: {} };
+    }
     if (!isPortableGenericHarnessCredentialRoute(harness, source)) throw new Error(SAFE_ERROR);
-    const parsedSource = KernelCredentialAccessSourceIdSchema.safeParse(harness.accessSourceId);
+    const managedGlm = harness.accessSourceId === "matrix_cloudflare";
+    const parsedSource = KernelCredentialAccessSourceIdSchema.safeParse(managedGlm ? "matrix_included" : harness.accessSourceId);
     if (!parsedSource.success) throw new Error(SAFE_ERROR);
     const launch = await resolveCredentialLaunch(
       options.homePath,
@@ -87,8 +94,12 @@ export function createCodingHarnessCredentialResolver(options: {
     signal?.throwIfAborted();
     const env = portableEnvironment(launch.env);
     if (!env.ANTHROPIC_API_KEY) throw new Error(SAFE_ERROR);
+    if (managedGlm && !env.ANTHROPIC_BASE_URL) throw new Error(SAFE_ERROR);
     return {
-      env,
+      env: managedGlm ? {
+        OPENAI_API_KEY: env.ANTHROPIC_API_KEY,
+        OPENAI_BASE_URL: `${env.ANTHROPIC_BASE_URL!.replace(/\/+$/, "").replace(/\/v1$/, "")}/v1`,
+      } : env,
       ...(launch.fundedRunTimeoutMs ? { maxRunMs: launch.fundedRunTimeoutMs } : {}),
     };
   };

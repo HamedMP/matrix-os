@@ -10,7 +10,8 @@ export type AiFundedPolicyErrorCode =
   | "reservation_expired"
   | "reservation_closed"
   | "revision_conflict"
-  | "unauthorized";
+  | "unauthorized"
+  | "unavailable";
 
 export class AiFundedPolicyError extends Error {
   constructor(readonly code: AiFundedPolicyErrorCode) {

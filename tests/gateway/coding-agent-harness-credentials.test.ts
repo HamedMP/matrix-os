@@ -72,6 +72,21 @@ function snapshot(
 }
 
 describe("coding harness credential resolution", () => {
+  it.each(["pi", "opencode"] as const)("maps %s's managed GLM route to only OpenAI-compatible lease credentials", async (harness) => {
+    const value = snapshot(harness, "matrix_included");
+    value.accessSources[0] = { ...value.accessSources[0]!, id: "matrix_cloudflare", providerId: "cloudflare", eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"] };
+    value.harnesses[0]!.accessSourceId = "matrix_cloudflare";
+    value.harnesses[0]!.route = { kind: "configurable", providerId: "cloudflare", modelId: "@cf/zai-org/glm-5.3-flash" };
+    const resolveCredentialLaunch = vi.fn(async () => ({ env: {
+      ANTHROPIC_API_KEY: "lease-token", ANTHROPIC_BASE_URL: "https://relay.example.test/",
+      DATABASE_URL: "postgres://private",
+    } }));
+    const resolver = createCodingHarnessCredentialResolver({
+      harness, homePath: "/home/matrix/home", settings: { getSnapshot: async () => value }, resolveCredentialLaunch,
+    });
+    expect(await resolver()).toEqual({ env: { OPENAI_API_KEY: "lease-token", OPENAI_BASE_URL: "https://relay.example.test/v1" } });
+    expect(resolveCredentialLaunch.mock.calls[0]?.[2]).toBe("matrix_included");
+  });
   it.each([
     ["pi", ".pi/agent/auth.json"],
     ["opencode", ".local/share/opencode/auth.json"],
@@ -163,5 +178,39 @@ describe("coding harness credential resolution", () => {
     });
 
     expect(await resolver()).toEqual({ env: { ANTHROPIC_API_KEY: "owner-key" } });
+  });
+
+  it("uses a harness-owned profile without injecting or resolving provider secrets", async () => {
+    const value = snapshot("opencode", "matrix_included");
+    value.modelProviders = [{
+      id: "baseten",
+      displayName: "Baseten",
+      models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true }],
+    }];
+    value.accessSources = [{
+      ...value.accessSources[0]!,
+      id: "harness_opencode_baseten",
+      kind: "harness_profile",
+      harness: "opencode",
+      fundingKind: "owner_account",
+      providerId: "baseten",
+      accountId: null,
+      displayName: "OpenCode account",
+      eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+    }];
+    Object.assign(value.harnesses[0]!, {
+      accessSourceId: "harness_opencode_baseten",
+      route: { kind: "configurable", providerId: "baseten", modelId: "baseten:zai-org/GLM-5.3" },
+    });
+    const resolveCredentialLaunch = vi.fn();
+    const resolver = createCodingHarnessCredentialResolver({
+      harness: "opencode",
+      homePath: "/home/matrix/home",
+      settings: { getSnapshot: async () => value },
+      resolveCredentialLaunch,
+    });
+
+    await expect(resolver()).resolves.toEqual({ env: {} });
+    expect(resolveCredentialLaunch).not.toHaveBeenCalled();
   });
 });

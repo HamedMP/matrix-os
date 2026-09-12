@@ -22,6 +22,7 @@ import {
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
@@ -264,6 +265,7 @@ import {
 import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
 import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
+import { createGenericHarnessModelCatalogReader } from "./ai-providers/generic-harness-model-catalog.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
@@ -4018,6 +4020,12 @@ export async function createGateway(config: GatewayConfig) {
   const aiProviderService = new AiProviderService({
     homePath,
     fundedCredentialProvider,
+    fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
+      ? createFundedAiReadinessReader({
+        relayBaseUrl: fundedAiRuntimeConfig.relayBaseUrl,
+        summary: fundedAiFundingSummaryReader,
+      })
+      : undefined,
     driverInventory: createProviderDriverInventoryReader({
       detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
       runtimeSource: agentRuntimeServices.source,
@@ -4043,6 +4051,12 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
+  const genericHarnessModelCatalog = createGenericHarnessModelCatalogReader({
+    homePath,
+    enabledHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
+    ),
+  });
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
@@ -4050,6 +4064,7 @@ export async function createGateway(config: GatewayConfig) {
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
+    genericModelCatalogReader: genericHarnessModelCatalog,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,

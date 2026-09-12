@@ -31,14 +31,19 @@ export type {
 export {
   ProviderSettingsController,
   ProviderSettingsTransportError,
+  openProviderAgentSetup,
   useProviderSettingsController,
 } from "./agents-providers/provider-settings-controller.js";
 
 export {
   canonicalProviderAvailabilityLabel,
   deriveCanonicalProviderChoices,
+  orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
+export { CompactChatProviderChoices } from "./compact-chat-provider-choices.js";
+export { HarnessIcon } from "./agents-providers/HarnessRail.js";
+export { CODING_AGENT_ARTWORK } from "./coding-agent-artwork.js";
 export {
   ChatEventFrameTooLarge,
   createCanonicalChatEventSource as createSharedCanonicalChatEventSource,
@@ -57,6 +62,7 @@ export type {
   ProviderSettingsTransportErrorCode,
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
+export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
 

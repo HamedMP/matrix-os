@@ -101,6 +101,18 @@ describe("Terminal WebSocket protocol", () => {
     expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal/tab");
   });
 
+  it("does not confuse server-created login names with canonical workspace/tab refs", () => {
+    const sessionId = `provider-auth-${"a".repeat(50)}`;
+    expect(sessionId).toHaveLength(64);
+    expect(isCanonicalShellSessionId(sessionId)).toBe(false);
+    expect(terminalWebSocketPathForSession(sessionId)).toBe("/ws/terminal/tab");
+    for (const invalid of ["", `${sessionId}a`, "../login", "login?token=x", "LOGIN", "-login", "login\n"]) {
+      expect(isCanonicalShellSessionId(invalid)).toBe(false);
+    }
+    expect(terminalWebSocketPathForSession("550E8400-E29B-41D4-A716-446655440000"))
+      .toBe("/ws/terminal/tab");
+  });
+
   it("uses two-word friendly terminal session names by default", () => {
     vi.spyOn(Math, "random")
       .mockReturnValueOnce(0)

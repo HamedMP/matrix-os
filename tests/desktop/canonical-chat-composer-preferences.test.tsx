@@ -143,8 +143,7 @@ describe("Canonical Chat composer preferences", () => {
 
     await screen.findByRole("textbox", { name: "Start a chat" });
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(screen.getByRole("button", { name: "Claude Code harness, Available" }));
-    fireEvent.click(screen.getByRole("option", { name: /Claude Sonnet 4\.6/ }));
+    fireEvent.click(screen.getByRole("option", { name: /Claude Sonnet 4\.6 via Claude/i }));
     expect(screen.getByRole("button", { name: "Choose model and provider" })
       .getAttribute("data-provider-instance")).toBe("claude_fixture");
     expect(screen.getByRole("button", { name: "Choose model and provider" })

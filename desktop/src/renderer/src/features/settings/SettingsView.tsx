@@ -15,8 +15,7 @@ import { useEffect, useState } from "react";
 import AccountSection from "./sections/AccountSection";
 import AppearanceSection from "./sections/AppearanceSection";
 import RuntimeSection from "./sections/RuntimeSection";
-import AgentSection from "./sections/AgentSection";
-import ProvidersSection from "./sections/ProvidersSection";
+import AgentsProvidersAdapter from "./AgentsProvidersAdapter";
 import IdentityPersonalitySection from "./sections/IdentityPersonalitySection";
 import BillingSection from "./sections/BillingSection";
 import IntegrationsSettingsSection from "../integrations/IntegrationsSettingsSection";
@@ -69,15 +68,6 @@ export function isSettingsSectionId(value: string): value is SettingsSectionId {
 export function resolveSettingsSectionId(value: string): SettingsSectionId | null {
   if (value === "agent" || value === "providers") return "agents-providers";
   return isSettingsSectionId(value) ? value : null;
-}
-
-function LegacyAgentsProvidersSettings() {
-  return (
-    <div data-settings-adapter="agents-providers-legacy">
-      <AgentSection />
-      <ProvidersSection />
-    </div>
-  );
 }
 
 export function SettingsSidebar({
@@ -156,7 +146,7 @@ export default function SettingsView({
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
-          {section === "agents-providers" ? <LegacyAgentsProvidersSettings /> : null}
+          {section === "agents-providers" ? <AgentsProvidersAdapter /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}

@@ -329,7 +329,7 @@ describe("pi provider adapter — spawn contract", () => {
 
     expect(fake.calls).toHaveLength(1);
     const call = fake.calls[0]!;
-    expect(call.command).toBe("pi");
+    expect(call.command).toBe("/opt/matrix/runtime/node/bin/pi");
     expect(call.cwd).toBe("/work/repo");
     // pi rejects "--" as an unknown option, so the prompt is the bare
     // trailing positional argument.
@@ -444,7 +444,10 @@ describe("pi provider adapter — spawn contract", () => {
       nextEventId: nextEventIdFactory(),
     });
 
-    expect(fake.calls[0]!.env).toMatchObject({ HOME: homePath, PATH: "/runtime/bin" });
+    expect(fake.calls[0]!.env).toMatchObject({
+      HOME: homePath,
+      PATH: "/opt/matrix/runtime/node/bin:/runtime/bin",
+    });
     expect(fake.calls[0]!.env).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(fake.calls[0]!.args).toEqual(expect.arrayContaining([
       "--offline",
@@ -499,7 +502,7 @@ describe("pi provider adapter — spawn contract", () => {
 
     expect(resolveCredentialLaunch).toHaveBeenCalledOnce();
     expect(fake.calls[0]!.env).toMatchObject({
-      PATH: "/runtime/bin",
+      PATH: "/opt/matrix/runtime/node/bin:/runtime/bin",
       ANTHROPIC_API_KEY: "selected-key",
       ANTHROPIC_BASE_URL: "https://relay.example.test",
     });
