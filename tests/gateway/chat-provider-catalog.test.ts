@@ -491,7 +491,7 @@ describe("canonical Chat Provider catalog", () => {
 
   it("publishes native Pi and OpenCode model discovery instead of a synthetic default", async () => {
     const runCommand = vi.fn(async (command: string) => ({
-      stdout: command === "pi"
+      stdout: command.endsWith("/pi") || command === "pi"
         ? [
             "provider   model            context  max-out  thinking  images",
             "anthropic  claude-sonnet-5  200K     64K      yes       yes",
@@ -530,6 +530,10 @@ describe("canonical Chat Provider catalog", () => {
       defaultSelection: { model: "opencode:big-pickle" },
     });
     expect(runCommand).toHaveBeenCalledTimes(2);
+    expect(runCommand.mock.calls.map(([command]) => command)).toEqual([
+      "/opt/matrix/runtime/node/bin/pi",
+      "/opt/matrix/runtime/node/bin/opencode",
+    ]);
   });
 
   it.each(["pi", "opencode"] as const)(
