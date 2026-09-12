@@ -13,3 +13,11 @@ export const MAX_TERMINAL_SNAPSHOT_BYTES =
 export const MAX_TERMINAL_RUNTIME_REQUEST_FRAME_BYTES = 8 * 1024 * 1024;
 export const MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES =
   MAX_TERMINAL_SNAPSHOT_BYTES + (1024 * 1024);
+
+// Dense tab creation has one aggregate operation deadline. Each child command
+// receives only the remaining time, so work cannot continue after the caller's
+// request has failed. The socket layers retain explicit response margin.
+export const TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS = 30_000;
+export const TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS = 150_000;
+export const TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS = 180_000;
+export const TERMINAL_RUNTIME_CLIENT_REQUEST_TIMEOUT_MS = 210_000;

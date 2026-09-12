@@ -10,6 +10,10 @@ import {
   MAX_TERMINAL_RUNTIME_REQUEST_FRAME_BYTES,
   MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
   MAX_TERMINAL_SNAPSHOT_BYTES,
+  TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+  TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
+  TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS,
+  TERMINAL_RUNTIME_CLIENT_REQUEST_TIMEOUT_MS,
 } from "../../packages/terminal-runtime/src/limits.js";
 
 const directories: string[] = [];
@@ -19,6 +23,15 @@ afterEach(async () => {
 });
 
 describe("terminal runtime Unix socket API", () => {
+  it("keeps the end-to-end request deadline above the dense multi-command budget", () => {
+    expect(TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS)
+      .toBeGreaterThan(TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS);
+    expect(TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS)
+      .toBeGreaterThan(TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS);
+    expect(TERMINAL_RUNTIME_CLIENT_REQUEST_TIMEOUT_MS)
+      .toBeGreaterThan(TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS);
+  });
+
   it("keeps legacy five MiB snapshots within a finite socket-frame bound", () => {
     const value = { type: "snapshot", ansi: "x".repeat(5 * 1024 * 1024) };
     const frame = encodeSocketFrame(value);

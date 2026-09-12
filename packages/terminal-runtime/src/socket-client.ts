@@ -12,7 +12,10 @@ import {
 import { z } from "zod/v4";
 import { terminalRuntimeErrorFromDetails } from "./errors.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
-import { MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES } from "./limits.js";
+import {
+  MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
+  TERMINAL_RUNTIME_CLIENT_REQUEST_TIMEOUT_MS,
+} from "./limits.js";
 import {
   TerminalRuntimeResponseSchema,
   type TerminalRuntimeRequest,
@@ -34,7 +37,7 @@ export class TerminalRuntimeSocketClient {
 
   constructor(options: TerminalRuntimeSocketClientOptions) {
     this.socketPath = options.socketPath;
-    this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.timeoutMs = options.timeoutMs ?? TERMINAL_RUNTIME_CLIENT_REQUEST_TIMEOUT_MS;
   }
 
   async listWorkspaces(): Promise<TerminalWorkspace[]> {

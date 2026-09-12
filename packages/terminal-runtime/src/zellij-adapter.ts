@@ -10,6 +10,10 @@ import type {
   ZellijObserverEvent,
   ZellijRuntimeAdapter,
 } from "./runtime.js";
+import {
+  TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+  TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
+} from "./limits.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
@@ -101,7 +105,11 @@ export interface ZellijCliRuntimeAdapterOptions {
 export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   private readonly homePath: string;
   private readonly binaryPath: string;
-  private readonly runCommand: NonNullable<ZellijCliRuntimeAdapterOptions["run"]>;
+  private readonly runCommand: (
+    args: string[],
+    binaryPath?: string,
+    timeoutMs?: number,
+  ) => Promise<string>;
   private readonly resolveRealpath: (path: string) => Promise<string>;
   private readonly spawnPtyProcess: NonNullable<ZellijCliRuntimeAdapterOptions["spawnPty"]>;
   private readonly spawnSubscriptionProcess: NonNullable<ZellijCliRuntimeAdapterOptions["spawnSubscription"]>;
@@ -122,17 +130,21 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       binaryPath: this.binaryPath,
       cwd: this.homePath,
       env: this.runtimeEnvironment,
-      timeoutMs: options.timeoutMs ?? 10_000,
+      timeoutMs: options.timeoutMs ?? TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
     });
-    this.runCommand = options.run ?? ((args, binaryPath) => {
-      if (!binaryPath || binaryPath === this.binaryPath) return currentGenerationRunner(args);
-      return createCommandRunner({
-        binaryPath,
-        cwd: this.homePath,
-        env: this.runtimeEnvironment,
-        timeoutMs: options.timeoutMs ?? 10_000,
-      })(args);
-    });
+    this.runCommand = options.run
+      ? ((args, binaryPath) => binaryPath === undefined
+          ? options.run!(args)
+          : options.run!(args, binaryPath))
+      : ((args, binaryPath, timeoutMs) => {
+        if (!binaryPath || binaryPath === this.binaryPath) return currentGenerationRunner(args, timeoutMs);
+        return createCommandRunner({
+          binaryPath,
+          cwd: this.homePath,
+          env: this.runtimeEnvironment,
+          timeoutMs: options.timeoutMs ?? TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+        })(args, timeoutMs);
+      });
     this.resolveRealpath = options.resolveRealpath ?? nodeRealpath;
     this.spawnPtyProcess = options.spawnPty ?? ((args, spawnOptions) => {
       return spawnNodePty(spawnOptions.binaryPath ?? this.binaryPath, args, {
@@ -177,6 +189,94 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     return this.createTab(sessionName, input);
   }
 
+  async prepareShellTabs(sessionNameInput: string, inputs: Array<{
+    internalName: string;
+    cwd: string;
+    command?: string[];
+  }>, operationDeadline?: number): Promise<Record<string, { tabId: number; paneId: string }>> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const requested = z.array(z.object({
+      internalName: z.string().regex(TAB_NAME),
+      cwd: z.string(),
+      command: z.array(z.string()).max(1_000).optional(),
+    }).strict()).max(10_000).parse(inputs);
+    if (new Set(requested.map((input) => input.internalName)).size !== requested.length) {
+      throw new Error("Terminal tab names must be unique");
+    }
+    if (requested.length === 0) return {};
+
+    const tabs = await this.readStructuredJson(
+      ["--session", sessionName, "action", "list-tabs", "--json"],
+      z.array(TabSchema).max(10_000),
+      binaryPath,
+      operationDeadline,
+    );
+    const bootstrap = tabs.find((tab) => tab.name === "matrix-bootstrap");
+    const tabsByName = new Map(tabs.map((tab) => [tab.name, tab]));
+    const tabIds = new Map(
+      requested.flatMap((input) => {
+        const tab = tabsByName.get(input.internalName);
+        return tab ? [[input.internalName, tab.tab_id] as const] : [];
+      }),
+    );
+    const missing = requested.filter((input) => !tabIds.has(input.internalName));
+    const resolvedCwds = new Map(await Promise.all(missing.map(async (input) => [
+      input.internalName,
+      await this.resolveCwd(input.cwd),
+    ] as const)));
+
+    for (const input of missing) {
+      const cwd = resolvedCwds.get(input.internalName)!;
+      const output = await this.run([
+        "--session", sessionName, "action", "new-tab",
+        "--name", input.internalName,
+        "--cwd", cwd,
+        ...(input.command ? ["--", ...input.command] : []),
+      ], binaryPath, remainingCommandTimeout(operationDeadline));
+      const outputTabId = output.trim();
+      const tabId = /^\d+$/.test(outputTabId)
+        ? z.coerce.number().int().min(0).parse(outputTabId)
+        : await this.waitForTabId(sessionName, input.internalName, binaryPath, operationDeadline);
+      tabIds.set(input.internalName, tabId);
+    }
+    if (bootstrap) {
+      await this.run([
+        "--session", sessionName, "action", "close-tab", "--tab-id", String(bootstrap.tab_id),
+      ], binaryPath, remainingCommandTimeout(operationDeadline));
+    }
+
+    const panes = await this.waitForManagedPanes(
+      sessionName,
+      [...tabIds.values()],
+      binaryPath,
+      operationDeadline,
+    );
+    const panesByTab = new Map<number, Array<z.infer<typeof PaneSchema>>>();
+    for (const pane of panes) {
+      if (pane.is_plugin) continue;
+      const tabPanes = panesByTab.get(pane.tab_id) ?? [];
+      tabPanes.push(pane);
+      panesByTab.set(pane.tab_id, tabPanes);
+    }
+    const prepared: Record<string, { tabId: number; paneId: string }> = {};
+    for (const input of requested) {
+      const tabId = tabIds.get(input.internalName);
+      if (tabId === undefined) throw new Error("Managed terminal tab failed to report its identifier");
+      const managedPanes = panesByTab.get(tabId) ?? [];
+      const primaryPane = managedPanes.find((pane) => pane.pane_title === input.internalName)
+        ?? managedPanes.toSorted((left, right) => left.id - right.id)[0];
+      if (!primaryPane) throw new Error("Managed terminal tab primary pane is unavailable");
+      const paneId = `terminal_${primaryPane.id}`;
+      if (primaryPane.pane_title !== input.internalName) {
+        await this.run([
+          "--session", sessionName, "action", "rename-pane", "--pane-id", paneId, input.internalName,
+        ], binaryPath, remainingCommandTimeout(operationDeadline));
+      }
+      prepared[input.internalName] = { tabId, paneId };
+    }
+    return prepared;
+  }
+
   async stopLegacySessions(namesInput: string[]): Promise<void> {
     const names = z.array(z.string().regex(LEGACY_SESSION_NAME)).max(10_000).parse(namesInput);
     for (const name of names) {
@@ -210,31 +310,14 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     cwd: string;
     command?: string[];
   }): Promise<{ tabId: number; paneId: string }> {
-    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
     const internalName = z.string().regex(TAB_NAME).parse(input.internalName);
-    const cwd = await this.resolveCwd(input.cwd);
-    const tabs = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-tabs", "--json"],
-      z.array(TabSchema).max(10_000),
-      binaryPath,
+    await this.resolveCwd(input.cwd);
+    const prepared = await this.prepareShellTabs(
+      sessionNameInput,
+      [{ ...input, internalName }],
+      Date.now() + TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
     );
-    const bootstrap = tabs.find((tab) => tab.name === "matrix-bootstrap");
-    const output = await this.run([
-      "--session", sessionName, "action", "new-tab",
-      "--name", internalName,
-      "--cwd", cwd,
-      ...(input.command ? ["--", ...input.command] : []),
-    ], binaryPath);
-    const outputTabId = output.trim();
-    const tabId = /^\d+$/.test(outputTabId)
-      ? z.coerce.number().int().min(0).parse(outputTabId)
-      : await this.waitForTabId(sessionName, internalName, binaryPath);
-    if (bootstrap) {
-      await this.run(["--session", sessionName, "action", "close-tab", "--tab-id", String(bootstrap.tab_id)], binaryPath);
-    }
-    const paneId = await this.waitForManagedPane(sessionName, tabId, binaryPath);
-    await this.run(["--session", sessionName, "action", "rename-pane", "--pane-id", paneId, internalName], binaryPath);
-    return { tabId, paneId };
+    return prepared[internalName]!;
   }
 
   async openAttachment(sessionNameInput: string, input: {
@@ -504,21 +587,26 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     return canonicalCwd;
   }
 
-  private run(args: string[], binaryPath = this.binaryPath): Promise<string> {
+  private run(args: string[], binaryPath = this.binaryPath, timeoutMs?: number): Promise<string> {
     return binaryPath === this.binaryPath
-      ? this.runCommand(args)
-      : this.runCommand(args, binaryPath);
+      ? this.runCommand(args, undefined, timeoutMs)
+      : this.runCommand(args, binaryPath, timeoutMs);
   }
 
   private async readStructuredJson<T>(
     args: string[],
     schema: z.ZodType<T>,
     binaryPath = this.binaryPath,
+    operationDeadline?: number,
   ): Promise<T> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
-        const output = (await this.run(args, binaryPath)).trim();
+        const output = (await this.run(
+          args,
+          binaryPath,
+          remainingCommandTimeout(operationDeadline),
+        )).trim();
         const arrayStart = output.indexOf("[");
         const objectStart = output.indexOf("{");
         const start = arrayStart < 0
@@ -539,34 +627,39 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     throw lastError instanceof Error ? lastError : new Error("Zellij structured command failed");
   }
 
-  private async waitForManagedPane(
+  private async waitForManagedPanes(
     sessionName: string,
-    tabId: number,
+    tabIds: number[],
     binaryPath = this.binaryPath,
-  ): Promise<string> {
+    operationDeadline?: number,
+  ): Promise<Array<z.infer<typeof PaneSchema>>> {
+    const requested = new Set(tabIds);
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const panes = await this.readStructuredJson(
         ["--session", sessionName, "action", "list-panes", "--all", "--json"],
         z.array(PaneSchema).max(10_000),
         binaryPath,
+        operationDeadline,
       );
-      const tabPanes = panes.filter((pane) => pane.tab_id === tabId && !pane.is_plugin);
-      if (tabPanes.length === 1) return `terminal_${tabPanes[0]!.id}`;
+      const ready = new Set(panes.filter((pane) => !pane.is_plugin).map((pane) => pane.tab_id));
+      if ([...requested].every((tabId) => ready.has(tabId))) return panes;
       await new Promise<void>((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
     }
-    throw new Error("Managed terminal tab must contain exactly one pane");
+    throw new Error("Managed terminal tabs must each contain a pane");
   }
 
   private async waitForTabId(
     sessionName: string,
     internalName: string,
     binaryPath = this.binaryPath,
+    operationDeadline?: number,
   ): Promise<number> {
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const tabs = await this.readStructuredJson(
         ["--session", sessionName, "action", "list-tabs", "--json"],
         z.array(TabSchema).max(10_000),
         binaryPath,
+        operationDeadline,
       );
       const tab = tabs.find((candidate) => candidate.name === internalName);
       if (tab) return tab.tab_id;
@@ -650,12 +743,12 @@ function createCommandRunner(options: {
   cwd: string;
   env: Record<string, string>;
   timeoutMs: number;
-}): (args: string[]) => Promise<string> {
-  return (args) => new Promise((resolve, reject) => {
+}): (args: string[], timeoutMs?: number) => Promise<string> {
+  return (args, timeoutMs) => new Promise((resolve, reject) => {
     nodeExecFile(options.binaryPath, args, {
       cwd: options.cwd,
       env: options.env,
-      timeout: options.timeoutMs,
+      timeout: timeoutMs ?? options.timeoutMs,
       maxBuffer: MAX_COMMAND_OUTPUT_BYTES,
     }, (error, stdout, stderr) => {
       if (error) {
@@ -666,6 +759,13 @@ function createCommandRunner(options: {
       } else resolve(String(stdout));
     });
   });
+}
+
+function remainingCommandTimeout(operationDeadline?: number): number | undefined {
+  if (operationDeadline === undefined) return undefined;
+  const remaining = operationDeadline - Date.now();
+  if (remaining <= 0) throw new Error("Terminal runtime operation timed out");
+  return Math.min(TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS, remaining);
 }
 
 function isMissingZellijSessionFailure(error: unknown): boolean {
