@@ -168,7 +168,12 @@ describe('Preview VPS provisioning workflow', () => {
     expect(deploy).toContain('activeWorkspaceServices');
     expect(deploy).toContain('Terminal migration verified');
     expect(workflow.jobs.diagnose_release.if).toContain("needs.gate.outputs.action == 'diagnose'");
-    expect(workflow.jobs.diagnose_release.steps[1].run).toContain('gatewayLifecycle');
+    const diagnose = workflow.jobs.diagnose_release.steps[1].run as string;
+    expect(diagnose).toContain('gatewayLifecycle');
+    expect(diagnose).toContain('gatewayExitFingerprints');
+    expect(diagnose).toContain('syncAgentLifecycle');
+    expect(diagnose).toContain('privilegedGatewayActions');
+    expect(diagnose).toContain('terminalMigration');
 
     const shellSyntax = spawnSync('bash', ['-n', '-c', deploy], { encoding: 'utf8' });
     expect(shellSyntax.stderr).toBe('');
@@ -179,6 +184,17 @@ describe('Preview VPS provisioning workflow', () => {
       const pythonSyntax = spawnSync('python3', [
         '-c',
         'import sys; compile(sys.argv[1], "preview-vps-inline", "exec")',
+        source!,
+      ], { encoding: 'utf8' });
+      expect(pythonSyntax.stderr).toBe('');
+      expect(pythonSyntax.status).toBe(0);
+    }
+    const diagnosticPythonBlocks = [...diagnose.matchAll(/<<'PYTHON'[^\n]*\n([\s\S]*?)\nPYTHON/g)];
+    expect(diagnosticPythonBlocks).toHaveLength(1);
+    for (const [, source] of diagnosticPythonBlocks) {
+      const pythonSyntax = spawnSync('python3', [
+        '-c',
+        'import sys; compile(sys.argv[1], "preview-vps-diagnostic-inline", "exec")',
         source!,
       ], { encoding: 'utf8' });
       expect(pythonSyntax.stderr).toBe('');

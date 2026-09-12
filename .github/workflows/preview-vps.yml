@@ -910,8 +910,44 @@ jobs:
           read -r -d '' lifecycle_script <<'PYTHON' || true
           import datetime
           import json
+          import os
+          import pwd
           import re
+          import stat
           import subprocess
+
+          SINCE = "2026-09-12 05:34:00 UTC"
+
+          def timestamp(entry):
+              value = entry.get("__REALTIME_TIMESTAMP")
+              if isinstance(value, str) and value.isdigit():
+                  return datetime.datetime.fromtimestamp(
+                      int(value) / 1_000_000, datetime.timezone.utc
+                  ).isoformat()
+              return "unknown"
+
+          def load_journal(arguments):
+              output = subprocess.run([
+                  "/usr/bin/journalctl", *arguments, "--since", SINCE,
+                  "--output=json", "--no-pager",
+              ], check=True, timeout=15, capture_output=True, text=True).stdout
+              entries = []
+              for raw in output.splitlines():
+                  try:
+                      entries.append(json.loads(raw))
+                  except json.JSONDecodeError:
+                      continue
+              return entries
+
+          def read_json(path, limit):
+              fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+              try:
+                  metadata = os.fstat(fd)
+                  if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 2 or metadata.st_size > limit:
+                      raise ValueError("invalid state file")
+                  return json.loads(os.read(fd, metadata.st_size + 1))
+              finally:
+                  os.close(fd)
 
           properties = subprocess.run([
               "/usr/bin/systemctl", "show", "matrix-gateway.service",
@@ -925,24 +961,35 @@ jobs:
               if separator:
                   current[key] = value
 
-          journal = subprocess.run([
-              "/usr/bin/journalctl", "--unit=matrix-gateway.service",
-              "--since=2026-09-12 05:34:00 UTC", "--output=json", "--no-pager",
-          ], check=True, timeout=15, capture_output=True, text=True).stdout
+          gateway_journal = load_journal(["--unit=matrix-gateway.service"])
           events = []
+          exit_fingerprints = []
           invocations = set()
-          for raw in journal.splitlines():
-              try:
-                  entry = json.loads(raw)
-              except json.JSONDecodeError:
-                  continue
+          fingerprint_patterns = {
+              "address_in_use": r"\bEADDRINUSE\b",
+              "module_missing": r"\bERR_MODULE_NOT_FOUND\b|Cannot find (?:module|package)",
+              "file_missing": r"\bENOENT\b",
+              "permission_denied": r"\bEACCES\b|permission denied",
+              "out_of_memory": r"out of memory|heap limit|oom-kill",
+              "uncaught_exception": r"uncaught exception|uncaughtException",
+              "unhandled_rejection": r"unhandled rejection|unhandledRejection",
+              "syntax_error": r"\bSyntaxError\b",
+              "type_error": r"\bTypeError\b",
+              "reference_error": r"\bReferenceError\b",
+              "terminal_runtime_error": r"terminal runtime.*(?:error|failed)|zellij.*(?:error|failed)",
+              "database_error": r"(?:postgres|database).*(?:error|failed)",
+          }
+          for entry in gateway_journal:
               invocation = entry.get("_SYSTEMD_INVOCATION_ID")
               if isinstance(invocation, str) and re.fullmatch(r"[0-9a-f]{32}", invocation):
                   invocations.add(invocation)
-              if entry.get("SYSLOG_IDENTIFIER") != "systemd" and entry.get("_COMM") != "systemd":
-                  continue
               message = entry.get("MESSAGE")
               if not isinstance(message, str):
+                  continue
+              if entry.get("SYSLOG_IDENTIFIER") != "systemd" and entry.get("_COMM") != "systemd":
+                  for name, pattern in fingerprint_patterns.items():
+                      if re.search(pattern, message, re.IGNORECASE):
+                          exit_fingerprints.append({"at": timestamp(entry), "category": name})
                   continue
               category = None
               if message.startswith("Starting "):
@@ -961,19 +1008,101 @@ jobs:
                   category = "automatic_restart_scheduled"
               if category is None:
                   continue
-              timestamp = entry.get("__REALTIME_TIMESTAMP")
-              if isinstance(timestamp, str) and timestamp.isdigit():
-                  at = datetime.datetime.fromtimestamp(int(timestamp) / 1_000_000, datetime.timezone.utc).isoformat()
-              else:
-                  at = "unknown"
-              events.append({"at": at, "category": category})
+              event = {"at": timestamp(entry), "category": category}
+              if category == "main_process_exited":
+                  match = re.search(r"code=([a-z-]+), status=([0-9]+)(?:/([A-Z-]+))?", message)
+                  if match:
+                      event["code"] = match.group(1) if re.fullmatch(r"[a-z-]+", match.group(1)) else "unknown"
+                      event["status"] = int(match.group(2))
+                      event["statusName"] = match.group(3) or "unknown"
+              events.append(event)
+
+          sync_events = []
+          sync_categories = (
+              ("Started for ", "agent_started"),
+              ("Starting update from ", "update_started"),
+              ("Stopping services", "runtime_stop_requested"),
+              ("Starting services", "runtime_start_requested"),
+              ("Health check passed", "update_health_passed"),
+              ("Restarting sync agent", "agent_restart_requested"),
+              ("Exact requested version", "already_current"),
+              ("Recovering interrupted update", "interrupted_update_recovery"),
+              ("ERROR:", "update_error"),
+              ("Update failed", "update_failed"),
+          )
+          for entry in load_journal(["--unit=matrix-sync-agent.service"]):
+              message = entry.get("MESSAGE")
+              if not isinstance(message, str) or not message.startswith("matrix-sync-agent:"):
+                  continue
+              payload = re.sub(r"^matrix-sync-agent:\s+[0-9TZ:-]+\s+", "", message)
+              for prefix, category in sync_categories:
+                  if payload.startswith(prefix):
+                      sync_events.append({"at": timestamp(entry), "category": category})
+                      break
+
+          privileged_actions = []
+          for entry in load_journal(["_COMM=sudo"]):
+              message = entry.get("MESSAGE")
+              if not isinstance(message, str) or "matrix-gateway" not in message or "systemctl" not in message:
+                  continue
+              category = None
+              if re.search(r"COMMAND=.*systemctl\s+stop\b.*matrix-gateway", message):
+                  category = "runtime_stop"
+              elif re.search(r"COMMAND=.*systemctl\s+restart\b.*matrix-gateway", message):
+                  category = "gateway_restart"
+              elif re.search(r"COMMAND=.*systemctl\s+start\b.*matrix-gateway", message):
+                  category = "gateway_start"
+              if category:
+                  privileged_actions.append({"at": timestamp(entry), "category": category})
+
+          terminal_migration = {"journalStatus": "unavailable", "stateSchemaVersion": -1,
+                                "workspaceCount": -1, "migratedLegacyTabs": -1,
+                                "activeWorkspaceServices": -1}
+          try:
+              home = "/home/matrix/home"
+              migration_journal = read_json(f"{home}/system/terminal-migration-journal.json", 16 * 1024 * 1024)
+              workspace_state = read_json(f"{home}/system/terminal-workspaces.json", 16 * 1024 * 1024)
+              workspaces = workspace_state.get("workspaces")
+              migrated_tabs = []
+              if isinstance(workspaces, dict):
+                  for workspace in workspaces.values():
+                      tabs = workspace.get("tabs") if isinstance(workspace, dict) else None
+                      if isinstance(tabs, dict):
+                          migrated_tabs.extend(
+                              tab for tab in tabs.values()
+                              if isinstance(tab, dict) and tab.get("migrationKey") in
+                              {"release-smoke-a", "release-smoke-b"}
+                          )
+              owner = pwd.getpwnam("matrix")
+              listed = subprocess.run([
+                  "/usr/sbin/runuser", "-u", "matrix", "--", "/usr/bin/env",
+                  f"HOME={home}", f"MATRIX_HOME={home}",
+                  f"XDG_RUNTIME_DIR=/run/user/{owner.pw_uid}",
+                  f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{owner.pw_uid}/bus",
+                  "/usr/bin/systemctl", "--user", "list-units", "matrix-zellij@*.service",
+                  "--state=active", "--no-legend", "--plain",
+              ], check=True, timeout=15, capture_output=True, text=True).stdout
+              units = [line for line in listed.splitlines() if line.strip()]
+              terminal_migration = {
+                  "journalStatus": migration_journal.get("status") if migration_journal.get("status") in {"committed", "rolled-back", "prepared"} else "invalid",
+                  "stateSchemaVersion": workspace_state.get("schemaVersion") if isinstance(workspace_state.get("schemaVersion"), int) else -1,
+                  "workspaceCount": len(workspaces) if isinstance(workspaces, dict) else -1,
+                  "migratedLegacyTabs": len(migrated_tabs),
+                  "activeWorkspaceServices": len(units),
+              }
+          except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError):
+              pass
 
           def bounded_int(value):
               return int(value) if isinstance(value, str) and value.isdigit() and int(value) <= 1_000_000 else -1
 
           print(json.dumps({
               "gatewayLifecycle": events[-20:],
+              "gatewayExitFingerprints": exit_fingerprints[-20:],
               "gatewayInvocationCount": len(invocations),
+              "syncAgentLifecycle": sync_events[-30:],
+              "privilegedGatewayActions": privileged_actions[-20:],
+              "terminalMigration": terminal_migration,
               "activeState": current.get("ActiveState", "unknown") if current.get("ActiveState") in {"active", "inactive", "failed"} else "unknown",
               "subState": current.get("SubState", "unknown") if current.get("SubState") in {"running", "dead", "failed", "auto-restart"} else "unknown",
               "result": current.get("Result", "unknown") if re.fullmatch(r"[a-z-]{1,32}", current.get("Result", "")) else "unknown",
@@ -991,7 +1120,12 @@ jobs:
             -H "authorization: Bearer ${runtime_token}" \
             -H 'content-type: application/json' --data-binary "$body"
           jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) |
-            .stdout | fromjson | select(.gatewayLifecycle | type == "array")' \
+            .stdout | fromjson |
+            select((.gatewayLifecycle | type == "array") and
+              (.gatewayExitFingerprints | type == "array") and
+              (.syncAgentLifecycle | type == "array") and
+              (.privilegedGatewayActions | type == "array") and
+              (.terminalMigration | type == "object"))' \
             /tmp/release-smoke-lifecycle.json >/dev/null
           jq -r '.stdout' /tmp/release-smoke-lifecycle.json
 
