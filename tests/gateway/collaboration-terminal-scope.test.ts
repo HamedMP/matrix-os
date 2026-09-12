@@ -22,6 +22,7 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   let fixture: CollaborationTestDatabase;
   let session: Record<string, unknown>;
   let registry: ReturnType<typeof registryFixture>;
+  let runtime: ReturnType<typeof runtimeFixture>;
   let adapter: CollaborationTerminalAdapter;
 
   beforeEach(async () => {
@@ -30,10 +31,11 @@ describe("CollaborationTerminalAdapter scope binding", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     session = eligibleSession();
     registry = registryFixture(() => session);
+    runtime = runtimeFixture();
     adapter = new CollaborationTerminalAdapter({
       repository: new CollaborationRepository(fixture.db, { now: () => new Date(now) }),
       registry,
-      runtime: runtimeFixture(),
+      runtime,
       runtimeId: collaborationIds.runtime,
       executionEligibility: {
         profileId: "scope-runtime-terminal-v1",
@@ -146,6 +148,69 @@ describe("CollaborationTerminalAdapter scope binding", () => {
       terminalId,
     })).resolves.toEqual({ eligible: false, reason: "unsupported", resourceRevision: 4 });
   });
+
+  it("revalidates control after the asynchronous binding lookup before runtime input", async () => {
+    sessionBinding(session, collaborationIds.scope);
+    let releaseLookup: (() => void) | undefined;
+    const lookupBlocked = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    let lookupStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { lookupStarted = resolve; });
+    registry.get.mockImplementationOnce(async () => {
+      lookupStarted?.();
+      await lookupBlocked;
+      return session;
+    });
+    const revalidate = vi.fn(async () => {
+      throw new Error("stale lease");
+    });
+
+    const pending = adapter.input({
+      scopeId: collaborationIds.scope,
+      terminalId,
+      incarnation,
+      actorId: collaborationActors.editor,
+      connectionId: "connection_editor",
+      leaseEpoch: 1,
+      data: "blocked\n",
+      revalidate,
+    });
+    await started;
+    releaseLookup?.();
+
+    await expect(pending).rejects.toThrow("stale lease");
+    expect(revalidate).toHaveBeenCalledOnce();
+    expect(runtime.input).not.toHaveBeenCalled();
+  });
+
+  it("repairs a private database scope whose failed rollback left the registry bound", async () => {
+    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    registry.bindCollaboration.mockImplementationOnce(async (_name: string, input: { scopeId: string }) => {
+      sessionBinding(session, input.scopeId);
+      vi.spyOn(fixture.db, "transaction").mockReturnValueOnce({
+        execute: async () => {
+          throw new Error("activation failed");
+        },
+      } as ReturnType<typeof fixture.db.transaction>);
+      return session;
+    });
+    registry.unbindCollaboration.mockRejectedValueOnce(new Error("rollback unavailable"));
+
+    await expect(adapter.shareTerminal({
+      ownerId: collaborationActors.owner,
+      terminalId,
+      clientRequestId: "50000000-0000-4000-8000-000000000020",
+      payloadHash: "a".repeat(64),
+      expectedResourceRevision: 4,
+      confirmationToken: preflight.confirmationToken!,
+    })).rejects.toThrow("activation failed");
+    expect(session.sharedControlMode).toBe("shared");
+
+    await expect(adapter.preflight({ ownerId: collaborationActors.owner, terminalId }))
+      .resolves.toMatchObject({ eligible: true, resourceRevision: 4 });
+    expect(registry.unbindCollaboration).toHaveBeenCalledTimes(2);
+    expect(session.sharedControlMode).toBe("eligible");
+    expect(session.collaborationScopeId).toBeUndefined();
+  });
 });
 
 function eligibleSession() {
@@ -170,7 +235,10 @@ function registryFixture(readSession: () => Record<string, unknown>) {
       sessionBinding(readSession(), input.scopeId);
       return readSession();
     }),
-    unbindCollaboration: vi.fn(async () => undefined),
+    unbindCollaboration: vi.fn(async () => {
+      delete readSession().collaborationScopeId;
+      readSession().sharedControlMode = "eligible";
+    }),
   };
 }
 

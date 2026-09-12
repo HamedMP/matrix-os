@@ -51,7 +51,7 @@ export interface CollaborationTerminalRuntime {
   input(input: TerminalRuntimeAction & { data: string }): Promise<void>;
   paste(input: TerminalRuntimeAction & { data: string }): Promise<void>;
   resize(input: TerminalRuntimeAction & { cols: number; rows: number }): Promise<void>;
-  stop(input: Omit<TerminalRuntimeAction, "connectionId" | "leaseEpoch">): Promise<void>;
+  stop(input: Omit<TerminalRuntimeAction, "connectionId" | "leaseEpoch" | "revalidate">): Promise<void>;
 }
 
 interface TerminalRuntimeAction {
@@ -61,6 +61,7 @@ interface TerminalRuntimeAction {
   actorId: string;
   connectionId: string;
   leaseEpoch: number;
+  revalidate(): Promise<void>;
 }
 
 export class CollaborationTerminalDispatcher {
@@ -163,6 +164,9 @@ export class CollaborationTerminalDispatcher {
       actorId: identity.actorId,
       connectionId: identity.connectionId,
       leaseEpoch: epoch,
+      revalidate: async () => {
+        await this.options.control.assertHeld(leasedIdentity);
+      },
     };
     if (action.type === "input") await this.options.terminal.input({ ...runtimeInput, data: action.data });
     if (action.type === "paste") await this.options.terminal.paste({ ...runtimeInput, data: action.data });
