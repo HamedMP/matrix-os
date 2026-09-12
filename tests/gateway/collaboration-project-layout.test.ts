@@ -127,10 +127,19 @@ describe("project collaboration layout adapter", () => {
 
   it("returns common layout without leaking another member's embedded view state", async () => {
     const projectLayout = adapter();
+    await fixture.db.insertInto("collaboration_layout_node_revisions").values({
+      scope_id: PROJECT_SCOPE_ID,
+      canvas_id: CANVAS_ID,
+      node_id: "node_app",
+      revision: 4,
+      updated_at: NOW,
+    }).execute();
     const owner = await projectLayout.get(await context(OWNER_ID), { canvasId: CANVAS_ID });
     const editor = await projectLayout.get(await context(EDITOR_ID), { canvasId: CANVAS_ID });
 
     expect(owner.layout.nodes).toEqual(editor.layout.nodes);
+    expect(owner.layout.nodeRevisions).toEqual({ node_app: 4, node_chat: 0 });
+    expect(editor.layout.nodeRevisions).toEqual(owner.layout.nodeRevisions);
     expect(owner.layout).not.toHaveProperty("viewStates");
     expect(owner.viewState).toBeNull();
     expect(editor.viewState).toBeNull();
@@ -160,6 +169,7 @@ describe("project collaboration layout adapter", () => {
       expect.objectContaining({ id: "node_app", position: { x: 80, y: 90 } }),
       expect.objectContaining({ id: "node_chat", position: { x: 500, y: 100 } }),
     ]));
+    expect(current.layout.nodeRevisions).toEqual({ node_app: 1, node_chat: 1 });
   });
 
   it("rejects stale same-node writes and keeps viewer layout mutation read-only", async () => {

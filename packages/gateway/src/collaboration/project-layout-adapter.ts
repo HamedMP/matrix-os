@@ -40,6 +40,7 @@ export interface ProjectLayoutProjection {
     canvasId: string;
     revision: number;
     nodes: unknown[];
+    nodeRevisions: Record<string, number>;
     edges: unknown[];
     displayOptions: Record<string, unknown>;
   };
@@ -197,6 +198,19 @@ export function createProjectLayoutAdapter(options: {
         await requireBinding(trx, current, canvasId.data);
         const canvas = await requireCanvas(trx, current, canvasId.data, ownerScope);
         const document = validateDocument(canvas);
+        const nodeIds = document.nodes.map((node) => node.id);
+        const storedNodeRevisions = nodeIds.length === 0
+          ? []
+          : await trx.selectFrom("collaboration_layout_node_revisions")
+              .select(["node_id", "revision"])
+              .where("scope_id", "=", current.scopeId)
+              .where("canvas_id", "=", canvasId.data)
+              .where("node_id", "in", nodeIds)
+              .execute();
+        const nodeRevisions = Object.fromEntries(nodeIds.map((nodeId) => [nodeId, 0]));
+        for (const stored of storedNodeRevisions) {
+          nodeRevisions[stored.node_id] = Number(stored.revision);
+        }
         const ownState = await trx.selectFrom("collaboration_project_view_states")
           .select(["state", "revision"])
           .where("scope_id", "=", current.scopeId)
@@ -210,6 +224,7 @@ export function createProjectLayoutAdapter(options: {
             canvasId: canvas.id,
             revision: Number(canvas.revision),
             nodes: document.nodes,
+            nodeRevisions,
             edges: document.edges,
             displayOptions: document.displayOptions,
           },

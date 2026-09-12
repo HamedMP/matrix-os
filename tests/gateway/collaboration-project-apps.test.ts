@@ -175,6 +175,42 @@ describe("project collaboration app adapter", () => {
     expect(rows).toEqual([]);
   });
 
+  it("allows concurrent read queries without exclusive collaboration locks", async () => {
+    let entered = 0;
+    let release!: () => void;
+    let resolveBoth!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const bothEntered = new Promise<void>((resolve) => { resolveBoth = resolve; });
+    bridge.execute = vi.fn(async () => {
+      entered += 1;
+      if (entered === 2) resolveBoth();
+      await gate;
+      return [];
+    });
+    const viewer = await authority.authorize({
+      scopeId: PROJECT_SCOPE_ID,
+      actorId: VIEWER_ID,
+      action: "read",
+    });
+    const projectApps = adapter();
+    const first = projectApps.query(viewer, {
+      appId: APP_ID,
+      action: { app: "board", table: "cards", action: "find" },
+    });
+    const second = projectApps.query(viewer, {
+      appId: APP_ID,
+      action: { app: "board", table: "cards", action: "find" },
+    });
+    const concurrent = await Promise.race([
+      bothEntered.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 250)),
+    ]);
+    release();
+    await Promise.all([first, second]);
+
+    expect(concurrent).toBe(true);
+  });
+
   it("rejects owner credentials and cannot route an action to another app", async () => {
     const editor = await authority.authorize({
       scopeId: PROJECT_SCOPE_ID,

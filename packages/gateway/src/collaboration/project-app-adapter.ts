@@ -136,11 +136,15 @@ export function createProjectAppAdapter(options: {
     context: AuthorizedCollaborationContext,
     requireWrite: boolean,
   ): Promise<void> {
-    const scope = await trx.selectFrom("collaboration_scopes").selectAll()
-      .where("id", "=", context.scopeId).forUpdate().executeTakeFirst();
-    const member = await trx.selectFrom("collaboration_members").selectAll()
+    let scopeQuery = trx.selectFrom("collaboration_scopes").selectAll()
+      .where("id", "=", context.scopeId);
+    scopeQuery = requireWrite ? scopeQuery.forUpdate() : scopeQuery.forShare();
+    const scope = await scopeQuery.executeTakeFirst();
+    let memberQuery = trx.selectFrom("collaboration_members").selectAll()
       .where("scope_id", "=", context.membershipScopeId)
-      .where("actor_id", "=", context.actorId).forUpdate().executeTakeFirst();
+      .where("actor_id", "=", context.actorId);
+    memberQuery = requireWrite ? memberQuery.forUpdate() : memberQuery.forShare();
+    const member = await memberQuery.executeTakeFirst();
     const expired = member?.expires_at && new Date(member.expires_at).getTime() <= now().getTime();
     if (!scope || scope.kind !== "project" || scope.lifecycle !== "shared"
       || scope.resource_id !== context.resourceId || scope.owner_id !== context.ownerId
@@ -159,13 +163,14 @@ export function createProjectAppAdapter(options: {
     executor: Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase>,
     context: AuthorizedCollaborationContext,
     appId: string,
-    lock = false,
+    lock: "share" | "update" | false = false,
   ) {
     let query = executor.selectFrom("collaboration_resource_bindings").selectAll()
       .where("project_scope_id", "=", context.scopeId)
       .where("resource_kind", "=", "app")
       .where("resource_id", "=", appId);
-    if (lock) query = query.forUpdate();
+    if (lock === "update") query = query.forUpdate();
+    else if (lock === "share") query = query.forShare();
     const binding = await query.executeTakeFirst();
     if (!binding || binding.readiness !== "ready"
       || binding.authority_runtime_id !== context.authorityRuntimeId
@@ -194,7 +199,7 @@ export function createProjectAppAdapter(options: {
       const action = parseAction(raw.action, app.bridgeAppId, READ_ACTIONS);
       return await options.db.transaction().execute(async (trx) => {
         await requireCurrentProject(trx, current, false);
-        await requireBinding(trx, current, appId.data, true);
+        await requireBinding(trx, current, appId.data, "share");
         return jsonValue(await options.bridge.execute({
           namespace: app.namespace,
           scopeId: current.scopeId,
@@ -242,7 +247,7 @@ export function createProjectAppAdapter(options: {
           }
           return { ...parseStoredResult(existing.result_ref), replayed: true };
         }
-        const binding = await requireBinding(trx, current, envelope.data.appId, true);
+        const binding = await requireBinding(trx, current, envelope.data.appId, "update");
         if (Number(binding.revision) !== envelope.data.expectedRevision) {
           throw new ProjectAppAdapterError("conflict");
         }
