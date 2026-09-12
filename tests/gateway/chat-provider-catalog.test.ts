@@ -298,6 +298,85 @@ describe("canonical Chat Provider catalog", () => {
       });
   });
 
+  it("projects OpenCode's Matrix-funded Cloudflare route into Chat", async () => {
+    const configured = {
+      ...configuredHarness("opencode", true),
+      accessSourceId: "matrix_cloudflare",
+      route: {
+        kind: "configurable" as const,
+        providerId: "cloudflare",
+        modelId: "@cf/zai-org/glm-5.3-flash",
+      },
+    };
+    const settings = await harnessSettings([configured]).getSnapshot();
+    settings.accessSources = [{
+      ...settings.accessSources[0]!,
+      id: "matrix_cloudflare",
+      kind: "matrix_gateway",
+      fundingKind: "matrix_included",
+      providerId: "cloudflare",
+      accountId: null,
+      displayName: "Matrix AI",
+      eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"],
+    }];
+    settings.modelProviders = [{
+      id: "cloudflare",
+      displayName: "Cloudflare Workers AI",
+      models: [{
+        id: "@cf/zai-org/glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+        enabled: true,
+      }],
+    }];
+    const aiSnapshot = providerSettingsCanonicalFixture();
+    aiSnapshot.accessSources.push({
+      ...aiSnapshot.accessSources[0]!,
+      id: "matrix_cloudflare",
+      vendor: "cloudflare",
+      eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"],
+    });
+    aiSnapshot.models.push({
+      ...aiSnapshot.models[0]!,
+      id: "@cf/zai-org/glm-5.3-flash",
+      vendor: "cloudflare",
+      displayName: "GLM 5.3 Flash",
+      effortControls: [],
+      eligibleAccessSourceIds: ["matrix_cloudflare"],
+      dataPolicies: [{
+        accessSourceId: "matrix_cloudflare",
+        route: "matrix_relay",
+        disclosureKey: "matrix-cloudflare-workers-ai",
+      }],
+    });
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "opencode",
+        displayName: "OpenCode",
+        kind: "opencode",
+        supportedModes: ["default"],
+        defaultModel: undefined,
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => aiSnapshot },
+      harnessSettingsSource: { getSnapshot: async () => settings },
+      executableDriverKinds: ["opencode"],
+      credentialedDriverKinds: ["opencode"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "opencode_default"
+    ))).toMatchObject({
+      availability: "available",
+      connectionLabel: "Matrix AI",
+      models: [{ id: "cloudflare:@cf/zai-org/glm-5.3-flash", displayName: "GLM 5.3 Flash" }],
+      defaultSelection: {
+        instanceId: "opencode_default",
+        model: "cloudflare:@cf/zai-org/glm-5.3-flash",
+      },
+    });
+  });
+
   it("projects an OpenCode-native model from the same live Settings catalog", async () => {
     const configured = {
       ...configuredHarness("opencode", true),
