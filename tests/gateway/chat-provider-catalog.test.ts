@@ -1670,8 +1670,7 @@ describe("canonical Chat Provider catalog", () => {
     await expect(service.getCatalog(principal)).rejects
       .toBeInstanceOf(ProviderCatalogUnavailableError);
     expect(warning).toHaveBeenCalledWith(
-      "[chat-providers] Canonical Provider projection failed validation",
-      ["instances.2.supports.interactionModes.0:invalid_format"],
+      "[chat-providers] Canonical Provider projection failed validation: instances.2.supports.interactionModes.0:invalid_format",
     );
     warning.mockRestore();
   });

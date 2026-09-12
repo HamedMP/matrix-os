@@ -109,7 +109,7 @@ export function GatewayPanel({
       ) : !ready ? (
         <p className="matrix-ap-help">{source.readiness.safeReason === "policy" || source.readiness.action === "contact_owner"
           ? "Matrix AI is restricted by your workspace. Ask your administrator."
-          : "Gateway connection not verified. Check again."}</p>
+          : "Matrix AI connection not verified. Check again."}</p>
       ) : null}
 
       <div className="matrix-ap-credit-row">
@@ -163,7 +163,7 @@ export function GatewayPanel({
                 value={budgetUsd}
                 onChange={(event) => setBudgetUsd(event.target.value)}
                 disabled={disabled || !canSetBudget}
-                title={canSetBudget ? undefined : "Changing the gateway budget is not available"}
+                title={canSetBudget ? undefined : "Changing the Matrix AI budget is not available"}
                 placeholder="No limit"
               />
             </span>
@@ -172,7 +172,7 @@ export function GatewayPanel({
             type="button"
             className="matrix-ap-button"
             disabled={disabled || !canSetBudget}
-            title={canSetBudget ? undefined : "Changing the gateway budget is not available"}
+            title={canSetBudget ? undefined : "Changing the Matrix AI budget is not available"}
             onClick={saveBudget}
           >
             Save budget
@@ -184,7 +184,7 @@ export function GatewayPanel({
           <fieldset
             className="matrix-ap-allowlist"
             disabled={disabled || !canSetAllowlist}
-            title={canSetAllowlist ? undefined : "Changing the gateway model list is not available"}
+            title={canSetAllowlist ? undefined : "Changing the Matrix AI model list is not available"}
           >
             <legend>Models available through Matrix</legend>
             {provider?.models
@@ -220,7 +220,7 @@ export function GatewayPanel({
           <section className="matrix-ap-dialog" role="dialog" aria-modal="true" aria-labelledby="matrix-ap-credit-title">
             <div className="matrix-ap-dialog-head">
               <div>
-                <span className="matrix-ap-eyebrow">Matrix gateway</span>
+                <span className="matrix-ap-eyebrow">Matrix AI</span>
                 <h3 id="matrix-ap-credit-title">Add Matrix AI credit</h3>
                 <p className="matrix-ap-dialog-copy">
                   Credit is added to this computer after Stripe confirms payment. It does not expire.

@@ -129,7 +129,7 @@ export function AddHarnessDialog({ snapshot, onMutate, onClose, onRefresh, onSet
             {sources.map((item) => <option key={item.id} value={item.id}>{item.displayName}{item.readiness.state === "ready" ? "" : " · setup required"}</option>)}
           </select>
         </label>
-        {source?.kind === "matrix_gateway" ? <p className="matrix-ap-help">{source.readiness.state === "ready" ? "Uses your Matrix AI credit. No provider login is needed." : "Matrix AI is not ready on this computer. Its gateway configuration and credit must be enabled before you can use it."}</p>
+        {source?.kind === "matrix_gateway" ? <p className="matrix-ap-help">{source.readiness.state === "ready" ? "Uses your Matrix AI credit. No separate login is needed." : "Matrix AI is not ready on this computer. Access and credit must be enabled before you can use it."}</p>
           : source?.kind === "harness_profile" ? <p className="matrix-ap-help">This agent uses its own saved login. Manage it in Terminal; Matrix does not create extra account profiles.</p>
           : <p className="matrix-ap-help">Use a connected account from Agents &amp; providers. Only connections reported ready can continue.</p>}
         {!snapshot.accessSources.some((item) => item.kind === "matrix_gateway") ? <p className="matrix-ap-help">Matrix AI is not ready on this computer. See the Matrix AI section for its setup status.</p> : null}

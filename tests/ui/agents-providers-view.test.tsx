@@ -397,6 +397,8 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByLabelText("Model")).toHaveValue("@cf/zai-org/glm-5.3-flash");
     expect(screen.getByRole("option", { name: "GLM 5.3 Flash" })).toBeVisible();
     expect(screen.queryByText("Cloudflare Workers AI")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Matrix gateway/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Matrix AI · no separate account" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "OpenCode connection" }))
       .toHaveTextContent("Using Matrix AI");
   });
