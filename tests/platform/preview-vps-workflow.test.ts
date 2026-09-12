@@ -165,6 +165,7 @@ describe('Preview VPS provisioning workflow', () => {
     expect(deploy).toContain('wait_for_stable_host_settled()');
     expect(deploy).toContain('unattended-upgrades.service');
     expect(deploy).toContain('consecutive_idle');
+    expect(deploy).toContain('deadline=$((SECONDS + 1800))');
     expect(deploy).toContain('Stable host provisioning is settled');
     expect(deploy).toContain('verify_terminal_migration()');
     expect(deploy).toContain('journalStatus');

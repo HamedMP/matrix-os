@@ -511,7 +511,7 @@ jobs:
           PYTHON
             body="$(jq -cn --arg script "$settle_script" \
               '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script],timeoutMs:30000}')"
-            deadline=$((SECONDS + 600))
+            deadline=$((SECONDS + 1800))
             while [ "$SECONDS" -lt "$deadline" ]; do
               send_runtime_command "$body" "$response"
               if jq -e '.stdout | fromjson | .ready == true' "$response" >/dev/null; then
