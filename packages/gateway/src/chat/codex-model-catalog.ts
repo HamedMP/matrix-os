@@ -8,6 +8,20 @@ const MAX_MODELS = 64;
 const MAX_OPTIONS = 32;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_CACHE_TTL_MS = 60_000;
+// A cold app-server start, one dropped handshake, or a momentary scheduling
+// hiccup are all ordinary and should not immediately degrade Codex to
+// "unavailable" for a full cache window. One bounded retry after a short
+// delay absorbs those without materially slowing a healthy request or
+// risking an unbounded/tight retry loop against a genuinely broken CLI.
+const DEFAULT_MAX_ATTEMPTS = 2;
+const DEFAULT_RETRY_DELAY_MS = 300;
+const DEFAULT_TERMINATE_GRACE_MS = 1_000;
+// A failed lookup is cached only briefly. Long enough that repeated polling
+// (e.g. an open Chat tab) cannot retry-storm a down or mid-install Codex
+// with a fresh spawn+retry sequence on every request; short enough that a
+// login or install finishing mid-outage is reflected on the next request
+// shortly after, without needing a dedicated invalidation signal.
+const DEFAULT_FAILURE_CACHE_TTL_MS = 10_000;
 
 const ReferenceIdSchema = z.string().trim().min(1).max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$/);
@@ -120,26 +134,46 @@ async function readCodexModels(input: {
     let buffer = "";
     let totalBytes = 0;
     let settled = false;
-    const timeout = setTimeout(() => finish(new Error("Codex model catalog timed out")), input.timeoutMs);
+    let requestedOutcome: { error?: Error; value?: unknown } | null = null;
+    let terminateTimer: NodeJS.Timeout | null = null;
+    const timeout = setTimeout(() => requestFinish(new Error("Codex model catalog timed out")), input.timeoutMs);
     timeout.unref();
 
-    const finish = (error?: Error, value?: unknown) => {
+    const settleAfterExit = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (terminateTimer) clearTimeout(terminateTimer);
+      const outcome = requestedOutcome ?? { error: new Error("Codex model catalog stopped") };
+      if (outcome.error) reject(outcome.error);
+      else resolve(outcome.value);
+    };
+
+    const requestFinish = (error?: Error, value?: unknown) => {
+      if (settled || requestedOutcome) return;
+      requestedOutcome = { ...(error ? { error } : {}), ...(error ? {} : { value }) };
+      clearTimeout(timeout);
+
+      // A retry must never overlap the child from the previous attempt. Ask
+      // the app-server to terminate, escalate if it ignores SIGTERM, and only
+      // settle this attempt after the OS reports the child has actually
+      // closed. fetchCodexModelsWithRetry cannot start its next attempt until
+      // this promise settles.
       child.kill("SIGTERM");
-      if (error) reject(error);
-      else resolve(value);
+      terminateTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, DEFAULT_TERMINATE_GRACE_MS);
+      terminateTimer.unref();
     };
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
 
-    child.once("error", () => finish(new Error("Codex model catalog unavailable")));
-    child.once("close", () => finish(new Error("Codex model catalog stopped")));
+    child.once("error", () => requestFinish(new Error("Codex model catalog unavailable")));
+    child.once("close", settleAfterExit);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       totalBytes += Buffer.byteLength(chunk, "utf8");
       if (totalBytes > MAX_RESPONSE_BYTES) {
-        finish(new Error("Codex model catalog exceeded its response limit"));
+        requestFinish(new Error("Codex model catalog exceeded its response limit"));
         return;
       }
       buffer += chunk;
@@ -159,7 +193,7 @@ async function readCodexModels(input: {
           send({ method: "initialized", params: {} });
           send({ id: 2, method: "model/list", params: { limit: MAX_MODELS, includeHidden: false } });
         } else if (message.id === 2) {
-          finish(undefined, message.result);
+          requestFinish(undefined, message.result);
         }
       }
     });
@@ -174,32 +208,91 @@ async function readCodexModels(input: {
   });
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref();
+  });
+}
+
+async function fetchCodexModelsWithRetry(input: {
+  executable: string;
+  cwd: string;
+  timeoutMs: number;
+  maxAttempts: number;
+  retryDelayMs: number;
+  spawnProcess: SpawnProcess;
+}): Promise<CodingModelCatalogProjection> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= input.maxAttempts; attempt += 1) {
+    try {
+      const raw = await readCodexModels({
+        executable: input.executable,
+        cwd: input.cwd,
+        timeoutMs: input.timeoutMs,
+        spawnProcess: input.spawnProcess,
+      });
+      return normalizeCodexModelCatalog(raw);
+    } catch (error) {
+      lastError = error;
+      // Sequential and bounded: the next attempt only starts once the
+      // previous attempt's process has already been terminated inside
+      // readCodexModels, so at most one app-server child is ever alive at a
+      // time and the total added delay is capped by maxAttempts.
+      if (attempt < input.maxAttempts) await wait(input.retryDelayMs);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Codex model catalog unavailable");
+}
+
 export function createCodexModelCatalogSource(options: {
   executable: string;
   cwd: string;
   timeoutMs?: number;
   cacheTtlMs?: number;
+  failureCacheTtlMs?: number;
+  maxAttempts?: number;
+  retryDelayMs?: number;
   spawnProcess?: SpawnProcess;
 }) {
   const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 30_000));
   const cacheTtlMs = Math.max(1, Math.min(options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS, 5 * 60_000));
+  const failureCacheTtlMs = Math.max(
+    1,
+    Math.min(options.failureCacheTtlMs ?? DEFAULT_FAILURE_CACHE_TTL_MS, cacheTtlMs),
+  );
+  const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS, 3));
+  const retryDelayMs = Math.max(0, Math.min(options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS, 2_000));
   const spawnProcess = options.spawnProcess ?? (nodeSpawn as SpawnProcess);
   let cached: { expiresAt: number; value: CodingModelCatalogProjection } | null = null;
+  let failedUntil = 0;
   let pending: Promise<CodingModelCatalogProjection> | null = null;
 
   return async (provider: AgentProviderSummary): Promise<CodingModelCatalogProjection | null> => {
     if (provider.kind !== "codex" && provider.id !== "codex") return null;
     const now = Date.now();
     if (cached && cached.expiresAt > now) return cached.value;
+    if (!pending && failedUntil > now) {
+      throw new Error("Codex model catalog unavailable");
+    }
     if (!pending) {
-      pending = readCodexModels({
+      pending = fetchCodexModelsWithRetry({
         executable: options.executable,
         cwd: options.cwd,
         timeoutMs,
+        maxAttempts,
+        retryDelayMs,
         spawnProcess,
-      }).then(normalizeCodexModelCatalog).then((value) => {
+      }).then((value) => {
         cached = { expiresAt: Date.now() + cacheTtlMs, value };
+        failedUntil = 0;
         return value;
+      }).catch((error: unknown) => {
+        // Cache the failure only briefly (see DEFAULT_FAILURE_CACHE_TTL_MS)
+        // so repeated polling while Codex is down or mid-install cannot
+        // retry-storm it with a fresh spawn+retry sequence on every request.
+        failedUntil = Date.now() + failureCacheTtlMs;
+        throw error;
       }).finally(() => {
         pending = null;
       });
