@@ -332,8 +332,9 @@ jobs:
           provision_body="$(jq -cn \
             --arg owner "$PREVIEW_CLERK_USER_ID" \
             --arg handle "$HANDLE" \
+            --arg bundle_version "$VERSION" \
             --argjson access "$access_user_ids" \
-            '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}')"
+            '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access, bundleVersion: $bundle_version}')"
           code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
             -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision" \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \

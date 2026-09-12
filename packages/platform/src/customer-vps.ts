@@ -423,6 +423,7 @@ async function resolveHostBundleRef(
   db: PlatformDB,
   config: CustomerVpsConfig,
   previewTestSnapshotId?: string,
+  previewBundleVersion?: string,
 ): Promise<HostBundleRef> {
   if (previewTestSnapshotId) {
     return resolvePinnedPreviewTestSnapshotBundle({
@@ -431,6 +432,17 @@ async function resolveHostBundleRef(
       currentBundleVersion: config.imageVersion,
       currentBundleUrl: config.hostBundleUrl,
     });
+  }
+  if (previewBundleVersion) {
+    const release = await getHostBundleRelease(db, previewBundleVersion);
+    if (!release) {
+      throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+    }
+    return {
+      imageVersion: release.version,
+      hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
+      sha256: release.sha256,
+    };
   }
   if (config.hostBundleUrlOverride || !HOST_BUNDLE_CHANNELS.has(config.imageVersion)) {
     const release = await getHostBundleRelease(db, config.imageVersion);
@@ -1817,6 +1829,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     const testSnapshotId = provisioningClass === 'preview' && 'testSnapshotId' in input
       ? input.testSnapshotId
       : undefined;
+    const previewBundleVersion = provisioningClass === 'preview' && 'bundleVersion' in input
+      ? input.bundleVersion
+      : undefined;
     const request = {
       ...input,
       runtimeSlot: input.runtimeSlot ?? 'primary',
@@ -1908,7 +1923,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
 
-    const bundleRef = await resolveHostBundleRef(deps.db, deps.config, testSnapshotId);
+    const bundleRef = await resolveHostBundleRef(
+      deps.db,
+      deps.config,
+      testSnapshotId,
+      previewBundleVersion,
+    );
 
     let provisionRow: { existing: UserMachineRecord | null };
     try {

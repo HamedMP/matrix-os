@@ -1384,6 +1384,57 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
   });
 
+  it('boots operator previews from an explicitly published immutable bundle', async () => {
+    const version = 'v2026.09.11-pr1607-34614651893-1-1388d33';
+    await upsertHostBundleRelease(db, {
+      version,
+      channel: 'none',
+      gitCommit: '1388d33397ff502ff046f5d65cf3c3538b44d283',
+      gitRef: 'codex/om-214-chat-agent-ui',
+      buildTime: '2026-09-11T15:20:00.000Z',
+      bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`,
+      checksumKey: `system-bundles/${version}/matrix-host-bundle.tar.gz.sha256`,
+      sha256: 'b'.repeat(64),
+      size: 1_257_725_742,
+      severity: 'normal',
+      updateType: 'manual',
+      changelog: 'Preview bundle',
+      createdAt: '2026-09-11T15:22:00.000Z',
+    });
+    const { service, hetzner } = createService();
+
+    const provisioned = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-1607',
+      runtimeSlot: 'pr-1607',
+      bundleVersion: version,
+    });
+
+    expect((await getUserMachine(db, provisioned.machineId))?.imageVersion).toBe(version);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain(
+      `MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/${version}/matrix-host-bundle.tar.gz`,
+    );
+    expect(createInput?.userData).toContain(`MATRIX_IMAGE_VERSION=${version}`);
+    expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
+  });
+
+  it('rejects an unpublished explicit preview bundle before creating a server', async () => {
+    const { service, hetzner } = createService();
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-1607',
+      runtimeSlot: 'pr-1607',
+      bundleVersion: 'v2026.09.11-pr1607-1-1-abcdef0',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning unavailable',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
   it('can provision an isolated staging runtime for the same Clerk user', async () => {
     let nextId = 0;
     const ids = [
