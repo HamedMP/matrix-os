@@ -95,6 +95,7 @@ describe("CollaborationWebSocketAuthorizer", () => {
       ownerId: platformCollaborationActors.owner,
       scopeId,
       purpose: "events",
+      signedPolicy: { policy: { milestone: "m1" } },
     });
     const verifier = new CollaborationActorProofVerifier({
       runtimeId: "runtime_owner",
@@ -196,9 +197,11 @@ describe("CollaborationWebSocketAuthorizer", () => {
       },
       externalHost: "app.matrix-os.com",
       signedProof: { proof: { value: "safe" }, signature: "signed" },
+      signedPolicy: { policy: { milestone: "m3" }, signature: "policy-signed" },
     });
     expect(headers).toContain("sec-websocket-key: safe-key");
     expect(headers).toContain("x-matrix-collaboration-proof:");
+    expect(headers).toContain("x-matrix-collaboration-policy:");
     expect(headers).not.toContain("caller-secret");
     expect(headers).not.toContain("forged-owner");
     expect(headers).not.toContain("forged-proof");

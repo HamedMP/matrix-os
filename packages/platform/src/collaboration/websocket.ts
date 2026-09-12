@@ -27,6 +27,7 @@ const FORWARDED_SOCKET_HEADERS = new Set([
 ]);
 
 type SignedProof = ReturnType<CollaborationProofSigner["signSocket"]>;
+type SignedPolicy = ReturnType<CollaborationProofSigner["signPolicy"]>;
 type Purpose = "events" | "terminal";
 
 export type CollaborationWebSocketErrorCode =
@@ -50,6 +51,7 @@ export interface CollaborationWebSocketUpgrade {
   scopeId: string;
   purpose: Purpose;
   signedProof: SignedProof;
+  signedPolicy: SignedPolicy;
 }
 
 export function isCollaborationWebSocketPath(rawPath: string): boolean {
@@ -80,6 +82,7 @@ export function buildCollaborationWebSocketUpgradeHeaders(input: {
   incomingHeaders: IncomingMessage["headers"];
   externalHost: string;
   signedProof: unknown;
+  signedPolicy: unknown;
 }): string {
   const headers = Object.entries(input.incomingHeaders).flatMap(([name, raw]) => {
     if (!FORWARDED_SOCKET_HEADERS.has(name) || raw === undefined) return [];
@@ -90,6 +93,7 @@ export function buildCollaborationWebSocketUpgradeHeaders(input: {
   headers.push(`x-forwarded-host: ${input.externalHost}`);
   headers.push("x-forwarded-proto: https");
   headers.push(`x-matrix-collaboration-proof: ${Buffer.from(JSON.stringify(input.signedProof)).toString("base64url")}`);
+  headers.push(`x-matrix-collaboration-policy: ${Buffer.from(JSON.stringify(input.signedPolicy)).toString("base64url")}`);
   return headers.join("\r\n");
 }
 
@@ -188,6 +192,15 @@ export class CollaborationWebSocketAuthorizer {
       path: route.path,
       query: route.query,
     });
+    const issuedAt = this.now();
+    const signedPolicy = this.options.signer.signPolicy({
+      milestone: policy.milestone,
+      revision: String(policy.revision),
+      mode: policy.mode,
+      cohort: policy.cohort,
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + TICKET_LIFETIME_MS).toISOString(),
+    });
     return {
       upstreamPath: `${route.path}${route.query ? `?${route.query}` : ""}`,
       runtimeId: directory.runtimeId,
@@ -195,6 +208,7 @@ export class CollaborationWebSocketAuthorizer {
       scopeId: route.scopeId,
       purpose: route.purpose,
       signedProof,
+      signedPolicy,
     };
   }
 

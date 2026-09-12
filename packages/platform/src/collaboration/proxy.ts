@@ -42,6 +42,8 @@ const SCOPE_ROUTES = [
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests/${RESOURCE}/cancel$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/requests/${RESOURCE}/retry$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/approvals/${RESOURCE}/decision$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/terminal$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/terminal/actions$`)],
 ] as const;
 
 const M2_SCOPE_ROUTES = [
@@ -50,6 +52,11 @@ const M2_SCOPE_ROUTES = [
   ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${RESOURCE}/cancel$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${RESOURCE}/retry$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/approvals/${RESOURCE}/decision$`)],
+] as const;
+
+const M3_SCOPE_ROUTES = [
+  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/terminal$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/terminal/actions$`)],
 ] as const;
 
 const INVITATION_ROUTES = [
@@ -87,11 +94,12 @@ export function parseCollaborationProxyRoute(
 export function collaborationMilestoneForRoute(
   method: string,
   path: string,
-): "m1" | "m2" | null {
+): "m1" | "m2" | "m3" | null {
   const route = parseCollaborationProxyRoute(method, path);
   if (!route) return null;
-  return M2_SCOPE_ROUTES.some(([allowedMethod, pattern]) =>
-    method === allowedMethod && pattern.test(path)) ? "m2" : "m1";
+  if (M2_SCOPE_ROUTES.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path))) return "m2";
+  if (M3_SCOPE_ROUTES.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path))) return "m3";
+  return "m1";
 }
 
 export interface CollaborationRuntimeRoute {
@@ -183,7 +191,7 @@ export class CollaborationProxy {
       }
       headers.set("accept", "application/json");
       headers.set(PROOF_HEADER, Buffer.from(JSON.stringify(signedProof)).toString("base64url"));
-      if (milestone === "m2") {
+      if (milestone === "m2" || milestone === "m3") {
         const issuedAt = (this.options.now ?? (() => new Date()))();
         const signedPolicy = this.options.signer.signPolicy({
           milestone: policy.milestone,
