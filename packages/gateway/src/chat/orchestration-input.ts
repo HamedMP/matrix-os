@@ -8,7 +8,6 @@ export class CanonicalChatOrchestrationError extends Error {
     this.name = "CanonicalChatOrchestrationError";
   }
 }
-
 export function safeError(
   code: CanonicalChatSafeError["code"],
   safeMessage: string,
@@ -114,4 +113,3 @@ export function mapRepositoryError(error: unknown): never {
   }
   throw error;
 }
-

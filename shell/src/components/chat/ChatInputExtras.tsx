@@ -11,7 +11,6 @@ export function ChatVoiceButton({ connected, recording, transcribing, onClick }:
     {transcribing ? <Loader2Icon className="size-4 animate-spin" /> : recording ? <MicOffIcon className="size-4" /> : <MicIcon className="size-4" />}
   </Button>;
 }
-
 export function ChatMentionTokens({ resources, onRemove }: {
   resources: CanonicalChatResourceReference[]; onRemove(resource: CanonicalChatResourceReference): void;
 }) {
@@ -20,4 +19,3 @@ export function ChatMentionTokens({ resources, onRemove }: {
     <span className="min-w-0 truncate" title={resource.label}>@{resource.label}</span><button type="button" aria-label={`Remove ${resource.label}`} className="shrink-0 rounded px-1 focus-visible:ring-2" onClick={() => onRemove(resource)}>×</button>
   </span>)}</div>;
 }
-
