@@ -1206,6 +1206,20 @@ jobs:
           fi
           echo "Installed target state verified: $(jq -c '{appVersion,releaseVersion,migrationStatus,terminalRuntimeActive}' <<< "$after")"
 
+          stale_test_tab="tt_88fea4c456bd0112bed13fc20c9af8006"
+          runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-stale-test-tab.json
+          stale_test_ref="$(jq -cer --arg tab "$stale_test_tab" '
+            [.workspaces[] as $workspace | $workspace.tabs[] |
+              select(.id == $tab and .name == "Matrix terminal smoke") |
+              {workspaceId:$workspace.id,tabId:.id}] |
+            if length == 0 then null elif length == 1 then .[0] else error("duplicate test tab") end
+          ' /tmp/nimanaderi-stale-test-tab.json)"
+          if [ "$stale_test_ref" != "null" ]; then
+            stale_workspace="$(jq -er .workspaceId <<< "$stale_test_ref")"
+            runtime_request DELETE "/api/terminal/workspaces/${stale_workspace}/tabs/${stale_test_tab}" /tmp/nimanaderi-stale-test-tab-delete.json
+            echo "Removed the exact temporary tab left by the timed-out probe."
+          fi
+
           runtime_request POST /api/terminal/workspaces/ensure /tmp/nimanaderi-workspace.json '{}'
           workspace_id="$(jq -er '.workspace.id | select(type == "string" and test("^tws_[0-9a-f]{32}$"))' /tmp/nimanaderi-workspace.json)"
           tab_id="tt_$(printf '%s' "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${VERSION}" | sha256sum | cut -c1-32)"
@@ -1291,6 +1305,8 @@ jobs:
           let allOutput = "";
           let cursor = 0;
           let oscReplies = 0;
+          let attachCount = 0;
+          let outputBytes = 0;
           let firstResultCount = 0;
           let secondResultCount = 0;
           const sockets = [];
@@ -1317,11 +1333,13 @@ jobs:
                   throw new Error("binary_input_capability_missing");
                 }
                 cursor = Math.max(cursor, frame.nextSeq ?? 0);
+                attachCount += 1;
                 attached = true;
                 return;
               }
               const data = frame.type === "output" ? frame.data : frame.type === "snapshot" ? frame.ansi : "";
               if (typeof data !== "string" || data.length === 0) return;
+              outputBytes += data.length;
               if (frame.type === "output") cursor = Math.max(cursor, Number(frame.seq) + 1);
               allOutput = (allOutput + data).slice(-1024 * 1024);
               firstResultCount = (allOutput.match(/81243/g) || []).length;
@@ -1365,6 +1383,29 @@ jobs:
               stableObservationSeconds: 75,
               visibleRgbPayloads: 0,
             }));
+          } catch (error) {
+            const allowed = new Set([
+              "attach_timeout",
+              "binary_input_capability_missing",
+              "terminal_websocket_error",
+              "osc_round_trip_timeout",
+              "osc_reply_rendered_as_output",
+              "keyboard_round_trip_failed",
+              "first_socket_close_timeout",
+              "reconnect_round_trip_failed",
+              "osc_feedback_loop_detected",
+              "uncontrolled_terminal_output_detected",
+              "terminal_round_trip_count_mismatch",
+            ]);
+            const candidate = error instanceof Error ? error.message : "unknown";
+            console.error(JSON.stringify({
+              code: allowed.has(candidate) ? candidate : "unexpected_probe_failure",
+              attachCount,
+              oscReplies,
+              outputBytes,
+              visibleRgbPayloads: allOutput.includes("rgb:") ? 1 : 0,
+            }));
+            process.exitCode = 1;
           } finally {
             for (const socket of sockets) {
               if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
@@ -1375,7 +1416,10 @@ jobs:
             --arg workspace "$workspace_id" --arg tab "$tab_id" \
             '{command:["/opt/matrix/runtime/node/bin/node","-e",$script,$token,$workspace,$tab],timeoutMs:150000}')"
           runtime_request POST /api/terminal/run /tmp/nimanaderi-websocket-probe.json "$websocket_body" 180
-          jq -e '.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null' /tmp/nimanaderi-websocket-probe.json >/dev/null
+          if ! jq -e '.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null' /tmp/nimanaderi-websocket-probe.json >/dev/null; then
+            jq -c '{exitCode,timedOut,truncated,signal,diagnostic:(.stderr | fromjson? // {code:"missing_probe_diagnostic"})}' /tmp/nimanaderi-websocket-probe.json >&2
+            exit 1
+          fi
           websocket_result="$(jq -er '.stdout | fromjson' /tmp/nimanaderi-websocket-probe.json)"
           jq -e '.binaryInput == true and .keyboardRoundTrips == 2 and .oscReplies >= 1 and
             .reconnects == 1 and .stableObservationSeconds == 75 and .visibleRgbPayloads == 0' <<< "$websocket_result" >/dev/null
