@@ -25,6 +25,7 @@ function currentServerFrame(value: unknown): unknown {
       canonicalSize: frame.canonicalSize ?? { cols: 120, rows: 40 },
       revision: frame.revision ?? 1,
       nextSeq: frame.nextSeq ?? frame.fromSeq ?? 0,
+      ...(frame.capabilities === undefined ? {} : { capabilities: frame.capabilities }),
     };
   }
   if (frame.type === "exit") return {
@@ -201,7 +202,7 @@ function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
 function connectAndAttach(h: Harness): void {
   h.socket.connect();
   h.latest().open();
-  h.latest().frame({ type: "attached", nextSeq: 0 });
+  h.latest().frame({ type: "attached", nextSeq: 0, capabilities: ["binary-input-v1"] });
 }
 
 let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -219,7 +220,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness();
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
     );
     expect(LIVE_TAIL_FROM_SEQ).toBe(9_007_199_254_740_991);
   });
@@ -243,7 +244,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness();
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
     );
     expect(h.latest().url).not.toContain("chat=");
   });
@@ -314,7 +315,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness({ baseUrl: "http://localhost:3001/" });
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `ws://localhost:3001/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `ws://localhost:3001/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
     );
   });
 
@@ -358,7 +359,7 @@ describe("ShellSocket URL building", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=42`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=42&inputCapability=binary-input-v1`,
     );
   });
 
@@ -369,7 +370,7 @@ describe("ShellSocket URL building", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
     );
   });
 
@@ -707,7 +708,7 @@ describe("ShellSocket server frames", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
     );
   });
 
@@ -867,7 +868,13 @@ describe("ShellSocket reconnect", () => {
     h.timers.advance(2000);
 
     h.latest().open();
-    h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+    h.latest().frame({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 0,
+      capabilities: ["binary-input-v1"],
+    });
     expect(h.socket.state).toBe("attached");
 
     h.latest().serverClose();
@@ -1005,6 +1012,21 @@ describe("ShellSocket resize coalescing", () => {
 });
 
 describe("ShellSocket input", () => {
+  it("falls back to a compatible text frame when an older runtime does not advertise binary input", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.latest().open();
+    h.latest().frame({ type: "attached", nextSeq: 0 });
+
+    h.socket.sendBinary("\x1b]10;rgb:1111/2222/3333\x07");
+
+    expect(h.latest().sentFrames()).toContainEqual({
+      type: "input",
+      terminalRef: TERMINAL_REF,
+      data: "\x1b]10;rgb:1111/2222/3333\x07",
+    });
+  });
+
   it("preserves xterm binary reports in a dedicated base64 frame", () => {
     const h = createHarness();
     connectAndAttach(h);
@@ -1043,7 +1065,13 @@ describe("ShellSocket input", () => {
     h.socket.sendInput("lo");
     expect(h.latest().sent).toHaveLength(0);
     h.latest().open();
-    h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+    h.latest().frame({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 0,
+      capabilities: ["binary-input-v1"],
+    });
     expect(h.latest().inputFrames()).toEqual(["hel", "lo"]);
   });
 
@@ -1055,7 +1083,13 @@ describe("ShellSocket input", () => {
     h.socket.sendInput("b");
 
     h.latest().open();
-    h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+    h.latest().frame({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 0,
+      capabilities: ["binary-input-v1"],
+    });
 
     expect(h.latest().sentFrames().slice(0, 3)).toEqual([
       { type: "input", terminalRef: TERMINAL_REF, data: "a" },

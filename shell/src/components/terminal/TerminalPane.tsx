@@ -209,6 +209,7 @@ export function TerminalPane({
   const webglRecreateAttemptedRef = useRef(false);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const onBinaryDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const binaryInputSupportedRef = useRef(false);
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1304,6 +1305,7 @@ export function TerminalPane({
 
           switch (msg.type) {
             case "attached":
+              binaryInputSupportedRef.current = msg.capabilities.includes("binary-input-v1");
               log("attached", {
                 attachedSessionId: msg.sessionId,
                 state: msg.state,
@@ -1494,6 +1496,7 @@ export function TerminalPane({
           tabId: terminalRef.tabId,
           fromSeq: String(replayRequest?.requestedSeq ?? 0),
           client: suppressNativeKeyboard ? "mobile" : "browser",
+          inputCapability: "binary-input-v1",
           ...(declaredSize ? { cols: String(declaredSize.cols), rows: String(declaredSize.rows) } : {}),
         };
         log("connect-ws", {
@@ -1649,11 +1652,11 @@ export function TerminalPane({
           return;
         }
         for (let offset = 0; offset < data.length; offset += TERMINAL_INPUT_CHUNK_CHARS) {
-          if (!sendTerminalBinaryFrame(
-            ws,
-            sessionIdRef.current,
-            data.slice(offset, offset + TERMINAL_INPUT_CHUNK_CHARS),
-          )) {
+          const chunk = data.slice(offset, offset + TERMINAL_INPUT_CHUNK_CHARS);
+          const sent = binaryInputSupportedRef.current
+            ? sendTerminalBinaryFrame(ws, sessionIdRef.current, chunk)
+            : sendTerminalInputFrame(ws, sessionIdRef.current, chunk);
+          if (!sent) {
             console.warn("[terminal] Rejected invalid binary terminal input");
             return;
           }
@@ -1737,6 +1740,7 @@ export function TerminalPane({
         onDataDisposableRef.current = null;
         onBinaryDisposableRef.current?.dispose();
         onBinaryDisposableRef.current = null;
+        binaryInputSupportedRef.current = false;
         onResizeDisposableRef.current?.dispose();
         onResizeDisposableRef.current = null;
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);

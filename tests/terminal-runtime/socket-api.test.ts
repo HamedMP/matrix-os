@@ -248,7 +248,10 @@ describe("terminal runtime Unix socket API", () => {
     await emitOutput?.(new TextEncoder().encode("second"));
     await outputsReady.promise;
 
-    expect(frames.find((frame) => frame.type === "attached")?.nextSeq).toBe(42);
+    expect(frames.find((frame) => frame.type === "attached")).toMatchObject({
+      nextSeq: 42,
+      capabilities: ["binary-input-v1"],
+    });
     expect(frames.filter((frame) => frame.type === "output").map((frame) => frame.seq))
       .toEqual([42, 43]);
     stream.close();

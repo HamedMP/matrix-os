@@ -104,6 +104,14 @@ describe("project-scoped terminal workspace contracts", () => {
       terminalRef,
       dataBase64: Buffer.alloc((64 * 1024) + 1).toString("base64"),
     })).toThrow();
+    expect(TerminalTabServerFrameSchema.parse({
+      type: "attached",
+      terminalRef,
+      canonicalSize: { cols: 120, rows: 36 },
+      revision: 4,
+      nextSeq: 12,
+      capabilities: ["binary-input-v1"],
+    })).toMatchObject({ capabilities: ["binary-input-v1"] });
     const snapshotFrame = TerminalTabServerFrameSchema.parse({
       type: "snapshot",
       terminalRef,

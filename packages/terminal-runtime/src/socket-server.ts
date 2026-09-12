@@ -251,6 +251,7 @@ export class TerminalRuntimeSocketServer {
       canonicalSize: resized.canonicalSize,
       revision,
       nextSeq,
+      capabilities: ["binary-input-v1"],
     });
     if (snapshot) {
       send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });

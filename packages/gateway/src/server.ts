@@ -76,6 +76,10 @@ import {
   resolveTerminalAttachmentMode,
   terminalAttachmentAllowsFrame,
 } from "./session-runtime-bridge.js";
+import {
+  parseTerminalInputCapabilityRequest,
+  terminalFrameForInputCapabilities,
+} from "./terminal-input-capabilities.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -2641,6 +2645,7 @@ export async function createGateway(config: GatewayConfig) {
       const fromSeq = /^\d+$/.test(fromSeqRaw) ? Number(fromSeqRaw) : Number.NaN;
       const cols = /^\d+$/.test(colsRaw) ? Number(colsRaw) : Number.NaN;
       const rows = /^\d+$/.test(rowsRaw) ? Number(rowsRaw) : Number.NaN;
+      const binaryInputRequested = parseTerminalInputCapabilityRequest(c.req.query("inputCapability"));
       const validNumbers = Number.isSafeInteger(fromSeq) && fromSeq >= 0
         && Number.isSafeInteger(cols) && cols >= 20 && cols <= 500
         && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
@@ -2706,7 +2711,9 @@ export async function createGateway(config: GatewayConfig) {
               size: { cols, rows },
               onFrame: (frame) => {
                 if (closed) return;
-                try { ws.send(JSON.stringify(frame)); }
+                try {
+                  ws.send(JSON.stringify(terminalFrameForInputCapabilities(frame, binaryInputRequested)));
+                }
                 catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
               },
               onClose: () => { if (!closed) ws.close(); },

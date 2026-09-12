@@ -714,11 +714,15 @@ const TerminalServerEventBaseSchema = z.object({
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
 
+export const TerminalInputCapabilitySchema = z.enum(["binary-input-v1"]);
+export type TerminalInputCapability = z.infer<typeof TerminalInputCapabilitySchema>;
+
 export const TerminalTabServerFrameSchema = z.discriminatedUnion("type", [
   TerminalServerEventBaseSchema.extend({
     type: z.literal("attached"),
     canonicalSize: TerminalGridSizeSchema,
     nextSeq: z.number().int().min(0),
+    capabilities: z.array(TerminalInputCapabilitySchema).max(8).optional(),
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("snapshot"),

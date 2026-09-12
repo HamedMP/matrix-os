@@ -1,6 +1,7 @@
 const mockConnect = jest.fn();
 const mockDetach = jest.fn();
 const mockSendInput = jest.fn(() => true);
+const mockSendBinary = jest.fn(() => true);
 const mockResize = jest.fn(() => true);
 const mockGatewayClient = {};
 const mockSurfaceWrite = jest.fn();
@@ -31,7 +32,10 @@ jest.mock("@/components/TerminalSurface", () => {
   const React = require("react");
   const { Pressable, Text, View } = require("react-native");
   return {
-    TerminalSurface: React.forwardRef((props: { onInput: (data: string) => void }, ref: React.Ref<unknown>) => {
+    TerminalSurface: React.forwardRef((props: {
+      onInput: (data: string) => void;
+      onBinary: (data: string) => void;
+    }, ref: React.Ref<unknown>) => {
       React.useImperativeHandle(ref, () => ({
         write: mockSurfaceWrite,
         clear: mockSurfaceClear,
@@ -48,6 +52,10 @@ jest.mock("@/components/TerminalSurface", () => {
           accessibilityLabel: "Type terminal input",
           onPress: () => props.onInput("a"),
         }, React.createElement(Text, null, "terminal")),
+        React.createElement(Pressable, {
+          accessibilityLabel: "Send terminal protocol reply",
+          onPress: () => props.onBinary("\x1b]10;?\x07"),
+        }, React.createElement(Text, null, "protocol")),
       );
     }),
   };
@@ -68,6 +76,7 @@ describe("live terminal session modal", () => {
     mockConnect.mockResolvedValue({
       detach: mockDetach,
       sendInput: mockSendInput,
+      sendBinary: mockSendBinary,
       resize: mockResize,
       close: jest.fn(),
     });
@@ -85,9 +94,11 @@ describe("live terminal session modal", () => {
     const options = mockConnect.mock.calls[0]?.[0] as {
       onMessage: (frame: { type: string; data?: string; ansi?: string; canonicalSize?: { cols: number; rows: number } }) => void;
     };
-    options.onMessage({ type: "attached", canonicalSize: { cols: 100, rows: 30 } });
-    options.onMessage({ type: "snapshot", ansi: "ready" });
-    options.onMessage({ type: "output", data: "\nhello" });
+    act(() => {
+      options.onMessage({ type: "attached", canonicalSize: { cols: 100, rows: 30 } });
+      options.onMessage({ type: "snapshot", ansi: "ready" });
+      options.onMessage({ type: "output", data: "\nhello" });
+    });
     expect(mockSurfaceClear).toHaveBeenCalled();
     expect(mockSurfaceResize).toHaveBeenCalledWith(100, 30);
     expect(mockSurfaceWrite).toHaveBeenCalledWith("ready");
@@ -95,6 +106,8 @@ describe("live terminal session modal", () => {
 
     fireEvent.press(screen.getByLabelText("Type terminal input"));
     expect(mockSendInput).toHaveBeenCalledWith("a");
+    fireEvent.press(screen.getByLabelText("Send terminal protocol reply"));
+    expect(mockSendBinary).toHaveBeenCalledWith("\x1b]10;?\x07");
 
     rendered.unmount();
     expect(mockDetach).toHaveBeenCalled();
@@ -102,6 +115,16 @@ describe("live terminal session modal", () => {
 
   it("stops showing an indefinite loader when the socket handshake never opens", async () => {
     jest.useFakeTimers();
+    mockConnect.mockImplementationOnce(async (options: { onStatus: (status: "open") => void }) => {
+      options.onStatus("open");
+      return {
+        detach: mockDetach,
+        sendInput: mockSendInput,
+        sendBinary: mockSendBinary,
+        resize: mockResize,
+        close: jest.fn(),
+      };
+    });
     render(<TerminalSessionScreen />);
 
     await waitFor(() => expect(mockConnect).toHaveBeenCalled());

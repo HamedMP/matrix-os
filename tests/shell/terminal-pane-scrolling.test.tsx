@@ -19,8 +19,20 @@ const TAB_ID = `tt_${"b".repeat(32)}`;
 const TERMINAL_REF_KEY = `${WORKSPACE_ID}:${TAB_ID}`;
 const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
 
-function attachedFrame(nextSeq: number, canonicalSize = { cols: 120, rows: 42 }, revision = 1) {
-  return { type: "attached", terminalRef: TERMINAL_REF, canonicalSize, revision, nextSeq };
+function attachedFrame(
+  nextSeq: number,
+  canonicalSize = { cols: 120, rows: 42 },
+  revision = 1,
+  capabilities: string[] | null = ["binary-input-v1"],
+) {
+  return {
+    type: "attached",
+    terminalRef: TERMINAL_REF,
+    canonicalSize,
+    revision,
+    nextSeq,
+    ...(capabilities === null ? {} : { capabilities }),
+  };
 }
 
 function outputFrame(seq: number, data: string, revision = 1) {
@@ -906,6 +918,17 @@ describe("TerminalPane scrolling", () => {
       terminalRef: TERMINAL_REF,
       dataBase64: "G10xMDs/BxtcG1s8NjQ7MTU7NU2A/w==",
     }));
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify(attachedFrame(0, { cols: 140, rows: 40 }, 2, null)),
+      });
+    });
+    terminal.emitBinary("\x1b]10;rgb:1111/2222/3333\x07");
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "input",
+      terminalRef: TERMINAL_REF,
+      data: "\x1b]10;rgb:1111/2222/3333\x07",
+    }));
     const sentBeforeInvalidBinary = stubWs.send.mock.calls.length;
     terminal.emitBinary(`${"x".repeat(32_768)}\u{100}`);
     expect(stubWs.send).toHaveBeenCalledTimes(sentBeforeInvalidBinary);
@@ -1370,6 +1393,7 @@ describe("TerminalPane scrolling", () => {
     expect(url.searchParams.get("workspaceId")).toBe(WORKSPACE_ID);
     expect(url.searchParams.get("tabId")).toBe(TAB_ID);
     expect(url.searchParams.get("fromSeq")).toBe("0");
+    expect(url.searchParams.get("inputCapability")).toBe("binary-input-v1");
     expect(url.searchParams.get("fromSeq")).not.toBe(String(Number.MAX_SAFE_INTEGER));
   });
 

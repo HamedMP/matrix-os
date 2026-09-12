@@ -124,8 +124,9 @@ export class ShellSocket {
   private failedAttempts = 0;
   private pendingInput: Array<
     | { type: "input"; data: string }
-    | { type: "binary"; dataBase64: string }
+    | { type: "binary"; data: string }
   > = [];
+  private binaryInputSupported = false;
   private lastKnownDims: Dims | null = null;
   private lastSentDims: Dims | null = null;
   private resizeSentSinceAttach = false;
@@ -191,11 +192,10 @@ export class ShellSocket {
     }
     for (let offset = 0; offset < data.length; offset += INPUT_CHUNK_CHARS) {
       const chunk = data.slice(offset, offset + INPUT_CHUNK_CHARS);
-      const frame = { type: "binary" as const, dataBase64: btoa(chunk) };
       if (this.currentState === "attached" && this.socket !== null) {
-        this.sendFrame({ ...frame, terminalRef: this.terminalRef });
+        this.sendBinaryChunk(chunk);
       } else {
-        this.pendingInput.push(frame);
+        this.pendingInput.push({ type: "binary", data: chunk });
         if (this.pendingInput.length > PENDING_INPUT_MAX_CHUNKS) this.pendingInput.shift();
       }
     }
@@ -245,6 +245,7 @@ export class ShellSocket {
 
   private openSocket(isReconnect: boolean): void {
     if (this.disposed) return;
+    this.binaryInputSupported = false;
     // Per-connection resize bookkeeping: a fresh attach starts a new startup
     // window and may need the last known dims resent.
     this.lastSentDims = null;
@@ -310,7 +311,7 @@ export class ShellSocket {
       : LIVE_TAIL_FROM_SEQ;
     const size = this.lastKnownDims;
     const sizingSuffix = size ? `&cols=${size.cols}&rows=${size.rows}` : "";
-    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}`;
+    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}&inputCapability=binary-input-v1`;
   }
 
   private scheduleReconnect(): void {
@@ -439,6 +440,8 @@ export class ShellSocket {
       return;
     }
     this.failedAttempts = 0;
+    this.binaryInputSupported = Array.isArray(frame.capabilities)
+      && frame.capabilities.includes("binary-input-v1");
     this.handleCanonicalSize(frame.canonicalSize && typeof frame.canonicalSize === "object"
       ? frame.canonicalSize as Record<string, unknown>
       : {});
@@ -558,8 +561,21 @@ export class ShellSocket {
     const chunks = this.pendingInput;
     this.pendingInput = [];
     for (const chunk of chunks) {
-      this.sendFrame({ ...chunk, terminalRef: this.terminalRef });
+      if (chunk.type === "binary") this.sendBinaryChunk(chunk.data);
+      else this.sendFrame({ ...chunk, terminalRef: this.terminalRef });
     }
+  }
+
+  private sendBinaryChunk(data: string): void {
+    if (this.binaryInputSupported) {
+      this.sendFrame({
+        type: "binary",
+        terminalRef: this.terminalRef,
+        dataBase64: btoa(data),
+      });
+      return;
+    }
+    this.sendFrame({ type: "input", terminalRef: this.terminalRef, data });
   }
 
   private scheduleHeartbeat(): void {
