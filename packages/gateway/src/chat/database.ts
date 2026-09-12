@@ -113,8 +113,15 @@ export interface ChatQueuedTurnsTable {
   id: string;
   chat_id: string;
   client_request_id: string;
+  actor_request_id: ColumnType<string | null, string | null | undefined, string | null>;
+  requesting_actor_id: ColumnType<string | null, string | null | undefined, string | null>;
+  collaboration_scope_id: ColumnType<string | null, string | null | undefined, string | null>;
+  accepted_seq: ColumnType<number | null, number | null | undefined, number | null>;
+  payload_hash: ColumnType<string | null, string | null | undefined, string | null>;
+  accepted_auth_epoch: ColumnType<number | null, number | null | undefined, number | null>;
+  retry_of_queued_turn_id: ColumnType<string | null, string | null | undefined, string | null>;
   position: number;
-  status: "queued" | "claimed" | "cancelled";
+  status: "queued" | "claimed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
   parts: JsonValue;
   driver_kind: string;
   instance_id: string;
@@ -152,6 +159,15 @@ export interface ChatRunEventsTable {
   run_seq: Generated<number | null>;
   event: JsonValue;
   occurred_at: Timestamp;
+}
+
+export interface ChatApprovalOutcomesTable {
+  run_id: string;
+  approval_id: string;
+  chat_id: string;
+  decision: "approve" | "approve_for_session" | "decline" | "cancel";
+  activity_id: string;
+  resolved_at: Timestamp;
 }
 
 export interface ChatTerminalBindingsTable {
@@ -236,6 +252,7 @@ export interface ChatDatabase {
   chat_queued_turns: ChatQueuedTurnsTable;
   chat_run_steers: ChatRunSteersTable;
   chat_run_events: ChatRunEventsTable;
+  chat_approval_outcomes: ChatApprovalOutcomesTable;
   chat_terminal_bindings: ChatTerminalBindingsTable;
   chat_run_adapter_state: ChatRunAdapterStateTable;
   chat_outbox: ChatOutboxTable;
@@ -417,8 +434,15 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       id TEXT PRIMARY KEY,
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
       client_request_id TEXT NOT NULL,
-      position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 20),
-      status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'cancelled')),
+      actor_request_id TEXT,
+      requesting_actor_id TEXT,
+      collaboration_scope_id UUID,
+      accepted_seq BIGINT,
+      payload_hash TEXT,
+      accepted_auth_epoch BIGINT,
+      retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL,
+      position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 32),
+      status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'cancelled', 'interrupted', 'unauthorized', 'unavailable')),
       parts JSONB NOT NULL,
       driver_kind TEXT NOT NULL,
       instance_id TEXT NOT NULL,
@@ -435,6 +459,45 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       updated_at TIMESTAMPTZ NOT NULL,
       UNIQUE (chat_id, client_request_id)
     )
+  `.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS actor_request_id TEXT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS requesting_actor_id TEXT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS collaboration_scope_id UUID`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_seq BIGINT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS payload_hash TEXT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_auth_epoch BIGINT`.execute(db);
+  await sql`
+    ALTER TABLE chat_queued_turns
+    ADD COLUMN IF NOT EXISTS retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL
+  `.execute(db);
+  await sql`ALTER TABLE chat_queued_turns DROP CONSTRAINT IF EXISTS chat_queued_turns_position_check`.execute(db);
+  await sql`
+    ALTER TABLE chat_queued_turns ADD CONSTRAINT chat_queued_turns_position_check
+    CHECK (position BETWEEN 1 AND 32)
+  `.execute(db);
+  await sql`ALTER TABLE chat_queued_turns DROP CONSTRAINT IF EXISTS chat_queued_turns_status_check`.execute(db);
+  await sql`
+    ALTER TABLE chat_queued_turns ADD CONSTRAINT chat_queued_turns_status_check
+    CHECK (status IN ('queued', 'claimed', 'cancelled', 'interrupted', 'unauthorized', 'unavailable'))
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_queued_turns
+    DROP CONSTRAINT IF EXISTS chat_queued_turns_chat_id_client_request_id_key
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_personal_request
+    ON chat_queued_turns(chat_id, client_request_id)
+    WHERE requesting_actor_id IS NULL
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_shared_request
+    ON chat_queued_turns(chat_id, requesting_actor_id, actor_request_id)
+    WHERE requesting_actor_id IS NOT NULL
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_shared_sequence
+    ON chat_queued_turns(chat_id, accepted_seq)
+    WHERE collaboration_scope_id IS NOT NULL
   `.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queued_turns_position
@@ -478,6 +541,34 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       event JSONB NOT NULL,
       occurred_at TIMESTAMPTZ NOT NULL
     )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_approval_outcomes (
+      run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+      approval_id TEXT NOT NULL,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      decision TEXT NOT NULL CHECK (decision IN ('approve', 'approve_for_session', 'decline', 'cancel')),
+      activity_id TEXT NOT NULL,
+      resolved_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (run_id, approval_id)
+    )
+  `.execute(db);
+  await sql`
+    INSERT INTO chat_approval_outcomes (
+      run_id, approval_id, chat_id, decision, activity_id, resolved_at
+    )
+    SELECT run_id, approval_id, MIN(chat_id), MIN(decision), MIN(activity_id), MAX(resolved_at)
+    FROM (
+      SELECT run_id, event ->> 'approvalId' AS approval_id, chat_id,
+        event ->> 'decision' AS decision, id AS activity_id, occurred_at AS resolved_at
+      FROM chat_run_events
+      WHERE event ->> 'type' = 'approval.resolved'
+        AND event ->> 'approvalId' IS NOT NULL
+        AND event ->> 'decision' IN ('approve', 'approve_for_session', 'decline', 'cancel')
+    ) AS resolved
+    GROUP BY run_id, approval_id
+    HAVING COUNT(DISTINCT chat_id) = 1 AND COUNT(DISTINCT decision) = 1
+    ON CONFLICT (run_id, approval_id) DO NOTHING
   `.execute(db);
   await sql`
     ALTER TABLE chat_run_events
@@ -591,6 +682,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_project ON chats(owner_type, owner_id, project_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_page ON chat_messages(chat_id, seq)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_run_events_run_occurred ON chat_run_events(run_id, occurred_at, id)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_approval_outcomes_chat ON chat_approval_outcomes(chat_id, run_id)`.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_run_events_run_sequence
     ON chat_run_events(run_id, run_seq)

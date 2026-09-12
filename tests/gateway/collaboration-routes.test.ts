@@ -1,9 +1,12 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
+import { CollaborationChatCommands } from "../../packages/gateway/src/chat/collaboration-commands.js";
+import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
+import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/collaboration/chat-execution-adapter.js";
 import { CollaborationChatScopeService } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
@@ -60,6 +63,26 @@ describe("collaboration gateway routes", () => {
       resolveParticipant,
       now: () => now,
     });
+    const chatRepository = new ChatRepository(fixture.db);
+    const chatExecutionAdapter = new CollaborationChatExecutionAdapter({
+      repository: chatRepository,
+      commands: new CollaborationChatCommands({
+        db: fixture.db,
+        now: () => now,
+        submitApproval: async () => undefined,
+      }),
+      resolveParticipant,
+      resolveEligibility: async (scopeId) => {
+        const row = await fixture.db.selectFrom("collaboration_scopes")
+          .select("execution_eligibility").where("id", "=", scopeId).executeTakeFirst();
+        return typeof row?.execution_eligibility === "string"
+          ? JSON.parse(row.execution_eligibility) as unknown
+          : row?.execution_eligibility;
+      },
+      requestDispatch: async () => undefined,
+      now: () => now,
+      createQueuedTurnId: () => "qturn_shared_route_1",
+    });
     nonce = 0;
     signer = new CollaborationProofSigner({
       activeKeyId: "collaboration-key-1",
@@ -80,6 +103,7 @@ describe("collaboration gateway routes", () => {
       repository,
       chatScope,
       chatAdapter,
+      chatExecutionAdapter,
       resolveParticipant,
       now: () => now,
     }));
@@ -194,6 +218,58 @@ describe("collaboration gateway routes", () => {
     expect(await history.json()).toMatchObject({
       messages: [{ purpose: "discussion", actor: { actorId: collaborationActors.editor } }],
     });
+  });
+
+  it("admits and lists M2 AI requests only with a signed current M2 policy", async () => {
+    await shareChat();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_generation: 1,
+      execution_eligibility: JSON.stringify({
+        profileId: "scope-runtime-proof-v1",
+        profileVersion: 1,
+        profileDigest: "a".repeat(64),
+        adapterId: "claude-code",
+        harnessVersion: "2.1.240",
+      }),
+    }).where("id", "=", collaborationIds.scope).execute();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}/chat/requests`;
+    const body = {
+      clientRequestId: request(80),
+      expectedRevision: "2",
+      text: "Summarize our discussion",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    };
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body,
+    })).status).toBe(401);
+    const admitted = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body,
+      m2Policy: true,
+    });
+    expect(admitted.status).toBe(201);
+    expect(await admitted.json()).toMatchObject({
+      id: "qturn_shared_route_1",
+      acceptedSequence: "1",
+      actor: { actorId: collaborationActors.owner, displayName: "Nima Owner" },
+      state: "queued",
+    });
+    const listed = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path,
+      m2Policy: true,
+    });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({ requests: [{ id: "qturn_shared_route_1" }] });
   });
 
   it("lets viewers read and keep private state but rejects every discussion write", async () => {
@@ -480,6 +556,7 @@ describe("collaboration gateway routes", () => {
     query?: string;
     body?: unknown;
     deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string };
+    m2Policy?: boolean;
   }): Promise<Response> {
     const body = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
@@ -493,11 +570,22 @@ describe("collaboration gateway routes", () => {
       body,
       ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
     });
+    const policy = input.m2Policy ? signer.signPolicy({
+      milestone: "m2",
+      revision: "1",
+      mode: "enabled",
+      cohort: [],
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+    }) : undefined;
     return app.request(`${input.path}${input.query ? `?${input.query}` : ""}`, {
       method: input.method,
       headers: {
         "content-type": "application/json",
         "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(proof)).toString("base64url"),
+        ...(policy ? {
+          "x-matrix-collaboration-policy": Buffer.from(JSON.stringify(policy)).toString("base64url"),
+        } : {}),
         ...(input.deleteConditions ? {
           "x-matrix-client-request-id": input.deleteConditions.clientRequestId,
           "x-matrix-expected-revision": input.deleteConditions.expectedRevision,
