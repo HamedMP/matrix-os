@@ -190,14 +190,14 @@ jobs:
           if [ "$action" = "customer_smoke" ]; then
             handle="nimanaderi"
             if [ "$GITHUB_REF" != "refs/heads/release-smoke-vps" ] ||
-              [ "$REQUESTED_VERSION" != "v2026.09.12-1237" ]; then
+              [ "$REQUESTED_VERSION" != "v2026.09.12-1238" ]; then
               echo "Customer release smoke is restricted to the isolated exact-release test branch." >&2
               exit 1
             fi
             dev_release="$(curl --fail --silent --show-error --max-time 15 \
               'https://app.matrix-os.com/system-bundles/channels/dev.json')"
             if ! jq -e --arg version "$REQUESTED_VERSION" \
-              --arg commit "501faacbecf5f9726c92fa6ef10ad8f89b42a587" \
+              --arg commit "06bbd789302af4bc62942643453bde1cb5d6abf2" \
               '.channel == "dev" and .version == $version and .gitCommit == $commit' \
               <<< "$dev_release" >/dev/null; then
               echo "Requested release is not the pinned current dev bundle." >&2
@@ -998,13 +998,7 @@ jobs:
       - name: Verify stable, deploy, and prove the new terminal architecture
         run: |
           set -euo pipefail
-          stable_release="$(curl --fail --silent --show-error --max-time 15 \
-            "${PLATFORM_PUBLIC_URL%/}/system-bundles/channels/stable.json")"
-          stable_version="$(jq -er 'select(.channel == "stable") | .version | select(type == "string")' <<< "$stable_release")"
-          if [ "$stable_version" != "v2026.09.08-1195" ]; then
-            echo "Stable channel changed; refusing the pinned production smoke." >&2
-            exit 1
-          fi
+          source_version="v2026.09.12-1237"
 
           fleet="$(curl --fail --silent --show-error --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
@@ -1013,10 +1007,11 @@ jobs:
             [.machines[] | select(.handle == $h and .deletedAt == null)] |
             if length == 1 then .[0] else error("production machine is not unique") end
           ' <<< "$fleet")"
-          if ! jq -e --arg stable "$stable_version" '
-            .status == "running" and .healthy == true and .runtimeVersion == $stable
+          if ! jq -e --arg source "$source_version" --arg target "$VERSION" '
+            .status == "running" and .healthy == true and
+            (.runtimeVersion == $source or .runtimeVersion == $target)
           ' <<< "$machine" >/dev/null; then
-            echo "nimanaderi is not a healthy exact-stable runtime; no deployment was triggered." >&2
+            echo "nimanaderi is not a healthy exact-source or target runtime; no deployment was triggered." >&2
             exit 1
           fi
           address="$(jq -er '.publicIPv4 | select(type == "string" and test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' <<< "$machine")"
@@ -1147,22 +1142,29 @@ jobs:
           }
 
           before="$(collect_state /tmp/nimanaderi-before.json)"
-          if ! jq -e --arg stable "$stable_version" '
-            .appVersion == $stable and .releaseVersion == $stable and .coreServicesActive == true
+          if ! jq -e --arg source "$source_version" --arg target "$VERSION" '
+            (.appVersion == $source or .appVersion == $target) and
+            .releaseVersion == .appVersion and .coreServicesActive == true and
+            .terminalRuntimeActive == true and .schemaVersion == 2 and
+            .migrationStatus == "committed" and .updateError == "none"
           ' <<< "$before" >/dev/null; then
-            echo "Stable host preflight failed; no deployment was triggered." >&2
+            echo "Source host preflight failed; no deployment was triggered." >&2
             exit 1
           fi
-          echo "Stable preflight verified: $(jq -c '{appVersion,releaseVersion,coreServicesActive,terminalRuntimeActive,workspaceCount,tabCount}' <<< "$before")"
+          echo "Source preflight verified: $(jq -c '{appVersion,releaseVersion,coreServicesActive,terminalRuntimeActive,workspaceCount,tabCount}' <<< "$before")"
 
-          deploy_body="{\"version\":\"${VERSION}\",\"handle\":\"${HANDLE}\"}"
-          curl --fail --silent --show-error --max-time 30 \
-            -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
-            -H "authorization: Bearer ${PLATFORM_SECRET}" \
-            -H 'content-type: application/json' \
-            --data-binary "$deploy_body" -o /tmp/nimanaderi-deploy.json
-          jq -e '(.failed // 0) == 0 and (.triggered // 0) == 1' /tmp/nimanaderi-deploy.json >/dev/null
-          echo "Exact-version deployment triggered for nimanaderi."
+          if [ "$(jq -r .appVersion <<< "$before")" != "$VERSION" ]; then
+            deploy_body="{\"version\":\"${VERSION}\",\"handle\":\"${HANDLE}\"}"
+            curl --fail --silent --show-error --max-time 30 \
+              -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              -H 'content-type: application/json' \
+              --data-binary "$deploy_body" -o /tmp/nimanaderi-deploy.json
+            jq -e '(.failed // 0) == 0 and (.triggered // 0) == 1' /tmp/nimanaderi-deploy.json >/dev/null
+            echo "Exact-version deployment triggered for nimanaderi."
+          else
+            echo "nimanaderi already runs the exact target; deployment skipped."
+          fi
 
           deadline=$((SECONDS + 720))
           while true; do
@@ -1203,13 +1205,179 @@ jobs:
 
           runtime_request POST /api/terminal/workspaces/ensure /tmp/nimanaderi-workspace.json '{}'
           workspace_id="$(jq -er '.workspace.id | select(type == "string" and test("^tws_[0-9a-f]{32}$"))' /tmp/nimanaderi-workspace.json)"
-          tab_body='{"name":"Post-upgrade verification","cwd":"","command":["/bin/bash","-lc","printf '\''Matrix upgrade verified.\\n'\''; exec /bin/bash"]}'
+          tab_id="tt_$(printf '%s' "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${VERSION}" | sha256sum | cut -c1-32)"
+          probe_path="/tmp/matrix-terminal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.py"
+          tab_created=false
+          cleanup_test_tab() {
+            if [ "$tab_created" = true ]; then
+              runtime_request DELETE "/api/terminal/workspaces/${workspace_id}/tabs/${tab_id}" /tmp/nimanaderi-tab-delete.json || true
+            fi
+          }
+          trap cleanup_test_tab EXIT
+
+          read -r -d '' osc_probe_script <<'PYTHON' || true
+          import os
+          import select
+          import sys
+          import termios
+          import time
+          import tty
+
+          try:
+              os.unlink(__file__)
+          except FileNotFoundError:
+              pass
+          fd = sys.stdin.fileno()
+          previous = termios.tcgetattr(fd)
+          response = bytearray()
+          try:
+              tty.setraw(fd)
+              os.write(sys.stdout.fileno(), b"\x1b]10;?\x07")
+              deadline = time.monotonic() + 20
+              while time.monotonic() < deadline and not (response.endswith(b"\x07") or response.endswith(b"\x1b\\")):
+                  ready, _, _ = select.select([fd], [], [], 0.25)
+                  if ready:
+                      response.extend(os.read(fd, 256))
+                      if len(response) > 4096:
+                          raise RuntimeError("terminal response exceeded limit")
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+          if not response.startswith(b"\x1b]10;rgb:") or not (response.endswith(b"\x07") or response.endswith(b"\x1b\\")):
+              print("__MATRIX_OSC_FAILED__", flush=True)
+              raise SystemExit(7)
+          print("__MATRIX_OSC_OK__", flush=True)
+          os.execv("/bin/bash", ["bash", "-i"])
+          PYTHON
+          read -r -d '' write_probe_script <<'PYTHON' || true
+          import os
+          import sys
+          path, content = sys.argv[1], sys.argv[2]
+          fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+          try:
+              os.write(fd, content.encode("utf-8"))
+          finally:
+              os.close(fd)
+          PYTHON
+          write_probe_body="$(jq -cn --arg script "$write_probe_script" --arg path "$probe_path" --arg content "$osc_probe_script" \
+            '{command:["/usr/bin/python3","-c",$script,$path,$content],timeoutMs:30000}')"
+          runtime_request POST /api/terminal/run /tmp/nimanaderi-write-probe.json "$write_probe_body"
+          jq -e '.exitCode == 0 and .timedOut == false and .truncated == false' /tmp/nimanaderi-write-probe.json >/dev/null
+
+          tab_body="$(jq -cn --arg tab "$tab_id" --arg path "$probe_path" \
+            '{tabId:$tab,name:"Matrix terminal smoke",cwd:"",command:["/usr/bin/python3",$path]}')"
           runtime_request POST "/api/terminal/workspaces/${workspace_id}/tabs" /tmp/nimanaderi-tab.json "$tab_body"
-          tab_id="$(jq -er '.tab.id | select(type == "string" and test("^tt_[0-9a-f]{32}$"))' /tmp/nimanaderi-tab.json)"
+          jq -e --arg tab "$tab_id" '.tab.id == $tab and .tab.status == "running"' /tmp/nimanaderi-tab.json >/dev/null
+          tab_created=true
           runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-workspaces.json
           jq -e --arg workspace "$workspace_id" --arg tab "$tab_id" '
             any(.workspaces[]; .id == $workspace and any(.tabs[]; .id == $tab and .status == "running"))
           ' /tmp/nimanaderi-workspaces.json >/dev/null
+
+          read -r -d '' websocket_probe <<'JAVASCRIPT' || true
+          const [token, workspaceId, tabId] = process.argv.slice(1);
+          const terminalRef = { workspaceId, tabId };
+          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const deadline = async (predicate, timeoutMs, code) => {
+            const end = Date.now() + timeoutMs;
+            while (Date.now() < end) {
+              if (predicate()) return;
+              await wait(50);
+            }
+            throw new Error(code);
+          };
+          let allOutput = "";
+          let cursor = 0;
+          let oscReplies = 0;
+          let firstResultCount = 0;
+          let secondResultCount = 0;
+          const sockets = [];
+
+          const attach = async (fromSeq) => {
+            const url = new URL("ws://127.0.0.1:4000/ws/terminal/tab");
+            url.searchParams.set("workspaceId", workspaceId);
+            url.searchParams.set("tabId", tabId);
+            url.searchParams.set("client", "browser");
+            url.searchParams.set("inputCapability", "binary-input-v1");
+            url.searchParams.set("fromSeq", String(fromSeq));
+            url.searchParams.set("token", token);
+            const socket = new WebSocket(url);
+            sockets.push(socket);
+            let attached = false;
+            let protocolTail = "";
+            socket.addEventListener("message", (event) => {
+              const frame = JSON.parse(String(event.data));
+              if (frame.type === "error" || frame.type === "safe-error") {
+                throw new Error("terminal_websocket_error");
+              }
+              if (frame.type === "attached") {
+                if (!Array.isArray(frame.capabilities) || !frame.capabilities.includes("binary-input-v1")) {
+                  throw new Error("binary_input_capability_missing");
+                }
+                cursor = Math.max(cursor, frame.nextSeq ?? 0);
+                attached = true;
+                return;
+              }
+              const data = frame.type === "output" ? frame.data : frame.type === "snapshot" ? frame.ansi : "";
+              if (typeof data !== "string" || data.length === 0) return;
+              if (frame.type === "output") cursor = Math.max(cursor, Number(frame.seq) + 1);
+              allOutput = (allOutput + data).slice(-1024 * 1024);
+              firstResultCount = (allOutput.match(/81243/g) || []).length;
+              secondResultCount = (allOutput.match(/91307/g) || []).length;
+              protocolTail = (protocolTail + data).slice(-4096);
+              if (protocolTail.includes("\x1b]10;?\x07")) {
+                protocolTail = protocolTail.replace("\x1b]10;?\x07", "");
+                const reply = Buffer.from("\x1b]10;rgb:ffff/ffff/ffff\x07", "latin1");
+                socket.send(JSON.stringify({ type: "binary", terminalRef, dataBase64: reply.toString("base64") }));
+                oscReplies += 1;
+              }
+            });
+            await deadline(() => attached, 20_000, "attach_timeout");
+            return socket;
+          };
+
+          try {
+            let socket = await attach(0);
+            await deadline(() => allOutput.includes("__MATRIX_OSC_OK__"), 25_000, "osc_round_trip_timeout");
+            if (allOutput.includes("rgb:")) throw new Error("osc_reply_rendered_as_output");
+            socket.send(JSON.stringify({ type: "input", terminalRef, data: "echo $((81234 + 9))\r" }));
+            await deadline(() => firstResultCount === 1, 15_000, "keyboard_round_trip_failed");
+            socket.close();
+            await deadline(() => socket.readyState === WebSocket.CLOSED, 5_000, "first_socket_close_timeout");
+
+            socket = await attach(cursor);
+            socket.send(JSON.stringify({ type: "input", terminalRef, data: "echo $((91300 + 7))\r" }));
+            await deadline(() => secondResultCount === 1, 15_000, "reconnect_round_trip_failed");
+            const stableBytes = allOutput.length;
+            await wait(75_000);
+            if (allOutput.includes("rgb:")) throw new Error("osc_feedback_loop_detected");
+            if (allOutput.length - stableBytes > 131_072) throw new Error("uncontrolled_terminal_output_detected");
+            if (firstResultCount !== 1 || secondResultCount !== 1 || oscReplies < 1) {
+              throw new Error("terminal_round_trip_count_mismatch");
+            }
+            console.log(JSON.stringify({
+              binaryInput: true,
+              keyboardRoundTrips: 2,
+              oscReplies,
+              reconnects: 1,
+              stableObservationSeconds: 75,
+              visibleRgbPayloads: 0,
+            }));
+          } finally {
+            for (const socket of sockets) {
+              if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+            }
+          }
+          JAVASCRIPT
+          websocket_body="$(jq -cn --arg script "$websocket_probe" --arg token "$runtime_token" \
+            --arg workspace "$workspace_id" --arg tab "$tab_id" \
+            '{command:["/opt/matrix/runtime/node/bin/node","-e",$script,$token,$workspace,$tab],timeoutMs:150000}')"
+          runtime_request POST /api/terminal/run /tmp/nimanaderi-websocket-probe.json "$websocket_body"
+          jq -e '.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null' /tmp/nimanaderi-websocket-probe.json >/dev/null
+          websocket_result="$(jq -er '.stdout | fromjson' /tmp/nimanaderi-websocket-probe.json)"
+          jq -e '.binaryInput == true and .keyboardRoundTrips == 2 and .oscReplies >= 1 and
+            .reconnects == 1 and .stableObservationSeconds == 75 and .visibleRgbPayloads == 0' <<< "$websocket_result" >/dev/null
+          echo "Terminal transport verified: $(jq -c . <<< "$websocket_result")"
+
           final="$(collect_state /tmp/nimanaderi-final.json)"
           if ! jq -e --arg target "$VERSION" '
             .appVersion == $target and .releaseVersion == $target and
@@ -1235,6 +1403,15 @@ jobs:
             .migrationStatus == "committed" and .activeWorkspaceServices >= 1
           ' <<< "$observed" >/dev/null
           echo "Migration remained committed after the observation window: $(jq -c '{appVersion,releaseVersion,migrationStatus,activeWorkspaceServices}' <<< "$observed")"
+
+          runtime_request DELETE "/api/terminal/workspaces/${workspace_id}/tabs/${tab_id}" /tmp/nimanaderi-tab-delete.json
+          tab_created=false
+          trap - EXIT
+          runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-workspaces-after-cleanup.json
+          jq -e --arg workspace "$workspace_id" --arg tab "$tab_id" '
+            all(.workspaces[]; .id != $workspace or all(.tabs[]; .id != $tab))
+          ' /tmp/nimanaderi-workspaces-after-cleanup.json >/dev/null
+          echo "Temporary terminal removed by exact workspace/tab ID."
 
   diagnose_release:
     name: Diagnose released-bundle smoke lifecycle
