@@ -112,6 +112,41 @@ describe("project collaboration transition journal", () => {
   it("requires ordered durable stages and publishes the destination authority exactly once", async () => {
     const transitions = journal();
     await prepare();
+    const childScopeId = "10000000-0000-4000-8000-000000000052";
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: childScopeId,
+      owner_type: "personal",
+      owner_id: OWNER_ID,
+      kind: "chat",
+      resource_id: "chat_project",
+      parent_scope_id: SCOPE_ID,
+      membership_mode: "inherited",
+      lifecycle: "preparing",
+      revision: 1,
+      auth_epoch: 0,
+      authority_runtime_id: DESTINATION_RUNTIME,
+      authority_generation: 1,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: NOW,
+      updated_at: NOW,
+      deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_resource_bindings").values({
+      id: "30000000-0000-4000-8000-000000000051",
+      project_scope_id: SCOPE_ID,
+      resource_scope_id: childScopeId,
+      resource_kind: "chat",
+      resource_id: "chat_project",
+      authority_runtime_id: DESTINATION_RUNTIME,
+      authority_generation: 1,
+      revision: 1,
+      readiness: "ready",
+      blocker: null,
+      incarnation: null,
+      created_at: NOW,
+      updated_at: NOW,
+    }).execute();
     await transitions.beginStaging(TRANSITION_ID);
     await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
     await expect(transitions.markFenced({
@@ -135,6 +170,14 @@ describe("project collaboration transition journal", () => {
       revision: 5,
       authority_runtime_id: DESTINATION_RUNTIME,
       authority_generation: 1,
+    });
+    expect(await fixture.db.selectFrom("collaboration_scopes")
+      .select(["lifecycle", "membership_mode", "parent_scope_id", "authority_runtime_id"])
+      .where("id", "=", childScopeId).executeTakeFirstOrThrow()).toEqual({
+      lifecycle: "shared",
+      membership_mode: "inherited",
+      parent_scope_id: SCOPE_ID,
+      authority_runtime_id: DESTINATION_RUNTIME,
     });
     expect(await fixture.db.selectFrom("collaboration_events")
       .select(({ fn }) => fn.countAll<number>().as("count"))

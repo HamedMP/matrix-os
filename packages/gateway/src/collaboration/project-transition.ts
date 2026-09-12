@@ -375,6 +375,14 @@ export function createProjectTransitionJournal(options: {
           || (scope.lifecycle !== "preparing" && scope.lifecycle !== "recovering")) {
           throw new ProjectTransitionError("conflict");
         }
+        const incompatibleBinding = await trx.selectFrom("collaboration_resource_bindings")
+          .select("id").where("project_scope_id", "=", scope.id)
+          .where((expression) => expression.or([
+            expression("readiness", "=", "blocked"),
+            expression("authority_runtime_id", "!=", row.destination_authority_runtime_id),
+            expression("authority_generation", "!=", Number(row.destination_authority_generation)),
+          ])).limit(1).executeTakeFirst();
+        if (incompatibleBinding) throw new ProjectTransitionError("conflict");
         const nextRevision = Number(scope.revision) + 1;
         const updatedScope = await trx.updateTable("collaboration_scopes").set({
           lifecycle: "shared",
@@ -390,6 +398,17 @@ export function createProjectTransitionJournal(options: {
           .where("authority_generation", "=", Number(row.source_authority_generation))
           .returningAll().executeTakeFirst();
         if (!updatedScope) throw new ProjectTransitionError("conflict");
+        await trx.updateTable("collaboration_scopes").set({
+          lifecycle: "shared",
+          authority_runtime_id: row.destination_authority_runtime_id,
+          authority_generation: Number(row.destination_authority_generation),
+          auth_epoch: Number(scope.auth_epoch) + 1,
+          updated_at: now(),
+        }).where("parent_scope_id", "=", scope.id)
+          .where("membership_mode", "=", "inherited")
+          .where("lifecycle", "in", ["preparing", "recovering"])
+          .where("deleted_at", "is", null)
+          .execute();
         const updated = await trx.updateTable("collaboration_transitions").set({
           status: "active",
           error_code: null,
