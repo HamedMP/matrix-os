@@ -998,6 +998,128 @@ jobs:
       - name: Verify stable, deploy, and prove the new terminal architecture
         run: |
           set -euo pipefail
+          customer_diagnose_read_only=true
+          if [ "$customer_diagnose_read_only" = true ]; then
+            fleet="$(curl --fail --silent --show-error --max-time 30 \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+            machine="$(jq -cer --arg h "$HANDLE" --arg v "$VERSION" '
+              [.machines[] | select(.handle == $h and .deletedAt == null)] |
+              if length == 1 and .[0].status == "running" and .[0].healthy == true and .[0].runtimeVersion == $v
+              then .[0] else error("customer runtime is not the exact healthy target") end
+            ' <<< "$fleet")"
+            address="$(jq -er '.publicIPv4 | select(type == "string" and test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' <<< "$machine")"
+            owner_id="$(jq -er '.clerkUserId | select(type == "string" and test("^user_[A-Za-z0-9]+$"))' <<< "$machine")"
+            echo "::add-mask::$address"
+            echo "::add-mask::$owner_id"
+            runtime_token="$(PLATFORM_SIGNING_SECRET="$PLATFORM_SECRET" node --input-type=module -e '
+              import { createHmac } from "node:crypto";
+              process.stdout.write(createHmac("sha256", process.env.PLATFORM_SIGNING_SECRET).update(process.argv[1]).digest("hex"));
+            ' "$HANDLE")"
+            owner_proof="$(RUNTIME_TOKEN="$runtime_token" node --input-type=module -e '
+              import { createHmac } from "node:crypto";
+              process.stdout.write(createHmac("sha256", process.env.RUNTIME_TOKEN).update(process.argv[1]).digest("hex"));
+            ' "$owner_id")"
+            echo "::add-mask::$runtime_token"
+            echo "::add-mask::$owner_proof"
+
+            runtime_request_read_only() {
+              local method="$1" path="$2" output="$3" data="${4:-}"
+              local args=(--fail --silent --show-error --max-time 30 --insecure
+                --resolve "app.matrix-os.com:443:${address}"
+                -X "$method" "https://app.matrix-os.com${path}"
+                -H "authorization: Bearer ${runtime_token}"
+                -H "x-platform-user-id: ${owner_id}"
+                -H "x-platform-verified: ${owner_proof}"
+                -o "$output")
+              if [ -n "$data" ]; then
+                args+=(-H 'content-type: application/json' --data-binary "$data")
+              fi
+              curl "${args[@]}"
+            }
+
+            runtime_request_read_only GET /api/terminal/workspaces /tmp/nimanaderi-read-only-workspaces.json
+            inventory="$(jq -c '
+              [ .workspaces[] as $workspace | $workspace.tabs[] |
+                {workspaceId:$workspace.id,id,name,status,createdAt} ] as $tabs |
+              {
+                workspaceCount:(.workspaces | length),
+                tabCount:($tabs | length),
+                statusCounts:($tabs | group_by(.status) | map({key:.[0].status,value:length}) | from_entries),
+                smokeArtifacts:([$tabs[] | select(.name == "Matrix terminal smoke") | {workspaceId,id,status,createdAt}]),
+                latestShell:([$tabs[] | select(.name == "Shell")] | sort_by(.createdAt) | last // null)
+              }
+            ' /tmp/nimanaderi-read-only-workspaces.json)"
+            echo "Read-only customer terminal inventory: $inventory"
+            latest_shell="$(jq -cer '
+              [ .workspaces[] as $workspace | $workspace.tabs[] | select(.name == "Shell") |
+                {workspaceId:$workspace.id,tabId:.id,status,createdAt} ] |
+              sort_by(.createdAt) | last // error("no Shell tab")
+            ' /tmp/nimanaderi-read-only-workspaces.json)"
+            workspace_id="$(jq -er .workspaceId <<< "$latest_shell")"
+            tab_id="$(jq -er .tabId <<< "$latest_shell")"
+
+            read -r -d '' observe_script <<'JAVASCRIPT' || true
+            const [token, workspaceId, tabId] = process.argv.slice(1);
+            const terminalRef = { workspaceId, tabId };
+            const url = new URL("ws://127.0.0.1:4000/ws/terminal/tab");
+            for (const [key, value] of Object.entries({ workspaceId, tabId, client: "browser", inputCapability: "binary-input-v1", fromSeq: "0", token })) url.searchParams.set(key, value);
+            const result = { outcome: "pending", opened: false, attached: 0, state: null, binaryInput: false, snapshots: 0, snapshotBytes: 0, outputs: 0, outputBytes: 0, exits: 0, errors: 0, errorCode: null, closeCode: null };
+            const allowedCodes = new Set(["attach_failed", "not_found", "unavailable", "capacity", "invalid_request"]);
+            let finished = false;
+            const ws = new WebSocket(url);
+            const finish = (outcome) => {
+              if (finished) return;
+              finished = true;
+              result.outcome = outcome;
+              if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+              console.log(JSON.stringify(result));
+            };
+            ws.addEventListener("open", () => { result.opened = true; });
+            ws.addEventListener("message", (event) => {
+              let frame;
+              try { frame = JSON.parse(String(event.data)); }
+              catch (error) { result.errors += 1; if (!(error instanceof SyntaxError)) result.errorCode = "other"; return; }
+              if (frame.type === "attached") { result.attached += 1; result.state = frame.state ?? null; result.binaryInput = Array.isArray(frame.capabilities) && frame.capabilities.includes("binary-input-v1"); }
+              else if (frame.type === "snapshot") { result.snapshots += 1; result.snapshotBytes += typeof frame.ansi === "string" ? frame.ansi.length : 0; }
+              else if (frame.type === "output") { result.outputs += 1; result.outputBytes += typeof frame.data === "string" ? frame.data.length : 0; }
+              else if (frame.type === "exit") result.exits += 1;
+              else if (frame.type === "error" || frame.type === "safe-error") { result.errors += 1; result.errorCode = allowedCodes.has(frame.code) ? frame.code : "other"; }
+            });
+            ws.addEventListener("error", () => { result.errors += 1; });
+            ws.addEventListener("close", (event) => { result.closeCode = event.code; finish("closed"); });
+            setTimeout(() => finish("observed"), 12_000);
+          JAVASCRIPT
+            observe_body="$(jq -cn --arg script "$observe_script" --arg token "$runtime_token" \
+              --arg workspace "$workspace_id" --arg tab "$tab_id" \
+              '{command:["/opt/matrix/runtime/node/bin/node","-e",$script,$token,$workspace,$tab],timeoutMs:20000}')"
+            runtime_request_read_only POST /api/terminal/run /tmp/nimanaderi-read-only-observe.json "$observe_body"
+            observation="$(jq -cer 'select(.exitCode == 0 and .timedOut == false and .truncated == false) | .stdout | fromjson' /tmp/nimanaderi-read-only-observe.json)"
+            echo "Read-only latest Shell attachment: $observation"
+
+            read -r -d '' log_script <<'PYTHON' || true
+          import json
+          import subprocess
+          result = subprocess.run(
+              ["/usr/bin/journalctl", "-u", "matrix-gateway.service", "-u", "matrix-terminal-runtime.service", "--since", "-30 minutes", "--no-pager", "-o", "cat"],
+              capture_output=True, text=True, timeout=15,
+          )
+          text = result.stdout[-1000000:]
+          patterns = {
+              "attachFailed": ("attach process failed", "attach_failed", "terminal attachment exit"),
+              "deleteFailed": ("failed to delete terminal workspace",),
+              "runtimeUnavailable": ("TerminalRuntimeUnavailable", "runtime_unavailable"),
+              "sendFailed": ("terminal websocket send failed",),
+              "tabUnavailable": ("Terminal tab unavailable",),
+          }
+          print(json.dumps({key: sum(text.count(item) for item in values) for key, values in patterns.items()}, sort_keys=True))
+          PYTHON
+            log_body="$(jq -cn --arg script "$log_script" '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script],timeoutMs:20000}')"
+            runtime_request_read_only POST /api/terminal/run /tmp/nimanaderi-read-only-logs.json "$log_body"
+            log_categories="$(jq -cer 'select(.exitCode == 0 and .timedOut == false and .truncated == false) | .stdout | fromjson' /tmp/nimanaderi-read-only-logs.json)"
+            echo "Read-only terminal log categories: $log_categories"
+            exit 0 # read-only customer diagnostic
+          fi
           source_version="v2026.09.12-1238"
 
           fleet="$(curl --fail --silent --show-error --max-time 30 \

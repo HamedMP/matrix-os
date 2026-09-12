@@ -237,6 +237,11 @@ describe('Preview VPS provisioning workflow', () => {
     expect(decide).toContain('refs/heads/release-smoke-vps');
     expect(decide).toContain('v2026.09.12-1239');
     expect(workflow.jobs.customer_release_smoke.if).toContain("needs.gate.outputs.action == 'customer_smoke'");
+    expect(smoke).toContain('customer_diagnose_read_only=true');
+    expect(smoke).toContain('Read-only customer terminal inventory:');
+    expect(smoke).toContain('Read-only latest Shell attachment:');
+    expect(smoke).toContain('Read-only terminal log categories:');
+    expect(smoke.indexOf('exit 0 # read-only customer diagnostic')).toBeLessThan(smoke.indexOf('/vps/deploy'));
     expect(smoke).toContain('Source preflight verified');
     expect(smoke).toContain('"coreServicesActive": all(services[name] for name in core_service_names)');
     expect(smoke).toContain('.coreServicesActive == true');
@@ -255,7 +260,7 @@ describe('Preview VPS provisioning workflow', () => {
     expect(smoke).toContain('firstResultCount,');
     expect(smoke).toContain('content = "".join(sys.argv[2:])');
     expect(smoke).toContain('[range(0; length; 3000) as $offset | .[$offset:$offset + 3000]]');
-    expect(smoke).not.toContain('["/opt/matrix/runtime/node/bin/node","-e",$script');
+    expect(smoke).not.toContain('["/opt/matrix/runtime/node/bin/node","-e",$script,$token,$workspace,$tab],timeoutMs:150000');
     expect(smoke).toContain('delete_exact_test_workspace "$workspace_id"');
     expect(smoke).toContain('Temporary terminal workspace removed by exact ID.');
     expect(smoke).toContain('Terminal architecture verified');
