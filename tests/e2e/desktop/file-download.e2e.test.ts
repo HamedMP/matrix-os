@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -11,7 +12,13 @@ const desktopMain = resolve(__dirname, "../../../desktop/out/main/index.js");
 const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/package.json"));
 const executablePath = desktopRequire("electron") as string;
 
-describe("OM-243 built Electron download", () => {
+const hasDesktopBuild = existsSync(desktopMain);
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
+  throw new Error(`Required Desktop E2E build is missing: ${desktopMain}`);
+}
+const suite = hasDesktopBuild ? describe : describe.skip;
+
+suite("OM-243 built Electron download", () => {
   let gateway: Awaited<ReturnType<typeof startDownloadGateway>>;
   let app: ElectronApplication;
   let page: Page;

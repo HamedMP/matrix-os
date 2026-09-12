@@ -558,6 +558,12 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         run: bun run build:desktop
 
+      - name: Run required Desktop file download regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/file-download.e2e.test.ts
+
       - name: Run required MAT-335 Desktop regression
         if: needs.changes.outputs.should_run == 'true'
         env:
