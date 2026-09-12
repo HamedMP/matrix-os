@@ -3,6 +3,7 @@
 @import "shadcn/tailwind.css";
 @import "@clerk/ui/themes/shadcn.css";
 @import "@matrix-os/ui/agents-providers.css";
+@source "../../../packages/ui/src/matrix-local-setup";
 
 /* Opt-in command-list motion: immediate entry, delayed fade on exit. */
 [data-instant-list-hover] {

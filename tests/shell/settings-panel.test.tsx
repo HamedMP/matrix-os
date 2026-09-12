@@ -62,6 +62,13 @@ vi.mock("../../shell/src/components/settings/sections/BillingSection.js", () => 
 }));
 
 describe("Settings panel", () => {
+  it("opens the shared local setup page from navigation", async () => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+    render(<Settings open onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Matrix CLI & MCP" }));
+    expect(screen.getByRole("heading", { name: "Matrix CLI & MCP" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Skills & plugins" })).toBeTruthy();
+  });
   beforeEach(() => {
     vi.resetModules();
     billingState.active = true;
