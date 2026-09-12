@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   Download,
+  MoreHorizontal,
   FileCode2,
   FileQuestion,
   FilePenLine,
@@ -10,7 +11,9 @@ import {
   TriangleAlert,
   X,
 } from "@renderer/lib/hugeicons";
-import { lazy, useEffect, useState } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { lazy, useEffect, useState, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { AppError, toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
@@ -305,11 +308,13 @@ export function FilePreview({
   entry,
   onOpen,
   textRenderer = "plain",
+  unavailableAction,
 }: {
   path: string | null;
   entry?: BrowserEntry;
   onOpen?: (selection: PreviewSelection) => void;
   textRenderer?: "plain" | "monaco";
+  unavailableAction?: ReactNode;
 }) {
   const api = useConnection((state) => state.api);
   if (path === null || !api) {
@@ -323,7 +328,7 @@ export function FilePreview({
   if (kind === "image") return <ImagePreview key={path} path={path} name={name} />;
   if (kind === "markdown") return <TextPreview key={path} path={path} markdown />;
   if (kind === "text") return <TextPreview key={path} path={path} monaco={textRenderer === "monaco"} />;
-  return <EmptyState icon={<FileQuestion size={26} />} headline="Preview not available" description="This file type can’t be previewed here." />;
+  return <EmptyState icon={<FileQuestion size={26} />} headline="Preview not available" description="This file type can’t be previewed here." action={unavailableAction} />;
 }
 
 export function PreviewPane({
@@ -354,7 +359,7 @@ export function PreviewPane({
       className="flex min-h-0 min-w-0 flex-col border-t md:border-t-0 md:border-l"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
     >
-      <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
+      <header className="flex min-h-16 shrink-0 items-center gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
         {history.length > 1 ? (
           <button
             type="button"
@@ -369,23 +374,36 @@ export function PreviewPane({
         <span className="shrink-0" style={{ color: entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)" }}>
           <FileGlyph kind={kindForEntry(entry)} size={20} />
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }} title={entry.name}>{entry.name}</h2>
           {metadata ? <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{metadata}</p> : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
-        {onDownload && entry.type === "file" ? (
-          <Button variant="subtle" disabled={downloadPending} onClick={() => onDownload(path, entry.sizeBytes)}>
-            <Download size={14} aria-hidden /> Download
-          </Button>
-        ) : null}
-        {onEdit && entry.type === "file" && !isManagedBrowserPath(path) ? (
-          <Button variant="subtle" className="ml-auto shrink-0" onClick={() => onEdit(path)}>
-            <FilePenLine size={14} aria-hidden /> Open in Editor
-          </Button>
+        {entry.type === "file" && (onDownload || (onEdit && !isManagedBrowserPath(path))) ? (
+          <DropdownMenu.Root key={path}>
+            <DropdownMenu.Trigger asChild>
+              <button type="button" aria-label="File actions" title="File actions" className="flex size-8 shrink-0 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
+                <MoreHorizontal size={16} aria-hidden />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content align="end" sideOffset={6} className="min-w-44 rounded-lg border p-1" style={{ zIndex: DESKTOP_Z_INDEX.popover, background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}>
+                {onDownload ? (
+                  <DropdownMenu.Item disabled={downloadPending} onSelect={() => onDownload(path, entry.sizeBytes)} className="flex cursor-default items-center gap-2 rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none data-[highlighted]:bg-[var(--bg-hover)] data-[disabled]:opacity-40">
+                    <Download size={14} aria-hidden /> Download
+                  </DropdownMenu.Item>
+                ) : null}
+                {onEdit && !isManagedBrowserPath(path) ? (
+                  <DropdownMenu.Item onSelect={() => onEdit(path)} className="flex cursor-default items-center gap-2 rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none data-[highlighted]:bg-[var(--bg-hover)]">
+                    <FilePenLine size={14} aria-hidden /> Open in Editor
+                  </DropdownMenu.Item>
+                ) : null}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         ) : null}
         {onClose ? (
-          <button type="button" aria-label="Close preview" onClick={onClose} className={`${onEdit && entry.type === "file" && !isManagedBrowserPath(path) ? "" : "ml-auto"} flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]`} style={{ color: "var(--text-tertiary)" }}>
+          <button type="button" aria-label="Close preview" onClick={onClose} className="flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]" style={{ color: "var(--text-tertiary)" }}>
             <X size={16} />
           </button>
         ) : null}
@@ -395,6 +413,11 @@ export function PreviewPane({
         path={path}
         entry={entry}
         onOpen={(next) => setHistory((current) => [...current, next])}
+        unavailableAction={onDownload ? (
+          <Button variant="subtle" disabled={downloadPending} onClick={() => onDownload(path, entry.sizeBytes)}>
+            <Download size={14} aria-hidden /> Download
+          </Button>
+        ) : undefined}
       />
     </section>
   );

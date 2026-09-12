@@ -37,6 +37,10 @@ describe("OM-243 built Electron download", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.getByTestId("desktop-taskbar-files").click({ timeout: 20_000 });
     await page.getByRole("button", { name: `Open ${gateway.filename}` }).waitFor();
+    // The fixture auto-opens onboarding over the preview header.
+    if (await page.getByRole("dialog", { name: "Getting started", exact: true }).isVisible()) {
+      await page.getByRole("button", { name: /^Getting started —/ }).click();
+    }
   }, 60_000);
 
   afterAll(async () => {
@@ -72,7 +76,8 @@ describe("OM-243 built Electron download", () => {
 
   it("treats native save-dialog cancellation as a non-error without fetching", async () => {
     await app.evaluate(({ dialog }) => { dialog.showSaveDialog = async () => ({ canceled: true, filePath: undefined }); });
-    await page.getByRole("button", { name: "Download", exact: true }).click();
+    await page.getByRole("button", { name: "File actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Download", exact: true }).click();
     await page.getByText("Download cancelled.", { exact: true }).waitFor();
     expect(gateway.requestCount()).toBe(2);
   });

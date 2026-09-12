@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FilesWorkspace from "../../desktop/src/renderer/src/features/files/FilesWorkspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -38,6 +38,18 @@ describe("Files single-file download actions", () => {
       path: "archive.zip", runtimeSlot: "preview", authGeneration: 3, requestId: expect.any(String),
     }));
     expect(await screen.findByText("Download saved.")).toBeTruthy();
+  });
+
+  it("keeps preview header actions in an accessible menu and download beside the empty state", async () => {
+    setup();
+    fireEvent.click(await screen.findByRole("button", { name: "Open archive.zip" }));
+    const header = screen.getByRole("region", { name: "File preview" }).querySelector("header")!;
+    expect(within(header).queryByRole("button", { name: "Download" })).toBeNull();
+    expect(within(header).queryByRole("button", { name: "Open in Editor" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Download" }).closest("header")).toBeNull();
+    fireEvent.keyDown(within(header).getByRole("button", { name: "File actions" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Download" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("runtime:download-file", expect.objectContaining({ path: "archive.zip" })));
   });
 
   it.each(["list", "grid"] as const)("downloads the right-clicked file in %s view, not a previous selection", async (view) => {

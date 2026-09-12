@@ -7,6 +7,12 @@ Electron Desktop Files has uploads and previews but no download action. Add Down
 for individual files, including binary/unsupported previews, from the preview and
 list/grid context menus. Do not add or change structural file-management actions.
 
+Electron preview chrome stays on one row: truncating file identity, a File actions
+ellipsis menu, and Close. Download and Open in Editor live in that menu. Unsupported
+previews additionally show Download below the centered explanation. Web Files keep
+their existing preview/Quick Look layout and context menus; action eligibility and
+transfer state remain shared, while the presentation adapts to each renderer.
+
 Downloads use authenticated `GET /api/files/media?path=...&download=true` with
 backpressure instead of the buffered blob endpoint. There is no product file-size cap. Native transfers use inactivity limits rather
 than a total deadline and can resume after an infrastructure connection reset. Upload/blob limits remain separate.
