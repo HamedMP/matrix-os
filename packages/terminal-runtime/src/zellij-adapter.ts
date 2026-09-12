@@ -151,8 +151,11 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   async ensureSession(sessionNameInput: string, size = { cols: 120, rows: 36 }): Promise<void> {
     const logicalSessionName = z.string().regex(SESSION_NAME).parse(sessionNameInput);
     if (this.workspaceLifecycle) {
-      const target = await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
-      await this.waitForSession(target.sessionName, target.binaryPath);
+      // The systemd lifecycle does its own invocation-fenced readiness check
+      // before returning. Re-probing with `list-panes` scales with every pane
+      // in a migrated workspace and can exceed this adapter's fixed timeout
+      // even though the owned runtime is already ready.
+      await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
       return;
     }
     const sessionName = logicalSessionName;
