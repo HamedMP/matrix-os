@@ -39,6 +39,7 @@ describe("guided provider setup", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByLabelText("Use AI through")).toHaveValue("matrix_included");
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.queryByLabelText("Model provider")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Model")).toHaveValue("sonnet");
   });
 

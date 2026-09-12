@@ -137,10 +137,10 @@ export function AddHarnessDialog({ snapshot, onMutate, onClose, onRefresh, onSet
       {step === 2 ? <>
         <h4>Choose a model</h4>
         <p className="matrix-ap-help">{catalog?.displayName} · {source?.displayName}. Only models available through this connection are shown.</p>
-        <label className="matrix-ap-field"><span>Model provider</span><select value={provider?.id ?? ""} disabled={disabled} onChange={(event) => { setProviderId(event.target.value); setModelId(""); }}>
+        {source?.kind !== "matrix_gateway" ? <label className="matrix-ap-field"><span>Model provider</span><select value={provider?.id ?? ""} disabled={disabled} onChange={(event) => { setProviderId(event.target.value); setModelId(""); }}>
           {!provider ? <option value="">Choose a provider again</option> : null}
           {providers.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
-        </select></label>
+        </select></label> : null}
         <label className="matrix-ap-field"><span>Model</span><select value={model?.id ?? ""} disabled={disabled} onChange={(event) => setModelId(event.target.value)}>
           {!model ? <option value="">Choose a model again</option> : null}
           {models.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}

@@ -145,7 +145,7 @@ export function HarnessEditor({
           {!mutableRoute ? <span className="matrix-ap-fixed-tag">Fixed by {harness.displayName}</span> : null}
         </div>
         <div className="matrix-ap-form-grid">
-          <label className="matrix-ap-field">
+          {accessSource?.kind !== "matrix_gateway" ? <label className="matrix-ap-field">
             <span>Provider</span>
             {canSetRoute && mutableRoute ? <select
               aria-label="Model provider"
@@ -159,7 +159,7 @@ export function HarnessEditor({
               ) : null}
               {routeProviders.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
             </select> : <span className="matrix-ap-readonly-value">{provider?.displayName ?? `${unavailableRouteLabel(harness.route.providerId)} · Unavailable`}</span>}
-          </label>
+          </label> : null}
           <label className="matrix-ap-field">
             <span>Model</span>
             {canSetRoute && mutableRoute ? <select

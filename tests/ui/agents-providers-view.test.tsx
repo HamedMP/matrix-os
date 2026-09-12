@@ -356,6 +356,51 @@ describe("AgentsProvidersView", () => {
     expect(within(connection).getByRole("button", { name: /Own account/ })).toBeVisible();
   });
 
+  it("keeps Matrix AI upstream providers private in an agent route", () => {
+    const next = snapshot();
+    const harness = next.harnesses[0]!;
+    Object.assign(harness, {
+      harness: "opencode",
+      displayName: "OpenCode",
+      accessSourceId: "matrix_cloudflare",
+      selectedAccountId: null,
+      route: {
+        kind: "configurable",
+        providerId: "cloudflare",
+        modelId: "@cf/zai-org/glm-5.3-flash",
+      },
+    });
+    next.modelProviders.push({
+      id: "cloudflare",
+      displayName: "Cloudflare Workers AI",
+      models: [{
+        id: "@cf/zai-org/glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+        enabled: true,
+      }],
+    });
+    next.accessSources.push({
+      ...next.accessSources[0]!,
+      id: "matrix_cloudflare",
+      kind: "matrix_gateway",
+      fundingKind: "matrix_included",
+      providerId: "cloudflare",
+      accountId: null,
+      displayName: "Matrix AI",
+      eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"],
+    });
+    next.gatewayPolicy!.allowedModelIds.push("@cf/zai-org/glm-5.3-flash");
+
+    setup({ snapshot: next });
+
+    expect(screen.queryByLabelText("Model provider")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toHaveValue("@cf/zai-org/glm-5.3-flash");
+    expect(screen.getByRole("option", { name: "GLM 5.3 Flash" })).toBeVisible();
+    expect(screen.queryByText("Cloudflare Workers AI")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "OpenCode connection" }))
+      .toHaveTextContent("Using Matrix AI");
+  });
+
   it("asks for a runtime update before connecting a disabled agent on a legacy gateway", () => {
     const next = snapshot();
     delete next.atomicConnectSupported;
@@ -511,7 +556,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByRole("combobox", { name: "Model provider" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Model" })).not.toBeInTheDocument();
     const configuration = screen.getByRole("region", { name: "Claude configuration" });
-    expect(within(configuration).getByText("Anthropic")).toBeVisible();
+    expect(within(configuration).queryByText("Anthropic")).not.toBeInTheDocument();
     expect(within(configuration).getAllByText("Claude Opus 5").length).toBeGreaterThan(0);
   });
 
@@ -861,8 +906,7 @@ describe("AgentsProvidersView", () => {
     expect(within(within(dialog).getByLabelText("Use AI through"))
       .getByRole("option", { name: "Work Anthropic key · setup required" })).toBeVisible();
     fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-    expect(within(within(dialog).getByLabelText("Model provider"))
-      .queryByRole("option", { name: "OpenAI" })).toBeNull();
+    expect(within(dialog).queryByLabelText("Model provider")).toBeNull();
   });
 
   it("offers a harness-owned OpenCode catalog as real provider and model choices", () => {
@@ -870,8 +914,8 @@ describe("AgentsProvidersView", () => {
     Object.assign(native.harnesses[0]!, {
       harness: "opencode",
       displayName: "OpenCode",
-      route: { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
-      accessSourceId: "matrix_included",
+      route: { kind: "configurable", providerId: "baseten", modelId: "baseten:deepseek-ai/DeepSeek-V4-Pro" },
+      accessSourceId: "harness_opencode_baseten",
       selectedAccountId: null,
     });
     native.modelProviders.push({

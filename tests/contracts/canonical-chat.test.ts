@@ -37,6 +37,14 @@ describe("canonical Chat contracts", () => {
       model: "@cf/zai-org/glm-5.3-flash",
     }).success).toBe(true);
     expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "opencode_default",
+      model: "cloudflare:@cf/zai-org/glm-5.3-flash",
+    }).success).toBe(true);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "opencode_default",
+      model: "cloudflare:@cf/../private-model",
+    }).success).toBe(false);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
       instanceId: "pi_default",
       model: "@other/private-model",
     }).success).toBe(false);
