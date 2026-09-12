@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { applyCanonicalChatContent } from "../../packages/ui/src/canonical-chat-content.js";
-import type { CanonicalChatDetailResponse, CanonicalChatMessage } from "@matrix-os/contracts";
+import {
+  applyCanonicalChatContent,
+  mergeCanonicalChatListRecord,
+  preferCanonicalChatDetailSnapshot,
+  type CanonicalChatDetailResponse,
+  type CanonicalChatListResponse,
+  type CanonicalChatMessage,
+} from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 
 const initial: CanonicalChatDetailResponse = {
@@ -74,5 +80,28 @@ describe("canonical Chat content reducer", () => {
       ...frame(2, 0, "hello").event, chatId: "chat_other",
     } })).toBe(initial);
     expect(applyCanonicalChatContent(initial, frame(1, 0, "old"))).toBe(initial);
+  });
+
+  it("upserts list records without rolling a newer streamed revision backward", () => {
+    const list: CanonicalChatListResponse = { items: [initial.record] };
+    const newer = { ...initial.record, chat: { ...initial.record.chat, revision: 3, title: "Newer" } };
+    const streamed = mergeCanonicalChatListRecord(list, newer);
+
+    expect(streamed.items).toEqual([newer]);
+    expect(mergeCanonicalChatListRecord(streamed, initial.record)).toBe(streamed);
+  });
+
+  it("fences a stale REST detail snapshot behind streamed state", () => {
+    const streamed = { ...initial, record: {
+      ...initial.record,
+      chat: { ...initial.record.chat, revision: 4, title: "Streamed" },
+    } };
+
+    expect(preferCanonicalChatDetailSnapshot(streamed, initial, 4)).toBe(streamed);
+    expect(preferCanonicalChatDetailSnapshot(undefined, initial, 4)).toBeUndefined();
+    expect(preferCanonicalChatDetailSnapshot(streamed, {
+      ...initial,
+      record: { ...initial.record, chat: { ...initial.record.chat, revision: 5 } },
+    }, 4)?.record.chat.revision).toBe(5);
   });
 });
