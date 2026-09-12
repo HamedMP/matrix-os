@@ -235,7 +235,7 @@ describe('Preview VPS provisioning workflow', () => {
     expect(decide).toContain('action="customer_smoke"');
     expect(decide).toContain('handle="nimanaderi"');
     expect(decide).toContain('refs/heads/release-smoke-vps');
-    expect(decide).toContain('v2026.09.12-1238');
+    expect(decide).toContain('v2026.09.12-1239');
     expect(workflow.jobs.customer_release_smoke.if).toContain("needs.gate.outputs.action == 'customer_smoke'");
     expect(smoke).toContain('Source preflight verified');
     expect(smoke).toContain('"coreServicesActive": all(services[name] for name in core_service_names)');
