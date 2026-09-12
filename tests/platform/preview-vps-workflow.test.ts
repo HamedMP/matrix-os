@@ -143,6 +143,43 @@ describe('Preview VPS provisioning workflow', () => {
       .toContain('PREVIEW_MACHINE_ID="$accepted_machine_id" ./scripts/wait-preview-provisioning.sh');
   });
 
+  it('can smoke-test the exact current dev release from a healthy stable baseline', () => {
+    const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+    const decide = workflow.jobs.gate.steps.find((step: { name?: string }) => step.name === 'Decide action').run as string;
+    const deploy = workflow.jobs.deploy.steps.find(
+      (step: { name?: string }) => step.name === 'Deploy preview bundle to preview VPS',
+    ).run as string;
+
+    expect(workflow.on.workflow_dispatch.inputs.release_smoke).toEqual(expect.objectContaining({
+      type: 'boolean',
+      default: false,
+    }));
+    expect(decide).toContain('RELEASE_SMOKE');
+    expect(decide).toContain('/system-bundles/channels/dev.json');
+    expect(decide).toContain('Requested release is not the current dev bundle');
+    expect(deploy).toContain('Stable baseline ready for ${HANDLE}: ${stable_version}');
+    expect(deploy).toContain('verify_terminal_migration()');
+    expect(deploy).toContain('journalStatus');
+    expect(deploy).toContain('stateSchemaVersion');
+    expect(deploy).toContain('activeWorkspaceServices');
+    expect(deploy).toContain('Terminal migration verified');
+
+    const shellSyntax = spawnSync('bash', ['-n', '-c', deploy], { encoding: 'utf8' });
+    expect(shellSyntax.stderr).toBe('');
+    expect(shellSyntax.status).toBe(0);
+    const pythonBlocks = [...deploy.matchAll(/<<'PYTHON'[^\n]*\n([\s\S]*?)\nPYTHON/g)];
+    expect(pythonBlocks.length).toBeGreaterThanOrEqual(4);
+    for (const [, source] of pythonBlocks) {
+      const pythonSyntax = spawnSync('python3', [
+        '-c',
+        'import sys; compile(sys.argv[1], "preview-vps-inline", "exec")',
+        source!,
+      ], { encoding: 'utf8' });
+      expect(pythonSyntax.stderr).toBe('');
+      expect(pythonSyntax.status).toBe(0);
+    }
+  });
+
   it('returns successfully when the accepted machine is running', async () => {
     const result = await runWaitScript({
       handle: 'pr-1340',

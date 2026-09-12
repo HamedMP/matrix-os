@@ -32,6 +32,11 @@ on:
         description: "Optional existing version pinned to this PR head"
         required: false
         type: string
+      release_smoke:
+        description: "Test the exact current dev release from a fresh stable preview"
+        required: false
+        default: false
+        type: boolean
       verify_inventory:
         description: "Only verify the deployed preview in the authenticated computer inventory"
         required: false
@@ -66,6 +71,7 @@ jobs:
       head_sha: ${{ steps.decide.outputs.head_sha }}
       head_ref: ${{ steps.decide.outputs.head_ref }}
       requested_version: ${{ steps.decide.outputs.requested_version }}
+      release_smoke: ${{ steps.decide.outputs.release_smoke }}
     steps:
       - name: Decide action
         id: decide
@@ -79,6 +85,7 @@ jobs:
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
+          RELEASE_SMOKE: ${{ inputs.release_smoke }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
           TEARDOWN_PREVIEW: ${{ inputs.teardown_preview }}
           GH_TOKEN: ${{ github.token }}
@@ -107,6 +114,12 @@ jobs:
             else
               if [ "$VERIFY_INVENTORY" = "true" ]; then
                 action="verify"
+              elif [ "$RELEASE_SMOKE" = "true" ]; then
+                if [ -z "$REQUESTED_VERSION" ]; then
+                  echo "A release version is required for the stable-to-dev smoke test." >&2
+                  exit 1
+                fi
+                action="deploy_existing"
               elif [ -n "$REQUESTED_VERSION" ]; then
                 action="deploy_existing"
               else
@@ -125,11 +138,25 @@ jobs:
             exit 1
           fi
           if [ "$action" = "deploy_existing" ]; then
-            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            if [ "$RELEASE_SMOKE" = "true" ]; then
+              if [ "$GITHUB_REF" != "refs/heads/release-smoke-vps" ] ||
+                [ "$REQUESTED_VERSION" != "v2026.09.12-1237" ]; then
+                echo "Release smoke is restricted to the isolated exact-release test branch." >&2
+                exit 1
+              fi
+              dev_release="$(curl --fail --silent --show-error --max-time 15 \
+                'https://app.matrix-os.com/system-bundles/channels/dev.json')"
+              if ! jq -e --arg version "$REQUESTED_VERSION" \
+                --arg commit "501faacbecf5f9726c92fa6ef10ad8f89b42a587" \
+                '.channel == "dev" and .version == $version and .gitCommit == $commit' \
+                <<< "$dev_release" >/dev/null; then
+                echo "Requested release is not the current dev bundle." >&2
+                exit 1
+              fi
+            elif [ "$GITHUB_REF" != "refs/heads/main" ]; then
               echo "Pinned Preview deployments must run from the trusted main workflow." >&2
               exit 1
-            fi
-            if ! printf '%s' "$REQUESTED_VERSION" |
+            elif ! printf '%s' "$REQUESTED_VERSION" |
               grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$" ||
               [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then
               echo "Invalid pinned preview version" >&2
@@ -143,6 +170,7 @@ jobs:
             echo "head_sha=$head_sha"
             echo "head_ref=$head_ref"
             echo "requested_version=$REQUESTED_VERSION"
+            echo "release_smoke=$RELEASE_SMOKE"
           } >> "$GITHUB_OUTPUT"
           echo "action=$action pr=$PR_NUMBER"
 
@@ -247,6 +275,7 @@ jobs:
       PREVIEW_INSTALL_TIMEOUT_SECONDS: 600
       HANDLE: ${{ needs.gate.outputs.handle }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
+      RELEASE_SMOKE: ${{ needs.gate.outputs.release_smoke }}
     steps:
       - name: Checkout preview source
         if: needs.gate.outputs.action == 'deploy'
@@ -396,6 +425,203 @@ jobs:
               jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
                 "$response" >/dev/null
           }
+          wait_for_stable_baseline() {
+            local deadline stable_release stable_version status healthy runtime_version
+            stable_release="$(curl --fail --silent --show-error --max-time 15 \
+              "${PLATFORM_PUBLIC_URL%/}/system-bundles/channels/stable.json")"
+            stable_version="$(jq -er 'select(.channel == "stable") | .version | select(type == "string" and test("^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+$"))' \
+              <<< "$stable_release")"
+            deadline=$((SECONDS + 300))
+            while true; do
+              runtime="$(curl --fail --silent --show-error --max-time 30 \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                "${PLATFORM_PUBLIC_URL%/}/vps/fleet" |
+                jq -c --arg h "$HANDLE" \
+                  '[.machines[] | select(.handle == $h and .runtimeSlot == $h and .status == "running" and .deletedAt == null)] |
+                   if length == 1 then .[0] else {status:"pending",healthy:false,runtimeVersion:null,publicIPv4:""} end')"
+              status="$(jq -r '.status' <<< "$runtime")"
+              healthy="$(jq -r '.healthy == true' <<< "$runtime")"
+              runtime_version="$(jq -r '.runtimeVersion // "pending"' <<< "$runtime")"
+              address="$(jq -r '.publicIPv4 // ""' <<< "$runtime")"
+              if [ "$status" = "running" ] && [ "$healthy" = "true" ] && [ "$runtime_version" = "$stable_version" ] &&
+                printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+                echo "Stable baseline ready for ${HANDLE}: ${stable_version}"
+                return 0
+              fi
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "Disposable preview did not reach the exact healthy stable baseline." >&2
+                return 1
+              fi
+              sleep 15
+            done
+          }
+          seed_legacy_sessions() {
+            local body response=/tmp/preview-legacy-seed.json seed_script
+            read -r -d '' seed_script <<'PYTHON' || true
+          import json
+          import os
+          import pwd
+          import re
+          import shlex
+          import stat
+          import subprocess
+
+          home = "/home/matrix/home"
+          owner = pwd.getpwnam("matrix")
+          generation_path = "/opt/matrix/app/TERMINAL_RUNTIME_GENERATION"
+          generation_fd = os.open(generation_path, os.O_RDONLY | os.O_NOFOLLOW)
+          try:
+              generation_stat = os.fstat(generation_fd)
+              if not stat.S_ISREG(generation_stat.st_mode) or generation_stat.st_size > 80:
+                  raise ValueError("invalid generation marker")
+              generation = os.read(generation_fd, 81).decode("utf-8").strip()
+          finally:
+              os.close(generation_fd)
+          if not re.fullmatch(r"gen_[0-9a-f]{64}", generation):
+              raise ValueError("invalid generation")
+          zellij = f"/opt/matrix/terminal-runtime/generations/{generation}/zellij"
+          zellij_stat = os.lstat(zellij)
+          if not stat.S_ISREG(zellij_stat.st_mode) or stat.S_ISLNK(zellij_stat.st_mode):
+              raise ValueError("invalid zellij binary")
+          runtime_env = [
+              f"HOME={home}",
+              f"MATRIX_HOME={home}",
+              f"XDG_RUNTIME_DIR=/run/user/{owner.pw_uid}",
+              f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{owner.pw_uid}/bus",
+              f"ZELLIJ_CONFIG_DIR={home}/system/zellij",
+              f"ZELLIJ_CONFIG_FILE={home}/system/zellij/config.kdl",
+              "TERM=xterm-256color",
+          ]
+          names = ["release-smoke-a", "release-smoke-b"]
+          for name in names:
+              command = " ".join(shlex.quote(value) for value in [zellij, "attach", "--create-background", name])
+              subprocess.run(
+                  ["/usr/sbin/runuser", "-u", "matrix", "--", "/usr/bin/env", *runtime_env,
+                   "/usr/bin/script", "-qefc", command, "/dev/null"],
+                  check=True,
+                  timeout=20,
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+              )
+
+          registry_path = f"{home}/system/shell-sessions.json"
+          try:
+              registry_fd = os.open(registry_path, os.O_RDONLY | os.O_NOFOLLOW)
+          except FileNotFoundError:
+              registry = {"sessions": {}}
+          else:
+              try:
+                  registry_stat = os.fstat(registry_fd)
+                  if not stat.S_ISREG(registry_stat.st_mode) or registry_stat.st_size > 16 * 1024 * 1024:
+                      raise ValueError("invalid legacy registry")
+                  registry = json.loads(os.read(registry_fd, registry_stat.st_size + 1))
+              finally:
+                  os.close(registry_fd)
+          if not isinstance(registry, dict) or not isinstance(registry.get("sessions"), dict):
+              raise ValueError("invalid legacy registry")
+          for name in names:
+              registry["sessions"][name] = {"name": name, "status": "active", "cwd": ""}
+          temporary = f"{registry_path}.release-smoke"
+          output_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+          try:
+              os.fchown(output_fd, owner.pw_uid, owner.pw_gid)
+              os.write(output_fd, (json.dumps(registry) + "\n").encode("utf-8"))
+              os.fsync(output_fd)
+          finally:
+              os.close(output_fd)
+          os.replace(temporary, registry_path)
+          directory_fd = os.open(os.path.dirname(registry_path), os.O_RDONLY)
+          try:
+              os.fsync(directory_fd)
+          finally:
+              os.close(directory_fd)
+          print("seeded=2")
+          PYTHON
+            body="$(jq -cn --arg script "$seed_script" \
+              '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script],timeoutMs:60000}')"
+            send_runtime_command "$body" "$response"
+            jq -e '.stdout == "seeded=2\n"' "$response" >/dev/null
+            echo "Seeded two live legacy Zellij sessions on the stable baseline."
+          }
+          verify_terminal_migration() {
+            local body response=/tmp/preview-terminal-migration.json verify_script evidence
+            read -r -d '' verify_script <<'PYTHON' || true
+          import json
+          import os
+          import pwd
+          import re
+          import stat
+          import subprocess
+
+          def read_json(path, limit):
+              fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+              try:
+                  metadata = os.fstat(fd)
+                  if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 2 or metadata.st_size > limit:
+                      raise ValueError("invalid state file")
+                  return json.loads(os.read(fd, metadata.st_size + 1))
+              finally:
+                  os.close(fd)
+
+          home = "/home/matrix/home"
+          journal = read_json(f"{home}/system/terminal-migration-journal.json", 16 * 1024 * 1024)
+          state = read_json(f"{home}/system/terminal-workspaces.json", 16 * 1024 * 1024)
+          if journal.get("status") != "committed" or state.get("schemaVersion") != 2:
+              raise ValueError("migration not committed")
+          workspaces = state.get("workspaces")
+          if not isinstance(workspaces, dict) or len(workspaces) != 1:
+              raise ValueError("unexpected workspace topology")
+          workspace = next(iter(workspaces.values()))
+          tabs = workspace.get("tabs") if isinstance(workspace, dict) else None
+          if not isinstance(tabs, dict):
+              raise ValueError("invalid migrated tabs")
+          migrated = [tab for tab in tabs.values() if isinstance(tab, dict) and
+                      tab.get("migrationKey") in {"release-smoke-a", "release-smoke-b"}]
+          if len(migrated) != 2 or any(tab.get("status") != "running" or
+                                      not isinstance(tab.get("zellijTabId"), int) or
+                                      not re.fullmatch(r"terminal_[0-9]+", str(tab.get("zellijPaneId")))
+                                      for tab in migrated):
+              raise ValueError("legacy sessions were not activated as tabs")
+          legacy_names = journal.get("legacySessionNames")
+          terminal_refs = journal.get("terminalRefs")
+          generated_names = journal.get("generatedSessionNames")
+          expected_seeded = {"release-smoke-a", "release-smoke-b"}
+          if (not isinstance(legacy_names, list) or not expected_seeded.issubset(set(legacy_names)) or
+              not isinstance(terminal_refs, dict) or not expected_seeded.issubset(terminal_refs) or
+              not isinstance(generated_names, list) or generated_names != [workspace.get("zellijSessionName")]):
+              raise ValueError("migration journal does not match workspace state")
+
+          owner = pwd.getpwnam("matrix")
+          command = [
+              "/usr/sbin/runuser", "-u", "matrix", "--", "/usr/bin/env",
+              f"HOME={home}", f"MATRIX_HOME={home}",
+              f"XDG_RUNTIME_DIR=/run/user/{owner.pw_uid}",
+              f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{owner.pw_uid}/bus",
+              "/usr/bin/systemctl", "--user", "list-units", "matrix-zellij@*.service",
+              "--state=active", "--no-legend", "--plain",
+          ]
+          listed = subprocess.run(command, check=True, timeout=15, capture_output=True, text=True).stdout
+          units = [line.split()[0] for line in listed.splitlines() if line.strip()]
+          if len(units) != 1 or any(not re.fullmatch(r"matrix-zellij@rt_[0-9a-f]{32}\.service", unit) for unit in units):
+              raise ValueError("workspace service topology is not active")
+          print(json.dumps({
+              "journalStatus": "committed",
+              "stateSchemaVersion": 2,
+              "workspaceCount": 1,
+              "migratedLegacyTabs": 2,
+              "generatedSessionCount": len(generated_names),
+              "activeWorkspaceServices": len(units),
+          }, sort_keys=True))
+          PYTHON
+            body="$(jq -cn --arg script "$verify_script" \
+              '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script],timeoutMs:45000}')"
+            send_runtime_command "$body" "$response"
+            evidence="$(jq -cer '.stdout | fromjson |
+              select(.journalStatus == "committed" and .stateSchemaVersion == 2 and
+                .workspaceCount == 1 and .migratedLegacyTabs == 2 and
+                .generatedSessionCount == 1 and .activeWorkspaceServices == 1)' "$response")"
+            echo "Terminal migration verified: ${evidence}"
+          }
           collect_preview_diagnostics() {
             local body response=/tmp/preview-update-diagnostics.json state_script
             if ! printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
@@ -519,6 +745,10 @@ jobs:
             done
             echo "Preview gateway remained stable for 15 minutes."
           }
+          if [ "$RELEASE_SMOKE" = "true" ]; then
+            wait_for_stable_baseline
+            seed_legacy_sessions
+          fi
           code="$(attempt)"
           if [ "$code" != "200" ]; then
             echo "Deploy returned HTTP ${code}; retrying once in 30s..."
@@ -567,6 +797,9 @@ jobs:
                 echo "Active app version for ${HANDLE}: ${active_bundle_version:-unavailable}"
                 if [ "$active_bundle_version" = "$VERSION" ]; then
                   reconcile_preview_registration
+                  if [ "$RELEASE_SMOKE" = "true" ]; then
+                    verify_terminal_migration
+                  fi
                   verify_preview_stability
                   echo "Preview ready: ${HANDLE} is healthy on ${VERSION}"
                   break
