@@ -6,6 +6,9 @@ import { FileDownloadProvider, FileDownloadAction } from "../../shell/src/compon
 import { FileContextMenu } from "../../shell/src/components/file-browser/FileContextMenu";
 import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser";
 
+import { XpTilesView } from "../../shell/src/components/file-browser/XpTilesView";
+import { ColumnView } from "../../shell/src/components/file-browser/ColumnView";
+
 const download = vi.fn();
 const dispose = vi.fn();
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ userId: "user-a", sessionId: "session-a" }) }));
@@ -16,9 +19,24 @@ beforeEach(() => {
   download.mockResolvedValue({ status: "handed_off" });
   useFileBrowser.setState({ currentPath: "projects", selectedPaths: new Set(), entries: [{ name: "binary.zip", type: "file", size: 3 }] });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("web Files download UI", () => {
+  it("downloads from XP tiles", async () => {
+    render(<FileDownloadProvider><FileContextMenu><div><XpTilesView renamingPath={null} onCancelRename={() => {}} /></div></FileContextMenu></FileDownloadProvider>);
+    fireEvent.contextMenu(screen.getByText("binary.zip"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Download" }));
+    await waitFor(() => expect(download).toHaveBeenCalledWith(expect.objectContaining({ path: "projects/binary.zip" })));
+  });
+  it("downloads an ancestor-column file using that column's path", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify({ entries:
+      new URL(url).searchParams.get("path") === "" ? [{ name: "root.zip", type: "file" }] : [{ name: "nested.zip", type: "file" }],
+    }))));
+    render(<FileDownloadProvider><FileContextMenu><div><ColumnView /></div></FileContextMenu></FileDownloadProvider>);
+    fireEvent.contextMenu(await screen.findByText("root.zip"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Download" }));
+    await waitFor(() => expect(download).toHaveBeenCalledWith(expect.objectContaining({ path: "root.zip" })));
+  });
   it("offers an explicit file action with browser handoff feedback", async () => {
     render(<FileDownloadProvider><FileDownloadAction path="projects/binary.zip" size={3} /></FileDownloadProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Download" }));
