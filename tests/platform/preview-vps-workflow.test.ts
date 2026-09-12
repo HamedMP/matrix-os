@@ -244,13 +244,15 @@ describe('Preview VPS provisioning workflow', () => {
     expect(smoke).toContain('/vps/deploy');
     expect(smoke).toContain('deploy_body="{\\"version\\":\\"${VERSION}\\",\\"handle\\":\\"${HANDLE}\\"}"');
     expect(smoke).toContain('/api/terminal/workspaces/ensure');
-    expect(smoke).toContain('Matrix terminal smoke');
+    expect(smoke).toContain('reuse_tab_id="tt_b9d62ada8b532721f0ff877dada0ccc9"');
+    expect(smoke).toContain('/usr/bin/python3 ${oscProbePath} ${probeNonce}\\r');
     expect(smoke).toContain('binary-input-v1');
-    expect(smoke).toContain('__MATRIX_OSC_ARMED__');
-    expect(smoke).toContain('__MATRIX_START_OSC__\\r');
+    expect(smoke).toContain('__MATRIX_OSC_ARMED_');
+    expect(smoke).toContain('__MATRIX_START_OSC_');
     expect(smoke).toContain('__MATRIX_OSC_OK__');
     expect(smoke).toContain('osc_feedback_loop_detected');
     expect(smoke).toContain('keyboardRoundTrips: 2');
+    expect(smoke).toContain('firstResultCount,');
     expect(smoke).toContain('content = "".join(sys.argv[2:])');
     expect(smoke).toContain('[range(0; length; 3000) as $offset | .[$offset:$offset + 3000]]');
     expect(smoke).not.toContain('["/opt/matrix/runtime/node/bin/node","-e",$script');

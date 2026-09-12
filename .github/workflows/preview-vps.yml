@@ -1227,7 +1227,16 @@ jobs:
           runtime_request POST /api/terminal/workspaces/ensure /tmp/nimanaderi-workspace.json "$workspace_body"
           workspace_id="$(jq -er '.workspace.id | select(type == "string" and test("^tws_[0-9a-f]{32}$"))' /tmp/nimanaderi-workspace.json)"
           echo "Exact temporary workspace is ready."
-          tab_id="tt_$(printf '%s' "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${VERSION}" | sha256sum | cut -c1-32)"
+          reuse_tab_id="tt_b9d62ada8b532721f0ff877dada0ccc9"
+          runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-workspaces.json
+          if ! jq -e --arg workspace "$workspace_id" --arg tab "$reuse_tab_id" '
+            any(.workspaces[]; .id == $workspace and any(.tabs[]; .id == $tab and .status == "running"))
+          ' /tmp/nimanaderi-workspaces.json >/dev/null; then
+            echo "The exact isolated diagnostic tab is not running; no replacement tab was created." >&2
+            exit 1
+          fi
+          tab_id="$reuse_tab_id"
+          echo "Reusing the exact isolated diagnostic tab."
           probe_path="/tmp/matrix-terminal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.py"
           workspace_created=true
           cleanup_test_workspace() {
@@ -1249,8 +1258,11 @@ jobs:
               os.unlink(__file__)
           except FileNotFoundError:
               pass
-          print("__MATRIX_OSC_ARMED__", flush=True)
-          if sys.stdin.buffer.readline().rstrip(b"\r\n") != b"__MATRIX_START_OSC__":
+          nonce = sys.argv[1]
+          armed_marker = f"__MATRIX_OSC_ARMED_{nonce}__"
+          start_marker = f"__MATRIX_START_OSC_{nonce}__".encode()
+          print(armed_marker, flush=True)
+          if sys.stdin.buffer.readline().rstrip(b"\r\n") != start_marker:
               raise SystemExit(8)
           fd = sys.stdin.fileno()
           previous = termios.tcgetattr(fd)
@@ -1290,25 +1302,17 @@ jobs:
           jq -e '.exitCode == 0 and .timedOut == false and .truncated == false' /tmp/nimanaderi-write-probe.json >/dev/null
           echo "Bounded OSC probe file is ready."
 
-          tab_body="$(jq -cn --arg tab "$tab_id" --arg path "$probe_path" \
-            '{tabId:$tab,name:"Matrix terminal smoke",cwd:"projects",command:["/usr/bin/python3",$path]}')"
-          runtime_request POST "/api/terminal/workspaces/${workspace_id}/tabs" /tmp/nimanaderi-tab.json "$tab_body"
-          jq -e --arg tab "$tab_id" '.tab.id == $tab and .tab.status == "running"' /tmp/nimanaderi-tab.json >/dev/null
-          echo "Temporary terminal tab is running."
-          runtime_request GET /api/terminal/workspaces /tmp/nimanaderi-workspaces.json
-          jq -e --arg workspace "$workspace_id" --arg tab "$tab_id" '
-            any(.workspaces[]; .id == $workspace and any(.tabs[]; .id == $tab and .status == "running"))
-          ' /tmp/nimanaderi-workspaces.json >/dev/null
-
           read -r -d '' websocket_probe <<'JAVASCRIPT' || true
           import { unlink } from "node:fs/promises";
-          const [scriptPath, token, workspaceId, tabId] = process.argv.slice(1);
+          const [scriptPath, token, workspaceId, tabId, oscProbePath, probeNonce] = process.argv.slice(1);
           try {
             await unlink(scriptPath);
           } catch (error) {
             if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
           }
           const terminalRef = { workspaceId, tabId };
+          const armedMarker = `__MATRIX_OSC_ARMED_${probeNonce}__`;
+          const startMarker = `__MATRIX_START_OSC_${probeNonce}__`;
           const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           const deadline = async (predicate, timeoutMs, code) => {
             const end = Date.now() + timeoutMs;
@@ -1374,8 +1378,9 @@ jobs:
 
           try {
             let socket = await attach(0);
-            await deadline(() => allOutput.includes("__MATRIX_OSC_ARMED__"), 20_000, "osc_arm_timeout");
-            socket.send(JSON.stringify({ type: "input", terminalRef, data: "__MATRIX_START_OSC__\r" }));
+            socket.send(JSON.stringify({ type: "input", terminalRef, data: `/usr/bin/python3 ${oscProbePath} ${probeNonce}\r` }));
+            await deadline(() => allOutput.includes(armedMarker), 20_000, "osc_arm_timeout");
+            socket.send(JSON.stringify({ type: "input", terminalRef, data: `${startMarker}\r` }));
             await deadline(() => allOutput.includes("__MATRIX_OSC_OK__"), 25_000, "osc_round_trip_timeout");
             if (allOutput.includes("rgb:")) throw new Error("osc_reply_rendered_as_output");
             socket.send(JSON.stringify({ type: "input", terminalRef, data: "echo $((81234 + 9))\r" }));
@@ -1422,6 +1427,8 @@ jobs:
               attachCount,
               oscReplies,
               outputBytes,
+              firstResultCount,
+              secondResultCount,
               visibleRgbPayloads: allOutput.includes("rgb:") ? 1 : 0,
             }));
             process.exitCode = 1;
@@ -1441,8 +1448,9 @@ jobs:
           jq -e '.exitCode == 0 and .timedOut == false and .truncated == false' \
             /tmp/nimanaderi-write-websocket-probe.json >/dev/null
           websocket_body="$(jq -cn --arg path "$websocket_path" --arg token "$runtime_token" \
-            --arg workspace "$workspace_id" --arg tab "$tab_id" \
-            '{command:["/opt/matrix/runtime/node/bin/node",$path,$token,$workspace,$tab],timeoutMs:150000}')"
+            --arg workspace "$workspace_id" --arg tab "$tab_id" --arg probe "$probe_path" \
+            --arg nonce "${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" \
+            '{command:["/opt/matrix/runtime/node/bin/node",$path,$token,$workspace,$tab,$probe,$nonce],timeoutMs:150000}')"
           runtime_request POST /api/terminal/run /tmp/nimanaderi-websocket-probe.json "$websocket_body" 180
           if ! jq -e '.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null' /tmp/nimanaderi-websocket-probe.json >/dev/null; then
             jq -c '{exitCode,timedOut,truncated,signal,diagnostic:(.stderr | fromjson? // {code:"missing_probe_diagnostic"})}' /tmp/nimanaderi-websocket-probe.json >&2
