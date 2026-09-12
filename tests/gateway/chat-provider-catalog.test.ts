@@ -1657,6 +1657,24 @@ describe("canonical Chat Provider catalog", () => {
     await expect(service.getCatalog(principal)).rejects
       .toBeInstanceOf(ProviderCatalogUnavailableError);
   });
+
+  it("logs only safe schema paths when the canonical projection is invalid", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider({ supportedModes: ["unsafe/mode"] }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    await expect(service.getCatalog(principal)).rejects
+      .toBeInstanceOf(ProviderCatalogUnavailableError);
+    expect(warning).toHaveBeenCalledWith(
+      "[chat-providers] Canonical Provider projection failed validation",
+      ["instances.2.supports.interactionModes.0:invalid_format"],
+    );
+    warning.mockRestore();
+  });
 });
 
 function selectionCatalog(): CanonicalProviderCatalog {
