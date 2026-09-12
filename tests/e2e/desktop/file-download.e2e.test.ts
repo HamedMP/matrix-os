@@ -45,12 +45,11 @@ suite("OM-243 built Electron download", () => {
     app = await launch();
     page = await app.firstWindow();
     await page.setViewportSize({ width: 1280, height: 800 });
+    await page.addLocatorHandler(page.getByRole("dialog", { name: "Getting started", exact: true }), async () => {
+      await page.getByRole("button", { name: /^Getting started —/ }).click();
+    });
     await page.getByTestId("desktop-taskbar-files").click({ timeout: 20_000 });
     await page.getByRole("button", { name: `Open ${gateway.filename}` }).waitFor();
-    // The fixture auto-opens onboarding over the preview header.
-    if (await page.getByRole("dialog", { name: "Getting started", exact: true }).isVisible()) {
-      await page.getByRole("button", { name: /^Getting started —/ }).click();
-    }
   }, 60_000);
 
   afterAll(async () => {
