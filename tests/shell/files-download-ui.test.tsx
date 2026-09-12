@@ -9,6 +9,8 @@ import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser";
 import { XpTilesView } from "../../shell/src/components/file-browser/XpTilesView";
 import { ColumnView } from "../../shell/src/components/file-browser/ColumnView";
 
+import { SearchResults } from "../../shell/src/components/file-browser/SearchResults";
+
 const download = vi.fn();
 const dispose = vi.fn();
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ userId: "user-a", sessionId: "session-a" }) }));
@@ -19,9 +21,25 @@ beforeEach(() => {
   download.mockResolvedValue({ status: "handed_off" });
   useFileBrowser.setState({ currentPath: "projects", selectedPaths: new Set(), entries: [{ name: "binary.zip", type: "file", size: 3 }] });
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("web Files download UI", () => {
+  it("downloads a search match from its exact path", async () => {
+    useFileBrowser.setState({ searching: false, searchQuery: "archive", searchResults: [{ name: "archive.zip", path: "other/nested/archive.zip", type: "file", matches: [] }] });
+    render(<FileDownloadProvider><FileContextMenu><div><SearchResults /></div></FileContextMenu></FileDownloadProvider>);
+    fireEvent.contextMenu(screen.getByText("archive.zip"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Download" }));
+    await waitFor(() => expect(download).toHaveBeenCalledWith(expect.objectContaining({ path: "other/nested/archive.zip" })));
+  });
+  it.each([new Error("secret provider /private/path"), "secret token"])("logs only a safe classification for transport rejection %s", async (error) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    download.mockRejectedValue(error);
+    render(<FileDownloadProvider><FileDownloadAction path="projects/binary.zip" /></FileDownloadProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(warn).toHaveBeenCalledWith("[file-download] transport rejected", error instanceof Error ? "error" : "unknown"));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
+    expect(document.body.textContent).not.toContain("secret");
+  });
   it("downloads from XP tiles", async () => {
     render(<FileDownloadProvider><FileContextMenu><div><XpTilesView renamingPath={null} onCancelRename={() => {}} /></div></FileContextMenu></FileDownloadProvider>);
     fireEvent.contextMenu(screen.getByText("binary.zip"));

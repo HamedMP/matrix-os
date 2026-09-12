@@ -40,7 +40,14 @@ export function useFileDownload(scope: string, transport: FileDownloadTransport)
     }).then((result) => {
       const parsed = FileDownloadResultSchema.safeParse(result);
       return parsed.success ? parsed.data : { status: "error", code: "failed" } as const;
-    }).catch((): FileDownloadResult => ({ status: "error", code: "failed" }))
+    }).catch((error: unknown): FileDownloadResult => {
+      // Never include transport messages, provider details, or owner paths.
+      const classification = error instanceof Error
+        ? error.name === "AbortError" ? "aborted" : error.name === "TimeoutError" ? "timeout" : "error"
+        : "unknown";
+      console.warn("[file-download] transport rejected", classification);
+      return { status: "error", code: "failed" };
+    })
       .then((result) => {
         if (active.current !== request) return;
         active.current = null;
