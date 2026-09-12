@@ -181,15 +181,105 @@ describe("project collaboration inheritance", () => {
       .where("id", "=", PROJECT_SCOPE_ID).execute();
 
     await expect(inheritance.resolve({
+      projectScopeId: PROJECT_SCOPE_ID,
       ownerId: OWNER_ID,
       kind: "app",
       resourceId: "app_board",
     })).resolves.toEqual(binding);
     await expect(inheritance.resolve({
+      projectScopeId: PROJECT_SCOPE_ID,
       ownerId: OWNER_ID,
       kind: "app",
       resourceId: "app_sibling",
     })).resolves.toBeNull();
+  });
+
+  it("requires the project scope when resolving identical relative resource ids", async () => {
+    const otherProjectScopeId = "10000000-0000-4000-8000-000000000073";
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: otherProjectScopeId,
+      owner_type: "personal",
+      owner_id: OWNER_ID,
+      kind: "project",
+      resource_id: "proj_beta",
+      parent_scope_id: null,
+      membership_mode: "direct",
+      lifecycle: "shared",
+      revision: 1,
+      auth_epoch: 1,
+      authority_runtime_id: AUTHORITY_RUNTIME_ID,
+      authority_generation: 2,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: NOW,
+      updated_at: NOW,
+      deleted_at: null,
+    }).execute();
+    const inheritance = resolver();
+    const first = await inheritance.bindOwnedResource({
+      projectScopeId: PROJECT_SCOPE_ID,
+      ownerId: OWNER_ID,
+      kind: "file",
+      resourceId: "src/index.ts",
+      authorityRuntimeId: AUTHORITY_RUNTIME_ID,
+      authorityGeneration: 2,
+      revision: 1,
+      readiness: "ready",
+    });
+    const second = await inheritance.bindOwnedResource({
+      projectScopeId: otherProjectScopeId,
+      ownerId: OWNER_ID,
+      kind: "file",
+      resourceId: "src/index.ts",
+      authorityRuntimeId: AUTHORITY_RUNTIME_ID,
+      authorityGeneration: 2,
+      revision: 2,
+      readiness: "ready",
+    });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE_ID).execute();
+
+    await expect(inheritance.resolve({
+      projectScopeId: PROJECT_SCOPE_ID,
+      ownerId: OWNER_ID,
+      kind: "file",
+      resourceId: "src/index.ts",
+    })).resolves.toEqual(first);
+    await expect(inheritance.resolve({
+      projectScopeId: otherProjectScopeId,
+      ownerId: OWNER_ID,
+      kind: "file",
+      resourceId: "src/index.ts",
+    })).resolves.toEqual(second);
+  });
+
+  it("reconciles a repaired staged blocker before activation", async () => {
+    const inheritance = resolver();
+    const blocked = await inheritance.bindOwnedResource({
+      projectScopeId: PROJECT_SCOPE_ID,
+      ownerId: OWNER_ID,
+      kind: "app",
+      resourceId: "app_repairable",
+      authorityRuntimeId: AUTHORITY_RUNTIME_ID,
+      authorityGeneration: 2,
+      revision: 1,
+      readiness: "blocked",
+      blocker: "role_enforcement_unavailable",
+    });
+
+    const repaired = await inheritance.bindOwnedResource({
+      projectScopeId: PROJECT_SCOPE_ID,
+      ownerId: OWNER_ID,
+      kind: "app",
+      resourceId: "app_repairable",
+      authorityRuntimeId: AUTHORITY_RUNTIME_ID,
+      authorityGeneration: 2,
+      revision: 2,
+      readiness: "ready",
+    });
+
+    expect(repaired).toMatchObject({ id: blocked.id, revision: 2, readiness: "ready" });
+    await expect(inheritance.assertReadyForActivation(PROJECT_SCOPE_ID)).resolves.toBeUndefined();
   });
 
   it("requires terminal incarnation and blocks activation while any owned binding is unavailable", async () => {

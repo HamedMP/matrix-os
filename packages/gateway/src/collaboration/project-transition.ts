@@ -475,6 +475,13 @@ export function createProjectTransitionJournal(options: {
       if (row.status !== "recovering" || row.publication_marker !== null) {
         throw new ProjectTransitionError("conflict");
       }
+      await trx.deleteFrom("collaboration_resource_bindings")
+        .where("project_scope_id", "=", scope.id).execute();
+      await trx.deleteFrom("collaboration_scopes")
+        .where("parent_scope_id", "=", scope.id)
+        .where("membership_mode", "=", "inherited")
+        .where("lifecycle", "in", ["preparing", "recovering"])
+        .execute();
       const restored = await trx.updateTable("collaboration_scopes").set({
         lifecycle: "private",
         updated_at: now(),

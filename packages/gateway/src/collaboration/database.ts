@@ -456,10 +456,7 @@ export async function bootstrapCollaborationDatabase(
     ON collaboration_transitions(status, updated_at)
     WHERE status IN ('prepared', 'staging', 'fenced', 'committing', 'recovering')
   `.execute(db);
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_collaboration_resource_lookup
-    ON collaboration_resource_bindings(project_scope_id, resource_kind, resource_id)
-  `.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_collaboration_resource_lookup`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_collaboration_resource_readiness
     ON collaboration_resource_bindings(project_scope_id, readiness)

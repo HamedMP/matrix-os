@@ -224,8 +224,23 @@ export function createProjectInheritanceResolver(options: {
           .where("resource_id", "=", input.resourceId)
           .executeTakeFirst();
         if (existing) {
-          if (!sameBinding(existing, input)) throw new ProjectInheritanceError("conflict");
-          return rowToBinding(existing);
+          if (sameBinding(existing, input)) return rowToBinding(existing);
+          const canReconcileStaging = project.lifecycle === "preparing"
+            && existing.authority_runtime_id === input.authorityRuntimeId
+            && Number(existing.authority_generation) === input.authorityGeneration
+            && Number(existing.revision) <= input.revision
+            && (existing.incarnation ?? undefined) === input.incarnation;
+          if (!canReconcileStaging) throw new ProjectInheritanceError("conflict");
+          const updated = await trx.updateTable("collaboration_resource_bindings").set({
+            revision: input.revision,
+            readiness: input.readiness,
+            blocker: input.blocker ?? null,
+            updated_at: now(),
+          }).where("id", "=", existing.id)
+            .where("revision", "=", Number(existing.revision))
+            .returningAll().executeTakeFirst();
+          if (!updated || !sameBinding(updated, input)) throw new ProjectInheritanceError("conflict");
+          return rowToBinding(updated);
         }
         const resourceScopeId = input.kind === "chat" || input.kind === "terminal"
           ? await inheritedResourceScope(trx, {
@@ -273,11 +288,13 @@ export function createProjectInheritanceResolver(options: {
   }
 
   async function resolve(raw: {
+    projectScopeId: string;
     ownerId: string;
     kind: ProjectResourceBinding["kind"];
     resourceId: string;
   }): Promise<ProjectResourceBinding | null> {
     const input = z.object({
+      projectScopeId: ScopeIdSchema,
       ownerId: ActorIdSchema,
       kind: ResourceKindSchema,
       resourceId: ResourceIdSchema,
@@ -286,6 +303,7 @@ export function createProjectInheritanceResolver(options: {
       .innerJoin("collaboration_scopes as project", "project.id", "binding.project_scope_id")
       .selectAll("binding")
       .where("project.owner_id", "=", input.ownerId)
+      .where("project.id", "=", input.projectScopeId)
       .where("project.kind", "=", "project")
       .where("project.deleted_at", "is", null)
       .where("project.lifecycle", "=", "shared")

@@ -58,11 +58,12 @@ describe("project collaboration writer fence", () => {
     });
   }
 
-  function fence(capacity = 256) {
+  function fence(capacity = 256, perProjectCapacity = 256) {
     return createProjectFence({
       db: fixture.db,
       transitions: journal(),
       capacity,
+      perProjectCapacity,
     });
   }
 
@@ -147,6 +148,51 @@ describe("project collaboration writer fence", () => {
       errorCode: "inventory_changed",
       sourceFenceEpoch: 1,
     });
+  });
+
+  it("holds the coordinator until the durable fence commit settles", async () => {
+    await stage();
+    let settleFence!: (value: boolean) => void;
+    const markFenced = vi.fn(async () => new Promise<boolean>((resolve) => {
+      settleFence = resolve;
+    }));
+    const transitions = {
+      get: journal().get,
+      markFenced,
+    };
+    const projectFence = createProjectFence({
+      db: fixture.db,
+      transitions,
+    });
+    const cutover = projectFence.fenceTransition({
+      transitionId: TRANSITION_ID,
+      projectScopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      inspectCurrent: async () => ({
+        inventoryRevision: 7,
+        inventoryHash: INVENTORY_HASH,
+        membershipHash: MEMBERSHIP_HASH,
+      }),
+    });
+    await vi.waitFor(() => expect(markFenced).toHaveBeenCalledTimes(1));
+    const operation = vi.fn(async () => undefined);
+    const delayedWrite = projectFence.withAdmission({
+      projectScopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      authorityRuntimeId: SOURCE_RUNTIME,
+      authorityGeneration: 3,
+      kind: "write",
+      path: "legacy",
+    }, operation);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(operation).not.toHaveBeenCalled();
+    settleFence(true);
+    await expect(cutover).resolves.toBe(true);
+    await expect(delayedWrite).resolves.toBeUndefined();
+    expect(operation).toHaveBeenCalledTimes(1);
   });
 
   it("rejects delayed legacy writes and runs after a successful fence", async () => {
@@ -254,5 +300,44 @@ describe("project collaboration writer fence", () => {
     }, async () => undefined)).rejects.toMatchObject({ code: "capacity" });
     release();
     await held;
+  });
+
+  it("bounds queued admissions for one busy project", async () => {
+    const projectFence = fence(256, 2);
+    let release!: () => void;
+    const held = projectFence.withAdmission({
+      projectScopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      authorityRuntimeId: SOURCE_RUNTIME,
+      authorityGeneration: 3,
+      kind: "write",
+      path: "legacy",
+    }, async () => new Promise<void>((resolve) => {
+      release = resolve;
+    }));
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const queued = projectFence.withAdmission({
+      projectScopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      authorityRuntimeId: SOURCE_RUNTIME,
+      authorityGeneration: 3,
+      kind: "run",
+      path: "legacy",
+    }, async () => undefined);
+
+    await expect(projectFence.withAdmission({
+      projectScopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      authorityRuntimeId: SOURCE_RUNTIME,
+      authorityGeneration: 3,
+      kind: "write",
+      path: "legacy",
+    }, async () => undefined)).rejects.toMatchObject({ code: "capacity" });
+    release();
+    await held;
+    await queued;
   });
 });

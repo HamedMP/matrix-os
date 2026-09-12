@@ -228,6 +228,56 @@ describe("project collaboration transition journal", () => {
     });
   });
 
+  it("removes staged bindings and inherited scopes when recovery restores privacy", async () => {
+    const transitions = journal();
+    await prepare();
+    const childScopeId = "10000000-0000-4000-8000-000000000053";
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: childScopeId,
+      owner_type: "personal",
+      owner_id: OWNER_ID,
+      kind: "chat",
+      resource_id: "chat_abandoned",
+      parent_scope_id: SCOPE_ID,
+      membership_mode: "inherited",
+      lifecycle: "preparing",
+      revision: 1,
+      auth_epoch: 0,
+      authority_runtime_id: DESTINATION_RUNTIME,
+      authority_generation: 1,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: NOW,
+      updated_at: NOW,
+      deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_resource_bindings").values({
+      id: "30000000-0000-4000-8000-000000000053",
+      project_scope_id: SCOPE_ID,
+      resource_scope_id: childScopeId,
+      resource_kind: "chat",
+      resource_id: "chat_abandoned",
+      authority_runtime_id: DESTINATION_RUNTIME,
+      authority_generation: 1,
+      revision: 1,
+      readiness: "blocked",
+      blocker: "runtime_unavailable",
+      incarnation: null,
+      created_at: NOW,
+      updated_at: NOW,
+    }).execute();
+    await transitions.beginStaging(TRANSITION_ID);
+
+    await expect(transitions.recover({
+      cleanupStaging: vi.fn(async () => undefined),
+      completePublication: vi.fn(async () => undefined),
+    })).resolves.toEqual({ recovered: 1, activated: 0, failed: 1 });
+    await expect(fixture.db.selectFrom("collaboration_resource_bindings")
+      .select("id").where("project_scope_id", "=", SCOPE_ID).execute()).resolves.toEqual([]);
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select("id").where("id", "=", childScopeId).executeTakeFirst()).resolves.toBeUndefined();
+  });
+
   it.each(["prepared", "staging", "fenced", "committing"] as const)(
     "recovers a %s crash by cleaning staging and retaining the original",
     async (crashAt) => {

@@ -49,12 +49,12 @@ describe("collaboration owner database", () => {
       "idx_collaboration_exports_expiry",
       "idx_collaboration_invitation_identity",
       "idx_collaboration_outbox_delivery",
-      "idx_collaboration_resource_lookup",
       "idx_collaboration_resource_readiness",
       "idx_collaboration_scope_binding",
       "idx_collaboration_transition_in_progress",
       "idx_collaboration_transition_recovery",
     ]));
+    expect(indexes.rows.map((row) => row.indexname)).not.toContain("idx_collaboration_resource_lookup");
   });
 
   it("upgrades an existing canonical Chat schema with immutable attribution fields", async () => {

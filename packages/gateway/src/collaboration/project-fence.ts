@@ -4,6 +4,7 @@ import type { OwnerCollaborationDatabase } from "./database.js";
 import type { createProjectTransitionJournal } from "./project-transition.js";
 
 const DEFAULT_COORDINATOR_CAPACITY = 256;
+const DEFAULT_PER_PROJECT_CAPACITY = 64;
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const ProjectIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
@@ -67,10 +68,16 @@ export function createProjectFence(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   transitions: ProjectTransitionJournal;
   capacity?: number;
+  perProjectCapacity?: number;
 }) {
   const capacity = options.capacity ?? DEFAULT_COORDINATOR_CAPACITY;
+  const perProjectCapacity = options.perProjectCapacity ?? DEFAULT_PER_PROJECT_CAPACITY;
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > DEFAULT_COORDINATOR_CAPACITY) {
     throw new RangeError("Invalid project fence capacity");
+  }
+  if (!Number.isSafeInteger(perProjectCapacity) || perProjectCapacity < 1
+    || perProjectCapacity > DEFAULT_COORDINATOR_CAPACITY) {
+    throw new RangeError("Invalid per-project fence capacity");
   }
   const coordinators = new Map<string, Coordinator>();
 
@@ -81,6 +88,7 @@ export function createProjectFence(options: {
       coordinator = { tail: Promise.resolve(), pending: 0 };
       coordinators.set(scopeId, coordinator);
     }
+    if (coordinator.pending >= perProjectCapacity) throw new ProjectFenceError("capacity");
     coordinator.pending += 1;
     const previous = coordinator.tail;
     let releaseCurrent!: () => void;
@@ -209,7 +217,7 @@ export function createProjectFence(options: {
         membershipHash: DigestSchema,
       }).strict().safeParse(await rawInput.inspectCurrent());
       if (!current.success) throw new ProjectFenceError("invalid");
-      return options.transitions.markFenced({
+      return await options.transitions.markFenced({
         transitionId: transition.id,
         sourceFenceEpoch: Number(scope.auth_epoch) + 1,
         currentInventoryRevision: current.data.inventoryRevision,
