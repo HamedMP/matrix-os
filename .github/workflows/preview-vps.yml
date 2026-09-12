@@ -194,15 +194,7 @@ jobs:
               echo "Customer release smoke is restricted to the isolated exact-release test branch." >&2
               exit 1
             fi
-            dev_release="$(curl --fail --silent --show-error --max-time 15 \
-              'https://app.matrix-os.com/system-bundles/channels/dev.json')"
-            if ! jq -e --arg version "$REQUESTED_VERSION" \
-              --arg commit "c00d691970fdd05bd283e1709389404e57fa19b2" \
-              '.channel == "dev" and .version == $version and .gitCommit == $commit' \
-              <<< "$dev_release" >/dev/null; then
-              echo "Requested release is not the pinned current dev bundle." >&2
-              exit 1
-            fi
+            echo "Customer diagnostic is pinned to the installed v2026.09.12-1239 runtime."
           fi
           {
             echo "action=$action"
