@@ -53,6 +53,7 @@ on:
         default: false
 
 permissions:
+  actions: read
   contents: read
   id-token: write
   pull-requests: write
@@ -267,6 +268,7 @@ jobs:
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
             funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
           fi
+          PREVIEW_SPEECH_NOT_AFTER="$(date -u -d '+24 hours' '+%Y-%m-%dT%H:%M:%S.000Z')"
           deploy_preview() {
             local api_origin="$1"
             local custom_mcp_secret_bindings=""
@@ -281,7 +283,7 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},${api_origin#https://}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${funded_ai_env_bindings}" \
+              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},${api_origin#https://}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${funded_ai_env_bindings}" \
               --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
@@ -432,15 +434,41 @@ jobs:
     timeout-minutes: 5
     env:
       PR_NUMBER: ${{ inputs.pr }}
-      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
-      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_HEAD_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - name: Select exact-head preview runtime artifact
+        id: runtime
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          run_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${EXPECTED_HEAD_SHA}&event=pull_request&status=success&per_page=20" \
+            --jq '.workflow_runs | sort_by(.created_at) | reverse | .[0].id // empty')"
+          if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+            echo "A successful exact-head Preview VPS run is required before connecting speech." >&2
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
         with:
-          node-version: 24
-      - name: Read the one existing preview route
-        run: node scripts/chat-share-preview-fixture.mjs --select
+          name: preview-runtime-access-${{ inputs.pr }}
+          path: preview-runtime-access
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.runtime.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate handle-scoped preview runtime access
+        run: |
+          set -euo pipefail
+          route=preview-runtime-access/preview-runtime-access.json
+          jq -e --arg handle "pr-$PR_NUMBER" '
+            type == "object"
+            and keys == ["address", "handle", "terminalToken"]
+            and .handle == $handle
+            and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            and (.terminalToken | type == "string" and test("^[a-f0-9]{64}$"))
+          ' "$route" >/dev/null
+          cp "$route" preview-share-route.json
+          chmod 600 preview-share-route.json
       - uses: actions/upload-artifact@v4
         with:
           name: preview-share-route
@@ -458,7 +486,6 @@ jobs:
       GCP_REGION: ${{ vars.GCP_REGION }}
       CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
       PR_NUMBER: ${{ inputs.pr }}
-      PRODUCTION_PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
     steps:
       - uses: actions/checkout@v6
@@ -507,6 +534,7 @@ jobs:
           address="$(jq -er '.address | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<< "$route")"
           handle="pr-$PR_NUMBER"
           machine_id="chat-share-preview-$handle"
+          terminal_token="$(jq -er '.terminalToken | select(test("^[a-f0-9]{64}$"))' <<< "$route")"
           preview_platform_secret="$(gcloud secrets versions access latest \
             --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_platform_secret"
@@ -516,10 +544,6 @@ jobs:
               "matrix-platform-speech-runtime", 1, process.argv[1], process.argv[2], process.argv[3],
             ])).digest("hex"));
           ' "$handle" "$machine_id" "$handle")"
-          terminal_token="$(PRODUCTION_SIGNING_SECRET="$PRODUCTION_PLATFORM_SECRET" node --input-type=module -e '
-            import { createHmac } from "node:crypto";
-            process.stdout.write(createHmac("sha256", process.env.PRODUCTION_SIGNING_SECRET).update(process.argv[1]).digest("hex"));
-          ' "$handle")"
           echo "::add-mask::$speech_token"
           echo "::add-mask::$terminal_token"
           runtime_config="$(jq -cn \
@@ -567,7 +591,7 @@ jobs:
           fd, temporary = tempfile.mkstemp(prefix=".host.env.preview.", dir=directory, text=True)
           try:
               os.fchmod(fd, 0o640)
-              os.fchown(fd, 0, 0)
+              os.fchown(fd, 0, metadata.st_gid)
               with os.fdopen(fd, "w", encoding="utf-8") as target:
                   target.write("\n".join(lines) + "\n")
                   target.flush()
@@ -597,4 +621,12 @@ jobs:
           send_runtime_command "$body" /tmp/preview-speech-config.json
           body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-gateway.service"],"timeoutMs":30000}'
           send_runtime_command "$body" /tmp/preview-gateway-restart.json
+          body='{"command":["/usr/bin/systemctl","is-active","--quiet","matrix-gateway.service"],"timeoutMs":10000}'
+          send_runtime_command "$body" /tmp/preview-gateway-active.json
+          capability_url="${url}/internal/containers/${handle}/speech/capabilities?runtimeSlot=${handle}"
+          curl --fail --silent --show-error --max-time 15 \
+            -H "authorization: Bearer ${speech_token}" "$capability_url" \
+            -o /tmp/preview-speech-capabilities.json
+          jq -e '.fileTranscription.status == "ready" and .fileTranscription.dictation.enabled == true' \
+            /tmp/preview-speech-capabilities.json >/dev/null
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"
