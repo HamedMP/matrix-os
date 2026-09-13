@@ -70,6 +70,8 @@ export default function ComputerFileBrowser({
   forceList = false,
   mode = "browse",
   onOpenFile,
+  onDownload,
+  downloadPending = false,
   onSelectionChange,
   onChooseFolder,
   onCreateFolder,
@@ -92,6 +94,8 @@ export default function ComputerFileBrowser({
   // competes with files. The default "browse" mode is unchanged.
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
+  onDownload?: (path: string, size?: number) => void;
+  downloadPending?: boolean;
   onSelectionChange?: (selection: BrowserSelection | null) => void;
   onChooseFolder?: (path: string) => void;
   onCreateFolder?: (path: string) => void;
@@ -139,6 +143,7 @@ export default function ComputerFileBrowser({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepth = useRef(0);
   const [dragActive, setDragActive] = useState(false);
+  const [contextFile, setContextFile] = useState<{ path: string; size?: number; scope: string } | null>(null);
   const [contextDirectory, setContextDirectory] = useState<{ path: string; name: string } | null>(null);
   const refreshMounted = useRef(false);
 
@@ -429,7 +434,7 @@ export default function ComputerFileBrowser({
           onDropFiles={mode === "browse" && entry.type === "directory" && !isManagedBrowserPath(path)
             ? (files) => enqueueFiles(files, path)
             : undefined}
-          contextPath={entry.type === "directory" ? path : undefined}
+          contextPath={path}
         />
       );
       return entryButton;
@@ -529,6 +534,9 @@ export default function ComputerFileBrowser({
       ) : null}
       <ContextMenu items={mode === "browse"
         ? [
+            ...(contextFile && contextFile.scope === browserScope && onDownload
+              ? [{ label: "Download", disabled: downloadPending, onSelect: () => onDownload(contextFile.path, contextFile.size) }]
+              : []),
             ...(contextDirectory && onOpenFolderInNewTab
               ? [{ label: "Open in new tab", onSelect: () => onOpenFolderInNewTab(contextDirectory.path, contextDirectory.name) }]
               : []),
@@ -545,7 +553,9 @@ export default function ComputerFileBrowser({
           const path = target instanceof Element
             ? target.closest<HTMLElement>("[data-files-entry-path]")?.dataset.filesEntryPath
             : undefined;
-          setContextDirectory(path ? { path, name: pathTitle(path) } : null);
+          const entry = scoped && path ? viewEntries.find((item) => joinPath(viewCurrentPath, item.name) === path) : undefined;
+          setContextDirectory(path && entry?.type === "directory" ? { path, name: entry.name } : null);
+          setContextFile(path && entry?.type === "file" ? { path, size: entry.sizeBytes, scope: browserScope } : null);
         }}
         className={`${compact && !fillAvailableHeight ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto ${
           compact && effectiveView === "list" ? "px-1.5 pb-1.5" : compact || effectiveView === "grid" ? "p-1.5" : "pb-4"

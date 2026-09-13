@@ -61,6 +61,8 @@ const JournalSchema = z.object({
   status: z.enum([
     "staging",
     "staged",
+    "preparing",
+    "prepared",
     "stopped",
     "activating",
     "committed",
@@ -82,6 +84,11 @@ type Journal = z.infer<typeof JournalSchema>;
 export interface LegacyZellijCutover {
   stopLegacySessions(names: string[]): Promise<void>;
   ensureWorkspace(sessionName: string, size: { cols: number; rows: number }): Promise<void>;
+  prepareShellTabs?(sessionName: string, inputs: Array<{
+    internalName: string;
+    cwd: string;
+    command?: never;
+  }>): Promise<Record<string, { tabId: number; paneId: string }>>;
   createShellTab(sessionName: string, input: {
     internalName: string;
     cwd: string;
@@ -168,7 +175,7 @@ export async function migrateTerminalWorkspaces(options: {
     cwd: canonicalRelativeCwd(options.homePath, project.cwd),
   }));
   if (journal.status === "committed") throw new Error("terminal_state_corrupt");
-  if (["staged", "stopped", "activating"].includes(journal.status)) {
+  if (["staged", "preparing", "prepared", "stopped", "activating"].includes(journal.status)) {
     const stagedState = await readJsonIfPresent(stagedStatePath, MAX_LEGACY_STATE_BYTES);
     if (!isSchemaV2State(stagedState)) throw new Error("terminal_state_corrupt");
   }
@@ -216,36 +223,33 @@ export async function migrateTerminalWorkspaces(options: {
     journal.updatedAt = now().toISOString();
     await writeJsonAtomic(journalPath, journal);
   }
-  if (["staged", "stopped", "activating"].includes(journal.status)) {
+  if (["staged", "preparing", "prepared", "stopped", "activating"].includes(journal.status)) {
     await persistGeneratedSessionNames(stagedStore, journal, journalPath, now);
   }
 
-  if (journal.status === "staged") {
+  let replacementsPreparedInThisRun = false;
+  if (journal.status === "staged" || journal.status === "preparing") {
+    journal.status = "preparing";
+    journal.updatedAt = now().toISOString();
+    await writeJsonAtomic(journalPath, journal);
+    await prepareReplacementWorkspaces(stagedStore, options.cutover);
+    replacementsPreparedInThisRun = true;
+    journal.status = "prepared";
+    journal.updatedAt = now().toISOString();
+    await writeJsonAtomic(journalPath, journal);
+  }
+  if (journal.status === "prepared") {
     await options.cutover.stopLegacySessions(journal.legacySessionNames);
     journal.status = "stopped";
     journal.updatedAt = now().toISOString();
     await writeJsonAtomic(journalPath, journal);
   }
   if (journal.status === "stopped" || journal.status === "activating") {
-    journal.status = "activating";
-    journal.updatedAt = now().toISOString();
-    await writeJsonAtomic(journalPath, journal);
-    for (const workspace of await stagedStore.listWorkspaces()) {
-      const internal = await stagedStore.getRuntimeWorkspace(workspace.id);
-      if (!internal) throw new Error("staged_workspace_missing");
-      await options.cutover.ensureWorkspace(internal.zellijSessionName, internal.canonicalSize);
-      for (const tab of Object.values(internal.tabs).sort((left, right) => left.order - right.order)) {
-        const ref = { workspaceId: internal.id, tabId: tab.id };
-        let ids = await options.cutover.findTabByInternalName?.(internal.zellijSessionName, tab.zellijTabName);
-        ids ??= tab.zellijTabId !== null && tab.zellijPaneId !== null
-          ? { tabId: tab.zellijTabId, paneId: tab.zellijPaneId }
-          : undefined;
-        ids ??= await options.cutover.createShellTab(internal.zellijSessionName, {
-          internalName: tab.zellijTabName,
-          cwd: tab.cwd,
-        });
-        await stagedStore.activateTab(ref, ids);
-      }
+    if (!replacementsPreparedInThisRun) {
+      journal.status = "activating";
+      journal.updatedAt = now().toISOString();
+      await writeJsonAtomic(journalPath, journal);
+      await prepareReplacementWorkspaces(stagedStore, options.cutover);
     }
     await renameDurable(stagedStatePath, finalStatePath);
     journal.status = "committed";
@@ -257,6 +261,42 @@ export async function migrateTerminalWorkspaces(options: {
     migratedTabs: Object.keys(journal.terminalRefs).length,
     stoppedLegacySessions: journal.legacySessionNames.length,
   };
+}
+
+async function prepareReplacementWorkspaces(
+  stagedStore: TerminalWorkspaceStore,
+  cutover: LegacyZellijCutover,
+): Promise<void> {
+  for (const workspace of await stagedStore.listWorkspaces()) {
+    const internal = await stagedStore.getRuntimeWorkspace(workspace.id);
+    if (!internal) throw new Error("staged_workspace_missing");
+    await cutover.ensureWorkspace(internal.zellijSessionName, internal.canonicalSize);
+    const tabs = Object.values(internal.tabs).sort((left, right) => left.order - right.order);
+    if (cutover.prepareShellTabs) {
+      const prepared = await cutover.prepareShellTabs(
+        internal.zellijSessionName,
+        tabs.map((tab) => ({ internalName: tab.zellijTabName, cwd: tab.cwd })),
+      );
+      for (const tab of tabs) {
+        const ids = prepared[tab.zellijTabName];
+        if (!ids) throw new Error("prepared_terminal_tab_missing");
+        await stagedStore.activateTab({ workspaceId: internal.id, tabId: tab.id }, ids);
+      }
+      continue;
+    }
+    for (const tab of tabs) {
+      const ref = { workspaceId: internal.id, tabId: tab.id };
+      let ids = await cutover.findTabByInternalName?.(internal.zellijSessionName, tab.zellijTabName);
+      ids ??= tab.zellijTabId !== null && tab.zellijPaneId !== null
+        ? { tabId: tab.zellijTabId, paneId: tab.zellijPaneId }
+        : undefined;
+      ids ??= await cutover.createShellTab(internal.zellijSessionName, {
+        internalName: tab.zellijTabName,
+        cwd: tab.cwd,
+      });
+      await stagedStore.activateTab(ref, ids);
+    }
+  }
 }
 
 export async function rollbackTerminalWorkspaceMigration(options: {

@@ -9,3 +9,4 @@ export * from "./runtime-config.js";
 export * from "./errors.js";
 export * from "./user-systemd-controller.js";
 export * from "./user-systemd-workspace.js";
+export * from "./runtime-environment.js";

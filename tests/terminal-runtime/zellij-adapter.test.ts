@@ -10,7 +10,118 @@ import {
 
 const lexicalRealpath = async (path: string): Promise<string> => path;
 
+function attachmentRouteHarness(paneId: string) {
+  let routed = false;
+  let emitData = (_data: string) => undefined;
+  const write = vi.fn((data: string | Buffer) => {
+    if (Buffer.from(data).equals(Buffer.from("\x1b[24;8~", "latin1"))) {
+      routed = true;
+      queueMicrotask(() => emitData("\x1b[2Jtarget-ready"));
+    }
+  });
+  const pty: RuntimePty = {
+    write,
+    resize: vi.fn(),
+    kill: vi.fn(),
+    onData: vi.fn((listener) => {
+      emitData = listener;
+      queueMicrotask(() => listener("bootstrap-ready"));
+      return { dispose: vi.fn() };
+    }),
+    onExit: vi.fn(() => ({ dispose: vi.fn() })),
+  };
+  return {
+    pty,
+    write,
+    clientsFor(args: string[]): string | undefined {
+      if (!args.includes("list-clients")) return undefined;
+      const sessionName = args[args.indexOf("--session") + 1] ?? "";
+      if (sessionName.startsWith("matrix-attach-")) {
+        return "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 plugin_3 zellij:about\n";
+      }
+      return routed
+        ? `CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 ${paneId} sh\n`
+        : "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n";
+    },
+  };
+}
+
 describe("Zellij 0.44.3 structured runtime adapter", () => {
+  it("propagates one explicit owner runtime environment to attachments", async () => {
+    const runtimeEnvironment = {
+      HOME: "/home/matrix/home",
+      MATRIX_HOME: "/home/matrix/home",
+      ZELLIJ_CONFIG_DIR: "/home/matrix/home/system/zellij",
+      XDG_RUNTIME_DIR: "/run/user/999",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/999/bus",
+    };
+    const route = attachmentRouteHarness("terminal_12");
+    const spawnPty = vi.fn(() => route.pty);
+    const run = vi.fn(async (args: string[]) => route.clientsFor(args) ?? "");
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      env: runtimeEnvironment,
+      run,
+      spawnPty,
+    });
+
+    await adapter.openAttachment("matrix-w-0123456789abcdef0123456789abcdef", {
+      paneId: "terminal_12",
+      size: { cols: 120, rows: 36 },
+      onData: () => undefined,
+      onExit: () => undefined,
+    });
+
+    expect(spawnPty).toHaveBeenCalledWith(expect.arrayContaining([
+      "--config", "attach", "--create",
+    ]), expect.objectContaining({ env: runtimeEnvironment }));
+    expect(route.write).toHaveBeenCalledWith(Buffer.from("\x1b[24;8~", "latin1"));
+  });
+
+  it("ties pane-route readiness to the exact PTY reconnect output", async () => {
+    const route = attachmentRouteHarness("terminal_12");
+    const run = vi.fn(async (args: string[]) => route.clientsFor(args) ?? "");
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      run,
+      spawnPty: vi.fn(() => route.pty),
+    });
+
+    await adapter.openAttachment("matrix-w-0123456789abcdef0123456789abcdef", {
+      paneId: "terminal_12",
+      size: { cols: 120, rows: 36 },
+      onData: () => undefined,
+      onExit: () => undefined,
+    });
+
+    const targetClientQueries = run.mock.calls.filter(([args]) =>
+      args.includes("list-clients")
+      && args[args.indexOf("--session") + 1] === "matrix-w-0123456789abcdef0123456789abcdef");
+    expect(targetClientQueries).toHaveLength(0);
+  });
+
+  it("propagates non-missing legacy session deletion failures", async () => {
+    const failure = Object.assign(new Error("denied"), { stderr: "permission denied" });
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      run: vi.fn(async () => { throw failure; }),
+    });
+
+    await expect(adapter.stopLegacySessions(["legacy-session"]))
+      .rejects.toBe(failure);
+  });
+
+  it("tolerates only confirmed missing legacy sessions", async () => {
+    const failure = Object.assign(new Error("missing"), { stderr: "session does not exist" });
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      run: vi.fn(async () => { throw failure; }),
+    });
+
+    await expect(adapter.stopLegacySessions(["legacy-session"]))
+      .resolves.toBeUndefined();
+  });
+
   it.each([
     [{ type: "resize", direction: "up" }, ["resize", "increase", "up", "--pane-id", "terminal_12"]],
     [{ type: "fullscreen" }, ["toggle-fullscreen", "--pane-id", "terminal_12"]],
@@ -102,6 +213,37 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     )).resolves.toEqual({ tabId: 7, paneId: "terminal_12" });
   });
 
+  it("finds a dense set of tabs with one tab inventory and one pane inventory", async () => {
+    const first = "matrix-tab-0123456789abcdef0123456789abcdef";
+    const second = "matrix-tab-fedcba9876543210fedcba9876543210";
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-tabs")) {
+        return JSON.stringify([
+          { tab_id: 7, name: first },
+          { tab_id: 8, name: second },
+        ]);
+      }
+      if (args.includes("list-panes")) {
+        return JSON.stringify([
+          { id: 12, is_plugin: false, tab_id: 7, pane_title: first },
+          { id: 13, is_plugin: false, tab_id: 8, pane_title: second },
+        ]);
+      }
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+
+    await expect(adapter.findTabsByInternalName(
+      "matrix-w-0123456789abcdef0123456789abcdef",
+      [first, second],
+    )).resolves.toEqual({
+      [first]: { tabId: 7, paneId: "terminal_12" },
+      [second]: { tabId: 8, paneId: "terminal_13" },
+    });
+    expect(run.mock.calls.filter(([args]) => args.includes("list-tabs"))).toHaveLength(1);
+    expect(run.mock.calls.filter(([args]) => args.includes("list-panes"))).toHaveLength(1);
+  });
+
   it("promotes a remaining pane through the pinned generation when the primary closes", async () => {
     const logicalName = "matrix-w-0123456789abcdef0123456789abcdef";
     const ownedName = "matrix-rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -143,19 +285,16 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       ensureWorkspaceSession: vi.fn(async () => ({ sessionName: ownedName, binaryPath })),
       deleteWorkspaceSession: vi.fn(async () => undefined),
     };
+    const route = attachmentRouteHarness("terminal_12");
     const run = vi.fn(async (args: string[], _binaryPath?: string) => {
+      const clients = route.clientsFor(args);
+      if (clients !== undefined) return clients;
       if (args.includes("new-tab")) return "7\n";
       if (args.includes("list-tabs")) return "[]";
       if (args.includes("list-panes")) return JSON.stringify([{ id: 12, is_plugin: false, tab_id: 7 }]);
       return "";
     });
-    const pty: RuntimePty = {
-      resize: vi.fn(),
-      kill: vi.fn(),
-      onData: vi.fn(() => ({ dispose: vi.fn() })),
-      onExit: vi.fn(() => ({ dispose: vi.fn() })),
-    };
-    const spawnPty = vi.fn(() => pty);
+    const spawnPty = vi.fn(() => route.pty);
     const subscription: RuntimeSubscriptionProcess = { close: vi.fn(async () => undefined) };
     const spawnSubscription = vi.fn(() => subscription);
     const adapter = new ZellijCliRuntimeAdapter({
@@ -190,10 +329,9 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     expect(run.mock.calls.every(([args]) => !args.includes(logicalName))).toBe(true);
     expect(run.mock.calls.some(([args]) => args.includes(ownedName))).toBe(true);
     expect(run.mock.calls.every(([, selectedBinary]) => selectedBinary === binaryPath)).toBe(true);
-    expect(spawnPty).toHaveBeenCalledWith(
-      ["attach", ownedName],
-      expect.objectContaining({ binaryPath }),
-    );
+    expect(spawnPty).toHaveBeenCalledWith(expect.arrayContaining([
+      "--config", "attach", "--create",
+    ]), expect.objectContaining({ binaryPath }));
     expect(spawnSubscription).toHaveBeenCalledWith(
       expect.arrayContaining(["--session", ownedName, "subscribe"]),
       expect.any(Function),
@@ -201,6 +339,29 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       binaryPath,
     );
     expect(lifecycle.deleteWorkspaceSession).toHaveBeenCalledWith(logicalName);
+  });
+
+  it("trusts the systemd lifecycle readiness fence when ensuring a workspace", async () => {
+    const logicalName = "matrix-w-0123456789abcdef0123456789abcdef";
+    const ownedName = "matrix-rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const binaryPath = `/opt/matrix/terminal-runtime/generations/gen_${"b".repeat(64)}/zellij`;
+    const run = vi.fn(async () => "[]");
+    const ensureWorkspaceSession = vi.fn(async () => ({ sessionName: ownedName, binaryPath }));
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix",
+      run,
+      workspaceLifecycle: {
+        resolveWorkspaceTarget: vi.fn(),
+        ensureWorkspaceSession,
+        deleteWorkspaceSession: vi.fn(),
+      },
+    });
+
+    await expect(adapter.ensureSession(logicalName, { cols: 120, rows: 36 }))
+      .resolves.toBeUndefined();
+
+    expect(ensureWorkspaceSession).toHaveBeenCalledWith(logicalName, { cols: 120, rows: 36 });
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("skips rollback cleanup for workspace sessions that were never created", async () => {
@@ -305,6 +466,57 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     expect(tabReads).toBe(2);
   });
 
+  it("reconciles a dense workspace with one pane inventory", async () => {
+    const logicalName = "matrix-w-0123456789abcdef0123456789abcdef";
+    const ownedName = "matrix-rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const binaryPath = `/opt/matrix/terminal-runtime/generations/gen_${"b".repeat(64)}/zellij`;
+    const existingName = "matrix-tab-0123456789abcdef0123456789abcdef";
+    const missingName = "matrix-tab-fedcba9876543210fedcba9876543210";
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-tabs")) {
+        return JSON.stringify([
+          { tab_id: 0, name: "matrix-bootstrap" },
+          { tab_id: 7, name: existingName },
+        ]);
+      }
+      if (args.includes("new-tab")) return "8\n";
+      if (args.includes("list-panes")) {
+        return JSON.stringify([
+          { id: 12, is_plugin: false, tab_id: 7, pane_title: existingName },
+          { id: 13, is_plugin: false, tab_id: 8, pane_title: "shell" },
+        ]);
+      }
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix",
+      run,
+      resolveRealpath: lexicalRealpath,
+      workspaceLifecycle: {
+        resolveWorkspaceTarget: vi.fn(async () => ({ sessionName: ownedName, binaryPath })),
+        ensureWorkspaceSession: vi.fn(),
+        deleteWorkspaceSession: vi.fn(),
+      },
+    });
+
+    await expect(adapter.prepareShellTabs(logicalName, [
+      { internalName: existingName, cwd: "" },
+      { internalName: missingName, cwd: "projects/matrix-os" },
+    ])).resolves.toEqual({
+      [existingName]: { tabId: 7, paneId: "terminal_12" },
+      [missingName]: { tabId: 8, paneId: "terminal_13" },
+    });
+
+    expect(run.mock.calls.filter(([args]) => args.includes("list-tabs"))).toHaveLength(1);
+    expect(run.mock.calls.filter(([args]) => args.includes("list-panes"))).toHaveLength(1);
+    expect(run).toHaveBeenCalledWith([
+      "--session", ownedName, "action", "close-tab", "--tab-id", "0",
+    ], binaryPath);
+    expect(run).toHaveBeenCalledWith([
+      "--session", ownedName, "action", "rename-pane", "--pane-id", "terminal_13", missingName,
+    ], binaryPath);
+  });
+
   it("resolves tab cwd inside Matrix home and rejects missing or symlink-escaped paths", async () => {
     const root = await mkdtemp(join(tmpdir(), "matrix-runtime-tab-cwd-"));
     const homePath = join(root, "home");
@@ -388,8 +600,11 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
   it("uses returned tab IDs, structured pane IDs, targeted input, and subscribe output", async () => {
     const commands: string[][] = [];
     let paneReads = 0;
+    const route = attachmentRouteHarness("terminal_12");
     const run = vi.fn(async (args: string[]) => {
       commands.push(args);
+      const clients = route.clientsFor(args);
+      if (clients !== undefined) return clients;
       if (args.includes("new-tab")) return "7\n";
       if (args.includes("list-tabs")) return "[]";
       if (args.includes("list-panes")) {
@@ -401,12 +616,6 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       if (args.includes("dump-screen")) return "history\nready$ ";
       return "";
     });
-    const pty: RuntimePty = {
-      resize: vi.fn(),
-      kill: vi.fn(),
-      onData: vi.fn(() => ({ dispose: vi.fn() })),
-      onExit: vi.fn(() => ({ dispose: vi.fn() })),
-    };
     let emitSubscription = (_line: string) => undefined;
     const subscription: RuntimeSubscriptionProcess = {
       close: vi.fn(async () => undefined),
@@ -419,7 +628,7 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       homePath: "/home/matrix",
       run,
       resolveRealpath: lexicalRealpath,
-      spawnPty: vi.fn(() => pty),
+      spawnPty: vi.fn(() => route.pty),
       spawnSubscription,
     });
 
@@ -443,10 +652,9 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       onExit: () => undefined,
     });
     await attachment.write(new TextEncoder().encode("echo hi\r"));
-    expect(commands).toContainEqual([
-      "--session", "matrix-w-0123456789abcdef0123456789abcdef",
-      "action", "write-chars", "--pane-id", "terminal_12", "--", "echo hi\r",
-    ]);
+    expect(route.write).toHaveBeenCalledTimes(2);
+    expect(Buffer.from(route.write.mock.calls[1]![0] as Uint8Array)).toEqual(Buffer.from("echo hi\r"));
+    expect(commands.some((args) => args.includes("write-chars"))).toBe(false);
 
     const events: unknown[] = [];
     await adapter.subscribeWorkspace("matrix-w-0123456789abcdef0123456789abcdef", {

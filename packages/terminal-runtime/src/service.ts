@@ -15,6 +15,10 @@ import {
   loadInstalledTerminalRuntimeGeneration,
 } from "./user-systemd-controller.js";
 import { createUserSystemdWorkspaceLifecycle } from "./user-systemd-workspace.js";
+import {
+  assertTerminalRuntimeDirectory,
+  createTerminalRuntimeEnvironment,
+} from "./runtime-environment.js";
 
 const ProjectConfigSchema = z.object({
   id: z.string().min(1).max(160),
@@ -57,9 +61,15 @@ async function main(): Promise<void> {
   }
   const appDir = resolve(process.env.MATRIX_APP_DIR ?? "/opt/matrix/app");
   const terminalRuntimeRoot = resolve(process.env.MATRIX_TERMINAL_RUNTIME_ROOT ?? "/opt/matrix/terminal-runtime");
+  const uid = process.getuid?.();
+  if (uid == null) throw new Error("terminal_runtime_uid_unavailable");
+  const runtimeEnvironment = createTerminalRuntimeEnvironment({ homePath, uid });
+  await assertTerminalRuntimeDirectory(runtimeEnvironment.XDG_RUNTIME_DIR!, uid);
   const generation = await loadInstalledTerminalRuntimeGeneration(appDir, { terminalRuntimeRoot });
   const controller = createUserSystemdTerminalRuntime({
     homePath,
+    uid,
+    env: runtimeEnvironment,
     generation,
     terminalRuntimeRoot,
     generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
@@ -67,6 +77,7 @@ async function main(): Promise<void> {
   await controller.assertInstallationReady();
   const zellij = new ZellijCliRuntimeAdapter({
     homePath,
+    env: runtimeEnvironment,
     binaryPath: join(terminalRuntimeRoot, "generations", generation, "zellij"),
     workspaceLifecycle: createUserSystemdWorkspaceLifecycle({
       homePath,

@@ -284,11 +284,15 @@ export async function hasActiveWorkspaceSessionForTerminalRef(
 ): Promise<boolean> {
   const homePath = resolve(homePathInput);
   const ref = TerminalRefSchema.parse(refInput);
-  return (await readAllSessions(homePath)).some((session) => (
-    isActive(session)
-    && session.terminalRef.workspaceId === ref.workspaceId
-    && session.terminalRef.tabId === ref.tabId
-  ));
+  return (await readAllSessions(homePath)).some((session) => {
+    if (!isActive(session)) return false;
+    // Sessions persisted before terminal workspace references were introduced
+    // remain valid legacy records, but cannot bind a current terminal tab.
+    if (session.terminalRef === undefined) return false;
+    const sessionRef = TerminalRefSchema.parse(session.terminalRef);
+    return sessionRef.workspaceId === ref.workspaceId
+      && sessionRef.tabId === ref.tabId;
+  });
 }
 
 async function resolveWorktree(

@@ -12,10 +12,12 @@ describe("matrix terminal runtime host service", () => {
     expect(unit).toContain("MemoryMax=");
     expect(unit).toContain("KillMode=control-group");
     expect(gateway).toMatch(/^After=.*\bmatrix-terminal-runtime\.service\b/m);
-    expect(gateway).toMatch(/^Requires=.*\bmatrix-terminal-runtime\.service\b/m);
+    expect(gateway).toMatch(/^Wants=.*\bmatrix-terminal-runtime\.service\b/m);
+    expect(gateway).not.toMatch(/^Requires=.*\bmatrix-terminal-runtime\.service\b/m);
     expect(gateway).not.toContain("PartOf=matrix-terminal-runtime.service");
     expect(service).toContain("createUserSystemdTerminalRuntime");
     expect(service).toContain("createUserSystemdWorkspaceLifecycle");
+    expect(unit).toContain("ConditionPathExists=/opt/matrix/app/TERMINAL_RUNTIME_GENERATION");
   });
 
   it("installs and reloads static user units without stopping live workspaces", async () => {

@@ -77,6 +77,7 @@ export interface TerminalWorkspaceRouteRuntime {
   renameTab?(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab>;
   reorderTabs?(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace>;
   terminateTab?(ref: { workspaceId: string; tabId: string }): Promise<void>;
+  deleteTab?(ref: { workspaceId: string; tabId: string }): Promise<void>;
   paneAction?(ref: { workspaceId: string; tabId: string }, action: TerminalPaneAction): Promise<void>;
   updateTabUiState?(ref: { workspaceId: string; tabId: string }, input: z.infer<typeof UiStateSchema>): Promise<TerminalTab>;
   deletionImpact(workspaceId: string): Promise<{ runningTabs: number; tabs: TerminalTab[] }>;
@@ -221,8 +222,8 @@ export function createTerminalWorkspaceRoutes(options: {
 
   app.delete("/workspaces/:workspaceId/tabs/:tabId", deleteLimit, async (c) => {
     try {
-      if (!options.runtime.terminateTab) return c.json({ error: "Terminal operation unavailable" }, 503);
-      await options.runtime.terminateTab(terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId")));
+      if (!options.runtime.deleteTab) return c.json({ error: "Terminal operation unavailable" }, 503);
+      await options.runtime.deleteTab(terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId")));
       return c.body(null, 204);
     } catch (error) { return requestFailure(c, error); }
   });

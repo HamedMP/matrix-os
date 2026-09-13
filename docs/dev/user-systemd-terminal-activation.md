@@ -53,6 +53,17 @@ enable linger for the `matrix` account, start its user manager if necessary,
 and run `systemctl --user daemon-reload`. The host updater installs and verifies
 new immutable assets before switching `current`.
 
+Before replacing any application, host helper, system unit, user unit, attach
+helper, or generation pointer, the updater writes a root-owned transaction
+backup under `/opt/matrix/staging/update-transaction`. A failed or interrupted
+apply restores that complete set, reloads both systemd managers, restores unit
+enablement and prior activity, and verifies the previous gateway. Candidate-
+modified files are restored through same-directory atomic replacements, and
+candidate-added units are stopped and disabled before their definitions are
+removed. When rollback crosses the
+legacy/project-workspace boundary, the candidate's matching migration code
+runs its journaled rollback before the candidate application is removed.
+
 These paths must never stop or restart:
 
 - `matrix-zellij@*`
@@ -63,6 +74,13 @@ An ordinary update may restart the gateway and
 `matrix-terminal-runtime.service`. That only replaces sockets, WebSockets,
 attachments, and observers. Active workspace units, Zellij servers, tabs, and
 workload PIDs remain unchanged. Rollback has the same continuity rule.
+
+The gateway orders itself after and *wants* the terminal control plane, but it
+does not require it. If terminal startup or its socket later fails, non-terminal
+Matrix OS surfaces remain available and terminal operations return a generic
+service-unavailable response. Candidate release health remains stricter: the
+updater commits a terminal-enabled bundle only after both the exact gateway
+version and the terminal socket health check succeed.
 
 Each runtime descriptor pins its immutable generation. Reference-aware garbage
 collection retains all generations referenced by valid descriptors in addition
@@ -120,8 +138,11 @@ restarting any workspace unit.
 
 The coordinated project-workspace cutover intentionally interrupts the legacy
 one-session-per-terminal processes once. Migration journals and stages new
-metadata/reference state before stopping legacy sessions, but it does not claim
-to preserve their process memory.
+metadata/reference state, then creates every replacement workspace and tab
+before stopping any legacy session. A replacement preparation failure leaves
+the legacy processes running. After all replacements are usable, the cutover
+stops the legacy processes and atomically commits the staged state; it does not
+claim to preserve their process memory across that accepted boundary.
 
 After that cutover, normal bundles must preserve running workspace units. A
 rollback within the project-workspace architecture also preserves them. A

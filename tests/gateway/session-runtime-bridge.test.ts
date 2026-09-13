@@ -113,6 +113,11 @@ describe("session runtime bridge", () => {
       data: "rm -rf project",
     })).toBe(false);
     expect(terminalAttachmentAllowsFrame("observe", {
+      type: "binary",
+      terminalRef: TERMINAL_REF,
+      dataBase64: "Gw==",
+    })).toBe(false);
+    expect(terminalAttachmentAllowsFrame("observe", {
       type: "resize",
       terminalRef: TERMINAL_REF,
       mode: "hard",

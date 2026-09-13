@@ -158,7 +158,9 @@ export function terminalAttachmentAllowsFrame(
   frame: z.input<typeof TerminalTabClientFrameSchema>,
 ): boolean {
   if (mode === "owner") return true;
-  return frame.type !== "input" && !(frame.type === "resize" && frame.mode === "hard");
+  return frame.type !== "input"
+    && frame.type !== "binary"
+    && !(frame.type === "resize" && frame.mode === "hard");
 }
 
 export async function resolveTerminalAttachmentMode(

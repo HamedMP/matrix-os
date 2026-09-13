@@ -11,34 +11,10 @@ import {
   resolveExistingFileApiPath,
   resolveWritableFileApiPath,
 } from "./path-security.js";
+import { createFileDownloadStream, parseByteRange, type FileDownloadStreamOptions } from "./file-download-stream.js";
 import { isDirectChatAttachmentPath } from "./chat/attachment-cleanup.js";
 
 const FILE_BLOB_BODY_LIMIT = 10 * 1024 * 1024;
-
-interface ByteRange {
-  start: number;
-  end: number;
-}
-
-function parseByteRange(value: string, size: number): ByteRange | null {
-  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
-  if (!match || size <= 0) return null;
-  const rawStart = match[1] ?? "";
-  const rawEnd = match[2] ?? "";
-  if (rawStart === "" && rawEnd === "") return null;
-
-  if (rawStart === "") {
-    const suffixLength = Number(rawEnd);
-    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
-    return { start: Math.max(0, size - suffixLength), end: size - 1 };
-  }
-
-  const start = Number(rawStart);
-  if (!Number.isSafeInteger(start) || start < 0 || start >= size) return null;
-  const requestedEnd = rawEnd === "" ? size - 1 : Number(rawEnd);
-  if (!Number.isSafeInteger(requestedEnd) || requestedEnd < start) return null;
-  return { start, end: Math.min(requestedEnd, size - 1) };
-}
 
 const BoolQuerySchema = z
   .enum(["true", "false"])
@@ -53,12 +29,14 @@ const BlobQuerySchema = z.object({
     .regex(/^[^/\0]+$/)
     .refine((value) => value !== "." && value !== "..")
     .optional(),
+  download: BoolQuerySchema,
   force: BoolQuerySchema,
   secret: BoolQuerySchema,
 });
 
 export interface FileBlobRouteDeps {
   homePath: string;
+  downloadOptions?: FileDownloadStreamOptions;
 }
 
 function invalidPath(c: Context) {
@@ -82,6 +60,7 @@ async function safeUnlink(path: string): Promise<void> {
 
 export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
   const app = new Hono();
+  const download = createFileDownloadStream(deps.homePath, deps.downloadOptions);
   const putBodyLimit = bodyLimit({
     maxSize: FILE_BLOB_BODY_LIMIT,
     onError: (c) => c.json({ error: "payload_too_large" }, 413),
@@ -94,6 +73,7 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
   function parseQuery(c: Context) {
     const parsed = BlobQuerySchema.safeParse({
       path: c.req.query("path"),
+      download: c.req.query("download"),
       filename: c.req.query("filename"),
       force: c.req.query("force"),
       secret: c.req.query("secret"),
@@ -119,9 +99,21 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
     });
   });
 
+  app.on("HEAD", "/media", async (c) => {
+    const parsed = parseQuery(c);
+    if (!parsed) return invalidPath(c);
+    if (parsed.download) return download(c, parsed.path);
+    const resolved = resolveExistingFileApiPath(deps.homePath, parsed.path);
+    if (!resolved) return c.json({ error: "not_found" }, 404);
+    const info = await stat(resolved);
+    if (!info.isFile()) return c.json({ error: "not_file" }, 400);
+    return new Response(null, { headers: { "Content-Length": String(info.size), "Content-Type": getMimeType(extname(basename(resolved))), "Cache-Control": "private, no-store" } });
+  });
+
   app.get("/media", async (c) => {
     const parsed = parseQuery(c);
     if (!parsed) return invalidPath(c);
+    if (parsed.download) return download(c, parsed.path);
 
     const resolved = resolveExistingFileApiPath(deps.homePath, parsed.path);
     if (!resolved) return c.json({ error: "not_found" }, 404);

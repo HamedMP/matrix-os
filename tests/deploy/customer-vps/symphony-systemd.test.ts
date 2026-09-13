@@ -53,8 +53,10 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(cloudInit).toContain("PLATFORM_INTERNAL_URL={{platformInternalUrl}}");
     expect(cloudInit).toContain("UPGRADE_TOKEN={{platformVerificationToken}}");
     expect(cloudInit).toContain("Environment=SYMPHONY_PORT=4766");
-    expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
-    expect(cloudInit).toContain("systemctl start matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service");
+    expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
+    expect(cloudInit).toContain("systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service");
+    expect(cloudInit).toContain("systemctl enable --now matrix-terminal-runtime.service");
+    expect(cloudInit).toContain("systemctl enable --now matrix-vps-registration.service");
     expect(cloudInit).toContain("systemctl start --no-block matrix-code-server.service");
     expect(cloudInit).toContain("systemctl start --no-block matrix-code.service");
   });
@@ -149,7 +151,7 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(syncAgent).toContain("sudo systemctl enable matrix-symphony.service");
     expect(syncAgent).toContain("sudo systemctl start --no-block matrix-symphony.service");
     expect(syncAgent).toContain("stop_runtime_services()");
-    expect(syncAgent).toContain("if ! sudo systemctl stop matrix-symphony matrix-gateway matrix-shell; then");
+    expect(syncAgent).toContain("if ! sudo systemctl stop matrix-symphony matrix-gateway matrix-shell matrix-terminal-runtime; then");
     expect(syncAgent).toContain('sudo systemctl show --property=ActiveState --value "$service"');
     expect(syncAgent).not.toContain("sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true");
   });

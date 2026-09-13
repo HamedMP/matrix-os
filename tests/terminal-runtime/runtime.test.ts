@@ -531,6 +531,52 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
+  it("restores every tab in a dense workspace with one batch runtime lookup", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    let batchLookups = 0;
+    let singleLookups = 0;
+    class BatchRestoreZellij extends FakeZellij {
+      override async findTabByInternalName(): Promise<never> {
+        singleLookups += 1;
+        throw new Error("dense restore must not inspect tabs one at a time");
+      }
+
+      async findTabsByInternalName(
+        sessionName: string,
+        internalNames: string[],
+      ): Promise<Record<string, { tabId: number; paneId: string }>> {
+        batchLookups += 1;
+        const requested = new Set(internalNames);
+        return Object.fromEntries(
+          [...(this.sessions.get(sessionName)?.entries() ?? [])]
+            .filter(([, tab]) => requested.has(tab.name))
+            .map(([tabId, tab]) => [tab.name, { tabId, paneId: tab.paneId }]),
+        );
+      }
+    }
+    const zellij = new BatchRestoreZellij();
+    const firstRuntime = new TerminalRuntime({ store, zellij });
+    const workspace = await firstRuntime.ensureWorkspace({ projectId: "matrix-os" });
+    await firstRuntime.createTab(workspace.id, { name: "one", cwd: "projects/matrix-os" });
+    await firstRuntime.createTab(workspace.id, { name: "two", cwd: "projects/matrix-os" });
+    await firstRuntime.createTab(workspace.id, { name: "three", cwd: "projects/matrix-os" });
+    await firstRuntime.shutdown();
+    batchLookups = 0;
+
+    const restartedRuntime = new TerminalRuntime({
+      store: new TerminalWorkspaceStore({ homePath }),
+      zellij,
+    });
+    await restartedRuntime.restoreAll();
+
+    expect(batchLookups).toBe(1);
+    expect(singleLookups).toBe(0);
+    expect((await restartedRuntime.listWorkspaces())[0]?.tabs).toHaveLength(3);
+    await restartedRuntime.shutdown();
+  });
+
   it("retires an unrecoverable legacy starting tab so it cannot consume capacity", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
@@ -657,6 +703,64 @@ describe("project-scoped terminal runtime", () => {
 
     await expect(runtime.writeInput(ref, "late")).rejects.toThrow(/unavailable/i);
     expect(zellij.targetedWrites).toEqual([]);
+    await runtime.shutdown();
+  });
+
+  it("purges only the exact exited tab record without touching sibling sessions", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const disposable = await runtime.createTab(workspace.id, { name: "verification", cwd: "projects/matrix-os" });
+    const customer = await runtime.createTab(workspace.id, { name: "customer-shell", cwd: "projects/matrix-os" });
+    await runtime.terminateTab({ workspaceId: workspace.id, tabId: disposable.id });
+    zellij.closedTabs.length = 0;
+
+    await runtime.deleteTab({ workspaceId: workspace.id, tabId: disposable.id });
+
+    expect((await runtime.listWorkspaces())[0]?.tabs).toEqual([
+      expect.objectContaining({ id: customer.id, name: "customer-shell", status: "running" }),
+    ]);
+    expect(zellij.closedTabs).toEqual([]);
+    await runtime.shutdown();
+  });
+
+  it("closes an exited record when its exact Zellij tab is still alive", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const disposable = await runtime.createTab(workspace.id, { name: "verification", cwd: "projects/matrix-os" });
+    const customer = await runtime.createTab(workspace.id, { name: "customer-shell", cwd: "projects/matrix-os" });
+    const internalWorkspace = await store.getRuntimeWorkspace(workspace.id);
+    const liveTabId = internalWorkspace?.tabs[disposable.id]?.zellijTabId;
+    expect(liveTabId).not.toBeNull();
+    await store.markTabExited({ workspaceId: workspace.id, tabId: disposable.id });
+
+    await runtime.deleteTab({ workspaceId: workspace.id, tabId: disposable.id });
+
+    expect(zellij.closedTabs).toEqual([liveTabId]);
+    expect((await runtime.listWorkspaces())[0]?.tabs).toEqual([
+      expect.objectContaining({ id: customer.id, name: "customer-shell", status: "running" }),
+    ]);
+    await runtime.shutdown();
+  });
+
+  it("closes a running tab before purging its canonical record", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "temporary", cwd: "projects/matrix-os" });
+
+    await runtime.deleteTab({ workspaceId: workspace.id, tabId: tab.id });
+
+    expect(zellij.closedTabs).toHaveLength(1);
+    expect((await runtime.listWorkspaces())[0]?.tabs).toEqual([]);
     await runtime.shutdown();
   });
 

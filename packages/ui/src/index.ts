@@ -79,3 +79,5 @@ export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from
 export { WindowResizeControls, resizeWindowBounds, type WindowBounds, type ResizeDirection } from "./window/WindowResizeControls.js";
 export { constrainFloatingWindow, isPointNearWindow, WINDOW_BACKGROUND_CLICK_BUFFER } from "./window/window-placement.js";
 export { CanonicalChatInputForm, type CanonicalChatInputFormProps } from "./chat/CanonicalChatInputForm.js";
+
+export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";

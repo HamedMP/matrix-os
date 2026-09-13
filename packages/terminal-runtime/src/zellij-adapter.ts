@@ -1,5 +1,7 @@
 import { execFile as nodeExecFile, spawn as spawnProcess } from "node:child_process";
-import { chmod, mkdir, open, realpath as nodeRealpath, rename } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { chmod, mkdir, mkdtemp, open, realpath as nodeRealpath, rename, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { spawn as spawnNodePty } from "node-pty";
 import { z } from "zod/v4";
@@ -10,10 +12,17 @@ import type {
   ZellijObserverEvent,
   ZellijRuntimeAdapter,
 } from "./runtime.js";
+import {
+  TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+  TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
+} from "./limits.js";
+import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
+const MAX_ATTACHMENT_HANDSHAKE_BYTES = 1024 * 1024;
 const STRUCTURED_READINESS_ATTEMPTS = 20;
+const SWITCH_SESSION_RECONNECT_SEQUENCE = "\x1b[2J";
 const SESSION_NAME = /^matrix-w-[0-9a-f]{32}$/;
 const TAB_NAME = /^matrix-tab-[0-9a-f]{32}$/;
 const PANE_ID = /^terminal_[0-9]+$/;
@@ -49,6 +58,7 @@ const SubscribeEventSchema = z.discriminatedUnion("event", [
 ]);
 
 export interface RuntimePty {
+  write(data: string | Buffer): void;
   resize(cols: number, rows: number): void;
   kill(): void;
   onData(listener: (data: string) => void): { dispose(): void };
@@ -75,6 +85,7 @@ export interface WorkspaceZellijLifecycle {
 
 export interface ZellijCliRuntimeAdapterOptions {
   homePath: string;
+  env?: Record<string, string>;
   binaryPath?: string;
   timeoutMs?: number;
   run?: (args: string[], binaryPath?: string) => Promise<string>;
@@ -98,33 +109,47 @@ export interface ZellijCliRuntimeAdapterOptions {
 export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   private readonly homePath: string;
   private readonly binaryPath: string;
-  private readonly runCommand: NonNullable<ZellijCliRuntimeAdapterOptions["run"]>;
+  private readonly runCommand: (
+    args: string[],
+    binaryPath?: string,
+    timeoutMs?: number,
+  ) => Promise<string>;
   private readonly resolveRealpath: (path: string) => Promise<string>;
   private readonly spawnPtyProcess: NonNullable<ZellijCliRuntimeAdapterOptions["spawnPty"]>;
   private readonly spawnSubscriptionProcess: NonNullable<ZellijCliRuntimeAdapterOptions["spawnSubscription"]>;
   private readonly workspaceLayoutPath: string;
   private readonly workspaceLifecycle?: WorkspaceZellijLifecycle;
+  private readonly runtimeEnvironment: Record<string, string>;
+  private attachmentOpenChain = Promise.resolve();
 
   constructor(options: ZellijCliRuntimeAdapterOptions) {
     this.homePath = options.homePath;
     this.binaryPath = options.binaryPath ?? "/opt/matrix/bin/zellij";
     this.workspaceLayoutPath = join(options.homePath, "system", "zellij", "runtime-workspace.kdl");
     this.workspaceLifecycle = options.workspaceLifecycle;
+    this.runtimeEnvironment = options.env ?? createTerminalRuntimeEnvironment({
+      homePath: options.homePath,
+      uid: process.getuid?.() ?? 0,
+    });
     const currentGenerationRunner = createCommandRunner({
       binaryPath: this.binaryPath,
       cwd: this.homePath,
-      env: runtimeEnv(options.homePath),
-      timeoutMs: options.timeoutMs ?? 10_000,
+      env: this.runtimeEnvironment,
+      timeoutMs: options.timeoutMs ?? TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
     });
-    this.runCommand = options.run ?? ((args, binaryPath) => {
-      if (!binaryPath || binaryPath === this.binaryPath) return currentGenerationRunner(args);
-      return createCommandRunner({
-        binaryPath,
-        cwd: this.homePath,
-        env: runtimeEnv(options.homePath),
-        timeoutMs: options.timeoutMs ?? 10_000,
-      })(args);
-    });
+    this.runCommand = options.run
+      ? ((args, binaryPath) => binaryPath === undefined
+          ? options.run!(args)
+          : options.run!(args, binaryPath))
+      : ((args, binaryPath, timeoutMs) => {
+        if (!binaryPath || binaryPath === this.binaryPath) return currentGenerationRunner(args, timeoutMs);
+        return createCommandRunner({
+          binaryPath,
+          cwd: this.homePath,
+          env: this.runtimeEnvironment,
+          timeoutMs: options.timeoutMs ?? TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+        })(args, timeoutMs);
+      });
     this.resolveRealpath = options.resolveRealpath ?? nodeRealpath;
     this.spawnPtyProcess = options.spawnPty ?? ((args, spawnOptions) => {
       return spawnNodePty(spawnOptions.binaryPath ?? this.binaryPath, args, {
@@ -136,15 +161,18 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       });
     });
     this.spawnSubscriptionProcess = options.spawnSubscription ?? ((args, onLine, onExit, binaryPath) => {
-      return spawnLineProcess(binaryPath ?? this.binaryPath, args, this.homePath, runtimeEnv(this.homePath), onLine, onExit);
+      return spawnLineProcess(binaryPath ?? this.binaryPath, args, this.homePath, this.runtimeEnvironment, onLine, onExit);
     });
   }
 
   async ensureSession(sessionNameInput: string, size = { cols: 120, rows: 36 }): Promise<void> {
     const logicalSessionName = z.string().regex(SESSION_NAME).parse(sessionNameInput);
     if (this.workspaceLifecycle) {
-      const target = await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
-      await this.waitForSession(target.sessionName, target.binaryPath);
+      // The systemd lifecycle does its own invocation-fenced readiness check
+      // before returning. Re-probing with `list-panes` scales with every pane
+      // in a migrated workspace and can exceed this adapter's fixed timeout
+      // even though the owned runtime is already ready.
+      await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
       return;
     }
     const sessionName = logicalSessionName;
@@ -166,11 +194,106 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     return this.createTab(sessionName, input);
   }
 
+  async prepareShellTabs(sessionNameInput: string, inputs: Array<{
+    internalName: string;
+    cwd: string;
+    command?: string[];
+  }>, operationDeadline?: number): Promise<Record<string, { tabId: number; paneId: string }>> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const requested = z.array(z.object({
+      internalName: z.string().regex(TAB_NAME),
+      cwd: z.string(),
+      command: z.array(z.string()).max(1_000).optional(),
+    }).strict()).max(10_000).parse(inputs);
+    if (new Set(requested.map((input) => input.internalName)).size !== requested.length) {
+      throw new Error("Terminal tab names must be unique");
+    }
+    if (requested.length === 0) return {};
+
+    const tabs = await this.readStructuredJson(
+      ["--session", sessionName, "action", "list-tabs", "--json"],
+      z.array(TabSchema).max(10_000),
+      binaryPath,
+      operationDeadline,
+    );
+    const bootstrap = tabs.find((tab) => tab.name === "matrix-bootstrap");
+    const tabsByName = new Map(tabs.map((tab) => [tab.name, tab]));
+    const tabIds = new Map(
+      requested.flatMap((input) => {
+        const tab = tabsByName.get(input.internalName);
+        return tab ? [[input.internalName, tab.tab_id] as const] : [];
+      }),
+    );
+    const missing = requested.filter((input) => !tabIds.has(input.internalName));
+    const resolvedCwds = new Map(await Promise.all(missing.map(async (input) => [
+      input.internalName,
+      await this.resolveCwd(input.cwd),
+    ] as const)));
+
+    for (const input of missing) {
+      const cwd = resolvedCwds.get(input.internalName)!;
+      const output = await this.run([
+        "--session", sessionName, "action", "new-tab",
+        "--name", input.internalName,
+        "--cwd", cwd,
+        ...(input.command ? ["--", ...input.command] : []),
+      ], binaryPath, remainingCommandTimeout(operationDeadline));
+      const outputTabId = output.trim();
+      const tabId = /^\d+$/.test(outputTabId)
+        ? z.coerce.number().int().min(0).parse(outputTabId)
+        : await this.waitForTabId(sessionName, input.internalName, binaryPath, operationDeadline);
+      tabIds.set(input.internalName, tabId);
+    }
+    if (bootstrap) {
+      await this.run([
+        "--session", sessionName, "action", "close-tab", "--tab-id", String(bootstrap.tab_id),
+      ], binaryPath, remainingCommandTimeout(operationDeadline));
+    }
+
+    const panes = await this.waitForManagedPanes(
+      sessionName,
+      [...tabIds.values()],
+      binaryPath,
+      operationDeadline,
+    );
+    const panesByTab = new Map<number, Array<z.infer<typeof PaneSchema>>>();
+    for (const pane of panes) {
+      if (pane.is_plugin) continue;
+      const tabPanes = panesByTab.get(pane.tab_id) ?? [];
+      tabPanes.push(pane);
+      panesByTab.set(pane.tab_id, tabPanes);
+    }
+    const prepared: Record<string, { tabId: number; paneId: string }> = {};
+    for (const input of requested) {
+      const tabId = tabIds.get(input.internalName);
+      if (tabId === undefined) throw new Error("Managed terminal tab failed to report its identifier");
+      const managedPanes = panesByTab.get(tabId) ?? [];
+      const primaryPane = managedPanes.find((pane) => pane.pane_title === input.internalName)
+        ?? managedPanes.toSorted((left, right) => left.id - right.id)[0];
+      if (!primaryPane) throw new Error("Managed terminal tab primary pane is unavailable");
+      const paneId = `terminal_${primaryPane.id}`;
+      if (primaryPane.pane_title !== input.internalName) {
+        await this.run([
+          "--session", sessionName, "action", "rename-pane", "--pane-id", paneId, input.internalName,
+        ], binaryPath, remainingCommandTimeout(operationDeadline));
+      }
+      prepared[input.internalName] = { tabId, paneId };
+    }
+    return prepared;
+  }
+
   async stopLegacySessions(namesInput: string[]): Promise<void> {
     const names = z.array(z.string().regex(LEGACY_SESSION_NAME)).max(10_000).parse(namesInput);
     for (const name of names) {
       try { await this.run(["delete-session", name, "--force"]); }
-      catch (error) { console.warn("[terminal-runtime] legacy session already stopped", name, error); }
+      catch (error) {
+        if (!isMissingZellijSessionFailure(error)) throw error;
+        console.warn(
+          "[terminal-runtime] legacy session already stopped",
+          name,
+          error instanceof Error ? error.name : "unknown_error",
+        );
+      }
     }
   }
 
@@ -192,31 +315,14 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     cwd: string;
     command?: string[];
   }): Promise<{ tabId: number; paneId: string }> {
-    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
     const internalName = z.string().regex(TAB_NAME).parse(input.internalName);
-    const cwd = await this.resolveCwd(input.cwd);
-    const tabs = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-tabs", "--json"],
-      z.array(TabSchema).max(10_000),
-      binaryPath,
+    await this.resolveCwd(input.cwd);
+    const prepared = await this.prepareShellTabs(
+      sessionNameInput,
+      [{ ...input, internalName }],
+      Date.now() + TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
     );
-    const bootstrap = tabs.find((tab) => tab.name === "matrix-bootstrap");
-    const output = await this.run([
-      "--session", sessionName, "action", "new-tab",
-      "--name", internalName,
-      "--cwd", cwd,
-      ...(input.command ? ["--", ...input.command] : []),
-    ], binaryPath);
-    const outputTabId = output.trim();
-    const tabId = /^\d+$/.test(outputTabId)
-      ? z.coerce.number().int().min(0).parse(outputTabId)
-      : await this.waitForTabId(sessionName, internalName, binaryPath);
-    if (bootstrap) {
-      await this.run(["--session", sessionName, "action", "close-tab", "--tab-id", String(bootstrap.tab_id)], binaryPath);
-    }
-    const paneId = await this.waitForManagedPane(sessionName, tabId, binaryPath);
-    await this.run(["--session", sessionName, "action", "rename-pane", "--pane-id", paneId, internalName], binaryPath);
-    return { tabId, paneId };
+    return prepared[internalName]!;
   }
 
   async openAttachment(sessionNameInput: string, input: {
@@ -225,26 +331,143 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     onData: (data: Uint8Array) => void;
     onExit: (exitCode: number | null) => void;
   }): Promise<ZellijAttachment> {
-    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const previousOpen = this.attachmentOpenChain;
+    const gate = Promise.withResolvers<void>();
+    this.attachmentOpenChain = gate.promise;
+    await previousOpen;
+    try {
+      return await this.openAttachmentNow(sessionNameInput, input);
+    } finally {
+      gate.resolve();
+    }
+  }
+
+  private async openAttachmentNow(sessionNameInput: string, input: {
+    paneId: string;
+    size: { cols: number; rows: number };
+    onData: (data: Uint8Array) => void;
+    onExit: (exitCode: number | null) => void;
+  }): Promise<ZellijAttachment> {
+    const target = await this.resolveWorkspaceTarget(sessionNameInput);
+    const sessionName = z.string().regex(LEGACY_SESSION_NAME).parse(target.sessionName);
+    const { binaryPath } = target;
     const paneId = z.string().regex(PANE_ID).parse(input.paneId);
-    const pty = this.spawnPtyProcess(["attach", sessionName], {
-      cwd: this.homePath,
-      env: runtimeEnv(this.homePath),
-      cols: input.size.cols,
-      rows: input.size.rows,
-      binaryPath,
+    const paneNumber = Number.parseInt(paneId.slice("terminal_".length), 10);
+    const bootstrapName = `matrix-attach-${randomBytes(16).toString("hex")}`;
+    const routeDirectory = await mkdtemp(join(tmpdir(), "matrix-zellij-attach-"));
+    const routeConfigPath = join(routeDirectory, "config.kdl");
+    const routeConfig = [
+      'default_mode "normal"',
+      "keybinds {",
+      "  normal {",
+      `    bind "Ctrl Alt Shift F12" { SwitchSession name="${sessionName}" pane_id=${paneNumber}; }`,
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    try {
+      const routeConfigHandle = await open(routeConfigPath, "wx", 0o600);
+      try { await routeConfigHandle.writeFile(routeConfig, "utf8"); } finally { await routeConfigHandle.close(); }
+    } catch (error) {
+      await removeAttachmentRouteDirectory(routeDirectory);
+      throw error;
+    }
+
+    let pty: RuntimePty;
+    try {
+      // Zellij 0.44.3 cannot target a pane on `attach`. A private bootstrap
+      // client performs an in-band SwitchSession instead, which is the only
+      // path that carries pane_to_focus for that exact client. No routing key
+      // is ever written into a customer pane.
+      pty = this.spawnPtyProcess(["--config", routeConfigPath, "attach", bootstrapName, "--create"], {
+        cwd: this.homePath,
+        env: this.runtimeEnvironment,
+        cols: input.size.cols,
+        rows: input.size.rows,
+        binaryPath,
+      });
+    } catch (error) {
+      await removeAttachmentRouteDirectory(routeDirectory);
+      throw error;
+    }
+    const bootstrapReady = Promise.withResolvers<void>();
+    const routeReady = Promise.withResolvers<void>();
+    const startupFailure = Promise.withResolvers<never>();
+    let bootstrapOutputSeen = false;
+    let routeRequested = false;
+    let reconnectSequenceSeen = false;
+    let bound = false;
+    let startupRejected = false;
+    let handshakeOutput = "";
+    const dataDisposable = pty.onData((data) => {
+      if (bound) {
+        input.onData(new TextEncoder().encode(data));
+        return;
+      }
+      if (!bootstrapOutputSeen) {
+        bootstrapOutputSeen = true;
+        bootstrapReady.resolve();
+        return;
+      }
+      if (!routeRequested) return;
+      handshakeOutput += data;
+      if (!startupRejected && Buffer.byteLength(handshakeOutput) > MAX_ATTACHMENT_HANDSHAKE_BYTES) {
+        startupRejected = true;
+        handshakeOutput = "";
+        startupFailure.reject(new Error("Terminal attachment handshake output exceeded limit"));
+        return;
+      }
+      if (!reconnectSequenceSeen) {
+        const reconnectOffset = handshakeOutput.indexOf(SWITCH_SESSION_RECONNECT_SEQUENCE);
+        if (reconnectOffset < 0) return;
+        // Zellij writes this clear-screen sequence from the client process only
+        // after its in-band SwitchSession has disconnected from the bootstrap
+        // server. The following redraw therefore belongs to this exact PTY's
+        // target-session attachment, unlike aggregate list-clients snapshots.
+        reconnectSequenceSeen = true;
+        handshakeOutput = handshakeOutput.slice(reconnectOffset);
+      }
+      if (handshakeOutput.length > SWITCH_SESSION_RECONNECT_SEQUENCE.length) {
+        routeReady.resolve();
+      }
     });
-    const dataDisposable = pty.onData((data) => input.onData(new TextEncoder().encode(data)));
-    const exitDisposable = pty.onExit((event) => input.onExit(event.exitCode));
-    await this.run(["--session", sessionName, "action", "focus-pane-id", paneId], binaryPath);
+    const exitDisposable = pty.onExit((event) => {
+      if (!bound) startupFailure.reject(new Error("Terminal attachment exited during startup"));
+      else input.onExit(event.exitCode);
+    });
+    try {
+      await withAttachmentTimeout(
+        Promise.race([bootstrapReady.promise, startupFailure.promise]),
+        "Terminal attachment bootstrap timed out",
+      );
+      await withAttachmentTimeout(
+        Promise.race([this.waitForAnyClient(bootstrapName, binaryPath), startupFailure.promise]),
+        "Terminal attachment bootstrap client timed out",
+      );
+      routeRequested = true;
+      pty.write(Buffer.from("\x1b[24;8~", "latin1"));
+      await withAttachmentTimeout(
+        Promise.race([routeReady.promise, startupFailure.promise]),
+        "Terminal attachment pane binding timed out",
+      );
+      bound = true;
+      if (handshakeOutput) input.onData(new TextEncoder().encode(handshakeOutput));
+      handshakeOutput = "";
+      pty.resize(input.size.cols, input.size.rows);
+    } catch (error) {
+      dataDisposable.dispose();
+      exitDisposable.dispose();
+      pty.kill();
+      throw error;
+    } finally {
+      await this.deleteBootstrapSession(bootstrapName, binaryPath);
+      await removeAttachmentRouteDirectory(routeDirectory);
+    }
     let closed = false;
     return {
       write: async (data) => {
         if (closed) throw new Error("Terminal attachment closed");
-        await this.run([
-          "--session", sessionName, "action", "write-chars", "--pane-id", paneId, "--",
-          new TextDecoder().decode(data),
-        ], binaryPath);
+        pty.write(Buffer.from(data));
       },
       resize: async (cols, rows) => { if (!closed) pty.resize(cols, rows); },
       close: async () => {
@@ -255,6 +478,27 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         pty.kill();
       },
     };
+  }
+
+  private async waitForAnyClient(sessionName: string, binaryPath: string): Promise<void> {
+    for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
+      const output = await this.run(["--session", sessionName, "action", "list-clients"], binaryPath);
+      if (output.split("\n").some((line) => /^\s*\d+\s+\S+/.test(line))) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+    throw new Error("Terminal attachment bootstrap client was unavailable");
+  }
+
+  private async deleteBootstrapSession(bootstrapName: string, binaryPath: string): Promise<void> {
+    try {
+      await this.run(["delete-session", bootstrapName, "--force"], binaryPath);
+    } catch (error) {
+      if (isMissingZellijSessionFailure(error)) return;
+      console.error(
+        "[terminal-runtime] failed to delete attachment bootstrap session",
+        error instanceof Error ? error.name : "unknown_error",
+      );
+    }
   }
 
   async writeToPane(sessionNameInput: string, paneIdInput: string, data: Uint8Array): Promise<void> {
@@ -306,32 +550,49 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     sessionNameInput: string,
     internalNameInput: string,
   ): Promise<{ tabId: number; paneId: string } | undefined> {
-    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
     const internalName = z.string().regex(TAB_NAME).parse(internalNameInput);
+    return (await this.findTabsByInternalName(sessionNameInput, [internalName]))[internalName];
+  }
+
+  async findTabsByInternalName(
+    sessionNameInput: string,
+    internalNamesInput: string[],
+  ): Promise<Record<string, { tabId: number; paneId: string }>> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const internalNames = z.array(z.string().regex(TAB_NAME)).max(10_000).parse(internalNamesInput);
+    if (new Set(internalNames).size !== internalNames.length) {
+      throw new Error("Terminal tab names must be unique");
+    }
+    if (internalNames.length === 0) return {};
+    const requested = new Set(internalNames);
     const tabs = await this.readStructuredJson(
       ["--session", sessionName, "action", "list-tabs", "--json"],
       z.array(TabSchema).max(10_000),
       binaryPath,
     );
-    const tab = tabs.find((candidate) => candidate.name === internalName);
-    if (!tab) return undefined;
+    const requestedTabs = tabs.filter((tab) => requested.has(tab.name));
+    if (requestedTabs.length === 0) return {};
     const panes = await this.readStructuredJson(
       ["--session", sessionName, "action", "list-panes", "--all", "--json"],
       z.array(PaneSchema).max(10_000),
       binaryPath,
     );
-    const managedPanes = panes.filter((pane) => pane.tab_id === tab.tab_id && !pane.is_plugin);
-    const primaryPane = managedPanes.find((pane) => pane.pane_title === internalName)
-      ?? managedPanes.toSorted((left, right) => left.id - right.id)[0];
-    if (!primaryPane) throw new Error("Managed terminal tab primary pane is unavailable");
-    const paneId = `terminal_${primaryPane.id}`;
-    if (primaryPane.pane_title !== internalName) {
-      await this.run(
-        ["--session", sessionName, "action", "rename-pane", "--pane-id", paneId, internalName],
-        binaryPath,
-      );
+    const found: Record<string, { tabId: number; paneId: string }> = {};
+    for (const tab of requestedTabs) {
+      const managedPanes = panes.filter((pane) => pane.tab_id === tab.tab_id && !pane.is_plugin);
+      const primaryPane = managedPanes.find((pane) => pane.pane_title === tab.name)
+        ?? managedPanes.toSorted((left, right) => left.id - right.id)[0];
+      if (!primaryPane) throw new Error("Managed terminal tab primary pane is unavailable");
+      const paneId = `terminal_${primaryPane.id}`;
+      if (primaryPane.pane_title !== tab.name) {
+        await this.run(
+          ["--session", sessionName, "action", "rename-pane", "--pane-id", paneId, tab.name],
+          binaryPath,
+        );
+      }
+      found[tab.name] = { tabId: tab.tab_id, paneId };
     }
-    return { tabId: tab.tab_id, paneId };
+    return found;
   }
 
   async subscribeWorkspace(sessionNameInput: string, input: {
@@ -489,21 +750,26 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     return canonicalCwd;
   }
 
-  private run(args: string[], binaryPath = this.binaryPath): Promise<string> {
+  private run(args: string[], binaryPath = this.binaryPath, timeoutMs?: number): Promise<string> {
     return binaryPath === this.binaryPath
-      ? this.runCommand(args)
-      : this.runCommand(args, binaryPath);
+      ? this.runCommand(args, undefined, timeoutMs)
+      : this.runCommand(args, binaryPath, timeoutMs);
   }
 
   private async readStructuredJson<T>(
     args: string[],
     schema: z.ZodType<T>,
     binaryPath = this.binaryPath,
+    operationDeadline?: number,
   ): Promise<T> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
-        const output = (await this.run(args, binaryPath)).trim();
+        const output = (await this.run(
+          args,
+          binaryPath,
+          remainingCommandTimeout(operationDeadline),
+        )).trim();
         const arrayStart = output.indexOf("[");
         const objectStart = output.indexOf("{");
         const start = arrayStart < 0
@@ -524,34 +790,39 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     throw lastError instanceof Error ? lastError : new Error("Zellij structured command failed");
   }
 
-  private async waitForManagedPane(
+  private async waitForManagedPanes(
     sessionName: string,
-    tabId: number,
+    tabIds: number[],
     binaryPath = this.binaryPath,
-  ): Promise<string> {
+    operationDeadline?: number,
+  ): Promise<Array<z.infer<typeof PaneSchema>>> {
+    const requested = new Set(tabIds);
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const panes = await this.readStructuredJson(
         ["--session", sessionName, "action", "list-panes", "--all", "--json"],
         z.array(PaneSchema).max(10_000),
         binaryPath,
+        operationDeadline,
       );
-      const tabPanes = panes.filter((pane) => pane.tab_id === tabId && !pane.is_plugin);
-      if (tabPanes.length === 1) return `terminal_${tabPanes[0]!.id}`;
+      const ready = new Set(panes.filter((pane) => !pane.is_plugin).map((pane) => pane.tab_id));
+      if ([...requested].every((tabId) => ready.has(tabId))) return panes;
       await new Promise<void>((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
     }
-    throw new Error("Managed terminal tab must contain exactly one pane");
+    throw new Error("Managed terminal tabs must each contain a pane");
   }
 
   private async waitForTabId(
     sessionName: string,
     internalName: string,
     binaryPath = this.binaryPath,
+    operationDeadline?: number,
   ): Promise<number> {
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const tabs = await this.readStructuredJson(
         ["--session", sessionName, "action", "list-tabs", "--json"],
         z.array(TabSchema).max(10_000),
         binaryPath,
+        operationDeadline,
       );
       const tab = tabs.find((candidate) => candidate.name === internalName);
       if (tab) return tab.tab_id;
@@ -635,12 +906,12 @@ function createCommandRunner(options: {
   cwd: string;
   env: Record<string, string>;
   timeoutMs: number;
-}): (args: string[]) => Promise<string> {
-  return (args) => new Promise((resolve, reject) => {
+}): (args: string[], timeoutMs?: number) => Promise<string> {
+  return (args, timeoutMs) => new Promise((resolve, reject) => {
     nodeExecFile(options.binaryPath, args, {
       cwd: options.cwd,
       env: options.env,
-      timeout: options.timeoutMs,
+      timeout: timeoutMs ?? options.timeoutMs,
       maxBuffer: MAX_COMMAND_OUTPUT_BYTES,
     }, (error, stdout, stderr) => {
       if (error) {
@@ -651,6 +922,42 @@ function createCommandRunner(options: {
       } else resolve(String(stdout));
     });
   });
+}
+
+function remainingCommandTimeout(operationDeadline?: number): number | undefined {
+  if (operationDeadline === undefined) return undefined;
+  const remaining = operationDeadline - Date.now();
+  if (remaining <= 0) throw new Error("Terminal runtime operation timed out");
+  return Math.min(TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS, remaining);
+}
+
+async function withAttachmentTimeout<T>(operation: Promise<T>, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(message)),
+          TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
+        );
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function removeAttachmentRouteDirectory(directory: string): Promise<void> {
+  try {
+    await rm(directory, { recursive: true, force: true });
+  } catch (error) {
+    console.error(
+      "[terminal-runtime] failed to delete attachment routing files",
+      error instanceof Error ? error.name : "unknown_error",
+    );
+  }
 }
 
 function isMissingZellijSessionFailure(error: unknown): boolean {
@@ -692,18 +999,6 @@ function spawnLineProcess(
       });
     },
   };
-}
-
-function runtimeEnv(homePath: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value !== "string" || key === "ZELLIJ" || key === "ZELLIJ_SESSION_NAME" || key === "ZELLIJ_PANE_ID") continue;
-    env[key] = value;
-  }
-  env.HOME = homePath;
-  env.MATRIX_HOME = homePath;
-  env.ZELLIJ_CONFIG_DIR = join(homePath, "system", "zellij");
-  return env;
 }
 
 function safeJson(line: string): unknown {

@@ -13,6 +13,7 @@ export type TerminalServerMessage =
       exitCode: null;
       fromSeq: number;
       canonicalSize: TerminalCanonicalSize;
+      capabilities: string[];
     })
   | (TerminalMessageIdentity & { type: "canonical-size"; cols: number; rows: number })
   | (TerminalMessageIdentity & { type: "output"; data: string; seq: number })
@@ -71,6 +72,7 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
         exitCode: null,
         fromSeq: msg.nextSeq,
         canonicalSize: msg.canonicalSize,
+        capabilities: msg.capabilities ?? [],
       };
     case "canonical-size":
       return { ...identity, type: "canonical-size", ...msg.canonicalSize };
