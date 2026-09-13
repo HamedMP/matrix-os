@@ -1,5 +1,6 @@
 "use client";
 
+import { FileDownloadAction } from "./FileDownloadProvider";
 import { useState, useEffect } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -130,6 +131,8 @@ export function PreviewPanel() {
         )}
         <div className="font-medium text-center break-all">{stat.name}</div>
       </div>
+
+      {stat.type === "file" && stat.path === selectedFullPath ? <FileDownloadAction path={stat.path} size={stat.size} /> : null}
 
       <dl className="space-y-2 text-xs">
         <InfoRow label="Type" value={stat.type === "directory" ? "Folder" : stat.mime ?? "File"} />

@@ -372,6 +372,16 @@ describe('CI workflows', () => {
     );
   });
 
+  it('requires download E2E after the Electron build under a virtual display', () => {
+    const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
+    const steps = workflow.jobs.e2e.steps;
+    const build = steps.findIndex((step: { run?: string }) => step.run === 'bun run build:desktop');
+    const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/file-download.e2e.test.ts');
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(download).toBeGreaterThan(build);
+    expect(steps[download].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
+  });
+
   it('documents workflow ownership and required checks', () => {
     const root = process.cwd();
     const readme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');

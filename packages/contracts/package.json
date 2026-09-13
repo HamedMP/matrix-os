@@ -8,6 +8,7 @@
     "./collaboration": "./src/collaboration.ts"
   },
   "imports": {
+    "#file-download": "./src/file-download.ts",
     "#release-alignment": "./src/release-alignment.ts",
     "#runtime-compatibility": "./src/runtime-compatibility.ts",
     "#chat-message-wire": "./src/chat-message-wire.ts",

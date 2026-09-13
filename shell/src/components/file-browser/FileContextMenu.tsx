@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { useWebFileDownload } from "./FileDownloadProvider";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -25,6 +27,8 @@ export function FileContextMenu({
   targetType,
   onOpenFile,
 }: FileContextMenuProps) {
+  const download = useWebFileDownload();
+  const [downloadTarget, setDownloadTarget] = useState<string | null>(null);
   const currentPath = useFileBrowser((s) => s.currentPath);
   const selectedPaths = useFileBrowser((s) => s.selectedPaths);
   const copy = useFileBrowser((s) => s.copy);
@@ -40,6 +44,12 @@ export function FileContextMenu({
   const setViewMode = useFileBrowser((s) => s.setViewMode);
   const setSortBy = useFileBrowser((s) => s.setSortBy);
 
+  const captureDownloadTarget = (event: React.MouseEvent) => {
+    const entry = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-web-file-path]") : null;
+    setDownloadTarget(entry?.dataset.webFileType === "file" ? entry.dataset.webFilePath ?? null : null);
+  };
+  const downloadItem = download && downloadTarget ? <ContextMenuItem disabled={download.pending} onSelect={() => download.download(downloadTarget)}>Download</ContextMenuItem> : null;
+
   const isMulti = selectedPaths.size > 1;
   const selected = Array.from(selectedPaths);
   const fullPaths = selected.map((n) =>
@@ -49,8 +59,9 @@ export function FileContextMenu({
   if (isMulti) {
     return (
       <ContextMenu>
-        <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+        <ContextMenuTrigger asChild onContextMenuCapture={captureDownloadTarget}>{children}</ContextMenuTrigger>
         <ContextMenuContent>
+          {downloadItem}
           <ContextMenuItem onClick={() => copy(fullPaths)}>Copy</ContextMenuItem>
           <ContextMenuItem onClick={() => cut(fullPaths)}>Cut</ContextMenuItem>
           <ContextMenuSeparator />
@@ -72,8 +83,9 @@ export function FileContextMenu({
 
     return (
       <ContextMenu>
-        <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+        <ContextMenuTrigger asChild onContextMenuCapture={captureDownloadTarget}>{children}</ContextMenuTrigger>
         <ContextMenuContent>
+          {downloadItem}
           {targetType === "directory" ? (
             <ContextMenuItem
               onClick={() => navigate(fullPath)}
@@ -117,8 +129,9 @@ export function FileContextMenu({
   // Empty space context menu
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger asChild onContextMenuCapture={captureDownloadTarget}>{children}</ContextMenuTrigger>
       <ContextMenuContent>
+        {downloadItem}
         <ContextMenuSub>
           <ContextMenuSubTrigger>New File</ContextMenuSubTrigger>
           <ContextMenuSubContent>

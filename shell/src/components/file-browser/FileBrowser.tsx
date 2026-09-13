@@ -15,6 +15,7 @@ import { TrashView } from "./TrashView";
 import { StatusBar } from "./StatusBar";
 import { FileContextMenu } from "./FileContextMenu";
 import { QuickLook } from "./QuickLook";
+import { FileDownloadProvider } from "./FileDownloadProvider";
 import { XpExplorer } from "./XpExplorer";
 
 interface FileBrowserProps {
@@ -287,6 +288,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
+      <FileDownloadProvider>
       {isXpExplorer ? (
         <XpExplorer
           renamingPath={renamingPath}
@@ -330,6 +332,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
         </>
       )}
       <QuickLook />
+      </FileDownloadProvider>
     </div>
   );
 }
