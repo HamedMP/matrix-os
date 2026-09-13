@@ -86,6 +86,8 @@ describe("platform speech startup wiring", () => {
       PLATFORM_SPEECH_POLICY_REVISION: "preview-speech-1",
       PLATFORM_SPEECH_SECRET: "s".repeat(32),
       PLATFORM_SPEECH_PREVIEW_NO_CHARGE: "true",
+      PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME: "25",
+      PLATFORM_SPEECH_PREVIEW_NOT_AFTER: "2026-09-14T00:00:00.000Z",
     });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: "Preview transcript" }), {
       status: 200,

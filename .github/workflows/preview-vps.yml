@@ -606,6 +606,18 @@ jobs:
             sleep 15
           done
 
+          jq -cn --arg handle "$HANDLE" --arg address "$address" --arg terminalToken "$runtime_token" \
+            '{handle:$handle,address:$address,terminalToken:$terminalToken}' > preview-runtime-access.json
+          chmod 600 preview-runtime-access.json
+
+      - name: Publish handle-scoped preview runtime access
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-runtime-access-${{ needs.gate.outputs.pr }}
+          path: preview-runtime-access.json
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Comment preview URL on PR
         if: github.event_name == 'pull_request'
         env:

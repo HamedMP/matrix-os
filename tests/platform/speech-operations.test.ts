@@ -120,6 +120,39 @@ describe("speech operation repository", () => {
       .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
   });
 
+  it("enforces a durable per-runtime lifetime cap for paid preview calls", async () => {
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => now,
+      maximumAdmissionsPerRuntimeLifetime: 1,
+      admissionsNotAfter: new Date("2026-09-11T00:00:00.000Z"),
+    });
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 0 }));
+    await repo.claimDispatch(identity, requestId);
+    await repo.complete(identity, requestId, {
+      executionState: "succeeded",
+      outcomeCode: "transcript",
+      actualCostMicrousd: 0,
+    }, async () => undefined);
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${now.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_2", reservedMicrousd: 0 })))
+      .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
+  });
+
+  it("rejects all new admissions at the preview expiry", async () => {
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => now,
+      maximumAdmissionsPerRuntimeLifetime: 25,
+      admissionsNotAfter: now,
+    });
+    await expect(repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 0 })))
+      .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
+  });
+
   it("evicts crashed active work from admission capacity before metadata expires", async () => {
     let checked = now;
     const repo = createSpeechOperationsRepository({
