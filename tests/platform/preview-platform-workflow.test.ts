@@ -24,6 +24,7 @@ describe("preview platform workflow", () => {
       join(root, ".github/workflows/preview-platform.yml"),
       "utf8",
     );
+
     expect(workflow).toContain("2>/dev/null || true");
     expect(workflow).toContain('BOOTSTRAP_API_ORIGIN="https://preview-bootstrap.invalid"');
     expect(workflow).toContain('if [ -z "$service_base_url" ]; then');
@@ -64,6 +65,9 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("preview-runtime-access");
     expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
     expect(workflow).toContain("openssl pkeyutl -decrypt");
+    expect(workflow).toContain("preview-share-runtime-access.json");
+    expect(workflow).toContain('.handle == $public[0].handle');
+    expect(workflow).toContain('.address == $public[0].address');
     expect(connectJobHeader).not.toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
     expect(connectJob.indexOf("pnpm install --frozen-lockfile --filter . --ignore-scripts"))
       .toBeLessThan(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"));
@@ -71,7 +75,7 @@ describe("preview platform workflow", () => {
       .toBeLessThan(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"));
     expect(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"))
       .toBeLessThan(connectJob.indexOf("Enable the existing tagged host without moving traffic"));
-    expect(workflow).toContain("trap 'rm -f preview-share-route.json' EXIT");
+    expect(workflow).toContain("trap 'rm -f preview-share-runtime-access.json' EXIT");
     expect(workflow).toContain("metadata.st_gid");
     expect(workflow).not.toContain("os.fchown(fd, 0, 0)");
     expect(workflow).not.toContain("PRODUCTION_PLATFORM_SECRET");
@@ -94,9 +98,11 @@ describe("preview platform workflow", () => {
     );
 
     expect(workflow).toContain("preview-runtime-access.enc");
+    expect(workflow).toContain("preview-runtime-route.json");
     expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64");
     expect(workflow).toContain("openssl pkeyutl -encrypt");
     expect(workflow).not.toContain("terminalToken");
+    expect(workflow).toContain("'{handle:$handle,address:$address}' > preview-runtime-route.json");
     expect(workflow).toContain("name: preview-runtime-access-");
     expect(workflow).toContain("retention-days: 1");
     expect(deployJob).not.toContain("environment: Preview");

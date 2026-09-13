@@ -470,14 +470,24 @@ jobs:
         run: |
           set -euo pipefail
           route=preview-runtime-access/preview-runtime-access.enc
+          public_route=preview-runtime-access/preview-runtime-route.json
           test -s "$route"
           test "$(wc -c < "$route")" -le 1024
+          jq -e --arg handle "pr-$PR_NUMBER" '
+            type == "object"
+            and keys == ["address", "handle"]
+            and .handle == $handle
+            and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
+          ' "$public_route" >/dev/null
           cp "$route" preview-share-route.enc
-          chmod 600 preview-share-route.enc
+          cp "$public_route" preview-share-route.json
+          chmod 600 preview-share-route.enc preview-share-route.json
       - uses: actions/upload-artifact@v4
         with:
           name: preview-share-route
-          path: preview-share-route.enc
+          path: |
+            preview-share-route.enc
+            preview-share-route.json
           retention-days: 1
 
   connect-share-preview:
@@ -540,20 +550,22 @@ jobs:
           openssl pkey -in "$private_key" -noout
           openssl pkeyutl -decrypt -inkey "$private_key" \
             -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
-            -in preview-share-route.enc -out preview-share-route.json
+            -in preview-share-route.enc -out preview-share-runtime-access.json
           rm -f preview-share-route.enc
-          chmod 600 preview-share-route.json
-          jq -e --arg handle "pr-$PR_NUMBER" '
+          chmod 600 preview-share-runtime-access.json
+          jq -e --arg handle "pr-$PR_NUMBER" --slurpfile public preview-share-route.json '
             type == "object"
             and keys == ["address", "handle", "token"]
             and .handle == $handle
             and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
             and (.token | type == "string" and test("^[a-f0-9]{64}$"))
-          ' preview-share-route.json >/dev/null
+            and .handle == $public[0].handle
+            and .address == $public[0].address
+          ' preview-share-runtime-access.json >/dev/null
       - name: Enable the existing tagged host without moving traffic
         run: |
           set -euo pipefail
-          trap 'rm -f preview-share-route.json' EXIT
+          trap 'rm -f preview-share-runtime-access.json' EXIT
           gcloud help run services describe >/dev/null
           gcloud help run revisions describe >/dev/null
           gcloud help run deploy >/dev/null
@@ -578,7 +590,7 @@ jobs:
             echo "PREVIEW_CLERK_USER_ID is required for preview speech authorization." >&2
             exit 1
           fi
-          route="$(cat preview-share-route.json)"
+          route="$(cat preview-share-runtime-access.json)"
           address="$(jq -er '.address | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<< "$route")"
           handle="pr-$PR_NUMBER"
           machine_id="chat-share-preview-$handle"
