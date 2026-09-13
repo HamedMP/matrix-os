@@ -1,5 +1,7 @@
 import { execFile as nodeExecFile, spawn as spawnProcess } from "node:child_process";
-import { chmod, mkdir, open, realpath as nodeRealpath, rename } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { chmod, mkdir, mkdtemp, open, realpath as nodeRealpath, rename, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { spawn as spawnNodePty } from "node-pty";
 import { z } from "zod/v4";
@@ -18,7 +20,9 @@ import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
+const MAX_ATTACHMENT_HANDSHAKE_BYTES = 1024 * 1024;
 const STRUCTURED_READINESS_ATTEMPTS = 20;
+const SWITCH_SESSION_RECONNECT_SEQUENCE = "\x1b[2J";
 const SESSION_NAME = /^matrix-w-[0-9a-f]{32}$/;
 const TAB_NAME = /^matrix-tab-[0-9a-f]{32}$/;
 const PANE_ID = /^terminal_[0-9]+$/;
@@ -116,6 +120,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   private readonly workspaceLayoutPath: string;
   private readonly workspaceLifecycle?: WorkspaceZellijLifecycle;
   private readonly runtimeEnvironment: Record<string, string>;
+  private attachmentOpenChain = Promise.resolve();
 
   constructor(options: ZellijCliRuntimeAdapterOptions) {
     this.homePath = options.homePath;
@@ -326,18 +331,138 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     onData: (data: Uint8Array) => void;
     onExit: (exitCode: number | null) => void;
   }): Promise<ZellijAttachment> {
-    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const previousOpen = this.attachmentOpenChain;
+    const gate = Promise.withResolvers<void>();
+    this.attachmentOpenChain = gate.promise;
+    await previousOpen;
+    try {
+      return await this.openAttachmentNow(sessionNameInput, input);
+    } finally {
+      gate.resolve();
+    }
+  }
+
+  private async openAttachmentNow(sessionNameInput: string, input: {
+    paneId: string;
+    size: { cols: number; rows: number };
+    onData: (data: Uint8Array) => void;
+    onExit: (exitCode: number | null) => void;
+  }): Promise<ZellijAttachment> {
+    const target = await this.resolveWorkspaceTarget(sessionNameInput);
+    const sessionName = z.string().regex(LEGACY_SESSION_NAME).parse(target.sessionName);
+    const { binaryPath } = target;
     const paneId = z.string().regex(PANE_ID).parse(input.paneId);
-    const pty = this.spawnPtyProcess(["attach", sessionName], {
-      cwd: this.homePath,
-      env: this.runtimeEnvironment,
-      cols: input.size.cols,
-      rows: input.size.rows,
-      binaryPath,
+    const paneNumber = Number.parseInt(paneId.slice("terminal_".length), 10);
+    const bootstrapName = `matrix-attach-${randomBytes(16).toString("hex")}`;
+    const routeDirectory = await mkdtemp(join(tmpdir(), "matrix-zellij-attach-"));
+    const routeConfigPath = join(routeDirectory, "config.kdl");
+    const routeConfig = [
+      'default_mode "normal"',
+      "keybinds {",
+      "  normal {",
+      `    bind "Ctrl Alt Shift F12" { SwitchSession name="${sessionName}" pane_id=${paneNumber}; }`,
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    try {
+      const routeConfigHandle = await open(routeConfigPath, "wx", 0o600);
+      try { await routeConfigHandle.writeFile(routeConfig, "utf8"); } finally { await routeConfigHandle.close(); }
+    } catch (error) {
+      await removeAttachmentRouteDirectory(routeDirectory);
+      throw error;
+    }
+
+    let pty: RuntimePty;
+    try {
+      // Zellij 0.44.3 cannot target a pane on `attach`. A private bootstrap
+      // client performs an in-band SwitchSession instead, which is the only
+      // path that carries pane_to_focus for that exact client. No routing key
+      // is ever written into a customer pane.
+      pty = this.spawnPtyProcess(["--config", routeConfigPath, "attach", bootstrapName, "--create"], {
+        cwd: this.homePath,
+        env: this.runtimeEnvironment,
+        cols: input.size.cols,
+        rows: input.size.rows,
+        binaryPath,
+      });
+    } catch (error) {
+      await removeAttachmentRouteDirectory(routeDirectory);
+      throw error;
+    }
+    const bootstrapReady = Promise.withResolvers<void>();
+    const routeReady = Promise.withResolvers<void>();
+    const startupFailure = Promise.withResolvers<never>();
+    let bootstrapOutputSeen = false;
+    let routeRequested = false;
+    let reconnectSequenceSeen = false;
+    let bound = false;
+    let startupRejected = false;
+    let handshakeOutput = "";
+    const dataDisposable = pty.onData((data) => {
+      if (bound) {
+        input.onData(new TextEncoder().encode(data));
+        return;
+      }
+      if (!bootstrapOutputSeen) {
+        bootstrapOutputSeen = true;
+        bootstrapReady.resolve();
+        return;
+      }
+      if (!routeRequested) return;
+      handshakeOutput += data;
+      if (!startupRejected && Buffer.byteLength(handshakeOutput) > MAX_ATTACHMENT_HANDSHAKE_BYTES) {
+        startupRejected = true;
+        handshakeOutput = "";
+        startupFailure.reject(new Error("Terminal attachment handshake output exceeded limit"));
+        return;
+      }
+      if (!reconnectSequenceSeen) {
+        const reconnectOffset = handshakeOutput.indexOf(SWITCH_SESSION_RECONNECT_SEQUENCE);
+        if (reconnectOffset < 0) return;
+        // Zellij writes this clear-screen sequence from the client process only
+        // after its in-band SwitchSession has disconnected from the bootstrap
+        // server. The following redraw therefore belongs to this exact PTY's
+        // target-session attachment, unlike aggregate list-clients snapshots.
+        reconnectSequenceSeen = true;
+        handshakeOutput = handshakeOutput.slice(reconnectOffset);
+      }
+      if (handshakeOutput.length > SWITCH_SESSION_RECONNECT_SEQUENCE.length) {
+        routeReady.resolve();
+      }
     });
-    const dataDisposable = pty.onData((data) => input.onData(new TextEncoder().encode(data)));
-    const exitDisposable = pty.onExit((event) => input.onExit(event.exitCode));
-    await this.run(["--session", sessionName, "action", "focus-pane-id", paneId], binaryPath);
+    const exitDisposable = pty.onExit((event) => {
+      if (!bound) startupFailure.reject(new Error("Terminal attachment exited during startup"));
+      else input.onExit(event.exitCode);
+    });
+    try {
+      await withAttachmentTimeout(
+        Promise.race([bootstrapReady.promise, startupFailure.promise]),
+        "Terminal attachment bootstrap timed out",
+      );
+      await withAttachmentTimeout(
+        Promise.race([this.waitForAnyClient(bootstrapName, binaryPath), startupFailure.promise]),
+        "Terminal attachment bootstrap client timed out",
+      );
+      routeRequested = true;
+      pty.write(Buffer.from("\x1b[24;8~", "latin1"));
+      await withAttachmentTimeout(
+        Promise.race([routeReady.promise, startupFailure.promise]),
+        "Terminal attachment pane binding timed out",
+      );
+      bound = true;
+      if (handshakeOutput) input.onData(new TextEncoder().encode(handshakeOutput));
+      handshakeOutput = "";
+      pty.resize(input.size.cols, input.size.rows);
+    } catch (error) {
+      dataDisposable.dispose();
+      exitDisposable.dispose();
+      pty.kill();
+      throw error;
+    } finally {
+      await this.deleteBootstrapSession(bootstrapName, binaryPath);
+      await removeAttachmentRouteDirectory(routeDirectory);
+    }
     let closed = false;
     return {
       write: async (data) => {
@@ -353,6 +478,27 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         pty.kill();
       },
     };
+  }
+
+  private async waitForAnyClient(sessionName: string, binaryPath: string): Promise<void> {
+    for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
+      const output = await this.run(["--session", sessionName, "action", "list-clients"], binaryPath);
+      if (output.split("\n").some((line) => /^\s*\d+\s+\S+/.test(line))) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+    throw new Error("Terminal attachment bootstrap client was unavailable");
+  }
+
+  private async deleteBootstrapSession(bootstrapName: string, binaryPath: string): Promise<void> {
+    try {
+      await this.run(["delete-session", bootstrapName, "--force"], binaryPath);
+    } catch (error) {
+      if (isMissingZellijSessionFailure(error)) return;
+      console.error(
+        "[terminal-runtime] failed to delete attachment bootstrap session",
+        error instanceof Error ? error.name : "unknown_error",
+      );
+    }
   }
 
   async writeToPane(sessionNameInput: string, paneIdInput: string, data: Uint8Array): Promise<void> {
@@ -783,6 +929,35 @@ function remainingCommandTimeout(operationDeadline?: number): number | undefined
   const remaining = operationDeadline - Date.now();
   if (remaining <= 0) throw new Error("Terminal runtime operation timed out");
   return Math.min(TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS, remaining);
+}
+
+async function withAttachmentTimeout<T>(operation: Promise<T>, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(message)),
+          TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
+        );
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function removeAttachmentRouteDirectory(directory: string): Promise<void> {
+  try {
+    await rm(directory, { recursive: true, force: true });
+  } catch (error) {
+    console.error(
+      "[terminal-runtime] failed to delete attachment routing files",
+      error instanceof Error ? error.name : "unknown_error",
+    );
+  }
 }
 
 function isMissingZellijSessionFailure(error: unknown): boolean {

@@ -10,6 +10,42 @@ import {
 
 const lexicalRealpath = async (path: string): Promise<string> => path;
 
+function attachmentRouteHarness(paneId: string) {
+  let routed = false;
+  let emitData = (_data: string) => undefined;
+  const write = vi.fn((data: string | Buffer) => {
+    if (Buffer.from(data).equals(Buffer.from("\x1b[24;8~", "latin1"))) {
+      routed = true;
+      queueMicrotask(() => emitData("\x1b[2Jtarget-ready"));
+    }
+  });
+  const pty: RuntimePty = {
+    write,
+    resize: vi.fn(),
+    kill: vi.fn(),
+    onData: vi.fn((listener) => {
+      emitData = listener;
+      queueMicrotask(() => listener("bootstrap-ready"));
+      return { dispose: vi.fn() };
+    }),
+    onExit: vi.fn(() => ({ dispose: vi.fn() })),
+  };
+  return {
+    pty,
+    write,
+    clientsFor(args: string[]): string | undefined {
+      if (!args.includes("list-clients")) return undefined;
+      const sessionName = args[args.indexOf("--session") + 1] ?? "";
+      if (sessionName.startsWith("matrix-attach-")) {
+        return "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 plugin_3 zellij:about\n";
+      }
+      return routed
+        ? `CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 ${paneId} sh\n`
+        : "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n";
+    },
+  };
+}
+
 describe("Zellij 0.44.3 structured runtime adapter", () => {
   it("propagates one explicit owner runtime environment to attachments", async () => {
     const runtimeEnvironment = {
@@ -19,14 +55,9 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       XDG_RUNTIME_DIR: "/run/user/999",
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/999/bus",
     };
-    const spawnPty = vi.fn((): RuntimePty => ({
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn(),
-      onData: vi.fn(() => ({ dispose: vi.fn() })),
-      onExit: vi.fn(() => ({ dispose: vi.fn() })),
-    }));
-    const run = vi.fn(async () => "");
+    const route = attachmentRouteHarness("terminal_12");
+    const spawnPty = vi.fn(() => route.pty);
+    const run = vi.fn(async (args: string[]) => route.clientsFor(args) ?? "");
     const adapter = new ZellijCliRuntimeAdapter({
       homePath: "/home/matrix/home",
       env: runtimeEnvironment,
@@ -41,10 +72,32 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       onExit: () => undefined,
     });
 
-    expect(spawnPty).toHaveBeenCalledWith(
-      ["attach", "matrix-w-0123456789abcdef0123456789abcdef"],
-      expect.objectContaining({ env: runtimeEnvironment }),
-    );
+    expect(spawnPty).toHaveBeenCalledWith(expect.arrayContaining([
+      "--config", "attach", "--create",
+    ]), expect.objectContaining({ env: runtimeEnvironment }));
+    expect(route.write).toHaveBeenCalledWith(Buffer.from("\x1b[24;8~", "latin1"));
+  });
+
+  it("ties pane-route readiness to the exact PTY reconnect output", async () => {
+    const route = attachmentRouteHarness("terminal_12");
+    const run = vi.fn(async (args: string[]) => route.clientsFor(args) ?? "");
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      run,
+      spawnPty: vi.fn(() => route.pty),
+    });
+
+    await adapter.openAttachment("matrix-w-0123456789abcdef0123456789abcdef", {
+      paneId: "terminal_12",
+      size: { cols: 120, rows: 36 },
+      onData: () => undefined,
+      onExit: () => undefined,
+    });
+
+    const targetClientQueries = run.mock.calls.filter(([args]) =>
+      args.includes("list-clients")
+      && args[args.indexOf("--session") + 1] === "matrix-w-0123456789abcdef0123456789abcdef");
+    expect(targetClientQueries).toHaveLength(0);
   });
 
   it("propagates non-missing legacy session deletion failures", async () => {
@@ -232,20 +285,16 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       ensureWorkspaceSession: vi.fn(async () => ({ sessionName: ownedName, binaryPath })),
       deleteWorkspaceSession: vi.fn(async () => undefined),
     };
+    const route = attachmentRouteHarness("terminal_12");
     const run = vi.fn(async (args: string[], _binaryPath?: string) => {
+      const clients = route.clientsFor(args);
+      if (clients !== undefined) return clients;
       if (args.includes("new-tab")) return "7\n";
       if (args.includes("list-tabs")) return "[]";
       if (args.includes("list-panes")) return JSON.stringify([{ id: 12, is_plugin: false, tab_id: 7 }]);
       return "";
     });
-    const pty: RuntimePty = {
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn(),
-      onData: vi.fn(() => ({ dispose: vi.fn() })),
-      onExit: vi.fn(() => ({ dispose: vi.fn() })),
-    };
-    const spawnPty = vi.fn(() => pty);
+    const spawnPty = vi.fn(() => route.pty);
     const subscription: RuntimeSubscriptionProcess = { close: vi.fn(async () => undefined) };
     const spawnSubscription = vi.fn(() => subscription);
     const adapter = new ZellijCliRuntimeAdapter({
@@ -280,10 +329,9 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     expect(run.mock.calls.every(([args]) => !args.includes(logicalName))).toBe(true);
     expect(run.mock.calls.some(([args]) => args.includes(ownedName))).toBe(true);
     expect(run.mock.calls.every(([, selectedBinary]) => selectedBinary === binaryPath)).toBe(true);
-    expect(spawnPty).toHaveBeenCalledWith(
-      ["attach", ownedName],
-      expect.objectContaining({ binaryPath }),
-    );
+    expect(spawnPty).toHaveBeenCalledWith(expect.arrayContaining([
+      "--config", "attach", "--create",
+    ]), expect.objectContaining({ binaryPath }));
     expect(spawnSubscription).toHaveBeenCalledWith(
       expect.arrayContaining(["--session", ownedName, "subscribe"]),
       expect.any(Function),
@@ -552,8 +600,11 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
   it("uses returned tab IDs, structured pane IDs, targeted input, and subscribe output", async () => {
     const commands: string[][] = [];
     let paneReads = 0;
+    const route = attachmentRouteHarness("terminal_12");
     const run = vi.fn(async (args: string[]) => {
       commands.push(args);
+      const clients = route.clientsFor(args);
+      if (clients !== undefined) return clients;
       if (args.includes("new-tab")) return "7\n";
       if (args.includes("list-tabs")) return "[]";
       if (args.includes("list-panes")) {
@@ -565,14 +616,6 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       if (args.includes("dump-screen")) return "history\nready$ ";
       return "";
     });
-    const ptyWrite = vi.fn();
-    const pty = {
-      write: ptyWrite,
-      resize: vi.fn(),
-      kill: vi.fn(),
-      onData: vi.fn(() => ({ dispose: vi.fn() })),
-      onExit: vi.fn(() => ({ dispose: vi.fn() })),
-    } satisfies RuntimePty & { write(data: Buffer): void };
     let emitSubscription = (_line: string) => undefined;
     const subscription: RuntimeSubscriptionProcess = {
       close: vi.fn(async () => undefined),
@@ -585,7 +628,7 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       homePath: "/home/matrix",
       run,
       resolveRealpath: lexicalRealpath,
-      spawnPty: vi.fn(() => pty),
+      spawnPty: vi.fn(() => route.pty),
       spawnSubscription,
     });
 
@@ -609,8 +652,8 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       onExit: () => undefined,
     });
     await attachment.write(new TextEncoder().encode("echo hi\r"));
-    expect(ptyWrite).toHaveBeenCalledOnce();
-    expect(Buffer.from(ptyWrite.mock.calls[0]![0] as Uint8Array)).toEqual(Buffer.from("echo hi\r"));
+    expect(route.write).toHaveBeenCalledTimes(2);
+    expect(Buffer.from(route.write.mock.calls[1]![0] as Uint8Array)).toEqual(Buffer.from("echo hi\r"));
     expect(commands.some((args) => args.includes("write-chars"))).toBe(false);
 
     const events: unknown[] = [];
