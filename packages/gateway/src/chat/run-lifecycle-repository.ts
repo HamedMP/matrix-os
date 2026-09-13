@@ -176,6 +176,14 @@ export class ChatRunLifecycleRepository {
       .where("chat_runs.chat_id", "=", input.chatId)
       .where("chat_runs.driver_kind", "=", input.driverKind)
       .where("chat_runs.instance_id", "=", input.instanceId)
+      .where(sql<boolean>`chat_runs.context_snapshot -> 'agent' IS NULL`)
+      // Never revive a native session from before an intervening Agent run.
+      .where(sql<boolean>`NOT EXISTS (
+        SELECT 1 FROM chat_runs AS agent_boundary
+        WHERE agent_boundary.chat_id = chat_runs.chat_id
+          AND agent_boundary.context_snapshot -> 'agent' IS NOT NULL
+          AND agent_boundary.history_boundary_seq >= chat_runs.history_boundary_seq
+      )`)
       // A new user turn continues the native conversation even when its last
       // run failed. Explicit retry callers retain the completed-only boundary.
       .where("chat_runs.status", "in", input.includeInterrupted

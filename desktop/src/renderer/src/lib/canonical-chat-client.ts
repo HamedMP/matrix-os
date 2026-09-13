@@ -1,3 +1,4 @@
+import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
@@ -98,6 +99,7 @@ const CanonicalChatDetailInputSchema = z.object({
 }).strict();
 
 export interface CanonicalChatClient {
+  agents?: ChatAgentClient;
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
   search(
     query: string,
@@ -183,6 +185,8 @@ export function createCanonicalChatClient(
 ): CanonicalChatClient {
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
+    agents: createChatAgentClient((path, method, body) => method === "GET" ? api.get(path)
+      : method === "POST" ? api.post(path, body) : api.patch(path, body)),
     async list(input = {}) {
       const parsed = CanonicalChatListInputSchema.parse(input);
       const response = await api.get(withQuery("/api/chats", {

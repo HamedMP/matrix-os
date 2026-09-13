@@ -1,4 +1,6 @@
+import { queuedRunContext } from "./queued-context.js";
 import {
+  ChatRunContextSchema,
   CanonicalChatIdSchema,
   CanonicalChatMessageSchema,
   CanonicalChatModelSelectionSchema,
@@ -51,6 +53,7 @@ export interface EnqueueQueuedTurnInput {
   executionRoot?: CanonicalChatExecutionRootRef;
   executionRootFingerprint?: string;
   capabilitySnapshot: CanonicalChatRun["capabilitySnapshot"];
+  context?: CanonicalChatRun["context"];
   createdAt: string;
 }
 
@@ -58,6 +61,7 @@ export interface EnqueuedQueuedTurn {
   queuedTurn: CanonicalChatQueuedTurn;
   queueDepth: number;
   alreadyQueued: boolean;
+  alreadyClaimed?: boolean;
 }
 
 export interface CancelQueuedTurnInput {
@@ -108,6 +112,7 @@ export function toQueuedTurn(row: Selectable<ChatQueuedTurnsTable>): CanonicalCh
     clientRequestId: row.client_request_id,
     position: Number(row.position),
     parts: parseJson(row.parts),
+    ...(row.context_snapshot == null ? {} : { context: parseJson(row.context_snapshot) }),
     selection: parseJson(row.selection),
     interactionMode: row.interaction_mode,
     permissionMode: row.permission_mode,
@@ -144,6 +149,24 @@ export class ChatQueueRepository {
     ) => Promise<void>,
   ) {}
 
+  async findAdmission(ownerInput: ChatOwner, chatId: string, clientRequestId: string, requestHash?: string): Promise<EnqueuedQueuedTurn | null> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    CanonicalChatIdSchema.parse(chatId);
+    CanonicalChatRequestIdSchema.parse(clientRequestId);
+    return this.transact(async (trx) => {
+      const chat = await ownedChat(trx, owner, chatId);
+      if (!chat) throw new ChatNotFoundError(chatId);
+      const row = await trx.selectFrom("chat_queued_turns").selectAll()
+        .where("chat_id", "=", chatId).where("client_request_id", "=", clientRequestId).executeTakeFirst();
+      if (!row) return null;
+      const queuedTurn = toQueuedTurn(row);
+      if (!["queued", "claimed"].includes(row.status) || (queuedTurn.context && queuedTurn.context.requestHash !== requestHash)) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
+      return { queuedTurn, queueDepth: await this.queueDepth(trx, chatId), alreadyQueued: true, ...(row.status === "claimed" ? { alreadyClaimed: true } : {}) };
+    });
+  }
+
   async enqueue(
     ownerInput: ChatOwner,
     input: EnqueueQueuedTurnInput,
@@ -156,6 +179,8 @@ export class ChatQueueRepository {
     const capabilitySnapshot = CanonicalChatRunSchema.shape.capabilitySnapshot.parse(
       input.capabilitySnapshot,
     );
+    const context = ChatRunContextSchema.optional().parse(input.context);
+    if (context?.agent && input.driverKind !== "hermes") throw new ChatConflictError(chatId, input.baseRevision);
     const createdAt = new Date(input.createdAt).toISOString();
 
     return this.transact(async (trx) => {
@@ -166,18 +191,25 @@ export class ChatQueueRepository {
         .where("client_request_id", "=", clientRequestId)
         .executeTakeFirst();
       if (duplicate) {
-        if (duplicate.status !== "queued") {
+        if (!["queued", "claimed"].includes(duplicate.status) || toQueuedTurn(duplicate).context?.requestHash !== context?.requestHash) {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const depth = await this.queueDepth(trx, chatId);
-        return { queuedTurn: toQueuedTurn(duplicate), queueDepth: depth, alreadyQueued: true };
+        return { queuedTurn: toQueuedTurn(duplicate), queueDepth: depth, alreadyQueued: true, ...(duplicate.status === "claimed" ? { alreadyClaimed: true } : {}) };
       }
+      // Both admission paths hold this same Chat lock. A request ID belongs to
+      // one operation; rejecting here prevents a duplicate from blocking claim.
+      const admitted = await trx.selectFrom("chat_turns").select("id")
+        .where("chat_id", "=", chatId).where("client_request_id", "=", clientRequestId).executeTakeFirst();
+      if (admitted) throw new ChatConflictError(chatId, Number(chat.revision));
       if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       if (chat.collaboration !== null) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
+      if (!context?.agent && chat.bound_instance_id && (chat.bound_instance_id !== selection.instanceId
+        || chat.bound_driver_kind !== input.driverKind)) throw new ChatConflictError(chatId, Number(chat.revision));
       const activeRun = await trx.selectFrom("chat_runs").select("id")
         .where("chat_id", "=", chatId)
         .where("status", "in", [...ACTIVE_RUNS])
@@ -200,6 +232,7 @@ export class ChatQueueRepository {
         permission_mode: input.permissionMode,
         execution_root: input.executionRoot ? jsonb(input.executionRoot) : null,
         execution_root_fingerprint: input.executionRootFingerprint ?? null,
+        context_snapshot: context ? jsonb(context) : null,
         capability_snapshot: jsonb(capabilitySnapshot),
         claimed_turn_id: null,
         claimed_run_id: null,
@@ -397,6 +430,11 @@ export class ChatQueueRepository {
         .where("status", "=", "pending")
         .executeTakeFirst();
       const existingParts = CanonicalChatQueuedTurnSchema.shape.parts.parse(parseJson(queued.parts));
+      const mentions = (value: typeof parts) => value.filter((part) => part.type === "resource_reference"
+        && (part.resource.kind === "agent" || part.resource.kind === "chat"));
+      if (JSON.stringify(mentions(existingParts)) !== JSON.stringify(mentions(parts))) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
       if (!pendingSteer && queued.status === "queued"
         && JSON.stringify(existingParts) === JSON.stringify(parts)) {
         return { queuedTurn: toQueuedTurn(queued) };
@@ -490,6 +528,7 @@ export class ChatQueueRepository {
         createdAt: claimedAt,
         updatedAt: claimedAt,
       });
+      const context = await queuedRunContext(trx, queuedTurn, chat.title, Number(chat.message_count));
       const run = CanonicalChatRunSchema.parse({
         id: runId,
         chatId,
@@ -507,6 +546,7 @@ export class ChatQueueRepository {
         status: "accepted",
         historyBoundarySeq: Number(chat.message_count),
         capabilitySnapshot,
+        ...(context ? { context } : {}),
         createdAt: claimedAt,
         updatedAt: claimedAt,
       });
@@ -565,6 +605,7 @@ export class ChatQueueRepository {
         started_at: null,
         completed_at: null,
         history_boundary_seq: run.historyBoundarySeq,
+        context_snapshot: run.context ? jsonb(run.context) : null,
         capability_snapshot: jsonb(run.capabilitySnapshot),
         created_at: claimedAt,
         updated_at: claimedAt,
@@ -582,7 +623,12 @@ export class ChatQueueRepository {
       const updatedChat = await trx.updateTable("chats").set({
         revision,
         message_count: sql<number>`message_count + 1`,
-        current_selection: jsonb(selection),
+        ...(!run.context?.agent ? {
+          current_selection: jsonb(selection),
+          bound_driver_kind: chat.bound_driver_kind ?? run.driverKind,
+          bound_instance_id: chat.bound_instance_id ?? run.instanceId,
+          bound_at_turn_id: chat.bound_at_turn_id ?? turn.id,
+        } : {}),
         attention: "none",
         last_message_preview: message.parts.find((part) => part.type === "text")?.text.slice(0, 280) ?? null,
         updated_at: claimedAt,

@@ -30,6 +30,8 @@ export {
   clearKnowledgeCache,
 } from "./skills.js";
 export type { SkillDefinition } from "./skills.js";
+export { skillSources } from "./skill-sources.js";
+export type { SkillSource } from "./skill-sources.js";
 export {
   loadHealthCheckTargets,
   checkModuleHealth,

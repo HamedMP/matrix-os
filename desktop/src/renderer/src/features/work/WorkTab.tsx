@@ -1,4 +1,5 @@
 import { chatMessageVersionUrl } from "@matrix-os/contracts";
+import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
 import { ArrowLeft, PanelLeftCloseIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
@@ -10,6 +11,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type ComponentProps,
   type Ref,
   type RefObject,
 } from "react";
@@ -195,7 +197,11 @@ function ResponsiveWorkInspector({
   );
 }
 
-export default function WorkTab({
+export default function WorkTab(props: ComponentProps<typeof WorkTabContent>) {
+  return <ChatAgentsWorkspace><WorkTabContent {...props} /></ChatAgentsWorkspace>;
+}
+
+function WorkTabContent({
   tabId,
   route,
   projectSlug,
@@ -272,6 +278,8 @@ export default function WorkTab({
     });
   }, [api, authGeneration, hostedRuntime, runtimeSlot, visible]);
   const client = hostedRuntime?.client ?? localClient;
+  const agentsNavigation = useChatAgentsNavigation();
+  const agentsOpen = Boolean(client?.agents && agentsNavigation?.opened?.client === client.agents);
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
   const activeChatScopeRef = useRef({ client, chatId: initialChatId });
   activeChatScopeRef.current = { client, chatId: initialChatId };
@@ -670,8 +678,9 @@ export default function WorkTab({
       onSelectChat={selectRailChat}
       onChatDeleted={handleRailChatDeleted}
       onChatRenamed={applyRenamedChat}
+      onOpenAgents={() => { if (layout === "narrow") showChat(); }}
     />
-  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, initialChatId, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat]);
+  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
     ? editingChatTitle ? (
         <ChatTitleEditor
@@ -705,10 +714,10 @@ export default function WorkTab({
     <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} />
   ) : null, [api, initialChatId, runtimeSlot, authGeneration]);
   const chromeSpec = useMemo(() => ({
-    title: chromeTitle,
+    title: agentsOpen ? "Agents" : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
-    rightPaneWidth: layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
-    rightActions: hasInspector ? (
+    rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
+    rightActions: agentsOpen ? null : hasInspector ? (
       <div className="flex items-center gap-1">
         {sharingControl}
         <PaneButton
@@ -725,7 +734,7 @@ export default function WorkTab({
         </PaneButton>
       </div>
     ) : sharingControl,
-  }), [sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+  }), [agentsOpen, sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;
@@ -823,8 +832,10 @@ export default function WorkTab({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
-          {content}
-          {draftInspector}
+          <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}>
+            {content}
+            {draftInspector}
+          </ChatAgentsContent>
         </div>
       </div>
     </div>

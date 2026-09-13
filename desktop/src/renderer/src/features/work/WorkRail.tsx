@@ -1,5 +1,8 @@
+import { ChatAgentsEntry, useChatAgentsNavigation } from "@matrix-os/ui";
+import { useUi } from "../../stores/ui";
+import { useTabs } from "../../stores/tabs";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Plus } from "@renderer/lib/hugeicons";
+import { Plus, Bot } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
@@ -57,10 +60,11 @@ export function WorkRail({
   active,
   activeChatId,
   activeProjectSlug,
-  onNewGlobalChat,
-  onCreateProject,
-  onNewProjectChat,
-  onSelectChat,
+  onNewGlobalChat: newGlobalChat,
+  onCreateProject: createProject,
+  onNewProjectChat: newProjectChat,
+  onSelectChat: selectChat,
+  onOpenAgents,
   onChatDeleted,
   onChatRenamed,
   onCollapse,
@@ -75,6 +79,7 @@ export function WorkRail({
   activeChatId?: string;
   activeProjectSlug?: string;
   onNewGlobalChat: () => void;
+  onOpenAgents?: () => void;
   onCreateProject: () => void;
   onNewProjectChat: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project?: Project) => void;
@@ -84,6 +89,11 @@ export function WorkRail({
   showCollapseControl?: boolean;
   className?: string;
 }) {
+  const agentsNavigation = useChatAgentsNavigation();
+  const onNewGlobalChat = () => { agentsNavigation?.close(); newGlobalChat(); };
+  const onCreateProject = () => { agentsNavigation?.close(); createProject(); };
+  const onNewProjectChat = (project: Project) => { agentsNavigation?.close(); newProjectChat(project); };
+  const onSelectChat = (...args: Parameters<typeof selectChat>) => { agentsNavigation?.close(); selectChat(...args); };
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [sections, setSections] = useState<Record<SectionKey, boolean>>({
@@ -279,6 +289,7 @@ export function WorkRail({
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
+      <ChatAgentsEntry icon={<Bot className="size-4" />} client={client?.agents} onOpen={onOpenAgents} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <div className="contents">
         <WorkRailSection
           label="Pinned"

@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CanonicalChatMessagePart,
   CanonicalChatApprovalDecision,
   CanonicalChatDetailResponse,
   CanonicalChatRecord,
 } from "@matrix-os/contracts";
 import {
+  createChatMentionRequestTracker,
+  compactChatTitle,
   createSharedCanonicalChatEventSource,
   createCanonicalChatRefresh,
   applyCanonicalChatContent,
@@ -40,6 +43,7 @@ function conversationMeta(record: CanonicalChatRecord) {
 }
 
 export function useCanonicalChatState(): ChatState {
+  const [mentionRequests] = useState(createChatMentionRequestTracker);
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl: getGatewayUrl() }), []);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
     openStream: (input) => client.openEventStream(input),
@@ -49,6 +53,7 @@ export function useCanonicalChatState(): ChatState {
   const [activeChatId, setActiveChatId] = useState<string>();
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [safeError, setSafeError] = useState<string | null>(null);
   const [eventConnectionState, setEventConnectionState] = useState<CanonicalChatEventConnectionState>(
     eventSource.connectionState(),
@@ -231,23 +236,25 @@ export function useCanonicalChatState(): ChatState {
     };
   }, [activeChatId, Boolean(detail?.record.activeRun), eventConnectionState, loadDetail]);
 
-  const submitMessage = useCallback((
+  const submitMessage = useCallback(async (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
     options?: ChatSubmitOptions,
   ) => {
-    if (!text.trim() || submitting) return;
+    if ((!text.trim() && !options?.resources?.length && !files?.length) || submittingRef.current) return false;
     if (activeChatId && detailRef.current?.record.chat.id !== activeChatId) {
       setSafeError("Wait for this chat to finish loading.");
-      return;
+      return false;
     }
     if (!options?.instanceId || !options.model || !options.interactionMode || !options.permissionMode) {
       setSafeError("Choose an available harness and model.");
-      return;
+      return false;
     }
+    submittingRef.current = true;
+    const sourceChatId = activeChatId;
     setSubmitting(true);
     setSafeError(null);
-    void (async () => {
+    const send = async () => {
       const uploadedReferences: string[] = [];
       let turnAdmitted = false;
       let admissionAttempted = false;
@@ -261,16 +268,18 @@ export function useCanonicalChatState(): ChatState {
         };
         let record = detailRef.current?.record ?? null;
         if (!record) {
+          autoRestoreChatRef.current = false;
           record = await client.create({
-            clientRequestId: requestId(),
-            title: (options.displayText?.trim() || text.trim()).slice(0, 200),
+            clientRequestId: options.clientRequestId ? `${options.clientRequestId}_chat` : requestId(),
+            title: compactChatTitle(options.displayText?.trim() || text),
             currentSelection: selection,
           });
-          setActiveChatId(record.chat.id);
         }
         if ((files?.length ?? 0) > 8) throw new Error("TooManyAttachments");
-        const uploadResults = await Promise.allSettled((files ?? []).map(async (file) => {
-          const reference = await client.uploadAttachment(file);
+        const uploadResults = await Promise.allSettled((files ?? []).map(async (file, index) => {
+          const retryKey = options.resources?.length && options.clientRequestId
+            ? `${options.clientRequestId}:${index}` : undefined;
+          const reference = await client.uploadAttachment(file, retryKey);
           if (!reference.ownerReference) throw new Error("InvalidAttachmentReference");
           uploadedReferences.push(reference.ownerReference);
           return reference;
@@ -280,37 +289,87 @@ export function useCanonicalChatState(): ChatState {
         const attachmentParts = uploadResults.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : []);
         admissionAttempted = true;
-        const admitted = await client.admitTurn(record.chat.id, {
-          clientRequestId: requestId(),
-          baseRevision: record.chat.revision,
-          parts: [{ type: "text", text: options.promptText?.trim() || text.trim() }, ...attachmentParts],
-          selection,
-          interactionMode: options.interactionMode!,
-          permissionMode: options.permissionMode!,
-        });
+        const parts: CanonicalChatMessagePart[] = [
+          ...(text.trim() ? [{ type: "text" as const, text: options.promptText?.trim() || text.trim() }] : []),
+          ...(options.resources ?? []).map((resource) => ({ type: "resource_reference" as const, resource })),
+          ...attachmentParts,
+        ];
+        const input = {
+          clientRequestId: options.clientRequestId ?? requestId(), baseRevision: record.chat.revision,
+          parts, selection, interactionMode: options.interactionMode!, permissionMode: options.permissionMode!,
+        };
+        const requestScope = record.chat.id;
+        let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
+        if (options.resources?.length) {
+          const { clientRequestId: seed, baseRevision: _revision, ...semanticInput } = input;
+          const attempt = mentionRequests.resolve(client, requestScope, semanticInput, operation, seed);
+          input.clientRequestId = attempt.clientRequestId;
+          operation = attempt.operation;
+        }
+        if (operation === "queue") {
+          const queued = await client.queueTurn(record.chat.id, input);
+          turnAdmitted = true;
+          mentionRequests.accepted(requestScope, input.clientRequestId);
+          const current = detailRef.current;
+          if (activeChatIdRef.current === record.chat.id && current?.record.chat.id === record.chat.id) {
+            const queuedTurns = [...(current.queuedTurns ?? []).filter((row) => row.id !== queued.queuedTurn.id), ...(queued.alreadyClaimed ? [] : [queued.queuedTurn])];
+            const next = { ...current, queuedTurns };
+            detailRef.current = next;
+            setDetail(next);
+          }
+          await loadDetail(record.chat.id);
+          return true;
+        }
+        const admitted = await client.admitTurn(record.chat.id, input);
         turnAdmitted = true;
-        setDetail((current) => current?.record.chat.id === admitted.record.chat.id
-          && current.record.chat.revision >= admitted.record.chat.revision ? current : ({
-          record: admitted.record,
-          messages: [...(current?.record.chat.id === record.chat.id ? current.messages : []), admitted.message],
-          turns: [...(current?.record.chat.id === record.chat.id ? current.turns : []), admitted.turn],
-          runs: [...(current?.record.chat.id === record.chat.id ? current.runs : []), admitted.run],
-          activities: current?.record.chat.id === record.chat.id ? current.activities : [],
-        }));
+        mentionRequests.accepted(requestScope, input.clientRequestId);
+        if (activeChatIdRef.current === sourceChatId) {
+          activeChatIdRef.current = record.chat.id;
+          setActiveChatId(record.chat.id);
+          const current = detailRef.current?.record.chat.id === record.chat.id ? detailRef.current : null;
+          if (!current || current.record.chat.revision < admitted.record.chat.revision) {
+            const next = {
+              record: admitted.record,
+              messages: [...(current?.messages ?? []), admitted.message],
+              turns: [...(current?.turns ?? []), admitted.turn], runs: [...(current?.runs ?? []), admitted.run],
+              activities: current?.activities ?? [], queuedTurns: current?.queuedTurns,
+            };
+            detailRef.current = next;
+            setDetail(next);
+          }
+        }
         await loadList();
         await loadDetail(record.chat.id);
+        return true;
       } catch (error: unknown) {
         const definitelyUnadmitted = !admissionAttempted || isDefinitiveCanonicalChatRejection(error);
         if (!turnAdmitted && definitelyUnadmitted && uploadedReferences.length > 0) {
           await Promise.allSettled(uploadedReferences.map((reference) => client.deleteAttachment(reference)));
         }
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("Message could not be sent. Try again.");
-      } finally {
-        setSubmitting(false);
+        if (activeChatIdRef.current === sourceChatId) setSafeError("Message could not be sent. Try again.");
+        return turnAdmitted;
       }
-    })();
-  }, [activeChatId, client, loadDetail, loadList, submitting]);
+    };
+    return send().finally(() => {
+      submittingRef.current = false;
+      setSubmitting(false);
+    });
+  }, [activeChatId, client, loadDetail, loadList, mentionRequests]);
+
+  const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    const current = detailRef.current;
+    if (!activeChatId || current?.record.chat.id !== activeChatId) return false;
+    try {
+      await client.cancelQueuedTurn(activeChatId, queuedTurnId, { clientRequestId: requestId(), baseRevision: current.record.chat.revision });
+      await loadDetail(activeChatId);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Queue cancellation failed:", error instanceof Error ? error.name : "UnknownError");
+      if (activeChatIdRef.current === activeChatId) setSafeError("Queued request could not be cancelled. Try again.");
+      return false;
+    }
+  }, [activeChatId, client, loadDetail]);
 
   const newChat = useCallback(async () => {
     autoRestoreChatRef.current = false;
@@ -423,6 +482,9 @@ export function useCanonicalChatState(): ChatState {
     currentTool: null,
     connected,
     queue: [],
+    agentClient: client.agents,
+    queuedTurns: detail?.queuedTurns ?? [],
+    cancelQueuedTurn,
     providerSelection: activeRecord?.chat.currentSelection,
     conversations: records.map(conversationMeta),
     activeConversationTitle: activeRecord?.chat.title,

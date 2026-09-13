@@ -11,6 +11,7 @@ import {
 import { join, basename, dirname, relative } from "node:path";
 import { z } from "zod/v4";
 import { parseFrontmatter } from "./agents.js";
+import { skillSources, type SkillSource as Source } from "./skill-sources.js";
 
 const SkillFrontmatterSchema = z.object({
   name: z.string(),
@@ -52,32 +53,6 @@ export function clearSkillCache(): void {
 
 export function clearKnowledgeCache(): void {
   knowledgeCache.clear();
-}
-
-type Source = {
-  readonly label: string;
-  readonly dir: string;
-  readonly kind: "directory-scan" | "flat-scan";
-};
-
-function skillSources(homePath: string): Source[] {
-  return [
-    {
-      label: ".agents/skills",
-      dir: join(homePath, ".agents", "skills"),
-      kind: "directory-scan",
-    },
-    {
-      label: ".claude/skills",
-      dir: join(homePath, ".claude", "skills"),
-      kind: "directory-scan",
-    },
-    {
-      label: "agents/skills",
-      dir: join(homePath, "agents", "skills"),
-      kind: "flat-scan",
-    },
-  ];
 }
 
 function tryRealpath(path: string): string | null {

@@ -76,6 +76,16 @@ export type { TerminalControlsState, TerminalControlsTransport, TerminalControls
 export { GettingStartedVisibilityProvider, GettingStartedBlocker, useGettingStartedVisibility, useGettingStartedBlocker, useGettingStartedPopoverFocus } from "./getting-started-visibility.js";
 export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from "./terminal/terminal-pane-request.js";
 
+export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection } from "./chat-agents/client.js";
+export { ChatAgentsEntry } from "./chat-agents/ChatAgentsEntry.js";
+export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
+export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
+export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
+export { isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
+
+export { ChatContextReceipt } from "./chat-agents/ChatContextReceipt.js";
+export { createChatMentionRequestTracker } from "./chat-agents/request-tracker.js";
+export { compactChatTitle } from "./chat-title.js";
 export { WindowResizeControls, resizeWindowBounds, type WindowBounds, type ResizeDirection } from "./window/WindowResizeControls.js";
 export { constrainFloatingWindow, isPointNearWindow, WINDOW_BACKGROUND_CLICK_BUFFER } from "./window/window-placement.js";
 
