@@ -12,7 +12,7 @@ const runtimeEnv = {
   MATRIX_CLERK_USER_ID: "user_alice",
   MATRIX_MACHINE_ID: "machine_123",
   MATRIX_RUNTIME_SLOT: "primary",
-  MATRIX_FUNDED_AI_RUNTIME_TOKEN: "r".repeat(64),
+  MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: "r".repeat(64),
 };
 
 const unavailableCapabilities = {
@@ -37,14 +37,56 @@ describe("platform speech runtime client", () => {
     expect(loadPlatformSpeechRuntimeConfig({})).toBeUndefined();
     expect(() => loadPlatformSpeechRuntimeConfig({
       ...runtimeEnv,
-      MATRIX_FUNDED_AI_RUNTIME_TOKEN: "legacy-short-token",
+      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: "legacy-short-token",
     })).toThrow(/misconfigured/i);
     expect(loadPlatformSpeechRuntimeConfig(runtimeEnv)).toEqual({
       baseUrl: "https://platform.internal/internal/containers/alice/speech",
       runtimeAuthToken: "r".repeat(64),
       identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      requestOwnerId: "user_alice",
       requestTimeoutMs: 65_000,
     });
+
+    expect(loadPlatformSpeechRuntimeConfig({
+      ...runtimeEnv,
+      MATRIX_HANDLE: "pr-1620",
+      MATRIX_RUNTIME_SLOT: "pr-1620",
+      MATRIX_PREVIEW_RUNTIME: "true",
+      MATRIX_PLATFORM_SPEECH_ORIGIN: "https://pr-1620---speech-preview.example",
+      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: "s".repeat(64),
+      MATRIX_PLATFORM_SPEECH_OWNER_ID: "speech_preview_owner",
+      MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID: "user_alice",
+      MATRIX_PLATFORM_SPEECH_MACHINE_ID: "speech_preview_machine",
+      MATRIX_PLATFORM_SPEECH_RUNTIME_SLOT: "pr-1620",
+    })).toEqual({
+      baseUrl: "https://pr-1620---speech-preview.example/internal/containers/pr-1620/speech",
+      runtimeAuthToken: "s".repeat(64),
+      identity: {
+        ownerId: "speech_preview_owner",
+        machineId: "speech_preview_machine",
+        runtimeSlot: "pr-1620",
+      },
+      requestOwnerId: "user_alice",
+      requestTimeoutMs: 65_000,
+    });
+    expect(() => loadPlatformSpeechRuntimeConfig({
+      ...runtimeEnv,
+      MATRIX_PLATFORM_SPEECH_OWNER_ID: "partial-preview-identity",
+    })).toThrow(/misconfigured/i);
+    expect(() => loadPlatformSpeechRuntimeConfig({
+      ...runtimeEnv,
+      MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID: "invalid owner",
+    })).toThrow(/misconfigured/i);
+    expect(() => loadPlatformSpeechRuntimeConfig({
+      ...runtimeEnv,
+      MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID: "user_someone_else",
+    })).toThrow(/misconfigured/i);
+    expect(() => loadPlatformSpeechRuntimeConfig({
+      ...runtimeEnv,
+      MATRIX_PLATFORM_SPEECH_OWNER_ID: "preview_owner",
+      MATRIX_PLATFORM_SPEECH_MACHINE_ID: "preview_machine",
+      MATRIX_PLATFORM_SPEECH_RUNTIME_SLOT: "primary",
+    })).toThrow(/misconfigured/i);
   });
 
   it("uses a fixed runtime URL, runtime credential, timeout, no redirects, and no retries", async () => {

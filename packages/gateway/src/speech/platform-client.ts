@@ -30,6 +30,7 @@ export interface PlatformSpeechRuntimeConfig {
   baseUrl: string;
   runtimeAuthToken: string;
   identity: z.infer<typeof IdentitySchema>;
+  requestOwnerId: string;
   requestTimeoutMs: number;
 }
 
@@ -91,18 +92,42 @@ export function loadPlatformSpeechRuntimeConfig(
   if (env.MATRIX_PLATFORM_SPEECH_ENABLED !== "true" && env.MATRIX_PLATFORM_SPEECH_ENABLED !== "1") {
     return undefined;
   }
-  const platform = parsePlatformOrigin(env.PLATFORM_INTERNAL_URL);
+  const platform = parsePlatformOrigin(env.MATRIX_PLATFORM_SPEECH_ORIGIN ?? env.PLATFORM_INTERNAL_URL);
   const handle = HandleSchema.safeParse(env.MATRIX_HANDLE);
+  const identityOverrides = [
+    env.MATRIX_PLATFORM_SPEECH_OWNER_ID,
+    env.MATRIX_PLATFORM_SPEECH_MACHINE_ID,
+    env.MATRIX_PLATFORM_SPEECH_RUNTIME_SLOT,
+  ];
+  const hasIdentityOverride = identityOverrides.some((value) => value !== undefined);
+  if (hasIdentityOverride && identityOverrides.some((value) => value === undefined)) {
+    throw new PlatformSpeechRuntimeConfigError();
+  }
+  if (hasIdentityOverride) {
+    const previewSlot = env.MATRIX_RUNTIME_SLOT;
+    if (env.MATRIX_PREVIEW_RUNTIME !== "true" || !previewSlot || !/^pr-[1-9][0-9]{0,8}$/.test(previewSlot)
+      || identityOverrides[2] !== previewSlot || !platform.hostname.startsWith(`${previewSlot}---`)) {
+      throw new PlatformSpeechRuntimeConfigError();
+    }
+  }
   const identity = IdentitySchema.safeParse({
-    ownerId: env.MATRIX_CLERK_USER_ID,
-    machineId: env.MATRIX_MACHINE_ID,
-    runtimeSlot: env.MATRIX_RUNTIME_SLOT,
+    ownerId: hasIdentityOverride ? identityOverrides[0] : env.MATRIX_CLERK_USER_ID,
+    machineId: hasIdentityOverride ? identityOverrides[1] : env.MATRIX_MACHINE_ID,
+    runtimeSlot: hasIdentityOverride ? identityOverrides[2] : env.MATRIX_RUNTIME_SLOT,
   });
-  const token = RuntimeTokenSchema.safeParse(env.MATRIX_FUNDED_AI_RUNTIME_TOKEN);
+  const token = RuntimeTokenSchema.safeParse(env.MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN);
+  const requestOwnerId = IdentitySchema.shape.ownerId.safeParse(
+    env.MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID
+      ?? (hasIdentityOverride ? identityOverrides[0] : env.MATRIX_CLERK_USER_ID),
+  );
+  if (env.MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID !== undefined
+    && env.MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID !== env.MATRIX_CLERK_USER_ID) {
+    throw new PlatformSpeechRuntimeConfigError();
+  }
   const timeout = env.MATRIX_PLATFORM_SPEECH_TIMEOUT_MS === undefined
     ? DEFAULT_TIMEOUT_MS
     : Number(env.MATRIX_PLATFORM_SPEECH_TIMEOUT_MS);
-  if (!handle.success || !identity.success || !token.success
+  if (!handle.success || !identity.success || !requestOwnerId.success || !token.success
     || !Number.isSafeInteger(timeout) || timeout < 5_000 || timeout > 90_000) {
     throw new PlatformSpeechRuntimeConfigError();
   }
@@ -113,6 +138,7 @@ export function loadPlatformSpeechRuntimeConfig(
     ).toString().replace(/\/$/, ""),
     runtimeAuthToken: token.data,
     identity: identity.data,
+    requestOwnerId: requestOwnerId.data,
     requestTimeoutMs: timeout,
   };
 }
@@ -215,7 +241,7 @@ export function createPlatformSpeechClient(
   }
 
   return {
-    ownerId: config.identity.ownerId,
+    ownerId: config.requestOwnerId,
     async capabilities(signal) {
       return (await request({ path: "/capabilities", method: "GET", signal, schema: SpeechCapabilitiesResponseSchema }))!;
     },

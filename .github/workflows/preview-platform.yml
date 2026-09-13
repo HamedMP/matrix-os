@@ -224,6 +224,31 @@ jobs:
             exit 1
           fi
 
+      - name: Verify preview speech secrets
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          for secret_name in platform-speech-openai-api-key-preview platform-speech-secret-preview; do
+            secret_tmpfile="$(mktemp)"
+            trap 'rm -f "$secret_tmpfile"' EXIT
+            gcloud secrets versions access latest --secret "$secret_name" \
+              --project "$GCP_PROJECT_ID" >"$secret_tmpfile"
+            test -s "$secret_tmpfile"
+            accessor_member="$(
+              gcloud secrets get-iam-policy "$secret_name" \
+                --project "$GCP_PROJECT_ID" \
+                --flatten='bindings[].members' \
+                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+                --format='value(bindings.members)' | head -1
+            )"
+            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "Preview speech secret access is misconfigured." >&2
+              exit 1
+            fi
+            rm -f "$secret_tmpfile"
+            trap - EXIT
+          done
+
       - name: Deploy zero-traffic tagged revision to preview service
         if: steps.config.outputs.configured == 'true'
         run: |
@@ -256,8 +281,8 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},${api_origin#https://}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback${funded_ai_env_bindings}" \
-              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
+              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},${api_origin#https://}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${funded_ai_env_bindings}" \
+              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
           }
@@ -433,6 +458,8 @@ jobs:
       GCP_REGION: ${{ vars.GCP_REGION }}
       CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
       PR_NUMBER: ${{ inputs.pr }}
+      PRODUCTION_PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -472,4 +499,102 @@ jobs:
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
             --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}@CUSTOMER_VPS_TLS_VERIFY=false" --quiet
+          if ! [[ "$PREVIEW_CLERK_USER_ID" =~ ^user_[A-Za-z0-9]+$ ]]; then
+            echo "PREVIEW_CLERK_USER_ID is required for preview speech authorization." >&2
+            exit 1
+          fi
+          route="$(cat preview-share-route.json)"
+          address="$(jq -er '.address | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<< "$route")"
+          handle="pr-$PR_NUMBER"
+          machine_id="chat-share-preview-$handle"
+          preview_platform_secret="$(gcloud secrets versions access latest \
+            --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_platform_secret"
+          speech_token="$(PREVIEW_SIGNING_SECRET="$preview_platform_secret" node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.env.PREVIEW_SIGNING_SECRET).update(JSON.stringify([
+              "matrix-platform-speech-runtime", 1, process.argv[1], process.argv[2], process.argv[3],
+            ])).digest("hex"));
+          ' "$handle" "$machine_id" "$handle")"
+          terminal_token="$(PRODUCTION_SIGNING_SECRET="$PRODUCTION_PLATFORM_SECRET" node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.env.PRODUCTION_SIGNING_SECRET).update(process.argv[1]).digest("hex"));
+          ' "$handle")"
+          echo "::add-mask::$speech_token"
+          echo "::add-mask::$terminal_token"
+          runtime_config="$(jq -cn \
+            --arg origin "$url" \
+            --arg token "$speech_token" \
+            --arg owner "$PREVIEW_CLERK_USER_ID" \
+            --arg machine "$machine_id" \
+            --arg slot "$handle" \
+            '{
+              MATRIX_PREVIEW_RUNTIME:"true",
+              MATRIX_PLATFORM_SPEECH_ENABLED:"true",
+              MATRIX_PLATFORM_SPEECH_ORIGIN:$origin,
+              MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN:$token,
+              MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID:$owner,
+              MATRIX_PLATFORM_SPEECH_OWNER_ID:"chat-share-preview-fixture",
+              MATRIX_PLATFORM_SPEECH_MACHINE_ID:$machine,
+              MATRIX_PLATFORM_SPEECH_RUNTIME_SLOT:$slot
+            }')"
+          read -r -d '' patch_script <<'PYTHON' || true
+          import json
+          import os
+          import re
+          import stat
+          import sys
+          import tempfile
+
+          path = "/opt/matrix/env/host.env"
+          config = json.loads(sys.argv[1])
+          if not isinstance(config, dict) or not config:
+              raise ValueError("invalid preview runtime configuration")
+          for key, value in config.items():
+              if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", key) or not isinstance(value, str):
+                  raise ValueError("invalid preview runtime configuration")
+              if not value or len(value) > 2048 or "\n" in value or "\r" in value or "\0" in value:
+                  raise ValueError("invalid preview runtime configuration")
+          metadata = os.lstat(path)
+          if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_size > 1024 * 1024:
+              raise ValueError("invalid host environment file")
+          with open(path, "r", encoding="utf-8") as source:
+              lines = source.read().splitlines()
+          keys = set(config)
+          lines = [line for line in lines if line.split("=", 1)[0] not in keys]
+          lines.extend(f"{key}={config[key]}" for key in sorted(keys))
+          directory = os.path.dirname(path)
+          fd, temporary = tempfile.mkstemp(prefix=".host.env.preview.", dir=directory, text=True)
+          try:
+              os.fchmod(fd, 0o640)
+              os.fchown(fd, 0, 0)
+              with os.fdopen(fd, "w", encoding="utf-8") as target:
+                  target.write("\n".join(lines) + "\n")
+                  target.flush()
+                  os.fsync(target.fileno())
+              os.replace(temporary, path)
+              directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+              try:
+                  os.fsync(directory_fd)
+              finally:
+                  os.close(directory_fd)
+          finally:
+              if os.path.exists(temporary):
+                  os.unlink(temporary)
+          PYTHON
+          send_runtime_command() {
+            local body="$1" response="$2"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" \
+              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${terminal_token}" \
+              -H 'content-type: application/json' --data-binary "$body"
+            jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
+              "$response" >/dev/null
+          }
+          body="$(jq -cn --arg script "$patch_script" --arg config "$runtime_config" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script,$config],timeoutMs:10000}')"
+          send_runtime_command "$body" /tmp/preview-speech-config.json
+          body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-gateway.service"],"timeoutMs":30000}'
+          send_runtime_command "$body" /tmp/preview-gateway-restart.json
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"
