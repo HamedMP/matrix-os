@@ -88,6 +88,10 @@ export function createConfiguredPlatformSpeechService(options: {
     db: options.db,
     now: options.now,
     ...config.admission,
+    ...(config.provider === "openai" && config.fundingMode === "preview_no_charge" ? {
+      maximumAdmissionsPerRuntimeLifetime: config.previewMaximumOperationsPerRuntime,
+      admissionsNotAfter: new Date(config.previewNotAfter),
+    } : {}),
   });
   const fingerprintSecret = deriveSecret(config.speechSecret, "fingerprint");
   if (config.provider === "fixture") {

@@ -58,5 +58,23 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID");
     expect(workflow).toContain("MATRIX_PREVIEW_RUNTIME");
     expect(workflow).toContain("systemctl\",\"restart\",\"matrix-gateway.service");
+    expect(workflow).toContain("PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25");
+    expect(workflow).toContain("PLATFORM_SPEECH_PREVIEW_NOT_AFTER");
+    expect(workflow).toContain("preview-runtime-access");
+    expect(workflow).toContain("metadata.st_gid");
+    expect(workflow).not.toContain("os.fchown(fd, 0, 0)");
+    expect(workflow).not.toContain("PRODUCTION_PLATFORM_SECRET");
+    expect(workflow).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
+    expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
+    expect(workflow).toContain("/speech/capabilities?runtimeSlot=");
+  });
+
+  it("publishes only handle-scoped preview runtime access for the connector workflow", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/preview-vps.yml"), "utf8");
+
+    expect(workflow).toContain("preview-runtime-access.json");
+    expect(workflow).toContain("terminalToken");
+    expect(workflow).toContain("name: preview-runtime-access-");
+    expect(workflow).toContain("retention-days: 1");
   });
 });

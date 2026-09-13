@@ -169,6 +169,8 @@ export function createSpeechOperationsRepository(options: {
   maximumActiveOperationsPerOwner?: number;
   maximumAdmissionsPerOwner?: number;
   admissionWindowMs?: number;
+  maximumAdmissionsPerRuntimeLifetime?: number;
+  admissionsNotAfter?: Date;
 }) {
   const now = options.now ?? (() => new Date());
   const maximumRequestAgeMs = options.maximumRequestAgeMs ?? 5 * 60_000;
@@ -180,6 +182,10 @@ export function createSpeechOperationsRepository(options: {
     ?? Math.min(2, maximumActiveOperations);
   const maximumAdmissionsPerOwner = options.maximumAdmissionsPerOwner ?? 10;
   const admissionWindowMs = options.admissionWindowMs ?? 60_000;
+  const maximumAdmissionsPerRuntimeLifetime = options.maximumAdmissionsPerRuntimeLifetime;
+  const admissionsNotAfter = options.admissionsNotAfter;
+  const hasLifetimeBoundary = maximumAdmissionsPerRuntimeLifetime !== undefined
+    || admissionsNotAfter !== undefined;
   if (maximumRequestAgeMs < 60_000 || maximumRequestAgeMs > 24 * 60 * 60_000
     || futureClockSkewMs < 0 || futureClockSkewMs > 5 * 60_000
     || metadataRetentionMs < maximumRequestAgeMs || metadataRetentionMs > 30 * 24 * 60 * 60_000
@@ -190,7 +196,14 @@ export function createSpeechOperationsRepository(options: {
     || maximumActiveOperationsPerOwner > maximumActiveOperations
     || !Number.isSafeInteger(maximumAdmissionsPerOwner) || maximumAdmissionsPerOwner < 1
     || maximumAdmissionsPerOwner > 10_000
-    || !Number.isSafeInteger(admissionWindowMs) || admissionWindowMs < 1_000 || admissionWindowMs > 60 * 60_000) {
+    || !Number.isSafeInteger(admissionWindowMs) || admissionWindowMs < 1_000 || admissionWindowMs > 60 * 60_000
+    || (hasLifetimeBoundary && (
+      !Number.isSafeInteger(maximumAdmissionsPerRuntimeLifetime)
+      || maximumAdmissionsPerRuntimeLifetime! < 1
+      || maximumAdmissionsPerRuntimeLifetime! > 10_000
+      || !(admissionsNotAfter instanceof Date)
+      || !Number.isFinite(admissionsNotAfter.getTime())
+    ))) {
     throw new Error("Speech operation retention policy is invalid");
   }
 
@@ -250,6 +263,9 @@ export function createSpeechOperationsRepository(options: {
         return operationRecord(existing);
       }
       await sql`SELECT pg_advisory_xact_lock(hashtext('matrix-speech-admission'))`.execute(trx.executor);
+      if (admissionsNotAfter && checked.getTime() >= admissionsNotAfter.getTime()) {
+        throw new SpeechOperationRateLimitError();
+      }
       const activeStates: SpeechExecutionState[] = ["received", "reserved", "dispatching"];
       const activeCutoff = new Date(checked.getTime() - activeOperationTtlMs).toISOString();
       const active = await trx.executor.selectFrom("speech_operations")
@@ -267,9 +283,20 @@ export function createSpeechOperationsRepository(options: {
         .where("source_kind", "is not", null)
         .where("created_at", ">=", new Date(checked.getTime() - admissionWindowMs).toISOString())
         .executeTakeFirstOrThrow();
+      const runtimeAdmissions = maximumAdmissionsPerRuntimeLifetime === undefined
+        ? undefined
+        : await trx.executor.selectFrom("speech_operations")
+          .select(({ fn }) => fn.countAll<number>().as("count"))
+          .where("owner_id", "=", admission.identity.ownerId)
+          .where("machine_id", "=", admission.identity.machineId)
+          .where("runtime_slot", "=", admission.identity.runtimeSlot)
+          .where("source_kind", "is not", null)
+          .executeTakeFirstOrThrow();
       if (Number(active.count) >= maximumActiveOperations
         || Number(ownerActive.count) >= maximumActiveOperationsPerOwner
-        || Number(ownerAdmissions.count) >= maximumAdmissionsPerOwner) {
+        || Number(ownerAdmissions.count) >= maximumAdmissionsPerOwner
+        || (runtimeAdmissions !== undefined
+          && Number(runtimeAdmissions.count) >= maximumAdmissionsPerRuntimeLifetime!)) {
         throw new SpeechOperationRateLimitError();
       }
       const inserted = await trx.executor.insertInto("speech_operations").values({

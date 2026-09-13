@@ -96,6 +96,8 @@ describe("platform speech configuration", () => {
       PLATFORM_SPEECH_POLICY_REVISION: "preview-speech-1",
       PLATFORM_SPEECH_SECRET: secret,
       PLATFORM_SPEECH_PREVIEW_NO_CHARGE: "true",
+      PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME: "25",
+      PLATFORM_SPEECH_PREVIEW_NOT_AFTER: "2026-09-14T00:00:00.000Z",
     };
     expect(() => loadPlatformSpeechConfig(base)).toThrow("Platform speech configuration is invalid");
     expect(loadPlatformSpeechConfig({ ...base, PLATFORM_PREVIEW: "true" })).toMatchObject({
@@ -104,6 +106,29 @@ describe("platform speech configuration", () => {
       fundingMode: "preview_no_charge",
       microusdPerMinute: 0,
       allowedFundingSources: [],
+      previewMaximumOperationsPerRuntime: 25,
+      previewNotAfter: "2026-09-14T00:00:00.000Z",
     });
+  });
+
+  it.each([
+    ["missing lifetime cap", { PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME: undefined }],
+    ["missing expiry", { PLATFORM_SPEECH_PREVIEW_NOT_AFTER: undefined }],
+    ["invalid expiry", { PLATFORM_SPEECH_PREVIEW_NOT_AFTER: "tomorrow" }],
+  ])("rejects preview OpenAI mode with %s", (_label, changed) => {
+    expect(() => loadPlatformSpeechConfig({
+      NODE_ENV: "production",
+      PLATFORM_PREVIEW: "true",
+      PLATFORM_SPEECH_ENABLED: "true",
+      PLATFORM_SPEECH_PROVIDER: "openai",
+      PLATFORM_SPEECH_OPENAI_API_KEY: "platform-openai-key-123456",
+      PLATFORM_SPEECH_MODEL: "gpt-4o-mini-transcribe",
+      PLATFORM_SPEECH_POLICY_REVISION: "preview-speech-1",
+      PLATFORM_SPEECH_SECRET: secret,
+      PLATFORM_SPEECH_PREVIEW_NO_CHARGE: "true",
+      PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME: "25",
+      PLATFORM_SPEECH_PREVIEW_NOT_AFTER: "2026-09-14T00:00:00.000Z",
+      ...changed,
+    })).toThrow("Platform speech configuration is invalid");
   });
 });
