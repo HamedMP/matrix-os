@@ -13,7 +13,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { RuntimeSlotSchema } from "../customer-vps-schema.js";
 import { getRunningUserMachineByHandle, type PlatformDB } from "../db.js";
-import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from "../platform-token.js";
+import { buildPlatformSpeechRuntimeVerificationToken, timingSafeTokenEquals } from "../platform-token.js";
 import { SpeechServiceError, type PlatformSpeechService } from "./service.js";
 
 const MAX_DICTATION_BODY_BYTES = 10 * 1024 * 1024 + 64 * 1024;
@@ -72,7 +72,7 @@ async function runtimeIdentity(
   if (!machine) return undefined;
   const authorization = c.req.header("authorization");
   const actual = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
-  const expected = buildPlatformRuntimeVerificationToken({
+  const expected = buildPlatformSpeechRuntimeVerificationToken({
     handle: handle.data,
     machineId: machine.machineId,
     runtimeSlot: machine.runtimeSlot,

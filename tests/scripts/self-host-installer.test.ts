@@ -38,6 +38,10 @@ describe("self-host server installer", () => {
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret");
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RUNTIME_TOKEN || true");
     expect(script).toContain("MATRIX_FUNDED_AI_RUNTIME_TOKEN=${funded_ai_runtime_token}");
+    expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN || true");
+    expect(script).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN=${platform_speech_runtime_token}");
+    expect(script).toContain("MATRIX_PLATFORM_SPEECH_ORIGIN=${platform_speech_origin}");
+    expect(script).toContain("MATRIX_PLATFORM_SPEECH_ENABLED=${platform_speech_enabled}");
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret");
     expect(script).toContain("read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret");
     expect(script).toContain("cleanup_install_tmp");

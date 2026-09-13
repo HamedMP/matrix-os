@@ -44,6 +44,7 @@ import {
 } from './customer-vps-auth.js';
 import {
   buildPlatformRuntimeVerificationToken,
+  buildPlatformSpeechRuntimeVerificationToken,
   buildPlatformVerificationToken,
 } from './platform-token.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
@@ -253,9 +254,12 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
+  '      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
   '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
+  '      MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}',
+  '      MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}',
   '      POSTHOG_TOKEN={{posthogToken}}',
   '      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
   '      POSTHOG_HOST={{posthogHost}}',
@@ -372,6 +376,11 @@ function buildHostConfig(
       machineId,
       runtimeSlot: input.runtimeSlot,
     }, config.platformSecret),
+    platformSpeechRuntimeToken: buildPlatformSpeechRuntimeVerificationToken({
+      handle: input.handle,
+      machineId,
+      runtimeSlot: input.runtimeSlot,
+    }, config.platformSecret),
     registrationToken,
     postgresPassword,
     posthogToken: config.posthogToken,
@@ -381,6 +390,8 @@ function buildHostConfig(
     posthogApiHost: config.posthogApiHost,
     fundedAiEnabled: config.fundedAiEnabled ? 'true' : 'false',
     fundedAiRelayUrl: config.fundedAiRelayUrl,
+    platformSpeechEnabled: config.platformSpeechEnabled ? 'true' : 'false',
+    platformSpeechOrigin: config.platformSpeechOrigin,
   };
 }
 

@@ -78,6 +78,9 @@ jobs:
       PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}
       MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
       MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
+      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}
+      MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}
+      MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
     steps:
       - name: Check preview configuration
@@ -102,6 +105,17 @@ jobs:
           esac
           if ! [[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]; then
             echo "MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30." >&2
+            exit 1
+          fi
+          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED; do
+            case "${!name}" in true|false) ;; *) echo "$name must be true or false." >&2; exit 1;; esac
+          done
+          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" ]; then
+            echo "Funded AI control-plane and runtime flags must match." >&2
+            exit 1
+          fi
+          if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ] && ! [[ "$MATRIX_FUNDED_AI_RELAY_URL" =~ ^https://[^/?#]+/?$ ]]; then
+            echo "MATRIX_FUNDED_AI_RELAY_URL must be an HTTPS origin when funded AI is enabled." >&2
             exit 1
           fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -138,6 +152,25 @@ jobs:
             --substitutions "_IMAGE=$image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,_NEXT_PUBLIC_MATRIX_APP_URL=$PREVIEW_PUBLIC_URL" \
             --quiet
           echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify preview speech and funded AI secrets
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          required_preview_secrets=(platform-speech-openai-api-key-preview platform-speech-secret-preview)
+          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
+            required_preview_secrets+=(ai-relay-control-token-preview ai-funded-credential-hash-secret-preview)
+          fi
+          for secret_name in "${required_preview_secrets[@]}"; do
+            gcloud secrets versions describe latest --secret "$secret_name" --project "$GCP_PROJECT_ID" >/dev/null
+            accessor_member="$(gcloud secrets get-iam-policy "$secret_name" --project "$GCP_PROJECT_ID" \
+              --flatten='bindings[].members' --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+              --format='value(bindings.members)' | head -1)"
+            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "$secret_name must be readable by the preview runtime service account." >&2
+              exit 1
+            fi
+          done
 
       - name: Verify preview golden snapshot operator secret
         if: steps.config.outputs.configured == 'true'
@@ -184,6 +217,12 @@ jobs:
           PREVIEW_DOMAIN="${PREVIEW_DOMAIN%%/*}"
           deploy_preview() {
             local api_origin="$1"
+            funded_ai_env_bindings=",MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED},MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}"
+            funded_ai_secret_bindings=""
+            if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
+              funded_ai_env_bindings="${funded_ai_env_bindings},MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
+              funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token-preview:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret-preview:latest"
+            fi
             gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION" \
@@ -192,8 +231,8 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_API_ORIGIN=${api_origin},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN}" \
-              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest" \
+              --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_API_ORIGIN=${api_origin},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},PLATFORM_SPEECH_ENABLED=true,PLATFORM_SPEECH_PROVIDER=openai,PLATFORM_SPEECH_MODEL=gpt-4o-transcribe,PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1,PLATFORM_SPEECH_MICROUSD_PER_MINUTE=25000,PLATFORM_SPEECH_FUNDING_SOURCES=promotional,PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${funded_ai_env_bindings}" \
+              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest${funded_ai_secret_bindings}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
           }
@@ -328,7 +367,7 @@ jobs:
           done
 
   select-share-preview:
-    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -337,6 +376,8 @@ jobs:
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: main
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -361,6 +402,8 @@ jobs:
       PR_NUMBER: ${{ inputs.pr }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: main
       - uses: actions/download-artifact@v4
         with:
           name: preview-share-route
@@ -374,16 +417,8 @@ jobs:
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile --filter . --ignore-scripts
-      - name: Register only the PR preview route in staging
-        run: |
-          set -euo pipefail
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
-          test "$CLOUD_RUN_PREVIEW_SERVICE" = matrix-platform-preview
-          gcloud help secrets versions access >/dev/null
-          preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
-          echo "::add-mask::$preview_db"
-          PREVIEW_DATABASE_URL="$preview_db" node scripts/chat-share-preview-fixture.mjs
-      - name: Enable the existing tagged host without moving traffic
+      - name: Resolve the existing tagged speech origin without moving traffic
+        id: origin
         run: |
           set -euo pipefail
           gcloud help run services describe >/dev/null
@@ -398,4 +433,121 @@ jobs:
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
             --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}@CUSTOMER_VPS_TLS_VERIFY=false" --quiet
+          echo "speech_origin=$url" >> "$GITHUB_OUTPUT"
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Seed only the exact preview identity and bounded speech credit in staging
+        env:
+          SPEECH_ORIGIN: ${{ steps.origin.outputs.speech_origin }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          test "$CLOUD_RUN_PREVIEW_SERVICE" = matrix-platform-preview
+          preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
+          preview_platform_secret="$(gcloud secrets versions access latest --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_db"
+          echo "::add-mask::$preview_platform_secret"
+          PREVIEW_DATABASE_URL="$preview_db" PLATFORM_SECRET="$preview_platform_secret" \
+            node scripts/chat-share-preview-fixture.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-speech-activation
+          path: preview-speech-activation.json
+          retention-days: 1
+
+  activate-share-preview:
+    needs: connect-share-preview
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PR_NUMBER: ${{ inputs.pr }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-speech-activation
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Revalidate and activate only speech on the exact disposable host
+        run: |
+          set -euo pipefail
+          cp preview-speech-activation.json expected-preview-speech-activation.json
+          node scripts/chat-share-preview-fixture.mjs --select
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const expected = JSON.parse(await readFile("expected-preview-speech-activation.json", "utf8"));
+          const current = JSON.parse(await readFile("preview-share-route.json", "utf8"));
+          for (const key of ["handle", "address", "ownerId", "machineId", "runtimeSlot"]) {
+            if (expected[key] !== current[key]) throw new Error(`Preview identity changed: ${key}`);
+          }
+          NODE
+          handle="$(jq -er .handle expected-preview-speech-activation.json)"
+          owner_id="$(jq -er .ownerId expected-preview-speech-activation.json)"
+          machine_id="$(jq -er .machineId expected-preview-speech-activation.json)"
+          runtime_slot="$(jq -er .runtimeSlot expected-preview-speech-activation.json)"
+          speech_origin="$(jq -er .speechOrigin expected-preview-speech-activation.json)"
+          speech_runtime_token="$(jq -er .speechRuntimeToken expected-preview-speech-activation.json)"
+          echo "::add-mask::$speech_runtime_token"
+          if [ "$owner_id" != "$PREVIEW_CLERK_USER_ID" ] || [ -z "${CLERK_SECRET_KEY:-}" ]; then
+            echo "The exact preview owner must be the configured QA user." >&2
+            exit 1
+          fi
+          sessions_code="$(curl -sS --max-time 30 -o /tmp/clerk-sessions.json -w '%{http_code}' \
+            "https://api.clerk.com/v1/sessions?user_id=${PREVIEW_CLERK_USER_ID}&status=active&limit=10" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" -H "Clerk-API-Version: 2025-11-10")"
+          test "$sessions_code" = 200
+          session_id="$(jq -er 'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' /tmp/clerk-sessions.json)"
+          mint_session_token() {
+            local token_code
+            token_code="$(curl -sS --max-time 30 -o /tmp/clerk-token.json -w '%{http_code}' \
+              -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
+              -H "authorization: Bearer ${CLERK_SECRET_KEY}" -H "Clerk-API-Version: 2025-11-10" \
+              -H "content-type: application/json" --data-binary '{"expires_in_seconds":60}')"
+            test "$token_code" = 200
+            session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' /tmp/clerk-token.json)"
+            echo "::add-mask::$session_token"
+          }
+          activation_script="$(sed '1{/^#!/d;}' scripts/activate-speech-preview.py)"
+          body="$(jq -cn --arg script "$activation_script" --arg handle "$handle" --arg machine "$machine_id" \
+            --arg owner "$owner_id" --arg slot "$runtime_slot" --arg origin "$speech_origin" --arg token "$speech_runtime_token" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script,"--handle",$handle,"--machine-id",$machine,"--owner-id",$owner,"--runtime-slot",$slot,"--speech-origin",$origin,"--speech-runtime-token",$token],timeoutMs:15000}')"
+          send_runtime_command() {
+            local payload="$1" output="$2"
+            curl --fail --silent --show-error --max-time 45 -o "$output" \
+              -X POST "https://app.matrix-os.com/vm/${handle}/api/terminal/run" \
+              -H "authorization: Bearer ${session_token}" -H 'content-type: application/json' --data-binary "$payload"
+            jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' "$output" >/dev/null
+          }
+          mint_session_token
+          send_runtime_command "$body" /tmp/speech-activation.json
+          restart_unit="matrix-speech-preview-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          restart_body="$(jq -cn --arg unit "$restart_unit" \
+            '{command:["/usr/bin/sudo","/usr/bin/systemd-run","--unit",$unit,"--on-active=2s","--timer-property=AccuracySec=1s","--collect","/usr/bin/systemctl","restart","matrix-gateway.service"],timeoutMs:10000}')"
+          mint_session_token
+          send_runtime_command "$restart_body" /tmp/speech-restart.json
+          sleep 3
+          health_code=""
+          for _attempt in {1..8}; do
+            mint_session_token
+            health_code="$(curl --silent --show-error --connect-timeout 3 --max-time 8 \
+              -o /tmp/speech-health.json -w '%{http_code}' \
+              "https://app.matrix-os.com/vm/${handle}/api/speech/capabilities" \
+              -H "authorization: Bearer ${session_token}" || true)"
+            if [ "$health_code" = 200 ] && jq -e \
+              '.contractVersion == 1 and .fileTranscription.status == "ready" and .fileTranscription.dictation.enabled == true' \
+              /tmp/speech-health.json >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          test "$health_code" = 200
+          jq -e '.contractVersion == 1 and .fileTranscription.status == "ready" and .fileTranscription.dictation.enabled == true' \
+            /tmp/speech-health.json >/dev/null
+          echo "Activated isolated speech origin for ${handle}; PLATFORM_INTERNAL_URL and MATRIX_FUNDED_AI_* were preserved." >> "$GITHUB_STEP_SUMMARY"

@@ -53,6 +53,7 @@ describe("local speech fixture planning", () => {
       GATEWAY_URL: "http://127.0.0.1:4117",
       NEXT_PUBLIC_GATEWAY_WS: "ws://127.0.0.1:4117/ws",
       MATRIX_PLATFORM_SPEECH_ENABLED: "true",
+      MATRIX_PLATFORM_SPEECH_ORIGIN: "http://127.0.0.1:9117",
       PLATFORM_SPEECH_ENABLED: "true",
       PLATFORM_SPEECH_PROVIDER: "fixture",
       PLATFORM_SPEECH_FIXTURE_TRANSCRIPT: "Deterministic local speech fixture transcript",
@@ -71,7 +72,8 @@ describe("local speech fixture planning", () => {
       plan.env.PLATFORM_SPEECH_SECRET,
       plan.env.MATRIX_AUTH_TOKEN,
     ])).toHaveLength(4);
-    expect(plan.env.MATRIX_FUNDED_AI_RUNTIME_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+    expect(plan.env.MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+    expect(plan.env.MATRIX_FUNDED_AI_RUNTIME_TOKEN).toBeUndefined();
   });
 
   it("rejects non-loopback PostgreSQL admin URLs before any connection", () => {

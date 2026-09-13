@@ -2,6 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 
 describe('customer VPS bootstrap configuration', () => {
+  it('keeps speech disabled by default and requires a dedicated safe origin when enabled', () => {
+    expect(loadCustomerVpsConfig({})).toMatchObject({
+      platformSpeechEnabled: false,
+      platformSpeechOrigin: '',
+    });
+    expect(loadCustomerVpsConfig({
+      MATRIX_PLATFORM_SPEECH_ENABLED: 'true',
+      MATRIX_PLATFORM_SPEECH_ORIGIN: 'https://speech.matrix-os.com',
+    })).toMatchObject({
+      platformSpeechEnabled: true,
+      platformSpeechOrigin: 'https://speech.matrix-os.com',
+    });
+    expect(() => loadCustomerVpsConfig({
+      MATRIX_PLATFORM_SPEECH_ENABLED: 'true',
+      MATRIX_PLATFORM_SPEECH_ORIGIN: 'http://speech.example',
+    })).toThrow('Platform speech runtime is misconfigured');
+    expect(() => loadCustomerVpsConfig({
+      MATRIX_PLATFORM_SPEECH_ENABLED: 'true',
+    })).toThrow('Platform speech runtime is misconfigured');
+  });
+
   it('keeps funded AI disabled unless a valid relay is explicitly configured', () => {
     expect(loadCustomerVpsConfig({})).toMatchObject({
       fundedAiEnabled: false,

@@ -34,6 +34,7 @@ import {
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import {
   buildPlatformRuntimeVerificationToken,
+  buildPlatformSpeechRuntimeVerificationToken,
   timingSafeTokenEquals,
   buildPlatformVerificationToken,
 } from '../../packages/platform/src/platform-token.js';
@@ -1501,6 +1502,30 @@ describe('platform/customer-vps', () => {
     expect(fundedToken).not.toBe(buildPlatformVerificationToken('alice', 'platform-secret'));
     expect(createInput?.userData).not.toContain('AI_RELAY_CONTROL_TOKEN');
     expect(createInput?.userData).not.toContain('CF_AIG_AUTHORIZATION');
+  });
+
+  it('templates a dedicated runtime-bound speech origin and credential into customer hosts', async () => {
+    const { service, hetzner } = createService({
+      config: createTestConfig({
+        platformSpeechEnabled: true,
+        platformSpeechOrigin: 'https://speech.matrix-os.com',
+      }),
+    });
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    const speechToken = createInput?.userData
+      .match(/^\s*MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN=([^\s]+)$/m)?.[1];
+    expect(createInput?.userData).toContain('MATRIX_PLATFORM_SPEECH_ENABLED=true');
+    expect(createInput?.userData).toContain('MATRIX_PLATFORM_SPEECH_ORIGIN=https://speech.matrix-os.com');
+    expect(speechToken).toBe(buildPlatformSpeechRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      runtimeSlot: 'primary',
+    }, 'platform-secret'));
+    expect(speechToken).not.toBe(createInput?.userData
+      .match(/^\s*MATRIX_FUNDED_AI_RUNTIME_TOKEN=([^\s]+)$/m)?.[1]);
   });
 
   it('never templates platform R2 credentials into provisioned customer hosts', async () => {

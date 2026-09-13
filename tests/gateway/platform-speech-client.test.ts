@@ -7,12 +7,14 @@ import {
 
 const runtimeEnv = {
   MATRIX_PLATFORM_SPEECH_ENABLED: "true",
-  PLATFORM_INTERNAL_URL: "https://platform.internal",
+  MATRIX_PLATFORM_SPEECH_ORIGIN: "https://speech.platform.internal",
   MATRIX_HANDLE: "alice",
   MATRIX_CLERK_USER_ID: "user_alice",
   MATRIX_MACHINE_ID: "machine_123",
   MATRIX_RUNTIME_SLOT: "primary",
-  MATRIX_FUNDED_AI_RUNTIME_TOKEN: "r".repeat(64),
+  MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: "s".repeat(64),
+  PLATFORM_INTERNAL_URL: "https://funded.platform.internal",
+  MATRIX_FUNDED_AI_RUNTIME_TOKEN: "f".repeat(64),
 };
 
 const unavailableCapabilities = {
@@ -37,11 +39,11 @@ describe("platform speech runtime client", () => {
     expect(loadPlatformSpeechRuntimeConfig({})).toBeUndefined();
     expect(() => loadPlatformSpeechRuntimeConfig({
       ...runtimeEnv,
-      MATRIX_FUNDED_AI_RUNTIME_TOKEN: "legacy-short-token",
+      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: "legacy-short-token",
     })).toThrow(/misconfigured/i);
     expect(loadPlatformSpeechRuntimeConfig(runtimeEnv)).toEqual({
-      baseUrl: "https://platform.internal/internal/containers/alice/speech",
-      runtimeAuthToken: "r".repeat(64),
+      baseUrl: "https://speech.platform.internal/internal/containers/alice/speech",
+      runtimeAuthToken: "s".repeat(64),
       identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
       requestTimeoutMs: 65_000,
     });
@@ -56,12 +58,12 @@ describe("platform speech runtime client", () => {
     await expect(client.capabilities()).resolves.toEqual(unavailableCapabilities);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(fetchFn.mock.calls[0]?.[0]).toBe(
-      "https://platform.internal/internal/containers/alice/speech/capabilities?runtimeSlot=primary",
+      "https://speech.platform.internal/internal/containers/alice/speech/capabilities?runtimeSlot=primary",
     );
     expect(fetchFn.mock.calls[0]?.[1]).toMatchObject({
       method: "GET",
       redirect: "error",
-      headers: { authorization: `Bearer ${"r".repeat(64)}`, accept: "application/json" },
+      headers: { authorization: `Bearer ${"s".repeat(64)}`, accept: "application/json" },
     });
     expect(fetchFn.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });

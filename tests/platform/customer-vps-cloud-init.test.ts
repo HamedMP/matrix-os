@@ -34,6 +34,7 @@ describe('platform/customer-vps-cloud-init', () => {
       registrationToken: 'r'.repeat(64),
       platformVerificationToken: 'v'.repeat(64),
       fundedAiRuntimeToken: 'f'.repeat(64),
+      platformSpeechRuntimeToken: 's'.repeat(64),
       postgresPassword: 'p'.repeat(48),
     };
     const template = await loadCustomerVpsCloudInitTemplate();
@@ -56,6 +57,7 @@ describe('platform/customer-vps-cloud-init', () => {
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
     fundedAiRuntimeToken: 'funded-runtime-verification-secret',
+    platformSpeechRuntimeToken: 'speech-runtime-verification-secret',
     registrationToken: 'registration-secret',
     postgresPassword: 'postgres-secret',
     posthogToken: 'phc_public',
@@ -65,6 +67,8 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogApiHost: '/relay',
     fundedAiEnabled: 'true',
     fundedAiRelayUrl: 'https://relay.matrix-os.com',
+    platformSpeechEnabled: 'true',
+    platformSpeechOrigin: 'https://speech.platform.example',
   };
 
   function runRestoreWithFakeMatrixctl(
@@ -218,6 +222,9 @@ exit 99
     expect(rendered).toContain('MATRIX_AUTH_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_CODE_PROXY_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=funded-runtime-verification-secret');
+    expect(rendered).toContain('MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN=speech-runtime-verification-secret');
+    expect(rendered).toContain('MATRIX_PLATFORM_SPEECH_ENABLED=true');
+    expect(rendered).toContain('MATRIX_PLATFORM_SPEECH_ORIGIN=https://speech.platform.example');
     expect(rendered).toContain('PLATFORM_INTERNAL_URL=https://platform.example');
     expect(rendered).toContain('path: /opt/matrix/env/symphony.env');
     expect(rendered).toContain('MATRIX_HANDLE=alice');
@@ -226,6 +233,7 @@ exit 99
     expect(rendered).not.toContain('MATRIX_AUTH_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=\n');
+    expect(rendered).not.toContain('MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN=\n');
     expect(rendered).not.toContain('PLATFORM_INTERNAL_URL=\n');
     expect(rendered).toContain('MATRIX_FUNDED_AI_ENABLED=true');
     expect(rendered).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.matrix-os.com');
@@ -388,6 +396,9 @@ exit 99
     expect(cloudInit).toContain('MATRIX_AUTH_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
     expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');
@@ -708,7 +719,7 @@ exit 99
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nfunded={{fundedAiRuntimeToken}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nfunded={{fundedAiRuntimeToken}}\nspeech={{platformSpeechRuntimeToken}}\n',
       input,
     );
 
@@ -718,6 +729,7 @@ exit 99
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).not.toContain('platform-verification-secret');
     expect(redacted).not.toContain('funded-runtime-verification-secret');
+    expect(redacted).not.toContain('speech-runtime-verification-secret');
     expect(redacted).toContain('[redacted]');
   });
 
