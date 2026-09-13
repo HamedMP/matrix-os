@@ -70,6 +70,9 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
     expect(workflow).toContain("/speech/capabilities?runtimeSlot=");
     expect(workflow).toContain("/api/speech/capabilities");
+    expect(workflow).toContain('os.open(path, os.O_RDONLY | os.O_NOFOLLOW)');
+    expect(workflow).toContain('re.fullmatch(r"[a-f0-9]{64}", token)');
+    expect(workflow).not.toContain('os.environ["MATRIX_AUTH_TOKEN"]');
     expect(workflow).toContain("EXPECTED_HEAD_SHA");
     expect(workflow).toContain("expected_image=");
   });
