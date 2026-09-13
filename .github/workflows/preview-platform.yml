@@ -677,9 +677,32 @@ jobs:
           read -r -d '' gateway_probe_script <<'PYTHON' || true
           import json
           import os
+          import re
+          import stat
           import urllib.request
 
-          token = os.environ["MATRIX_AUTH_TOKEN"]
+          path = "/opt/matrix/env/host.env"
+          fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+          try:
+              metadata = os.fstat(fd)
+              if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_size > 1024 * 1024:
+                  raise ValueError("invalid host environment file")
+              source = os.fdopen(fd, "r", encoding="utf-8")
+              fd = -1
+              with source:
+                  token_lines = [
+                      line.removeprefix("MATRIX_AUTH_TOKEN=")
+                      for line in source.read().splitlines()
+                      if line.startswith("MATRIX_AUTH_TOKEN=")
+                  ]
+          finally:
+              if fd >= 0:
+                  os.close(fd)
+          if len(token_lines) != 1:
+              raise ValueError("invalid gateway authentication configuration")
+          token = token_lines[0]
+          if re.fullmatch(r"[a-f0-9]{64}", token) is None:
+              raise ValueError("invalid gateway authentication configuration")
           results = {}
           for name, path in (
               ("speech", "/api/speech/capabilities"),
