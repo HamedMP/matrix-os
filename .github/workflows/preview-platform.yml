@@ -442,8 +442,18 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
-          run_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${EXPECTED_HEAD_SHA}&event=pull_request&status=success&per_page=20" \
-            --jq '.workflow_runs | sort_by(.created_at) | reverse | .[0].id // empty')"
+          expected_artifact="preview-runtime-access-$PR_NUMBER"
+          run_id=""
+          mapfile -t candidate_runs < <(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${EXPECTED_HEAD_SHA}&event=pull_request&status=success&per_page=20" \
+            --jq '.workflow_runs | sort_by(.created_at) | reverse | .[].id')
+          for candidate in "${candidate_runs[@]}"; do
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate}/artifacts" | \
+              jq -r --arg name "$expected_artifact" '[.artifacts[] | select(.name == $name and .expired == false)] | .[0].id // empty')"
+            if [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]; then
+              run_id="$candidate"
+              break
+            fi
+          done
           if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
             echo "A successful exact-head Preview VPS run is required before connecting speech." >&2
             exit 1
@@ -456,23 +466,18 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.runtime.outputs.run_id }}
           github-token: ${{ github.token }}
-      - name: Validate handle-scoped preview runtime access
+      - name: Preserve encrypted handle-scoped preview runtime access
         run: |
           set -euo pipefail
-          route=preview-runtime-access/preview-runtime-access.json
-          jq -e --arg handle "pr-$PR_NUMBER" '
-            type == "object"
-            and keys == ["address", "handle", "terminalToken"]
-            and .handle == $handle
-            and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
-            and (.terminalToken | type == "string" and test("^[a-f0-9]{64}$"))
-          ' "$route" >/dev/null
-          cp "$route" preview-share-route.json
-          chmod 600 preview-share-route.json
+          route=preview-runtime-access/preview-runtime-access.enc
+          test -s "$route"
+          test "$(wc -c < "$route")" -le 1024
+          cp "$route" preview-share-route.enc
+          chmod 600 preview-share-route.enc
       - uses: actions/upload-artifact@v4
         with:
           name: preview-share-route
-          path: preview-share-route.json
+          path: preview-share-route.enc
           retention-days: 1
 
   connect-share-preview:
@@ -485,13 +490,40 @@ jobs:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       PR_NUMBER: ${{ inputs.pr }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      EXPECTED_HEAD_SHA: ${{ github.sha }}
+      GH_TOKEN: ${{ github.token }}
+      PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64: ${{ secrets.PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64 }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
         with:
           name: preview-share-route
+      - name: Decrypt and validate handle-scoped preview runtime access
+        run: |
+          set -euo pipefail
+          if [ -z "${PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64:-}" ]; then
+            echo "Preview runtime handoff decryption is not configured." >&2
+            exit 1
+          fi
+          private_key=/tmp/preview-runtime-handoff-private.pem
+          printf '%s' "$PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64" | base64 --decode > "$private_key"
+          chmod 600 "$private_key"
+          openssl pkey -in "$private_key" -noout
+          openssl pkeyutl -decrypt -inkey "$private_key" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -in preview-share-route.enc -out preview-share-route.json
+          rm -f "$private_key" preview-share-route.enc
+          chmod 600 preview-share-route.json
+          jq -e --arg handle "pr-$PR_NUMBER" '
+            type == "object"
+            and keys == ["address", "handle", "token"]
+            and .handle == $handle
+            and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            and (.token | type == "string" and test("^[a-f0-9]{64}$"))
+          ' preview-share-route.json >/dev/null
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -506,6 +538,11 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          pr_head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          if [ "$pr_head" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "The requested PR head changed before preview connection." >&2
+            exit 1
+          fi
           test "$CLOUD_RUN_PREVIEW_SERVICE" = matrix-platform-preview
           gcloud help secrets versions access >/dev/null
           preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
@@ -521,6 +558,14 @@ jobs:
           revision="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<< "$service")"
           url="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .url' <<< "$service")"
           image="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)' --quiet)"
+          expected_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA::12}"
+          expected_digest="$(gcloud artifacts docker images describe "$expected_image" \
+            --project "$GCP_PROJECT_ID" --format='value(image_summary.digest)' --quiet)"
+          expected_digest_image="${expected_image%:*}@${expected_digest}"
+          if [ -z "$expected_digest" ] || { [ "$image" != "$expected_image" ] && [ "$image" != "$expected_digest_image" ]; }; then
+            echo "The tagged platform preview does not match the exact PR head." >&2
+            exit 1
+          fi
           # Match the existing platform VPS-origin TLS policy (tracked in #410).
           # This applies only to the dedicated Preview service and registered VPS addresses.
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
@@ -534,7 +579,7 @@ jobs:
           address="$(jq -er '.address | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<< "$route")"
           handle="pr-$PR_NUMBER"
           machine_id="chat-share-preview-$handle"
-          terminal_token="$(jq -er '.terminalToken | select(test("^[a-f0-9]{64}$"))' <<< "$route")"
+          terminal_token="$(jq -er '.token | select(test("^[a-f0-9]{64}$"))' <<< "$route")"
           preview_platform_secret="$(gcloud secrets versions access latest \
             --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_platform_secret"
@@ -629,4 +674,34 @@ jobs:
             -o /tmp/preview-speech-capabilities.json
           jq -e '.fileTranscription.status == "ready" and .fileTranscription.dictation.enabled == true' \
             /tmp/preview-speech-capabilities.json >/dev/null
+          read -r -d '' gateway_probe_script <<'PYTHON' || true
+          import json
+          import os
+          import urllib.request
+
+          token = os.environ["MATRIX_AUTH_TOKEN"]
+          results = {}
+          for name, path in (
+              ("speech", "/api/speech/capabilities"),
+              ("providers", "/api/chat-providers"),
+          ):
+              request = urllib.request.Request(
+                  f"http://127.0.0.1:4000{path}",
+                  headers={"authorization": f"Bearer {token}"},
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  if response.status != 200:
+                      raise RuntimeError("gateway preview probe failed")
+                  results[name] = json.load(response)
+          print(json.dumps(results, separators=(",", ":")))
+          PYTHON
+          body="$(jq -cn --arg script "$gateway_probe_script" \
+            '{command:["/usr/bin/python3","-c",$script],timeoutMs:30000}')"
+          send_runtime_command "$body" /tmp/preview-gateway-capabilities.json
+          jq -e '
+            (.stdout | fromjson) as $result
+            | $result.speech.fileTranscription.status == "ready"
+            and $result.speech.fileTranscription.dictation.enabled == true
+            and ($result.providers | type == "object")
+          ' /tmp/preview-gateway-capabilities.json >/dev/null
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"
