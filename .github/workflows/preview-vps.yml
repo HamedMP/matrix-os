@@ -615,19 +615,23 @@ jobs:
           printf '%s' "$PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64" | base64 --decode > "$public_key"
           openssl pkey -pubin -in "$public_key" -noout
           plaintext=/tmp/preview-runtime-access.json
+          jq -cn --arg handle "$HANDLE" --arg address "$address" \
+            '{handle:$handle,address:$address}' > preview-runtime-route.json
           jq -cn --arg handle "$HANDLE" --arg address "$address" --arg token "$runtime_token" \
             '{handle:$handle,address:$address,token:$token}' > "$plaintext"
           openssl pkeyutl -encrypt -pubin -inkey "$public_key" \
             -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
             -in "$plaintext" -out preview-runtime-access.enc
           rm -f "$plaintext" "$public_key"
-          chmod 600 preview-runtime-access.enc
+          chmod 600 preview-runtime-access.enc preview-runtime-route.json
 
       - name: Publish handle-scoped preview runtime access
         uses: actions/upload-artifact@v4
         with:
           name: preview-runtime-access-${{ needs.gate.outputs.pr }}
-          path: preview-runtime-access.enc
+          path: |
+            preview-runtime-access.enc
+            preview-runtime-route.json
           retention-days: 1
           if-no-files-found: error
 
