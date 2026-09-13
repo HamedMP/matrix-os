@@ -10,12 +10,13 @@ describe("platform database startup migration", () => {
     expect(wrapperStart).toBeGreaterThanOrEqual(0);
     expect(schemaStart).toBeGreaterThan(wrapperStart);
 
-    const wrapper = source.slice(wrapperStart, schemaStart);
+    expect(source.slice(wrapperStart, schemaStart)).toContain('await runPlatformMigration(db, migrateSchema)');
+    const wrapper = await readFile('packages/platform/src/migration-runner.ts', 'utf8');
     const transactionStart = wrapper.indexOf("await db.transaction().execute");
     const callbackStart = wrapper.indexOf("=> {", transactionStart);
     const lockStart = wrapper.indexOf("pg_advisory_xact_lock", callbackStart);
-    const lockExecution = wrapper.indexOf(".execute(trx)", lockStart);
-    const schemaMigration = wrapper.indexOf("await migrateSchema(trx)", lockExecution);
+    const lockExecution = wrapper.indexOf(".execute(transaction)", lockStart);
+    const schemaMigration = wrapper.indexOf("await migrateSchema(transaction)", lockExecution);
     const transactionEnd = wrapper.lastIndexOf("});");
 
     expect(transactionStart).toBeGreaterThanOrEqual(0);
