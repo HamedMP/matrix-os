@@ -22,6 +22,7 @@ const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
 const MAX_ATTACHMENT_HANDSHAKE_BYTES = 1024 * 1024;
 const STRUCTURED_READINESS_ATTEMPTS = 20;
+const SWITCH_SESSION_RECONNECT_SEQUENCE = "\x1b[2J";
 const SESSION_NAME = /^matrix-w-[0-9a-f]{32}$/;
 const TAB_NAME = /^matrix-tab-[0-9a-f]{32}$/;
 const PANE_ID = /^terminal_[0-9]+$/;
@@ -352,7 +353,6 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const { binaryPath } = target;
     const paneId = z.string().regex(PANE_ID).parse(input.paneId);
     const paneNumber = Number.parseInt(paneId.slice("terminal_".length), 10);
-    const baselineClientCount = await this.countClientsOnPane(sessionName, paneId, binaryPath);
     const bootstrapName = `matrix-attach-${randomBytes(16).toString("hex")}`;
     const routeDirectory = await mkdtemp(join(tmpdir(), "matrix-zellij-attach-"));
     const routeConfigPath = join(routeDirectory, "config.kdl");
@@ -391,8 +391,11 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       throw error;
     }
     const bootstrapReady = Promise.withResolvers<void>();
+    const routeReady = Promise.withResolvers<void>();
     const startupFailure = Promise.withResolvers<never>();
-    let switching = false;
+    let bootstrapOutputSeen = false;
+    let routeRequested = false;
+    let reconnectSequenceSeen = false;
     let bound = false;
     let startupRejected = false;
     let handshakeOutput = "";
@@ -401,16 +404,31 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         input.onData(new TextEncoder().encode(data));
         return;
       }
-      if (!switching) {
-        switching = true;
+      if (!bootstrapOutputSeen) {
+        bootstrapOutputSeen = true;
         bootstrapReady.resolve();
         return;
       }
+      if (!routeRequested) return;
       handshakeOutput += data;
       if (!startupRejected && Buffer.byteLength(handshakeOutput) > MAX_ATTACHMENT_HANDSHAKE_BYTES) {
         startupRejected = true;
         handshakeOutput = "";
         startupFailure.reject(new Error("Terminal attachment handshake output exceeded limit"));
+        return;
+      }
+      if (!reconnectSequenceSeen) {
+        const reconnectOffset = handshakeOutput.indexOf(SWITCH_SESSION_RECONNECT_SEQUENCE);
+        if (reconnectOffset < 0) return;
+        // Zellij writes this clear-screen sequence from the client process only
+        // after its in-band SwitchSession has disconnected from the bootstrap
+        // server. The following redraw therefore belongs to this exact PTY's
+        // target-session attachment, unlike aggregate list-clients snapshots.
+        reconnectSequenceSeen = true;
+        handshakeOutput = handshakeOutput.slice(reconnectOffset);
+      }
+      if (handshakeOutput.length > SWITCH_SESSION_RECONNECT_SEQUENCE.length) {
+        routeReady.resolve();
       }
     });
     const exitDisposable = pty.onExit((event) => {
@@ -426,12 +444,10 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         Promise.race([this.waitForAnyClient(bootstrapName, binaryPath), startupFailure.promise]),
         "Terminal attachment bootstrap client timed out",
       );
+      routeRequested = true;
       pty.write(Buffer.from("\x1b[24;8~", "latin1"));
       await withAttachmentTimeout(
-        Promise.race([
-          this.waitForClientOnPane(sessionName, paneId, baselineClientCount, binaryPath),
-          startupFailure.promise,
-        ]),
+        Promise.race([routeReady.promise, startupFailure.promise]),
         "Terminal attachment pane binding timed out",
       );
       bound = true;
@@ -462,30 +478,6 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         pty.kill();
       },
     };
-  }
-
-  private async countClientsOnPane(
-    sessionName: string,
-    paneId: string,
-    binaryPath: string,
-  ): Promise<number> {
-    const output = await this.run(["--session", sessionName, "action", "list-clients"], binaryPath);
-    return output.split("\n").filter((line) => line.trim().split(/\s+/)[1] === paneId).length;
-  }
-
-  private async waitForClientOnPane(
-    sessionName: string,
-    paneId: string,
-    baselineClientCount: number,
-    binaryPath: string,
-  ): Promise<void> {
-    for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
-      const output = await this.run(["--session", sessionName, "action", "list-clients"], binaryPath);
-      const count = output.split("\n").filter((line) => line.trim().split(/\s+/)[1] === paneId).length;
-      if (count > baselineClientCount) return;
-      await new Promise<void>((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
-    }
-    throw new Error("Terminal attachment client did not reach requested pane");
   }
 
   private async waitForAnyClient(sessionName: string, binaryPath: string): Promise<void> {

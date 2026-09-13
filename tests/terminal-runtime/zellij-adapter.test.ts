@@ -12,14 +12,19 @@ const lexicalRealpath = async (path: string): Promise<string> => path;
 
 function attachmentRouteHarness(paneId: string) {
   let routed = false;
+  let emitData = (_data: string) => undefined;
   const write = vi.fn((data: string | Buffer) => {
-    if (Buffer.from(data).equals(Buffer.from("\x1b[24;8~", "latin1"))) routed = true;
+    if (Buffer.from(data).equals(Buffer.from("\x1b[24;8~", "latin1"))) {
+      routed = true;
+      queueMicrotask(() => emitData("\x1b[2Jtarget-ready"));
+    }
   });
   const pty: RuntimePty = {
     write,
     resize: vi.fn(),
     kill: vi.fn(),
     onData: vi.fn((listener) => {
+      emitData = listener;
       queueMicrotask(() => listener("bootstrap-ready"));
       return { dispose: vi.fn() };
     }),
@@ -71,6 +76,28 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       "--config", "attach", "--create",
     ]), expect.objectContaining({ env: runtimeEnvironment }));
     expect(route.write).toHaveBeenCalledWith(Buffer.from("\x1b[24;8~", "latin1"));
+  });
+
+  it("ties pane-route readiness to the exact PTY reconnect output", async () => {
+    const route = attachmentRouteHarness("terminal_12");
+    const run = vi.fn(async (args: string[]) => route.clientsFor(args) ?? "");
+    const adapter = new ZellijCliRuntimeAdapter({
+      homePath: "/home/matrix/home",
+      run,
+      spawnPty: vi.fn(() => route.pty),
+    });
+
+    await adapter.openAttachment("matrix-w-0123456789abcdef0123456789abcdef", {
+      paneId: "terminal_12",
+      size: { cols: 120, rows: 36 },
+      onData: () => undefined,
+      onExit: () => undefined,
+    });
+
+    const targetClientQueries = run.mock.calls.filter(([args]) =>
+      args.includes("list-clients")
+      && args[args.indexOf("--session") + 1] === "matrix-w-0123456789abcdef0123456789abcdef");
+    expect(targetClientQueries).toHaveLength(0);
   });
 
   it("propagates non-missing legacy session deletion failures", async () => {
