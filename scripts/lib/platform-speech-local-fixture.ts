@@ -191,14 +191,14 @@ export function cancelBoundedLocalPostgresAdminClient(client: pg.Client): Promis
   return client.end().catch(() => undefined);
 }
 
-function runtimeToken(identity: {
+function speechRuntimeToken(identity: {
   handle: string;
   machineId: string;
   runtimeSlot: string;
 }, platformSecret: string): string {
   return createHmac("sha256", platformSecret)
     .update(JSON.stringify([
-      "matrix-funded-ai-runtime",
+      "matrix-platform-speech-runtime",
       1,
       identity.handle,
       identity.machineId,
@@ -267,12 +267,13 @@ export function createLocalSpeechFixturePlan(options: {
       PLATFORM_SPEECH_SECRET: speechSecret,
       PLATFORM_SPEECH_OPENAI_API_KEY: "",
       MATRIX_PLATFORM_SPEECH_ENABLED: "true",
+      MATRIX_PLATFORM_SPEECH_ORIGIN: platformOrigin,
       MATRIX_HANDLE: identity.handle,
       MATRIX_MACHINE_ID: identity.machineId,
       MATRIX_RUNTIME_SLOT: identity.runtimeSlot,
       MATRIX_CLERK_USER_ID: identity.ownerId,
       MATRIX_USER_ID: identity.ownerId,
-      MATRIX_FUNDED_AI_RUNTIME_TOKEN: runtimeToken(identity, platformSecret),
+      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: speechRuntimeToken(identity, platformSecret),
       MATRIX_AUTH_TOKEN: gatewayToken,
       UPGRADE_TOKEN: gatewayToken,
       MATRIX_HOME: homePath,

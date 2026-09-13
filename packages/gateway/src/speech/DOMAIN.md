@@ -33,8 +33,10 @@ service. It never selects a provider and never reads a speech-provider key.
 ## Release gate
 
 `MATRIX_PLATFORM_SPEECH_ENABLED` is off by default. When it is explicitly
-enabled, startup requires the platform URL, machine handle, owner ID, machine
-ID, runtime slot and runtime credential. Capability still remains unavailable
+enabled, startup requires the dedicated speech origin and speech-only runtime
+credential plus the machine handle, owner ID, machine ID and runtime slot.
+The funded-AI platform origin and credential are deliberately not fallbacks.
+Capability still remains unavailable
 unless the platform policy, funding source, provider configuration and media
 validation gates are all ready. Real provider/account, browser and packaged
 Electron evidence is intentionally deferred; do not enable a release from unit

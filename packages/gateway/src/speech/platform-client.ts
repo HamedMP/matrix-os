@@ -91,14 +91,14 @@ export function loadPlatformSpeechRuntimeConfig(
   if (env.MATRIX_PLATFORM_SPEECH_ENABLED !== "true" && env.MATRIX_PLATFORM_SPEECH_ENABLED !== "1") {
     return undefined;
   }
-  const platform = parsePlatformOrigin(env.PLATFORM_INTERNAL_URL);
+  const platform = parsePlatformOrigin(env.MATRIX_PLATFORM_SPEECH_ORIGIN);
   const handle = HandleSchema.safeParse(env.MATRIX_HANDLE);
   const identity = IdentitySchema.safeParse({
     ownerId: env.MATRIX_CLERK_USER_ID,
     machineId: env.MATRIX_MACHINE_ID,
     runtimeSlot: env.MATRIX_RUNTIME_SLOT,
   });
-  const token = RuntimeTokenSchema.safeParse(env.MATRIX_FUNDED_AI_RUNTIME_TOKEN);
+  const token = RuntimeTokenSchema.safeParse(env.MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN);
   const timeout = env.MATRIX_PLATFORM_SPEECH_TIMEOUT_MS === undefined
     ? DEFAULT_TIMEOUT_MS
     : Number(env.MATRIX_PLATFORM_SPEECH_TIMEOUT_MS);

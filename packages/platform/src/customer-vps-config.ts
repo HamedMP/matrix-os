@@ -25,6 +25,8 @@ export interface CustomerVpsConfig {
   posthogApiHost: string;
   fundedAiEnabled: boolean;
   fundedAiRelayUrl: string;
+  platformSpeechEnabled: boolean;
+  platformSpeechOrigin: string;
   provisionEtaSeconds: number;
   registrationTokenTtlMs: number;
   reconciliationBatchSize: number;
@@ -89,6 +91,35 @@ function fundedAiRuntimeFromEnv(env: NodeJS.ProcessEnv): {
   };
 }
 
+function platformSpeechRuntimeFromEnv(env: NodeJS.ProcessEnv): {
+  platformSpeechEnabled: boolean;
+  platformSpeechOrigin: string;
+} {
+  if (!enabledFromEnv(env.MATRIX_PLATFORM_SPEECH_ENABLED)) {
+    return { platformSpeechEnabled: false, platformSpeechOrigin: '' };
+  }
+  const raw = env.MATRIX_PLATFORM_SPEECH_ORIGIN ?? '';
+  if (!raw || raw.length > 2_048 || !/^[A-Za-z0-9:/._~%\[\]-]+$/.test(raw)) {
+    throw new Error('Platform speech runtime is misconfigured');
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    throw new Error('Platform speech runtime is misconfigured');
+  }
+  const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !(loopback && url.protocol === 'http:'))
+    || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
+    throw new Error('Platform speech runtime is misconfigured');
+  }
+  return {
+    platformSpeechEnabled: true,
+    platformSpeechOrigin: url.toString().replace(/\/$/, ''),
+  };
+}
+
 export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): CustomerVpsConfig {
   const platformUrl = env.PLATFORM_PUBLIC_URL ?? `http://localhost:${env.PLATFORM_PORT ?? 9000}`;
   const imageVersion = env.CUSTOMER_VPS_IMAGE_VERSION ?? 'stable';
@@ -97,6 +128,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     env.GOLDEN_SNAPSHOT_ARCHITECTURE ?? 'x86',
   );
   const fundedAiRuntime = fundedAiRuntimeFromEnv(env);
+  const platformSpeechRuntime = platformSpeechRuntimeFromEnv(env);
   return {
     hetznerApiToken: env.HETZNER_API_TOKEN ?? '',
     location: env.HETZNER_LOCATION ?? 'nbg1',
@@ -122,6 +154,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     posthogPublicHost: env.NEXT_PUBLIC_POSTHOG_HOST ?? DEFAULT_POSTHOG_PUBLIC_HOST,
     posthogApiHost: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? '',
     ...fundedAiRuntime,
+    ...platformSpeechRuntime,
     provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),
     // Clean-image bootstrap allows 15 minutes for the host bundle download
     // and 30 minutes for prerequisite preparation before Gateway can register.
