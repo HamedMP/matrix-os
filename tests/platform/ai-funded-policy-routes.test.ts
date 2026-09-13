@@ -21,7 +21,10 @@ import {
 import { insertContainer, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
-import { buildPlatformRuntimeVerificationToken } from "../../packages/platform/src/platform-token.js";
+import {
+  buildPlatformRuntimeVerificationToken,
+  buildPlatformSpeechRuntimeVerificationToken,
+} from "../../packages/platform/src/platform-token.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const platformSecret = "platform-secret-for-tests-123456789";
@@ -533,6 +536,9 @@ describe("funded AI policy routes", () => {
       "Bearer wrong-runtime-token",
       `Bearer ${bearerFor("bob")}`,
       `Bearer ${bearerFor("alice", "machine_predecessor")}`,
+      `Bearer ${buildPlatformSpeechRuntimeVerificationToken({
+        handle: "alice", machineId: "machine_123", runtimeSlot: "primary",
+      }, platformSecret)}`,
     ]) {
       const denied = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
         method: "POST",

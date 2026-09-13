@@ -40,4 +40,23 @@ describe("preview platform workflow", () => {
     expect(deriveOrigin).toBeGreaterThan(bootstrap);
     expect(finalDeploy).toBeGreaterThan(deriveOrigin);
   });
+
+  it("isolates managed AI and speech credentials while connecting a disposable PR runtime", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("PLATFORM_SPEECH_ENABLED=true");
+    expect(workflow).toContain("PLATFORM_SPEECH_PROVIDER=openai");
+    expect(workflow).toContain("PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe");
+    expect(workflow).toContain("PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest");
+    expect(workflow).toContain("PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest");
+    expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_ORIGIN");
+    expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN");
+    expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_OWNER_ID");
+    expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID");
+    expect(workflow).toContain("MATRIX_PREVIEW_RUNTIME");
+    expect(workflow).toContain("systemctl\",\"restart\",\"matrix-gateway.service");
+  });
 });

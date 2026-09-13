@@ -402,6 +402,9 @@ write_files:
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}
       MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}
+      MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}
+      MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}
+      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
       MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}
       MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}

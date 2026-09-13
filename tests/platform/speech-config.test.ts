@@ -85,4 +85,25 @@ describe("platform speech configuration", () => {
       PLATFORM_SPEECH_SECRET: secret,
     })).toThrow("Platform speech configuration is invalid");
   });
+
+  it("allows no-charge OpenAI transcription only on an explicit platform preview", () => {
+    const base = {
+      NODE_ENV: "production",
+      PLATFORM_SPEECH_ENABLED: "true",
+      PLATFORM_SPEECH_PROVIDER: "openai",
+      PLATFORM_SPEECH_OPENAI_API_KEY: "platform-openai-key-123456",
+      PLATFORM_SPEECH_MODEL: "gpt-4o-mini-transcribe",
+      PLATFORM_SPEECH_POLICY_REVISION: "preview-speech-1",
+      PLATFORM_SPEECH_SECRET: secret,
+      PLATFORM_SPEECH_PREVIEW_NO_CHARGE: "true",
+    };
+    expect(() => loadPlatformSpeechConfig(base)).toThrow("Platform speech configuration is invalid");
+    expect(loadPlatformSpeechConfig({ ...base, PLATFORM_PREVIEW: "true" })).toMatchObject({
+      enabled: true,
+      provider: "openai",
+      fundingMode: "preview_no_charge",
+      microusdPerMinute: 0,
+      allowedFundingSources: [],
+    });
+  });
 });

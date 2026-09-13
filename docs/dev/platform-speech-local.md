@@ -153,7 +153,7 @@ export MATRIX_CLERK_USER_ID='<reviewed-owner-id>'
 bun run dev:speech
 ```
 
-Generate `MATRIX_FUNDED_AI_RUNTIME_TOKEN` through the normal local runtime-registration workflow. Do not copy a customer token or key, and do not put the OpenAI key in a runtime home, host bundle, gateway env file, renderer, or browser storage. `PLATFORM_SPEECH_FUNDING_SOURCES` may be `addon`, `promotional`, or `promotional,addon`; choose deliberately so a text-only campaign is not spent accidentally.
+Generate `MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN` through the normal local runtime-registration workflow. Do not copy a customer token or key, and do not put the OpenAI key in a runtime home, host bundle, gateway env file, renderer, or browser storage. `PLATFORM_SPEECH_FUNDING_SOURCES` may be `addon`, `promotional`, or `promotional,addon`; choose deliberately so a text-only campaign is not spent accidentally.
 
 ## Device and format gates
 

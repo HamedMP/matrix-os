@@ -707,7 +707,7 @@ function ChatAppContent({
                 draftRequest={activeDraftRequest}
                 onDraftConsumed={consumeDraftRequest}
                 unavailablePlaceholder={!providerState.loading && providerState.selected === null
-                  ? "AI harness unavailable"
+                  ? "Write or dictate a draft — connect a harness to send"
                   : undefined}
                 attachmentsEnabled={providerState.selected?.supportsFileAttachments ?? false}
               />
@@ -770,7 +770,7 @@ function EmptyState({
           autoFocus={!mobile}
           draftRequest={composerDraftRequest}
           onDraftConsumed={onComposerDraftConsumed}
-          unavailablePlaceholder={!providerReady ? "AI harness unavailable" : undefined}
+          unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
           attachmentsEnabled={attachmentsEnabled}
         />
 
