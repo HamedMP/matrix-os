@@ -134,6 +134,21 @@ describe('CI workflows', () => {
     ['STRIPE_LEGACY_PRICE_CATALOG_JSON', 'stripe-legacy-price-catalog-json', 'latest'],
   ] as const;
 
+  it.each([
+    ['core CI', '.github/workflows/ci.yml'],
+    ['Docker CI', '.github/workflows/docker-test.yml'],
+  ])('reruns %s for each new head while ready-for-ci remains applied', (_name, path) => {
+    const workflow = readFileSync(join(process.cwd(), path), 'utf8');
+
+    expect(workflow).toMatch(/types:\s*\[[^\]]*synchronize[^\]]*\]/);
+    expect(workflow).toContain(
+      "PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}",
+    );
+    expect(workflow).toContain(
+      '[ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]',
+    );
+  });
+
   it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
