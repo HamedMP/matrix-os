@@ -29,7 +29,7 @@ interface EnabledSpeechConfigBase {
 
 export type PlatformSpeechConfig = { enabled: false } | (EnabledSpeechConfigBase & ({
   provider: "openai";
-  fundingMode: "existing_wallet";
+  fundingMode: "existing_wallet" | "preview_no_charge";
   apiKey: string;
   model: string;
   allowedFundingSources: readonly ("promotional" | "addon")[];
@@ -112,13 +112,18 @@ export function loadPlatformSpeechConfig(env: NodeJS.ProcessEnv = process.env): 
   const apiKey = env.PLATFORM_SPEECH_OPENAI_API_KEY?.trim() ?? "";
   const model = ModelSchema.safeParse(env.PLATFORM_SPEECH_MODEL);
   if (apiKey.length < 16 || !model.success) return invalid();
+  const previewNoCharge = env.PLATFORM_PREVIEW === "true"
+    && env.PLATFORM_SPEECH_PREVIEW_NO_CHARGE === "true";
+  if (env.PLATFORM_SPEECH_PREVIEW_NO_CHARGE === "true" && !previewNoCharge) return invalid();
   return {
     ...common,
     provider,
-    fundingMode: "existing_wallet",
+    fundingMode: previewNoCharge ? "preview_no_charge" : "existing_wallet",
     apiKey,
     model: model.data,
-    microusdPerMinute: integer(env.PLATFORM_SPEECH_MICROUSD_PER_MINUTE, undefined, 1, 1_000_000_000),
-    allowedFundingSources: fundingSources(env.PLATFORM_SPEECH_FUNDING_SOURCES),
+    microusdPerMinute: previewNoCharge
+      ? 0
+      : integer(env.PLATFORM_SPEECH_MICROUSD_PER_MINUTE, undefined, 1, 1_000_000_000),
+    allowedFundingSources: previewNoCharge ? [] : fundingSources(env.PLATFORM_SPEECH_FUNDING_SOURCES),
   };
 }

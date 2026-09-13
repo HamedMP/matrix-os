@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
-import { buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
+import {
+  buildPlatformRuntimeVerificationToken,
+  buildPlatformSpeechRuntimeVerificationToken,
+  buildPlatformVerificationToken,
+} from "../../packages/platform/src/platform-token.js";
 import { createSpeechRuntimeRoutes } from "../../packages/platform/src/speech/routes.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import { createDisabledOrchestrator } from "../../packages/platform/src/orchestrator.js";
@@ -67,14 +71,21 @@ describe("speech runtime routes", () => {
   }
 
   function runtimeBearer() {
-    return buildPlatformRuntimeVerificationToken({ handle: "alice", machineId: identity.machineId, runtimeSlot: "primary" }, platformSecret);
+    return buildPlatformSpeechRuntimeVerificationToken({ handle: "alice", machineId: identity.machineId, runtimeSlot: "primary" }, platformSecret);
   }
 
-  it("rejects the legacy handle-only token and accepts the runtime-bound credential", async () => {
+  it("rejects legacy and funded AI tokens and accepts the speech runtime credential", async () => {
     const routes = app(service());
     const path = "/internal/containers/alice/speech/capabilities?runtimeSlot=primary";
     expect((await routes.request(path, {
       headers: { authorization: `Bearer ${buildPlatformVerificationToken("alice", platformSecret)}` },
+    })).status).toBe(401);
+    expect((await routes.request(path, {
+      headers: { authorization: `Bearer ${buildPlatformRuntimeVerificationToken({
+        handle: "alice",
+        machineId: identity.machineId,
+        runtimeSlot: "primary",
+      }, platformSecret)}` },
     })).status).toBe(401);
     const response = await routes.request(path, {
       headers: { authorization: `Bearer ${runtimeBearer()}` },

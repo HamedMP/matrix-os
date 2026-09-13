@@ -590,7 +590,7 @@ export function ChatApp({
                 draftRequest={composerDraftRequest}
                 onDraftConsumed={onComposerDraftConsumed}
                 unavailablePlaceholder={!providerState.loading && providerState.selected === null
-                  ? "AI harness unavailable"
+                  ? "Write or dictate a draft — connect a harness to send"
                   : undefined}
                 attachmentsEnabled={providerState.selected?.supportsFileAttachments ?? false}
               />
@@ -651,7 +651,7 @@ function EmptyState({
           autoFocus={!mobile}
           draftRequest={composerDraftRequest}
           onDraftConsumed={onComposerDraftConsumed}
-          unavailablePlaceholder={!providerReady ? "AI harness unavailable" : undefined}
+          unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
           attachmentsEnabled={attachmentsEnabled}
         />
 
@@ -814,7 +814,6 @@ export function ChatInput({
                 : connected ? "Ask anything..."
                   : unavailablePlaceholder ?? "Connecting..."
           }
-          disabled={!connected}
           rows={1}
           className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
         />

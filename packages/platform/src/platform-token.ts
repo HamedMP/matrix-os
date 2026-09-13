@@ -33,3 +33,18 @@ export function buildPlatformRuntimeVerificationToken(
     ]))
     .digest("hex");
 }
+
+export function buildPlatformSpeechRuntimeVerificationToken(
+  identity: { handle: string; machineId: string; runtimeSlot: string },
+  platformSecret: string,
+): string {
+  return createHmac("sha256", platformSecret)
+    .update(JSON.stringify([
+      "matrix-platform-speech-runtime",
+      1,
+      identity.handle,
+      identity.machineId,
+      identity.runtimeSlot,
+    ]))
+    .digest("hex");
+}

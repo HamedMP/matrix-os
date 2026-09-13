@@ -44,6 +44,7 @@ import {
 } from './customer-vps-auth.js';
 import {
   buildPlatformRuntimeVerificationToken,
+  buildPlatformSpeechRuntimeVerificationToken,
   buildPlatformVerificationToken,
 } from './platform-token.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
@@ -253,6 +254,9 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
+  '      MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}',
+  '      MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}',
+  '      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
   '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
@@ -355,6 +359,12 @@ function buildHostConfig(
   postgresPassword: string,
   bundleRef: HostBundleRef,
 ): CustomerHostConfig {
+  const platformInternalUrl = new URL(config.platformRegisterUrl).origin;
+  const runtimeIdentity = {
+    handle: input.handle,
+    machineId,
+    runtimeSlot: input.runtimeSlot,
+  };
   return {
     machineId,
     clerkUserId: input.clerkUserId,
@@ -365,13 +375,12 @@ function buildHostConfig(
     updateChannel: config.imageVersion,
     hostBundleUrl: bundleRef.hostBundleUrl,
     platformRegisterUrl: config.platformRegisterUrl,
-    platformInternalUrl: new URL(config.platformRegisterUrl).origin,
+    platformInternalUrl,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
-    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken({
-      handle: input.handle,
-      machineId,
-      runtimeSlot: input.runtimeSlot,
-    }, config.platformSecret),
+    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken(runtimeIdentity, config.platformSecret),
+    platformSpeechEnabled: String(config.platformSpeechEnabled),
+    platformSpeechOrigin: platformInternalUrl,
+    platformSpeechRuntimeToken: buildPlatformSpeechRuntimeVerificationToken(runtimeIdentity, config.platformSecret),
     registrationToken,
     postgresPassword,
     posthogToken: config.posthogToken,

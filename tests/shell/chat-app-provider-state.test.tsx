@@ -276,7 +276,8 @@ describe("Chat canonical provider state", () => {
     expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Setup" }));
     expect(await screen.findByText("Pi — Disabled in Settings")).toBeVisible();
-    expect(screen.getByPlaceholderText("AI harness unavailable")).toBeDisabled();
+    expect(screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send")).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
   it("renders canonical setup actions for shared Canvas and web desktop Chat", async () => {
@@ -313,7 +314,8 @@ describe("Chat canonical provider state", () => {
     />);
 
     expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
-    expect(screen.getByPlaceholderText("AI harness unavailable")).toBeDisabled();
+    expect(screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send")).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
   it("locks an existing chat to its instance while allowing its model and run controls to change", async () => {

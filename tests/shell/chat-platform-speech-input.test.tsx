@@ -139,6 +139,9 @@ describe("shared chat platform speech input", () => {
 
     const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
     await waitFor(() => expect(textarea.value).toBe("spoken addition"));
+    expect(textarea.hasAttribute("disabled")).toBe(false);
+    fireEvent.change(textarea, { target: { value: "spoken addition, edited" } });
+    expect(textarea.value).toBe("spoken addition, edited");
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
     expect(onSubmit).not.toHaveBeenCalled();
   });

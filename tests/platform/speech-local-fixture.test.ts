@@ -71,7 +71,8 @@ describe("local speech fixture planning", () => {
       plan.env.PLATFORM_SPEECH_SECRET,
       plan.env.MATRIX_AUTH_TOKEN,
     ])).toHaveLength(4);
-    expect(plan.env.MATRIX_FUNDED_AI_RUNTIME_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+    expect(plan.env.MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+    expect(plan.env.MATRIX_FUNDED_AI_RUNTIME_TOKEN).toBeUndefined();
   });
 
   it("rejects non-loopback PostgreSQL admin URLs before any connection", () => {
