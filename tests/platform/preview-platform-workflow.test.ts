@@ -24,7 +24,6 @@ describe("preview platform workflow", () => {
       join(root, ".github/workflows/preview-platform.yml"),
       "utf8",
     );
-
     expect(workflow).toContain("2>/dev/null || true");
     expect(workflow).toContain('BOOTSTRAP_API_ORIGIN="https://preview-bootstrap.invalid"');
     expect(workflow).toContain('if [ -z "$service_base_url" ]; then');
@@ -46,6 +45,8 @@ describe("preview platform workflow", () => {
       join(root, ".github/workflows/preview-platform.yml"),
       "utf8",
     );
+    const connectJob = workflow.slice(workflow.indexOf("  connect-share-preview:"));
+    const connectJobHeader = connectJob.slice(0, connectJob.indexOf("    steps:"));
 
     expect(workflow).toContain("PLATFORM_SPEECH_ENABLED=true");
     expect(workflow).toContain("PLATFORM_SPEECH_PROVIDER=openai");
@@ -63,6 +64,14 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("preview-runtime-access");
     expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
     expect(workflow).toContain("openssl pkeyutl -decrypt");
+    expect(connectJobHeader).not.toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
+    expect(connectJob.indexOf("pnpm install --frozen-lockfile --filter . --ignore-scripts"))
+      .toBeLessThan(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"));
+    expect(connectJob.indexOf("Register only the PR preview route in staging"))
+      .toBeLessThan(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"));
+    expect(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"))
+      .toBeLessThan(connectJob.indexOf("Enable the existing tagged host without moving traffic"));
+    expect(workflow).toContain("trap 'rm -f preview-share-route.json' EXIT");
     expect(workflow).toContain("metadata.st_gid");
     expect(workflow).not.toContain("os.fchown(fd, 0, 0)");
     expect(workflow).not.toContain("PRODUCTION_PLATFORM_SECRET");
@@ -79,6 +88,10 @@ describe("preview platform workflow", () => {
 
   it("publishes only handle-scoped preview runtime access for the connector workflow", () => {
     const workflow = readFileSync(join(root, ".github/workflows/preview-vps.yml"), "utf8");
+    const deployJob = workflow.slice(
+      workflow.indexOf("  deploy:"),
+      workflow.indexOf("  cleanup-expired:"),
+    );
 
     expect(workflow).toContain("preview-runtime-access.enc");
     expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64");
@@ -86,5 +99,6 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain("terminalToken");
     expect(workflow).toContain("name: preview-runtime-access-");
     expect(workflow).toContain("retention-days: 1");
+    expect(deployJob).not.toContain("environment: Preview");
   });
 });
