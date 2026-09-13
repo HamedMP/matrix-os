@@ -8,7 +8,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main, "stack/**", "codex/**"]
-    types: [labeled, ready_for_review]
+    types: [labeled, ready_for_review, synchronize]
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
@@ -70,6 +70,7 @@ jobs:
         id: changed
         env:
           PR_ACTION: ${{ github.event.action || '' }}
+          PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}
           PR_LABEL_NAME: ${{ github.event.label.name || '' }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -96,7 +97,7 @@ jobs:
           should_run_trigger=true
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             should_run_trigger=false
-            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; }; then
+            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
               should_run_trigger=true
             fi
           fi
@@ -105,7 +106,7 @@ jobs:
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
             echo "os_view_parity_tests=false" >> "$GITHUB_OUTPUT"
-            echo "CI trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually."
+            echo "CI trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually. Later commits rerun automatically while ready-for-ci remains applied."
             exit 0
           fi
 

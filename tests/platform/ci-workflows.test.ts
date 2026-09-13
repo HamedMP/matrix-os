@@ -14,9 +14,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 
-function readChangeDetectionCheckoutRun(root: string): string | undefined {
+function readWorkflowStepRun(
+  root: string,
+  workflowPath: string,
+  stepName: string,
+): string | undefined {
   const workflow = parse(
-    readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'),
+    readFileSync(join(root, workflowPath), 'utf8'),
   ) as {
     jobs?: {
       changes?: {
@@ -29,8 +33,16 @@ function readChangeDetectionCheckoutRun(root: string): string | undefined {
   };
 
   return workflow.jobs?.changes?.steps?.find(
-    (step) => step.name === 'Checkout with bounded retry',
+    (step) => step.name === stepName,
   )?.run;
+}
+
+function readChangeDetectionCheckoutRun(root: string): string | undefined {
+  return readWorkflowStepRun(
+    root,
+    '.github/workflows/ci.yml',
+    'Checkout with bounded retry',
+  );
 }
 
 function runChangeDetectionCheckout(
@@ -111,6 +123,81 @@ fi
   }
 }
 
+function runPullRequestChangeDetection(
+  root: string,
+  workflowPath: string,
+  hasReadyForCi: boolean,
+): {
+  output: string;
+  status: number | null;
+  stderr: string;
+} {
+  const changeDetectionRun = readWorkflowStepRun(
+    root,
+    workflowPath,
+    workflowPath.endsWith('docker-test.yml')
+      ? 'Classify Docker/local-runtime changes'
+      : 'Detect source changes',
+  );
+  if (!changeDetectionRun) {
+    throw new Error(`Missing change-detection step in ${workflowPath}`);
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-ci-pr-trigger-'));
+  const fakeBin = join(tempDir, 'bin');
+  const githubOutput = join(tempDir, 'github-output');
+  mkdirSync(fakeBin);
+  writeFileSync(
+    join(fakeBin, 'git'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "fetch" ]; then
+  exit 0
+fi
+if [ "\${1:-}" = "diff" ]; then
+  if [[ " $* " == *" -z "* ]]; then
+    printf '.github/workflows/docker-test.yml\\0'
+  else
+    printf '.github/workflows/docker-test.yml\\n'
+  fi
+  exit 0
+fi
+echo "unexpected git command: $*" >&2
+exit 64
+`,
+  );
+  chmodSync(join(fakeBin, 'git'), 0o755);
+
+  try {
+    const result = spawnSync('bash', ['-c', changeDetectionRun], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        GITHUB_BASE_REF: 'main',
+        GITHUB_EVENT_BEFORE: '',
+        GITHUB_EVENT_NAME: 'pull_request',
+        GITHUB_OUTPUT: githubOutput,
+        GITHUB_REF: 'refs/pull/1/merge',
+        GITHUB_SHA: '0123456789012345678901234567890123456789',
+        GITHUB_TOKEN: 'test-token',
+        PR_ACTION: 'synchronize',
+        PR_HAS_READY_FOR_CI: String(hasReadyForCi),
+        PR_LABEL_NAME: '',
+      },
+    });
+
+    return {
+      output: existsSync(githubOutput) ? readFileSync(githubOutput, 'utf8') : '',
+      status: result.status,
+      stderr: result.stderr,
+    };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 describe('CI workflows', () => {
   const stripePriceSecrets = [
     [
@@ -133,6 +220,29 @@ describe('CI workflows', () => {
     ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual', 'latest'],
     ['STRIPE_LEGACY_PRICE_CATALOG_JSON', 'stripe-legacy-price-catalog-json', 'latest'],
   ] as const;
+
+  it.each([
+    ['core CI', '.github/workflows/ci.yml'],
+    ['Docker CI', '.github/workflows/docker-test.yml'],
+  ])('reruns %s for each new head while ready-for-ci remains applied', (_name, path) => {
+    const workflow = readFileSync(join(process.cwd(), path), 'utf8');
+
+    expect(workflow).toMatch(/types:\s*\[[^\]]*synchronize[^\]]*\]/);
+    expect(workflow).toContain(
+      "PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}",
+    );
+    expect(workflow).toContain(
+      '[ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]',
+    );
+
+    const unlabeled = runPullRequestChangeDetection(process.cwd(), path, false);
+    expect(unlabeled.status, unlabeled.stderr).toBe(0);
+    expect(unlabeled.output).toContain('should_run=false');
+
+    const labeled = runPullRequestChangeDetection(process.cwd(), path, true);
+    expect(labeled.status, labeled.stderr).toBe(0);
+    expect(labeled.output).toContain('should_run=true');
+  });
 
   it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
     const root = process.cwd();

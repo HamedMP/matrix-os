@@ -336,6 +336,27 @@ describe("terminal workspace gateway routes", () => {
     }
   });
 
+  it("deletes a terminal tab by exact IDs instead of retaining an exited record", async () => {
+    const deleteTab = vi.fn(async () => undefined);
+    const runtime = {
+      listWorkspaces: vi.fn(async () => [workspace]),
+      ensureWorkspace: vi.fn(async () => workspace),
+      createTab: vi.fn(),
+      deleteTab,
+      deletionImpact: vi.fn(async () => ({ runningTabs: 0, tabs: [] })),
+      deleteWorkspace: vi.fn(async () => undefined),
+    };
+    const app = new Hono().route("/api/terminal", createTerminalWorkspaceRoutes({ runtime, ...ownerOptions }));
+    const tabId = "tt_0123456789abcdef0123456789abcdef";
+
+    const response = await app.request(`/api/terminal/workspaces/${workspace.id}/tabs/${tabId}`, {
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(204);
+    expect(deleteTab).toHaveBeenCalledWith({ workspaceId: workspace.id, tabId });
+  });
+
   it("binds a Chat terminal by stable workspace/tab ref and cleans up failed bindings", async () => {
     const tab = {
       id: "tt_0123456789abcdef0123456789abcdef",

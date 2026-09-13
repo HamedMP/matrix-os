@@ -320,6 +320,16 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
+function isMissingZellijSessionFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const commandError = error as Error & { stderr?: unknown; stdout?: unknown };
+  const diagnostics = [commandError.stderr, commandError.stdout]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n");
+  return /(?:no active zellij sessions found|\bsession\b.*\b(?:not found|does not exist)\b)/i
+    .test(diagnostics);
+}
+
 export function createUserSystemdTerminalRuntime(options: {
   homePath: string;
   uid?: number;
@@ -608,10 +618,7 @@ export function createUserSystemdTerminalRuntime(options: {
         timeoutMs: SYSTEMCTL_TIMEOUT_MS,
       });
     } catch (err: unknown) {
-      const code: unknown = err instanceof Error && "code" in err
-        ? (err as { code?: unknown }).code
-        : undefined;
-      if (code !== 2 && code !== "2") throw new TerminalRuntimeUnavailableError(err);
+      if (!isMissingZellijSessionFailure(err)) throw new TerminalRuntimeUnavailableError(err);
     }
   }
 

@@ -594,7 +594,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     try {
       const workspace = await ensureWorkspaceForCwd(requestedCwd);
       if (!workspace) return null;
-      const name = label.trim() || terminalSessionName();
+      const name = terminalSessionName(label);
       const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${workspace.id}/tabs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -626,7 +626,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         // duplicating it or relying on an ephemeral mount to load inventory.
         return enqueueExistingTerminalRef(terminalKey) ? terminalKey : null;
       }
-      addSessionTab(label, terminalKey, requestedCwd, {
+      addSessionTab(name, terminalKey, requestedCwd, {
         ...(options.agent ? { agent: options.agent } : {}),
         compatMode: options.compatMode,
         legacyCompat: false,

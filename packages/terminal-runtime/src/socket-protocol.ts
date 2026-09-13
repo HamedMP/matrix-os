@@ -58,6 +58,7 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
     }).strict(),
   }).strict(),
   z.object({ ...RequestBase, operation: z.literal("TerminateTab"), input: TerminalRefSchema }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("DeleteTab"), input: TerminalRefSchema }).strict(),
   z.object({
     ...RequestBase,
     operation: z.literal("PaneAction"),

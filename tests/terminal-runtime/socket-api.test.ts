@@ -98,12 +98,14 @@ describe("terminal runtime Unix socket API", () => {
       updatedAt: workspace.updatedAt,
     };
     const paneAction = vi.fn(async () => undefined);
+    const deleteTab = vi.fn(async () => undefined);
     const server = new TerminalRuntimeSocketServer({
       socketPath,
       runtime: {
         listWorkspaces: async () => [workspace],
         ensureWorkspace: async () => workspace,
         createTab: async () => tab,
+        deleteTab,
         paneAction,
         getSnapshot: async () => socketSnapshot,
         resize: async () => ({ ...workspace, tabs: [tab] }),
@@ -145,6 +147,8 @@ describe("terminal runtime Unix socket API", () => {
       { workspaceId: workspace.id, tabId: created.id },
       { type: "focus", direction: "right" },
     );
+    await client.deleteTab({ workspaceId: workspace.id, tabId: created.id });
+    expect(deleteTab).toHaveBeenCalledWith({ workspaceId: workspace.id, tabId: created.id });
     const servedSnapshot = await client.getSnapshot({ workspaceId: workspace.id, tabId: created.id });
     expect((servedSnapshot as typeof socketSnapshot).ansi).toHaveLength(socketSnapshotAnsi.length);
     expect((servedSnapshot as typeof socketSnapshot).scrollback[0]).toHaveLength(socketSnapshotAnsi.length);
@@ -267,6 +271,81 @@ describe("terminal runtime Unix socket API", () => {
     });
     expect(frames.filter((frame) => frame.type === "output").map((frame) => frame.seq))
       .toEqual([42, 43]);
+    stream.close();
+    await server.close();
+  });
+
+  it("completes replay framing when a new tab has no snapshot", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-empty-replay-"));
+    directories.push(directory);
+    const socketPath = join(directory, "terminal-runtime.sock");
+    const terminalRef = {
+      workspaceId: "tws_0123456789abcdef0123456789abcdef",
+      tabId: "tt_0123456789abcdef0123456789abcdef",
+    };
+    const tab = {
+      id: terminalRef.tabId,
+      workspaceId: terminalRef.workspaceId,
+      name: "main",
+      cwd: "",
+      status: "running" as const,
+      revision: 1,
+      order: 0,
+      createdAt: "2026-08-11T12:00:00.000Z",
+      updatedAt: "2026-08-11T12:00:00.000Z",
+    };
+    const workspace = {
+      id: terminalRef.workspaceId,
+      scope: "main" as const,
+      canonicalSize: { cols: 120, rows: 36 },
+      status: "running" as const,
+      revision: 1,
+      createdAt: tab.createdAt,
+      updatedAt: tab.updatedAt,
+      tabs: [tab],
+    };
+    const server = new TerminalRuntimeSocketServer({
+      socketPath,
+      runtime: {
+        listWorkspaces: async () => [workspace],
+        ensureWorkspace: async () => workspace,
+        createTab: async () => tab,
+        getSnapshot: async () => undefined,
+        resize: async () => workspace,
+        attach: async () => ({
+          write: async () => undefined,
+          touch: () => undefined,
+          detach: async () => undefined,
+        }),
+        updateTabUiState: async () => tab,
+      },
+    });
+    await server.start();
+    const client = new TerminalRuntimeSocketClient({ socketPath });
+    const frames: Array<{ type: string; toSeq?: number | null }> = [];
+    const replayCompleted = Promise.withResolvers<void>();
+    const stream = client.attach({
+      ref: terminalRef,
+      viewerId: "desktop-empty-replay-test",
+      fromSeq: 0,
+      mode: "soft",
+      size: { cols: 120, rows: 36 },
+      onFrame: (frame) => {
+        frames.push(frame);
+        if (frame.type === "replay-end") replayCompleted.resolve();
+      },
+      onClose: () => undefined,
+      onError: replayCompleted.reject,
+    });
+
+    await replayCompleted.promise;
+
+    expect(frames.map((frame) => frame.type).slice(0, 3)).toEqual([
+      "attached",
+      "replay-start",
+      "replay-end",
+    ]);
+    expect(frames[2]).toMatchObject({ type: "replay-end", toSeq: null });
     stream.close();
     await server.close();
   });

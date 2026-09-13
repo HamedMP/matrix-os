@@ -232,6 +232,64 @@ describe("agent-session-manager", () => {
       .resolves.toBe(false);
   });
 
+  it("ignores active legacy sessions without terminal refs during attachment authorization", async () => {
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_legacy.json"), {
+      id: "sess_legacy",
+      kind: "agent",
+      runtime: {
+        type: "zellij",
+        status: "running",
+        zellijSession: "legacy-agent-session",
+      },
+      ownerId: "user_a",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      lastActivityAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, {
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    })).resolves.toBe(false);
+
+    const { manager } = createManager();
+    const started = await manager.startSession({
+      kind: "agent",
+      agent: "codex",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+    if (!started.ok) throw new Error("Expected session startup");
+
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, started.session.terminalRef))
+      .resolves.toBe(true);
+  });
+
+  it("fails closed when an active session has a malformed terminal ref", async () => {
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_malformed.json"), {
+      id: "sess_malformed",
+      kind: "agent",
+      runtime: {
+        type: "zellij",
+        status: "running",
+      },
+      terminalRef: {
+        workspaceId: "tws_00000000000000000000000000000001",
+        tabId: "tt_00000000000000000000000000000001",
+        unexpected: "field",
+      },
+      ownerId: "user_a",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      lastActivityAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, {
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    })).rejects.toThrow();
+  });
+
   it("includes bounded structured attachments in the agent launch prompt", async () => {
     const { manager, agentLauncher } = createManager();
 

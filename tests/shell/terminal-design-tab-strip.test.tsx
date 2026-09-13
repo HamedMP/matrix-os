@@ -90,6 +90,16 @@ async function flushAsync(times = 3) {
   });
 }
 
+function createdTabNameFromRequest(): string {
+  const createCall = vi.mocked(fetch).mock.calls.find(([input, init]) => (
+    String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST"
+  ));
+  expect(createCall).toBeDefined();
+  const body = JSON.parse(String(createCall?.[1]?.body)) as { name?: unknown };
+  expect(typeof body.name).toBe("string");
+  return body.name as string;
+}
+
 describe("TerminalApp per-design interior chrome", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
@@ -246,7 +256,8 @@ describe("TerminalApp per-design interior chrome", () => {
       String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST"
     ))).toBe(true);
 
-    const shellTab = within(tablist).getByRole("tab", { name: "Shell" });
+    const createdTabName = createdTabNameFromRequest();
+    const shellTab = within(tablist).getByRole("tab", { name: createdTabName });
     expect(shellTab.getAttribute("aria-selected")).toBe("true");
     expect(canvasTab.getAttribute("aria-selected")).toBe("false");
 
@@ -255,7 +266,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
     fireEvent.click(within(tablist).getByRole("button", { name: "Close Canvas Terminal" }));
     expect(within(tablist).queryByRole("tab", { name: "Canvas Terminal" })).toBeNull();
-    expect(within(tablist).getByRole("tab", { name: "Shell" }).getAttribute("aria-selected")).toBe("true");
+    expect(within(tablist).getByRole("tab", { name: createdTabName }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("requests xterm focus for changed, repeated, and replacement tab activation", async () => {
@@ -279,6 +290,7 @@ describe("TerminalApp per-design interior chrome", () => {
     await flushAsync();
 
     const afterCreate = readGridProps();
+    const createdTabName = createdTabNameFromRequest();
     expect(afterCreate.focusRequestId).toBeGreaterThan(initialRequest);
     expect(afterCreate.focusedPaneId).toBe(afterCreate.paneTree.id);
 
@@ -294,7 +306,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
     fireEvent.click(within(tablist).getByRole("button", { name: "Close Canvas Terminal" }));
     const afterClose = readGridProps();
-    expect(within(tablist).getByRole("tab", { name: "Shell" }).getAttribute("aria-selected")).toBe("true");
+    expect(within(tablist).getByRole("tab", { name: createdTabName }).getAttribute("aria-selected")).toBe("true");
     expect(afterClose.focusRequestId).toBeGreaterThan(afterRepeatedActivation.focusRequestId);
     expect(afterClose.focusedPaneId).toBe(afterClose.paneTree.id);
   });
@@ -333,6 +345,7 @@ describe("TerminalApp per-design interior chrome", () => {
       await Promise.resolve();
     });
     await flushAsync();
+    const createdTabName = createdTabNameFromRequest();
 
     const chevron = screen.getByRole("button", { name: "Open tab list" });
     expect(chevron.getAttribute("aria-expanded")).toBe("false");
@@ -341,7 +354,7 @@ describe("TerminalApp per-design interior chrome", () => {
 
     const menu = screen.getByRole("menu", { name: "Open tabs" });
     const items = within(menu).getAllByRole("menuitemradio");
-    expect(items.map((item) => item.textContent)).toEqual(["Canvas Terminal", "Shell"]);
+    expect(items.map((item) => item.textContent)).toEqual(["Canvas Terminal", createdTabName]);
     expect(items[1].getAttribute("aria-checked")).toBe("true");
 
     fireEvent.click(items[0]);

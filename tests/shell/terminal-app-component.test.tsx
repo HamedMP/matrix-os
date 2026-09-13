@@ -225,15 +225,21 @@ describe("TerminalApp workspace contract", () => {
       if (url.endsWith("/api/files/tree")) return json([]);
       return json({});
     });
-    render(<TerminalApp initialSessionId={REF_KEY} />);
+    render(<TerminalApp initialSessionId={REF_KEY} desktopParity />);
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "New shell session" }));
     await settle();
 
-    expect(vi.mocked(fetch).mock.calls).toContainEqual([
-      expect.stringContaining(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`),
-      expect.objectContaining({ method: "POST" }),
-    ]);
+    const createCall = vi.mocked(fetch).mock.calls.find(([input, init]) => (
+      String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`)
+      && init?.method === "POST"
+    ));
+    expect(createCall).toBeDefined();
+    const requestBody = JSON.parse(String(createCall?.[1]?.body)) as { name: string };
+    expect(requestBody).toMatchObject({
+      name: expect.stringMatching(/^[a-z]+-[a-z]+$/),
+    });
+    expect(screen.queryByText(requestBody.name)).not.toBeNull();
   });
 
   it("creates queued runtime launches as canonical workspace tabs", async () => {
