@@ -495,35 +495,11 @@ jobs:
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       EXPECTED_HEAD_SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
-      PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64: ${{ secrets.PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64 }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
         with:
           name: preview-share-route
-      - name: Decrypt and validate handle-scoped preview runtime access
-        run: |
-          set -euo pipefail
-          if [ -z "${PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64:-}" ]; then
-            echo "Preview runtime handoff decryption is not configured." >&2
-            exit 1
-          fi
-          private_key=/tmp/preview-runtime-handoff-private.pem
-          printf '%s' "$PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64" | base64 --decode > "$private_key"
-          chmod 600 "$private_key"
-          openssl pkey -in "$private_key" -noout
-          openssl pkeyutl -decrypt -inkey "$private_key" \
-            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
-            -in preview-share-route.enc -out preview-share-route.json
-          rm -f "$private_key" preview-share-route.enc
-          chmod 600 preview-share-route.json
-          jq -e --arg handle "pr-$PR_NUMBER" '
-            type == "object"
-            and keys == ["address", "handle", "token"]
-            and .handle == $handle
-            and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
-            and (.token | type == "string" and test("^[a-f0-9]{64}$"))
-          ' preview-share-route.json >/dev/null
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -548,9 +524,36 @@ jobs:
           preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
           PREVIEW_DATABASE_URL="$preview_db" node scripts/chat-share-preview-fixture.mjs
+      - name: Decrypt and validate handle-scoped preview runtime access
+        env:
+          PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64: ${{ secrets.PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64:-}" ]; then
+            echo "Preview runtime handoff decryption is not configured." >&2
+            exit 1
+          fi
+          private_key=/tmp/preview-runtime-handoff-private.pem
+          trap 'rm -f "$private_key"' EXIT
+          printf '%s' "$PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64" | base64 --decode > "$private_key"
+          chmod 600 "$private_key"
+          openssl pkey -in "$private_key" -noout
+          openssl pkeyutl -decrypt -inkey "$private_key" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -in preview-share-route.enc -out preview-share-route.json
+          rm -f preview-share-route.enc
+          chmod 600 preview-share-route.json
+          jq -e --arg handle "pr-$PR_NUMBER" '
+            type == "object"
+            and keys == ["address", "handle", "token"]
+            and .handle == $handle
+            and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            and (.token | type == "string" and test("^[a-f0-9]{64}$"))
+          ' preview-share-route.json >/dev/null
       - name: Enable the existing tagged host without moving traffic
         run: |
           set -euo pipefail
+          trap 'rm -f preview-share-route.json' EXIT
           gcloud help run services describe >/dev/null
           gcloud help run revisions describe >/dev/null
           gcloud help run deploy >/dev/null
