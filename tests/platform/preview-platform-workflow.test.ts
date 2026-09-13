@@ -61,19 +61,26 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25");
     expect(workflow).toContain("PLATFORM_SPEECH_PREVIEW_NOT_AFTER");
     expect(workflow).toContain("preview-runtime-access");
+    expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
+    expect(workflow).toContain("openssl pkeyutl -decrypt");
     expect(workflow).toContain("metadata.st_gid");
     expect(workflow).not.toContain("os.fchown(fd, 0, 0)");
     expect(workflow).not.toContain("PRODUCTION_PLATFORM_SECRET");
     expect(workflow).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
     expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
     expect(workflow).toContain("/speech/capabilities?runtimeSlot=");
+    expect(workflow).toContain("/api/speech/capabilities");
+    expect(workflow).toContain("EXPECTED_HEAD_SHA");
+    expect(workflow).toContain("expected_image=");
   });
 
   it("publishes only handle-scoped preview runtime access for the connector workflow", () => {
     const workflow = readFileSync(join(root, ".github/workflows/preview-vps.yml"), "utf8");
 
-    expect(workflow).toContain("preview-runtime-access.json");
-    expect(workflow).toContain("terminalToken");
+    expect(workflow).toContain("preview-runtime-access.enc");
+    expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64");
+    expect(workflow).toContain("openssl pkeyutl -encrypt");
+    expect(workflow).not.toContain("terminalToken");
     expect(workflow).toContain("name: preview-runtime-access-");
     expect(workflow).toContain("retention-days: 1");
   });
