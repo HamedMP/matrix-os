@@ -351,3 +351,24 @@ describe("coding agent turn dispatch", () => {
     }
   });
 });
+
+it("preserves uncertain background delivery during full provider-store shutdown", async () => {
+  const resumeTurn = vi.fn(() => new Promise<any>(() => undefined));
+  const provider: CodingAgentProviderAdapter = {
+    providerId: "codex",
+    startThread: context => {
+      const initial = completedStart(id => `sess_${id.slice(7)}`)(context) as any;
+      return { ...initial, resumeState: { ...initial.resumeState, backgroundRef: { id: "bg_00000000000000000000000000000001" } } };
+    }, resumeTurn,
+  };
+  const harness = await createTurnHarness({ provider });
+  try {
+    await harness.threads.acceptTurn(ownerPrincipal, harness.threadId, { message: "Continue", clientRequestId: "req_shutdown_pending" });
+    await vi.waitFor(() => expect(resumeTurn).toHaveBeenCalledOnce());
+    await harness.threads.shutdownTurns();
+    const saved = JSON.parse(await readFile(join(harness.homePath, "system/coding-agents/threads.json"), "utf8"));
+    expect(saved.threads[0].status).toBe("running");
+    expect(saved.threads[0].activeTurnId).toBeTruthy();
+    expect(saved.turns[0].status).toBe("running");
+  } finally { await harness.cleanup(); }
+});

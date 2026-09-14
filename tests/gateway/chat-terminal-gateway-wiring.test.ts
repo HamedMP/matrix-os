@@ -376,6 +376,7 @@ describe("createGateway Chat terminal production wiring", () => {
           sessions: [
             { id: "sess_bound", terminalRef: boundRef },
             { id: "sess_manual", terminalRef: manualRef },
+            { id: "sess_background", runtime: { type: "background", status: "running" } },
           ],
         })),
       } as never,

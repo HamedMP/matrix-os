@@ -7,9 +7,16 @@ import { defaultAbortEvents } from "./thread-fallback-events.js";
 import type { StoredThread, StoredThreadState, StoredTurn } from "./thread-store.js";
 
 /** Internal execution fence; absence preserves the public thread-wide cancel API. */
-export type CodingAbortScope = { initialRequestId: string } | { turnId: string };
+export type CodingAbortScope = { initialRequestId: string } | { turnId: string } | { runRequestId: string };
 
 function matchesExecution(thread: StoredThread, state: StoredThreadState, scope: CodingAbortScope): boolean {
+  if ("runRequestId" in scope) {
+    const activeTurn = state.turns.find(turn => turn.ownerId === thread.ownerId && turn.threadId === thread.id
+      && turn.turnId === (thread.activeTurnId ?? thread.deliveredTurnId));
+    if (!activeTurn && (thread.activeTurnId || thread.deliveredTurnId)) throw new Error("Live turn identity unavailable");
+    return activeTurn ? activeTurn.clientRequestId === scope.runRequestId
+      : thread.clientRequestId === scope.runRequestId && !thread.activeTurnId && !thread.deliveredTurnId;
+  }
   if ("turnId" in scope) return (thread.activeTurnId ?? thread.deliveredTurnId) === scope.turnId;
   return thread.clientRequestId === scope.initialRequestId && !thread.activeTurnId && !thread.deliveredTurnId
     && !state.turns.some((turn) => turn.threadId === thread.id && turn.ownerId === thread.ownerId);

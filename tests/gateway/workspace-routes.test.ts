@@ -59,6 +59,14 @@ describe("workspace API routes", () => {
     vi.restoreAllMocks();
   });
 
+  it("rejects the internal background runtime choice on public session creation", async () => {
+    const startSession = vi.fn();
+    const app = createWorkspaceRoutes({ homePath, agentSessionManager: { startSession } as never });
+    const response = await app.request(jsonRequest("/api/sessions", { kind: "agent", agent: "codex", runtimePreference: "background" }));
+    expect(response.status).toBe(400);
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
   it("returns structured generic validation errors for project creation", async () => {
     const app = createWorkspaceRoutes({ homePath });
 

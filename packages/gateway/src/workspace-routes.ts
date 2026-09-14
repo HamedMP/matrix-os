@@ -1,3 +1,4 @@
+import type { BackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -224,6 +225,7 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
 }
 
 export function createWorkspaceRoutes(options: {
+  backgroundRuntime?: BackgroundAgentRuntime;
   homePath: string;
   projectManager?: ProjectManager;
   projectFolders?: ProjectFolders;
@@ -262,6 +264,7 @@ export function createWorkspaceRoutes(options: {
     worktreeManager,
     agentLauncher,
     terminalRuntime,
+    backgroundRuntime: options.backgroundRuntime,
   });
   const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
   const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge();
@@ -825,15 +828,15 @@ export function createWorkspaceRoutes(options: {
       return principalError(c, err);
     }
     try {
-      const boundedSessions = result.sessions.slice(0, 100);
+      const boundedSessions = result.sessions.slice(0, 100).filter((session) => session.runtime?.type !== "background" && session.terminalRef);
       const terminalSessionIds = boundedSessions.map((session) => (
-        `${session.terminalRef.workspaceId}:${session.terminalRef.tabId}`
+        `${session.terminalRef!.workspaceId}:${session.terminalRef!.tabId}`
       ));
       const boundIds = await options.listChatBoundSessionIds(ownerScope, terminalSessionIds);
       const bound = new Set(boundIds.slice(0, 100));
       return c.json({
         sessions: boundedSessions.filter((session) => !bound.has(
-          `${session.terminalRef.workspaceId}:${session.terminalRef.tabId}`,
+          `${session.terminalRef!.workspaceId}:${session.terminalRef!.tabId}`,
         )),
         nextCursor: result.nextCursor,
       });
