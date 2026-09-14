@@ -48,11 +48,13 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
+import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import {
   fitWindowBoundsToWorkArea,
   type FittedWindowBounds,
   type WindowBounds,
 } from "./platform/window-bounds";
+import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
@@ -124,10 +126,7 @@ async function openExternalHttpUrl(url: string): Promise<void> {
 function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const win = new BrowserWindow({
     ...bounds,
-    // Let the renderer's active surface continue beneath the macOS controls
-    // instead of retaining an opaque native title-bar material.
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 14, y: 13 },
+    ...windowChromeOptions(process.platform),
     backgroundColor: "#0e0e13",
     show: false,
     webPreferences: {
@@ -189,6 +188,13 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
+      const failedProtocolRegistrations = registerWindowsProtocolClients(app);
+      if (failedProtocolRegistrations.length > 0) {
+        console.warn(
+          `[main] could not register Windows URL schemes: ${failedProtocolRegistrations.join(", ")}`,
+        );
+      }
+
       // Packaged builds get the icon from build/icon.icns automatically; in dev
       // the dock shows Electron's default icon unless we set the brand icon.
       if (process.platform === "darwin" && !app.isPackaged && app.dock) {

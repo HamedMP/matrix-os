@@ -1,4 +1,5 @@
 import { CornerDownLeft } from "@renderer/lib/hugeicons";
+import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { useMemo, useState } from "react";
 import { Dialog } from "../../design/primitives";
 import { sendKernelMessage } from "../../lib/kernel-wiring";
@@ -84,7 +85,7 @@ function ComposerForm({ onClose }: { onClose: () => void }) {
         >
           Start
           <span className="flex items-center gap-0.5 text-xs opacity-80">
-            ⌘<CornerDownLeft size={11} />
+            {desktopShortcutLabel("")}<CornerDownLeft size={11} />
           </span>
         </button>
       </div>

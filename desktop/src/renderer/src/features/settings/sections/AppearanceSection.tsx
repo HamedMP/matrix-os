@@ -1,4 +1,5 @@
 import { Check, Minus, Plus } from "@renderer/lib/hugeicons";
+import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { Button, IconButton } from "../../../design/primitives";
 import { getThemeVariant, unifiedThemes } from "../../../design/themes";
 import { resolveThemeMode, type ThemeMode } from "../../../design/themes/apply";
@@ -102,7 +103,7 @@ export default function AppearanceSection() {
         <span className="text-sm" style={{ color: "var(--text-secondary)" }}>Zoom</span>
         <div className="flex items-center gap-2">
           <IconButton
-            label="Zoom out (⌘-)"
+            label={`Zoom out (${desktopShortcutLabel("-")})`}
             disabled={zoom <= MIN_ZOOM}
             onClick={() => setZoom(zoom - ZOOM_STEP)}
           >
@@ -115,7 +116,7 @@ export default function AppearanceSection() {
             {Math.round(zoom * 100)}%
           </span>
           <IconButton
-            label="Zoom in (⌘=)"
+            label={`Zoom in (${desktopShortcutLabel("=")})`}
             disabled={zoom >= MAX_ZOOM}
             onClick={() => setZoom(zoom + ZOOM_STEP)}
           >
@@ -126,7 +127,7 @@ export default function AppearanceSection() {
           </Button>
         </div>
         <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-          Zooms the entire interface. ⌘=, ⌘-, and ⌘0 work anywhere in the app.
+          Zooms the entire interface. {desktopShortcutLabel("=")}, {desktopShortcutLabel("-")}, and {desktopShortcutLabel("0")} work anywhere in the app.
         </p>
       </Card>
       <Card>
