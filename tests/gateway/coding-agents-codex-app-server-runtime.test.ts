@@ -288,6 +288,7 @@ describe("Codex app-server control runtime", () => {
       "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-input' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
       "  else if (message.method === 'turn/start') {",
       "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-input' } } }));",
+      "    if (!process.argv.includes('features.default_mode_request_user_input=true')) process.exit(43);",
       "    console.log(JSON.stringify({ id: 'rpc-input-secret', method: 'item/tool/requestUserInput', params: { threadId: 'native-thread-input', turnId: 'native-turn-input', itemId: 'native-item-input', questions: [{ id: 'native-approach', header: 'Approach', question: 'Which approach for /home/matrix/private-question?', options: [{ label: 'Minimal', description: 'Use /home/matrix/private-question.' }], isOther: true, isSecret: false }, { id: 'native-secret', header: 'Secret', question: 'Enter the temporary value.', options: null, isOther: false, isSecret: true }] } }));",
       "  } else if (message.id === 'rpc-input-secret') {",
       "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
