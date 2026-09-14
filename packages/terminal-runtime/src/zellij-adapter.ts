@@ -17,6 +17,7 @@ import {
   TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
 } from "./limits.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
+import { TerminalRuntimeError } from "./errors.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
@@ -770,24 +771,17 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
           binaryPath,
           remainingCommandTimeout(operationDeadline),
         )).trim();
-        const arrayStart = output.indexOf("[");
-        const objectStart = output.indexOf("{");
-        const start = arrayStart < 0
-          ? objectStart
-          : objectStart < 0
-            ? arrayStart
-            : Math.min(arrayStart, objectStart);
-        const end = Math.max(output.lastIndexOf("]"), output.lastIndexOf("}"));
-        if (start < 0 || end < start) {
-          throw new Error("Zellij structured command returned non-JSON output");
-        }
-        return schema.parse(JSON.parse(output.slice(start, end + 1)));
+        // Missing/exited sessions can return exit 0 with a human-readable
+        // inventory. ANSI escapes and prose can contain brackets, including
+        // "[]": extracting a JSON substring would fabricate an empty inventory
+        // and incorrectly retire persisted tabs. Require the whole response.
+        return schema.parse(JSON.parse(output));
       } catch (error) {
         lastError = error;
         await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
       }
     }
-    throw lastError instanceof Error ? lastError : new Error("Zellij structured command failed");
+    throw new TerminalRuntimeError("unavailable", undefined, { cause: lastError });
   }
 
   private async waitForManagedPanes(

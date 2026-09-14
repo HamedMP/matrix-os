@@ -269,6 +269,20 @@ export class TerminalWorkspaceStore {
     });
   }
 
+  async setWorkspaceDegraded(workspaceIdInput: string, degraded: boolean): Promise<void> {
+    const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
+    await this.mutate((state) => {
+      const workspace = state.workspaces[workspaceId];
+      if (!workspace) throw new TerminalRuntimeError("not_found");
+      if (workspace.status === "stopped" || (workspace.status === "degraded") === degraded) return;
+      workspace.status = degraded ? "degraded" : Object.values(workspace.tabs)
+        .some((tab) => tab.status === "running") ? "running" : "starting";
+      workspace.revision += 1;
+      workspace.updatedAt = this.now().toISOString();
+      state.revision += 1;
+    });
+  }
+
   async restoreTabStartupIntent(refInput: TerminalRef, commandInput: string[]): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
     const startupCommand = StartupCommandSchema.parse(commandInput);

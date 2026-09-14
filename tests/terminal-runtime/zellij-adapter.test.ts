@@ -47,6 +47,31 @@ function attachmentRouteHarness(paneId: string) {
 }
 
 describe("Zellij 0.44.3 structured runtime adapter", () => {
+  it.each([
+    "\x1b[32;1mmatrix-session\x1b[0m [Created 2 days ago] (EXITED)",
+    "Session unavailable. Active sessions: []",
+    '[{"tab_id":"invalid","name":"untrusted"}]',
+  ])("rejects invalid structured output as unavailable: %s", async (output) => {
+    const run = vi.fn(async () => output);
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+    await expect(adapter.findTabsByInternalName(
+      "matrix-w-0123456789abcdef0123456789abcdef",
+      ["matrix-tab-0123456789abcdef0123456789abcdef"],
+    )).rejects.toMatchObject({ code: "unavailable", message: "Terminal operation unavailable" });
+    expect(run).toHaveBeenCalledTimes(10);
+  });
+
+  it("retries a transient structured response without treating it as an empty inventory", async () => {
+    const run = vi.fn().mockResolvedValueOnce("Session unavailable. Active sessions: []")
+      .mockResolvedValueOnce("[]");
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+    await expect(adapter.findTabsByInternalName(
+      "matrix-w-0123456789abcdef0123456789abcdef",
+      ["matrix-tab-0123456789abcdef0123456789abcdef"],
+    )).resolves.toEqual({});
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it("propagates one explicit owner runtime environment to attachments", async () => {
     const runtimeEnvironment = {
       HOME: "/home/matrix/home",
