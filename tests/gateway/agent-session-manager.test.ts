@@ -197,6 +197,7 @@ describe("agent-session-manager", () => {
       "tws_00000000000000000000000000000001",
       expect.objectContaining({
         name: "codex",
+        cwd: `projects/repo/worktrees/${worktreeId}`,
         command: expect.arrayContaining(["codex"]),
         agent: { providerId: "codex" },
       }),
@@ -206,6 +207,17 @@ describe("agent-session-manager", () => {
     expect(record.transcriptPath).toBe(join(homePath, "system", "session-output", "sess_abc123.jsonl"));
     expect(record.writeMode).toBe("owner");
     expect(record.ownerId).toBe("user_a");
+  });
+
+  it.each([false, true])("validates the owner-relative runtime cwd (outside home: %s)", async (outside) => {
+    const { manager, terminalRuntime, agentLauncher } = createManager();
+    agentLauncher.buildLaunch.mockReturnValue({
+      command: "codex", args: [], cwd: outside ? join(homePath, "..", "outside") : homePath, env: {},
+    });
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a" });
+    expect(result.ok).toBe(!outside);
+    if (outside) expect(terminalRuntime.createTab).not.toHaveBeenCalled();
+    else expect(terminalRuntime.createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ cwd: "" }));
   });
 
   it("identifies active session-bound terminal refs for attachment authorization", async () => {

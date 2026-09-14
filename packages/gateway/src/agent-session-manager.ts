@@ -8,6 +8,7 @@ import {
   AgentModelOptionSchema,
   ProviderModelReferenceSchema,
   TerminalRefSchema,
+  TerminalTabSchema,
   type AgentAttachment,
   type TerminalRef,
 } from "@matrix-os/contracts";
@@ -443,7 +444,7 @@ export function createAgentSessionManager(options: {
         ];
         const tab = await options.terminalRuntime.createTab(workspace.id, {
           name: request.agent ?? "shell",
-          cwd: launch.cwd,
+          cwd: TerminalTabSchema.shape.cwd.parse(relative(homePath, launch.cwd)),
           command,
           ...(request.agent ? { agent: { providerId: request.agent } } : {}),
         });
