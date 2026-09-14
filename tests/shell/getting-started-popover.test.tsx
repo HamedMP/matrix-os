@@ -110,6 +110,18 @@ describe("web getting started status", () => {
       href: DESKTOP_APP_DOWNLOAD_URL,
       label: "Choose macOS download",
     });
+    expect(resolveDesktopDownloadSuggestion({ platform: "Win32", userAgent: "Windows NT 10.0" }, "arm64")).toEqual({
+      href: DESKTOP_APP_DOWNLOAD_URL,
+      label: "Choose desktop download",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "Linux", userAgent: "X11; Linux" }, "aarch64")).toEqual({
+      href: DESKTOP_APP_DOWNLOAD_URL,
+      label: "Choose desktop download",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "Linux", userAgent: "Linux; Android 14; Pixel 8" }, "x86_64")).toEqual({
+      href: DESKTOP_APP_DOWNLOAD_URL,
+      label: "Choose desktop download",
+    });
     expect(DESKTOP_APP_DOWNLOAD_URL).toBe("https://matrix-os.com/desktop");
   });
 

@@ -44,8 +44,15 @@ export function resolveDesktopDownloadSuggestion(
 ): DesktopDownloadSuggestion {
   const platform = `${identity.platform ?? ""} ${identity.userAgent ?? ""}`.toLowerCase();
   const normalizedArchitecture = architecture?.toLowerCase();
+  const isArm = normalizedArchitecture?.includes("arm") || normalizedArchitecture?.includes("aarch");
+  const fallback = { href: DESKTOP_APP_DOWNLOAD_URL, label: "Choose desktop download" };
+
+  if (/\b(android|iphone|ipad|ipod|mobile)\b/.test(platform)) {
+    return fallback;
+  }
 
   if (platform.includes("win")) {
+    if (isArm) return fallback;
     return { href: directDesktopDownload("windowsX64"), label: "Download for Windows" };
   }
 
@@ -59,11 +66,11 @@ export function resolveDesktopDownloadSuggestion(
     return { href: DESKTOP_APP_DOWNLOAD_URL, label: "Choose macOS download" };
   }
 
-  if (platform.includes("linux") && !platform.includes("arm") && !platform.includes("aarch")) {
+  if (platform.includes("linux") && !isArm && !platform.includes("arm") && !platform.includes("aarch")) {
     return { href: directDesktopDownload("linuxX64"), label: "Download for Linux" };
   }
 
-  return { href: DESKTOP_APP_DOWNLOAD_URL, label: "Choose desktop download" };
+  return fallback;
 }
 
 export type GettingStartedSettingsSection = "integrations" | "agents-providers" | "billing";
