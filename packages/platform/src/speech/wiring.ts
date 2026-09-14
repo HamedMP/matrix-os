@@ -88,6 +88,10 @@ export function createConfiguredPlatformSpeechService(options: {
     db: options.db,
     now: options.now,
     ...config.admission,
+    ...(config.provider === "openai" && config.fundingMode === "preview_no_charge" ? {
+      maximumAdmissionsPerRuntimeLifetime: config.previewMaximumOperationsPerRuntime,
+      admissionsNotAfter: new Date(config.previewNotAfter),
+    } : {}),
   });
   const fingerprintSecret = deriveSecret(config.speechSecret, "fingerprint");
   if (config.provider === "fixture") {
@@ -101,12 +105,14 @@ export function createConfiguredPlatformSpeechService(options: {
   }
   return createPlatformSpeechService({
     operations,
-    funding: createAiFundedSpeechFundingPort({
-      allowedSources: config.allowedFundingSources,
-      credentialHashSecret: deriveSecret(config.speechSecret, "funding"),
-      reservationIdFactory: () => `speech_${randomUUID().replaceAll("-", "")}`,
-      now: options.now,
-    }),
+    funding: config.fundingMode === "preview_no_charge"
+      ? fixtureFunding(deriveSecret(config.speechSecret, "funding"))
+      : createAiFundedSpeechFundingPort({
+        allowedSources: config.allowedFundingSources,
+        credentialHashSecret: deriveSecret(config.speechSecret, "funding"),
+        reservationIdFactory: () => `speech_${randomUUID().replaceAll("-", "")}`,
+        now: options.now,
+      }),
     adapter: createOpenAiFileTranscriptionAdapter({
       apiKey: config.apiKey,
       model: config.model,

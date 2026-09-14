@@ -247,6 +247,7 @@ jobs:
       PREVIEW_INSTALL_TIMEOUT_SECONDS: 600
       HANDLE: ${{ needs.gate.outputs.handle }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
+      PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64: ${{ vars.PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64 }}
     steps:
       - name: Checkout preview source
         if: needs.gate.outputs.action == 'deploy'
@@ -540,6 +541,34 @@ jobs:
             fi
             sleep 15
           done
+
+          if [ -z "${PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64:-}" ]; then
+            echo "Preview runtime handoff encryption is not configured." >&2
+            exit 1
+          fi
+          public_key=/tmp/preview-runtime-handoff-public.pem
+          printf '%s' "$PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64" | base64 --decode > "$public_key"
+          openssl pkey -pubin -in "$public_key" -noout
+          plaintext=/tmp/preview-runtime-access.json
+          jq -cn --arg handle "$HANDLE" --arg address "$address" \
+            '{handle:$handle,address:$address}' > preview-runtime-route.json
+          jq -cn --arg handle "$HANDLE" --arg address "$address" --arg token "$runtime_token" \
+            '{handle:$handle,address:$address,token:$token}' > "$plaintext"
+          openssl pkeyutl -encrypt -pubin -inkey "$public_key" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -in "$plaintext" -out preview-runtime-access.enc
+          rm -f "$plaintext" "$public_key"
+          chmod 600 preview-runtime-access.enc preview-runtime-route.json
+
+      - name: Publish handle-scoped preview runtime access
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-runtime-access-${{ needs.gate.outputs.pr }}
+          path: |
+            preview-runtime-access.enc
+            preview-runtime-route.json
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Comment preview URL on PR
         if: github.event_name == 'pull_request'

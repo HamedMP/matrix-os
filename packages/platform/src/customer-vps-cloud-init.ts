@@ -14,6 +14,9 @@ export interface CustomerHostConfig {
   platformInternalUrl: string;
   platformVerificationToken: string;
   fundedAiRuntimeToken: string;
+  platformSpeechEnabled: string;
+  platformSpeechOrigin: string;
+  platformSpeechRuntimeToken: string;
   registrationToken: string;
   postgresPassword: string;
   posthogToken: string;
@@ -33,6 +36,7 @@ const SECRET_KEYS = [
   'postgresPassword',
   'platformVerificationToken',
   'fundedAiRuntimeToken',
+  'platformSpeechRuntimeToken',
 ] as const;
 const REQUIRED_KEYS = ['hostBundleUrl', ...SECRET_KEYS] as const;
 
