@@ -87,16 +87,18 @@ try {
 }
 
 const configDir = join(homePath, "system", "zellij");
+// Let Zellij load the owner config when present and use defaults on first boot.
+const inheritedEnvironment = { ...process.env };
+delete inheritedEnvironment.ZELLIJ_CONFIG_FILE;
 // Match the gateway adapter: Normal is a typing fallback for old Normal-mode
 // servers and new Locked-mode servers, without changing their initial mode.
 const child = spawn(zellijPath, ["attach", descriptor.sessionName, ...remainingArgs, "options", "--default-mode", "normal"], {
   cwd: homePath,
   env: {
-    ...process.env,
+    ...inheritedEnvironment,
     HOME: homePath,
     MATRIX_HOME: homePath,
     ZELLIJ_CONFIG_DIR: configDir,
-    ZELLIJ_CONFIG_FILE: join(configDir, "config.kdl"),
     TERM: process.env.TERM || "xterm-256color",
     COLORTERM: process.env.COLORTERM || "truecolor",
     XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`,
