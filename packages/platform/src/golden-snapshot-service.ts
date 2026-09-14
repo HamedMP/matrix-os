@@ -324,10 +324,35 @@ runcmd:
         esac
       fi
       callbackToken="$(cat /run/matrix-golden-snapshot-callback-token 2>/dev/null)"
-      printf '{"eventId":"${input.callbackEventId}","phase":"failed","role":"validation","stage":"%s","bundleVersion":"${bundleVersion}","bundleSha256":"${input.bundleSha256}"}\\n' "$reportedStage" >/run/matrix-golden-failure.json
+      python3 - "$reportedStage" /run/matrix-golden-service-diagnostics.json >/run/matrix-golden-failure.json <<'PY'
+    import json
+    import os
+    import sys
+
+    reported_stage, diagnostics_path = sys.argv[1:]
+    payload = {
+        'eventId': '${input.callbackEventId}',
+        'phase': 'failed',
+        'role': 'validation',
+        'stage': reported_stage,
+        'bundleVersion': '${bundleVersion}',
+        'bundleSha256': '${input.bundleSha256}',
+    }
+    if os.path.isfile(diagnostics_path) and not os.path.islink(diagnostics_path):
+        try:
+            with open(diagnostics_path, 'rb') as handle:
+                raw = handle.read(131073)
+            if len(raw) <= 131072:
+                diagnostics = json.loads(raw)
+                if isinstance(diagnostics, dict):
+                    payload['serviceDiagnostics'] = diagnostics
+        except (OSError, ValueError, UnicodeError):
+            print('Golden service diagnostics unavailable; reporting failure stage only', file=sys.stderr)
+    json.dump(payload, sys.stdout, separators=(',', ':'))
+    PY
       printf 'header = "authorization: Bearer %s"\\n' "$callbackToken" |
         curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-failure.json '${input.callbackUrl}'
-      rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-failure.json /run/matrix-golden-validation.json /run/matrix-golden-activation-stage
+      rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-failure.json /run/matrix-golden-validation.json /run/matrix-golden-activation-stage /run/matrix-golden-service-diagnostics.json
       exit "$failureStatus"
     }
     trap reportFailure EXIT
@@ -369,7 +394,7 @@ runcmd:
       curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-validation.json '${input.callbackUrl}'
     failureArmed=0
     trap - EXIT
-    rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-validation.json
+    rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-validation.json /run/matrix-golden-activation-stage /run/matrix-golden-service-diagnostics.json
     exit "$validationStatus"
 `;
 }
