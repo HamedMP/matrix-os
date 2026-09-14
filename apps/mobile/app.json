@@ -94,7 +94,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Voice input for chat messages",
+          "microphonePermission": "Allow Matrix OS to use the microphone for voice input in chat messages.",
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false
         }

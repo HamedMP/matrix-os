@@ -4,6 +4,8 @@ import { parseConfigFileTextToJson } from "typescript";
 
 type MobileAppConfig = {
   expo?: {
+    version?: string;
+    plugins?: Array<string | [string, Record<string, unknown>]>;
     orientation?: string;
     updates?: {
       url?: string;
@@ -157,5 +159,20 @@ describe("mobile over-the-air update configuration", () => {
     expect(easConfig.build?.["development-device"]?.channel).toBe("development");
     expect(easConfig.build?.preview?.channel).toBe("preview");
     expect(easConfig.build?.production?.channel).toBe("production");
+  });
+});
+
+describe("mobile speech recording configuration", () => {
+  it("ships native audio capture behind a new app-version runtime boundary", () => {
+    expect(appConfig.expo?.version).toBe("0.2.3");
+    expect(packageConfig.dependencies?.["expo-audio"]).toBe("~57.0.5");
+    expect(appConfig.expo?.plugins).toContainEqual([
+      "expo-audio",
+      {
+        microphonePermission: "Allow Matrix OS to use the microphone for voice input in chat messages.",
+        enableBackgroundRecording: false,
+        enableBackgroundPlayback: false,
+      },
+    ]);
   });
 });

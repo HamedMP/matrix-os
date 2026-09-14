@@ -21,7 +21,7 @@ flowchart LR
 - `packages/contracts/src/speech/`: versioned capability, request, result, lifecycle event, and safe error schemas. No long-lived key or provider-native event crosses this boundary.
 - `packages/platform/src/speech/`: one service owning provider selection, secrets, policy admission, normalization, cancellation, and settlement. Keep adapters for different capabilities focused; do not force a transcription model to implement conversation tools.
 - `packages/gateway/src/speech/`: thin owner/runtime-authenticated facade and managed platform client. It handles owner file access and canonical chat/tool integration, not provider calls or provider selection.
-- `packages/ui/src/speech/`: shared recording state/controller and Web/Electron components. Surfaces supply authenticated transport, permission adapters, and draft identity. Native Mobile later supplies its own microphone adapter using the same contracts.
+- `packages/ui/src/speech/`: shared recording state/controller, waveform semantics, WAV encoder, and Web/Electron components. Surfaces supply authenticated transport, permission adapters, and draft identity. The follow-on Native Mobile layer supplies an Expo audio adapter while retaining the same lifecycle and contracts.
 - Existing platform AI funding repositories remain the budget source of truth. Extend operation/model policy and verified speech usage; do not build a second wallet or use arbitrary text-token estimates for audio.
 - Provider credentials reside only in platform infrastructure. The runtime facade uses its existing verified machine identity, with a speech-specific capability authorization. It receives neither the OpenAI key nor a broad-purpose provider token.
 

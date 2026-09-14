@@ -7,6 +7,15 @@ import {
 import { buildGatewayRequestUrl } from '../requests/http';
 import type { NativeSpeechRecording } from './capture';
 
+function removeCachedRecording(file: File, retriesRemaining = 1): void {
+  try {
+    if (file.exists) file.delete();
+  } catch (error: unknown) {
+    console.warn('Native speech cache cleanup failed', error instanceof Error ? error.name : 'UnknownError');
+    if (retriesRemaining > 0) setTimeout(() => removeCachedRecording(file, retriesRemaining - 1), 1000);
+  }
+}
+
 export function createNativeSpeechClient(options: { baseUrl: string; runtimeSlot: string; getToken: () => Promise<string | null> }) {
   async function request<T>(path: string, schema: { parse(value: unknown): T }, signal?: AbortSignal, body?: FormData | string, method = 'GET') {
     const controller = new AbortController();
@@ -37,7 +46,7 @@ export function createNativeSpeechClient(options: { baseUrl: string; runtimeSlot
       let offset = 0;
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
       return schema.parse(JSON.parse(new TextDecoder().decode(bytes)));
-    } catch { throw new Error('Speech is unavailable. Try again.'); }
+    } catch (_error: unknown) { throw new Error('Speech is unavailable. Try again.'); }
     finally { clearTimeout(timeout); signal?.removeEventListener('abort', abort); }
   }
   return {
@@ -53,9 +62,9 @@ export function createNativeSpeechClient(options: { baseUrl: string; runtimeSlot
         form.append('requestId', id);
         form.append('recording', file, 'recording.wav');
         return await request('/transcriptions', SpeechTranscriptionResponseSchema, input.signal, form, 'POST');
-      } catch { throw new Error('Speech is unavailable. Try again.'); } finally {
+      } catch (_error: unknown) { throw new Error('Speech is unavailable. Try again.'); } finally {
         input.recording.bytes.fill(0);
-        if (file.exists) file.delete();
+        removeCachedRecording(file);
       }
     },
   };
