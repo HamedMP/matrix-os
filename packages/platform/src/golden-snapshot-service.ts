@@ -27,6 +27,7 @@ const CleanupProviderResourceIdSchema = z.coerce.number().int().positive().max(N
 const SystemdStateSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:@-]+$/);
 export const GoldenSnapshotServiceDiagnosticsSchema = z.object({
   unit: z.enum([
+    'matrix-terminal-runtime.service',
     'matrix-gateway.service',
     'matrix-shell.service',
     'matrix-sync-agent.service',
@@ -82,6 +83,7 @@ const GoldenSnapshotFailureStageSchema = z.enum([
   'activation_postgres_ready',
   'activation_services_start',
   'activation_services_ready',
+  'activation_terminal_runtime_ready',
   'activation_gateway_ready',
   'activation_shell_ready',
   'activation_sync_agent_ready',
@@ -318,7 +320,7 @@ runcmd:
         && [ ! -L /run/matrix-golden-activation-stage ]; then
         activationStage="$(cat /run/matrix-golden-activation-stage)"
         case "$activationStage" in
-          activation_preflight_evidence|activation_preflight_forbidden_state|activation_preflight_host_prerequisites|activation_preflight_user_state|activation_preflight_runtime_state|activation_preflight_owner_state|activation_preflight_root_ssh_state|activation_preflight_root_local_state|activation_preflight_log_state|activation_preflight_cloud_init|activation_preflight_container_state|activation_runtime_setup|activation_terminal_runtime|activation_docker_start|activation_postgres_pull|activation_postgres_start|activation_postgres_ready|activation_services_start|activation_services_ready|activation_gateway_ready|activation_shell_ready|activation_sync_agent_ready|activation_gateway_health) reportedStage="$activationStage" ;;
+          activation_preflight_evidence|activation_preflight_forbidden_state|activation_preflight_host_prerequisites|activation_preflight_user_state|activation_preflight_runtime_state|activation_preflight_owner_state|activation_preflight_root_ssh_state|activation_preflight_root_local_state|activation_preflight_log_state|activation_preflight_cloud_init|activation_preflight_container_state|activation_runtime_setup|activation_terminal_runtime|activation_docker_start|activation_postgres_pull|activation_postgres_start|activation_postgres_ready|activation_services_start|activation_services_ready|activation_terminal_runtime_ready|activation_gateway_ready|activation_shell_ready|activation_sync_agent_ready|activation_gateway_health) reportedStage="$activationStage" ;;
         esac
       fi
       callbackToken="$(cat /run/matrix-golden-snapshot-callback-token 2>/dev/null)"

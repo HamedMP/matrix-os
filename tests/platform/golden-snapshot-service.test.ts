@@ -123,6 +123,7 @@ describe('golden snapshot build service', () => {
       'activation_preflight_cloud_init',
       'activation_preflight_container_state',
       'activation_terminal_runtime',
+      'activation_terminal_runtime_ready',
       'activation_gateway_ready',
       'activation_shell_ready',
       'activation_sync_agent_ready',
@@ -141,10 +142,10 @@ describe('golden snapshot build service', () => {
     }
   });
 
-  it('accepts bounded service diagnostics and rejects oversized journal evidence', () => {
+  it.each(['matrix-gateway.service', 'matrix-terminal-runtime.service'])('accepts bounded %s diagnostics and rejects oversized journal evidence', (unit) => {
     const payload = {
       eventId: randomUUID(), phase: 'failed', role: 'builder', stage: 'activation_gateway_ready',
-      bundleVersion: 'v1', bundleSha256: '1'.repeat(64), serviceDiagnostics,
+      bundleVersion: 'v1', bundleSha256: '1'.repeat(64), serviceDiagnostics: { ...serviceDiagnostics, unit },
     };
 
     expect(GoldenSnapshotCallbackSchema.safeParse(payload).success).toBe(true);
