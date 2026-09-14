@@ -435,6 +435,9 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByRole("option", { name: "GLM 5.3 Flash" })).toBeVisible();
     expect(screen.queryByText("Cloudflare Workers AI")).not.toBeInTheDocument();
     expect(screen.queryByText(/Matrix gateway/i)).not.toBeInTheDocument();
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Ready")).toHaveAttribute("data-state", "ready");
+    expect(within(gateway).queryByText("Matrix AI connection not verified. Check again.")).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Matrix AI · no separate account" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "OpenCode connection" }))
       .toHaveTextContent("Using Matrix AI");
