@@ -669,6 +669,7 @@ jobs:
           send_runtime_command() {
             local body="$1" response="$2"
             curl --fail --silent --show-error --max-time 45 --insecure \
+              --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
               --resolve "app.matrix-os.com:443:${address}" \
               -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
               -H "authorization: Bearer ${terminal_token}" \
