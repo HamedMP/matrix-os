@@ -40,7 +40,7 @@ it("persists exact text deltas atomically and publishes terminal state without r
     parts: [{ type: "text", text: "focus here" }], createdAt: snapshot.chat.createdAt });
   await repository.acceptSteer(owner, { chatId: id, runId: run.id,
     clientRequestId: "req_steer_content", acceptedAt: snapshot.chat.createdAt });
-  for (const delta of ["hello", " world"]) {
+  for (const delta of ["hello", "\n", " world"]) {
     await repository.appendAssistantDelta(owner, {
       chatId: id, runId: run.id, messageId: "msg_content", delta, createdAt: snapshot.chat.createdAt,
     });
@@ -48,9 +48,9 @@ it("persists exact text deltas atomically and publishes terminal state without r
   const events = await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 });
   const content = events.filter((event) => event.eventType === "run.message")
     .map((event) => CanonicalChatContentSchema.parse(event.payload.streamContent));
-  expect(content.map((c) => c.messageDelta?.offset)).toEqual([0, 5]);
+  expect(content.map((c) => c.messageDelta?.offset)).toEqual([0, 5, 6]);
   expect(content.map((c) => c.messageDelta?.message.parts)).toEqual([
-    [{ type: "text", text: "hello" }], [{ type: "text", text: " world" }],
+    [{ type: "text", text: "hello" }], [{ type: "text", text: "\n" }], [{ type: "text", text: " world" }],
   ]);
   await repository.finishRun(owner, { chatId: id, runId: run.id, outcome: "completed", completedAt: snapshot.chat.createdAt });
   const completed = (await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 })).at(-1)!;
