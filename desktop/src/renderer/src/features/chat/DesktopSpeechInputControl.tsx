@@ -4,6 +4,7 @@ import {
   createWebPcmSpeechCaptureAdapter,
   PlatformSpeechRecorderError,
   resolveSpeechWorkletUrl,
+  SpeechInputWaveform,
   usePlatformSpeechDraft,
   type BrowserSpeechClient,
   type PlatformSpeechCaptureAdapter,
@@ -66,9 +67,12 @@ export function DesktopSpeechInputControl({
         </span>
       ) : null}
       {speech.phase === "recording" ? (
-        <span aria-live="polite" className="px-1 text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-          {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
-        </span>
+        <>
+          <SpeechInputWaveform level={speech.inputLevel} className="mx-1 text-[var(--danger)]" />
+          <span aria-live="polite" className="px-1 text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+            {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
+          </span>
+        </>
       ) : null}
       <button
         type="button"
