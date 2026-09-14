@@ -113,12 +113,12 @@
 
 ### Tests first — M2 / PR3
 
-- [ ] T051 [P] [US3] (PR3) Write red real-Postgres tests for idle/busy admission, immutable order, 32 pending, actor-scoped IDs, and one active run in `tests/gateway/collaboration-chat-queue.test.ts`
-- [ ] T052 [P] [US3] (PR3) Write red reauthorization, competing approval, owner/editor cancel/retry, attempt lineage, and restart/unknown-outcome tests in `tests/gateway/collaboration-chat-controls.test.ts`
+- [x] T051 [P] [US3] (PR3) Write red real-Postgres tests for idle/busy admission, immutable order, 32 pending, actor-scoped IDs, and one active run in `tests/gateway/collaboration-chat-queue.test.ts`
+- [x] T052 [P] [US3] (PR3) Write red reauthorization, competing approval, owner/editor cancel/retry, attempt lineage, and restart/unknown-outcome tests in `tests/gateway/collaboration-chat-controls.test.ts`
 
 ### Implementation — M2 / PR3
 
-- [ ] T053 [US3] (PR3) Extend the canonical queue to shared idle/busy admission, 32 pending, immutable accepted sequence, actor/hash/epoch fields, and existing one-run guard in `packages/gateway/src/chat/queue-repository.ts`
+- [x] T053 [US3] (PR3) Extend the canonical queue to shared idle/busy admission, 32 pending, immutable accepted sequence, actor/hash/epoch fields, and existing one-run guard in `packages/gateway/src/chat/queue-repository.ts`
 - [ ] T054 [US3] (PR3) Implement durable approval/cancel/retry command claims, attribution, and distinct attempts in `packages/gateway/src/chat/collaboration-commands.ts`
 - [ ] T055 [US3] (PR3) Reauthorize original actors before claim/dispatch and preserve explicit unauthorized/unavailable/interrupted outcomes in `packages/gateway/src/chat/orchestrator.ts`
 - [ ] T056 [US3] (PR3) Wire PR2 scoped execution context and provenance into the canonical Chat adapter in `packages/gateway/src/collaboration/chat-execution-adapter.ts`

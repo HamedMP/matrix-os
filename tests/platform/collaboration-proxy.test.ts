@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
-import { CollaborationProxy, parseCollaborationProxyRoute } from "../../packages/platform/src/collaboration/proxy.js";
+import {
+  CollaborationProxy,
+  collaborationMilestoneForRoute,
+  parseCollaborationProxyRoute,
+} from "../../packages/platform/src/collaboration/proxy.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import {
   createPlatformCollaborationTestDatabase,
@@ -63,6 +67,7 @@ describe("CollaborationProxy", () => {
         ? { runtimeId, ownerId: platformCollaborationActors.owner, baseUrl: "https://owner-runtime.internal" }
         : null,
       fetchImpl,
+      now: () => now,
     });
   });
 
@@ -169,6 +174,74 @@ describe("CollaborationProxy", () => {
       .toEqual({ kind: "scope", identifier: scopeId });
     expect(parseCollaborationProxyRoute("GET", `/api/collaboration/scopes/${scopeId}/exports/${operationId}/raw`))
       .toBeNull();
+  });
+
+  it("classifies shared AI routes under M2 without moving discussion off M1", () => {
+    const requestId = "qturn_shared_request_1";
+    const approvalId = "approval_shared_request_1";
+    expect(collaborationMilestoneForRoute("GET", `/api/collaboration/scopes/${scopeId}/chat/messages`))
+      .toBe("m1");
+    expect(collaborationMilestoneForRoute("GET", `/api/collaboration/scopes/${scopeId}/chat/requests`))
+      .toBe("m2");
+    expect(collaborationMilestoneForRoute("POST", `/api/collaboration/scopes/${scopeId}/chat/requests`))
+      .toBe("m2");
+    expect(collaborationMilestoneForRoute(
+      "POST",
+      `/api/collaboration/scopes/${scopeId}/chat/requests/${requestId}/cancel`,
+    )).toBe("m2");
+    expect(collaborationMilestoneForRoute(
+      "POST",
+      `/api/collaboration/scopes/${scopeId}/chat/requests/${requestId}/retry`,
+    )).toBe("m2");
+    expect(collaborationMilestoneForRoute(
+      "POST",
+      `/api/collaboration/scopes/${scopeId}/chat/approvals/${approvalId}/decision`,
+    )).toBe("m2");
+  });
+
+  it("keeps M2 AI routes disabled independently from M1 discussion", async () => {
+    const path = `/api/collaboration/scopes/${scopeId}/chat/requests`;
+    const body = new TextEncoder().encode(JSON.stringify({
+      clientRequestId: "40000000-0000-4000-8000-000000000011",
+      expectedRevision: "1",
+      text: "Summarize our discussion",
+    }));
+    const disabled = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "POST",
+      path,
+      query: "",
+      body,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    expect(disabled.status).toBe(404);
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    await repository.setPolicy({
+      milestone: "m2",
+      expectedRevision: 0,
+      mode: "internal",
+      cohort: [platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer],
+      changedBy: "operator_test",
+    });
+    const enabled = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "POST",
+      path,
+      query: "",
+      body,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    expect(enabled.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const policyHeader = new Headers(init.headers).get("x-matrix-collaboration-policy");
+    expect(policyHeader).toMatch(/^[A-Za-z0-9_-]+$/);
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
+    });
+    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8"))))
+      .toMatchObject({ milestone: "m2", mode: "internal" });
   });
 
   it("streams a completed owner export without applying the JSON API buffer limit", async () => {

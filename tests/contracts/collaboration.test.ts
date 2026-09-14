@@ -1,5 +1,8 @@
 import {
   CollaborationActorProofSchema,
+  CollaborationAiRequestSchema,
+  CollaborationApprovalDecisionRequestSchema,
+  CollaborationCreateAiRequestSchema,
   CollaborationCapabilityModeSchema,
   CollaborationConnectionTicketRequestSchema,
   CollaborationDiscoveryResponseSchema,
@@ -348,5 +351,38 @@ describe("collaboration contracts", () => {
       actor: { actorId: "user_editor", displayName: "Ada" },
       parts: [{ type: "text", text: "Ship it" }], createdAt: now,
     })).toMatchObject({ actor: { displayName: "Ada" }, purpose: "discussion" });
+  });
+
+  it("keeps shared AI admission and control actor-free and scope bounded", () => {
+    expect(CollaborationCreateAiRequestSchema.parse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      text: "Run the release checks",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    })).toMatchObject({ text: "Run the release checks" });
+    expect(CollaborationCreateAiRequestSchema.safeParse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      text: "Run the release checks",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      actorId: "user_editor",
+    }).success).toBe(false);
+    expect(CollaborationApprovalDecisionRequestSchema.parse({
+      clientRequestId: requestId,
+      expectedRevision: "5",
+      runId: "run_shared_1",
+      decision: "approve",
+    })).toMatchObject({ decision: "approve" });
+    expect(CollaborationAiRequestSchema.parse({
+      id: "qturn_shared_1",
+      chatId: "chat_release",
+      acceptedSequence: "1",
+      actor: { actorId: "user_editor", displayName: "Ada" },
+      state: "queued",
+      text: "Run the release checks",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      acceptedAt: now,
+      updatedAt: now,
+    })).toMatchObject({ state: "queued", actor: { displayName: "Ada" } });
   });
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   CanonicalChatIdSchema,
   CanonicalChatMessageSchema,
@@ -8,6 +9,8 @@ import {
   CanonicalChatRunSchema,
   CanonicalChatTurnSchema,
   CanonicalOwnerScopeSchema,
+  CollaborationActorIdSchema,
+  CollaborationIdSchema,
   type CanonicalChatExecutionRootRef,
   type CanonicalChatQueuedTurn,
   type CanonicalChatMessage,
@@ -18,6 +21,7 @@ import {
   type CanonicalUpdateQueuedChatTurnRequest,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
+import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import type {
   ChatDatabase,
   ChatQueuedTurnsTable,
@@ -36,6 +40,7 @@ import {
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 const MAX_QUEUED_TURNS = 20;
+const MAX_SHARED_PENDING_TURNS = 32;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
 
 export interface EnqueueQueuedTurnInput {
@@ -101,6 +106,44 @@ export interface ClaimedQueuedTurn {
   queueDepth: number;
 }
 
+export interface EnqueueSharedQueuedTurnInput extends Omit<EnqueueQueuedTurnInput, "baseRevision" | "createdAt"> {
+  scopeId: string;
+  requestingActorId: string;
+  acceptedAuthEpoch: number;
+  payloadHash: string;
+  expectedRevision: number;
+  acceptedAt: string;
+  retryOfQueuedTurnId?: string;
+}
+
+export interface SharedQueuedTurn {
+  id: string;
+  chatId: string;
+  scopeId: string;
+  clientRequestId: string;
+  requestingActorId: string;
+  acceptedSequence: number;
+  acceptedAuthEpoch: number;
+  retryOfRequestId?: string;
+  state: "queued" | "claimed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
+  parts: CanonicalQueueChatTurnRequest["parts"];
+  selection: CanonicalQueueChatTurnRequest["selection"];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnqueuedSharedQueuedTurn extends SharedQueuedTurn {
+  pendingCount: number;
+  alreadyAccepted: boolean;
+}
+
+export class SharedChatQueueError extends Error {
+  constructor(readonly code: "capacity" | "conflict" | "forbidden" | "not_found" | "unavailable") {
+    super("Shared Chat queue unavailable");
+    this.name = "SharedChatQueueError";
+  }
+}
+
 export function toQueuedTurn(row: Selectable<ChatQueuedTurnsTable>): CanonicalChatQueuedTurn {
   return CanonicalChatQueuedTurnSchema.parse({
     id: row.id,
@@ -143,6 +186,153 @@ export class ChatQueueRepository {
       payload: Record<string, unknown>,
     ) => Promise<void>,
   ) {}
+
+  async enqueueShared(
+    ownerInput: ChatOwner,
+    input: EnqueueSharedQueuedTurnInput,
+  ): Promise<EnqueuedSharedQueuedTurn> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    const scopeId = CollaborationIdSchema.parse(input.scopeId);
+    const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(input.queuedTurnId);
+    const retryOfQueuedTurnId = input.retryOfQueuedTurnId === undefined
+      ? undefined
+      : CanonicalChatQueuedTurnIdSchema.parse(input.retryOfQueuedTurnId);
+    const clientRequestId = CollaborationIdSchema.parse(input.clientRequestId);
+    const requestingActorId = CollaborationActorIdSchema.parse(input.requestingActorId);
+    const selection = CanonicalChatModelSelectionSchema.parse(input.selection);
+    const capabilitySnapshot = CanonicalChatRunSchema.shape.capabilitySnapshot.parse(input.capabilitySnapshot);
+    const parts = CanonicalChatQueuedTurnSchema.shape.parts.parse(input.parts);
+    const acceptedAt = new Date(input.acceptedAt).toISOString();
+    if (!Number.isSafeInteger(input.acceptedAuthEpoch) || input.acceptedAuthEpoch < 0
+      || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+      || !/^[a-f0-9]{64}$/.test(input.payloadHash)) {
+      throw new SharedChatQueueError("conflict");
+    }
+
+    return this.transact(async (executor) => {
+      const trx = executor as unknown as Transaction<OwnerCollaborationDatabase>;
+      const scope = await trx.selectFrom("collaboration_scopes").selectAll()
+        .where("id", "=", scopeId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!scope || scope.owner_id !== owner.ownerId || scope.owner_type !== owner.type
+        || scope.kind !== "chat" || scope.resource_id !== chatId) {
+        throw new SharedChatQueueError("not_found");
+      }
+      if (scope.lifecycle !== "shared" || scope.membership_mode !== "direct"
+        || Number(scope.auth_epoch) !== input.acceptedAuthEpoch) {
+        throw new SharedChatQueueError("unavailable");
+      }
+      const member = await trx.selectFrom("collaboration_members").select(["role", "status", "expires_at"])
+        .where("scope_id", "=", scopeId)
+        .where("actor_id", "=", requestingActorId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!member || member.status !== "accepted"
+        || (member.expires_at !== null && new Date(member.expires_at).getTime() <= new Date(acceptedAt).getTime())) {
+        throw new SharedChatQueueError("not_found");
+      }
+      if (member.role === "viewer") throw new SharedChatQueueError("forbidden");
+
+      const chat = await ownedChat(executor, owner, chatId);
+      if (!chat) throw new SharedChatQueueError("not_found");
+      if (chat.lifecycle !== "active" || !sharedBindingMatches(chat.collaboration, scopeId)) {
+        throw new SharedChatQueueError("unavailable");
+      }
+      const duplicate = await trx.selectFrom("chat_queued_turns").selectAll()
+        .where("chat_id", "=", chatId)
+        .where("requesting_actor_id", "=", requestingActorId)
+        .where("actor_request_id", "=", clientRequestId)
+        .executeTakeFirst();
+      if (duplicate) {
+        if (duplicate.payload_hash !== input.payloadHash || duplicate.collaboration_scope_id !== scopeId) {
+          throw new SharedChatQueueError("conflict");
+        }
+        const pendingCount = await this.sharedPendingCount(executor, chatId);
+        return { ...toSharedQueuedTurn(duplicate), pendingCount, alreadyAccepted: true };
+      }
+      if (Number(chat.revision) !== input.expectedRevision) {
+        throw new SharedChatQueueError("conflict");
+      }
+      const pendingCount = await this.sharedPendingCount(executor, chatId);
+      if (pendingCount >= MAX_SHARED_PENDING_TURNS) throw new SharedChatQueueError("capacity");
+      const lastAccepted = await trx.selectFrom("chat_queued_turns")
+        .select(({ fn }) => fn.max<number>("accepted_seq").as("accepted_seq"))
+        .where("chat_id", "=", chatId)
+        .where("collaboration_scope_id", "=", scopeId)
+        .executeTakeFirst();
+      const acceptedSequence = Number(lastAccepted?.accepted_seq ?? 0) + 1;
+      const position = pendingCount + 1;
+      const inserted = await trx.insertInto("chat_queued_turns").values({
+        id: queuedTurnId,
+        chat_id: chatId,
+        client_request_id: `req_${clientRequestId.replaceAll("-", "")}`,
+        actor_request_id: clientRequestId,
+        requesting_actor_id: requestingActorId,
+        collaboration_scope_id: scopeId,
+        accepted_seq: acceptedSequence,
+        payload_hash: input.payloadHash,
+        accepted_auth_epoch: input.acceptedAuthEpoch,
+        retry_of_queued_turn_id: retryOfQueuedTurnId ?? null,
+        position,
+        status: "queued",
+        parts: jsonb(parts),
+        driver_kind: input.driverKind,
+        instance_id: selection.instanceId,
+        selection: jsonb(selection),
+        interaction_mode: input.interactionMode,
+        permission_mode: input.permissionMode,
+        execution_root: null,
+        execution_root_fingerprint: null,
+        capability_snapshot: jsonb(capabilitySnapshot),
+        claimed_turn_id: null,
+        claimed_run_id: null,
+        cancelled_at: null,
+        created_at: acceptedAt,
+        updated_at: acceptedAt,
+      }).returningAll().executeTakeFirstOrThrow();
+      const revision = Number(chat.revision) + 1;
+      const updated = await trx.updateTable("chats").set({ revision, updated_at: acceptedAt })
+        .where("id", "=", chatId)
+        .where("revision", "=", Number(chat.revision))
+        .returning("id")
+        .executeTakeFirst();
+      if (!updated) throw new SharedChatQueueError("conflict");
+      await appendSharedEvent(trx, {
+        scopeId,
+        resourceId: chatId,
+        revision,
+        authorityGeneration: Number(scope.authority_generation),
+        eventType: "chat.ai_request.accepted",
+        payload: { queuedTurnId, acceptedSequence, actorId: requestingActorId, state: "queued" },
+        createdAt: acceptedAt,
+      });
+      return {
+        ...toSharedQueuedTurn(inserted),
+        pendingCount: position,
+        alreadyAccepted: false,
+      };
+    });
+  }
+
+  async listShared(ownerInput: ChatOwner, chatIdInput: string): Promise<SharedQueuedTurn[]> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(chatIdInput);
+    const owned = await this.kysely.selectFrom("chats").select("id")
+      .where("id", "=", chatId)
+      .where("owner_type", "=", owner.type)
+      .where("owner_id", "=", owner.ownerId)
+      .executeTakeFirst();
+    if (!owned) return [];
+    const rows = await this.kysely.selectFrom("chat_queued_turns").selectAll()
+      .where("chat_id", "=", chatId)
+      .where("collaboration_scope_id", "is not", null)
+      .orderBy("accepted_seq", "asc")
+      .limit(100)
+      .execute();
+    return rows.map(toSharedQueuedTurn);
+  }
 
   async enqueue(
     ownerInput: ChatOwner,
@@ -440,6 +630,55 @@ export class ChatQueueRepository {
     const messageId = CanonicalChatMessageSchema.shape.id.parse(input.messageId);
     const claimedAt = new Date(input.claimedAt).toISOString();
     return this.transact(async (trx) => {
+      const candidateScope = await trx.selectFrom("chat_queued_turns")
+        .select(["collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch"])
+        .where("chat_id", "=", chatId)
+        .where("status", "=", "queued")
+        .orderBy("position")
+        .executeTakeFirst();
+      let sharedScope: {
+        id: string;
+        authority_generation: number;
+        lifecycle: string;
+        auth_epoch: number;
+        execution_generation: number | null;
+        execution_eligibility: unknown;
+      } | undefined;
+      let sharedAdmission: "allowed" | "unauthorized" | "unavailable" = "allowed";
+      if (candidateScope?.collaboration_scope_id) {
+        const sharedTrx = trx as unknown as Transaction<OwnerCollaborationDatabase>;
+        sharedScope = await sharedTrx.selectFrom("collaboration_scopes")
+          .select([
+            "id", "authority_generation", "lifecycle", "auth_epoch",
+            "execution_generation", "execution_eligibility",
+          ])
+          .where("id", "=", candidateScope.collaboration_scope_id)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!sharedScope) return null;
+        if (sharedScope.lifecycle !== "shared" || sharedScope.execution_generation === null
+          || sharedScope.execution_eligibility === null) {
+          sharedAdmission = "unavailable";
+        // The scope auth epoch is deliberately a coarse dispatch fence: any
+        // membership authority change invalidates accepted-but-unclaimed work,
+        // which callers may retry under the current authority. This prevents a
+        // revoke or downgrade race without inventing a second member revision.
+        } else if (!candidateScope.requesting_actor_id || candidateScope.accepted_auth_epoch === null
+          || Number(candidateScope.accepted_auth_epoch) !== Number(sharedScope.auth_epoch)) {
+          sharedAdmission = "unauthorized";
+        } else {
+          const member = await sharedTrx.selectFrom("collaboration_members")
+            .select(["role", "status", "expires_at"])
+            .where("scope_id", "=", sharedScope.id)
+            .where("actor_id", "=", candidateScope.requesting_actor_id)
+            .forUpdate()
+            .executeTakeFirst();
+          if (!member || member.status !== "accepted" || member.role === "viewer"
+            || (member.expires_at !== null && new Date(member.expires_at).getTime() <= new Date(claimedAt).getTime())) {
+            sharedAdmission = "unauthorized";
+          }
+        }
+      }
       const chat = await ownedChat(trx, owner, chatId);
       if (!chat) throw new ChatNotFoundError(chatId);
       if (chat.lifecycle !== "active") return null;
@@ -452,6 +691,37 @@ export class ChatQueueRepository {
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
+      if (candidate.collaboration_scope_id && sharedAdmission !== "allowed") {
+        const terminalized = await trx.updateTable("chat_queued_turns").set({
+          status: sharedAdmission,
+          updated_at: claimedAt,
+        }).where("id", "=", candidate.id)
+          .where("status", "=", "queued")
+          .returning("id")
+          .executeTakeFirst();
+        if (!terminalized) return null;
+        await trx.updateTable("chat_queued_turns")
+          .set({ position: sql<number>`position - 1`, updated_at: claimedAt })
+          .where("chat_id", "=", chatId)
+          .where("status", "=", "queued")
+          .where("position", ">", Number(candidate.position))
+          .execute();
+        const revision = Number(chat.revision) + 1;
+        await trx.updateTable("chats").set({ revision, updated_at: claimedAt })
+          .where("id", "=", chatId)
+          .where("revision", "=", Number(chat.revision))
+          .executeTakeFirstOrThrow();
+        await appendSharedEvent(trx as unknown as Transaction<OwnerCollaborationDatabase>, {
+          scopeId: candidate.collaboration_scope_id,
+          resourceId: chatId,
+          revision,
+          authorityGeneration: Number(sharedScope?.authority_generation ?? 0),
+          eventType: `chat.ai_request.${sharedAdmission}`,
+          payload: { queuedTurnId: candidate.id, actorId: candidate.requesting_actor_id, state: sharedAdmission },
+          createdAt: claimedAt,
+        });
+        return null;
+      }
       const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
         .where("queued_turn_id", "=", candidate.id)
         .where("status", "=", "pending")
@@ -476,6 +746,7 @@ export class ChatQueueRepository {
         seq: Number(chat.message_count) + 1,
         role: "user",
         state: "committed",
+        ...(row.requesting_actor_id ? { actorId: row.requesting_actor_id, purpose: "ai_request" } : {}),
         turnId,
         parts,
         createdAt: claimedAt,
@@ -591,15 +862,27 @@ export class ChatQueueRepository {
         .returning("id")
         .executeTakeFirst();
       if (!updatedChat) throw new ChatConflictError(chatId, Number(chat.revision));
-      await this.appendOutbox(trx, owner, chatId, revision, "queue.claimed", {
-        queuedTurnId: row.id,
-        turnId: turn.id,
-        runId: run.id,
-      });
-      await this.appendOutbox(trx, owner, chatId, revision, "turn.accepted", {
-        turnId: turn.id,
-        runId: run.id,
-      });
+      if (row.collaboration_scope_id && sharedScope) {
+        await appendSharedEvent(trx as unknown as Transaction<OwnerCollaborationDatabase>, {
+          scopeId: row.collaboration_scope_id,
+          resourceId: chatId,
+          revision,
+          authorityGeneration: Number(sharedScope.authority_generation),
+          eventType: "chat.ai_request.claimed",
+          payload: { queuedTurnId: row.id, turnId: turn.id, runId: run.id, state: "claimed" },
+          createdAt: claimedAt,
+        });
+      } else {
+        await this.appendOutbox(trx, owner, chatId, revision, "queue.claimed", {
+          queuedTurnId: row.id,
+          turnId: turn.id,
+          runId: run.id,
+        });
+        await this.appendOutbox(trx, owner, chatId, revision, "turn.accepted", {
+          turnId: turn.id,
+          runId: run.id,
+        });
+      }
       return {
         queuedTurn,
         message,
@@ -634,4 +917,82 @@ export class ChatQueueRepository {
       .executeTakeFirstOrThrow();
     return Number(result.count);
   }
+
+  private async sharedPendingCount(executor: Executor, chatId: string): Promise<number> {
+    const row = await executor.selectFrom("chat_queued_turns")
+      .select(({ fn }) => fn.countAll<number>().as("count"))
+      .where("chat_id", "=", chatId)
+      .where("collaboration_scope_id", "is not", null)
+      .where("status", "=", "queued")
+      .executeTakeFirstOrThrow();
+    return Number(row.count);
+  }
+}
+
+function toSharedQueuedTurn(row: Selectable<ChatQueuedTurnsTable>): SharedQueuedTurn {
+  const createdAt = asIso(row.created_at);
+  const updatedAt = asIso(row.updated_at);
+  if (!row.collaboration_scope_id || !row.requesting_actor_id || !row.actor_request_id || row.accepted_seq === null
+    || row.accepted_auth_epoch === null || !createdAt || !updatedAt) {
+    throw new SharedChatQueueError("unavailable");
+  }
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    scopeId: row.collaboration_scope_id,
+    clientRequestId: row.actor_request_id,
+    requestingActorId: row.requesting_actor_id,
+    acceptedSequence: Number(row.accepted_seq),
+    acceptedAuthEpoch: Number(row.accepted_auth_epoch),
+    ...(row.retry_of_queued_turn_id ? { retryOfRequestId: row.retry_of_queued_turn_id } : {}),
+    state: row.status,
+    parts: CanonicalChatQueuedTurnSchema.shape.parts.parse(parseJson(row.parts)),
+    selection: CanonicalChatModelSelectionSchema.parse(parseJson(row.selection)),
+    createdAt,
+    updatedAt,
+  };
+}
+
+function sharedBindingMatches(value: unknown, scopeId: string): boolean {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+    return !!parsed && typeof parsed === "object"
+      && (parsed as { scopeId?: unknown }).scopeId === scopeId
+      && (parsed as { executionFenced?: unknown }).executionFenced === true;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[chat/queue] collaboration binding decode failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return false;
+  }
+}
+
+async function appendSharedEvent(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  input: {
+    scopeId: string;
+    resourceId: string;
+    revision: number;
+    authorityGeneration: number;
+    eventType: string;
+    payload: Record<string, unknown>;
+    createdAt: string;
+  },
+): Promise<void> {
+  const latest = await trx.selectFrom("collaboration_events")
+    .select(({ fn }) => fn.max<number>("scope_seq").as("scope_seq"))
+    .where("scope_id", "=", input.scopeId)
+    .executeTakeFirst();
+  await trx.insertInto("collaboration_events").values({
+    scope_id: input.scopeId,
+    scope_seq: Number(latest?.scope_seq ?? 0) + 1,
+    event_id: randomUUID(),
+    resource_kind: "chat",
+    resource_id: input.resourceId,
+    revision: input.revision,
+    authority_generation: input.authorityGeneration,
+    event_type: input.eventType,
+    payload: jsonb(input.payload),
+    created_at: input.createdAt,
+  }).execute();
 }
