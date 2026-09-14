@@ -4,11 +4,10 @@ defmodule SymphonyElixir.Linear.Client do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, Linear.Bridge, Linear.Issue}
+  alias SymphonyElixir.{Config, Linear.Bridge, Linear.Issue, Linear.RequestGate}
 
   @issue_page_size 50
   @max_pages 200
-  @max_error_body_log_bytes 1_000
 
   @query """
   query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
@@ -167,23 +166,100 @@ defmodule SymphonyElixir.Linear.Client do
     payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
     request_fun = Keyword.get(opts, :request_fun) || graphql_request_fun()
 
-    with {:ok, headers} <- graphql_headers(),
-         {:ok, %{status: 200, body: body}} <- request_fun.(payload, headers) do
-      {:ok, body}
-    else
-      {:ok, response} ->
-        Logger.error(
-          "Linear GraphQL request failed status=#{response.status}" <>
-            linear_error_context(payload, response)
+    tracker = Config.settings!().tracker
+
+    fingerprint =
+      :crypto.hash(
+        :sha256,
+        :erlang.term_to_binary(
+          {tracker, System.get_env("PLATFORM_INTERNAL_URL"), System.get_env("MATRIX_HANDLE"),
+           System.get_env("UPGRADE_TOKEN")}
         )
+      )
 
-        {:error, {:linear_api_status, response.status}}
-
-      {:error, reason} ->
-        Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
-        {:error, {:linear_api_request, reason}}
+    with :ok <- configured_tracker(tracker),
+         :ok <- supported_request(tracker, payload),
+         {:ok, lease} <-
+           RequestGate.checkout_request(
+             fingerprint,
+             :crypto.hash(:sha256, :erlang.term_to_binary(payload))
+           ) do
+      result = perform_request(payload, request_fun)
+      :ok = RequestGate.finish(lease, result)
+      result
     end
   end
+
+  defp supported_request(tracker, payload) do
+    if tracker.api_key == Bridge.credential() do
+      case bridge_action(payload["query"]) do
+        {:ok, _} -> :ok
+        error -> error
+      end
+    else
+      :ok
+    end
+  end
+
+  defp configured_tracker(%{api_key: nil}), do: {:error, :missing_linear_api_token}
+  defp configured_tracker(%{project_slug: nil}), do: {:error, :missing_linear_project_slug}
+  defp configured_tracker(_), do: :ok
+
+  defp perform_request(payload, request_fun) do
+    with {:ok, headers} <- graphql_headers(),
+         {:ok, response} <- request_fun.(payload, headers) do
+      decode_response(response)
+    else
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, _reason} -> {:error, :network_error}
+    end
+  rescue
+    _error ->
+      Logger.warning("symphony_linear outcome=request_failed")
+      {:error, :network_error}
+  end
+
+  # Linear documents HTTP 400 + RATELIMITED as retryable. Classify structured
+  # codes only; never inspect or log provider messages.
+  defp decode_response(%{status: status, body: %{"errors" => errors}})
+       when status in [200, 400] and is_list(errors) and errors != [] do
+    codes =
+      errors
+      |> Enum.take(100)
+      |> Enum.map(fn
+        %{"extensions" => %{"code" => code}} when is_binary(code) -> code
+        _ -> nil
+      end)
+
+    cond do
+      Enum.any?(
+        codes,
+        &(&1 in [
+            "UNAUTHENTICATED",
+            "AUTHENTICATION_ERROR",
+            "GRAPHQL_VALIDATION_FAILED",
+            "GRAPHQL_PARSE_FAILED",
+            "CONFIGURATION_ERROR"
+          ])
+      ) ->
+        {:error, :linear_contract_error}
+
+      "RATELIMITED" in codes ->
+        {:error, {:linear_api_status, 429}}
+
+      Enum.any?(codes, &(&1 in ["INTERNAL_SERVER_ERROR", "INTERNAL_ERROR"])) ->
+        {:error, :network_error}
+
+      true ->
+        {:error, :linear_operation_error}
+    end
+  end
+
+  defp decode_response(%{status: 200, body: %{"data" => data} = body}) when is_map(data),
+    do: {:ok, body}
+
+  defp decode_response(%{status: 200}), do: {:error, :linear_unknown_payload}
+  defp decode_response(%{status: status}), do: {:error, {:linear_api_status, status}}
 
   @doc false
   @spec normalize_issue_for_test(map()) :: Issue.t() | nil
@@ -222,7 +298,8 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   @doc false
-  @spec fetch_issue_states_by_ids_for_test([String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
+  @spec fetch_issue_states_by_ids_for_test([String.t()], (String.t(), map() ->
+                                                            {:ok, map()} | {:error, term()})) ::
           {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids_for_test(issue_ids, graphql_fun)
       when is_list(issue_ids) and is_function(graphql_fun, 2) do
@@ -241,12 +318,29 @@ defmodule SymphonyElixir.Linear.Client do
     do_fetch_by_states_page(project_slug, state_names, assignee_filter, nil, [], @max_pages)
   end
 
-  defp do_fetch_by_states_page(_project_slug, _state_names, _assignee_filter, _after_cursor, acc_issues, 0) do
-    Logger.warning("Linear pagination hit the #{@max_pages}-page limit; returning partial results")
+  defp do_fetch_by_states_page(
+         _project_slug,
+         _state_names,
+         _assignee_filter,
+         _after_cursor,
+         acc_issues,
+         0
+       ) do
+    Logger.warning(
+      "Linear pagination hit the #{@max_pages}-page limit; returning partial results"
+    )
+
     {:ok, finalize_paginated_issues(acc_issues)}
   end
 
-  defp do_fetch_by_states_page(project_slug, state_names, assignee_filter, after_cursor, acc_issues, pages_remaining) do
+  defp do_fetch_by_states_page(
+         project_slug,
+         state_names,
+         assignee_filter,
+         after_cursor,
+         acc_issues,
+         pages_remaining
+       ) do
     with {:ok, body} <-
            graphql(@query, %{
              projectSlug: project_slug,
@@ -260,7 +354,14 @@ defmodule SymphonyElixir.Linear.Client do
 
       case next_page_cursor(page_info) do
         {:ok, next_cursor} ->
-          do_fetch_by_states_page(project_slug, state_names, assignee_filter, next_cursor, updated_acc, pages_remaining - 1)
+          do_fetch_by_states_page(
+            project_slug,
+            state_names,
+            assignee_filter,
+            next_cursor,
+            updated_acc,
+            pages_remaining - 1
+          )
 
         :done ->
           {:ok, finalize_paginated_issues(updated_acc)}
@@ -275,7 +376,8 @@ defmodule SymphonyElixir.Linear.Client do
     Enum.reverse(issues, acc_issues)
   end
 
-  defp finalize_paginated_issues(acc_issues) when is_list(acc_issues), do: Enum.reverse(acc_issues)
+  defp finalize_paginated_issues(acc_issues) when is_list(acc_issues),
+    do: Enum.reverse(acc_issues)
 
   defp do_fetch_issue_states(ids, assignee_filter) do
     do_fetch_issue_states(ids, assignee_filter, &graphql/2)
@@ -287,14 +389,26 @@ defmodule SymphonyElixir.Linear.Client do
     do_fetch_issue_states_page(ids, assignee_filter, graphql_fun, [], issue_order_index)
   end
 
-  defp do_fetch_issue_states_page([], _assignee_filter, _graphql_fun, acc_issues, issue_order_index) do
+  defp do_fetch_issue_states_page(
+         [],
+         _assignee_filter,
+         _graphql_fun,
+         acc_issues,
+         issue_order_index
+       ) do
     acc_issues
     |> finalize_paginated_issues()
     |> sort_issues_by_requested_ids(issue_order_index)
     |> then(&{:ok, &1})
   end
 
-  defp do_fetch_issue_states_page(ids, assignee_filter, graphql_fun, acc_issues, issue_order_index) do
+  defp do_fetch_issue_states_page(
+         ids,
+         assignee_filter,
+         graphql_fun,
+         acc_issues,
+         issue_order_index
+       ) do
     {batch_ids, rest_ids} = Enum.split(ids, @issue_page_size)
 
     case graphql_fun.(@query_by_ids, %{
@@ -305,7 +419,14 @@ defmodule SymphonyElixir.Linear.Client do
       {:ok, body} ->
         with {:ok, issues} <- decode_linear_response(body, assignee_filter) do
           updated_acc = prepend_page_issues(issues, acc_issues)
-          do_fetch_issue_states_page(rest_ids, assignee_filter, graphql_fun, updated_acc, issue_order_index)
+
+          do_fetch_issue_states_page(
+            rest_ids,
+            assignee_filter,
+            graphql_fun,
+            updated_acc,
+            issue_order_index
+          )
         end
 
       {:error, reason} ->
@@ -349,43 +470,6 @@ defmodule SymphonyElixir.Linear.Client do
 
   defp maybe_put_operation_name(payload, _operation_name), do: payload
 
-  defp linear_error_context(payload, response) when is_map(payload) do
-    operation_name =
-      case Map.get(payload, "operationName") do
-        name when is_binary(name) and name != "" -> " operation=#{name}"
-        _ -> ""
-      end
-
-    body =
-      response
-      |> Map.get(:body)
-      |> summarize_error_body()
-
-    operation_name <> " body=" <> body
-  end
-
-  defp summarize_error_body(body) when is_binary(body) do
-    body
-    |> String.replace(~r/\s+/, " ")
-    |> String.trim()
-    |> truncate_error_body()
-    |> inspect()
-  end
-
-  defp summarize_error_body(body) do
-    body
-    |> inspect(limit: 20, printable_limit: @max_error_body_log_bytes)
-    |> truncate_error_body()
-  end
-
-  defp truncate_error_body(body) when is_binary(body) do
-    if byte_size(body) > @max_error_body_log_bytes do
-      binary_part(body, 0, @max_error_body_log_bytes) <> "...<truncated>"
-    else
-      body
-    end
-  end
-
   defp graphql_headers do
     bridge_credential = Bridge.credential()
 
@@ -421,13 +505,16 @@ defmodule SymphonyElixir.Linear.Client do
     Req.post(Config.settings!().tracker.endpoint,
       headers: headers,
       json: payload,
-      connect_options: [timeout: 30_000],
-      receive_timeout: 30_000
+      retry: false,
+      redirect: false,
+      connect_options: [timeout: 10_000],
+      receive_timeout: 10_000
     )
   end
 
   defp post_matrix_linear_bridge_request(payload, _headers) do
-    with {:ok, url} <- matrix_linear_bridge_url(),
+    with {:ok, action} <- bridge_action(payload["query"]),
+         {:ok, url} <- matrix_linear_bridge_url(),
          {:ok, token} <- matrix_linear_bridge_token() do
       Req.post(url,
         headers: [
@@ -436,14 +523,13 @@ defmodule SymphonyElixir.Linear.Client do
         ],
         json: %{
           service: "linear",
-          action: "graphql",
-          params: %{
-            query: payload["query"],
-            variables: payload["variables"] || %{}
-          }
+          action: action,
+          params: payload["variables"] || %{}
         },
-        connect_options: [timeout: 30_000],
-        receive_timeout: 30_000
+        retry: false,
+        redirect: false,
+        connect_options: [timeout: 10_000],
+        receive_timeout: 10_000
       )
       |> unwrap_matrix_linear_bridge_response()
     end
@@ -453,7 +539,10 @@ defmodule SymphonyElixir.Linear.Client do
     with {:ok, base_url} <- required_env("PLATFORM_INTERNAL_URL", :missing_platform_internal_url),
          {:ok, handle} <- required_env("MATRIX_HANDLE", :missing_matrix_handle) do
       encoded_handle = URI.encode(handle, &URI.char_unreserved?/1)
-      {:ok, String.trim_trailing(base_url, "/") <> "/internal/containers/" <> encoded_handle <> "/integrations/call"}
+
+      {:ok,
+       String.trim_trailing(base_url, "/") <>
+         "/internal/containers/" <> encoded_handle <> "/integrations/call"}
     end
   end
 
@@ -468,34 +557,20 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  defp unwrap_matrix_linear_bridge_response({:ok, %{body: %{"data" => data}} = response}) when is_map(data) do
+  # Only a successful envelope is unwrapped. Preserve every HTTP failure status.
+  defp unwrap_matrix_linear_bridge_response(
+         {:ok, %{status: 200, body: %{"data" => data}} = response}
+       )
+       when is_map(data) do
     {:ok, %{response | body: data}}
-  end
-
-  defp unwrap_matrix_linear_bridge_response({:ok, %{status: 404, body: %{"error" => error}}})
-       when is_binary(error) do
-    # The platform bridge answers 404 for both "service not connected" and other
-    # missing resources (e.g. an unknown handle). Only the former means the owner
-    # must connect Linear; classify it narrowly so unrelated 404s stay generic.
-    if linear_not_connected_error?(error) do
-      Logger.warning("Matrix Linear bridge reports Linear is not connected")
-      {:error, :linear_not_connected}
-    else
-      Logger.warning("Matrix Linear bridge returned a 404 error response")
-      {:error, :matrix_linear_bridge_error}
-    end
-  end
-
-  defp unwrap_matrix_linear_bridge_response({:ok, %{body: %{"error" => _error}}}) do
-    Logger.warning("Matrix Linear bridge returned an error response")
-    {:error, :matrix_linear_bridge_error}
   end
 
   defp unwrap_matrix_linear_bridge_response(other), do: other
 
-  defp linear_not_connected_error?(error) when is_binary(error) do
-    String.contains?(String.downcase(error), "not connected")
-  end
+  defp bridge_action(@query), do: {:ok, "symphony_poll"}
+  defp bridge_action(@query_by_ids), do: {:ok, "symphony_issues_by_id"}
+  defp bridge_action(@viewer_query), do: {:ok, "symphony_viewer"}
+  defp bridge_action(query), do: SymphonyElixir.Linear.Adapter.bridge_action(query)
 
   defp decode_linear_response(%{"data" => %{"issues" => %{"nodes" => nodes}}}, assignee_filter) do
     issues =
@@ -506,8 +581,8 @@ defmodule SymphonyElixir.Linear.Client do
     {:ok, issues}
   end
 
-  defp decode_linear_response(%{"errors" => errors}, _assignee_filter) do
-    {:error, {:linear_graphql_errors, errors}}
+  defp decode_linear_response(%{"errors" => _errors}, _assignee_filter) do
+    {:error, :linear_graphql_error}
   end
 
   defp decode_linear_response(_unknown, _assignee_filter) do
@@ -525,7 +600,11 @@ defmodule SymphonyElixir.Linear.Client do
          },
          assignee_filter
        ) do
-    with {:ok, issues} <- decode_linear_response(%{"data" => %{"issues" => %{"nodes" => nodes}}}, assignee_filter) do
+    with {:ok, issues} <-
+           decode_linear_response(
+             %{"data" => %{"issues" => %{"nodes" => nodes}}},
+             assignee_filter
+           ) do
       {:ok, issues, %{has_next_page: has_next_page == true, end_cursor: end_cursor}}
     end
   end

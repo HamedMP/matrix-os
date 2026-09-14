@@ -102,6 +102,7 @@ case "$ACTION" in
     "${SUDO[@]}" systemctl start --no-block "$UNIT"
     ;;
   stop)
+    "${SUDO[@]}" systemctl disable "$UNIT" >/dev/null
     "${SUDO[@]}" systemctl stop --no-block "$UNIT"
     ;;
 esac

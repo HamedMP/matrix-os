@@ -38,7 +38,8 @@ defmodule SymphonyElixir.Orchestrator do
       retry_attempts: %{},
       codex_totals: nil,
       codex_rate_limits: nil,
-      last_tracker_status: nil
+      last_tracker_status: nil,
+      terminal_cleanup_pending: true
     ]
   end
 
@@ -64,8 +65,7 @@ defmodule SymphonyElixir.Orchestrator do
       codex_rate_limits: nil
     }
 
-    run_terminal_workspace_cleanup()
-    state = schedule_tick(state, 0)
+    state = schedule_tick(state, SymphonyElixir.Linear.RequestGate.snapshot().next_retry_in_ms || 0)
 
     {:ok, state}
   end
@@ -233,6 +233,12 @@ defmodule SymphonyElixir.Orchestrator do
       {:ok, issues} ->
         # The candidate poll succeeded, so Linear is reachable and authorized.
         state = put_tracker_status(state, :ok)
+        state = if state.terminal_cleanup_pending do
+          run_terminal_workspace_cleanup()
+          %{state | terminal_cleanup_pending: false}
+        else
+          state
+        end
 
         if available_slots(state) > 0 do
           choose_issues(issues, state)
@@ -246,40 +252,14 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp log_dispatch_blocker(:missing_linear_api_token),
-    do: Logger.error("Linear API token missing in WORKFLOW.md")
-
-  defp log_dispatch_blocker(:missing_linear_project_slug),
-    do: Logger.error("Linear project slug missing in WORKFLOW.md")
-
-  defp log_dispatch_blocker(:missing_tracker_kind),
-    do: Logger.error("Tracker kind missing in WORKFLOW.md")
-
-  defp log_dispatch_blocker({:unsupported_tracker_kind, kind}),
-    do: Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
-
-  defp log_dispatch_blocker({:invalid_workflow_config, message}),
-    do: Logger.error("Invalid WORKFLOW.md config: #{message}")
-
-  defp log_dispatch_blocker({:missing_workflow_file, path, reason}),
-    do: Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
-
-  defp log_dispatch_blocker(:workflow_front_matter_not_a_map),
-    do: Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
-
-  defp log_dispatch_blocker({:workflow_parse_error, reason}),
-    do: Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
-
   defp log_dispatch_blocker(reason),
-    do: Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+    do: Logger.debug("symphony_poll outcome=#{SymphonyElixir.PollingPolicy.classify({:error, reason})}")
 
-  # Maps a poll/validation failure to the credential signal surfaced to the
-  # shell. Only a missing token or an explicit "Linear not connected" from the
-  # platform bridge means the owner must connect Linear; everything else is a
-  # transient/operational error reported as unavailable.
   defp tracker_status_for_error(:missing_linear_api_token), do: :setup_required
-  defp tracker_status_for_error({:linear_api_request, :linear_not_connected}), do: :setup_required
-  defp tracker_status_for_error(_reason), do: :error
+  defp tracker_status_for_error(:missing_linear_project_slug), do: :setup_required
+  defp tracker_status_for_error({:linear_api_status, status}) when status in [401, 403, 404], do: :setup_required
+  defp tracker_status_for_error({:poll_deferred, :permanent, _}), do: :setup_required
+  defp tracker_status_for_error(_), do: :error
 
   defp put_tracker_status(%State{} = state, status)
        when status in [:ok, :setup_required, :error] do
@@ -304,7 +284,7 @@ defmodule SymphonyElixir.Orchestrator do
           |> reconcile_missing_running_issue_ids(running_ids, issues)
 
         {:error, reason} ->
-          Logger.debug("Failed to refresh running issue states: #{inspect(reason)}; keeping active workers")
+          Logger.debug("symphony_reconcile outcome=#{SymphonyElixir.PollingPolicy.classify({:error, reason})}")
 
           state
       end
@@ -821,14 +801,14 @@ defmodule SymphonyElixir.Orchestrator do
         |> handle_retry_issue_lookup(state, issue_id, attempt, metadata)
 
       {:error, reason} ->
-        Logger.warning("Retry poll failed for issue_id=#{issue_id} issue_identifier=#{metadata[:identifier] || issue_id}: #{inspect(reason)}")
+        Logger.warning("symphony_retry outcome=#{SymphonyElixir.PollingPolicy.classify({:error, reason})}")
 
         {:noreply,
          schedule_issue_retry(
            state,
            issue_id,
            attempt + 1,
-           Map.merge(metadata, %{error: "retry poll failed: #{inspect(reason)}"})
+           Map.merge(metadata, %{error: "Tracker unavailable"})
          )}
     end
   end
@@ -1070,7 +1050,8 @@ defmodule SymphonyElixir.Orchestrator do
        polling: %{
          checking?: state.poll_check_in_progress == true,
          next_poll_in_ms: next_poll_in_ms(state.next_poll_due_at_ms, now_ms),
-         poll_interval_ms: state.poll_interval_ms
+         poll_interval_ms: state.poll_interval_ms,
+         circuit: SymphonyElixir.Linear.RequestGate.snapshot()
        }
      }, state}
   end
