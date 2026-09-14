@@ -16,6 +16,7 @@ import { createWorktreeManager } from "../worktree-manager.js";
 import { safeDisplayPath } from "../chat/safe-activity-projection.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import { spawnIsolatedProviderProcess } from "./provider-process-isolation.js";
+import { chunkAssistantText, chunkDisplayText } from "./pi-output-chunks.js";
 import {
   addPortableProviderCredentials,
   buildPiChildEnvironment,
@@ -58,7 +59,6 @@ const DEFAULT_KILL_GRACE_MS = 2_000;
 const PROBE_TIMEOUT_MS = 1_500;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS_PER_RUN = 480;
-const MAX_DELTA_CHARS = 3_500;
 const MAX_TEXT_CHARS = 24_000;
 const MAX_STDERR_CHARS = 8_192;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
@@ -231,25 +231,6 @@ function safeToolName(raw: unknown): string {
   return cleaned;
 }
 
-// Contracts require non-blank text per event. Chunk long text preserving
-// order; fold whitespace-only chunks into the previous one so every emitted
-// chunk parses, keeping each chunk <= 4000 chars / 16KB.
-function chunkDisplayText(text: string): string[] {
-  const out: string[] = [];
-  for (let index = 0; index < text.length; index += MAX_DELTA_CHARS) {
-    const chunk = text.slice(index, index + MAX_DELTA_CHARS);
-    if (chunk.trim().length === 0) {
-      const last = out.at(-1);
-      if (last !== undefined && last.length + chunk.length <= 4_000) {
-        out[out.length - 1] = last + chunk;
-      }
-      continue;
-    }
-    out.push(chunk);
-  }
-  return out;
-}
-
 function truncateText(text: string, maxChars: number): { text: string; truncated: boolean } {
   if (text.length <= maxChars) return { text, truncated: false };
   return { text: text.slice(0, maxChars), truncated: true };
@@ -310,7 +291,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
   function emitPendingAssistantText(): void {
     if (!assistantMessageId || assistantEmittedChars >= assistantText.length) return;
     const pending = assistantText.slice(assistantEmittedChars);
-    for (const chunk of chunkDisplayText(pending)) {
+    for (const chunk of chunkAssistantText(pending)) {
       emit({ ...baseEvent(), type: "assistant.text.delta", messageId: assistantMessageId, delta: chunk });
     }
     assistantEmittedChars = assistantText.length;
@@ -325,7 +306,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
     if (options.streaming) {
       emitPendingAssistantText();
     } else {
-      for (const chunk of chunkDisplayText(bounded.text)) {
+      for (const chunk of chunkAssistantText(bounded.text)) {
         emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: chunk });
       }
     }
