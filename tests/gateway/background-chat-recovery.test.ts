@@ -22,6 +22,27 @@ describe("background Chat recovery", () => {
 
 import { createBackgroundChatProjection } from "../../packages/gateway/src/coding-agents/background-chat-recovery.js";
 
+it("releases completed recovery slots while still projecting their final events", async () => {
+  vi.useFakeTimers();
+  const projection = createBackgroundChatProjection();
+  let publish: (event: any) => void = () => {};
+  const reconcile = vi.fn().mockResolvedValue(undefined);
+  try {
+    projection.attach({ registerEventSink: (sink: any) => { publish = sink; return { dispose() {} }; } });
+    projection.setReconciler(reconcile);
+    for (let i = 0; i < 150; i += 1) {
+      const threadId = `thread_${i}`;
+      projection.track({ id: threadId, ownerId: "owner" });
+      publish({ ownerId: "owner", threadId, events: [{ type: i % 2 ? "thread.completed" : "thread.error" }] });
+    }
+    await vi.advanceTimersByTimeAsync(500);
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    publish({ ownerId: "owner", threadId: "thread_149", events: [] });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(reconcile).toHaveBeenCalledTimes(2);
+  } finally { await projection.close(); vi.useRealTimers(); }
+});
+
 it("runs a fresh replay after joining an older in-flight reconciliation", async () => {
   vi.useFakeTimers();
   const projection = createBackgroundChatProjection();

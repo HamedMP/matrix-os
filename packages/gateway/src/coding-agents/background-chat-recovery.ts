@@ -28,7 +28,7 @@ export async function restoreBackgroundChatThread(options: {
 
 /** Coalesce restored-provider updates into canonical replay; no prompt is dispatched here. */
 export function createBackgroundChatProjection() {
-  const restored = new Set<string>(); // bounded to the bridge's 100-session capacity; cleared on close
+  const restored = new Set<string>(); // at most 100 active recoveries; terminal events evict, close drains
   const dirty = new Set<string>(); // at most 64 owners; removed after each successful replay
   let reconcile: ((ownerId: string) => Promise<unknown>) | undefined;
   let timer: NodeJS.Timeout | undefined;
@@ -68,10 +68,16 @@ export function createBackgroundChatProjection() {
     },
     attach(store: Pick<import("./thread-store.js").CodingAgentThreadStore, "registerEventSink">) {
       subscription?.dispose();
-      subscription = store.registerEventSink(({ ownerId, threadId }) => {
-        if (!restored.has(`${ownerId}:${threadId}`)) return;
+      subscription = store.registerEventSink(({ ownerId, threadId, events }) => {
+        const key = `${ownerId}:${threadId}`;
+        if (!restored.has(key)) return;
         if (!dirty.has(ownerId) && dirty.size >= 64) throw new Error("Background projection capacity reached");
         dirty.add(ownerId);
+        // Keep the owner dirty so the final result is replayed, then release
+        // only this finished thread's observation slot for later recoveries.
+        if (events.some(event => event.type === "thread.completed" || event.type === "thread.error")) {
+          restored.delete(key);
+        }
         schedule();
       });
     },
