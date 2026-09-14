@@ -80,6 +80,10 @@ OTA payloads.
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 
+The `ready-for-ci` label is sticky: applying it starts full PR validation, and every later PR
+head reruns both core CI and Docker classification while the label remains. Reviewers must use
+the checks attached to the exact head SHA rather than an earlier green commit.
+
 ## Delivery Lane Router
 
 Use `scripts/delivery/resolve-lanes.mjs` before lane-specific build or deploy

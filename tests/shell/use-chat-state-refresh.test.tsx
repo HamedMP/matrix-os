@@ -107,6 +107,9 @@ describe("useChatState refresh recovery", () => {
       latestState?.submitMessage("Build a calendar app", undefined, {
         displayText: "Build a calendar app",
         promptText: "<matrix_hermes_setup>model=Hermes</matrix_hermes_setup>\n\nBuild a calendar app",
+        model: "claude-sonnet-5",
+        effort: "high",
+        accessSourceId: "matrix_included",
       });
     });
 
@@ -116,10 +119,72 @@ describe("useChatState refresh recovery", () => {
       displayText: "Build a calendar app",
       sessionId: undefined,
       requestId: expect.stringMatching(/^req-/),
+      model: "claude-sonnet-5",
+      effort: "high",
+      accessSourceId: "matrix_included",
     });
     await waitFor(() => {
       expect(latestState?.messages[0]?.content).toBe("Build a calendar app");
     });
+  });
+
+  it("stages and consumes the Matrix app-builder draft without submitting it", async () => {
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await act(async () => {
+      latestState?.requestComposerDraft("/matrix-app-builder ");
+    });
+
+    const request = latestState?.composerDraftRequest;
+    expect(request?.text).toBe("/matrix-app-builder ");
+    expect(sendMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: "message" }));
+
+    await act(async () => {
+      if (request) latestState?.consumeComposerDraft(request.id);
+    });
+    expect(latestState?.composerDraftRequest).toBeNull();
+  });
+
+  it("preserves the canonical model and effort when a queued message drains", async () => {
+    let handler: ((msg: unknown) => void) | null = null;
+    subscribeMock.mockImplementation((next: (msg: unknown) => void) => {
+      handler = next;
+      return () => {};
+    });
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await act(async () => {
+      latestState?.submitMessage("First");
+    });
+    await waitFor(() => expect(latestState?.busy).toBe(true));
+    sendMock.mockClear();
+
+    await act(async () => {
+      latestState?.submitMessage("Second", undefined, {
+        model: "claude-sonnet-5",
+        effort: "high",
+        accessSourceId: "owner_anthropic_key",
+      });
+    });
+    await waitFor(() => expect(latestState?.queue).toHaveLength(1));
+
+    await act(async () => {
+      handler?.({ type: "kernel:result", result: "done" });
+    });
+
+    expect(sendMock).toHaveBeenCalledWith({
+      type: "message",
+      text: "Second",
+      displayText: "Second",
+      sessionId: undefined,
+      requestId: expect.stringMatching(/^req-/),
+      model: "claude-sonnet-5",
+      effort: "high",
+      accessSourceId: "owner_anthropic_key",
+    });
+    await waitFor(() => expect(latestState?.queue).toHaveLength(0));
   });
 
   it("reattaches the active conversation after a socket reconnect epoch", async () => {

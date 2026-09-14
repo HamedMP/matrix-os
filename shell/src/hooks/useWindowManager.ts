@@ -1,10 +1,21 @@
+import { constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import { TERMINAL_MIN_WINDOW_HEIGHT, TERMINAL_MIN_WINDOW_WIDTH } from "@/lib/builtin-apps";
+import {
+  TERMINAL_DEFAULT_WINDOW_HEIGHT,
+  TERMINAL_DEFAULT_WINDOW_WIDTH,
+  TERMINAL_MIN_WINDOW_HEIGHT,
+  TERMINAL_MIN_WINDOW_WIDTH,
+} from "@/lib/builtin-apps";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";
+import {
+  createTerminalLayoutId,
+  type TerminalPersistence,
+} from "@/lib/terminal-window-metadata";
 import { useDesktopMode } from "@/stores/desktop-mode";
+import { patchWebOsViewState, resetWebOsViewStateClientForTests } from "@/lib/os-view-state-client";
 
 export interface AppWindow {
   id: string;
@@ -16,6 +27,8 @@ export interface AppWindow {
   height: number;
   minimized: boolean;
   zIndex: number;
+  terminalLayoutId?: string;
+  terminalPersistence?: TerminalPersistence;
 }
 
 export interface LayoutWindow {
@@ -26,6 +39,7 @@ export interface LayoutWindow {
   width: number;
   height: number;
   state: "open" | "minimized" | "closed";
+  terminalLayoutId?: string;
 }
 
 export interface AppEntry {
@@ -39,7 +53,8 @@ const MIN_HEIGHT = 200;
 const DESKTOP_WINDOW_MARGIN = 20;
 const DESKTOP_HEADER_HEIGHT = 38;
 const MAX_CLOSED_ENTRIES = 50;
-const LAYOUT_FETCH_TIMEOUT_MS = 10_000;
+const LAYOUT_SAVE_DEBOUNCE_MS = 500;
+const LAYOUT_SAVE_RETRY_MS = 2_000;
 
 function isTerminalWindowPath(path: string): boolean {
   return path === "__terminal__" || path.startsWith("__terminal__:");
@@ -51,7 +66,7 @@ function getMinimumWindowSize(path: string): { width: number; height: number } {
     : { width: MIN_WIDTH, height: MIN_HEIGHT };
 }
 
-function getEffectiveMinimumWindowSize(path: string): { width: number; height: number } {
+export function getEffectiveMinimumWindowSize(path: string): { width: number; height: number } {
   const preferred = getMinimumWindowSize(path);
   const mode = useDesktopMode.getState().mode;
   if (mode === "canvas") return preferred;
@@ -59,10 +74,10 @@ function getEffectiveMinimumWindowSize(path: string): { width: number; height: n
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
-  const availableWidth = Math.max(1, vw - (DESKTOP_WINDOW_MARGIN * 2));
+  const availableWidth = Math.max(1, vw);
   const availableHeight = Math.max(
     1,
-    vh - topInset - (DESKTOP_WINDOW_MARGIN * 2),
+    vh - topInset,
   );
   return {
     width: Math.min(preferred.width, availableWidth),
@@ -71,42 +86,35 @@ function getEffectiveMinimumWindowSize(path: string): { width: number; height: n
 }
 
 interface ClosedLayout {
+  title?: string;
   x: number;
   y: number;
   width: number;
   height: number;
+  terminalLayoutId?: string;
 }
 
-function normalizeRestoredLayout(path: string, layout: ClosedLayout): ClosedLayout {
+const TERMINAL_LAYOUT_ID_PATTERN = /^term-layout_[0-9a-f]{32}$/;
+
+function terminalLayoutIdForPath(
+  path: string,
+  persistence: TerminalPersistence | undefined,
+  existing?: string,
+): string | undefined {
+  if (!isTerminalWindowPath(path) || persistence === "ephemeral") return undefined;
+  return existing && TERMINAL_LAYOUT_ID_PATTERN.test(existing) ? existing : createTerminalLayoutId();
+}
+
+function normalizeRestoredLayout(path: string, layout: ClosedLayout, previous?: ClosedLayout): ClosedLayout {
   const mode = useDesktopMode.getState().mode;
   if (mode === "canvas") return layout;
 
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
-  const minSize = getEffectiveMinimumWindowSize(path);
-  const width = Math.min(
-    Math.max(layout.width, minSize.width),
-    Math.max(minSize.width, vw - (DESKTOP_WINDOW_MARGIN * 2)),
-  );
-  const height = Math.min(
-    Math.max(layout.height, minSize.height),
-    Math.max(minSize.height, vh - topInset - (DESKTOP_WINDOW_MARGIN * 2)),
-  );
-  const wasWide = layout.width >= vw * 0.8;
-  const targetX = wasWide ? Math.round((vw - width) / 2) : layout.x;
-  const maxX = Math.max(DESKTOP_WINDOW_MARGIN, vw - width - DESKTOP_WINDOW_MARGIN);
-  const maxY = Math.max(
-    DESKTOP_WINDOW_MARGIN,
-    vh - topInset - height - DESKTOP_WINDOW_MARGIN,
-  );
-
   return {
     ...layout,
-    width,
-    height,
-    x: Math.min(Math.max(targetX, DESKTOP_WINDOW_MARGIN), maxX),
-    y: Math.min(Math.max(layout.y, DESKTOP_WINDOW_MARGIN), maxY),
+    ...constrainFloatingWindow(layout, { width: vw, height: vh - topInset }, getMinimumWindowSize(path), previous),
   };
 }
 
@@ -115,7 +123,6 @@ interface WindowManagerState {
   nextZ: number;
   closedPaths: Set<string>;
   closedLayouts: Map<string, ClosedLayout>;
-  apps: AppEntry[];
   focusedWindowId: string | null;
   /** Per-app last-launched timestamp (ms since epoch). Drives the dock's
       default sort when the user hasn't manually reordered. In-memory only
@@ -125,14 +132,19 @@ interface WindowManagerState {
 }
 
 interface WindowManagerActions {
-  openWindow: (name: string, path: string, dockXOffset: number) => void;
+  openWindow: (
+    name: string,
+    path: string,
+    dockXOffset: number,
+    options?: { terminalPersistence?: TerminalPersistence },
+  ) => void;
   openWindowExclusive: (name: string, path: string, dockXOffset: number, basePath?: string) => void;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
   restoreWindow: (id: string) => void;
   restoreAndFocusWindow: (id: string) => void;
   moveWindow: (id: string, x: number, y: number) => void;
-  resizeWindow: (id: string, width: number, height: number) => void;
+  resizeWindow: (id: string, width: number, height: number, position?: { x: number; y: number }) => void;
   reconcileWindowsToViewport: () => void;
   focusWindow: (id: string) => void;
   clearFocus: () => void;
@@ -140,7 +152,6 @@ interface WindowManagerActions {
   getFocusedWindow: () => AppWindow | undefined;
   loadLayout: (saved: LayoutWindow[]) => void;
   setWindows: (updater: AppWindow[] | ((prev: AppWindow[]) => AppWindow[])) => void;
-  setApps: (updater: AppEntry[] | ((prev: AppEntry[]) => AppEntry[])) => void;
   cascadeWindows: (startX: number, startY: number, gap: number) => void;
   toggleFullscreen: (id: string) => void;
   exitFullscreen: () => void;
@@ -154,68 +165,93 @@ function markUserLayoutMutation(): void {
 }
 
 export function resetWindowManagerLayoutPersistenceForTests(): void {
+  resetWebOsViewStateClientForTests();
   layoutPersistenceArmed = false;
   clearTimeout(saveTimer);
   saveTimer = undefined;
 }
 
-function debouncedSave(state: WindowManagerState) {
+function debouncedSave(
+  state: Pick<WindowManagerState, "windows" | "closedPaths" | "closedLayouts">,
+  delayMs = LAYOUT_SAVE_DEBOUNCE_MS,
+) {
   if (!layoutPersistenceArmed) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     if (isPreVpsBillingSetupRoute()) return;
     const gatewayUrl = getGatewayUrl();
-    const layoutWindows: LayoutWindow[] = state.windows.map((w) => ({
-      path: w.path,
-      title: w.title,
-      x: w.x,
-      y: w.y,
-      width: w.width,
-      height: w.height,
-      state: w.minimized ? ("minimized" as const) : ("open" as const),
-    }));
+    const layoutWindows: LayoutWindow[] = state.windows.flatMap((w) => (
+      w.terminalPersistence === "ephemeral"
+        ? []
+        : [{
+            path: w.path,
+            title: w.title,
+            x: w.x,
+            y: w.y,
+            width: w.width,
+            height: w.height,
+            state: w.minimized ? ("minimized" as const) : ("open" as const),
+            ...(w.terminalLayoutId ? { terminalLayoutId: w.terminalLayoutId } : {}),
+          }]
+    ));
 
     const layoutPaths = new Set(layoutWindows.map((lw) => lw.path));
-    const appsByPath = new Map(state.apps.map((a) => [a.path, a]));
     for (const path of state.closedPaths) {
       if (!layoutPaths.has(path)) {
-        const app = appsByPath.get(path);
+        const closedLayout = state.closedLayouts.get(path);
         layoutWindows.push({
           path,
-          title: app?.name ?? path,
-          x: 0,
-          y: 0,
-          width: 640,
-          height: 480,
+          title: closedLayout?.title ?? path,
+          x: closedLayout?.x ?? 0,
+          y: closedLayout?.y ?? 0,
+          width: closedLayout?.width ?? 640,
+          height: closedLayout?.height ?? 480,
           state: "closed",
+          ...(closedLayout?.terminalLayoutId ? { terminalLayoutId: closedLayout.terminalLayoutId } : {}),
         });
       }
     }
 
-    fetch(`${gatewayUrl}/api/layout`, {
-      signal: AbortSignal.timeout(LAYOUT_FETCH_TIMEOUT_MS),
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ windows: layoutWindows }),
+    const geometry = layoutWindows.map(({ path, x, y, width, height, terminalLayoutId }) => ({
+      path,
+      x,
+      y,
+      width,
+      height,
+      ...(terminalLayoutId ? { terminalLayoutId } : {}),
+    }));
+    const mode = useDesktopMode.getState().mode;
+    patchWebOsViewState(gatewayUrl, {
+      apps: layoutWindows.map(({ path, title, state }) => ({ path, title, state })),
+      ...(mode === "canvas"
+        ? { canvas: { windows: geometry } }
+        : { desktop: { windows: geometry } }),
     }).catch((err: unknown) => {
       if (process.env.NODE_ENV !== "production") {
         console.debug("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));
       }
+      debouncedSave(useWindowManager.getState(), LAYOUT_SAVE_RETRY_MS);
     });
-  }, 500);
+  }, delayMs);
 }
 
 function computeDefaultWindowSize(path: string): { width: number; height: number } {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const minSize = getEffectiveMinimumWindowSize(path);
+  const mode = useDesktopMode.getState().mode;
+  const preferred = isTerminalWindowPath(path)
+    ? { width: TERMINAL_DEFAULT_WINDOW_WIDTH, height: TERMINAL_DEFAULT_WINDOW_HEIGHT }
+    : getEffectiveMinimumWindowSize(path);
+  const width = Math.round(Math.min(1200, Math.max(preferred.width, vw * 0.6)));
+  const height = Math.round(Math.min(900, Math.max(preferred.height, vh * 0.7)));
+  if (mode === "canvas") return { width, height };
   return {
-    width: Math.round(Math.min(1200, Math.max(minSize.width, vw * 0.6))),
-    height: Math.round(Math.min(900, Math.max(minSize.height, vh * 0.7))),
+    width: Math.min(width, Math.max(1, vw - DESKTOP_WINDOW_MARGIN * 2)),
+    height: Math.min(height, Math.max(1, vh - (mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0) - DESKTOP_WINDOW_MARGIN * 2)),
   };
 }
 
-// Float every fresh window at the exact center in dev/desktop modes. The dock
+// Float every fresh window at the exact center in Desktop mode. The dock
 // already exposes every running app, so offsetting later windows only produces
 // visibly asymmetric outer margins. Canvas keeps its separate spatial cascade.
 function centeredWindowPosition(path: string): { x: number; y: number } {
@@ -238,12 +274,16 @@ function createWindowRecord(
   path: string,
   fallbackX: number,
   fallbackY: number,
+  options: { terminalPersistence?: TerminalPersistence } = {},
 ): AppWindow {
   const storedLayout = state.closedLayouts.get(path);
   const saved = storedLayout ? normalizeRestoredLayout(path, storedLayout) : undefined;
   const minSize = getEffectiveMinimumWindowSize(path);
   const { width: defaultWidth, height: defaultHeight } = computeDefaultWindowSize(path);
 
+  const terminalPersistence = isTerminalWindowPath(path)
+    ? options.terminalPersistence ?? "durable"
+    : undefined;
   return {
     id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     title: name,
@@ -254,6 +294,8 @@ function createWindowRecord(
     height: Math.max(saved?.height ?? defaultHeight, minSize.height),
     minimized: false,
     zIndex: state.nextZ,
+    terminalLayoutId: terminalLayoutIdForPath(path, terminalPersistence, saved?.terminalLayoutId),
+    ...(terminalPersistence ? { terminalPersistence } : {}),
   };
 }
 
@@ -289,21 +331,26 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     nextZ: 1,
     closedPaths: new Set<string>(),
     closedLayouts: new Map<string, ClosedLayout>(),
-    apps: [],
     focusedWindowId: null,
     appLaunchTimes: {},
     fullscreenWindowId: null,
 
-    openWindow: (name, path, dockXOffset) => {
+    openWindow: (name, path, dockXOffset, options = {}) => {
       markUserLayoutMutation();
       set((state) => {
         const zState = normalizeWindowZOrder(state.windows, state.nextZ);
         const launchTimes = { ...state.appLaunchTimes, [path]: Date.now() };
-        const existing = zState.windows.find((w) => w.path === path);
+        const desiredPersistence = isTerminalWindowPath(path)
+          ? options.terminalPersistence ?? "durable"
+          : undefined;
+        const existing = zState.windows.find((w) => (
+          w.path === path
+          && (!desiredPersistence || (w.terminalPersistence ?? "durable") === desiredPersistence)
+        ));
         if (existing) {
           return {
             windows: zState.windows.map((w) =>
-              w.path === path
+              w.id === existing.id
                 ? { ...w, minimized: false, zIndex: zState.nextZ }
                 : w,
             ),
@@ -315,7 +362,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
         // Position the new window. Canvas pans to the window after it opens, so
         // a spatial cascade to the right of the rightmost window is fine there.
-        // Dev/desktop windows float in place, so center them on the viewport
+        // Desktop windows float in place, so center them on the viewport
         // instead of marching off to the right of the last one.
         const visible = zState.windows.filter((w) => !w.minimized);
         let fallbackX: number;
@@ -342,6 +389,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           path,
           fallbackX,
           fallbackY,
+          options,
         );
         return {
           windows: [...zState.windows, nextWindow],
@@ -400,9 +448,16 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         const win = state.windows.find((w) => w.id === id);
         const newClosed = new Set(state.closedPaths);
         const newLayouts = new Map(state.closedLayouts);
-        if (win) {
+        if (win && win.terminalPersistence !== "ephemeral") {
           newClosed.add(win.path);
-          newLayouts.set(win.path, { x: win.x, y: win.y, width: win.width, height: win.height });
+          newLayouts.set(win.path, {
+            title: win.title,
+            x: win.x,
+            y: win.y,
+            width: win.width,
+            height: win.height,
+            ...(win.terminalLayoutId ? { terminalLayoutId: win.terminalLayoutId } : {}),
+          });
         }
         // Evict oldest entries if over cap
         while (newClosed.size > MAX_CLOSED_ENTRIES) {
@@ -457,12 +512,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
       markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) =>
-          w.id === id ? { ...w, x, y } : w,
+          w.id === id ? { ...w, ...normalizeRestoredLayout(w.path, { ...w, x, y }) } : w,
         ),
       }));
     },
 
-    resizeWindow: (id, width, height) => {
+    resizeWindow: (id, width, height, position) => {
       markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) => {
@@ -470,8 +525,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           const minSize = getEffectiveMinimumWindowSize(w.path);
           return {
             ...w,
-            width: Math.max(minSize.width, width),
-            height: Math.max(minSize.height, height),
+            ...normalizeRestoredLayout(w.path, {
+              ...w,
+              ...(position ? { x: position.x, y: position.y } : {}),
+              width: Math.max(minSize.width, width),
+              height: Math.max(minSize.height, height),
+            }, w),
           };
         }),
       }));
@@ -540,10 +599,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           if (s.state === "closed") {
             newClosed.add(s.path);
             newLayouts.set(s.path, {
+              title: s.title,
               x: restored.x,
               y: restored.y,
               width: restored.width,
               height: restored.height,
+              ...(s.terminalLayoutId ? { terminalLayoutId: s.terminalLayoutId } : {}),
             });
             continue;
           }
@@ -557,6 +618,8 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             height: restored.height,
             minimized: s.state === "minimized",
             zIndex: z++,
+            terminalLayoutId: terminalLayoutIdForPath(s.path, "durable", s.terminalLayoutId),
+            ...(isTerminalWindowPath(s.path) ? { terminalPersistence: "durable" as const } : {}),
           });
         }
 
@@ -589,12 +652,6 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
       });
     },
 
-    setApps: (updater) => {
-      set((state) => ({
-        apps: typeof updater === "function" ? updater(state.apps) : updater,
-      }));
-    },
-
     cascadeWindows: (startX, startY, gap) => {
       markUserLayoutMutation();
       set((state) => ({
@@ -623,9 +680,19 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
 // Auto-save layout on window/closedPaths changes
 useWindowManager.subscribe(
-  (state) => ({ windows: state.windows, closedPaths: state.closedPaths, apps: state.apps }),
+  (state) => ({
+    windows: state.windows,
+    closedPaths: state.closedPaths,
+    closedLayouts: state.closedLayouts,
+  }),
   (current) => {
-    debouncedSave(current as WindowManagerState);
+    debouncedSave(current);
   },
-  { equalityFn: (a, b) => a.windows === b.windows && a.closedPaths === b.closedPaths && a.apps === b.apps },
+  {
+    equalityFn: (a, b) => (
+      a.windows === b.windows
+      && a.closedPaths === b.closedPaths
+      && a.closedLayouts === b.closedLayouts
+    ),
+  },
 );

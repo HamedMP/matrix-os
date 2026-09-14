@@ -48,7 +48,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.74",
+    "@anthropic-ai/claude-agent-sdk": "0.3.240",
     "@matrix-os/gateway": "workspace:*",
     "@matrix-os/mcp-browser": "workspace:*",
     "@mozilla/readability": "^0.6.0",

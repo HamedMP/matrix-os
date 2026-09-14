@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
 import {
@@ -11,8 +11,10 @@ import {
   InvalidRequestPrincipalError,
   JWT_CLAIMS_CONTEXT_KEY,
   MissingRequestPrincipalError,
+  SAFE_PRINCIPAL_USER_ID,
   markAuthContextReady,
   requireRequestPrincipal,
+  setPlatformVerifiedPrincipal,
 } from "./request-principal.js";
 
 export { AUTH_CONTEXT_READY_CONTEXT_KEY, JWT_CLAIMS_CONTEXT_KEY, markAuthContextReady };
@@ -94,7 +96,14 @@ const ROUTE_SCOPED_SIGNATURE_PATHS = [
 ];
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
-const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/terminal/session", "/ws/onboarding", "/ws/vocal"];
+const WS_QUERY_TOKEN_PATHS = [
+  "/ws/chats/events",
+  "/ws",
+  "/ws/voice",
+  "/ws/terminal/tab",
+  "/ws/onboarding",
+  "/ws/vocal",
+];
 const WS_QUERY_TOKEN_PATH_PATTERNS = [
   /^\/api\/canvases\/[^/]+\/ws$/,
   /^\/ws\/coding-agents\/thread\/thread_[A-Za-z0-9_-]+$/,
@@ -119,6 +128,14 @@ function timingSafeCompare(a: string, b: string): boolean {
   bBuf.copy(paddedB);
   const equal = timingSafeEqual(paddedA, paddedB);
   return aBuf.length === bBuf.length && equal;
+}
+
+function readPlatformVerifiedUserId(c: Context, token: string): string | undefined {
+  const userId = c.req.header("x-platform-user-id");
+  const proof = c.req.header("x-platform-verified");
+  if (!userId || !proof || !SAFE_PRINCIPAL_USER_ID.test(userId)) return undefined;
+  const expected = createHmac("sha256", token).update(userId).digest("hex");
+  return timingSafeCompare(proof, expected) ? userId : undefined;
 }
 
 const rateLimiter = createRateLimiter({
@@ -182,7 +199,7 @@ export function authMiddleware(
     const expectedRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT;
 
     const normalizedPath = c.req.path;
-    if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
+    if ((c.req.method === "GET" && /^\/api\/share\/chats\/[a-f0-9]{64}$/.test(normalizedPath)) || PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return nextWithReady(c, next);
     }
@@ -319,7 +336,13 @@ export function authMiddleware(
     const legacyQueryOk =
       token && isWsUpgrade && queryToken && timingSafeCompare(queryToken, token);
 
-    if (legacyHeaderOk || legacyQueryOk) {
+    if (legacyHeaderOk) {
+      const platformUserId = readPlatformVerifiedUserId(c, token);
+      if (platformUserId) setPlatformVerifiedPrincipal(c, platformUserId);
+      return nextWithReady(c, next);
+    }
+
+    if (legacyQueryOk) {
       return nextWithReady(c, next);
     }
 

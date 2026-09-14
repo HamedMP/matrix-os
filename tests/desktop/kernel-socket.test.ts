@@ -172,6 +172,25 @@ describe("KernelSocket: connection and routing", () => {
     expect(seen2).toEqual(seen1);
   });
 
+  it("accepts bounded OS-view invalidation events", () => {
+    const h = createHarness();
+    const seen: KernelServerMessage[] = [];
+    h.socket.subscribe((message) => seen.push(message));
+    h.socket.connect();
+    h.last().open();
+    h.last().message(JSON.stringify({
+      type: "os-view:changed",
+      revision: 7,
+      updatedAt: "2026-09-08T12:00:00.000Z",
+    }));
+
+    expect(seen).toContainEqual({
+      type: "os-view:changed",
+      revision: 7,
+      updatedAt: "2026-09-08T12:00:00.000Z",
+    });
+  });
+
   it("stops routing after unsubscribe", () => {
     const h = createHarness();
     const seen: KernelServerMessage[] = [];

@@ -505,8 +505,7 @@ public final class AppModel: ObservableObject {
     private var isLoadingSystemInfo = false
     /// The project whose tasks the board renders.
     public private(set) var projectSlug: String
-    /// Maps workspace session ids / terminal ids to the zellij shell session name
-    /// required by `/ws/terminal/session`.
+    /// Maps cards and tab labels to stable `workspaceId:tabId` references.
     private var sessionAttachNames: [String: String] = [:]
     private let maxCachedTerminalSessions = 8
     private var terminalSessionAccessOrder: [String] = []
@@ -539,12 +538,12 @@ public final class AppModel: ObservableObject {
             // section, not inside project kanban.
             GatewayBoardLoader(client: client)
         },
-        makeTerminal: @escaping @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession = { url, provider, session, name in
+        makeTerminal: @escaping @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession = { url, provider, terminalRef, name in
             let tokenProvider = provider as any TokenProviding
             let client = ShellWSClient(
                 url: url,
                 tokenProvider: { await tokenProvider.token() ?? "" },
-                session: session,
+                terminalRef: terminalRef,
                 transport: URLSessionShellTransport()
             )
             return TerminalSession(displayName: name, client: client)
@@ -1022,74 +1021,25 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    /// Loads the live zellij session list for the Terminals section.
+    /// Loads project-scoped terminal workspace tabs for the Terminals section.
     public func loadSessions() async {
         guard let client = gatewayClient() else { return }
-        struct SessionDTO: Decodable {
-            let name: String
-            let attachName: String
-            let status: String
-            let aliases: [String]
-
-            private enum CodingKeys: String, CodingKey {
-                case name, id, sessionId, terminalSessionId, status, state, runtime
-            }
-
-            private enum RuntimeKeys: String, CodingKey {
-                case status, zellijSession
-            }
-
-            init(from decoder: Decoder) throws {
-                let container = try decoder.container(keyedBy: CodingKeys.self)
-                let runtime = try? container.nestedContainer(keyedBy: RuntimeKeys.self, forKey: .runtime)
-                let directName = try container.decodeIfPresent(String.self, forKey: .name)
-                let zellijName = try runtime?.decodeIfPresent(String.self, forKey: .zellijSession)
-                let id = try container.decodeIfPresent(String.self, forKey: .id)
-                let terminalId = try container.decodeIfPresent(String.self, forKey: .terminalSessionId)
-                let sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
-                name = directName
-                    ?? zellijName
-                    ?? terminalId
-                    ?? sessionId
-                    ?? id
-                    ?? ""
-                attachName = zellijName
-                    ?? directName
-                    ?? terminalId
-                    ?? sessionId
-                    ?? id
-                    ?? ""
-                aliases = [directName, zellijName, id, terminalId, sessionId]
-                    .compactMap { $0 }
-                    .filter { !$0.isEmpty }
-                status = try container.decodeIfPresent(String.self, forKey: .status)
-                    ?? container.decodeIfPresent(String.self, forKey: .state)
-                    ?? runtime?.decodeIfPresent(String.self, forKey: .status)
-                    ?? "active"
-            }
-        }
-        struct SessionsResponse: Decodable {
-            let sessions: [SessionDTO]
-        }
+        struct TabDTO: Decodable { let id: String; let name: String; let status: String }
+        struct WorkspaceDTO: Decodable { let id: String; let projectId: String?; let tabs: [TabDTO] }
+        struct WorkspacesResponse: Decodable { let workspaces: [WorkspaceDTO] }
+        struct ProjectResponse: Decodable { struct Project: Decodable { let id: String }; let project: Project }
         var byName: [String: WorkspaceSession] = [:]
         var nextAttachNames: [String: String] = [:]
-        func merge(_ dtos: [SessionDTO]) {
-            for dto in dtos where !dto.name.isEmpty {
-                byName[dto.name] = WorkspaceSession(name: dto.name, attachName: dto.attachName, status: dto.status)
-                for alias in dto.aliases {
-                    nextAttachNames[alias] = dto.attachName
+        if let project: ProjectResponse = try? await client.get("/api/projects/\(projectSlug)"),
+           let response: WorkspacesResponse = try? await client.get("/api/terminal/workspaces") {
+            for workspace in response.workspaces where workspace.projectId == project.project.id {
+                for tab in workspace.tabs {
+                    let ref = "\(workspace.id):\(tab.id)"
+                    byName[tab.name] = WorkspaceSession(name: tab.name, attachName: ref, status: tab.status)
+                    nextAttachNames[tab.name] = ref
+                    nextAttachNames[ref] = ref
                 }
-                nextAttachNames[dto.name] = dto.attachName
             }
-        }
-        if let response: SessionsResponse = try? await client.get("/api/terminal/sessions") {
-            merge(response.sessions)
-        }
-        if let response: SessionsResponse = try? await client.get("/api/sessions?limit=100") {
-            merge(response.sessions)
-        }
-        if let response: [SessionDTO] = try? await client.get("/api/terminal/pty-sessions") {
-            merge(response)
         }
         let loaded = Array(byName.values).sorted { lhs, rhs in
             if lhs.isActive != rhs.isActive { return lhs.isActive && !rhs.isActive }
@@ -1376,22 +1326,22 @@ public final class AppModel: ObservableObject {
             throw OperatorError.noSession
         }
 
-        // Existing session → attach by name. No session yet → connect to
-        // `/ws/terminal?cwd=` which auto-creates one (matrix shell connect -c).
+        // Current clients always attach through a stable workspace/tab ref.
         let requestedSession = card.linkedSessionId ?? ""
         let attachSession = sessionAttachName(for: requestedSession)
         let hasSession = !attachSession.isEmpty
+        guard hasSession else {
+            let err = OperatorError.noSession
+            openError = err
+            throw err
+        }
         let wsURL: URL
         do {
-            if hasSession {
-                wsURL = try profile.webSocketURL(
-                    path: "/ws/terminal/session",
-                    session: attachSession,
-                    fromSeq: Int?.none
-                )
-            } else {
-                wsURL = try profile.autoCreateTerminalURL(cwd: nil)
-            }
+            wsURL = try profile.webSocketURL(
+                path: "/ws/terminal/tab",
+                terminalRef: attachSession,
+                fromSeq: Int?.none
+            )
         } catch {
             let err = OperatorError.misconfigured
             openError = err
@@ -1402,11 +1352,6 @@ public final class AppModel: ObservableObject {
         let session = makeTerminal(wsURL, principal, attachSession, label)
         cacheTerminalSession(session, for: tabID)
         terminal = session
-        if !hasSession {
-            session.onNextAttach { [weak self] in
-                Task { await self?.loadSessions() }
-            }
-        }
         session.start()
         return session
     }
@@ -1964,7 +1909,7 @@ public final class AppModel: ObservableObject {
     /// Whether a task or terminal-session create request is in flight.
     @Published public private(set) var isCreatingWorkItem = false
 
-    /// Creates a new zellij session (Terminals section "+") and reloads the list.
+    /// Creates a new tab in the selected project workspace.
     public func createSession() {
         guard !isCreatingWorkItem, let client = gatewayClient() else { return }
         openError = nil
@@ -1972,22 +1917,27 @@ public final class AppModel: ObservableObject {
         let existingSessionNames = Set(sessions.map(\.name))
         Task { [weak self] in
             defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
-            struct CreateSessionRequest: Encodable {
-                let name: String
-                let cwd: String?
-            }
-            struct CreateSessionResponse: Decodable {
-                let name: String?
-            }
+            struct EnsureRequest: Encodable { let projectId: String? }
+            struct WorkspaceDTO: Decodable { let id: String }
+            struct EnsureResponse: Decodable { let workspace: WorkspaceDTO }
+            struct CreateTabRequest: Encodable { let name: String; let cwd: String }
+            struct TabDTO: Decodable { let id: String; let name: String }
+            struct CreateTabResponse: Decodable { let tab: TabDTO }
+            struct ProjectResponse: Decodable { struct Project: Decodable { let id: String }; let project: Project }
             for attempt in 0..<shellSessionCreateAttempts {
                 let name = generatedShellSessionName()
                 do {
-                    let response: CreateSessionResponse = try await client.post(
-                        "/api/terminal/sessions",
-                        body: CreateSessionRequest(name: name, cwd: nil)
+                    let project: ProjectResponse = try await client.get("/api/projects/\(self?.projectSlug ?? "")")
+                    let ensured: EnsureResponse = try await client.post(
+                        "/api/terminal/workspaces/ensure",
+                        body: EnsureRequest(projectId: project.project.id)
+                    )
+                    let response: CreateTabResponse = try await client.post(
+                        "/api/terminal/workspaces/\(ensured.workspace.id)/tabs",
+                        body: CreateTabRequest(name: name, cwd: "projects/\(self?.projectSlug ?? "")")
                     )
                     await self?.loadSessions()
-                    let requestedName = response.name ?? name
+                    let requestedName = response.tab.name
                     if self?.sessions.contains(where: { $0.name == requestedName }) == true {
                         await MainActor.run { self?.openSession(named: requestedName) }
                     } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {

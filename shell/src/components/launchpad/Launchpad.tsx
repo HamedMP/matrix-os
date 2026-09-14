@@ -1,11 +1,36 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SearchIcon } from "@/lib/hugeicons";
+import {
+  Blocks,
+  BrushIcon,
+  Code2,
+  FilePenLine,
+  FolderTree,
+  Globe2,
+  LayoutGrid,
+  MessageSquare,
+  Monitor,
+  Notebook,
+  PlusIcon,
+  SearchIcon,
+  Settings,
+  SquareTerminal,
+  type LucideIcon,
+} from "@/lib/hugeicons";
+import {
+  OS_VIEW_CREATE_APP_APPEARANCE,
+  clampOsViewContextMenuPoint,
+  osViewFixedAppAppearanceForPath,
+  type OsViewDesktopAddResult,
+  type OsViewDesktopBounds,
+  type OsViewFixedAppIcon,
+} from "@matrix-os/contracts";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { groupLauncherApps } from "@/lib/dock-sections";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { isOsViewDestinationPath } from "@/lib/web-desktop-app-launch";
 import {
   computeLaunchpadColumns,
   computeLaunchpadPageSize,
@@ -13,6 +38,21 @@ import {
   paginateLaunchpadApps,
 } from "./launchpad-utils";
 import "./launchpad.css";
+
+const BUILT_IN_ICON_COMPONENTS: Readonly<Record<OsViewFixedAppIcon, LucideIcon>> = {
+  "message-square": MessageSquare,
+  "square-terminal": SquareTerminal,
+  "folder-tree": FolderTree,
+  "file-pen": FilePenLine,
+  code: Code2,
+  settings: Settings,
+  blocks: Blocks,
+  globe: Globe2,
+  notebook: Notebook,
+  brush: BrushIcon,
+  "layout-grid": LayoutGrid,
+  monitor: Monitor,
+};
 
 /**
  * macOS Launchpad: full-screen frosted-glass app launcher used in place of
@@ -27,11 +67,13 @@ export function Launchpad({
   visible,
   onOpenApp,
   onClose,
+  onAddToDesktop,
 }: {
   apps: AppEntry[];
   visible: boolean;
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
+  onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
 }) {
   // Keep the registry's stable order, flattened from the classic sections.
   const groups = groupLauncherApps(apps);
@@ -39,6 +81,9 @@ export function Launchpad({
 
   const [query, setQuery] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
+  const [contextMenu, setContextMenu] = useState<{ app: AppEntry; x: number; y: number } | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [placementPending, setPlacementPending] = useState(false);
   const filteredApps = filterLaunchpadApps(orderedApps, query);
 
   // Viewport-derived page size. window is only read inside this effect
@@ -75,7 +120,25 @@ export function Launchpad({
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (visible) searchRef.current?.focus();
+    else {
+      setContextMenu(null);
+      setContextError(null);
+      setPlacementPending(false);
+    }
   }, [visible]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const dismissMenuFirst = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setContextMenu(null);
+      setContextError(null);
+    };
+    document.addEventListener("keydown", dismissMenuFirst, true);
+    return () => document.removeEventListener("keydown", dismissMenuFirst, true);
+  }, [contextMenu]);
 
   const launch = (app: AppEntry) => {
     onOpenApp(app.name, app.path);
@@ -88,6 +151,14 @@ export function Launchpad({
       data-visible={visible ? "true" : undefined}
       className="launchpad-root"
       style={{ zIndex: SHELL_Z_INDEX.launchpad }}
+      onPointerDownCapture={(event) => {
+        if (!contextMenu) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest("[data-launchpad-context-menu]")) return;
+        event.stopPropagation();
+        setContextMenu(null);
+        setContextError(null);
+      }}
     >
       {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss backdrop: a pure pointer convenience that closes Launchpad only when the empty area itself is clicked. Keyboard dismiss is provided by the launcher's global Escape handler (MissionControl), and the real controls are focusable buttons. */}
       <div
@@ -141,7 +212,20 @@ export function Launchpad({
               }}
             >
               {pageApps.map((app) => (
-                <LaunchpadTile key={app.path} app={app} onLaunch={() => launch(app)} />
+                <LaunchpadTile
+                  key={app.path}
+                  app={app}
+                  onLaunch={() => launch(app)}
+                  onContextMenu={isOsViewDestinationPath(app.path) ? undefined : (event) => {
+                    if (placementPending) return;
+                    const point = clampOsViewContextMenuPoint(
+                      { x: event.clientX, y: event.clientY },
+                      { width: window.innerWidth, height: window.innerHeight },
+                    );
+                    setContextMenu({ app, ...point });
+                    setContextError(null);
+                  }}
+                />
               ))}
             </div>
           ) : (
@@ -163,19 +247,101 @@ export function Launchpad({
               />
             ))}
         </div>
+        {contextMenu && contextMenu.app.path !== "__create-app__" && onAddToDesktop ? (
+          <div
+            role="menu"
+            data-launchpad-context-menu
+            className="fixed z-50 min-w-48 max-w-64 rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              disabled={placementPending}
+              aria-busy={placementPending}
+              className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
+              onClick={async () => {
+                if (placementPending) return;
+                let result: OsViewDesktopAddResult = "failed";
+                setPlacementPending(true);
+                try {
+                  result = await onAddToDesktop(contextMenu.app.path, {
+                    width: Math.max(1, window.innerWidth),
+                    height: Math.max(1, window.innerHeight - 126),
+                  });
+                } catch (error: unknown) {
+                  console.warn("[launchpad] Desktop placement failed:", error instanceof Error ? error.name : "UnknownError");
+                }
+                setPlacementPending(false);
+                if (result === "added" || result === "already-present") {
+                  setContextMenu(null);
+                  setContextError(null);
+                  onClose();
+                  return;
+                }
+                setContextError(result === "desktop-full"
+                  ? "Desktop is full. Remove an icon and try again."
+                  : "Could not add the app. Please try again.");
+              }}
+            >
+              Add {contextMenu.app.name} to Desktop
+            </button>
+            {contextError ? <p role="alert" className="max-w-60 px-3 pb-2 text-xs">{contextError}</p> : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function LaunchpadTile({ app, onLaunch }: { app: AppEntry; onLaunch: () => void }) {
+function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu?: (event: React.MouseEvent) => void }) {
   const { showImage, onError } = useIconWithFallback(app.iconUrl);
+  const builtInAppearance = osViewFixedAppAppearanceForPath(app.path);
+  const BuiltInIcon = builtInAppearance
+    ? BUILT_IN_ICON_COMPONENTS[builtInAppearance.icon]
+    : undefined;
+  const useFixedIcon = BuiltInIcon && builtInAppearance?.iconSource === "fixed";
   return (
-    <button type="button" data-launchpad-tile className="launchpad-tile" onClick={onLaunch}>
+    <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(event); } : undefined}>
       <span className="launchpad-icon">
-        {showImage && app.iconUrl ? (
+        {app.path === "__create-app__" ? (
+          <span
+            data-launchpad-create-icon
+            className="flex size-full items-center justify-center"
+            style={{
+              background: OS_VIEW_CREATE_APP_APPEARANCE.background,
+              color: OS_VIEW_CREATE_APP_APPEARANCE.foreground,
+            }}
+          >
+            <PlusIcon className="size-12" aria-hidden="true" />
+          </span>
+        ) : useFixedIcon && builtInAppearance ? (
+          <span
+            data-launchpad-built-in-icon
+            className="flex size-full items-center justify-center"
+            style={{
+              background: builtInAppearance.background,
+              color: builtInAppearance.foreground,
+            }}
+            aria-hidden="true"
+          >
+            <BuiltInIcon className="size-8" />
+          </span>
+        ) : showImage && app.iconUrl ? (
           // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
           <img src={app.iconUrl} alt="" draggable={false} onError={onError} />
+        ) : BuiltInIcon && builtInAppearance ? (
+          <span
+            data-launchpad-built-in-icon
+            className="flex size-full items-center justify-center"
+            style={{
+              background: builtInAppearance.background,
+              color: builtInAppearance.foreground,
+            }}
+            aria-hidden="true"
+          >
+            <BuiltInIcon className="size-8" />
+          </span>
         ) : (
           <span className="launchpad-icon-fallback" aria-hidden>
             {app.name.charAt(0).toUpperCase()}

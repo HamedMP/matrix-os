@@ -21,6 +21,9 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TAB_ID = `tt_${"b".repeat(32)}`;
+
 const SKILLS = [
   {
     name: "code-review",
@@ -47,7 +50,8 @@ function makeApi(opts: FakeApiOptions = {}) {
       throw new AppError("notFound");
     }),
     post: vi.fn(async (path: string) => {
-      if (path === "/api/terminal/sessions") return { name: "plugins-skills" };
+      if (path === "/api/terminal/workspaces/ensure") return { workspace: { id: WORKSPACE_ID } };
+      if (path === `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) return { tab: { id: TAB_ID } };
       throw new AppError("notFound");
     }),
     delete: vi.fn(),

@@ -16,7 +16,24 @@ async function runWaitScript(machine: Record<string, unknown>, overrides: NodeJS
   tempDirectories.push(directory);
   const curlPath = join(directory, 'curl');
   const jqPath = join(directory, 'jq');
-  await writeFile(curlPath, '#!/usr/bin/env bash\nprintf \'%s\\n\' "$FAKE_FLEET_RESPONSE"\n');
+  await writeFile(curlPath, `#!/usr/bin/env node
+const fs = require('node:fs');
+
+const statePath = process.env.FAKE_CURL_STATE;
+const statusCodes = (process.env.FAKE_HTTP_CODES ?? '200').split(',');
+let invocation = 0;
+try {
+  invocation = Number(fs.readFileSync(statePath, 'utf8'));
+} catch (error) {
+  if (error?.code !== 'ENOENT') throw error;
+}
+fs.writeFileSync(statePath, String(invocation + 1));
+const statusCode = statusCodes[Math.min(invocation, statusCodes.length - 1)];
+const body = statusCode === '200'
+  ? process.env.FAKE_FLEET_RESPONSE
+  : process.env.FAKE_ERROR_RESPONSE;
+process.stdout.write(body + '\\n' + statusCode);
+`);
   await writeFile(jqPath, `#!/usr/bin/env node
 const fs = require('node:fs');
 
@@ -70,6 +87,9 @@ if (args.includes('-c')) {
       PREVIEW_PROVISION_TIMEOUT_SECONDS: '5',
       PREVIEW_PROVISION_POLL_SECONDS: '0',
       FAKE_FLEET_RESPONSE: JSON.stringify({ machines: [machine] }),
+      FAKE_ERROR_RESPONSE: 'provider throttling details must stay private',
+      FAKE_HTTP_CODES: '200',
+      FAKE_CURL_STATE: join(directory, 'curl-state'),
       ...overrides,
     },
   });
@@ -80,6 +100,23 @@ afterEach(async () => {
 });
 
 describe('Preview VPS provisioning workflow', () => {
+  it('collects bounded updater diagnostics before an install timeout', () => {
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const deployStep = YAML.parse(workflow).jobs.deploy.steps.find(
+      (step: { name?: string }) => step.name === 'Deploy preview bundle to preview VPS',
+    ).run as string;
+
+    expect(deployStep).toContain('collect_preview_diagnostics()');
+    expect(deployStep).toContain('"/opt/matrix/app/.update-error.json"');
+    expect(deployStep).toContain('metadata.st_size > limit');
+    expect(deployStep).toContain('state["updateError"]');
+    expect(deployStep).toContain('state["updateVersion"]');
+    expect(deployStep).not.toContain('/usr/bin/journalctl');
+    expect(deployStep).toContain('collect_preview_diagnostics || true');
+    expect(deployStep.indexOf('collect_preview_diagnostics || true'))
+      .toBeLessThan(deployStep.indexOf('Timed out waiting for ${HANDLE}'));
+  });
+
   it('budgets the job for provisioning, bounded repair, and workflow overhead', () => {
     const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
     const deploy = workflow.jobs.deploy;
@@ -116,6 +153,20 @@ describe('Preview VPS provisioning workflow', () => {
     });
 
     expect(result.status).toBe(0);
+  });
+
+  it('backs off and recovers from a transient fleet rate limit', async () => {
+    const result = await runWaitScript({
+      handle: 'pr-1340',
+      machineId,
+      status: 'running',
+      failureCode: null,
+      deletedAt: null,
+    }, { FAKE_HTTP_CODES: '429,200' });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('Preview fleet status is throttled; retrying');
+    expect(result.stderr).not.toContain('provider throttling details');
   });
 
   it('reports a coarse terminal failure code', async () => {

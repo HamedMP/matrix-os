@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import { Monitor, PanelLeft, X } from "@/lib/hugeicons";
@@ -13,6 +14,7 @@ interface WebDesktopHeaderProps {
   onCloseWindow: (id: string) => void;
   onShowDesktop: () => void;
   onToggleFullscreen: (id: string) => void;
+  rightActions?: ReactNode;
 }
 
 function activeWindowId(windows: AppWindow[]): string | null {
@@ -32,8 +34,10 @@ export function WebDesktopHeader({
   onCloseWindow,
   onShowDesktop,
   onToggleFullscreen,
+  rightActions,
 }: WebDesktopHeaderProps) {
   const [previewsOpen, setPreviewsOpen] = useState(false);
+  useGettingStartedBlocker(previewsOpen);
   const activeId = useMemo(() => activeWindowId(windows), [windows]);
   const fullscreenWindow = windows.find((windowRecord) => windowRecord.id === fullscreenWindowId);
 
@@ -93,6 +97,11 @@ export function WebDesktopHeader({
             </button>
           ) : null}
         </div>
+        {rightActions ? (
+          <div className="flex shrink-0 items-center border-l border-border/70 px-2">
+            {rightActions}
+          </div>
+        ) : null}
       </header>
 
       {previewsOpen ? (

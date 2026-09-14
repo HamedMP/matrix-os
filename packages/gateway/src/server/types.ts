@@ -6,6 +6,7 @@ export interface GatewayConfig {
   model?: string;
   maxTurns?: number;
   spawnFn?: SpawnFn;
+  runningVersion?: string;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
 
@@ -45,6 +46,7 @@ export type ServerMessage =
     }
   | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
   | { type: "data:change"; app: string; key: string }
+  | { type: "os-view:changed"; revision: number; updatedAt: string }
   | { type: "integration:connected"; service: string; accountLabel: string }
   | { type: "integration:disconnected"; service: string; id: string }
   | { type: "integration:expired"; service: string; id: string; accountLabel: string }

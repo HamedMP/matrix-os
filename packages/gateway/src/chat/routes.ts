@@ -1,32 +1,64 @@
 import {
+  ChatMessageWireVersionSchema,
+  projectChatMessageResponse,
+  CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
+  CanonicalCancelQueuedChatTurnRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunIdSchema,
+  CanonicalChatQueueAdmissionResponseSchema,
+  CanonicalChatQueueCancellationResponseSchema,
+  CanonicalChatQueueReorderResponseSchema,
+  CanonicalChatQueueUpdateResponseSchema,
+  CanonicalChatQueuedTurnIdSchema,
   CanonicalChatTurnIdSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalQueueChatTurnRequestSchema,
+  CanonicalReorderQueuedChatTurnsRequestSchema,
+  CanonicalUpdateQueuedChatTurnRequestSchema,
+  CanonicalSteerQueuedChatTurnRequestSchema,
+  CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
+  type CanonicalChatApprovalSubmissionResponse,
   type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunSteeringResponse,
   type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatQueueAdmissionResponse,
+  type CanonicalChatQueueCancellationResponse,
+  type CanonicalChatQueueReorderResponse,
+  type CanonicalChatQueueUpdateResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
+  type CanonicalCancelQueuedChatTurnRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalQueueChatTurnRequest,
+  type CanonicalReorderQueuedChatTurnsRequest,
+  type CanonicalUpdateQueuedChatTurnRequest,
+  type CanonicalSteerQueuedChatTurnRequest,
+  type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalSteerChatRunRequest,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -39,11 +71,17 @@ import {
 } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestrator.js";
+import {
+  createCanonicalChatEventStream,
+} from "./event-stream.js";
+
+export { createCanonicalChatEventStream } from "./event-stream.js";
 
 const CHAT_CREATE_BODY_LIMIT = 96 * 1024;
 const CHAT_TURN_BODY_LIMIT = 128 * 1024;
 const CHAT_CANCEL_BODY_LIMIT = 4 * 1024;
 const CHAT_UPDATE_BODY_LIMIT = 4 * 1024;
+const CHAT_ACKNOWLEDGEMENT_BODY_LIMIT = 4 * 1024;
 
 const ChatListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -76,10 +114,20 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalUpdateChatProjectRequest,
   ): Promise<CanonicalChatRecord>;
+  updateTitle(
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalUpdateChatTitleRequest,
+  ): Promise<CanonicalChatRecord>;
   updateUserState(
     owner: ChatOwner,
     chatId: string,
     input: CanonicalUpdateChatUserStateRequest,
+  ): Promise<CanonicalChatRecord>;
+  acknowledgeCompletion(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
   ): Promise<CanonicalChatRecord>;
   delete(owner: ChatOwner, chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   list(owner: ChatOwner, input: {
@@ -103,12 +151,55 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
   ): Promise<CanonicalChatTurnAdmissionResponse>;
+  enqueueQueuedTurn(
+    principal: RequestPrincipal,
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalQueueChatTurnRequest,
+  ): Promise<CanonicalChatQueueAdmissionResponse>;
+  cancelQueuedTurn(
+    owner: ChatOwner,
+    chatId: string,
+    queuedTurnId: string,
+    input: CanonicalCancelQueuedChatTurnRequest,
+  ): Promise<CanonicalChatQueueCancellationResponse>;
+  reorderQueuedTurns(
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalReorderQueuedChatTurnsRequest,
+  ): Promise<CanonicalChatQueueReorderResponse>;
+  updateQueuedTurn(
+    owner: ChatOwner,
+    chatId: string,
+    queuedTurnId: string,
+    input: CanonicalUpdateQueuedChatTurnRequest,
+  ): Promise<CanonicalChatQueueUpdateResponse>;
+  steerQueuedTurn(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    queuedTurnId: string,
+    input: CanonicalSteerQueuedChatTurnRequest,
+  ): Promise<CanonicalChatRunSteeringResponse>;
+  steerRun(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    input: CanonicalSteerChatRunRequest,
+  ): Promise<CanonicalChatRunSteeringResponse>;
   cancelRun(
     owner: ChatOwner,
     chatId: string,
     runId: string,
     input: CanonicalCancelChatRunRequest,
   ): Promise<CanonicalChatRunCancellationResponse>;
+  submitApproval(
+    owner: ChatOwner,
+    chatId: string,
+    runId: string,
+    approvalId: string,
+    input: CanonicalSubmitChatApprovalRequest,
+  ): Promise<CanonicalChatApprovalSubmissionResponse>;
   retryTurn(
     principal: RequestPrincipal,
     owner: ChatOwner,
@@ -120,6 +211,14 @@ export interface CanonicalChatRouteService {
 
 function ownerFromPrincipal(principal: RequestPrincipal): ChatOwner {
   return { type: "personal", ownerId: principal.userId };
+}
+
+export async function closeCanonicalChatEventLifecycle(options: {
+  stream: Pick<ReturnType<typeof createCanonicalChatEventStream>, "shutdown">;
+  releaseRepository(): Promise<void>;
+}): Promise<void> {
+  options.stream.shutdown();
+  await options.releaseRepository();
 }
 
 function bodyTooLarge(c: Context) {
@@ -181,10 +280,20 @@ export function createCanonicalChatRoutes(options: {
   getPrincipal: (context: Context) => RequestPrincipal;
 }): Hono {
   const routes = new Hono();
+  routes.use("/api/chats/*", async (context, next) => {
+    if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success) {
+      return validationError(context);
+    }
+    await next();
+  });
   const createBodyLimit = bodyLimit({ maxSize: CHAT_CREATE_BODY_LIMIT, onError: bodyTooLarge });
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
   const cancelBodyLimit = bodyLimit({ maxSize: CHAT_CANCEL_BODY_LIMIT, onError: bodyTooLarge });
   const updateBodyLimit = bodyLimit({ maxSize: CHAT_UPDATE_BODY_LIMIT, onError: bodyTooLarge });
+  const acknowledgementBodyLimit = bodyLimit({
+    maxSize: CHAT_ACKNOWLEDGEMENT_BODY_LIMIT,
+    onError: bodyTooLarge,
+  });
 
   routes.delete("/api/chats/:chatId", cancelBodyLimit, async (context) => {
     try {
@@ -282,6 +391,22 @@ export function createCanonicalChatRoutes(options: {
     }
   });
 
+  routes.patch("/api/chats/:chatId/title", updateBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalUpdateChatTitleRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.updateTitle(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatRecordSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
   routes.patch("/api/chats/:chatId/user-state", updateBodyLimit, async (context) => {
     try {
       const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
@@ -298,6 +423,29 @@ export function createCanonicalChatRoutes(options: {
     }
   });
 
+  routes.post(
+    "/api/chats/:chatId/runs/:runId/acknowledge",
+    acknowledgementBodyLimit,
+    async (context) => {
+      try {
+        const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+        const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+        const parsed = CanonicalAcknowledgeChatCompletionRequestSchema.safeParse(
+          await context.req.json(),
+        );
+        if (!parsed.success) return validationError(context);
+        const result = await options.service.acknowledgeCompletion(
+          ownerFromPrincipal(options.getPrincipal(context)),
+          chatId,
+          runId,
+        );
+        return context.json(CanonicalChatRecordSchema.parse(result));
+      } catch (error: unknown) {
+        return handleError(context, error);
+      }
+    },
+  );
+
   routes.get("/api/chats/:chatId", async (context) => {
     try {
       const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
@@ -312,7 +460,10 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       if (!result) return notFound(context);
-      return context.json(CanonicalChatDetailResponseSchema.parse(result));
+      return context.json(projectChatMessageResponse(
+        CanonicalChatDetailResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -330,11 +481,132 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
       );
-      return context.json(CanonicalChatTurnAdmissionResponseSchema.parse(result), 202);
+      return context.json(projectChatMessageResponse(
+        CanonicalChatTurnAdmissionResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ), 202);
     } catch (error: unknown) {
       return handleError(context, error);
     }
   });
+
+  routes.post("/api/chats/:chatId/queued-turns", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalQueueChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const principal = options.getPrincipal(context);
+      const result = await options.service.enqueueQueuedTurn(
+        principal,
+        ownerFromPrincipal(principal),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueAdmissionResponseSchema.parse(result), 201);
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/queued-turns/order", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalReorderQueuedChatTurnsRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.reorderQueuedTurns(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueReorderResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/queued-turns/:queuedTurnId", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(context.req.param("queuedTurnId"));
+      const parsed = CanonicalUpdateQueuedChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.updateQueuedTurn(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        queuedTurnId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueUpdateResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.delete("/api/chats/:chatId/queued-turns/:queuedTurnId", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(context.req.param("queuedTurnId"));
+      const parsed = CanonicalCancelQueuedChatTurnRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.cancelQueuedTurn(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        queuedTurnId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatQueueCancellationResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/runs/:runId/steer", turnBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+      const parsed = CanonicalSteerChatRunRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.steerRun(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        runId,
+        parsed.data,
+      );
+      return context.json(projectChatMessageResponse(
+        CanonicalChatRunSteeringResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post(
+    "/api/chats/:chatId/runs/:runId/queued-turns/:queuedTurnId/steer",
+    cancelBodyLimit,
+    async (context) => {
+      try {
+        const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+        const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+        const queuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(context.req.param("queuedTurnId"));
+        const parsed = CanonicalSteerQueuedChatTurnRequestSchema.safeParse(await context.req.json());
+        if (!parsed.success) return validationError(context);
+        const result = await options.service.steerQueuedTurn(
+          ownerFromPrincipal(options.getPrincipal(context)),
+          chatId,
+          runId,
+          queuedTurnId,
+          parsed.data,
+        );
+        return context.json(projectChatMessageResponse(
+        CanonicalChatRunSteeringResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+      ));
+      } catch (error: unknown) {
+        return handleError(context, error);
+      }
+    },
+  );
 
   routes.post("/api/chats/:chatId/runs/:runId/cancel", cancelBodyLimit, async (context) => {
     try {
@@ -350,6 +622,28 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       return context.json(CanonicalChatRunCancellationResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/runs/:runId/approvals/:approvalId", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+      const approvalId = z.string().trim().min(1).max(128)
+        .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/)
+        .parse(context.req.param("approvalId"));
+      const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.submitApproval(
+        ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        runId,
+        approvalId,
+        parsed.data,
+      );
+      return context.json(CanonicalChatApprovalSubmissionResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }

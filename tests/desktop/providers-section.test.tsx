@@ -5,8 +5,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProvidersSection from "../../desktop/src/renderer/src/features/settings/sections/ProvidersSection";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+
+const TERMINAL_WORKSPACE_ID = `tws_${"c".repeat(32)}`;
+const TERMINAL_TAB_ID = `tt_${"d".repeat(32)}`;
 
 function runtimeSummary(providers: unknown[]) {
   return {
@@ -16,7 +20,7 @@ function runtimeSummary(providers: unknown[]) {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: {
       maxPromptBytes: 16384,
@@ -75,7 +79,11 @@ describe("ProvidersSection", () => {
     api = {
       get: vi.fn(),
       getText: vi.fn(),
-      post: vi.fn().mockResolvedValue({ name: "matrix-setup-codex" }),
+      post: vi.fn((path: string) => Promise.resolve(
+        path === "/api/terminal/workspaces/ensure"
+          ? { workspace: { id: TERMINAL_WORKSPACE_ID } }
+          : { tab: { id: TERMINAL_TAB_ID } },
+      )),
       put: vi.fn(),
       putText: vi.fn(),
     };
@@ -90,7 +98,7 @@ describe("ProvidersSection", () => {
       activeTabId: "home",
       tabs: [{ id: "home", kind: "home", title: "Home", closable: false }],
     });
-    useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
+    resetProviderPreferences();
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "runtime:get-summary") return summaryResult();
@@ -120,25 +128,32 @@ describe("ProvidersSection", () => {
   });
 
   it("runs setup actions through the existing foreground terminal flow", async () => {
-    let resolveSetupSession!: (value: { name: string }) => void;
-    api.post.mockImplementation(() => new Promise<{ name: string }>((resolve) => {
-      resolveSetupSession = resolve;
-    }));
+    let resolveSetupTab!: (value: { tab: { id: string } }) => void;
+    api.post.mockImplementation((path: string) => {
+      if (path === "/api/terminal/workspaces/ensure") {
+        return Promise.resolve({ workspace: { id: TERMINAL_WORKSPACE_ID } });
+      }
+      return new Promise<{ tab: { id: string } }>((resolve) => {
+        resolveSetupTab = resolve;
+      });
+    });
     render(<ProvidersSection />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Open provider setup Sign in" }));
 
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith(
-        "/api/terminal/sessions",
-        expect.objectContaining({ cmd: "codex login", cwd: "projects" }),
+        `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`,
+        expect.objectContaining({ command: ["sh", "-lc", "codex login"], cwd: "projects" }),
       ),
     );
-    await act(async () => resolveSetupSession({ name: "matrix-setup-codex" }));
+    await act(async () => resolveSetupTab({ tab: { id: TERMINAL_TAB_ID } }));
     expect(
       useTabs.getState().tabs.some((tab) => tab.kind === "terminals" && tab.title === "Terminal"),
     ).toBe(true);
-    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe("matrix-setup-codex");
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(
+      `${TERMINAL_WORKSPACE_ID}:${TERMINAL_TAB_ID}`,
+    );
   });
 
   it("shows a generic setup error when the terminal cannot be opened", async () => {
@@ -238,7 +253,7 @@ describe("ProvidersSection", () => {
   });
 
   it("resets the default provider back to automatic", async () => {
-    useProviderPreferences.setState({ defaultProviderId: "codex", composerSelections: {}, hydrated: true });
+    resetProviderPreferences({ defaultProviderId: "codex", hydrated: true });
     render(<ProvidersSection />);
     expect((await screen.findAllByText("Codex")).length).toBeGreaterThan(0);
 

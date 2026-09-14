@@ -108,9 +108,9 @@ write block; zellij env allowlist + KDL escaping; approval-hook scaffold exists 
 | | Status | Notes |
 |---|---|---|
 | **S**poofing | ✅ | Presigned URLs scoped to `matrixos-sync/{userId}/` and validated before issue. |
-| **T**ampering | ⚠️ | Standing full-bucket credential on every VPS bypasses presign scoping (**F4**). |
-| **I**nfo disclosure | ⚠️ | A popped VPS reads every user's synced files via the shared key (**F4**); `.env*` not excluded from sync defaults can push secrets up (**F7**). |
-| **E**levation | ⚠️ | Single-VPS compromise → cross-tenant data access through shared creds (**F4**). |
+| **T**ampering | ⚠️ | Brokered hosts are tenant-scoped; legacy hosts retain standing-key risk until F4 rollout and revocation complete. |
+| **I**nfo disclosure | ⚠️ | Brokered hosts cannot request cross-tenant keys; copied legacy credentials remain dangerous until revoked (**F4**); `.env*` not excluded from sync defaults can push secrets up (**F7**). |
+| **E**levation | ⚠️ | Source path is tenant-scoped, but incomplete fleet migration preserves the former cross-tenant credential risk (**F4**). |
 
 Holding: presign prefix validation (`keyAllowedForUser`); sync/bundle bucket isolation
 checked in CI; immutable release objects.

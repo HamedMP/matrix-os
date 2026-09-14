@@ -14,8 +14,10 @@ import {
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
+import { canonicalProviderAvailabilityLabel } from "@matrix-os/ui";
 
 const DRIVER_LABEL: Record<CanonicalProviderDriverKind, string> = {
+  kernel: "Matrix Agent",
   hermes: "Hermes",
   openclaw: "OpenClaw",
   codex: "Codex",
@@ -32,13 +34,6 @@ const DRIVER_GROUPS: Array<{
   { capabilityClass: "system_agent", label: "General agents", shortLabel: "General" },
   { capabilityClass: "coding_agent", label: "Coding agents", shortLabel: "Coding" },
 ];
-
-function availabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
-  if (instance.availability === "setup_required") return "Setup required";
-  if (instance.availability === "auth_required") return "Authentication required";
-  if (instance.availability === "unavailable") return "Unavailable";
-  return "Available";
-}
 
 function modelProviderPresentation(
   instance: CanonicalProviderInstanceDescriptor,
@@ -62,6 +57,7 @@ export function ProviderModelPicker({
   catalog,
   selection,
   instanceLocked,
+  disabled = false,
   unavailableProviderLabel,
   menuSide = "top",
   onSetupAction,
@@ -71,6 +67,7 @@ export function ProviderModelPicker({
   catalog: CanonicalProviderCatalog;
   selection: CanonicalComposerSelection | null;
   instanceLocked: boolean;
+  disabled?: boolean;
   unavailableProviderLabel?: string;
   menuSide?: "top" | "bottom";
   onSetupAction?: (
@@ -93,10 +90,13 @@ export function ProviderModelPicker({
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleModels = activeInstance?.availability === "available"
     ? activeInstance.models.filter((model) => (
-      normalizedQuery.length === 0
-      || model.displayName.toLocaleLowerCase().includes(normalizedQuery)
-      || activeInstance.displayName.toLocaleLowerCase().includes(normalizedQuery)
-      || DRIVER_LABEL[activeInstance.driverKind].toLocaleLowerCase().includes(normalizedQuery)
+      model.availability === "available"
+      && (
+        normalizedQuery.length === 0
+        || model.displayName.toLocaleLowerCase().includes(normalizedQuery)
+        || activeInstance.displayName.toLocaleLowerCase().includes(normalizedQuery)
+        || DRIVER_LABEL[activeInstance.driverKind].toLocaleLowerCase().includes(normalizedQuery)
+      )
     ))
     : [];
 
@@ -104,6 +104,10 @@ export function ProviderModelPicker({
     <Popover.Root
       open={open}
       onOpenChange={(nextOpen) => {
+        if (disabled) {
+          setOpen(false);
+          return;
+        }
         setOpen(nextOpen);
         if (nextOpen) {
           setActiveInstanceId(selectedInstance?.id ?? catalog.instances[0]?.id ?? "");
@@ -113,6 +117,7 @@ export function ProviderModelPicker({
       <Popover.Trigger asChild>
       <button
         type="button"
+        disabled={disabled}
         aria-label="Choose model and provider"
         aria-expanded={open}
         data-provider-instance={selectedInstance?.id ?? ""}
@@ -120,7 +125,7 @@ export function ProviderModelPicker({
         title={selectedInstance && selectedModel
           ? `${selectedModel.displayName} · ${selectedInstance.displayName}`
           : unavailableProviderLabel ?? "Choose model and provider"}
-        className="flex h-8 max-w-[12rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        className="flex h-8 max-w-[12rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-wait disabled:opacity-50"
         style={{ color: "var(--text-secondary)" }}
       >
         {selectedInstance ? <ProviderDriverGlyph kind={selectedInstance.driverKind} /> : <Cpu size={15} />}
@@ -173,7 +178,7 @@ export function ProviderModelPicker({
                     const disabled = !instance
                       || (locked && !setupBrowsable)
                       || (unavailable && instance.setupActions.length === 0);
-                    const availability = instance ? availabilityLabel(instance) : "Unavailable";
+                    const availability = instance ? canonicalProviderAvailabilityLabel(instance) : "Unavailable";
                     const tooltipLabel = unavailable
                       ? `${driver.displayName} — ${availability}`
                       : locked
@@ -332,7 +337,7 @@ export function ProviderModelPicker({
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{model.displayName}</span>
                           <span className="block truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                            {provider.label} · {availabilityLabel(instance)}
+                            {provider.label} · {canonicalProviderAvailabilityLabel(instance)}
                           </span>
                         </span>
                       </button>
@@ -347,7 +352,7 @@ export function ProviderModelPicker({
             {activeInstance && activeInstance.availability !== "available" ? (
               <div className="mt-1 border-t px-2 pt-2" style={{ borderColor: "var(--border-subtle)" }}>
                 <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                  {availabilityLabel(activeInstance)}
+                  {canonicalProviderAvailabilityLabel(activeInstance)}
                 </p>
                 {onSetupAction ? activeInstance.setupActions.map((action) => (
                   <button

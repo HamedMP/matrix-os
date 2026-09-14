@@ -87,8 +87,8 @@ describe("zellij-runtime", () => {
     );
     expect(runCommand).not.toHaveBeenCalledWith("zellij", expect.arrayContaining(["--layout"]), expect.any(Object));
 
-    expect(runtime.attachCommand("sess_abc123")).toEqual(["zellij", "attach", "matrix-sess_abc123"]);
-    expect(runtime.observeCommand("sess_abc123")).toEqual(["zellij", "attach", "matrix-sess_abc123", "--index", "0"]);
+    expect(runtime.attachCommand("sess_abc123")).toEqual(["zellij", "attach", "matrix-sess_abc123", "options", "--default-mode", "normal"]);
+    expect(runtime.observeCommand("sess_abc123")).toEqual(["zellij", "attach", "matrix-sess_abc123", "--index", "0", "options", "--default-mode", "normal"]);
 
     await expect(runtime.kill("sess_abc123")).resolves.toEqual({ ok: true });
     expect(pty.process.kill).toHaveBeenCalledTimes(1);

@@ -440,6 +440,18 @@ describe("coding-agent provider registry", () => {
     }]);
   });
 
+  it("invalidates credential detection when the provider catalog requests a live refresh", () => {
+    const invalidateCredentialDetection = vi.fn();
+    const registry = createCodingAgentProviderRegistry({
+      providers: [adapter()],
+      invalidateCredentialDetection,
+    });
+
+    registry.invalidate(owner.userId);
+
+    expect(invalidateCredentialDetection).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects unsafe or duplicate provider configuration", () => {
     expect(() => createCodingAgentProviderRegistry({
       providers: [adapter({ providerId: "../unsafe" })],

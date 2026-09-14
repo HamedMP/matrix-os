@@ -10,6 +10,12 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 
 const NOW = "2026-08-28T10:00:00.000Z";
 const { snapshot } = createCanonicalChatFixture("completed");
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+
+function refKey(label: string): string {
+  const value = [...label].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 0);
+  return `${WORKSPACE_ID}:tt_${value.toString(16).padStart(32, "0")}`;
+}
 
 function binding(id: string, terminalSessionId: string, occurredAt: string): CanonicalChatRunActivity {
   return {
@@ -52,7 +58,29 @@ function summary(items: TerminalSessionSummary[]): RuntimeSummary {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items, hasMore: false, limit: 50 },
+    terminalWorkspaces: {
+      items: [{
+        id: WORKSPACE_ID,
+        scope: "main",
+        name: "Main",
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+        tabs: items.map((item, order) => ({
+          id: refKey(item.id).split(":")[1]!,
+          workspaceId: WORKSPACE_ID,
+          name: item.name,
+          cwd: "",
+          status: item.status === "stale" ? "unavailable" : item.status,
+          revision: 1,
+          order,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        })),
+      }],
+      hasMore: false,
+      limit: 50,
+    },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
@@ -63,27 +91,27 @@ function summary(items: TerminalSessionSummary[]): RuntimeSummary {
 describe("Work terminal projection", () => {
   it("keeps only selected-Chat bindings, newest first, and de-duplicates by session id", () => {
     const result = projectWorkTerminalSessions(detail([
-      binding("activity_old", "terminal_build", "2026-08-28T08:00:00.000Z"),
-      binding("activity_other", "terminal_deploy", "2026-08-28T09:00:00.000Z"),
-      binding("activity_new", "terminal_build", "2026-08-28T10:00:00.000Z"),
+      binding("activity_old", refKey("terminal_build"), "2026-08-28T08:00:00.000Z"),
+      binding("activity_other", refKey("terminal_deploy"), "2026-08-28T09:00:00.000Z"),
+      binding("activity_new", refKey("terminal_build"), "2026-08-28T10:00:00.000Z"),
     ]), summary([
       session("terminal_unrelated"),
       session("terminal_build", { name: "Build" }),
       session("terminal_deploy", { name: "Deploy" }),
     ]));
 
-    expect(result.map((item) => item.id)).toEqual(["terminal_build", "terminal_deploy"]);
+    expect(result.map((item) => item.id)).toEqual([refKey("terminal_build"), refKey("terminal_deploy")]);
     expect(result.map((item) => item.name)).toEqual(["Build", "Deploy"]);
   });
 
   it("shows a persisted binding as unavailable without borrowing another runtime session", () => {
     expect(projectWorkTerminalSessions(
-      detail([binding("activity_missing", "terminal_missing", "2026-08-28T10:00:00.000Z")]),
+      detail([binding("activity_missing", refKey("terminal_missing"), "2026-08-28T10:00:00.000Z")]),
       summary([session("terminal_unrelated")]),
     )).toEqual([
       expect.objectContaining({
-        id: "terminal_missing",
-        name: "terminal_missing",
+        id: refKey("terminal_missing"),
+        name: refKey("terminal_missing"),
         status: "unavailable",
         attachable: false,
       }),
@@ -92,11 +120,11 @@ describe("Work terminal projection", () => {
 
   it("keeps persisted bindings visible as unavailable before a runtime summary exists", () => {
     expect(projectWorkTerminalSessions(
-      detail([binding("activity_pending", "terminal_pending", "2026-08-28T10:00:00.000Z")]),
+      detail([binding("activity_pending", refKey("terminal_pending"), "2026-08-28T10:00:00.000Z")]),
       null,
     )).toEqual([
       expect.objectContaining({
-        id: "terminal_pending",
+        id: refKey("terminal_pending"),
         status: "unavailable",
         attachable: false,
       }),
@@ -106,15 +134,15 @@ describe("Work terminal projection", () => {
   it("changes projection with the selected Chat detail instead of retaining prior bindings", () => {
     const runtime = summary([session("terminal_first"), session("terminal_second")]);
     const first = projectWorkTerminalSessions(
-      detail([binding("activity_first", "terminal_first", "2026-08-28T09:00:00.000Z")]),
+      detail([binding("activity_first", refKey("terminal_first"), "2026-08-28T09:00:00.000Z")]),
       runtime,
     );
     const second = projectWorkTerminalSessions(
-      detail([binding("activity_second", "terminal_second", "2026-08-28T10:00:00.000Z")]),
+      detail([binding("activity_second", refKey("terminal_second"), "2026-08-28T10:00:00.000Z")]),
       runtime,
     );
 
-    expect(first.map((item) => item.id)).toEqual(["terminal_first"]);
-    expect(second.map((item) => item.id)).toEqual(["terminal_second"]);
+    expect(first.map((item) => item.id)).toEqual([refKey("terminal_first")]);
+    expect(second.map((item) => item.id)).toEqual([refKey("terminal_second")]);
   });
 });

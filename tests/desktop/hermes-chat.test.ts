@@ -68,18 +68,19 @@ describe("useHermesChat", () => {
   it("returns to idle and shows an error when the kernel socket is unavailable", () => {
     kernel.sendKernelMessage.mockReturnValue(false);
 
-    useHermesChat.getState().send("hello");
+    expect(useHermesChat.getState().send("hello")).toBe(false);
 
     expect(useHermesChat.getState().status).toBe("idle");
     expect(useHermesChat.getState().activeRequestId).toBeNull();
+    expect(useHermesChat.getState().messages).toEqual([]);
+    expect(useHermesChat.getState().providerInstanceLocked).toBe(false);
+  });
+
+  it("reports when the kernel accepted a message", () => {
+    expect(useHermesChat.getState().send("hello")).toBe(true);
     expect(useHermesChat.getState().messages).toEqual([
       expect.objectContaining({ role: "user", content: "hello" }),
-      expect.objectContaining({
-        role: "system",
-        content: "Can't reach Matrix OS. Check your connection.",
-      }),
     ]);
-    expect(useHermesChat.getState().providerInstanceLocked).toBe(false);
   });
 
   it("locks the provider only after the Gateway accepts the first Turn", () => {

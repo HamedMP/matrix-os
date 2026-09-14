@@ -1,11 +1,7 @@
 import { Download, LoaderCircle } from "@renderer/lib/hugeicons";
 import { useDesktopUpdate } from "../../stores/desktop-update";
 
-interface DesktopUpdateButtonProps {
-  collapsed: boolean;
-}
-
-export default function DesktopUpdateButton({ collapsed }: DesktopUpdateButtonProps) {
+export default function DesktopUpdateButton() {
   const snapshot = useDesktopUpdate((state) => state.snapshot);
   const installing = useDesktopUpdate((state) => state.installing);
   const install = useDesktopUpdate((state) => state.install);
@@ -13,19 +9,17 @@ export default function DesktopUpdateButton({ collapsed }: DesktopUpdateButtonPr
   if (snapshot.status !== "ready" || !snapshot.version) return null;
 
   const label = `Update Matrix OS to ${snapshot.version}`;
-  const button = (
+  return (
     <button
       type="button"
       aria-label={label}
       title={label}
       disabled={installing}
-      className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition-[transform,filter] duration-150 hover:brightness-110 active:scale-[0.97] disabled:cursor-wait disabled:opacity-80"
+      className="no-drag flex size-6 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition-[transform,filter] duration-150 hover:brightness-110 active:scale-[0.97] disabled:cursor-wait disabled:opacity-80"
       style={{ background: "var(--update-action)" }}
       onClick={() => void install()}
     >
-      {installing ? <LoaderCircle size={13} className="animate-spin" /> : <Download size={13} />}
+      {installing ? <LoaderCircle size={12} className="animate-spin" /> : <Download size={12} />}
     </button>
   );
-
-  return collapsed ? <div className="flex justify-center px-2 pt-1">{button}</div> : button;
 }

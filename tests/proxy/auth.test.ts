@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildProxyApiKey,
+  isFundedProxyApiKey,
   isAuthorizedProxyAdminRequest,
   parseProxyApiKey,
 } from "../../packages/proxy/src/auth.js";
@@ -33,5 +34,12 @@ describe("proxy auth", () => {
     expect(parseProxyApiKey(key, "proxy-shared-secret")).toEqual({ handle: "alice" });
     expect(parseProxyApiKey("sk-proxy-alice", "proxy-shared-secret")).toBeNull();
     expect(parseProxyApiKey(key, "wrong-secret")).toBeNull();
+  });
+
+  it("recognizes funded credentials as opaque platform authority, never local handle HMAC auth", () => {
+    const fundedKey = `sk-matrix-funded-credential_123.${"s".repeat(43)}`;
+    expect(isFundedProxyApiKey(fundedKey)).toBe(true);
+    expect(isFundedProxyApiKey(buildProxyApiKey("alice", "proxy-shared-secret"))).toBe(false);
+    expect(parseProxyApiKey(fundedKey, "proxy-shared-secret")).toBeNull();
   });
 });

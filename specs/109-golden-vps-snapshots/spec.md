@@ -441,7 +441,11 @@ straightforward billing, and one-owner-per-VPS isolation.
   When no exact image exists, the system MUST use the clean Ubuntu path.
 - **FR-022**: Snapshot compatibility MUST account for architecture, base-system and boot
   compatibility, minimum disk requirement, and any release-declared activation
-  constraint.
+  constraint. Every purchasable hosted server type MUST derive its architecture and
+  disk capacity from the shared hosted-machine catalog; an independent snapshot
+  allowlist MUST NOT silently send a supported paid configuration to clean-image
+  provisioning. Bounded legacy capability entries MAY remain for recovery of existing
+  machines that are no longer offered for purchase.
 - **FR-023**: The platform MUST NOT select an older or merely compatible snapshot for a
   different target bundle.
 - **FR-024**: A new VPS MUST receive customer identity and secrets only during its own

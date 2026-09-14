@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -eu
+
+exec /opt/matrix/runtime/node/bin/node \
+  --enable-source-maps \
+  /opt/matrix/app/packages/scope-runtime/dist/main.js

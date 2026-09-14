@@ -6,6 +6,8 @@ import { buildPlatformUserProof } from "../../packages/platform/src/session-rout
 import {
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
+  isSignUpShellPath,
+  resolveCompletedSignupRedirect,
 } from "../../shell/src/lib/proxy-routes";
 
 /**
@@ -69,6 +71,13 @@ describe("proxy auth: route classification", () => {
     expect(isPublicShellPath("/sign-up/verify-email-address")).toBe(true);
   });
 
+  it("identifies only sign-up pages as completed-signup recovery paths", () => {
+    expect(isSignUpShellPath("/sign-up")).toBe(true);
+    expect(isSignUpShellPath("/sign-up/verify-email-address")).toBe(true);
+    expect(isSignUpShellPath("/sign-in")).toBe(false);
+    expect(isSignUpShellPath("/sign-up-malicious")).toBe(false);
+  });
+
   it("classifies only the exact runtime HTML route as public", () => {
     expect(isPublicShellPath("/runtime")).toBe(true);
     expect(isPublicShellPath("/runtime/other")).toBe(false);
@@ -117,6 +126,257 @@ describe("proxy auth: route classification", () => {
     expect(isGatewayProxy("/")).toBe(false);
     expect(isGatewayProxy("/settings")).toBe(false);
     expect(isGatewayProxy("/health")).toBe(false);
+  });
+});
+
+describe("completed signup redirect validation", () => {
+  const appOrigin = "https://app.matrix-os.com";
+
+  it("accepts absolute and relative same-origin destinations", () => {
+    expect(resolveCompletedSignupRedirect(
+      "?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F",
+      appOrigin,
+    )).toBe("/");
+    expect(resolveCompletedSignupRedirect(
+      "?redirect_url=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+      appOrigin,
+    )).toBe("/auth/device?user_code=BCDF-GHJK");
+  });
+
+  it("rejects external, protocol-relative, auth-loop, and oversized destinations", () => {
+    expect(resolveCompletedSignupRedirect(
+      "?redirect_url=https%3A%2F%2Fevil.example%2Fsteal",
+      appOrigin,
+    )).toBe("/");
+    expect(resolveCompletedSignupRedirect(
+      "?redirect_url=%2F%2Fevil.example%2Fsteal",
+      appOrigin,
+    )).toBe("/");
+    expect(resolveCompletedSignupRedirect(
+      "?redirect_url=%2Fsign-up%2Fverify-email-address",
+      appOrigin,
+    )).toBe("/");
+    expect(resolveCompletedSignupRedirect(
+      `?redirect_url=${encodeURIComponent(`/${"a".repeat(2_048)}`)}`,
+      appOrigin,
+    )).toBe("/");
+    expect(resolveCompletedSignupRedirect(
+      `?padding=${"a".repeat(8_192)}&redirect_url=%2Fauth%2Fdevice`,
+      appOrigin,
+    )).toBe("/");
+  });
+});
+
+describe("proxy auth: completed signup recovery", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.doUnmock("@clerk/nextjs/server");
+    vi.doUnmock("next/server");
+  });
+
+  async function loadProxy(
+    userId: string | null,
+    configuredAppUrl = "https://app.matrix-os.com",
+    additionalEnv: Record<string, string> = {},
+  ) {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_MATRIX_APP_URL", configuredAppUrl);
+    for (const [key, value] of Object.entries(additionalEnv)) {
+      vi.stubEnv(key, value);
+    }
+    const recoveryLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const recoveryError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const clerkRequestHandler = vi.fn(async (
+      handler: (...args: unknown[]) => unknown,
+      request: unknown,
+      event: unknown,
+    ) => handler(async () => ({ userId }), request, event));
+    const clerkMiddleware = vi.fn((handler) => async (request: unknown, event: unknown) =>
+      clerkRequestHandler(handler, request, event)
+    );
+    vi.doMock("@clerk/nextjs/server", () => ({ clerkMiddleware }));
+
+    const nextResponseNext = vi.fn((init?: unknown) => ({ kind: "next", init }));
+    const nextResponseRedirect = vi.fn((url: URL, status?: number) => ({
+      kind: "redirect",
+      url,
+      status,
+    }));
+    class MockNextResponse extends Response {
+      static next = nextResponseNext;
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = nextResponseRedirect;
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+    return {
+      proxy,
+      clerkMiddleware,
+      clerkRequestHandler,
+      nextResponseNext,
+      nextResponseRedirect,
+      recoveryLog,
+      recoveryError,
+    };
+  }
+
+  function signupRequest(
+    search: string,
+    method = "GET",
+    pathname = "/sign-up/verify-email-address",
+  ) {
+    return {
+      method,
+      headers: new Headers({
+        host: "127.0.0.1:3200",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-forwarded-proto": "http",
+      }),
+      nextUrl: {
+        host: "127.0.0.1:3200",
+        pathname,
+        protocol: "http:",
+        search,
+      },
+    };
+  }
+
+  it("redirects a completed verification POST to the configured app origin with 303", async () => {
+    const { proxy, nextResponseRedirect, recoveryLog } = await loadProxy("user_complete");
+
+    const response = await proxy(
+      signupRequest(
+        "?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F",
+        "POST",
+      ) as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toEqual({
+      kind: "redirect",
+      url: new URL("https://app.matrix-os.com/"),
+      status: 303,
+    });
+    expect(nextResponseRedirect).toHaveBeenCalledOnce();
+    expect(recoveryLog).toHaveBeenCalledWith("[auth] recovered completed signup");
+  });
+
+  it("preserves a validated same-origin device approval destination", async () => {
+    const { proxy } = await loadProxy("user_complete");
+
+    const response = await proxy(
+      signupRequest(
+        "?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+      ) as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toEqual({
+      kind: "redirect",
+      url: new URL("https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK"),
+      status: 303,
+    });
+  });
+
+  it("recovers an authenticated reload of the direct sign-up route", async () => {
+    const { proxy } = await loadProxy("user_complete");
+
+    const response = await proxy(
+      signupRequest("", "GET", "/sign-up") as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toEqual({
+      kind: "redirect",
+      url: new URL("https://app.matrix-os.com/"),
+      status: 303,
+    });
+  });
+
+  it("falls back to the app root for an external destination", async () => {
+    const { proxy } = await loadProxy("user_complete");
+
+    const response = await proxy(
+      signupRequest("?redirect_url=https%3A%2F%2Fevil.example%2Fsteal") as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toEqual({
+      kind: "redirect",
+      url: new URL("https://app.matrix-os.com/"),
+      status: 303,
+    });
+  });
+
+  it("recovers a provisioned user through the trusted platform fast path", async () => {
+    const platformSecret = "platform-secret-123";
+    const handle = "alice";
+    const platformToken = buildPlatformVerificationToken(handle, platformSecret);
+    const { proxy, clerkMiddleware, clerkRequestHandler } = await loadProxy(
+      null,
+      "https://app.matrix-os.com",
+      {
+        UPGRADE_TOKEN: platformToken,
+        MATRIX_CLERK_USER_ID: "user_alice",
+        MATRIX_HANDLE: handle,
+        MATRIX_RUNTIME_SLOT: "primary",
+      },
+    );
+    const request = signupRequest(
+      "?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    request.headers.set("authorization", `Bearer ${platformToken}`);
+    request.headers.set("x-platform-user-id", "user_alice");
+    request.headers.set(
+      "x-platform-verified",
+      buildPlatformUserProof(handle, "user_alice", platformSecret),
+    );
+
+    const response = await proxy(
+      request as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toEqual({
+      kind: "redirect",
+      url: new URL("https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK"),
+      status: 303,
+    });
+    expect(clerkMiddleware).toHaveBeenCalledOnce();
+    expect(clerkRequestHandler).not.toHaveBeenCalled();
+  });
+
+  it("continues rendering the Clerk flow for an anonymous signup", async () => {
+    const { proxy, nextResponseNext, nextResponseRedirect } = await loadProxy(null);
+
+    const response = await proxy(
+      signupRequest("?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F") as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toEqual({ kind: "next", init: undefined });
+    expect(nextResponseNext).toHaveBeenCalledOnce();
+    expect(nextResponseRedirect).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the canonical app origin is not configured", async () => {
+    const { proxy, nextResponseRedirect, recoveryError } = await loadProxy("user_complete", "");
+
+    const response = await proxy(
+      signupRequest("?redirect_url=https%3A%2F%2Fevil.example%2Fsteal") as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toBeInstanceOf(Response);
+    expect(response.status).toBe(503);
+    expect(nextResponseRedirect).not.toHaveBeenCalled();
+    expect(recoveryError).toHaveBeenCalledWith(
+      "[auth] completed signup recovery unavailable: app origin is not configured",
+    );
   });
 });
 

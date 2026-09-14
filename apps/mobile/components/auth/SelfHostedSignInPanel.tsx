@@ -30,12 +30,12 @@ export function SelfHostedSignInPanel({
       <Text style={styles.panelTitle}>Basic Auth</Text>
       <View style={styles.fields}>
         <View style={styles.inputRow}>
-          <Ionicons name="person-outline" size={17} color={theme.colors.inkMuted} />
+          <Ionicons name="person-outline" size={17} color={theme.v2.appColors.muted} />
           <TextInput
             value={username}
             onChangeText={onUsernameChange}
             placeholder="matrix"
-            placeholderTextColor={theme.colors.inkDim}
+            placeholderTextColor={theme.v2.appColors.muted}
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="next"
@@ -44,12 +44,12 @@ export function SelfHostedSignInPanel({
           />
         </View>
         <View style={styles.inputRow}>
-          <Ionicons name="key-outline" size={17} color={theme.colors.inkMuted} />
+          <Ionicons name="key-outline" size={17} color={theme.v2.appColors.muted} />
           <TextInput
             value={password}
             onChangeText={onPasswordChange}
             placeholder="Installer password"
-            placeholderTextColor={theme.colors.inkDim}
+            placeholderTextColor={theme.v2.appColors.muted}
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
@@ -71,10 +71,10 @@ export function SelfHostedSignInPanel({
         ]}
       >
         {connecting ? (
-          <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+          <ActivityIndicator size="small" color={theme.v2.colors.textInverse} />
         ) : (
           <>
-            <Ionicons name="log-in-outline" size={19} color={theme.colors.primaryForeground} />
+            <Ionicons name="log-in-outline" size={19} color={theme.v2.colors.textInverse} />
             <Text style={styles.buttonText}>Connect to self-hosted Matrix</Text>
           </>
         )}
@@ -89,9 +89,9 @@ const styles = StyleSheet.create((theme) => ({
     gap: 10,
   },
   panelTitle: {
-    fontFamily: theme.fonts.sansSemiBold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 13,
-    color: theme.colors.foreground,
+    color: theme.v2.appColors.ink,
   },
   fields: {
     gap: 8,
@@ -102,41 +102,35 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: 10,
     paddingHorizontal: 14,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
+    borderRadius: theme.v2.radius.control,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.field,
+    borderColor: theme.v2.appColors.line,
+    backgroundColor: theme.v2.appColors.surface,
   },
   input: {
     flex: 1,
     minWidth: 0,
-    fontFamily: theme.fonts.sansMedium,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 14,
-    color: theme.colors.foreground,
+    color: theme.v2.appColors.ink,
     paddingVertical: 10,
   },
   button: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 12,
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.primary,
+    gap: 10,
+    backgroundColor: theme.v2.colors.brand,
+    borderRadius: theme.v2.radius.control,
     paddingVertical: 16,
-    paddingHorizontal: 24,
-    boxShadow: "0 10px 22px rgba(194, 112, 58, 0.18)",
   },
   buttonDisabled: {
-    opacity: 0.72,
+    opacity: 0.55,
   },
   buttonText: {
-    fontFamily: theme.fonts.sansSemiBold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 16,
-    color: theme.colors.primaryForeground,
+    color: theme.v2.colors.textInverse,
   },
   buttonPressed: {
     opacity: 0.85,

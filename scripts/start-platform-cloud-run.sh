@@ -56,7 +56,7 @@ if [ "${AUTH_SHELL_ENABLED:-true}" = "true" ]; then
   fi
 fi
 
-node packages/platform/dist/main.js &
+node --import=tsx packages/platform/dist/main.js &
 platform_pid="$!"
 
 while :; do

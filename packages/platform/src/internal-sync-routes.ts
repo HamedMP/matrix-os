@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { z } from "zod/v4";
 import { getActiveUserMachineByHandle, getContainer, type PlatformDB } from "./db.js";
+import { buildCustomerVpsR2Key } from "./customer-vps-r2.js";
+import { RuntimeSlotSchema } from "./customer-vps-schema.js";
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -9,11 +12,18 @@ import {
 const INTERNAL_SYNC_BODY_LIMIT = 64 * 1024;
 const INTERNAL_SYNC_MULTIPART_COMPLETE_LIMIT = 1024 * 1024;
 const INTERNAL_SYNC_OBJECT_BODY_LIMIT = 100 * 1024 * 1024;
+const SYSTEM_STORAGE_PRESIGN_TTL_SECONDS = 300;
+const SYSTEM_STORAGE_SINGLE_PUT_LIMIT = 64 * 1024 * 1024;
 const SAFE_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
+const SYSTEM_SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/;
 
 interface R2Client {
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
+  headObject(
+    key: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ exists: boolean; etag?: string }>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(
     key: string,
@@ -64,12 +74,15 @@ interface MultipartAbortInput extends MultipartCreateInput {
 }
 
 async function getAuthorizedUserId(db: PlatformDB, handle: string): Promise<string | null> {
+  const machine = await getActiveUserMachineByHandle(db, handle);
+  if (machine?.clerkUserId) {
+    return machine.clerkUserId;
+  }
   const record = await getContainer(db, handle);
   if (record?.clerkUserId) {
     return record.clerkUserId;
   }
-  const machine = await getActiveUserMachineByHandle(db, handle);
-  return machine?.clerkUserId ?? null;
+  return null;
 }
 
 function buildManifestKey(userId: string): string {
@@ -81,6 +94,51 @@ function buildManifestKey(userId: string): string {
 
 function keyAllowedForUser(key: string, userId: string): boolean {
   return key === buildManifestKey(userId) || key.startsWith(`matrixos-sync/${userId}/files/`);
+}
+
+const SystemStorageKeyInputSchema = z.object({
+  key: z.string().min(1).max(512),
+}).strict();
+
+const SystemStoragePutInputSchema = SystemStorageKeyInputSchema.extend({
+  size: z.number().int().nonnegative().max(SYSTEM_STORAGE_SINGLE_PUT_LIMIT),
+}).strict();
+
+function isValidRuntimeSlot(value: string): boolean {
+  return RuntimeSlotSchema.safeParse(value).success;
+}
+
+function systemStorageAccess(key: string): "read" | "write" | null {
+  if (key === "system/vps-meta.json") return "read";
+  if (key === "system/db/latest") return "write";
+
+  const primarySnapshot = /^system\/db\/snapshots\/([^/]+)$/.exec(key);
+  if (primarySnapshot) {
+    return SYSTEM_SNAPSHOT_NAME.test(primarySnapshot[1] ?? "") ? "write" : null;
+  }
+
+  const slotLatest = /^system\/runtime-slots\/([^/]+)\/db\/latest$/.exec(key);
+  if (slotLatest) {
+    return isValidRuntimeSlot(slotLatest[1] ?? "") ? "write" : null;
+  }
+
+  const slotSnapshot = /^system\/runtime-slots\/([^/]+)\/db\/snapshots\/([^/]+)$/.exec(key);
+  if (slotSnapshot) {
+    return isValidRuntimeSlot(slotSnapshot[1] ?? "") &&
+      SYSTEM_SNAPSHOT_NAME.test(slotSnapshot[2] ?? "")
+      ? "write"
+      : null;
+  }
+
+  return null;
+}
+
+function systemStorageKey(
+  c: { get: (key: "internalSyncUserId") => string },
+  r2PrefixRoot: string,
+  relativeKey: string,
+): string {
+  return buildCustomerVpsR2Key(r2PrefixRoot, c.get("internalSyncUserId"), relativeKey);
 }
 
 function isNoSuchKeyError(err: unknown): boolean {
@@ -141,6 +199,8 @@ function parseMultipartPartInput(input: unknown): MultipartPartInput | null {
     !Number.isInteger(partNumber) ||
     typeof partNumber !== "number" ||
     partNumber <= 0 ||
+    partNumber > 10_000 ||
+    uploadId.length > 512 ||
     expiresIn === null
   ) {
     return null;
@@ -155,7 +215,7 @@ function parseMultipartUploadIdInput(input: unknown): MultipartAbortInput | null
   const record = asRecord(input);
   if (!parsed || !record) return null;
   const uploadId = parseNonEmptyString(record.uploadId);
-  return uploadId ? { ...parsed, uploadId } : null;
+  return uploadId && uploadId.length <= 512 ? { ...parsed, uploadId } : null;
 }
 
 function parseMultipartCompleteInput(input: unknown): MultipartCompleteInput | null {
@@ -209,6 +269,7 @@ export function createInternalSyncRoutes(opts: {
   db: PlatformDB;
   r2: R2Client;
   platformSecret: string;
+  r2PrefixRoot: string;
 }): Hono<any> {
   const app = new Hono<{ Variables: { internalSyncUserId: string } }>();
 
@@ -271,6 +332,120 @@ export function createInternalSyncRoutes(opts: {
       parsed.expiresIn,
     );
     return c.json({ url });
+  });
+
+  app.post("/system/exists", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = SystemStorageKeyInputSchema.safeParse(await parseJsonBody(c));
+    if (!parsed.success || systemStorageAccess(parsed.data.key) === null) {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    try {
+      const result = await opts.r2.headObject(
+        systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key),
+        { signal: AbortSignal.timeout(10_000) },
+      );
+      return c.json({ exists: result.exists });
+    } catch (err: unknown) {
+      console.error("[internal-sync] System object probe failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Storage probe failed" }, 502);
+    }
+  });
+
+  app.post("/system/presign/get", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = SystemStorageKeyInputSchema.safeParse(await parseJsonBody(c));
+    if (!parsed.success || systemStorageAccess(parsed.data.key) === null) {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    const url = await opts.r2.getPresignedGetUrl(
+      systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key),
+      SYSTEM_STORAGE_PRESIGN_TTL_SECONDS,
+    );
+    return c.json({ url });
+  });
+
+  app.post("/system/presign/put", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = SystemStoragePutInputSchema.safeParse(await parseJsonBody(c));
+    if (!parsed.success) {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    if (systemStorageAccess(parsed.data.key) !== "write") {
+      return c.json({ error: "Forbidden key" }, 403);
+    }
+    const url = await opts.r2.getPresignedPutUrl(
+      systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key),
+      parsed.data.size,
+      SYSTEM_STORAGE_PRESIGN_TTL_SECONDS,
+    );
+    return c.json({ url });
+  });
+
+  app.post("/system/multipart/create", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = parseMultipartCreateInput(await parseJsonBody(c));
+    if (!parsed || systemStorageAccess(parsed.key) !== "write") {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    try {
+      const uploadId = await opts.r2.createMultipartUpload(
+        systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
+      );
+      return c.json({ uploadId });
+    } catch (err: unknown) {
+      console.error("[internal-sync] System multipart creation failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Multipart creation failed" }, 502);
+    }
+  });
+
+  app.post("/system/multipart/part", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = parseMultipartPartInput(await parseJsonBody(c));
+    if (!parsed || systemStorageAccess(parsed.key) !== "write") {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    const url = await opts.r2.getPresignedPartUrl(
+      systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
+      parsed.uploadId,
+      parsed.partNumber,
+      SYSTEM_STORAGE_PRESIGN_TTL_SECONDS,
+    );
+    return c.json({ url });
+  });
+
+  app.post(
+    "/system/multipart/complete",
+    bodyLimit({ maxSize: INTERNAL_SYNC_MULTIPART_COMPLETE_LIMIT }),
+    async (c) => {
+      const parsed = parseMultipartCompleteInput(await parseJsonBody(c));
+      if (!parsed || systemStorageAccess(parsed.key) !== "write") {
+        return c.json({ error: "Validation error" }, 400);
+      }
+      try {
+        const result = await opts.r2.completeMultipartUpload(
+          systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
+          parsed.uploadId,
+          parsed.parts,
+        );
+        return c.json({ etag: result.etag ?? null });
+      } catch (err: unknown) {
+        console.error("[internal-sync] System multipart completion failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: "Multipart completion failed" }, 502);
+      }
+    },
+  );
+
+  app.post("/system/multipart/abort", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = parseMultipartUploadIdInput(await parseJsonBody(c));
+    if (!parsed || systemStorageAccess(parsed.key) !== "write") {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    try {
+      await opts.r2.abortMultipartUpload(
+        systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
+        parsed.uploadId,
+      );
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      console.error("[internal-sync] System multipart abort failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Multipart abort failed" }, 502);
+    }
   });
 
   app.post("/multipart/create", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {

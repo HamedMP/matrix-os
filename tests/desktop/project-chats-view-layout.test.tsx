@@ -87,7 +87,7 @@ function summaryFixture(): RuntimeSummary {
     },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
@@ -490,20 +490,13 @@ describe("ProjectChatsView hero layout", () => {
     useCodingAgentWorkspace.setState({ loadThreadSnapshot });
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("button", { name: "Show conversation tools" });
-
-    act(() => {
-      useProjectView.getState().setSelectedThread("matrix-os", null);
-      useTabs.setState({ recentViews: [] });
-    });
+    act(() => useProjectView.getState().setSelectedThread("matrix-os", null));
     await screen.findByText("What should we work on?");
     loadThreadSnapshot.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
 
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_plan"));
-    expect(useTabs.getState().recentViews).not.toContainEqual(
-      expect.objectContaining({ kind: "conversation", id: "thread_plan" }),
-    );
   });
 
   it("does not bind a cached workspace terminal while the selected thread snapshot is loading", async () => {
@@ -514,14 +507,27 @@ describe("ProjectChatsView hero layout", () => {
       if (channel === "runtime:get-summary") {
         return {
           ...summaryFixture(),
-          terminalSessions: {
+          terminalWorkspaces: {
             items: [{
-              id: "term_cached",
-              name: "cached-shell",
+              id: "tws_00000000000000000000000000000001",
+              scope: "project",
+              projectId: "matrix-os",
+              canonicalSize: { cols: 120, rows: 36 },
               status: "running",
-              attachable: true,
+              revision: 1,
               createdAt: NOW,
               updatedAt: NOW,
+              tabs: [{
+                id: "tt_00000000000000000000000000000001",
+                workspaceId: "tws_00000000000000000000000000000001",
+                name: "cached-shell",
+                cwd: "projects/matrix-os",
+                status: "running",
+                revision: 1,
+                order: 0,
+                createdAt: NOW,
+                updatedAt: NOW,
+              }],
             }],
             hasMore: false,
             limit: 20,
@@ -536,7 +542,10 @@ describe("ProjectChatsView hero layout", () => {
             ...workspace.projectThreads,
             items: workspace.projectThreads.items.map((thread) => ({
               ...thread,
-              terminalSessionId: "term_cached",
+              terminalRef: {
+                workspaceId: "tws_00000000000000000000000000000001",
+                tabId: "tt_00000000000000000000000000000001",
+              },
             })),
           },
         };

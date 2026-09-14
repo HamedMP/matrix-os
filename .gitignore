@@ -148,4 +148,5 @@ paper/*.log
 paper/*.out
 paper/*.pdf
 .gstack/
+/output/playwright/
 distro/observability/logs-edge/logs-edge.env

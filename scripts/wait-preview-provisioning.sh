@@ -26,9 +26,40 @@ if ! [[ "$poll_seconds" =~ ^[0-9]+$ ]] || [ "$poll_seconds" -gt 60 ]; then
 fi
 
 deadline=$((SECONDS + PREVIEW_PROVISION_TIMEOUT_SECONDS))
+status=unknown
+rate_limit_count=0
 while true; do
-  machine="$(curl -fsS --max-time 30 -H "authorization: Bearer ${PLATFORM_SECRET}" "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-    jq -c --arg h "$HANDLE" --arg id "$PREVIEW_MACHINE_ID" '[.machines[] | select(.handle == $h and .machineId == $id and .deletedAt == null)] | (.[0] // {status: "absent", failureCode: null})')"
+  if ! fleet_response="$(curl -sS --max-time 30 -H "authorization: Bearer ${PLATFORM_SECRET}" --write-out $'\n%{http_code}' "${PLATFORM_PUBLIC_URL}/vps/fleet" 2>/dev/null)"; then
+    echo "Preview fleet status request failed." >&2
+    exit 1
+  fi
+  http_code="${fleet_response##*$'\n'}"
+  fleet_body="${fleet_response%$'\n'*}"
+
+  if [ "$http_code" = 429 ]; then
+    rate_limit_count=$((rate_limit_count + 1))
+    backoff_seconds=$((poll_seconds * (rate_limit_count + 1)))
+    if [ "$backoff_seconds" -gt 60 ]; then
+      backoff_seconds=60
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "Timed out waiting for ${HANDLE} to reach running (last: ${status})" >&2
+      exit 1
+    fi
+    echo "Preview fleet status is throttled; retrying in ${backoff_seconds}s." >&2
+    sleep "$backoff_seconds"
+    continue
+  fi
+  if [ "$http_code" != 200 ]; then
+    echo "Preview fleet status request failed." >&2
+    exit 1
+  fi
+  rate_limit_count=0
+
+  if ! machine="$(jq -c --arg h "$HANDLE" --arg id "$PREVIEW_MACHINE_ID" '[.machines[] | select(.handle == $h and .machineId == $id and .deletedAt == null)] | (.[0] // {status: "absent", failureCode: null})' <<< "$fleet_body")"; then
+    echo "Preview fleet status response was invalid." >&2
+    exit 1
+  fi
   status="$(jq -r '.status' <<< "$machine")"
   case "$status" in
     running)

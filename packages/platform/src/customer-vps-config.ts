@@ -17,17 +17,14 @@ export interface CustomerVpsConfig {
   hostBundleUrlOverride?: boolean;
   platformRegisterUrl: string;
   platformSecret: string;
-  r2AccessKeyId: string;
-  r2SecretAccessKey: string;
-  r2Endpoint: string;
-  r2AccountId: string;
-  r2Bucket: string;
   r2PrefixRoot: string;
   posthogToken: string;
   posthogProjectToken: string;
   posthogHost: string;
   posthogPublicHost: string;
   posthogApiHost: string;
+  fundedAiEnabled: boolean;
+  fundedAiRelayUrl: string;
   provisionEtaSeconds: number;
   registrationTokenTtlMs: number;
   reconciliationBatchSize: number;
@@ -63,6 +60,35 @@ function enabledFromEnv(value: string | undefined): boolean {
   return value === 'true';
 }
 
+function fundedAiRuntimeFromEnv(env: NodeJS.ProcessEnv): {
+  fundedAiEnabled: boolean;
+  fundedAiRelayUrl: string;
+} {
+  if (!enabledFromEnv(env.MATRIX_FUNDED_AI_RUNTIME_ENABLED)) {
+    return { fundedAiEnabled: false, fundedAiRelayUrl: '' };
+  }
+  const raw = env.MATRIX_FUNDED_AI_RELAY_URL ?? '';
+  if (!raw || raw.length > 2_048 || !/^[A-Za-z0-9:/._~%\[\]-]+$/.test(raw)) {
+    throw new Error('Funded AI runtime is misconfigured');
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    throw new Error('Funded AI runtime is misconfigured');
+  }
+  const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !(loopback && url.protocol === 'http:'))
+    || url.username || url.password || url.search || url.hash) {
+    throw new Error('Funded AI runtime is misconfigured');
+  }
+  return {
+    fundedAiEnabled: true,
+    fundedAiRelayUrl: url.toString().replace(/\/$/, ''),
+  };
+}
+
 export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): CustomerVpsConfig {
   const platformUrl = env.PLATFORM_PUBLIC_URL ?? `http://localhost:${env.PLATFORM_PORT ?? 9000}`;
   const imageVersion = env.CUSTOMER_VPS_IMAGE_VERSION ?? 'stable';
@@ -70,6 +96,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
   const snapshotArchitecture = GoldenSnapshotBuildArchitectureSchema.parse(
     env.GOLDEN_SNAPSHOT_ARCHITECTURE ?? 'x86',
   );
+  const fundedAiRuntime = fundedAiRuntimeFromEnv(env);
   return {
     hetznerApiToken: env.HETZNER_API_TOKEN ?? '',
     location: env.HETZNER_LOCATION ?? 'nbg1',
@@ -83,11 +110,6 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     hostBundleUrlOverride: Boolean(env.MATRIX_HOST_BUNDLE_URL),
     platformRegisterUrl: `${platformUrl.replace(/\/$/, '')}/vps/register`,
     platformSecret: env.PLATFORM_SECRET ?? '',
-    r2AccessKeyId: env.S3_ACCESS_KEY_ID ?? env.R2_ACCESS_KEY_ID ?? '',
-    r2SecretAccessKey: env.S3_SECRET_ACCESS_KEY ?? env.R2_SECRET_ACCESS_KEY ?? '',
-    r2Endpoint: env.S3_ENDPOINT ?? env.R2_ENDPOINT ?? '',
-    r2AccountId: env.R2_ACCOUNT_ID ?? '',
-    r2Bucket: env.S3_BUCKET ?? env.R2_BUCKET ?? 'matrixos-sync',
     r2PrefixRoot: env.R2_PREFIX_ROOT ?? 'matrixos-sync',
     posthogToken: env.POSTHOG_TOKEN ?? env.NEXT_PUBLIC_POSTHOG_KEY ?? '',
     posthogProjectToken:
@@ -99,6 +121,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     posthogHost: env.POSTHOG_HOST ?? env.NEXT_PUBLIC_POSTHOG_HOST ?? '',
     posthogPublicHost: env.NEXT_PUBLIC_POSTHOG_HOST ?? DEFAULT_POSTHOG_PUBLIC_HOST,
     posthogApiHost: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? '',
+    ...fundedAiRuntime,
     provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),
     // Clean-image bootstrap allows 15 minutes for the host bundle download
     // and 30 minutes for prerequisite preparation before Gateway can register.

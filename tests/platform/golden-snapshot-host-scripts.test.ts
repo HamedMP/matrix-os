@@ -933,7 +933,7 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     expect(source).toContain('timeout --kill-after=30 120 systemctl enable --now docker.service');
     expect(source).toContain('timeout --kill-after=30 60 systemctl daemon-reload');
     expect(source).toContain(
-      'timeout --kill-after=30 180 systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service',
+      'timeout --kill-after=30 180 systemctl start matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service',
     );
   });
 

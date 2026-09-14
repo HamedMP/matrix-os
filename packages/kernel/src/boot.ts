@@ -5,7 +5,7 @@ import {
 import * as fs from "node:fs";
 import { join, resolve, relative, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const DEFAULT_HOME = join(
   process.env.HOME ?? process.env.USERPROFILE ?? ".",
@@ -121,6 +121,61 @@ function hashFile(filePath: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return typeof value === "object"
+    && value !== null
+    && !Array.isArray(value)
+    && Object.values(value).every((entry) => typeof entry === "string");
+}
+
+function readInstalledManifest(
+  manifestPath: string,
+  logLines: string[],
+  now: string,
+): Record<string, string> {
+  if (!existsSync(manifestPath)) return {};
+
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    if (!isStringRecord(parsed)) {
+      throw new SyntaxError("Installed template manifest must be a string record");
+    }
+    return parsed;
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) throw err;
+    logLines.push(`[${now}] Ignoring invalid installed manifest`);
+    return {};
+  }
+}
+
+function writeFileAtomic(filePath: string, contents: string): void {
+  const tempPath = `${filePath}.matrixos-${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, contents, {
+      encoding: "utf-8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.renameSync(tempPath, filePath);
+  } catch (err: unknown) {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch (cleanupErr: unknown) {
+      if (
+        !(cleanupErr instanceof Error)
+        || !("code" in cleanupErr)
+        || (cleanupErr as NodeJS.ErrnoException).code !== "ENOENT"
+      ) {
+        console.warn(
+          "[boot] Failed to clean template manifest temp file:",
+          cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+        );
+      }
+    }
+    throw err;
+  }
+}
+
 export function smartSyncTemplate(
   homePath: string,
   templateDir: string,
@@ -146,10 +201,7 @@ export function smartSyncTemplate(
 
   // Load installed manifest (what was last synced to user's home)
   const installedManifestPath = join(homePath, ".template-manifest.json");
-  let installedManifest: Record<string, string> = {};
-  if (existsSync(installedManifestPath)) {
-    installedManifest = JSON.parse(readFileSync(installedManifestPath, "utf-8"));
-  }
+  const installedManifest = readInstalledManifest(installedManifestPath, logLines, now);
 
   for (const [relPath, templateHash] of Object.entries(templateManifest)) {
     const homeFilePath = join(homePath, relPath);
@@ -211,7 +263,7 @@ export function smartSyncTemplate(
   }
 
   // Write updated installed manifest
-  writeFileNow(installedManifestPath, JSON.stringify(installedManifest, null, 2));
+  writeFileAtomic(installedManifestPath, JSON.stringify(installedManifest, null, 2));
 
   const summary = `${report.updated.length} updated, ${report.added.length} added, ${report.skipped.length} skipped`;
   logLines.push(`[${now}] Template sync completed: ${summary}`);

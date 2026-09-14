@@ -44,10 +44,10 @@ describe('cloudflared websocket watchdog', () => {
     expect(
       buildProbeWebSocketUrl(
         'https://app.matrix-os.com/',
-        '/ws/terminal/session?session=main&fromSeq=0',
+        '/ws/terminal/tab?workspaceId=tws_main&tabId=tt_shell&client=browser&fromSeq=0',
         'jwt-token',
       ).toString(),
-    ).toBe('wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=0&token=jwt-token');
+    ).toBe('wss://app.matrix-os.com/ws/terminal/tab?workspaceId=tws_main&tabId=tt_shell&client=browser&fromSeq=0&token=jwt-token');
   });
 
   it('redacts probe tokens before logging URLs', () => {

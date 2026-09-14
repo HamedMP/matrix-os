@@ -41,6 +41,9 @@ describe("Matrix integrations MCP server", () => {
       "sync_services",
       "call_service",
       "disconnect_service",
+      "list_custom_mcp_servers",
+      "describe_custom_mcp_server",
+      "call_custom_mcp_tool",
     ]);
     expect(listed.tools[0]?.description).toContain("new conversation");
 

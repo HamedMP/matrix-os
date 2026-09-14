@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,28 +12,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { getGatewayUrl } from "@/lib/gateway";
 import { PuzzleIcon, PlusIcon } from "@/lib/hugeicons";
-
-const GATEWAY = getGatewayUrl();
-const PLUGINS_FETCH_TIMEOUT_MS = 10_000;
-
-interface PluginInfo {
-  id: string;
-  name: string;
-  version: string;
-  description?: string;
-  origin: string;
-  status: string;
-  contributions: {
-    tools: number;
-    hooks: number;
-    channels: number;
-    routes: number;
-    services: number;
-    skills: number;
-  };
-}
+import { pluginsQueryOptions } from "@/api/plugins";
 
 const ORIGIN_STYLES: Record<string, string> = {
   bundled: "bg-blue-500/10 text-blue-600",
@@ -49,33 +30,8 @@ const CONFIG_EXAMPLE = `{
 }`;
 
 export function PluginsSection() {
-  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
-  const [error, setError] = useState(false);
+  const { data: plugins = [], isError, isPending } = useQuery(pluginsQueryOptions());
   const [dialogOpen, setDialogOpen] = useState(false);
-
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded run-once mount load (empty deps): the request carries AbortSignal.timeout, the `cancelled` flag gates every setState, and the controller aborts in cleanup, so this is the correct fetch-on-mount pattern; a data-fetching library would add no safety here.
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch(`${GATEWAY}/api/plugins`, {
-      signal: AbortSignal.timeout(PLUGINS_FETCH_TIMEOUT_MS),
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error();
-        return r.json();
-      })
-      .then((data) => { if (!cancelled) setPlugins(data); })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          console.warn("Failed to load plugins", error);
-          setError(true);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
@@ -87,7 +43,15 @@ export function PluginsSection() {
         </Button>
       </div>
 
-      {error && (
+      {isPending && (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <p className="text-sm text-muted-foreground">Loading plugins...</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {isError && (
         <Card>
           <CardContent className="py-8 text-center">
             <PuzzleIcon className="size-8 text-muted-foreground/40 mx-auto mb-3" />
@@ -98,7 +62,7 @@ export function PluginsSection() {
         </Card>
       )}
 
-      {!error && plugins.length === 0 && (
+      {!isPending && !isError && plugins.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <PuzzleIcon className="size-8 text-muted-foreground/40 mb-3" />
@@ -110,7 +74,7 @@ export function PluginsSection() {
         </Card>
       )}
 
-      {plugins.length > 0 && (
+      {!isPending && !isError && plugins.length > 0 && (
         <div className="space-y-3">
           {plugins.map((plugin) => {
             const c = plugin.contributions;

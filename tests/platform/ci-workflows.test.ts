@@ -14,9 +14,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 
-function readChangeDetectionCheckoutRun(root: string): string | undefined {
+function readWorkflowStepRun(
+  root: string,
+  workflowPath: string,
+  stepName: string,
+): string | undefined {
   const workflow = parse(
-    readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'),
+    readFileSync(join(root, workflowPath), 'utf8'),
   ) as {
     jobs?: {
       changes?: {
@@ -29,8 +33,16 @@ function readChangeDetectionCheckoutRun(root: string): string | undefined {
   };
 
   return workflow.jobs?.changes?.steps?.find(
-    (step) => step.name === 'Checkout with bounded retry',
+    (step) => step.name === stepName,
   )?.run;
+}
+
+function readChangeDetectionCheckoutRun(root: string): string | undefined {
+  return readWorkflowStepRun(
+    root,
+    '.github/workflows/ci.yml',
+    'Checkout with bounded retry',
+  );
 }
 
 function runChangeDetectionCheckout(
@@ -111,15 +123,126 @@ fi
   }
 }
 
+function runPullRequestChangeDetection(
+  root: string,
+  workflowPath: string,
+  hasReadyForCi: boolean,
+): {
+  output: string;
+  status: number | null;
+  stderr: string;
+} {
+  const changeDetectionRun = readWorkflowStepRun(
+    root,
+    workflowPath,
+    workflowPath.endsWith('docker-test.yml')
+      ? 'Classify Docker/local-runtime changes'
+      : 'Detect source changes',
+  );
+  if (!changeDetectionRun) {
+    throw new Error(`Missing change-detection step in ${workflowPath}`);
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-ci-pr-trigger-'));
+  const fakeBin = join(tempDir, 'bin');
+  const githubOutput = join(tempDir, 'github-output');
+  mkdirSync(fakeBin);
+  writeFileSync(
+    join(fakeBin, 'git'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "fetch" ]; then
+  exit 0
+fi
+if [ "\${1:-}" = "diff" ]; then
+  if [[ " $* " == *" -z "* ]]; then
+    printf '.github/workflows/docker-test.yml\\0'
+  else
+    printf '.github/workflows/docker-test.yml\\n'
+  fi
+  exit 0
+fi
+echo "unexpected git command: $*" >&2
+exit 64
+`,
+  );
+  chmodSync(join(fakeBin, 'git'), 0o755);
+
+  try {
+    const result = spawnSync('bash', ['-c', changeDetectionRun], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        GITHUB_BASE_REF: 'main',
+        GITHUB_EVENT_BEFORE: '',
+        GITHUB_EVENT_NAME: 'pull_request',
+        GITHUB_OUTPUT: githubOutput,
+        GITHUB_REF: 'refs/pull/1/merge',
+        GITHUB_SHA: '0123456789012345678901234567890123456789',
+        GITHUB_TOKEN: 'test-token',
+        PR_ACTION: 'synchronize',
+        PR_HAS_READY_FOR_CI: String(hasReadyForCi),
+        PR_LABEL_NAME: '',
+      },
+    });
+
+    return {
+      output: existsSync(githubOutput) ? readFileSync(githubOutput, 'utf8') : '',
+      status: result.status,
+      stderr: result.stderr,
+    };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 describe('CI workflows', () => {
   const stripePriceSecrets = [
-    ['STRIPE_PRICE_MATRIX_STARTER_MONTHLY', 'stripe-price-matrix-starter-monthly'],
-    ['STRIPE_PRICE_MATRIX_STARTER_ANNUAL', 'stripe-price-matrix-starter-annual'],
-    ['STRIPE_PRICE_MATRIX_BUILDER_MONTHLY', 'stripe-price-matrix-builder-monthly'],
-    ['STRIPE_PRICE_MATRIX_BUILDER_ANNUAL', 'stripe-price-matrix-builder-annual'],
-    ['STRIPE_PRICE_MATRIX_MAX_MONTHLY', 'stripe-price-matrix-max-monthly'],
-    ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
+    [
+      'STRIPE_PRICE_MATRIX_STARTER_MONTHLY',
+      'stripe-price-matrix-starter-monthly-2026-08-31',
+      '1',
+    ],
+    ['STRIPE_PRICE_MATRIX_STARTER_ANNUAL', 'stripe-price-matrix-starter-annual', 'latest'],
+    [
+      'STRIPE_PRICE_MATRIX_BUILDER_MONTHLY',
+      'stripe-price-matrix-builder-monthly-2026-08-31',
+      '1',
+    ],
+    ['STRIPE_PRICE_MATRIX_BUILDER_ANNUAL', 'stripe-price-matrix-builder-annual', 'latest'],
+    [
+      'STRIPE_PRICE_MATRIX_MAX_MONTHLY',
+      'stripe-price-matrix-max-monthly-2026-08-31',
+      '1',
+    ],
+    ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual', 'latest'],
+    ['STRIPE_LEGACY_PRICE_CATALOG_JSON', 'stripe-legacy-price-catalog-json', 'latest'],
   ] as const;
+
+  it.each([
+    ['core CI', '.github/workflows/ci.yml'],
+    ['Docker CI', '.github/workflows/docker-test.yml'],
+  ])('reruns %s for each new head while ready-for-ci remains applied', (_name, path) => {
+    const workflow = readFileSync(join(process.cwd(), path), 'utf8');
+
+    expect(workflow).toMatch(/types:\s*\[[^\]]*synchronize[^\]]*\]/);
+    expect(workflow).toContain(
+      "PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}",
+    );
+    expect(workflow).toContain(
+      '[ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]',
+    );
+
+    const unlabeled = runPullRequestChangeDetection(process.cwd(), path, false);
+    expect(unlabeled.status, unlabeled.stderr).toBe(0);
+    expect(unlabeled.output).toContain('should_run=false');
+
+    const labeled = runPullRequestChangeDetection(process.cwd(), path, true);
+    expect(labeled.status, labeled.stderr).toBe(0);
+    expect(labeled.output).toContain('should_run=true');
+  });
 
   it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
     const root = process.cwd();
@@ -150,17 +273,19 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, docs-contract, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
     expect(workflow).toContain('needs.patterns.result');
     expect(workflow).toContain('needs.react-doctor.result');
     expect(workflow).toContain('needs.sync-client.result');
+    expect(workflow).toContain('needs.agent-sdk-compatibility.result');
     expect(workflow).toContain('needs.unit.result');
     expect(workflow).toContain('needs.docs-contract.result');
+    expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
@@ -245,6 +370,16 @@ describe('CI workflows', () => {
     expect(workflow).toContain(
       'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts',
     );
+  });
+
+  it('requires download E2E after the Electron build under a virtual display', () => {
+    const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
+    const steps = workflow.jobs.e2e.steps;
+    const build = steps.findIndex((step: { run?: string }) => step.run === 'bun run build:desktop');
+    const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/file-download.e2e.test.ts');
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(download).toBeGreaterThan(build);
+    expect(steps[download].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
   });
 
   it('documents workflow ownership and required checks', () => {
@@ -482,10 +617,43 @@ describe('CI workflows', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
-    for (const [envName, secretName] of stripePriceSecrets) {
-      expect(workflow).toContain(`${envName}=${secretName}:latest`);
+    for (const [envName, secretName, secretVersion] of stripePriceSecrets) {
+      expect(workflow).toContain(`${envName}=${secretName}:${secretVersion}`);
       expect(workflow).toContain(`${envName}=${secretName}`);
     }
+
+    expect(workflow).toContain('required_stripe_price_secret_bindings=(');
+    expect(workflow).toContain('.valueFrom.secretKeyRef.name // empty');
+    expect(workflow).toContain('.valueFrom.secretKeyRef.key // empty');
+  });
+
+  it('wires the isolated legacy Stripe catalog into platform previews', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(workflow).toContain(
+      'STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest',
+    );
+    expect(workflow).not.toContain(
+      'STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest',
+    );
+  });
+
+  it('builds platform previews with the real Clerk key and preview origin', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(workflow).toContain(
+      'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}',
+    );
+    expect(workflow).toContain(
+      "PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}",
+    );
+    expect(workflow).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required.');
+    expect(workflow).toContain(
+      '_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
+    );
+    expect(workflow).toContain('_NEXT_PUBLIC_MATRIX_APP_URL=$PREVIEW_PUBLIC_URL');
   });
 
   it('deploys the card-trial rollout flag and verifies every trial lifecycle webhook', () => {
@@ -517,26 +685,60 @@ describe('CI workflows', () => {
     }
   });
 
-  it('durably deploys fail-closed prebilling for every new primary signup', () => {
+  it('durably deploys count-only prebilling and removes legacy cost settings', () => {
     const root = process.cwd();
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'");
     expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100'");
-    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '1' }}");
-    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS || '254000' }}");
-    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_COSTS: ${{ vars.MATRIX_PREBILLING_PROVISIONING_COSTS || 'cpx22:92900;cpx32:169900;cpx52:254000' }}");
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '4' }}");
     for (const name of [
       'MATRIX_PREBILLING_PROVISIONING_ENABLED',
       'MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT',
       'MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE',
-      'MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS',
-      'MATRIX_PREBILLING_PROVISIONING_COSTS',
     ]) {
       expect(production).toContain(`${name}=\${${name}}`);
     }
-    expect(production).toContain('Verify deployed prebilling contract');
-    expect(production).toContain('prebilling deployment contract is missing');
+    expect(production).not.toContain('MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS=${MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS}');
+    expect(production).not.toContain('MATRIX_PREBILLING_PROVISIONING_COSTS=${MATRIX_PREBILLING_PROVISIONING_COSTS}');
+    expect(production).toContain('legacy_prebilling_env=(');
+    expect(production).toContain('deployed prebilling contract still contains legacy setting');
+    expect(production).toContain('Verify deployed provisioning contract');
+    expect(production).toContain('provisioning deployment contract is missing');
+  });
+
+  it('keeps count-only prebilling enabled without a prebuilt rollback drain path', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(production).not.toContain('prebilling_rollback_drain');
+    expect(production).not.toContain('PREBILLING_ROLLBACK_DRAIN');
+    expect(production).not.toContain('Rollback drain requires a promoted production deployment.');
+    expect(production).toContain("MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'");
+    expect(production).toContain('MATRIX_PREBILLING_PROVISIONING_ENABLED=true');
+    expect(production).toContain('MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=100');
+    expect(production).toContain('--to-revisions "$PRODUCTION_REVISION=100"');
+  });
+
+  it('binds production customer provisioning to the stable host-bundle channel', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const candidateContract = production.slice(
+      production.indexOf('      - name: Verify deployed provisioning contract'),
+      production.indexOf('      - name: Smoke candidate revision'),
+    );
+    const productionContract = production.slice(
+      production.indexOf('      - name: Verify production provisioning contract'),
+      production.indexOf('      - name: Promote revision'),
+    );
+
+    expect(production).toContain("CUSTOMER_VPS_IMAGE_VERSION: 'stable'");
+    expect(production).not.toContain('CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}');
+    expect(production).toContain('CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}');
+    expect(candidateContract).toContain('CUSTOMER_VPS_IMAGE_VERSION');
+    expect(productionContract).toContain('"CUSTOMER_VPS_IMAGE_VERSION=stable"');
+    expect(production).toContain('channels/${CUSTOMER_VPS_IMAGE_VERSION}.json');
+    expect(production).not.toContain('channels/dev.json');
   });
 
   it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {
@@ -563,6 +765,16 @@ describe('CI workflows', () => {
     expect(workflow).not.toContain('STRIPE_PRICE_EXTRA_RUNTIME');
     expect(workflow).not.toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME');
     expect(workflow).not.toContain('PORTAL_CONFIGURATION_SECRET_BINDINGS');
+  });
+
+  it('preflights and mounts Reddit conversion attribution in platform Cloud Run', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Verify Reddit Conversions API secret');
+    expect(workflow).toContain('REDDIT_PIXEL_ID=a2_jo0odxapssmi');
+    expect(workflow).toContain('REDDIT_CONVERSIONS_ACCESS_TOKEN=reddit-conversions-access-token:latest');
+    expect(workflow).toContain('roles/secretmanager.secretAccessor');
   });
 
   it('wires Pipedream integration secrets into platform Cloud Run', () => {

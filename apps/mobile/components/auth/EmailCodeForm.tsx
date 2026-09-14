@@ -20,12 +20,10 @@ type EmailCodeFormProps = {
   /** True once Clerk has said this account has no password. */
   passwordUnavailable: boolean;
   signingIn: boolean;
-  sending: boolean;
   verifying: boolean;
   /** True while any provider on the screen is mid-flight. */
   busy: boolean;
   onSignIn: () => void;
-  onSendCode: () => void;
   onVerify: () => void;
   onUseDifferentEmail: () => void;
 };
@@ -40,11 +38,9 @@ export function EmailCodeForm({
   codeSentTo,
   passwordUnavailable,
   signingIn,
-  sending,
   verifying,
   busy,
   onSignIn,
-  onSendCode,
   onVerify,
   onUseDifferentEmail,
 }: EmailCodeFormProps) {
@@ -53,16 +49,15 @@ export function EmailCodeForm({
   if (codeSentTo === null) {
     const emailReady = isLikelyEmail(email);
     const canSignIn = !busy && emailReady && password.length > 0;
-    const canSendCode = !busy && emailReady;
     return (
       <>
         <View style={styles.inputRow}>
-          <Ionicons name="mail-outline" size={17} color={theme.colors.inkMuted} />
+          <Ionicons name="mail-outline" size={17} color={theme.v2.appColors.muted} />
           <TextInput
             value={email}
             onChangeText={onEmailChange}
             placeholder="you@example.com"
-            placeholderTextColor={theme.colors.inkDim}
+            placeholderTextColor={theme.v2.appColors.muted}
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="email"
@@ -75,12 +70,12 @@ export function EmailCodeForm({
           />
         </View>
         <View style={styles.inputRow}>
-          <Ionicons name="lock-closed-outline" size={17} color={theme.colors.inkMuted} />
+          <Ionicons name="lock-closed-outline" size={17} color={theme.v2.appColors.muted} />
           <TextInput
             value={password}
             onChangeText={onPasswordChange}
             placeholder="Password"
-            placeholderTextColor={theme.colors.inkDim}
+            placeholderTextColor={theme.v2.appColors.muted}
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="current-password"
@@ -104,7 +99,7 @@ export function EmailCodeForm({
           ]}
         >
           {signingIn ? (
-            <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+            <ActivityIndicator size="small" color={theme.v2.colors.textInverse} />
           ) : (
             <Text style={styles.buttonPrimaryText}>Sign in</Text>
           )}
@@ -116,24 +111,6 @@ export function EmailCodeForm({
             That account has no password. Use a code, or continue with Google or GitHub.
           </Text>
         ) : null}
-        <Pressable
-          onPress={onSendCode}
-          disabled={!canSendCode}
-          style={({ pressed }) => [
-            styles.buttonSecondary,
-            pressed && styles.buttonPressed,
-            !canSendCode && styles.buttonDisabled,
-          ]}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color={theme.colors.foreground} />
-          ) : (
-            <>
-              <Ionicons name="mail-outline" size={19} color={theme.colors.foreground} />
-              <Text style={styles.buttonSecondaryText}>Email me a code instead</Text>
-            </>
-          )}
-        </Pressable>
       </>
     );
   }
@@ -143,12 +120,12 @@ export function EmailCodeForm({
     <>
       <Text style={styles.hint}>We sent a 6-digit code to {codeSentTo}.</Text>
       <View style={styles.inputRow}>
-        <Ionicons name="keypad-outline" size={17} color={theme.colors.inkMuted} />
+        <Ionicons name="keypad-outline" size={17} color={theme.v2.appColors.muted} />
         <TextInput
           value={code}
           onChangeText={onCodeChange}
           placeholder="123456"
-          placeholderTextColor={theme.colors.inkDim}
+          placeholderTextColor={theme.v2.appColors.muted}
           autoCapitalize="none"
           autoCorrect={false}
           autoComplete="one-time-code"
@@ -173,7 +150,7 @@ export function EmailCodeForm({
         ]}
       >
         {verifying ? (
-          <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+          <ActivityIndicator size="small" color={theme.v2.colors.textInverse} />
         ) : (
           <Text style={styles.buttonPrimaryText}>Verify and sign in</Text>
         )}
@@ -192,83 +169,59 @@ export function EmailCodeForm({
 
 const styles = StyleSheet.create((theme) => ({
   inputRow: {
-    minHeight: 50,
+    minHeight: 52,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     paddingHorizontal: 14,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
+    borderRadius: theme.v2.radius.control,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.field,
+    borderColor: theme.v2.appColors.line,
+    backgroundColor: theme.v2.appColors.surface,
   },
   input: {
     flex: 1,
     minWidth: 0,
-    fontFamily: theme.fonts.sansMedium,
-    fontSize: 14,
-    color: theme.colors.foreground,
+    fontFamily: theme.v2.fonts.body,
+    fontSize: 15,
+    color: theme.v2.appColors.ink,
     paddingVertical: 10,
   },
   buttonPrimary: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 12,
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.primary,
+    gap: 10,
+    backgroundColor: theme.v2.colors.brand,
+    borderRadius: theme.v2.radius.control,
     paddingVertical: 16,
-    paddingHorizontal: 24,
-    boxShadow: "0 10px 22px rgba(194, 112, 58, 0.18)",
-  },
-  buttonSecondary: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingVertical: 15,
-    paddingHorizontal: 24,
   },
   buttonDisabled: {
-    opacity: 0.72,
+    opacity: 0.55,
   },
   buttonPrimaryText: {
-    fontFamily: theme.fonts.sansSemiBold,
+    fontFamily: theme.v2.fonts.semibold,
     fontSize: 16,
-    color: theme.colors.primaryForeground,
-  },
-  buttonSecondaryText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 16,
-    color: theme.colors.foreground,
+    color: theme.v2.colors.textInverse,
   },
   buttonPressed: {
     opacity: 0.85,
     transform: [{ scale: 0.98 }],
   },
   hint: {
-    fontFamily: theme.fonts.sans,
+    fontFamily: theme.v2.fonts.body,
     fontSize: 13,
     lineHeight: 18,
-    color: theme.colors.mutedForeground,
+    color: theme.v2.appColors.muted,
   },
   link: {
-    alignSelf: "flex-start",
+    alignSelf: "center",
     paddingVertical: 5,
     paddingHorizontal: 2,
   },
   linkText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 12,
-    color: theme.colors.accentInk,
+    fontFamily: theme.v2.fonts.semibold,
+    fontSize: 13,
+    color: theme.v2.colors.brand,
   },
 }));

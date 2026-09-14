@@ -70,13 +70,15 @@ function parseModelIds(rawModels: unknown[] | undefined, currentModel: string | 
   const seen = new Set<string>();
   for (const candidate of rawModels ?? []) {
     const parsed = ModelIdSchema.safeParse(candidate);
-    if (!parsed.success || seen.has(parsed.data)) continue;
+    if (!parsed.success || parsed.data.endsWith("-pro") || seen.has(parsed.data)) {
+      continue;
+    }
     seen.add(parsed.data);
     models.push(parsed.data);
     if (models.length === MAX_MODELS_PER_PROVIDER) break;
   }
   models.sort((left, right) => left.localeCompare(right));
-  if (currentModel === null) return models;
+  if (currentModel === null || currentModel.endsWith("-pro")) return models;
   const selectedIndex = models.indexOf(currentModel);
   if (selectedIndex !== -1) models.splice(selectedIndex, 1);
   return [currentModel, ...models].slice(0, MAX_MODELS_PER_PROVIDER);

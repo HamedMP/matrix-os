@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createIpcHandler } from "../../packages/sync-client/src/daemon/ipc-handler.js";
 
 describe("daemon editor-client contract fixture", () => {
-  it("uses only v1 commands for auth, session list/create, and attach URL discovery", async () => {
+  it("uses only v1 commands for auth and workspace/tab discovery", async () => {
+    const workspaceId = "tws_00000000000000000000000000000001";
+    const tabId = "tt_00000000000000000000000000000001";
     const handler = createIpcHandler({
       config: {
         gatewayUrl: "https://gateway.example",
@@ -25,8 +27,9 @@ describe("daemon editor-client contract fixture", () => {
         handle: "neo",
       }),
       shell: {
-        listSessions: async () => [],
-        createSession: async () => ({ name: "main", created: true }),
+        listWorkspaces: async () => [{ id: workspaceId, scope: "main", tabs: [] }],
+        ensureWorkspace: async () => ({ id: workspaceId, scope: "main", tabs: [] }),
+        createTab: async () => ({ id: tabId, workspaceId, displayName: "main" }),
       },
     });
 
@@ -37,10 +40,14 @@ describe("daemon editor-client contract fixture", () => {
     await expect(handler("auth.token", {})).resolves.toMatchObject({
       accessToken: "tok",
     });
-    await expect(handler("shell.list", {})).resolves.toEqual({ sessions: [] });
-    await expect(handler("shell.create", { name: "main" })).resolves.toEqual({
-      name: "main",
-      created: true,
+    await expect(handler("terminal.workspaces.list", {})).resolves.toEqual({
+      workspaces: [{ id: workspaceId, scope: "main", tabs: [] }],
+    });
+    await expect(handler("terminal.workspace.ensure", {})).resolves.toMatchObject({ id: workspaceId });
+    await expect(handler("terminal.tab.create", { workspaceId, name: "main" })).resolves.toEqual({
+      id: tabId,
+      workspaceId,
+      displayName: "main",
     });
     await expect(handler("status", {})).resolves.toMatchObject({
       gatewayUrl: "https://gateway.example",

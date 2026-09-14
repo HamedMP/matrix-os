@@ -287,7 +287,7 @@ Use branded or schema-validated string aliases:
 - `turnId`: `turn_[A-Za-z0-9_-]{1,128}`.
 - `eventId`: `evt_[A-Za-z0-9_-]{1,128}`.
 - `approvalId`: `appr_[A-Za-z0-9_-]{1,128}`.
-- `terminalSessionId`: existing named session/UUID schema; do not invent a second ID if canonical names already exist.
+- `terminalRef`: canonical `{ workspaceId, tabId }`; internal Zellij session and tab names never cross this boundary.
 
 ### Runtime Summary
 
@@ -407,7 +407,7 @@ type CreateAgentThreadRequest = {
   prompt: string;
   projectId: string;
   taskId?: string;
-  terminalSessionId?: string;
+  terminalRef?: TerminalRef;
   worktreeId?: string;
   mode?: "default" | "plan" | "review" | "full_access";
   approvalPolicy?: "untrusted" | "on_request" | "on_failure" | "never";
@@ -478,7 +478,7 @@ type AgentThreadEvent =
   | { type: "user_input.requested"; eventId: string; threadId: string; request: UserInputRequest }
   | { type: "file.changed"; eventId: string; threadId: string; path: string; changeKind: string }
   | { type: "review.ready"; eventId: string; threadId: string; reviewId: string; summary: ReviewSummary }
-  | { type: "terminal.bound"; eventId: string; threadId: string; terminalSessionId: string }
+  | { type: "terminal.bound"; eventId: string; threadId: string; terminalRef: TerminalRef }
   | { type: "thread.error"; eventId: string; threadId: string; safeMessage: string; retryable: boolean }
   | { type: "thread.completed"; eventId: string; threadId: string; outcome: "completed" | "failed" | "aborted" };
 ```

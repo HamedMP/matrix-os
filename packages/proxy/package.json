@@ -16,9 +16,11 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
+    "@matrix-os/contracts": "workspace:*",
     "@matrix-os/observability": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "hono": "^4.11.9",
-    "prom-client": "^15.1.3"
+    "prom-client": "^15.1.3",
+    "zod": "^4.4.3"
   }
 }

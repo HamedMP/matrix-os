@@ -120,8 +120,11 @@ function readRelease(info: unknown, version: string): DesktopReleaseNotes {
 export function createUpdater(events: UpdateEvents): Updater {
   let current: DesktopUpdateSnapshot = { status: "disabled" };
   let activeAutoUpdater: ElectronAutoUpdater | null = null;
-  let pendingReleaseSave: Promise<void> = Promise.resolve();
+  let pendingReleaseSave: Promise<void> | null = null;
   let installStarted = false;
+  let installPending = false;
+  let checkInFlight = false;
+  let verifiedVersion: string | null = null;
   const feed = resolveUpdateFeedConfig(process.env, app.isPackaged);
 
   const setSnapshot = (next: DesktopUpdateSnapshot): void => {
@@ -135,18 +138,21 @@ export function createUpdater(events: UpdateEvents): Updater {
         setSnapshot({ status: "disabled" });
         return;
       }
-      if (current.status === "checking") {
+      if (checkInFlight || installStarted) {
         return;
       }
-      if (current.status === "downloading" || current.status === "ready") {
+      if (current.status === "downloading") {
         return;
       }
 
+      const staged = current.status === "ready" ? current : null;
+      checkInFlight = true;
+      verifiedVersion = null;
       setSnapshot({ status: "checking" });
       try {
         const autoUpdater = await loadAutoUpdater();
         activeAutoUpdater = autoUpdater;
-        autoUpdater.autoDownload = true;
+        autoUpdater.autoDownload = staged === null;
         autoUpdater.autoInstallOnAppQuit = false;
         autoUpdater.allowPrerelease = feed.allowPrerelease;
         autoUpdater.setFeedURL({
@@ -163,6 +169,10 @@ export function createUpdater(events: UpdateEvents): Updater {
             setSnapshot({ status: "error" });
             return;
           }
+          // electron-updater reads autoDownload after emitting this event.
+          // Reuse the staged bytes only when this fresh manifest names them.
+          if (staged?.version === version) return;
+          autoUpdater.autoDownload = true;
           setSnapshot({ status: "downloading", version, progress: 0 });
           events.onAvailable(version);
         });
@@ -181,7 +191,7 @@ export function createUpdater(events: UpdateEvents): Updater {
             return;
           }
           const release = readRelease(info, version);
-          pendingReleaseSave = (async () => {
+          const saveRelease = async () => {
             try {
               await events.onReleaseReady?.(release);
             } catch (err: unknown) {
@@ -190,7 +200,8 @@ export function createUpdater(events: UpdateEvents): Updater {
                 err instanceof Error ? err.message : String(err),
               );
             }
-          })();
+          };
+          pendingReleaseSave = pendingReleaseSave ? pendingReleaseSave.then(saveRelease) : saveRelease();
           setSnapshot({ status: "ready", version, progress: 100, release });
           events.onReady(version);
         });
@@ -205,19 +216,33 @@ export function createUpdater(events: UpdateEvents): Updater {
           );
           setSnapshot({ status: "error" });
         });
-        await autoUpdater.checkForUpdates();
+        const result = await autoUpdater.checkForUpdates();
+        verifiedVersion = readVersion(result?.updateInfo);
+        if (staged?.version === verifiedVersion && current.status === "checking") {
+          setSnapshot(staged);
+        }
+        // Download completion is asynchronous relative to the manifest check.
+        void result?.downloadPromise?.catch((error: unknown) => {
+          console.warn("[updates] background download failed:", error instanceof Error ? error.message : String(error));
+          if (current.status === "downloading") setSnapshot({ status: "error" });
+        });
       } catch (err: unknown) {
         console.warn(
           "[updates] check failed:",
           err instanceof Error ? err.message : String(err),
         );
         setSnapshot({ status: "error" });
+      } finally {
+        checkInFlight = false;
       }
     },
     async install() {
-      if (current.status !== "ready" || installStarted) return false;
-      installStarted = true;
+      if (current.status !== "ready" || installStarted || installPending || checkInFlight) return false;
+      installPending = true;
       try {
+        await updater.check();
+        if (current.status !== "ready" || !verifiedVersion || current.version !== verifiedVersion) return false;
+        installStarted = true;
         await pendingReleaseSave;
         const installable = activeAutoUpdater ?? await loadAutoUpdater();
         activeAutoUpdater = installable;
@@ -226,6 +251,8 @@ export function createUpdater(events: UpdateEvents): Updater {
       } catch (error: unknown) {
         installStarted = false;
         throw error;
+      } finally {
+        installPending = false;
       }
     },
     isInstallStarted: () => installStarted,

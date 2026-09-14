@@ -1,3 +1,4 @@
+import { constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { DESKTOP_Z_INDEX } from "../design/layering";
 
@@ -88,19 +89,9 @@ function finiteOr(value: number, fallback: number): number {
 export function desktopSurfaceBounds(
   bounds: DesktopSurfaceBounds,
   viewport: DesktopViewport,
+  previous?: DesktopSurfaceBounds,
 ): DesktopSurfaceBounds {
-  const availableWidth = Math.max(1, finiteOr(viewport.width, 1) - DESKTOP_GAP * 2);
-  const availableHeight = Math.max(1, finiteOr(viewport.height, 1) - DESKTOP_GAP * 2);
-  const minimumWidth = Math.min(MIN_WINDOW_WIDTH, availableWidth);
-  const minimumHeight = Math.min(MIN_WINDOW_HEIGHT, availableHeight);
-  const width = clamp(finiteOr(bounds.width, minimumWidth), minimumWidth, availableWidth);
-  const height = clamp(finiteOr(bounds.height, minimumHeight), minimumHeight, availableHeight);
-  return {
-    x: clamp(finiteOr(bounds.x, DESKTOP_GAP), DESKTOP_GAP, viewport.width - DESKTOP_GAP - width),
-    y: clamp(finiteOr(bounds.y, DESKTOP_GAP), DESKTOP_GAP, viewport.height - DESKTOP_GAP - height),
-    width,
-    height,
-  };
+  return constrainFloatingWindow(bounds, viewport, { width: MIN_WINDOW_WIDTH, height: MIN_WINDOW_HEIGHT }, previous);
 }
 
 export function defaultDesktopSurfaceBounds(
@@ -422,7 +413,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
         ...state.surfaces,
         [tabId]: {
           ...surface,
-          bounds: constrainToViewport ? desktopSurfaceBounds(bounds, viewport) : {
+          bounds: constrainToViewport ? desktopSurfaceBounds(bounds, viewport, surface.bounds) : {
             x: finiteOr(bounds.x, surface.bounds.x),
             y: finiteOr(bounds.y, surface.bounds.y),
             width: clamp(finiteOr(bounds.width, surface.bounds.width), MIN_WINDOW_WIDTH, 16_384),

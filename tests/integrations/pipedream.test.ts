@@ -140,6 +140,29 @@ describe("Pipedream Connect SDK Wrapper", () => {
     );
   });
 
+  it("creates a connect token that returns native mobile users to integrations", async () => {
+    mockTokensCreate.mockResolvedValueOnce({
+      token: "ctok_mobile",
+      expiresAt: new Date("2026-04-06T00:00:00Z"),
+      connectLinkUrl: "https://pipedream.com/connect/test-project-id?token=ctok_mobile",
+    });
+
+    const client = await createPipedreamClient(TEST_CONFIG);
+    await client.createConnectToken("user-42", {
+      successRedirectUri: "matrixos://integrations",
+      errorRedirectUri: "matrixos://integrations",
+    });
+
+    expect(mockTokensCreate).toHaveBeenCalledWith(
+      {
+        externalUserId: "user-42",
+        successRedirectUri: "matrixos://integrations",
+        errorRedirectUri: "matrixos://integrations",
+      },
+      expect.objectContaining({ timeoutInSeconds: 10 }),
+    );
+  });
+
   it("gets the OAuth URL for a service", async () => {
     const client = await createPipedreamClient(TEST_CONFIG);
     const url = client.getOAuthUrl("https://pipedream.com/connect/proj_abc?token=ctok_abc123", "gmail");

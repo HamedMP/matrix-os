@@ -8,6 +8,8 @@ import {
   UserInputQuestionSchema,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
+import { safePublishedText } from "../chat/safe-activity-projection.js";
+import { AiTokenUsageSchema, type AiTokenUsage } from "../ai-analytics.js";
 
 const MAX_CODEX_JSON_LINE_BYTES = 64 * 1024;
 const MAX_ASSISTANT_DELTA_CHARS = 4_000;
@@ -50,6 +52,8 @@ const FileChangeItemSchema = z.object({
 const McpToolItemSchema = z.object({
   id: CodexItemIdSchema,
   type: z.literal("mcp_tool_call"),
+  server: CodexItemIdSchema,
+  tool: CodexItemIdSchema,
   status: z.enum(["in_progress", "completed", "failed"]),
   result: z.unknown().nullable().optional(),
   error: z.unknown().nullable().optional(),
@@ -86,7 +90,8 @@ const CodexItemSchema = z.discriminatedUnion("type", [
 const CodexExecEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread.started"), thread_id: CodexProviderThreadIdSchema }).passthrough(),
   z.object({ type: z.literal("turn.started") }).passthrough(),
-  z.object({ type: z.literal("turn.completed") }).passthrough(),
+  z.object({ type: z.literal("turn.completed"), usage: z.unknown().optional() }).passthrough(),
+  z.object({ type: z.literal("turn.aborted") }).passthrough(),
   z.object({ type: z.literal("turn.failed") }).passthrough(),
   z.object({ type: z.literal("item.started"), item: CodexItemSchema }).passthrough(),
   z.object({ type: z.literal("item.updated"), item: CodexItemSchema }).passthrough(),
@@ -94,6 +99,11 @@ const CodexExecEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error") }).passthrough(),
 ]);
 const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("matrix.codex.approval.resolved"),
+    approvalId: ApprovalIdSchema,
+    decision: z.literal("cancel"),
+  }).strict(),
   z.object({
     type: z.literal("matrix.codex.approval.requested"),
     approvalId: ApprovalIdSchema,
@@ -127,7 +137,10 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.started"),
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
-    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan"]),
+    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase"]),
+    preview: SafeDisplayStringSchema.optional(),
+    previewKind: z.enum(["command", "path", "text"]).optional(),
+    detail: SafeDisplayStringSchema.optional(),
   }).strict(),
   z.object({
     type: z.literal("matrix.codex.tool.output"),
@@ -151,7 +164,28 @@ export interface CodexEventContext {
 export interface CodexEventParseResult {
   events: AgentThreadEvent[];
   providerThreadId?: string;
-  outcome?: "completed" | "failed";
+  outcome?: "completed" | "failed" | "aborted";
+  tokenUsage?: AiTokenUsage;
+}
+
+const CodexTokenUsageSchema = z.object({
+  input_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  output_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  cached_input_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  reasoning_output_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+}).passthrough();
+
+function codexTokenUsage(value: unknown): AiTokenUsage | undefined {
+  const parsed = CodexTokenUsageSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  return AiTokenUsageSchema.parse({
+    inputTokens: parsed.data.input_tokens,
+    outputTokens: parsed.data.output_tokens,
+    ...(parsed.data.cached_input_tokens === undefined
+      ? {} : { cachedInputTokens: parsed.data.cached_input_tokens }),
+    ...(parsed.data.reasoning_output_tokens === undefined
+      ? {} : { reasoningOutputTokens: parsed.data.reasoning_output_tokens }),
+  });
 }
 
 function event(context: CodexEventContext, input: Record<string, unknown>): AgentThreadEvent {
@@ -185,6 +219,9 @@ function appServerRecordEvents(
   context: CodexEventContext,
   record: z.infer<typeof MatrixCodexRecordSchema>,
 ): AgentThreadEvent[] {
+  if (record.type === "matrix.codex.approval.resolved") {
+    return [event(context, { type: "approval.resolved", approvalId: record.approvalId, decision: record.decision })];
+  }
   if (record.type === "matrix.codex.approval.requested") {
     return [event(context, {
       type: "approval.requested",
@@ -239,6 +276,8 @@ function appServerRecordEvents(
       toolCallId: record.toolCallId,
       displayName: record.displayName,
       kind: record.kind,
+      ...(record.preview ? { preview: record.preview, previewKind: record.previewKind } : {}),
+      ...(record.detail ? { detail: record.detail } : {}),
     })];
   }
   if (record.type === "matrix.codex.tool.output") {
@@ -261,12 +300,14 @@ function toolStarted(
   itemId: string,
   displayName: string,
   kind: string,
+  details: { preview?: string; previewKind?: "command" | "path" | "text"; detail?: string } = {},
 ): AgentThreadEvent {
   return event(context, {
     type: "tool.started",
     toolCallId: itemId,
     displayName,
     kind,
+    ...details,
   });
 }
 
@@ -307,11 +348,19 @@ function startedItemEvents(
   context: CodexEventContext,
   item: z.infer<typeof CodexItemSchema>,
 ): AgentThreadEvent[] {
-  if (item.type === "command_execution") return [toolStarted(context, item.id, "Run command", "command")];
-  if (item.type === "mcp_tool_call") return [toolStarted(context, item.id, "Use tool", "tool")];
+  if (item.type === "command_execution") {
+    const preview = safePublishedText(item.command, { homePath: "/home/matrix/home", maxChars: 1_000 });
+    return [toolStarted(context, item.id, "Run command", "command", preview
+      ? { preview, previewKind: "command" }
+      : {})];
+  }
+  if (item.type === "mcp_tool_call") {
+    return [toolStarted(context, item.id, `Use ${item.server}.${item.tool}`, "tool")];
+  }
   if (item.type === "collab_tool_call") return [toolStarted(context, item.id, "Coordinate agents", "agent")];
   if (item.type === "web_search") return [toolStarted(context, item.id, "Search web", "search")];
   if (item.type === "todo_list") return [toolStarted(context, item.id, "Update plan", "plan")];
+  if (item.type === "reasoning") return [toolStarted(context, item.id, "Thinking", "reasoning")];
   return [];
 }
 
@@ -338,7 +387,9 @@ function completedItemEvents(
       .map((change) => safeFileChangeEvent(context, change))
       .filter((change): change is AgentThreadEvent => change !== null);
     return [
-      toolStarted(context, item.id, "Update files", "file_change"),
+      toolStarted(context, item.id, "Update files", "file_change", changes[0]?.type === "file.changed"
+        ? { preview: changes[0].path, previewKind: "path" }
+        : {}),
       ...changes,
       toolCompleted(context, item.id, item.status === "completed" ? "success" : "failed"),
     ];
@@ -362,6 +413,7 @@ function completedItemEvents(
   if (item.type === "web_search" || item.type === "todo_list") {
     return [toolCompleted(context, item.id, "success")];
   }
+  if (item.type === "reasoning") return [toolCompleted(context, item.id, "success")];
   return [];
 }
 
@@ -393,7 +445,11 @@ export function parseCodexExecJsonLine(
   if (codexEvent.type === "turn.started") {
     return { events: [event(context, { type: "thread.status", status: "running" })] };
   }
-  if (codexEvent.type === "turn.completed") return { events: [], outcome: "completed" };
+  if (codexEvent.type === "turn.completed") {
+    const tokenUsage = codexTokenUsage(codexEvent.usage);
+    return { events: [], outcome: "completed", ...(tokenUsage ? { tokenUsage } : {}) };
+  }
+  if (codexEvent.type === "turn.aborted") return { events: [], outcome: "aborted" };
   if (codexEvent.type === "turn.failed") return { events: [], outcome: "failed" };
   if (codexEvent.type === "item.started") {
     return { events: startedItemEvents(context, codexEvent.item) };

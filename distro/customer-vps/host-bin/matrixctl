@@ -1,47 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-R2_ENV_FILE="${MATRIX_R2_ENV_FILE:-/opt/matrix/env/r2.env}"
 HOST_ENV_FILE="${MATRIX_HOST_ENV_FILE:-/opt/matrix/env/host.env}"
-R2_ENV_LOADED=false
-if [ -e "$R2_ENV_FILE" ]; then
-  if [ ! -f "$R2_ENV_FILE" ] || [ ! -r "$R2_ENV_FILE" ]; then
-    echo "matrixctl: r2 configuration unreadable" >&2
-    exit 2
-  fi
-  # shellcheck disable=SC1091
-  set +u
-  if ! source "$R2_ENV_FILE"; then
-    set -u
-    echo "matrixctl: r2 configuration invalid" >&2
-    exit 2
-  fi
-  set -u
-  R2_ENV_LOADED=true
-fi
 if [ -f "$HOST_ENV_FILE" ]; then
   # shellcheck disable=SC1091
   set +u
   source "$HOST_ENV_FILE"
   set -u
 fi
-export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
-export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
-export AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}"
-export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
-
-R2_BUCKET="${R2_BUCKET:-${MATRIX_R2_BUCKET:-matrixos-sync}}"
-R2_PREFIX="${R2_PREFIX:-${MATRIX_R2_PREFIX:-}}"
-R2_ENDPOINT="${R2_ENDPOINT:-}"
-R2_ACCOUNT_ID="${R2_ACCOUNT_ID:-}"
 MATRIX_PLATFORM_URL="${MATRIX_PLATFORM_URL:-${PLATFORM_URL:-}}"
 MATRIX_PLATFORM_TOKEN="${MATRIX_PLATFORM_TOKEN:-${PLATFORM_TOKEN:-}}"
-MATRIX_R2_OPERATION_TIMEOUT_SECONDS="${MATRIX_R2_OPERATION_TIMEOUT_SECONDS:-300}"
-MATRIX_R2_CONNECT_TIMEOUT_SECONDS="${MATRIX_R2_CONNECT_TIMEOUT_SECONDS:-10}"
-MATRIX_R2_READ_TIMEOUT_SECONDS="${MATRIX_R2_READ_TIMEOUT_SECONDS:-60}"
+MATRIX_NODE_BIN="${MATRIX_NODE_BIN:-/opt/matrix/runtime/node/bin/node}"
+MATRIX_R2_BROKER_HELPER="${MATRIX_R2_BROKER_HELPER:-/opt/matrix/bin/matrix-r2-broker.mjs}"
 
 usage() {
-  echo "usage: matrixctl r2 <put|get|exists|put-latest|prune> ..." >&2
+  echo "usage: matrixctl r2 <broker-ready|put|get|exists|put-latest|prune> ..." >&2
   echo "usage: matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]" >&2
   echo "usage: matrixctl deploy [<version>]" >&2
 }
@@ -51,102 +24,28 @@ fail() {
   exit 1
 }
 
-require_r2() {
-  [ -n "$R2_BUCKET" ] || fail "r2 bucket not configured"
-  [ -n "$R2_PREFIX" ] || fail "r2 prefix not configured"
-  [ -n "$AWS_ACCESS_KEY_ID" ] || fail "r2 access key not configured"
-  [ -n "$AWS_SECRET_ACCESS_KEY" ] || fail "r2 secret key not configured"
-  if [ -n "${MATRIX_MACHINE_ID:-}" ]; then
-    [ "$R2_ENV_LOADED" = true ] || fail "r2 configuration file missing"
-    [ -n "$R2_ACCOUNT_ID" ] || fail "r2 account not configured"
-    [ "$R2_ENDPOINT" = "https://${R2_ACCOUNT_ID}.eu.r2.cloudflarestorage.com" ] \
-      || fail "r2 endpoint invalid"
-  fi
+require_r2_broker() {
+  [ -x "$MATRIX_NODE_BIN" ] || fail "broker runtime unavailable"
+  [ -f "$MATRIX_R2_BROKER_HELPER" ] && [ ! -L "$MATRIX_R2_BROKER_HELPER" ] \
+    || fail "broker helper unavailable"
+  [ -n "${MATRIX_HANDLE:-}" ] || fail "broker configuration missing"
+  [ -n "${PLATFORM_INTERNAL_URL:-}" ] || fail "broker configuration missing"
+  [ -n "${UPGRADE_TOKEN:-}" ] || fail "broker configuration missing"
 }
 
-r2_endpoint_arg() {
-  if [ -n "$R2_ENDPOINT" ]; then
-    printf '%s\n' "$R2_ENDPOINT"
-  elif [ -n "$R2_ACCOUNT_ID" ]; then
-    printf 'https://%s.r2.cloudflarestorage.com\n' "$R2_ACCOUNT_ID"
-  else
-    printf '\n'
-  fi
+r2_broker() {
+  require_r2_broker
+  "$MATRIX_NODE_BIN" "$MATRIX_R2_BROKER_HELPER" "$@"
 }
 
-safe_relative_key() {
-  local key="$1"
-  case "$key" in
-    /*|*..*|*://*|*$'\r'*|*$'\n'*|"") return 1 ;;
-    system/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+r2_put() { r2_broker put "$1" "$2"; }
 
-full_key() {
-  local key="$1"
-  safe_relative_key "$key" || fail "invalid r2 key"
-  printf '%s%s\n' "$R2_PREFIX" "$key"
-}
+r2_get() { r2_broker get "$1" "$2"; }
 
-aws_s3() {
-  local endpoint
-  endpoint="$(r2_endpoint_arg)"
-  local args=(--cli-connect-timeout "$MATRIX_R2_CONNECT_TIMEOUT_SECONDS" --cli-read-timeout "$MATRIX_R2_READ_TIMEOUT_SECONDS")
-  if [ -n "$endpoint" ]; then
-    args=(--endpoint-url "$endpoint" "${args[@]}")
-  fi
-  timeout --preserve-status "$MATRIX_R2_OPERATION_TIMEOUT_SECONDS" aws "${args[@]}" "$@"
-}
-
-r2_put() {
-  local src="$1"
-  local key
-  key="$(full_key "$2")"
-  [ -f "$src" ] || fail "source file missing"
-  if ! aws_s3 s3 cp "$src" "s3://${R2_BUCKET}/${key}" >/dev/null; then
-    fail "r2 put failed"
-  fi
-}
-
-r2_get() {
-  local key dest
-  key="$(full_key "$1")"
-  dest="$2"
-  if ! aws_s3 s3 cp "s3://${R2_BUCKET}/${key}" "$dest" >/dev/null; then
-    fail "r2 get failed"
-  fi
-}
-
-r2_exists() {
-  local key output status
-  key="$(full_key "$1")"
-  if output="$(aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key" 2>&1 >/dev/null)"; then
-    return 0
-  else
-    status="$?"
-  fi
-  case "$status" in
-    124|143)
-      echo "matrixctl: r2 exists timed out" >&2
-      return "$status"
-      ;;
-  esac
-  case "$output" in
-    *"An error occurred (404) when calling the HeadObject operation:"*|*"An error occurred (NoSuchKey) when calling the HeadObject operation:"*|*"An error occurred (NotFound) when calling the HeadObject operation:"*)
-      return 44
-      ;;
-  esac
-  echo "matrixctl: r2 exists failed" >&2
-  if [ "$status" -eq 1 ]; then
-    return 2
-  fi
-  return "$status"
-}
+r2_exists() { r2_broker exists "$1"; }
 
 r2_put_latest() {
   local snapshot_key="$1"
-  safe_relative_key "$snapshot_key" || fail "invalid latest pointer"
   local latest_key
   case "$snapshot_key" in
     system/db/snapshots/*.dump)
@@ -171,7 +70,6 @@ r2_put_latest() {
 
 r2_prune() {
   local prefix="$1"
-  safe_relative_key "$prefix" || fail "invalid prune prefix"
   [ "$prefix" = "system/db/snapshots/" ] || fail "unsupported prune prefix"
   # Phase 1 keeps pruning intentionally conservative; the backup script owns
   # creation and latest-pointer ordering, and this bounded call is safe to no-op
@@ -280,9 +178,12 @@ if [ "${1:-}" != "r2" ]; then
   exit 2
 fi
 shift
-require_r2
 
 case "${1:-}" in
+  broker-ready)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
+    r2_broker probe
+    ;;
   put)
     [ "$#" -eq 3 ] || { usage; exit 2; }
     r2_put "$2" "$3"

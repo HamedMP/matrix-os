@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CanonicalChatDetailResponse, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
+import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/renderer/src/features/work/ChatFileNavigation";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -33,6 +34,12 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 
 const NOW = "2026-08-28T10:00:00.000Z";
 const { snapshot } = createCanonicalChatFixture("completed");
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+
+function refKey(label: string): string {
+  const value = [...label].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 0);
+  return `${WORKSPACE_ID}:tt_${value.toString(16).padStart(32, "0")}`;
+}
 
 function terminal(id: string): TerminalSessionSummary {
   return { id, name: id, status: "running", attachable: true, createdAt: NOW, updatedAt: NOW };
@@ -45,7 +52,29 @@ function summary(items: TerminalSessionSummary[]): RuntimeSummary {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items, hasMore: false, limit: 50 },
+    terminalWorkspaces: {
+      items: [{
+        id: WORKSPACE_ID,
+        scope: "main",
+        name: "Main",
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+        tabs: items.map((item, order) => ({
+          id: refKey(item.id).split(":")[1]!,
+          workspaceId: WORKSPACE_ID,
+          name: item.name,
+          cwd: "",
+          status: item.status === "stale" ? "unavailable" : item.status,
+          revision: 1,
+          order,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        })),
+      }],
+      hasMore: false,
+      limit: 50,
+    },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
@@ -64,7 +93,7 @@ function detail(chatId: string, sessionId?: string): CanonicalChatDetailResponse
       runId: run.id,
       occurredAt: NOW,
       type: "terminal.bound",
-      terminalSessionId: sessionId,
+      terminalSessionId: refKey(sessionId),
     }] : [],
   };
 }
@@ -84,6 +113,24 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("opens a message file in the matching Chat inspector and reveals the panel", async () => {
+    const reveal = vi.fn();
+    const { chatDetail, project } = projectDetail("chat_message");
+    function MessageFile() {
+      const navigation = useChatFileNavigation();
+      return <button onClick={() => navigation?.open({ chatId: "chat_message", target: {
+        kind: "project", projectId: "matrix-os", path: "README.md", label: "README.md",
+      } })}>Message file</button>;
+    }
+    render(<ChatFileNavigationProvider reveal={reveal}>
+      <MessageFile />
+      <WorkFilesInspector detail={chatDetail} projects={[project]} active />
+    </ChatFileNavigationProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Message file" }));
+    expect(reveal).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("tabpanel", { name: "File preview" })).toBeTruthy();
+  });
+
   beforeAll(() => { globalThis.ResizeObserver = NoopResizeObserver; });
   beforeEach(() => {
     resizeObserverCallbacks.length = 0;
@@ -95,7 +142,17 @@ describe("Work Files and Terminal inspector", () => {
       authGeneration: 1,
       api: {
         baseUrl: "https://matrix.test",
-        post: vi.fn(async (_path: string, body: { name: string }) => ({ name: body.name, created: true })),
+        post: vi.fn(async (path: string, body: { name?: string }) => path.endsWith("/ensure")
+          ? { workspace: { id: WORKSPACE_ID } }
+          : {
+              tab: {
+                id: refKey(body.name ?? "Chat terminal").split(":")[1],
+                name: body.name ?? "Chat terminal",
+                status: "running",
+                createdAt: NOW,
+                updatedAt: NOW,
+              },
+            }),
         delete: vi.fn(async () => ({})),
       } as never,
     }, true);
@@ -152,8 +209,8 @@ describe("Work Files and Terminal inspector", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "New terminal" }));
 
     await waitFor(() => expect(useConnection.getState().api?.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
-      expect.objectContaining({ chatId: "chat_fresh", name: expect.stringMatching(/^chat-[a-z0-9-]+$/) }),
+      `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`,
+      expect.objectContaining({ chatId: "chat_fresh", name: "Chat terminal" }),
     ));
     expect((await screen.findByTestId("work-terminal")).getAttribute("data-chat")).toBe("chat_fresh");
   });
@@ -176,13 +233,13 @@ describe("Work Files and Terminal inspector", () => {
 
     await waitFor(() => expect(resolveDraftChatId).toHaveBeenCalledOnce());
     await waitFor(() => expect(useConnection.getState().api?.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
-      expect.objectContaining({ chatId: "chat_from_draft", name: expect.stringMatching(/^chat-[a-z0-9-]+$/) }),
+      `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`,
+      expect.objectContaining({ chatId: "chat_from_draft", name: "Chat terminal" }),
     ));
     expect((await screen.findByTestId("work-terminal")).getAttribute("data-chat")).toBe("chat_from_draft");
     expect(onDraftTerminalCreated).toHaveBeenCalledWith(
       "chat_from_draft",
-      expect.objectContaining({ id: expect.stringMatching(/^chat-[a-z0-9-]+$/) }),
+      expect.objectContaining({ id: expect.stringMatching(/^tws_.+:tt_.+$/) }),
     );
   });
 
@@ -194,7 +251,7 @@ describe("Work Files and Terminal inspector", () => {
       runId: chatDetail.runs[0]!.id,
       occurredAt: NOW,
       type: "terminal.bound",
-      terminalSessionId: "terminal_second",
+      terminalSessionId: refKey("terminal_second"),
     });
     render(<WorkFilesInspector detail={chatDetail} projects={[]} active />);
 
@@ -219,7 +276,7 @@ describe("Work Files and Terminal inspector", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
 
     await waitFor(() => expect(useConnection.getState().api?.delete).toHaveBeenCalledWith(
-      "/api/terminal/sessions/terminal_first?force=1",
+      `/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${refKey("terminal_first").split(":")[1]}`,
     ));
     await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
   });

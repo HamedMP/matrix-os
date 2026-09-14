@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   MessageSquare,
   MessageSquarePlus,
@@ -13,7 +13,6 @@ import {
   useHermesChat,
   type HermesConversationSummary,
 } from "../../stores/hermes-chat";
-import { useTabs } from "../../stores/tabs";
 import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { filterConversations } from "./conversation-search";
 
@@ -113,7 +112,6 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   const [query, setQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<HermesConversationSummary | null>(null);
   const conversations = useHermesChat((state) => state.conversations);
-  const isConversationIndexComplete = useHermesChat((state) => state.isConversationIndexComplete);
   const indexStatus = useHermesChat((state) => state.indexStatus);
   const indexError = useHermesChat((state) => state.indexError);
   const deletingConversationId = useHermesChat((state) => state.deletingConversationId);
@@ -122,17 +120,10 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   const createConversation = useHermesChat((state) => state.createConversation);
   const deleteConversation = useHermesChat((state) => state.deleteConversation);
   const clearDeleteError = useHermesChat((state) => state.clearDeleteError);
-  const removeRecentView = useTabs((state) => state.removeRecentView);
-  const reconcileRecentHermesConversations = useTabs((state) => state.reconcileRecentHermesConversations);
   const filteredConversations = useMemo(
     () => filterConversations(conversations, query),
     [conversations, query],
   );
-
-  useEffect(() => {
-    if (indexStatus !== "ready" || !isConversationIndexComplete) return;
-    reconcileRecentHermesConversations(conversations.map((conversation) => conversation.id));
-  }, [conversations, indexStatus, isConversationIndexComplete, reconcileRecentHermesConversations]);
 
   const closeSearch = () => {
     setQuery("");
@@ -146,7 +137,6 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   const confirmDelete = async () => {
     if (!api || !deleteTarget) return;
     if (await deleteConversation(api, deleteTarget.id)) {
-      removeRecentView("conversation", deleteTarget.id);
       setDeleteTarget(null);
     }
   };

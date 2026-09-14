@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import type { TerminalWorkspace } from "@matrix-os/contracts";
 import { ChevronsLeftIcon, RefreshCwIcon, SearchIcon } from "@/lib/hugeicons";
 
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { NewSessionMenu } from "./NewSessionMenu";
 import { NewSessionSplitButton } from "./NewSessionSplitButton";
 import { ShellCloseConfirmation } from "./ShellCloseConfirmation";
 import { useTerminalAppContext } from "./TerminalAppContext";
 import { ThemePickerButton } from "./TerminalThemePicker";
-import { isCanonicalShellSessionId } from "./terminal-session-id";
+import { isCanonicalShellSessionId, parseTerminalRefKey, terminalRefKey } from "./terminal-session-id";
 import {
   DEFAULT_CWD,
   formatCwd,
@@ -29,7 +29,6 @@ import {
   applyShellRefreshSuccess,
   applyShellUiStatePatch,
   rollbackShellUiStatePatch,
-  shellSessionsEqual,
   snapshotShellUiStatePatch,
   type ShellRefreshState,
   type ShellSessionSummary,
@@ -38,27 +37,10 @@ import {
 import {
   CollapsedSessionsRail,
   ShellSessionGroup,
-  filterTreeNodes,
   formatShellDisplayName,
-  updateNode,
-  type ProjectInfo,
-  type TreeNode,
-  type WorkspaceSessionSummary,
 } from "./TerminalSidebarItems";
 import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalSidebar } from "./DesktopTerminalSidebar";
-
-const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
-  height: 28,
-  padding: "0 10px",
-  borderRadius: 6,
-  border: "1px solid transparent",
-  background: "var(--primary)",
-  color: "var(--primary-foreground)",
-  fontSize: 12,
-  fontWeight: 600,
-  whiteSpace: "nowrap",
-};
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
@@ -227,7 +209,6 @@ const SHELL_STATUS_DOT_CSS = `
 function clampTerminalSidebarWidth(width: number): number {
   return Math.min(MAX_TERMINAL_SIDEBAR_WIDTH, Math.max(MIN_TERMINAL_SIDEBAR_WIDTH, Math.round(width)));
 }
-type SidebarTab = "projects" | "shells" | "sessions" | "files";
 type NewSessionMenuAnchor = "drawer" | "rail";
 type CloseConfirmationRequest = {
   shell: ShellSessionSummary;
@@ -235,30 +216,6 @@ type CloseConfirmationRequest = {
   returnFocusElement: HTMLButtonElement;
 };
 
-function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: WorkspaceSessionSummary[]): boolean {
-  if (left.length !== right.length) return false;
-  const sortedLeft = [...left].sort((a, b) => a.id.localeCompare(b.id));
-  const sortedRight = [...right].sort((a, b) => a.id.localeCompare(b.id));
-  return sortedLeft.every((session, index) => {
-    const next = sortedRight[index];
-    return (
-      next !== undefined &&
-      session.id === next.id &&
-      session.kind === next.kind &&
-      session.projectSlug === next.projectSlug &&
-      session.taskId === next.taskId &&
-      session.worktreeId === next.worktreeId &&
-      session.pr === next.pr &&
-      session.agent === next.agent &&
-      session.runtime?.status === next.runtime?.status &&
-      session.status === next.status &&
-      session.transcriptPath === next.transcriptPath &&
-      (session.nativeAttachCommand ?? []).join("\u0000") === (next.nativeAttachCommand ?? []).join("\u0000")
-    );
-  });
-}
-
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 16 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree/agent-status UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
 export function LocalTerminalSidebar({
   canvasZoom = 1,
   desktopParity = false,
@@ -269,10 +226,6 @@ export function LocalTerminalSidebar({
   onDesktopSessionStateChange?: (state: { count: number; ready: boolean }) => void;
 } = {}) {
   const ctx = useTerminalAppContext();
-  const [tab, setTab] = useState<SidebarTab>("shells");
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [projectsLoading, setProjectsLoading] = useState(true);
-  const [projectsError, setProjectsError] = useState<string | null>(null);
   const [shells, setShells] = useState<ShellSessionSummary[]>([]);
   const [shellsAuthoritative, setShellsAuthoritative] = useState(false);
   const [shellsStale, setShellsStale] = useState(false);
@@ -284,7 +237,7 @@ export function LocalTerminalSidebar({
     stale: false,
     error: null,
   });
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for `fetchShells` and shell-tab refresh effect dependencies in compiled and test/runtime surfaces.
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for `fetchShells` and shell refresh effect dependencies in compiled and test/runtime surfaces.
   const commitShellRefreshState = useCallback((nextState: ShellRefreshState) => {
     shellRefreshStateRef.current = nextState;
     setShells(nextState.shells);
@@ -315,63 +268,22 @@ export function LocalTerminalSidebar({
   const [draggingShellName, setDraggingShellName] = useState<string | null>(null);
   const [dragOverShellName, setDragOverShellName] = useState<string | null>(null);
   const [draggingShellPlacement, setDraggingShellPlacement] = useState<"active" | "background" | null>(null);
-  const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
-  const [sessionsError, setSessionsError] = useState<string | null>(null);
   const {
     statuses: agentStatuses,
     checking: agentStatusesChecking,
     statusUnavailable: agentStatusesUnavailable,
     refresh: refreshAgentStatuses,
   } = useTerminalAgentStatuses();
-  const [rootPath, setRootPath] = useState("projects");
-  const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
 
-  const selectSidebarTab = (nextTab: SidebarTab) => {
-    setTab(nextTab);
-    setFilter("");
-  };
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchProjects` is in the dependency array of the projects-tab useEffect below.
-  const fetchProjects = useCallback(async () => {
-    setProjectsLoading(true);
-    setProjectsError(null);
-    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async load is correct as written
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/projects?root=projects`, {
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!res.ok) {
-        setProjectsError("Failed to load projects");
-        setProjects([]);
-        return;
-      }
-      const data = (await res.json()) as { projects?: ProjectInfo[] };
-      setProjects(Array.isArray(data.projects) ? data.projects : []);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("Failed to load projects:", msg);
-      setProjectsError("Could not reach gateway");
-      setProjects([]);
-    } finally {
-      setProjectsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the projects list when the Projects tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
-    if (tab === "projects") void fetchProjects();
-  }, [tab, fetchProjects]);
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load useEffect below and command handlers.
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shell-session load useEffect below and command handlers.
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal; preserveOrderDuringReorder?: boolean } = {}) => {
     const silent = options.silent === true;
     if (!silent) setShellsLoading(true);
     if (!silent) setShellsError(null);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async load is correct as written
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces`, {
         signal: options.signal ?? AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -389,9 +301,26 @@ export function LocalTerminalSidebar({
       if (options.preserveOrderDuringReorder === true && reorderSaveCountRef.current > 0) {
         return;
       }
-      const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
-      const hasSessionList = Array.isArray(data.sessions);
-      const nextShells = hasSessionList ? data.sessions! : [];
+      const data = (await res.json()) as { workspaces?: TerminalWorkspace[] };
+      const hasSessionList = Array.isArray(data.workspaces);
+      const nextShells: ShellSessionSummary[] = hasSessionList
+        ? data.workspaces!.flatMap((workspace) => workspace.tabs.map((terminalTab) => ({
+            name: terminalRefKey({ workspaceId: workspace.id, tabId: terminalTab.id }),
+            workspaceId: workspace.id,
+            tabId: terminalTab.id,
+            revision: terminalTab.revision,
+            workspaceRevision: workspace.revision,
+            projectId: workspace.scope === "project" ? workspace.projectId : undefined,
+            project: workspace.scope === "project" ? workspace.projectId : "main",
+            cwd: terminalTab.cwd,
+            status: terminalTab.status === "exited" ? "exited" as const : "active" as const,
+            placement: terminalTab.uiState?.placement ?? "active",
+            lastSeenSeq: terminalTab.uiState?.lastSeenSeq,
+            agent: terminalTab.agent?.providerId as ShellSessionSummary["agent"],
+            subtitle: terminalTab.name,
+            updatedAt: terminalTab.updatedAt,
+          })))
+        : [];
       commitShellRefreshState(applyShellRefreshSuccess(
         shellRefreshStateRef.current,
         nextShells,
@@ -414,9 +343,7 @@ export function LocalTerminalSidebar({
   }, [commitShellRefreshState]);
 
   useEffect(() => {
-    if (tab !== "shells") return;
     const controller = new AbortController();
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the shell-session list when the Shells tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     void fetchShells({ signal: controller.signal });
     const refreshTimer = window.setInterval(() => {
       void fetchShells({ silent: true, signal: controller.signal, preserveOrderDuringReorder: true });
@@ -425,72 +352,9 @@ export function LocalTerminalSidebar({
       controller.abort();
       window.clearInterval(refreshTimer);
     };
-  }, [fetchShells, tab]);
+  }, [fetchShells]);
 
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchSessions` is in the dependency array of the sessions-tab useEffect below.
-  const fetchSessions = useCallback(async () => {
-    setSessionsLoading(true);
-    setSessionsError(null);
-    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async load is correct as written
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/sessions?limit=100`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        setSessionsError("Failed to load sessions");
-        setSessions([]);
-        return;
-      }
-      const data = (await res.json()) as { sessions?: WorkspaceSessionSummary[] };
-      const nextSessions = Array.isArray(data.sessions)
-        ? data.sessions.filter((session) => typeof session.id === "string" && session.id.length > 0)
-        : [];
-      setSessions((prev) => workspaceSessionsEqual(prev, nextSessions) ? prev : nextSessions);
-    } catch (err: unknown) {
-      console.warn("Failed to load workspace sessions:", err instanceof Error ? err.message : err);
-      setSessionsError("Could not reach gateway");
-      setSessions([]);
-    } finally {
-      setSessionsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the workspace-session list when the Sessions tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
-    if (tab === "sessions") void fetchSessions();
-  }, [fetchSessions, tab]);
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchDir` is in the dependency array of the files-tab useEffect below.
-  const fetchDir = useCallback(async (path: string) => {
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/files/tree?path=${encodeURIComponent(path)}`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) return [];
-      return res.json();
-    } catch (err: unknown) {
-      console.warn("Failed to load terminal directory tree:", err instanceof Error ? err.message : err);
-      return [];
-    }
-  }, []);
-
-  useEffect(() => {
-    if (tab !== "files") return;
-    fetchDir(rootPath).then((entries: TreeNode[]) => setTree(entries.map(e => ({ ...e, path: `${rootPath}/${e.name}` }))));
-  }, [rootPath, fetchDir, tab]);
-
-  const toggleExpand = async (node: TreeNode) => {
-    if (node.type !== "directory") return;
-    if (node.expanded) { setTree(prev => updateNode(prev, node.path, { expanded: false })); return; }
-    const children = await fetchDir(node.path);
-    setTree(prev => updateNode(prev, node.path, { expanded: true, children: children.map((c: TreeNode) => ({ ...c, path: `${node.path}/${c.name}` })) }));
-  };
-
-  const isAtRoot = !rootPath || rootPath === ".";
   const normalizedFilter = filter.trim().toLowerCase();
-  const filteredProjects = normalizedFilter
-    ? projects.filter((p) => p.name.toLowerCase().includes(normalizedFilter))
-    : projects;
   const filteredShells = normalizedFilter
     ? shells.filter((shell) => [
       shell.name,
@@ -498,20 +362,6 @@ export function LocalTerminalSidebar({
       shell.tabs?.map((shellTab) => shellTab.name).join(" "),
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
     : shells;
-  const filteredSessions = normalizedFilter
-    ? sessions.filter((session) => [
-      session.id,
-      session.projectSlug,
-      session.taskId,
-      session.worktreeId,
-      session.agent,
-      session.runtime?.status,
-      session.status,
-      session.transcriptPath,
-    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
-    : sessions;
-  const filteredTree = normalizedFilter ? filterTreeNodes(tree, normalizedFilter) : tree;
-
   const createManagedShell = async () => {
     if (creatingShellRef.current) return;
     setNewSessionMenuAnchor(null);
@@ -542,11 +392,19 @@ export function LocalTerminalSidebar({
     setShellsError(null);
     const previousShells = shells;
     const deletedShell = previousShells.find((shell) => shell.name === name);
+    if (!deletedShell?.workspaceId || !deletedShell.tabId) {
+      deletingShellsRef.current!.delete(name);
+      setDeletingShellNames(Array.from(deletingShellsRef.current!));
+      setShellsError("Could not remove shell");
+      return;
+    }
     setShells((prev) => prev.filter((shell) => shell.name !== name));
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async delete flow is correct as written
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}?force=1`, {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${deletedShell.workspaceId}/tabs/${deletedShell.tabId}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -568,33 +426,30 @@ export function LocalTerminalSidebar({
 
   const renameManagedShell = async (shell: ShellSessionSummary, nextNameRaw: string): Promise<boolean> => {
     const nextName = nextNameRaw.trim();
-    if (nextName === shell.name) return true;
-    if (!SHELL_SESSION_NAME_PATTERN.test(nextName)) {
-      setShellsError("Use lowercase letters, numbers, and hyphens");
+    if (nextName === (shell.subtitle ?? shell.name)) return true;
+    if (!nextName || nextName.length > 120) {
+      setShellsError("Use a name between 1 and 120 characters");
       return false;
     }
     setShellsError(null);
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(shell.name)}/rename`, {
-        method: "PUT",
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${shell.workspaceId}/tabs/${shell.tabId}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nextName }),
+        body: JSON.stringify({ name: nextName, baseRevision: shell.revision }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         setShellsError("Failed to rename session");
         return false;
       }
-      const data = (await res.json()) as { session?: ShellSessionSummary };
-      const renamedShell: ShellSessionSummary = data.session?.name
-        ? data.session
-        : {
-            ...shell,
-            name: nextName,
-            attachCommand: `mos shell attach ${nextName}`,
-          };
+      const data = (await res.json()) as { tab?: { name?: string; revision?: number } };
+      const renamedShell: ShellSessionSummary = {
+        ...shell,
+        subtitle: data.tab?.name ?? nextName,
+        revision: data.tab?.revision ?? shell.revision + 1,
+      };
       setShells((prev) => prev.map((item) => item.name === shell.name ? renamedShell : item));
-      ctx.renameShellSession(shell.name, renamedShell.name);
       return true;
     } catch (err: unknown) {
       console.warn("Failed to rename shell session:", err instanceof Error ? err.message : err);
@@ -610,6 +465,11 @@ export function LocalTerminalSidebar({
   ) => {
     const rollbackOnFailure = options.rollbackOnFailure ?? true;
     setShellsError(null);
+    const target = shells.find((shell) => shell.name === name);
+    if (!target) {
+      if (rollbackOnFailure) setShellsError("Could not update session");
+      return null;
+    }
     const previousValues: ShellUiStatePatch = {};
     setShells((prev) => prev.map((shell) => {
       if (shell.name !== name) return shell;
@@ -624,10 +484,10 @@ export function LocalTerminalSidebar({
       )));
     };
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}/ui-state`, {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${target.workspaceId}/tabs/${target.tabId}/ui-state`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
+        body: JSON.stringify({ ...patch, baseRevision: target.revision }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -637,10 +497,11 @@ export function LocalTerminalSidebar({
         }
         return null;
       }
-      const data = (await res.json()) as { session?: ShellSessionSummary };
-      if (data.session?.name) {
-        setShells((prev) => prev.map((shell) => shell.name === data.session!.name ? data.session! : shell));
-        return data.session;
+      const data = (await res.json()) as { tab?: { revision?: number } };
+      if (data.tab) {
+        const updated = { ...target, ...patch, revision: data.tab.revision ?? target.revision + 1 };
+        setShells((prev) => prev.map((shell) => shell.name === name ? updated : shell));
+        return updated;
       }
       return null;
     } catch (err: unknown) {
@@ -653,77 +514,6 @@ export function LocalTerminalSidebar({
     }
   };
 
-  const openWorkspaceTransport = async (session: WorkspaceSessionSummary, mode: "observe" | "takeover") => {
-    if (!session.id) {
-      setSessionsError("Session is missing an id");
-      return;
-    }
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(session.id)}/${mode}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        setSessionsError("Failed to attach session");
-        return;
-      }
-      const data = (await res.json()) as { terminalSessionId?: string };
-      if (data.terminalSessionId) {
-        ctx.addSessionTab(`${session.id} · ${mode}`, data.terminalSessionId);
-      }
-    } catch (err: unknown) {
-      console.warn("Failed to attach workspace session:", err instanceof Error ? err.message : err);
-      setSessionsError("Could not attach session");
-    }
-  };
-
-  const duplicateWorkspaceSession = async (session: WorkspaceSessionSummary) => {
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          kind: session.kind ?? (session.agent ? "agent" : "shell"),
-          ...(session.agent ? { agent: session.agent } : {}),
-          ...(session.projectSlug ? { projectSlug: session.projectSlug } : {}),
-          ...(session.taskId ? { taskId: session.taskId } : {}),
-          ...(session.worktreeId ? { worktreeId: session.worktreeId } : {}),
-          ...(session.pr ? { pr: session.pr } : {}),
-        }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        setSessionsError("Failed to duplicate session");
-        return;
-      }
-      await fetchSessions();
-    } catch (err: unknown) {
-      console.warn("Failed to duplicate workspace session:", err instanceof Error ? err.message : err);
-      setSessionsError("Could not duplicate session");
-    }
-  };
-
-  const killWorkspaceSession = async (sessionId: string) => {
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(sessionId)}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        setSessionsError("Failed to kill session");
-        return;
-      }
-      await fetchSessions();
-    } catch (err: unknown) {
-      console.warn("Failed to kill workspace session:", err instanceof Error ? err.message : err);
-      setSessionsError("Could not kill session");
-    }
-  };
-
   const openSessionIds = new Set<string>();
   const syntheticShells: ShellSessionSummary[] = [];
   for (const terminalTab of ctx.tabs) {
@@ -731,8 +521,14 @@ export function LocalTerminalSidebar({
       if (!sessionId || openSessionIds.has(sessionId)) continue;
       openSessionIds.add(sessionId);
       if (!isCanonicalShellSessionId(sessionId)) continue;
+      const terminalRef = parseTerminalRefKey(sessionId);
+      if (!terminalRef) continue;
       syntheticShells.push({
         name: sessionId,
+        workspaceId: terminalRef.workspaceId,
+        tabId: terminalRef.tabId,
+        revision: 0,
+        workspaceRevision: 0,
         status: "active",
         placement: "active",
         attachedClients: 1,
@@ -753,8 +549,15 @@ export function LocalTerminalSidebar({
   const renderedShells = filteredShells.length > 0
     ? filteredShells
     : shellsAuthoritative ? [] : syntheticFilteredShells;
-  const activeShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "active");
-  const backgroundShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "background");
+  const pinnedFirst = (left: ShellSessionSummary, right: ShellSessionSummary) => (
+    Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))
+  );
+  const activeShells = renderedShells
+    .filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "active")
+    .sort(pinnedFirst);
+  const backgroundShells = renderedShells
+    .filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "background")
+    .sort(pinnedFirst);
   const activeTerminalTab = ctx.tabs.find((terminalTab) => terminalTab.id === ctx.activeTabId) ?? ctx.tabs[0];
   const selectedPaneId = activeTerminalTab
     ? ctx.focusedPaneId && hasPaneId(activeTerminalTab.paneTree, ctx.focusedPaneId)
@@ -840,7 +643,10 @@ export function LocalTerminalSidebar({
     if (existingTab) {
       ctx.setActiveTab(existingTab.id);
     } else {
-      ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name);
+      ctx.addSessionTab(shell.subtitle?.trim() || formatShellDisplayName(shell.name), shell.name, shell.cwd ?? DEFAULT_CWD, {
+        ...(shell.agent ? { agent: shell.agent } : {}),
+        legacyCompat: false,
+      });
     }
     if (markSeen && shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq) {
       void patchShellUiState(shell.name, { lastSeenSeq: shell.latestSeq });
@@ -872,6 +678,9 @@ export function LocalTerminalSidebar({
     const fromIndex = shells.findIndex((shell) => shell.name === fromName);
     const toIndex = shells.findIndex((shell) => shell.name === toName);
     if (fromIndex < 0 || toIndex < 0) return;
+    const source = shells[fromIndex]!;
+    const target = shells[toIndex]!;
+    if (source.workspaceId !== target.workspaceId) return;
     const nextShells = [...shells];
     const [moved] = nextShells.splice(fromIndex, 1);
     if (!moved) return;
@@ -883,10 +692,14 @@ export function LocalTerminalSidebar({
       reorderSaveCountRef.current = Math.max(0, reorderSaveCountRef.current - 1);
     };
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/order`, {
+      const workspaceTabs = nextShells.filter((shell) => shell.workspaceId === source.workspaceId);
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${source.workspaceId}/tabs/order`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order: nextShells.map((shell) => shell.name) }),
+        body: JSON.stringify({
+          tabIds: workspaceTabs.map((shell) => shell.tabId),
+          baseRevision: source.workspaceRevision,
+        }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -895,16 +708,7 @@ export function LocalTerminalSidebar({
         finishReorderSave();
         return;
       }
-      const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
-      if (Array.isArray(data.sessions)) {
-        commitShellRefreshState(applyShellRefreshSuccess(
-          shellRefreshStateRef.current,
-          data.sessions,
-          true,
-        ));
-      } else {
-        await fetchShells({ silent: true });
-      }
+      await fetchShells({ silent: true });
       finishReorderSave();
     } catch (err: unknown) {
       console.warn("Failed to save shell order:", err instanceof Error ? err.message : err);
@@ -1288,6 +1092,7 @@ export function LocalTerminalSidebar({
             selectedShellName={activeShellName}
             onOpen={openActiveShell}
             onToggle={moveShellToBackground}
+            onPin={(shell) => void patchShellUiState(shell.name, { pinned: !shell.pinned })}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell, anchorElement, returnFocusElement) => setCloseConfirmationRequest({ shell, anchorElement, returnFocusElement })}
             draggingShellName={draggingShellName}
@@ -1310,6 +1115,7 @@ export function LocalTerminalSidebar({
             selectedShellName={activeShellName}
             onOpen={makeShellActive}
             onToggle={makeShellActive}
+            onPin={(shell) => void patchShellUiState(shell.name, { pinned: !shell.pinned })}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell, anchorElement, returnFocusElement) => setCloseConfirmationRequest({ shell, anchorElement, returnFocusElement })}
             draggingShellName={draggingShellName}

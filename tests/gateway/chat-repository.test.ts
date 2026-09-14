@@ -5,6 +5,7 @@ import { sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import type {
   CanonicalChatMessage,
+  CanonicalChatRecord,
   CanonicalChatRun,
   CanonicalChatRunActivity,
   CanonicalChatTurn,
@@ -14,7 +15,9 @@ import {
   ChatConflictError,
   ChatNotFoundError,
   ChatRepository,
+  ChatRunNotActiveError,
 } from "../../packages/gateway/src/chat/repository.js";
+import type { ChatOutboxEvent, ChatOwner } from "../../packages/gateway/src/chat/records.js";
 
 const owner = { type: "personal" as const, ownerId: "user_a" };
 const otherOwner = { type: "personal" as const, ownerId: "user_b" };
@@ -31,6 +34,7 @@ function message(chatId: string, seq = 1): CanonicalChatMessage {
     seq,
     role: "user",
     state: "committed",
+    purpose: "ai_request",
     turnId: `cturn_${chatId}_${seq}`,
     parts: [{ type: "text", text: `message ${seq}` }],
     createdAt: now,
@@ -73,6 +77,7 @@ function run(chatId: string, inputTurn: CanonicalChatTurn, attempt = 1): Canonic
       userInput: true,
       resume: true,
       cancellation: true,
+      steering: "same_run",
       worktrees: "optional",
       interactionModes: ["default"],
       permissionModes: ["supervised"],
@@ -110,6 +115,75 @@ function terminalBinding(
   };
 }
 
+function createChat(repository: ChatRepository, suffix: string, creationOwner = owner) {
+  return repository.create(creationOwner, {
+    id: `chat_${suffix}`, clientRequestId: `req_${suffix}`, title: suffix,
+  });
+}
+
+async function admitChat(repository: ChatRepository, suffix: string) {
+  const created = await createChat(repository, suffix);
+  const input = message(created.chat.id);
+  const acceptedTurn = turn(created.chat.id, input, `req_turn_${suffix}`);
+  const acceptedRun = run(created.chat.id, acceptedTurn);
+  await repository.admitTurn(owner, {
+    chatId: created.chat.id,
+    baseRevision: created.chat.revision,
+    message: input,
+    turn: acceptedTurn,
+    run: acceptedRun,
+  });
+  return { chatId: created.chat.id, runId: acceptedRun.id, turn: acceptedTurn, run: acceptedRun };
+}
+
+type AdmittedChat = Awaited<ReturnType<typeof admitChat>>;
+type ActivityInput = CanonicalChatRunActivity extends infer Activity
+  ? Activity extends CanonicalChatRunActivity
+    ? Omit<Activity, "chatId" | "runId">
+    : never
+  : never;
+
+function finishChat(
+  repository: ChatRepository,
+  admitted: Pick<AdmittedChat, "chatId" | "runId">,
+  outcome: "completed" | "failed" | "aborted",
+  completedAt: string,
+) {
+  return repository.finishRun(owner, { ...admitted, outcome, completedAt });
+}
+
+function appendActivity(
+  repository: ChatRepository,
+  admitted: Pick<AdmittedChat, "chatId" | "runId">,
+  activity: ActivityInput,
+) {
+  return repository.appendRunActivities(owner, admitted.chatId, admitted.runId, [{
+    ...activity,
+    chatId: admitted.chatId,
+    runId: admitted.runId,
+  } as CanonicalChatRunActivity]);
+}
+
+async function retryAndFinish(
+  repository: ChatRepository,
+  admitted: AdmittedChat,
+  suffix: string,
+  completedAt: string,
+) {
+  const current = await repository.get(owner, admitted.chatId);
+  expect(current).not.toBeNull();
+  const retry = run(admitted.chatId, admitted.turn, 2);
+  await repository.admitRetry(owner, {
+    chatId: admitted.chatId,
+    turnId: admitted.turn.id,
+    clientRequestId: `req_retry_${suffix}`,
+    baseRevision: current!.chat.revision,
+    run: retry,
+  });
+  await finishChat(repository, { chatId: admitted.chatId, runId: retry.id }, "completed", completedAt);
+  return retry;
+}
+
 describe("ChatRepository", () => {
   let pglite: InstanceType<typeof KyselyPGlite>;
   let repository: ChatRepository;
@@ -141,8 +215,10 @@ describe("ChatRepository", () => {
       "chat_messages",
       "chat_migrations",
       "chat_outbox",
+      "chat_queued_turns",
       "chat_run_adapter_state",
       "chat_run_events",
+      "chat_run_steers",
       "chat_runs",
       "chat_terminal_bindings",
       "chat_turns",
@@ -196,6 +272,125 @@ describe("ChatRepository", () => {
     expect(await repository.get(owner, "chat_rolled_back")).toBeNull();
   });
 
+  it("notifies the single bounded outbox sink only after commit and never after rollback", async () => {
+    const delivered: Array<{ owner: ChatOwner; event: ChatOutboxEvent }> = [];
+    const events = repository;
+    const registration = events.registerOutboxSink((event) => delivered.push(event));
+
+    await createChat(repository, "sink_committed");
+    expect(delivered).toEqual([
+      expect.objectContaining({
+        owner,
+        event: expect.objectContaining({
+          chatId: "chat_sink_committed",
+          eventType: "chat.created",
+        }),
+      }),
+    ]);
+
+    let deliveredBeforeOuterCommit = -1;
+    await repository.withTransaction(async (transaction) => {
+      await createChat(transaction, "sink_outer_transaction");
+      deliveredBeforeOuterCommit = delivered.length;
+    });
+    expect(deliveredBeforeOuterCommit).toBe(1);
+    expect(delivered.at(-1)).toEqual(expect.objectContaining({
+      owner,
+      event: expect.objectContaining({ chatId: "chat_sink_outer_transaction" }),
+    }));
+
+    await expect(repository.withTransaction(async (transaction) => {
+      await createChat(transaction, "sink_rolled_back");
+      throw new Error("force rollback");
+    })).rejects.toThrow("force rollback");
+    expect(delivered).toHaveLength(2);
+
+    expect(() => events.registerOutboxSink(() => undefined))
+      .toThrow(/sink|registered/i);
+    registration.dispose();
+    const replacement = events.registerOutboxSink(() => undefined);
+    replacement.dispose();
+  });
+
+  it("drains the registered outbox sink before repository release", async () => {
+    const events = repository;
+    const delivered: ChatOutboxEvent[] = [];
+    events.registerOutboxSink(({ event }) => delivered.push(event));
+
+    await repository.release();
+    await createChat(repository, "after_repository_release");
+
+    expect(delivered).toEqual([]);
+  });
+
+  it("fails closed and rolls back when one transaction exceeds the pending outbox cap", async () => {
+    const delivered: ChatOutboxEvent[] = [];
+    repository.registerOutboxSink(({ event }) => delivered.push(event));
+
+    await expect(repository.withTransaction(async (transaction) => {
+      for (let index = 0; index <= 100; index += 1) {
+        await createChat(transaction, `pending_cap_${index}`);
+      }
+    })).rejects.toThrow(/outbox limit/i);
+
+    expect(delivered).toEqual([]);
+    expect((await repository.list(owner, { limit: 100 })).items).toEqual([]);
+  });
+
+  it("replays an owner-isolated bounded monotonic window and reports a pruned cursor gap", async () => {
+    const events = repository;
+    await createChat(repository, "replay_first");
+    await createChat(repository, "replay_other_owner", otherOwner);
+    await createChat(repository, "replay_second");
+
+    const firstWindow = await events.replayOutboxWindow(owner, { limit: 2 });
+    expect(firstWindow).toMatchObject({ gap: false });
+    expect(firstWindow.events).toHaveLength(2);
+    expect(firstWindow.events[0]?.chatId).toBe("chat_replay_first");
+    expect(firstWindow.nextCursor).toBe(firstWindow.events[1]?.cursor);
+
+    const remaining = await events.replayOutboxWindow(owner, {
+      afterCursor: firstWindow.events[0]?.cursor,
+      limit: 1000,
+    });
+    expect(remaining.gap).toBe(false);
+    expect(remaining.events.map((event) => event.chatId)).toEqual(["chat_replay_second"]);
+    expect(remaining.events.map((event) => event.cursor))
+      .toEqual([...remaining.events.map((event) => event.cursor)].sort((a, b) => a - b));
+    expect(remaining.events).toHaveLength(1);
+
+    await repository.pruneOutbox(owner, remaining.events[0]!.cursor + 1, 100);
+    await createChat(repository, "replay_after_prune");
+    const gap = await events.replayOutboxWindow(owner, {
+      afterCursor: firstWindow.nextCursor,
+      limit: 10,
+    });
+    expect(gap.gap).toBe(true);
+    expect(gap.events).toEqual([]);
+  });
+
+  it("caps one replay window even when the caller requests an oversized page", async () => {
+    const events = repository;
+    await createChat(repository, "replay_cap");
+    await repository.kysely.insertInto("chat_outbox").values(
+      Array.from({ length: 105 }, (_, index) => ({
+        owner_type: owner.type,
+        owner_id: owner.ownerId,
+        chat_id: "chat_replay_cap",
+        revision: index + 1,
+        event_type: "chat.updated" as const,
+        payload: {},
+      })),
+    ).execute();
+
+    const window = await events.replayOutboxWindow(owner, { limit: 10_000 });
+
+    expect(window.gap).toBe(true);
+    expect(window.events).toEqual([]);
+    const latest = await repository.kysely.selectFrom("chat_outbox").select("cursor").orderBy("cursor", "desc").limit(1).executeTakeFirstOrThrow();
+    expect(window.nextCursor).toBe(Number(latest.cursor));
+  });
+
   it("hydrates and updates owner-local Chat pin state atomically", async () => {
     const created = await repository.create(owner, {
       id: "chat_pinned",
@@ -234,6 +429,235 @@ describe("ChatRepository", () => {
         payload: { pinned: true },
       }),
     ]);
+  });
+
+  it("projects accepted, running, approval, and input Run states in fresh list and detail snapshots", async () => {
+    const accepted = await admitChat(repository, "rail_accepted");
+    const running = await admitChat(repository, "rail_running");
+    const approval = await admitChat(repository, "rail_approval");
+    const inputRequired = await admitChat(repository, "rail_input");
+
+    for (const state of [running, approval, inputRequired]) {
+      await repository.markRunRunning(owner, {
+        chatId: state.chatId,
+        runId: state.runId,
+        startedAt: "2026-08-25T00:00:30.000Z",
+      });
+    }
+    await appendActivity(repository, approval, {
+      id: "activity_rail_approval",
+      occurredAt: "2026-08-25T00:00:40.000Z",
+      type: "approval.requested",
+      approvalId: "approval_rail_exact",
+      title: "Allow the command",
+      risk: "medium",
+      allowedDecisions: ["approve", "approve_for_session", "decline"],
+    });
+    await appendActivity(repository, inputRequired, {
+      id: "activity_rail_input",
+      occurredAt: "2026-08-25T00:00:50.000Z",
+      type: "input.requested",
+      requestId: "input_rail_exact",
+      title: "Choose an option",
+    });
+
+    const list = await repository.list(owner, { limit: 100 });
+    const byId = new Map(list.items.map((record) => [record.chat.id, record]));
+    for (const [state, attention, status] of [
+      [accepted, "none", "accepted"],
+      [running, "none", "running"],
+      [approval, "approval_required", "waiting_for_approval"],
+      [inputRequired, "input_required", "waiting_for_input"],
+    ] as const) expect(byId.get(state.chatId)).toMatchObject({
+      chat: { attention }, activeRun: { runId: state.runId, status },
+    });
+
+    for (const expected of [accepted, running, approval, inputRequired]) {
+      const detail = await repository.getDetailPage(owner, expected.chatId, { limit: 200 });
+      expect(detail?.record).toEqual(byId.get(expected.chatId));
+    }
+  });
+
+  it("projects each newly persisted approval and input transition once with one refresh signal", async () => {
+    const admitted = await admitChat(repository, "rail_activity_transitions");
+    await repository.markRunRunning(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      startedAt: "2026-08-25T00:00:30.000Z",
+    });
+    const approvalRequested: ActivityInput = {
+      id: "activity_rail_transition_approval_requested",
+      occurredAt: "2026-08-25T00:00:40.000Z",
+      type: "approval.requested",
+      approvalId: "approval_rail_transition",
+      title: "Allow the command",
+      risk: "medium",
+      allowedDecisions: ["approve", "approve_for_session", "decline"],
+    };
+
+    await expect(appendActivity(repository, admitted, approvalRequested)).resolves.toBe(1);
+    const afterApproval = await repository.get(owner, admitted.chatId);
+    expect(afterApproval).toMatchObject({
+      chat: { attention: "approval_required", revision: 2 },
+      activeRun: { status: "waiting_for_approval" },
+    });
+    const outboxAfterApproval = await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 });
+
+    await expect(appendActivity(repository, admitted, approvalRequested)).resolves.toBe(0);
+    expect(await repository.get(owner, admitted.chatId)).toEqual(afterApproval);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 }))
+      .toEqual(outboxAfterApproval);
+
+    const transitions: Array<[ActivityInput, string, string, number]> = [
+      [{ id: "activity_rail_transition_approval_resolved", occurredAt: "2026-08-25T00:00:50.000Z", type: "approval.resolved", approvalId: "approval_rail_transition", decision: "approve" }, "none", "running", 3],
+      [{ id: "activity_rail_transition_input_requested", occurredAt: "2026-08-25T00:01:00.000Z", type: "input.requested", requestId: "input_rail_transition", title: "Choose an option" }, "input_required", "waiting_for_input", 4],
+      [{ id: "activity_rail_transition_input_resolved", occurredAt: "2026-08-25T00:01:10.000Z", type: "input.resolved", requestId: "input_rail_transition" }, "none", "running", 5],
+    ];
+    for (const [activity, attention, status, revision] of transitions) {
+      await appendActivity(repository, admitted, activity);
+      expect(await repository.get(owner, admitted.chatId)).toMatchObject({
+        chat: { attention, revision }, activeRun: { status },
+      });
+    }
+    const afterInput = await repository.get(owner, admitted.chatId);
+    expect(afterInput).toMatchObject({ chat: { attention: "none", revision: 5 } });
+    const transitionEvents = (await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 }))
+      .filter((event) => event.eventType === "run.activity");
+    expect(transitionEvents).toHaveLength(4);
+    expect(transitionEvents.map((event) => event.revision)).toEqual([2, 3, 4, 5]);
+  });
+
+  it("projects failed and exact successful completion state without treating aborted or idle as complete", async () => {
+    const failed = await admitChat(repository, "rail_terminal_failed");
+    const unseen = await admitChat(repository, "rail_terminal_unseen");
+    const acknowledged = await admitChat(repository, "rail_terminal_acknowledged");
+    const aborted = await admitChat(repository, "rail_terminal_aborted");
+    const idle = await createChat(repository, "rail_terminal_idle");
+    const completedAt = "2026-08-25T00:01:00.000Z";
+
+    await finishChat(repository, failed, "failed", completedAt);
+    await finishChat(repository, unseen, "completed", completedAt);
+    await repository.acknowledgeCompletion(owner, unseen.chatId, unseen.runId);
+    const latestCompletedAt = "2026-08-25T00:02:00.000Z";
+    const latestUnseenRun = await retryAndFinish(repository, unseen, "rail_terminal_unseen", latestCompletedAt);
+    await finishChat(repository, acknowledged, "completed", completedAt);
+    await repository.acknowledgeCompletion(owner, acknowledged.chatId, acknowledged.runId);
+    await finishChat(repository, aborted, "aborted", completedAt);
+
+    const list = await repository.list(owner, { limit: 100 });
+    const byId = new Map(list.items.map((record) => [record.chat.id, record]));
+    expect(byId.get(failed.chatId)).toMatchObject({ chat: { attention: "failed" } });
+    expect(byId.get(unseen.chatId)).toMatchObject({
+      chat: { attention: "none" },
+      latestSuccessfulCompletion: {
+        runId: latestUnseenRun.id,
+        completedAt: latestCompletedAt,
+        unacknowledged: true,
+      },
+    });
+    expect(byId.get(acknowledged.chatId)).toMatchObject({
+      chat: { attention: "none" },
+      latestSuccessfulCompletion: {
+        runId: acknowledged.runId,
+        completedAt,
+        unacknowledged: false,
+      },
+    });
+    expect(byId.get(aborted.chatId)).not.toHaveProperty("latestSuccessfulCompletion");
+    expect(byId.get(idle.chat.id)).not.toHaveProperty("latestSuccessfulCompletion");
+
+    for (const expected of [failed, unseen, acknowledged, aborted, { chatId: idle.chat.id }]) {
+      const detail = await repository.getDetailPage(owner, expected.chatId, { limit: 200 });
+      expect(detail?.record).toEqual(byId.get(expected.chatId));
+    }
+  });
+
+  it("acknowledges only an owned exact successful completed Run and rejects every other Run state", async () => {
+    const completed = await admitChat(repository, "ack_validation_completed");
+    const wrongChat = await createChat(repository, "ack_validation_wrong_chat");
+    const active = await admitChat(repository, "ack_validation_active");
+    const failed = await admitChat(repository, "ack_validation_failed");
+    const aborted = await admitChat(repository, "ack_validation_aborted");
+    const completedAt = "2026-08-25T00:03:00.000Z";
+    await finishChat(repository, completed, "completed", completedAt);
+    await finishChat(repository, failed, "failed", completedAt);
+    await finishChat(repository, aborted, "aborted", completedAt);
+
+    await expect(repository.acknowledgeCompletion(otherOwner, completed.chatId, completed.runId))
+      .rejects.toBeInstanceOf(ChatNotFoundError);
+    await expect(repository.acknowledgeCompletion(owner, wrongChat.chat.id, completed.runId))
+      .rejects.toBeInstanceOf(ChatNotFoundError);
+    for (const candidate of [active, failed, aborted]) {
+      await expect(repository.acknowledgeCompletion(owner, candidate.chatId, candidate.runId))
+        .rejects.toThrow();
+    }
+
+    await expect(repository.acknowledgeCompletion(owner, completed.chatId, completed.runId))
+      .resolves.toMatchObject({
+        latestSuccessfulCompletion: {
+          runId: completed.runId,
+          completedAt,
+          unacknowledged: false,
+        },
+      });
+  });
+
+  it("stores exact completion time monotonically and emits one refresh only when acknowledgement advances", async () => {
+    const admitted = await admitChat(repository, "ack_monotonic");
+    const { chatId, run: firstRun } = admitted;
+    const firstCompletedAt = "2026-08-25T00:01:00.000Z";
+    await finishChat(repository, admitted, "completed", firstCompletedAt);
+
+    await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
+    const afterFirstAck = await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 });
+    await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 })).toEqual(afterFirstAck);
+
+    const secondCompletedAt = "2026-08-25T00:02:00.000Z";
+    const secondRun = await retryAndFinish(repository, admitted, "ack_monotonic", secondCompletedAt);
+    await repository.acknowledgeCompletion(owner, chatId, secondRun.id);
+    const afterSecondAck = await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 });
+    await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 100 })).toEqual(afterSecondAck);
+
+    const userState = await repository.kysely.selectFrom("chat_user_state")
+      .select("attention_acknowledged_at")
+      .where("chat_id", "=", chatId)
+      .where("principal_id", "=", owner.ownerId)
+      .executeTakeFirstOrThrow();
+    expect(new Date(userState.attention_acknowledged_at!).toISOString()).toBe(secondCompletedAt);
+    expect(afterSecondAck.filter((event) => (
+      event.chatId === chatId && event.eventType === "chat.user_state_updated"
+    ))).toEqual([
+      expect.objectContaining({ payload: { runId: firstRun.id, completedAt: firstCompletedAt } }),
+      expect.objectContaining({ payload: { runId: secondRun.id, completedAt: secondCompletedAt } }),
+    ]);
+  });
+
+  it("keeps a newer successful completion unacknowledged across both old-ack interleavings", async () => {
+    const exercise = async (suffix: string, acknowledgeOldBeforeNewCompletion: boolean) => {
+      const admitted = await admitChat(repository, `ack_race_${suffix}`);
+      const { chatId, run: firstRun } = admitted;
+      await finishChat(repository, admitted, "completed", "2026-08-25T00:01:00.000Z");
+      if (acknowledgeOldBeforeNewCompletion) {
+        await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
+      }
+      const latestCompletedAt = "2026-08-25T00:02:00.000Z";
+      const secondRun = await retryAndFinish(repository, admitted, `ack_race_${suffix}`, latestCompletedAt);
+      if (!acknowledgeOldBeforeNewCompletion) {
+        await repository.acknowledgeCompletion(owner, chatId, firstRun.id);
+      }
+      expect(await repository.get(owner, chatId)).toMatchObject({
+        latestSuccessfulCompletion: {
+          runId: secondRun.id,
+          completedAt: latestCompletedAt,
+          unacknowledged: true,
+        },
+      });
+    };
+
+    await exercise("ack_then_complete", true);
+    await exercise("complete_then_ack", false);
   });
 
   it("keeps legacy terminal events visible without treating them as attachable incarnations", async () => {
@@ -480,6 +904,622 @@ describe("ChatRepository", () => {
       turn: secondTurn,
       run: run(created.chat.id, secondTurn, 2),
     })).rejects.toBeInstanceOf(ChatBusyError);
+  });
+
+  it("rejects a new Turn after the locked Chat row becomes discussion-only shared", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_safence",
+      clientRequestId: "req_safence",
+      title: "Shared admission fence",
+    });
+    await repository.kysely.updateTable("chats").set({
+      collaboration: JSON.stringify({
+        scopeId: "10000000-0000-4000-8000-000000000099",
+        mode: "discussion_only",
+        executionFenced: true,
+      }),
+    }).where("id", "=", created.chat.id).execute();
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+
+    await expect(repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: run(created.chat.id, acceptedTurn),
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    await expect(repository.kysely.selectFrom("chat_runs").selectAll()
+      .where("chat_id", "=", created.chat.id).execute()).resolves.toEqual([]);
+  });
+
+  it("durably enqueues an idempotent ordered Turn while a Run is active", async () => {
+    const admitted = await admitChat(repository, "queued_turn");
+    const queuedInput = {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queued_turn_1",
+      clientRequestId: "req_queue_turn_1",
+      parts: [{ type: "text" as const, text: "run this next" }],
+      driverKind: "codex" as const,
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    };
+
+    const first = await repository.enqueueQueuedTurn(owner, queuedInput);
+    const repeated = await repository.enqueueQueuedTurn(owner, {
+      ...queuedInput,
+      baseRevision: 1,
+      queuedTurnId: "qturn_should_not_be_inserted",
+    });
+
+    expect(first).toMatchObject({
+      alreadyQueued: false,
+      queueDepth: 1,
+      queuedTurn: {
+        id: "qturn_queued_turn_1",
+        chatId: admitted.chatId,
+        clientRequestId: "req_queue_turn_1",
+        position: 1,
+        parts: [{ type: "text", text: "run this next" }],
+      },
+    });
+    expect(repeated).toEqual({ ...first, alreadyQueued: true });
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(2);
+    expect((await repository.getDetailPage(owner, admitted.chatId, { limit: 200 }))?.queuedTurns)
+      .toEqual([first.queuedTurn]);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 10 }))
+      .toContainEqual(expect.objectContaining({
+        eventType: "queue.enqueued",
+        revision: 2,
+        payload: expect.objectContaining({ queuedTurnId: "qturn_queued_turn_1", position: 1 }),
+      }));
+    await expect(repository.enqueueQueuedTurn(otherOwner, {
+      ...queuedInput,
+      clientRequestId: "req_queue_other_owner",
+      queuedTurnId: "qturn_other_owner",
+      baseRevision: 2,
+    })).rejects.toBeInstanceOf(ChatNotFoundError);
+  });
+
+  it("enqueues against the current locked Chat revision when Run activity advances after the client snapshot", async () => {
+    const admitted = await admitChat(repository, "queue_activity_race");
+    const observedRevision = 1;
+    await repository.appendRunActivities(owner, admitted.chatId, admitted.runId, [
+      activity(admitted.chatId, admitted.runId, 901),
+    ]);
+
+    await expect(repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: observedRevision,
+      queuedTurnId: "qturn_queue_activity_race_1",
+      clientRequestId: "req_queue_activity_race_1",
+      parts: [{ type: "text", text: "queue despite fresh activity" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    })).resolves.toMatchObject({
+      alreadyQueued: false,
+      queuedTurn: { id: "qturn_queue_activity_race_1" },
+    });
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(3);
+  });
+
+  it("cancels one queued Turn idempotently and compacts the remaining order", async () => {
+    const admitted = await admitChat(repository, "queue_cancel");
+    let revision = 1;
+    for (const index of [1, 2, 3]) {
+      await repository.enqueueQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        baseRevision: revision++,
+        queuedTurnId: `qturn_queue_cancel_${index}`,
+        clientRequestId: `req_queue_cancel_${index}`,
+        parts: [{ type: "text", text: `queued ${index}` }],
+        driverKind: "codex",
+        selection: selection(),
+        interactionMode: "default",
+        permissionMode: "supervised",
+        capabilitySnapshot: admitted.run.capabilitySnapshot,
+        createdAt: `2026-08-25T00:00:1${index}.000Z`,
+      });
+    }
+
+    const cancelled = await repository.cancelQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_cancel_2",
+      clientRequestId: "req_queue_cancel_command",
+      baseRevision: 4,
+      cancelledAt: "2026-08-25T00:00:20.000Z",
+    });
+    const duplicate = await repository.cancelQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_cancel_2",
+      clientRequestId: "req_queue_cancel_command",
+      baseRevision: 4,
+      cancelledAt: "2026-08-25T00:00:21.000Z",
+    });
+
+    expect(cancelled).toEqual({
+      queuedTurnId: "qturn_queue_cancel_2",
+      queueDepth: 2,
+      cancellation: "cancelled",
+    });
+    expect(duplicate).toEqual({ ...cancelled, cancellation: "already_cancelled" });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([
+      expect.objectContaining({ id: "qturn_queue_cancel_1", position: 1 }),
+      expect.objectContaining({ id: "qturn_queue_cancel_3", position: 2 }),
+    ]);
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(5);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({
+        eventType: "queue.cancelled",
+        revision: 5,
+        payload: expect.objectContaining({ queuedTurnId: "qturn_queue_cancel_2", position: 2 }),
+      }));
+  });
+
+  it("reorders the complete queued set under one revision guard", async () => {
+    const admitted = await admitChat(repository, "queue_reorder");
+    let revision = 1;
+    for (const index of [1, 2, 3]) {
+      await repository.enqueueQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        baseRevision: revision++,
+        queuedTurnId: `qturn_queue_reorder_${index}`,
+        clientRequestId: `req_queue_reorder_${index}`,
+        parts: [{ type: "text", text: `queued ${index}` }],
+        driverKind: "codex",
+        selection: selection(),
+        interactionMode: "default",
+        permissionMode: "supervised",
+        capabilitySnapshot: admitted.run.capabilitySnapshot,
+        createdAt: `2026-08-25T00:00:1${index}.000Z`,
+      });
+    }
+    const order = [
+      "qturn_queue_reorder_3",
+      "qturn_queue_reorder_1",
+      "qturn_queue_reorder_2",
+    ];
+
+    const reordered = await repository.reorderQueuedTurns(owner, {
+      chatId: admitted.chatId,
+      clientRequestId: "req_queue_reorder_command",
+      baseRevision: 4,
+      queuedTurnIds: order,
+      reorderedAt: "2026-08-25T00:00:20.000Z",
+    });
+
+    expect(reordered.queuedTurns.map((queuedTurn) => queuedTurn.id)).toEqual(order);
+    expect(reordered.queuedTurns.map((queuedTurn) => queuedTurn.position)).toEqual([1, 2, 3]);
+    await expect(repository.reorderQueuedTurns(owner, {
+      chatId: admitted.chatId,
+      clientRequestId: "req_queue_reorder_incomplete",
+      baseRevision: 5,
+      queuedTurnIds: order.slice(0, 2),
+      reorderedAt: "2026-08-25T00:00:21.000Z",
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({
+        eventType: "queue.reordered",
+        revision: 5,
+        payload: expect.objectContaining({ queuedTurnIds: order }),
+      }));
+  });
+
+  it("edits one queued Turn in place under a revision guard", async () => {
+    const admitted = await admitChat(repository, "queue_edit");
+    for (const index of [1, 2]) {
+      await repository.enqueueQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        baseRevision: index,
+        queuedTurnId: `qturn_queue_edit_${index}`,
+        clientRequestId: `req_queue_edit_${index}`,
+        parts: [{ type: "text", text: `queued ${index}` }],
+        driverKind: "codex",
+        selection: selection(),
+        interactionMode: "default",
+        permissionMode: "supervised",
+        capabilitySnapshot: admitted.run.capabilitySnapshot,
+        createdAt: `2026-08-25T00:00:1${index}.000Z`,
+      });
+    }
+
+    const result = await repository.updateQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_edit_1",
+      clientRequestId: "req_queue_edit_save",
+      baseRevision: 3,
+      parts: [{ type: "text", text: "edited first" }],
+      updatedAt: "2026-08-25T00:00:20.000Z",
+    });
+
+    expect(result.queuedTurn).toMatchObject({
+      id: "qturn_queue_edit_1",
+      position: 1,
+      parts: [{ type: "text", text: "edited first" }],
+    });
+    await expect(repository.updateQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_edit_1",
+      clientRequestId: "req_queue_edit_save",
+      baseRevision: 3,
+      parts: [{ type: "text", text: "edited first" }],
+      updatedAt: "2026-08-25T00:00:20.000Z",
+    })).resolves.toEqual(result);
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([
+      expect.objectContaining({ id: "qturn_queue_edit_1", position: 1 }),
+      expect.objectContaining({ id: "qturn_queue_edit_2", position: 2 }),
+    ]);
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(4);
+    await expect(repository.updateQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      queuedTurnId: "qturn_queue_edit_1",
+      clientRequestId: "req_queue_edit_stale",
+      baseRevision: 3,
+      parts: [{ type: "text", text: "stale overwrite" }],
+      updatedAt: "2026-08-25T00:00:21.000Z",
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({
+        eventType: "queue.updated",
+        revision: 4,
+        payload: expect.objectContaining({ queuedTurnId: "qturn_queue_edit_1", position: 1 }),
+      }));
+  });
+
+  it("claims at most one queued Turn into canonical message, Turn, and Run records", async () => {
+    const admitted = await admitChat(repository, "queue_claim");
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queue_claim_1",
+      clientRequestId: "req_queue_claim_1",
+      parts: [{ type: "text", text: "first queued" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 2,
+      queuedTurnId: "qturn_queue_claim_2",
+      clientRequestId: "req_queue_claim_2",
+      parts: [{ type: "text", text: "second queued" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:11.000Z",
+    });
+    await repository.finishRun(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      outcome: "completed",
+      completedAt: "2026-08-25T00:00:20.000Z",
+    });
+
+    const claims = await Promise.all([
+      repository.claimNextQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        turnId: "cturn_queue_claim_next_a",
+        runId: "run_queue_claim_next_a",
+        messageId: "msg_queue_claim_next_a",
+        claimedAt: "2026-08-25T00:00:21.000Z",
+      }),
+      repository.claimNextQueuedTurn(owner, {
+        chatId: admitted.chatId,
+        turnId: "cturn_queue_claim_next_b",
+        runId: "run_queue_claim_next_b",
+        messageId: "msg_queue_claim_next_b",
+        claimedAt: "2026-08-25T00:00:21.000Z",
+      }),
+    ]);
+    const claimed = claims.find((claim) => claim !== null);
+
+    expect(claims.filter((claim) => claim !== null)).toHaveLength(1);
+    expect(claimed).toMatchObject({
+      queuedTurn: { id: "qturn_queue_claim_1", position: 1 },
+      message: { role: "user", state: "committed", parts: [{ type: "text", text: "first queued" }] },
+      turn: { status: "accepted", clientRequestId: "req_queue_claim_1" },
+      run: { status: "accepted", driverKind: "codex", attempt: 1 },
+    });
+    expect((await repository.get(owner, admitted.chatId))?.activeRun)
+      .toMatchObject({ runId: claimed!.run.id, turnId: claimed!.turn.id, status: "accepted" });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([
+      expect.objectContaining({ id: "qturn_queue_claim_2", position: 1 }),
+    ]);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 30 }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ eventType: "queue.claimed" }),
+        expect.objectContaining({ eventType: "turn.accepted" }),
+      ]));
+  });
+
+  it("persists one idempotent same-Run steering message and terminalizes it atomically", async () => {
+    const admitted = await admitChat(repository, "steer_persistence");
+    const input = {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      steerId: "steer_persistence_1",
+      messageId: "msg_steer_persistence_1",
+      clientRequestId: "req_steer_persistence_1",
+      parts: [{ type: "text" as const, text: "focus on the failing test" }],
+      createdAt: "2026-08-25T00:00:10.000Z",
+    };
+
+    const begun = await repository.beginSteer(owner, input);
+    const duplicate = await repository.beginSteer(owner, {
+      ...input,
+      steerId: "steer_should_not_exist",
+      messageId: "msg_should_not_exist",
+    });
+
+    expect(begun).toMatchObject({
+      alreadyRequested: false,
+      status: "pending",
+    });
+    expect(duplicate).toEqual({ ...begun, alreadyRequested: true });
+    await expect(repository.beginSteer(otherOwner, {
+      ...input,
+      steerId: "steer_other_owner",
+      messageId: "msg_other_owner",
+      clientRequestId: "req_steer_other_owner",
+    })).rejects.toBeInstanceOf(ChatNotFoundError);
+
+    const accepted = await repository.acceptSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      clientRequestId: input.clientRequestId,
+      acceptedAt: "2026-08-25T00:00:11.000Z",
+    });
+    expect(accepted).toMatchObject({ id: input.messageId, state: "committed" });
+    await expect(repository.acceptSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      clientRequestId: input.clientRequestId,
+      acceptedAt: "2026-08-25T00:00:12.000Z",
+    })).resolves.toEqual(accepted);
+    expect((await repository.get(owner, admitted.chatId))?.chat).toMatchObject({
+      revision: 3,
+      messageCount: 2,
+    });
+    expect(await repository.getMessages(owner, admitted.chatId, { afterSeq: 0, limit: 200 }))
+      .toEqual([expect.objectContaining({ role: "user", state: "committed" }), accepted]);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ eventType: "run.steer_requested", revision: 2 }),
+        expect.objectContaining({ eventType: "run.steered", revision: 3 }),
+      ]));
+  });
+
+  it("keeps a queued Turn retryable until same-Run steering is accepted", async () => {
+    const admitted = await admitChat(repository, "queued_steer");
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queued_steer_1",
+      clientRequestId: "req_queued_steer_input",
+      parts: [{ type: "text", text: "steer this now" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+
+    const begun = await repository.beginQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      queuedTurnId: "qturn_queued_steer_1",
+      steerId: "steer_queued_steer_1",
+      messageId: "msg_queued_steer_1",
+      clientRequestId: "req_queued_steer_1",
+      baseRevision: 2,
+      createdAt: "2026-08-25T00:00:11.000Z",
+    });
+
+    expect(begun).toMatchObject({
+      status: "pending",
+      alreadyRequested: false,
+      parts: [{ type: "text", text: "steer this now" }],
+    });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId))
+      .toEqual([expect.objectContaining({ id: "qturn_queued_steer_1", position: 1 })]);
+
+    await repository.failQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      queuedTurnId: "qturn_queued_steer_1",
+      clientRequestId: "req_queued_steer_1",
+      acceptedAt: "2026-08-25T00:00:12.000Z",
+    });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId))
+      .toEqual([expect.objectContaining({ id: "qturn_queued_steer_1", position: 1 })]);
+
+    const retry = await repository.beginQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      queuedTurnId: "qturn_queued_steer_1",
+      steerId: "steer_queued_steer_retry",
+      messageId: "msg_queued_steer_retry",
+      clientRequestId: "req_queued_steer_retry",
+      baseRevision: 4,
+      createdAt: "2026-08-25T00:00:13.000Z",
+    });
+    expect(retry).toMatchObject({ status: "pending", parts: begun.parts });
+    const accepted = await repository.acceptQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      queuedTurnId: "qturn_queued_steer_1",
+      clientRequestId: "req_queued_steer_retry",
+      acceptedAt: "2026-08-25T00:00:14.000Z",
+    });
+
+    expect(accepted).toMatchObject({
+      id: "msg_queued_steer_retry",
+      runId: admitted.runId,
+      parts: [{ type: "text", text: "steer this now" }],
+    });
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([]);
+    expect((await repository.get(owner, admitted.chatId))?.chat).toMatchObject({
+      revision: 6,
+      messageCount: 2,
+    });
+  });
+
+  it("does not claim a queued Turn while its accepted Provider steer is pending finalization", async () => {
+    const admitted = await admitChat(repository, "queued_steer_pending_finalize");
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queued_steer_pending_finalize",
+      clientRequestId: "req_queued_steer_pending_finalize_input",
+      parts: [{ type: "text", text: "steer remains pending" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+    await repository.beginQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      queuedTurnId: "qturn_queued_steer_pending_finalize",
+      steerId: "steer_queued_steer_pending_finalize",
+      messageId: "msg_queued_steer_pending_finalize",
+      clientRequestId: "req_queued_steer_pending_finalize",
+      baseRevision: 2,
+      createdAt: "2026-08-25T00:00:11.000Z",
+    });
+    await repository.finishRun(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      outcome: "completed",
+      completedAt: "2026-08-25T00:00:12.000Z",
+    });
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      turnId: "cturn_pending_finalize_claim",
+      runId: "run_pending_finalize_claim",
+      messageId: "msg_pending_finalize_claim",
+      claimedAt: "2026-08-25T00:00:13.000Z",
+    })).resolves.toBeNull();
+    expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([
+      expect.objectContaining({ id: "qturn_queued_steer_pending_finalize", position: 1 }),
+    ]);
+    expect((await repository.get(owner, admitted.chatId))?.chat.messageCount).toBe(1);
+  });
+
+  it("begins queued steering when Run activity advances after the client snapshot", async () => {
+    const admitted = await admitChat(repository, "queued_steer_activity_race");
+    await repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_queued_steer_activity_race_1",
+      clientRequestId: "req_queued_steer_activity_race_input",
+      parts: [{ type: "text", text: "steer despite fresh activity" }],
+      driverKind: "codex",
+      selection: selection(),
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+    const observedRevision = 2;
+    await repository.appendRunActivities(owner, admitted.chatId, admitted.runId, [
+      activity(admitted.chatId, admitted.runId, 902),
+    ]);
+
+    await expect(repository.beginQueuedTurnSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      queuedTurnId: "qturn_queued_steer_activity_race_1",
+      steerId: "steer_queued_steer_activity_race_1",
+      messageId: "msg_queued_steer_activity_race_1",
+      clientRequestId: "req_queued_steer_activity_race_1",
+      baseRevision: observedRevision,
+      createdAt: "2026-08-25T00:00:11.000Z",
+    })).resolves.toMatchObject({
+      status: "pending",
+      parts: [{ type: "text", text: "steer despite fresh activity" }],
+    });
+    expect((await repository.get(owner, admitted.chatId))?.chat.revision).toBe(4);
+  });
+
+  it("rejects stale or terminal steering targets before adding a message", async () => {
+    const admitted = await admitChat(repository, "steer_stale");
+    const input = {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: "cturn_wrong_target",
+      steerId: "steer_stale_1",
+      messageId: "msg_steer_stale_1",
+      clientRequestId: "req_steer_stale_1",
+      parts: [{ type: "text" as const, text: "stale" }],
+      createdAt: "2026-08-25T00:00:10.000Z",
+    };
+    await expect(repository.beginSteer(owner, input)).rejects.toBeInstanceOf(ChatRunNotActiveError);
+    await repository.finishRun(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      outcome: "completed",
+      completedAt: "2026-08-25T00:00:11.000Z",
+    });
+    await expect(repository.beginSteer(owner, {
+      ...input,
+      expectedTurnId: admitted.turn.id,
+      clientRequestId: "req_steer_terminal",
+    })).rejects.toBeInstanceOf(ChatRunNotActiveError);
+    expect((await repository.get(owner, admitted.chatId))?.chat.messageCount).toBe(1);
+  });
+
+  it("does not append a steering message when cancellation wins before acceptance commits", async () => {
+    const admitted = await admitChat(repository, "steer_cancel_race");
+    await repository.beginSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      expectedTurnId: admitted.turn.id,
+      steerId: "steer_cancel_race_1",
+      messageId: "msg_steer_cancel_race_1",
+      clientRequestId: "req_steer_cancel_race_1",
+      parts: [{ type: "text", text: "race" }],
+      createdAt: "2026-08-25T00:00:10.000Z",
+    });
+    await repository.finishRun(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      outcome: "aborted",
+      completedAt: "2026-08-25T00:00:11.000Z",
+    });
+
+    await expect(repository.acceptSteer(owner, {
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      clientRequestId: "req_steer_cancel_race_1",
+      acceptedAt: "2026-08-25T00:00:12.000Z",
+    })).rejects.toBeInstanceOf(ChatRunNotActiveError);
+    expect((await repository.get(owner, admitted.chatId))?.chat.messageCount).toBe(1);
+    expect(await repository.replayOutbox(owner, { afterCursor: 0, limit: 20 }))
+      .toContainEqual(expect.objectContaining({ eventType: "run.steer_failed" }));
   });
 
   it("admits an idempotent retry as a new Run attempt without duplicating the Turn input", async () => {
@@ -760,6 +1800,62 @@ describe("ChatRepository", () => {
     ]);
   });
 
+  it("updates a typed activity in place without changing its first receive sequence", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_activity_lifecycle",
+      clientRequestId: "req_create_activity_lifecycle",
+      title: "Activity lifecycle",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    const running: CanonicalChatRunActivity = {
+      id: "activity_command",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: now,
+      type: "agent.activity",
+      activityId: "tool_command",
+      kind: "command",
+      label: "Run command",
+      status: "running",
+    };
+    const failed: CanonicalChatRunActivity = {
+      ...running,
+      occurredAt: "2026-08-25T00:00:05.000Z",
+      status: "failed",
+      summary: "Command failed.",
+    };
+
+    await expect(repository.appendRunActivities(
+      owner,
+      created.chat.id,
+      acceptedRun.id,
+      [running],
+    )).resolves.toBe(1);
+    await expect(repository.appendRunActivities(
+      owner,
+      created.chat.id,
+      acceptedRun.id,
+      [failed],
+    )).resolves.toBe(1);
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      { ...activity(created.chat.id, acceptedRun.id, 2), id: "activity_after_command" },
+    ]);
+
+    expect((await repository.exportChat(owner, created.chat.id))?.activities).toEqual([
+      { ...failed, occurredAt: now, sequence: 1 },
+      expect.objectContaining({ id: "activity_after_command", sequence: 2 }),
+    ]);
+  });
+
   it("commits assistant output with the terminal transition and rejects late Provider events", async () => {
     const created = await repository.create(owner, {
       id: "chat_terminal_output",
@@ -797,6 +1893,7 @@ describe("ChatRepository", () => {
       seq: 2,
       role: "assistant",
       state: "committed",
+      purpose: "assistant",
       turnId: acceptedTurn.id,
       runId: acceptedRun.id,
       parts: [{ type: "text", text: "done" }],

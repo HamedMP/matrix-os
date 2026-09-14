@@ -15,7 +15,7 @@ type PublishFailure = {
 };
 type SessionLifecyclePick = Pick<
   WorkspaceSessionView,
-  "id" | "kind" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "agent" | "runtime" | "terminalSessionId" | "ownerId"
+  "id" | "kind" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "agent" | "runtime" | "terminalRef" | "ownerId"
 >;
 
 function isPublishFailure(result: unknown): result is PublishFailure {
@@ -145,7 +145,7 @@ export function createWorkspaceEventPublisher(options: {
           kind: session.kind,
           pr: session.pr,
           runtimeStatus: session.runtime.status,
-          terminalSessionId: session.terminalSessionId,
+          terminalRef: session.terminalRef,
           worktreeId: session.worktreeId,
         },
       });
@@ -160,7 +160,7 @@ export function createWorkspaceEventPublisher(options: {
           kind: session.kind,
           pr: session.pr,
           runtimeStatus: session.runtime.status,
-          terminalSessionId: session.terminalSessionId,
+          terminalRef: session.terminalRef,
           worktreeId: session.worktreeId,
         },
       });

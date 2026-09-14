@@ -101,4 +101,30 @@ describe("terminal link actions", () => {
     expect(execCommand).toHaveBeenCalledWith("copy");
     expect(document.querySelector("textarea")).toBeNull();
   });
+
+  it("does not log copied URLs or raw provider errors when both copy paths fail", async () => {
+    const rawFailure = "OpenAI /Users/operator/private.txt session-main";
+    const writeText = vi.fn().mockRejectedValue(new Error(rawFailure));
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => {
+        throw new Error(rawFailure);
+      }),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    copyTerminalLink(LINK);
+    await Promise.resolve();
+
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(LINK.url);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("OpenAI");
+    expect(diagnostics).not.toContain("private.txt");
+    expect(diagnostics).not.toContain("session-main");
+  });
 });

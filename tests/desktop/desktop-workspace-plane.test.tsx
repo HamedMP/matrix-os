@@ -55,6 +55,25 @@ function renderWorkspace(mode: "desktop" | "canvas") {
 }
 
 describe("workspace background event boundary", () => {
+  it("ignores background clicks within 12px of a visible window but allows distant clicks", () => {
+    const onBackgroundClick = vi.fn();
+    const view = render(<DesktopWorkspacePlane mode="desktop" onBackgroundClick={onBackgroundClick}>
+      <section data-os-window data-window-click-buffer data-surface-mode="window" />
+    </DesktopWorkspacePlane>);
+    const frame = view.container.querySelector('[data-os-window]')!;
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ x: 100, y: 100, left: 100, top: 100, right: 700, bottom: 500, width: 600, height: 400 } as DOMRect);
+    const background = screen.getByTestId("native-desktop-workspace");
+    fireEvent.click(background, { clientX: 94, clientY: 200 });
+    fireEvent.click(background, { clientX: 706, clientY: 200 });
+    fireEvent.click(background, { clientX: 200, clientY: 94 });
+    fireEvent.click(background, { clientX: 200, clientY: 506 });
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+    fireEvent.click(background, { clientX: 80, clientY: 200 });
+    expect(onBackgroundClick).toHaveBeenCalledTimes(1);
+    frame.setAttribute("aria-hidden", "true");
+    fireEvent.click(background, { clientX: 94, clientY: 200 });
+    expect(onBackgroundClick).toHaveBeenCalledTimes(2);
+  });
   it("allows the actual Terminal theme picker to change themes without showing desktop", async () => {
     const onBackgroundClick = vi.fn();
     render(

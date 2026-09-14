@@ -3,6 +3,7 @@ import type {
   RuntimeSummary,
   TerminalSessionSummary,
 } from "@matrix-os/contracts";
+import { runtimeTerminalTabs } from "../../lib/terminal-workspaces";
 
 const MAX_CHAT_ACTIVITIES = 500;
 
@@ -10,8 +11,17 @@ export function projectWorkTerminalSessions(
   detail: CanonicalChatDetailResponse,
   summary: RuntimeSummary | null,
 ): TerminalSessionSummary[] {
+  const liveSessions: TerminalSessionSummary[] = summary ? runtimeTerminalTabs(summary).map((tab) => ({
+    id: tab.refKey,
+    name: tab.name,
+    status: tab.status === "failed" ? "unavailable" : tab.status,
+    attachable: tab.attachable,
+    cwdLabel: tab.cwd || undefined,
+    createdAt: tab.createdAt,
+    updatedAt: tab.updatedAt,
+  })) : [];
   const liveById = new Map(
-    (summary?.terminalSessions?.items ?? []).slice(0, 50).map((session) => [session.id, session]),
+    liveSessions.slice(0, 50).map((session) => [session.id, session]),
   );
   const seen = new Set<string>();
   const sessions: TerminalSessionSummary[] = [];

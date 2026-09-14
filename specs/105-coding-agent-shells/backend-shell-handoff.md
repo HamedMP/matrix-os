@@ -88,29 +88,17 @@ Transcript parity requires a gateway-owned provider ingestion adapter that:
 Until that adapter and schema extension exist, shells must label the current view as an activity
 timeline and must not claim provider-complete transcript support.
 
-### Project/chat terminal relation contract gap
+### Project/chat terminal relation contract
 
-Canonical terminal sessions are currently projected as a flat bounded `RuntimeSummarySchema.terminalSessions`
-list. `AgentThreadSummarySchema` and the create-thread request expose only one optional
-`terminalSessionId`, while `TerminalSessionSummarySchema` carries no `projectId`, `taskId`, or
-`threadId`. A `terminal.bound` event can identify a terminal observed during one thread, but it is
-not an authoritative bounded one-to-many read model and cannot group existing TUI sessions under a
-project or conversation after replay truncation.
+The project-scoped terminal workspace contract is authoritative. Runtime summaries expose bounded
+workspace and tab rows, while thread creation, thread summaries, and `terminal.bound` events carry a
+`terminalRef` containing the stable `workspaceId` and `tabId`. Each project owns one workspace and
+each tab can be associated with a task or thread without making that conversation the tab owner.
 
-Project and conversation shells therefore cannot truthfully represent the required relationships:
-
-- one project owning multiple shell or coding-agent TUI terminals;
-- one conversation being associated with multiple terminals over its lifetime; and
-- one terminal remaining project-scoped without being owned by a conversation.
-
-Parity requires a gateway-owned terminal-binding contract. Before shells render grouped terminal
-collections, the backend must define a bounded relation schema containing `terminalSessionId`,
-`projectId`, optional `taskId`, optional `threadId`, a safe display label, relation role, lifecycle
-timestamps, and attachability; expose those bindings in the project workspace read route (or a
-dedicated bounded project-terminal route); and define authenticated bind/unbind or terminal-create
-inputs that validate project/task/thread ownership. The gateway must remain the source of truth and
-emit a generic project refresh event after relation mutations. A shell must not infer these
-relations from terminal names, working directories, the selected chat, or local persistence.
+Shells group tabs by the gateway-provided project workspace and attach only through the referenced
+workspace/tab pair. They do not infer relationships from Zellij names, working directories, the
+selected chat, or local persistence. Mutations validate owner, project, task, and thread scope at
+the gateway and publish a generic project refresh event after commit.
 
 ## Error And Recovery Rules
 

@@ -19,13 +19,12 @@ const defaultInnerHeight = window.innerHeight;
 
 function resetStore() {
   resetWindowManagerLayoutPersistenceForTests();
-  useDesktopMode.setState({ mode: "dev", previousMode: null, _hydrated: true });
+  useDesktopMode.setState({ mode: "desktop", previousMode: null, _hydrated: true });
   useWindowManager.setState({
     windows: [],
     nextZ: 1,
     closedPaths: new Set(),
     closedLayouts: new Map(),
-    apps: [],
     focusedWindowId: null,
     fullscreenWindowId: null,
   });
@@ -72,7 +71,7 @@ describe("Window Manager Store", () => {
       expect(windows[0].minimized).toBe(false);
     });
 
-    it("centers every dev-mode window without asymmetric cascade margins", () => {
+    it("centers every Desktop window without asymmetric cascade margins", () => {
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
       openWindow("App2", "apps/app2.html", 80);
@@ -80,7 +79,7 @@ describe("Window Manager Store", () => {
       expect(w2.x).toBe(w1.x);
       expect(w2.y).toBe(w1.y);
       expect(w1.x).toBe(Math.round((window.innerWidth - w1.width) / 2));
-      expect(w1.y).toBe(Math.round((window.innerHeight - w1.height) / 2));
+      expect(w1.y).toBe(Math.max(24, Math.round((window.innerHeight - 38 - w1.height) / 2)));
     });
 
     it("places second canvas window to the right of the first", () => {
@@ -148,14 +147,41 @@ describe("Window Manager Store", () => {
     it("updates window position", () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;
-      useWindowManager.getState().moveWindow(winId, 200, 300);
+      useWindowManager.getState().moveWindow(winId, 200, 100);
       const win = useWindowManager.getState().windows[0];
       expect(win.x).toBe(200);
-      expect(win.y).toBe(300);
+      expect(win.y).toBe(100);
     });
   });
 
+  it("keeps a partly offscreen placement when restoring a desktop layout", () => {
+    const bounds = { x: -12, y: -8, width: 640, height: 480 };
+    useWindowManager.getState().loadLayout([{ path: "apps/notes.html", title: "Notes", state: "open", ...bounds }]);
+    expect(useWindowManager.getState().windows[0]).toMatchObject(bounds);
+    useWindowManager.getState().reconcileWindowsToViewport();
+    expect(useWindowManager.getState().windows[0]).toMatchObject(bounds);
+  });
+
   describe("resizeWindow", () => {
+    it("allows a terminal to shrink below its launch size and restores that size", () => {
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      const winId = useWindowManager.getState().windows[0].id;
+      useWindowManager.getState().resizeWindow(winId, 640, 400, { x: 100, y: 80 });
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 100, y: 80, width: 640, height: 400 });
+      useWindowManager.getState().closeWindow(winId);
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ width: 640, height: 400 });
+    });
+    it("updates position and dimensions in one store notification", () => {
+      useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
+      const changed = vi.fn();
+      const unsubscribe = useWindowManager.subscribe(changed);
+      const id = useWindowManager.getState().windows[0].id;
+      useWindowManager.getState().resizeWindow(id, 500, 300, { x: 60, y: 40 });
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 60, y: 40, width: 500, height: 300 });
+      unsubscribe();
+    });
     it("updates window dimensions respecting minimums", () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;
@@ -195,10 +221,10 @@ describe("Window Manager Store", () => {
       useWindowManager.getState().reconcileWindowsToViewport();
 
       expect(useWindowManager.getState().windows[0]).toMatchObject({
-        x: 20,
-        y: 20,
-        width: 760,
-        height: 422,
+        x: -32,
+        y: -16,
+        width: 864,
+        height: 510,
       });
     });
 
@@ -220,12 +246,12 @@ describe("Window Manager Store", () => {
 
       const windowRecord = useWindowManager.getState().windows[0];
       expect(windowRecord).toMatchObject({
-        x: 20,
-        y: 20,
+        x: 40,
+        y: -16,
         width: 600,
-        height: 172,
+        height: 260,
       });
-      expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(230);
+      expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(window.innerHeight + 32);
     });
 
     it("leaves spatial Canvas windows unchanged", () => {
@@ -328,14 +354,49 @@ describe("Window Manager Store", () => {
   });
 
   describe("layout persistence", () => {
-    it("saves layout via PUT /api/layout after 500ms debounce", () => {
+    it("saves layout through the revisioned OS-view state after 500ms debounce", async () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       expect(fetchSpy).not.toHaveBeenCalled();
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
       expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining("/api/layout"),
-        expect.objectContaining({ method: "PUT" }),
+        expect.stringContaining("/api/os-view-state"),
+        expect.objectContaining({ method: "PATCH" }),
       );
+    });
+
+    it("persists a stable layout id for an ordinary Terminal window", async () => {
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      const opened = useWindowManager.getState().windows[0];
+      expect(opened.terminalLayoutId).toMatch(/^term-layout_[0-9a-f]{32}$/);
+
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body) as {
+        patch: { desktop: { windows: LayoutWindow[] } };
+      };
+      expect(body.patch.desktop.windows[0]?.terminalLayoutId).toBe(opened.terminalLayoutId);
+    });
+
+    it("keeps setup terminals separate, ephemeral, and out of desktop persistence", async () => {
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
+      useWindowManager.getState().openWindow("Terminal", "__terminal__", 80, {
+        terminalPersistence: "ephemeral",
+      });
+
+      const ordinary = useWindowManager.getState().windows.find((win) => win.terminalPersistence !== "ephemeral");
+      const setup = useWindowManager.getState().windows.find((win) => win.terminalPersistence === "ephemeral");
+      expect(ordinary?.path).toBe("__terminal__");
+      expect(setup?.path).toBe("__terminal__");
+      expect(ordinary?.terminalLayoutId).toMatch(/^term-layout_[0-9a-f]{32}$/);
+      expect(setup?.terminalLayoutId).toBeUndefined();
+
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body) as {
+        patch: { desktop: { windows: LayoutWindow[] } };
+      };
+      expect(body.patch.desktop.windows.map((win) => win.path)).toEqual(["__terminal__"]);
     });
 
     it("does not save layout on the pre-VPS billing setup route", () => {
@@ -348,17 +409,18 @@ describe("Window Manager Store", () => {
       window.history.pushState(null, "", "/");
     });
 
-    it("includes closed paths in layout save", () => {
+    it("includes closed paths in layout save", async () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;
       useWindowManager.getState().closeWindow(winId);
       fetchSpy.mockClear();
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
       const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-      expect(body.windows.some((w: LayoutWindow) => w.path === "apps/notes.html" && w.state === "closed")).toBe(true);
+      expect(body.patch.apps.some((app: LayoutWindow) => app.path === "apps/notes.html" && app.state === "closed")).toBe(true);
     });
 
-    it("debounces rapid changes into a single save", () => {
+    it("debounces rapid changes into a single save", async () => {
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
       vi.advanceTimersByTime(200);
@@ -366,15 +428,49 @@ describe("Window Manager Store", () => {
       vi.advanceTimersByTime(200);
       openWindow("App3", "apps/app3.html", 80);
       vi.advanceTimersByTime(500);
+      await Promise.resolve();
       // Only the final debounced call should fire
       const putCalls = fetchSpy.mock.calls.filter(
-        (c: [string, RequestInit]) => c[1]?.method === "PUT",
+        (c: [string, RequestInit]) => c[1]?.method === "PATCH",
       );
       expect(putCalls).toHaveLength(1);
+    });
+
+    it("retries the latest layout after a bounded persistence failure", async () => {
+      fetchSpy
+        .mockResolvedValueOnce({ ok: false, status: 503 })
+        .mockResolvedValueOnce({ ok: true, status: 200 });
+      useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
+      const initial = useWindowManager.getState().windows[0];
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const retried = JSON.parse(fetchSpy.mock.calls[1][1].body);
+      expect(retried.patch.desktop.windows[0]).toMatchObject({ x: initial.x, y: initial.y });
     });
   });
 
   describe("loadLayout", () => {
+    it("restores the same Terminal layout id across shell reloads", () => {
+      const terminalLayoutId = "term-layout_0123456789abcdef0123456789abcdef";
+      useWindowManager.getState().loadLayout([{
+        path: "__terminal__",
+        title: "Terminal",
+        x: 100,
+        y: 100,
+        width: 1040,
+        height: 680,
+        state: "open",
+        terminalLayoutId,
+      }]);
+
+      expect(useWindowManager.getState().windows[0]?.terminalLayoutId).toBe(terminalLayoutId);
+    });
+
     it("restores windows from saved layout", () => {
       const saved: LayoutWindow[] = [
         {
@@ -405,7 +501,7 @@ describe("Window Manager Store", () => {
       expect(closedPaths.has("apps/closed.html")).toBe(true);
     });
 
-    it("recenters restored wide dev-mode windows so their side margins stay symmetric", () => {
+    it("preserves user placement of restored wide windows without forcing symmetric margins", () => {
       const width = Math.round(window.innerWidth * 0.9);
       const saved: LayoutWindow[] = [
         {
@@ -422,8 +518,8 @@ describe("Window Manager Store", () => {
       useWindowManager.getState().loadLayout(saved);
 
       const [restored] = useWindowManager.getState().windows;
-      expect(restored.x).toBe(Math.round((window.innerWidth - width) / 2));
-      expect(window.innerWidth - (restored.x + restored.width)).toBe(restored.x);
+      expect(restored.x).toBe(85);
+      expect(restored.width).toBe(width);
       expect(restored.y).toBe(80);
     });
 
@@ -447,13 +543,13 @@ describe("Window Manager Store", () => {
 
       const [restored] = useWindowManager.getState().windows;
       expect(restored).toMatchObject({
-        x: 20,
-        y: 20,
-        width: 860,
-        height: 522,
+        x: -32,
+        y: -16,
+        width: 964,
+        height: 610,
       });
-      expect(restored.x + restored.width).toBeLessThanOrEqual(window.innerWidth - 20);
-      expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight - 20);
+      expect(restored.x + restored.width).toBeLessThanOrEqual(window.innerWidth + 32);
+      expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight + 32);
     });
 
     it("shrinks a restored terminal below its preferred minimum on narrow desktops", () => {
@@ -472,10 +568,10 @@ describe("Window Manager Store", () => {
       }]);
 
       expect(useWindowManager.getState().windows[0]).toMatchObject({
-        x: 20,
-        y: 20,
-        width: 860,
-        height: 522,
+        x: -32,
+        y: -16,
+        width: 964,
+        height: 610,
       });
     });
 
@@ -496,10 +592,10 @@ describe("Window Manager Store", () => {
       useWindowManager.getState().openWindow("Terminal", "__terminal__", 80);
 
       expect(useWindowManager.getState().windows[0]).toMatchObject({
-        x: 20,
-        y: 20,
-        width: 860,
-        height: 522,
+        x: -32,
+        y: -16,
+        width: 964,
+        height: 610,
       });
     });
 

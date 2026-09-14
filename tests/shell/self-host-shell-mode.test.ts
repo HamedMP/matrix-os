@@ -8,7 +8,6 @@ describe("self-host shell mode", () => {
   it("bypasses managed-cloud onboarding without loading Clerk on bare IP installs", () => {
     const page = readFileSync(join(root, "shell/src/app/page.tsx"), "utf8");
     const layout = readFileSync(join(root, "shell/src/app/layout.tsx"), "utf8");
-    const menuBar = readFileSync(join(root, "shell/src/components/MenuBar.tsx"), "utf8");
     const userButton = readFileSync(join(root, "shell/src/components/UserButton.tsx"), "utf8");
     const billingAccess = readFileSync(join(root, "shell/src/hooks/useMatrixBillingAccess.ts"), "utf8");
     const settings = readFileSync(join(root, "shell/src/components/Settings.tsx"), "utf8");
@@ -23,7 +22,6 @@ describe("self-host shell mode", () => {
     expect(layout).toContain("return renderDocument(false);");
     expect(layout).toContain("<ClerkProvider>");
     expect(layout).toContain("{renderDocument(true)}");
-    expect(menuBar).toContain("isSelfHostedDocument()");
     expect(userButton).toContain("SelfHostedUserButton");
     expect(billingAccess).toContain("useManagedMatrixBillingAccess");
     expect(billingAccess).not.toContain("isSelfHostedDocument");

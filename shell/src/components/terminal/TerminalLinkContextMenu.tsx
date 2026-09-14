@@ -2,14 +2,15 @@
 
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Copy, ExternalLink } from "@/lib/hugeicons";
+import { Copy, ExternalLink, TextSelect } from "@/lib/hugeicons";
 
 import type { TerminalLinkEntry } from "./terminal-links";
 
 export interface TerminalLinkMenuState {
   x: number;
   y: number;
-  link: TerminalLinkEntry;
+  link: TerminalLinkEntry | null;
+  selection: string;
 }
 
 interface TerminalLinkContextMenuProps {
@@ -17,6 +18,8 @@ interface TerminalLinkContextMenuProps {
   onClose: () => void;
   onOpen: (link: TerminalLinkEntry) => void;
   onCopy: (link: TerminalLinkEntry) => void;
+  onCopySelection: (selection: string) => void;
+  onSelectAll: () => void;
 }
 
 function openLabel(link: TerminalLinkEntry): string {
@@ -30,6 +33,8 @@ export function TerminalLinkContextMenu({
   onClose,
   onOpen,
   onCopy,
+  onCopySelection,
+  onSelectAll,
 }: TerminalLinkContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const firstActionRef = useRef<HTMLButtonElement>(null);
@@ -54,52 +59,90 @@ export function TerminalLinkContextMenu({
     };
   }, [menu, onClose]);
 
-  if (!menu) return null;
+  if (!menu || typeof window === "undefined" || typeof document === "undefined") return null;
 
   const x = Math.max(8, Math.min(menu.x, window.innerWidth - 228));
-  const y = Math.max(8, Math.min(menu.y, window.innerHeight - 132));
+  const y = Math.max(8, Math.min(menu.y, window.innerHeight - (menu.link ? 248 : 104)));
   const perform = (action: (link: TerminalLinkEntry) => void) => {
-    action(menu.link);
+    if (menu.link) action(menu.link);
     onClose();
   };
+  const performSelectionCopy = () => {
+    if (menu.selection) onCopySelection(menu.selection);
+    onClose();
+  };
+  const performSelectAll = () => {
+    onSelectAll();
+    onClose();
+  };
+  const itemClass = "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-accent focus:bg-accent focus:text-accent-foreground";
 
   return createPortal(
     <div
       ref={menuRef}
       role="menu"
-      aria-label="Link actions"
+      aria-label="Terminal actions"
       className="fixed z-50 w-[220px] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl"
       style={{ left: x, top: y }}
     >
-      <div className="border-b border-border/60 px-2 py-1.5">
-        <div className="truncate text-xs font-semibold">
-          {menu.link.kind === "web" ? menu.link.hostname : menu.link.providerLabel}
+      {menu.link ? (
+        <div className="border-b border-border/60 px-2 py-1.5">
+          <div className="truncate text-xs font-semibold">
+            {menu.link.kind === "web" ? menu.link.hostname : menu.link.providerLabel}
+          </div>
+          <div className="truncate text-[11px] text-muted-foreground">
+            {menu.link.displayPath}
+          </div>
         </div>
-        <div className="truncate text-[11px] text-muted-foreground">
-          {menu.link.displayPath}
-        </div>
-      </div>
+      ) : null}
       <button
-        ref={firstActionRef}
+        ref={menu.selection ? firstActionRef : undefined}
         type="button"
         role="menuitem"
-        aria-label={openLabel(menu.link)}
-        onClick={() => perform(onOpen)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-accent focus:bg-accent focus:text-accent-foreground"
-      >
-        <ExternalLink aria-hidden="true" className="size-4 text-muted-foreground" />
-        {openLabel(menu.link)}
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        aria-label="Copy Link"
-        onClick={() => perform(onCopy)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-accent focus:bg-accent focus:text-accent-foreground"
+        aria-label="Copy"
+        disabled={!menu.selection}
+        onClick={performSelectionCopy}
+        className={`${itemClass} disabled:opacity-40`}
       >
         <Copy aria-hidden="true" className="size-4 text-muted-foreground" />
-        Copy Link
+        Copy
       </button>
+      <button
+        ref={menu.selection ? undefined : firstActionRef}
+        type="button"
+        role="menuitem"
+        aria-label="Select All"
+        onClick={performSelectAll}
+        className={itemClass}
+      >
+        <TextSelect aria-hidden="true" className="size-4 text-muted-foreground" />
+        Select All
+      </button>
+      {menu.link ? (
+        <>
+          <div className="my-1 border-t border-border/60" />
+          <button
+            type="button"
+            role="menuitem"
+            aria-label={openLabel(menu.link)}
+            onClick={() => perform(onOpen)}
+            className={itemClass}
+          >
+            <ExternalLink aria-hidden="true" className="size-4 text-muted-foreground" />
+            {openLabel(menu.link)}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            aria-label="Copy Link"
+            onClick={() => perform(onCopy)}
+            className={itemClass}
+          >
+            <Copy aria-hidden="true" className="size-4 text-muted-foreground" />
+            Copy Link
+          </button>
+        </>
+      ) : null}
     </div>,
     document.body,
   );

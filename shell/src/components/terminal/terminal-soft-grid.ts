@@ -74,6 +74,23 @@ export interface TerminalPointerCoordinatesInput {
   gridScale: number;
 }
 
+export interface TerminalPointerCorrectionDecisionInput {
+  type: "mousedown" | "mousemove" | "mouseup" | "contextmenu";
+  alreadyCorrected: boolean;
+  visualScale: number;
+}
+
+/** Keeps screen-space menu events raw while correcting xterm cell events once. */
+export function shouldCorrectTerminalPointerCoordinates(
+  input: TerminalPointerCorrectionDecisionInput,
+): boolean {
+  return input.type !== "contextmenu"
+    && !input.alreadyCorrected
+    && Number.isFinite(input.visualScale)
+    && input.visualScale > 0
+    && input.visualScale !== 1;
+}
+
 /** Maps pointer coordinates back through every visual terminal transform. */
 export function correctTerminalPointerCoordinates(input: TerminalPointerCoordinatesInput): {
   clientX: number;

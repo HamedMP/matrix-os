@@ -3,7 +3,7 @@ import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import type { AgentLaunchSpec } from "./agent-launcher.js";
-import type { createUserSystemdTerminalRuntime, UserSystemdTerminalDescriptor } from "./shell/user-systemd-terminal-runtime.js";
+import type { createUserSystemdTerminalRuntime, UserSystemdTerminalDescriptor } from "@matrix-os/terminal-runtime/user-systemd-controller";
 import { createZellijAdapter, type ZellijAdapter } from "./shell/zellij.js";
 import { createZellijRuntime, type ZellijHealth, type ZellijLayoutResult, type ZellijStartResult } from "./zellij-runtime.js";
 
@@ -148,15 +148,21 @@ export function createUserSystemdZellijRuntime(options: {
       await writeImmutableFileExclusive(environmentPath, environmentContent, 64 * 1024);
       let descriptor;
       try {
-        descriptor = await options.controller.create({
+        const createInput = {
           runtimeId,
-          scope: "workspace",
-          kind: input.launch.command === "bash" ? "shell" : "agent",
+          scope: "workspace" as const,
+          kind: input.launch.command === "bash" ? "shell" as const : "agent" as const,
           displayName: input.sessionId,
           cwd: input.launch.cwd,
           layoutPath,
           environmentPath,
-        });
+        };
+        const existing = await options.controller.get(runtimeId);
+        // A repeated start is a new prompt, not proof it was delivered to an existing live runner.
+        // The controller verifies settled inactivity again while holding its mutation lock.
+        descriptor = existing
+          ? await options.controller.create(createInput, { replaceInactiveWorkspace: true })
+          : await options.controller.create(createInput);
       } catch (err: unknown) {
         let persisted: UserSystemdTerminalDescriptor | null;
         try {

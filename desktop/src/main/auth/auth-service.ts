@@ -24,18 +24,27 @@ export interface ConnectionProfile {
   email?: string;
 }
 
-export interface AuthStatus {
-  signedIn: boolean;
-  handle?: string;
+interface AuthStatusBase {
   runtimeSlot: string;
   platformHost: string;
-  displayName?: string;
-  imageUrl?: string;
   // Monotonic credential generation. Advances on every credential replacement
   // or drop so renderer caches keyed on identity cannot survive a session swap
   // that keeps the same handle/host/slot.
   authGeneration: number;
 }
+
+export type AuthStatus =
+  | (AuthStatusBase & {
+      signedIn: true;
+      handle: string;
+      userId: string;
+      displayName?: string;
+      imageUrl?: string;
+      email?: string;
+    })
+  | (AuthStatusBase & {
+      signedIn: false;
+    });
 
 export type PollResult = {
   status: "pending" | "authorized" | "expired";
@@ -139,7 +148,10 @@ export class AuthService {
   }
 
   getGatewayOrigin(): string {
-    return this.profile?.platformHost ?? this.deps.platformHost;
+    const profile = this.credential && this.profile?.userId !== this.credential.userId
+      ? null
+      : this.profile;
+    return profile?.platformHost ?? this.deps.platformHost;
   }
 
   getStatus(): AuthStatus {
@@ -149,12 +161,26 @@ export class AuthService {
 
   private currentStatus(): AuthStatus {
     const signedIn = this.credential !== null && !this.isExpired();
+    const credential = signedIn ? this.credential : null;
+    const authenticatedProfile = credential && this.profile?.userId === credential.userId
+      ? this.profile
+      : null;
+    if (!credential) {
+      return {
+        signedIn: false,
+        runtimeSlot: this.profile?.runtimeSlot ?? "primary",
+        platformHost: this.getGatewayOrigin(),
+        authGeneration: this.authGeneration,
+      };
+    }
     return {
-      signedIn,
-      ...(signedIn && this.profile ? { handle: this.profile.handle } : {}),
-      ...(signedIn && this.profile?.displayName ? { displayName: this.profile.displayName } : {}),
-      ...(signedIn && this.profile?.imageUrl ? { imageUrl: this.profile.imageUrl } : {}),
-      runtimeSlot: this.profile?.runtimeSlot ?? "primary",
+      signedIn: true,
+      handle: credential.handle,
+      userId: credential.userId,
+      ...(authenticatedProfile?.displayName ? { displayName: authenticatedProfile.displayName } : {}),
+      ...(authenticatedProfile?.imageUrl ? { imageUrl: authenticatedProfile.imageUrl } : {}),
+      ...(authenticatedProfile?.email ? { email: authenticatedProfile.email } : {}),
+      runtimeSlot: authenticatedProfile?.runtimeSlot ?? "primary",
       platformHost: this.getGatewayOrigin(),
       authGeneration: this.authGeneration,
     };

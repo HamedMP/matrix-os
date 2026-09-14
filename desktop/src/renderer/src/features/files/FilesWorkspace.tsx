@@ -6,9 +6,13 @@ import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowser";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
+import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 
 export { resolveActivePath } from "./FilePreviewPane";
 export type { FileSelection } from "./FilePreviewPane";
+
+import { useDesktopFileDownload } from "./use-file-download";
+import { FileDownloadStatus } from "./FileDownloadStatus";
 
 const MAX_FILE_TABS = 12;
 const SAFE_FOLDER_NAME = /^[^/\\\u0000-\u001f]{1,128}$/;
@@ -31,6 +35,7 @@ function joinPath(parent: string, name: string): string {
 }
 
 export default function FilesWorkspace() {
+  const download = useDesktopFileDownload();
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const [tabs, setTabs] = useState<FileTab[]>([HOME_TAB]);
@@ -168,6 +173,8 @@ export default function FilesWorkspace() {
                   initialPath={tab.path}
                   onPathChange={(path) => updateTabPath(tab.id, path)}
                   onSelectionChange={(next: BrowserSelection | null) => setSelections((current) => ({ ...current, [tab.id]: next ? { slot: runtimeSlot, authGeneration, path: next.path, entry: next.entry } : null }))}
+                  onDownload={download.download}
+                  downloadPending={download.pending}
                   onOpenFolderInNewTab={openFolderTab}
                   onRequestCreateFolder={(parentPath) => requestNewFolder(tab.id, parentPath)}
                   refreshRevision={refreshes[tab.id] ?? 0}
@@ -179,10 +186,18 @@ export default function FilesWorkspace() {
         </div>
         {previewSelection ? (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>}>
-            <PreviewPane key={previewSelection.path} selection={previewSelection} onClose={() => setSelections((current) => ({ ...current, [activeTabId]: null }))} />
+            <PreviewPane
+              key={previewSelection.path}
+              selection={previewSelection}
+              onDownload={download.download}
+              downloadPending={download.pending}
+              onEdit={openFileInDesktopEditor}
+              onClose={() => setSelections((current) => ({ ...current, [activeTabId]: null }))}
+            />
           </Suspense>
         ) : null}
       </div>
+      <FileDownloadStatus download={download} />
       <Dialog open={newFolderRequest !== null} onClose={() => setNewFolderRequest(null)} title="New folder" width={400} placement="center">
         <form className="p-5" onSubmit={(event) => { event.preventDefault(); void createFolder(); }}>
           <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>New folder</h2>

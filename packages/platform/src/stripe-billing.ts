@@ -1,12 +1,46 @@
 import Stripe from 'stripe';
+import { createHash } from 'node:crypto';
 import type {
   StripeBillingClient,
+  StripeAiCreditCheckoutSessionInput,
   StripeCheckoutSessionInput,
   StripeWebhookEvent,
 } from './billing-routes.js';
 
-export const MATRIX_STRIPE_API_VERSION = '2026-04-22.dahlia';
+// Keep the requested API version aligned with the generated types shipped by
+// the newest Stripe SDK eligible under the repository's seven-day age gate.
+export const MATRIX_STRIPE_API_VERSION = '2026-07-29.dahlia';
 export const MATRIX_STRIPE_API_TIMEOUT_MS = 10_000;
+
+function stripeAttributionMetadata(
+  attribution: StripeCheckoutSessionInput['attribution'],
+): Record<string, string> {
+  if (!attribution) return {};
+  return Object.fromEntries(
+    Object.entries({
+      matrix_attr_rdt_cid: attribution.rdt_cid,
+      matrix_attr_utm_source: attribution.utm_source,
+      matrix_attr_utm_medium: attribution.utm_medium,
+      matrix_attr_utm_campaign: attribution.utm_campaign,
+      matrix_attr_utm_content: attribution.utm_content,
+      matrix_attr_utm_term: attribution.utm_term,
+      matrix_attr_landing_path: attribution.landing_path,
+    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+}
+
+function checkoutIntegrationIdentifier(
+  prefix: 'matrix-subscription' | 'matrix-ai-credit',
+  idempotencyKey: string,
+): string {
+  // Stripe requires retries with an idempotency key to send byte-for-byte
+  // equivalent parameters. Derive the opaque suffix from that server-owned
+  // key so a process retry does not mutate the Checkout request.
+  const suffix = [...createHash('sha256').update(`${prefix}\0${idempotencyKey}`).digest().subarray(0, 8)]
+    .map((value) => String.fromCharCode(97 + (value % 26)))
+    .join('');
+  return `${prefix}-${suffix}`;
+}
 
 export function createStripeBillingClient(options: {
   secretKey: string;
@@ -22,8 +56,20 @@ export function createStripeBillingClient(options: {
     apiTimeoutMs: MATRIX_STRIPE_API_TIMEOUT_MS,
 
     async createCheckoutSession(input: StripeCheckoutSessionInput) {
+      const metadata = {
+        clerk_user_id: input.clerkUserId,
+        matrix_attr_reddit_pending: '1',
+        matrix_attr_reddit_expires_at: input.redditAttributionExpiresAt,
+        matrix_region_slug: input.regionSlug,
+        matrix_runtime_slot: input.runtimeSlot,
+        ...(input.prebillingIntentId
+          ? { matrix_prebilling_intent_id: input.prebillingIntentId }
+          : {}),
+        ...stripeAttributionMetadata(input.attribution),
+      };
       const session = await stripe.checkout.sessions.create({
         mode: input.mode,
+        integration_identifier: `matrix_checkout_${stableLetterSuffix(input.idempotencyKey)}`,
         ...(input.customerId ? { customer: input.customerId } : {}),
         client_reference_id: input.clerkUserId,
         line_items: [{ price: input.priceId, quantity: 1 }],
@@ -33,19 +79,9 @@ export function createStripeBillingClient(options: {
         automatic_tax: { enabled: input.automaticTax },
         ...(input.expiresAt ? { expires_at: Math.floor(Date.parse(input.expiresAt) / 1_000) } : {}),
         ...(input.paymentMethodMode === 'card_required'
-          ? {
-            payment_method_types: ['card'] as const,
-            payment_method_collection: 'always' as const,
-          }
+          ? { payment_method_collection: 'always' as const }
           : {}),
-        metadata: {
-          clerk_user_id: input.clerkUserId,
-          matrix_region_slug: input.regionSlug,
-          matrix_runtime_slot: input.runtimeSlot,
-          ...(input.prebillingIntentId
-            ? { matrix_prebilling_intent_id: input.prebillingIntentId }
-            : {}),
-        },
+        metadata,
         subscription_data: {
           ...(input.trialPeriodDays
             ? {
@@ -55,14 +91,7 @@ export function createStripeBillingClient(options: {
               },
             }
             : {}),
-          metadata: {
-            clerk_user_id: input.clerkUserId,
-            matrix_region_slug: input.regionSlug,
-            matrix_runtime_slot: input.runtimeSlot,
-            ...(input.prebillingIntentId
-              ? { matrix_prebilling_intent_id: input.prebillingIntentId }
-              : {}),
-          },
+          metadata,
         },
         tax_id_collection: { enabled: true },
         ...(input.customerId
@@ -86,6 +115,48 @@ export function createStripeBillingClient(options: {
       };
     },
 
+    async clearSubscriptionAttribution(subscriptionId) {
+      await stripe.subscriptions.update(subscriptionId, {
+        metadata: {
+          matrix_attr_reddit_pending: '',
+          matrix_attr_reddit_expires_at: '',
+          matrix_attr_rdt_cid: '',
+          matrix_attr_utm_source: '',
+          matrix_attr_utm_medium: '',
+          matrix_attr_utm_campaign: '',
+          matrix_attr_utm_content: '',
+          matrix_attr_utm_term: '',
+          matrix_attr_landing_path: '',
+        },
+      });
+    },
+
+    async createAiCreditCheckoutSession(input: StripeAiCreditCheckoutSessionInput) {
+      const metadata = {
+        matrix_checkout_kind: 'ai_credit_addon',
+        matrix_owner_id: input.clerkUserId,
+        matrix_machine_id: input.machineId,
+        matrix_runtime_slot: input.runtimeSlot,
+        matrix_ai_credit_package_id: input.packageId,
+        matrix_ai_credit_request_id: input.requestId,
+        matrix_ai_credit_price_id: input.priceId,
+        matrix_ai_credit_microusd: String(input.amountMicrousd),
+      };
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        integration_identifier: checkoutIntegrationIdentifier('matrix-ai-credit', input.idempotencyKey),
+        client_reference_id: input.clerkUserId,
+        line_items: [{ price: input.priceId, quantity: 1 }],
+        success_url: input.successUrl,
+        cancel_url: input.cancelUrl,
+        automatic_tax: { enabled: input.automaticTax },
+        metadata,
+        payment_intent_data: { metadata },
+      }, { idempotencyKey: input.idempotencyKey });
+      if (!session.url) throw new Error('Stripe checkout session missing redirect URL');
+      return { url: session.url, id: session.id };
+    },
+
     async retrieveCheckoutSession(id) {
       const session = await stripe.checkout.sessions.retrieve(id, {
         expand: ['line_items.data.price'],
@@ -103,6 +174,29 @@ export function createStripeBillingClient(options: {
       };
     },
 
+    async retrieveRecurringPrice(id) {
+      const price = await stripe.prices.retrieve(id);
+      const interval = price.recurring?.interval;
+      if (
+        price.unit_amount === null
+        || !Number.isInteger(price.unit_amount)
+        || price.unit_amount < 0
+        || !/^[a-z]{3}$/.test(price.currency)
+        || (interval !== 'month' && interval !== 'year')
+        || !Number.isInteger(price.recurring?.interval_count)
+        || (price.recurring?.interval_count ?? 0) < 1
+      ) {
+        throw new Error('Stripe recurring price is incomplete');
+      }
+      return {
+        priceId: price.id,
+        unitAmountMinor: price.unit_amount,
+        currency: price.currency,
+        interval: interval === 'month' ? 'monthly' : 'annual',
+        intervalCount: price.recurring!.interval_count,
+      };
+    },
+
     async createPortalSession(input) {
       const session = await stripe.billingPortal.sessions.create({
         customer: input.customerId,
@@ -117,6 +211,11 @@ export function createStripeBillingClient(options: {
   };
 }
 
+function stableLetterSuffix(idempotencyKey: string): string {
+  const bytes = createHash('sha256').update(idempotencyKey).digest().subarray(0, 8);
+  return Array.from(bytes, (value) => String.fromCharCode(97 + (value % 26))).join('');
+}
+
 export function createUnavailableStripeBillingClient(): StripeBillingClient {
   const unavailable = async () => {
     throw new Error('Stripe billing is not configured');
@@ -124,7 +223,10 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
   return {
     apiTimeoutMs: MATRIX_STRIPE_API_TIMEOUT_MS,
     createCheckoutSession: unavailable,
+    clearSubscriptionAttribution: unavailable,
+    createAiCreditCheckoutSession: unavailable,
     retrieveCheckoutSession: unavailable,
+    retrieveRecurringPrice: unavailable,
     createPortalSession: unavailable,
     constructWebhookEvent() {
       throw new Error('Stripe billing is not configured');

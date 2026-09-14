@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import {
@@ -10,6 +10,7 @@ import {
   AgentKindSchema,
   AgentSessionStateStore,
   deriveAgentVisualStatus,
+  sanitizeAgentSubtitle,
   type AgentKind,
   type AgentSessionSnapshot,
 } from "./agent-session-state.js";
@@ -34,11 +35,39 @@ const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
 const MAX_CONCURRENT_SESSION_DECORATIONS = 8;
 const VERIFIED_RUNTIME_INCARNATION = Symbol("verified-runtime-incarnation");
 
+function publicShellCwd(homePath: string, cwd: string): { cwd: string } | Record<string, never> {
+  const homeRelative = relative(homePath, cwd);
+  if (homeRelative === "") return { cwd: "~" };
+  if (isAbsolute(homeRelative) || homeRelative === ".." || homeRelative.startsWith(`..${sep}`)) return {};
+  return { cwd: homeRelative };
+}
+
+function activeAgentTitle(
+  sessionName: string,
+  agent: AgentKind | undefined,
+  paneTitle: string | undefined,
+): string | undefined {
+  if (!agent || !paneTitle) return undefined;
+  const title = sanitizeAgentSubtitle(paneTitle);
+  if (!title) return undefined;
+  const genericTitles = new Set([
+    sessionName.toLowerCase(),
+    agent,
+    "claude code",
+    "codex",
+    "opencode",
+    "pi",
+    "terminal",
+  ]);
+  return genericTitles.has(title.toLowerCase()) ? undefined : title;
+}
+
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
   getSessionCreatedAt?(name: string): Promise<string | null>;
   focusedPaneRuntime?(name: string): Promise<FocusedPaneRuntimeObservation>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
+  recoverSession?(options: { name: string; cwd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession?(name: string, nextName: string): Promise<void>;
 }
@@ -71,6 +100,7 @@ const ShellSessionSchema = z.object({
   visualStatusUpdatedAt: z.string().optional(),
   agent: AgentKindSchema.optional(),
   cwd: z.string().max(4096).optional(),
+  pinned: z.boolean().optional(),
 });
 
 const RegistryFileSchema = z.object({
@@ -85,6 +115,7 @@ type RegistryFile = z.infer<typeof RegistryFileSchema>;
 type ShellSessionReference = z.infer<typeof ShellSessionReferenceSchema>;
 export type ShellPlacement = z.infer<typeof ShellPlacementSchema>;
 export type ShellVisualStatus = z.infer<typeof ShellVisualStatusSchema>;
+export type ShellAgentLiveness = "running" | "stopped" | "unknown";
 export type ShellSessionAliasSource = z.infer<typeof ShellSessionReferenceSourceSchema>;
 export interface ShellSessionAlias {
   name: string;
@@ -92,6 +123,8 @@ export interface ShellSessionAlias {
   source: ShellSessionAliasSource;
 }
 export type ShellSession = Omit<PersistedShellSession, "cwd"> & {
+  /** Home-relative active pane path; absolute host paths are never exposed. */
+  cwd?: string;
   canonicalName: string;
   latestSeq: number | null;
   unread: boolean;
@@ -118,6 +151,7 @@ export type ShellSession = Omit<PersistedShellSession, "cwd"> & {
 export interface ShellSessionUiStatePatch {
   placement?: ShellPlacement;
   lastSeenSeq?: number | null;
+  pinned?: boolean;
   /** @deprecated Accepted for one compatibility release and intentionally ignored. */
   visualStatus?: ShellVisualStatus;
 }
@@ -145,6 +179,7 @@ export class ShellRegistry {
   private readonly persistPath: string;
   private readonly agentStateStore: ShellAgentStateStore;
   private readonly gitContextResolver: { resolve(input: TerminalGitContextInput): Promise<TerminalGitContext | null> };
+  private readonly resolvedHomePath: Promise<string>;
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: ShellRegistryOptions) {
@@ -152,6 +187,7 @@ export class ShellRegistry {
       options.persistPath ?? join(options.homePath, "system", "shell-sessions.json");
     this.agentStateStore = options.agentStateStore ?? new AgentSessionStateStore({ homePath: options.homePath });
     this.gitContextResolver = options.gitContextResolver ?? new TerminalGitContextResolver({ homePath: options.homePath });
+    this.resolvedHomePath = resolveShellCwd("~", options.homePath);
   }
 
   async list(): Promise<ShellSession[]> {
@@ -214,6 +250,30 @@ export class ShellRegistry {
         await this.write(file);
       }
       return this.decorateSession(session, file);
+    });
+  }
+
+  async observeAgentLiveness(name: string, agent: AgentKind): Promise<ShellAgentLiveness> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
+      const live = await this.options.adapter.listSessions();
+      if (!live.includes(targetName)) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      const [runtime, snapshot] = await Promise.all([
+        this.readFocusedPaneRuntime(targetName),
+        this.readAgentSnapshot(targetName),
+      ]);
+      if (!runtime.observed) return "unknown";
+      const observedAgent = inferAgentFromCommand(runtime.command ?? undefined);
+      if (observedAgent) return observedAgent === agent ? "running" : "stopped";
+      const executable = runtime.command?.trim().split(/\s+/, 1)[0]?.split("/").pop();
+      if (executable !== "matrix-terminal-shell") return "stopped";
+      return snapshot && snapshot.agent === agent && snapshot.phase !== "ended"
+        ? "running"
+        : "unknown";
     });
   }
 
@@ -299,6 +359,41 @@ export class ShellRegistry {
     });
   }
 
+  async recover(name: string, input: { cwd?: string } = {}): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const cwd = input.cwd ? await resolveShellCwd(input.cwd, this.options.homePath) : undefined;
+      const file = await this.read();
+      const live = new Set(await this.options.adapter.listSessions());
+      const changed = await this.markMissingMetadataExited(file, live);
+      if (changed) await this.write(file);
+
+      if (!live.has(safeName)) {
+        if (this.options.adapter.recoverSession) {
+          await this.options.adapter.recoverSession({ name: safeName, ...(cwd ? { cwd } : {}) });
+        } else {
+          await this.options.adapter.createSession({ name: safeName, ...(cwd ? { cwd } : {}) });
+        }
+      }
+
+      const now = new Date().toISOString();
+      const runtimeCreatedAt = await this.runtimeCreatedAt(safeName);
+      const existing = file.sessions[safeName];
+      const session: PersistedShellSession = {
+        ...(existing ?? this.adoptSession(safeName, now)),
+        name: safeName,
+        status: "active",
+        createdAt: runtimeCreatedAt ?? existing?.createdAt ?? now,
+        ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
+        updatedAt: now,
+        ...(cwd ? { cwd } : {}),
+      };
+      file.sessions[safeName] = session;
+      await this.write(file);
+      return this.decorateSession(session, file);
+    });
+  }
+
   async updateUiState(name: string, patch: ShellSessionUiStatePatch): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const safeName = validateSessionName(name);
@@ -318,6 +413,7 @@ export class ShellRegistry {
         updatedAt: now,
         ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
         ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
+        ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
       };
       delete next.visualStatus;
       delete next.visualStatusUpdatedAt;
@@ -567,9 +663,10 @@ export class ShellRegistry {
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
     const references = file ? this.referencesForTarget(file, session.name) : [];
     const recoverable = session.status === "exited" && references.length > 0;
+    const activeCwd = focusedPaneRuntime.cwd ?? session.cwd;
     const gitContext = await this.readGitContext({
       sessionName: session.name,
-      cwd: focusedPaneRuntime.cwd ?? session.cwd,
+      cwd: activeCwd,
     });
     const observedAgent = focusedPaneRuntime.observed
       ? inferAgentFromCommand(focusedPaneRuntime.command ?? undefined)
@@ -590,16 +687,23 @@ export class ShellRegistry {
     const liveAgent = focusedPaneRuntime.observed
       ? observedAgent
       : compatibleSnapshot?.agent ?? launchHintAgent;
+    const paneSubtitle = activeAgentTitle(session.name, liveAgent, focusedPaneRuntime.title);
     const agentVisualStatus = liveAgent
       ? deriveAgentVisualStatus(compatibleSnapshot, unread) ?? "running"
       : null;
     const visualStatus = agentVisualStatus
       ?? this.deriveVisualStatus(session, unread, activity);
+    const displayCwd = activeCwd
+      ? publicShellCwd(await this.resolvedHomePath, activeCwd)
+      : {};
     const { cwd: _internalCwd, agent: _launchHint, ...publicSession } = session;
     return {
       ...publicSession,
+      ...displayCwd,
       ...(liveAgent ? { agent: liveAgent } : {}),
-      ...(compatibleSnapshot?.subtitle ? { subtitle: compatibleSnapshot.subtitle } : {}),
+      ...(compatibleSnapshot?.subtitle || paneSubtitle
+        ? { subtitle: compatibleSnapshot?.subtitle ?? paneSubtitle }
+        : {}),
       ...(compatibleSnapshot?.lastAction ? { lastAction: compatibleSnapshot.lastAction } : {}),
       ...(compatibleSnapshot?.agentUpdatedAt ? { agentUpdatedAt: compatibleSnapshot.agentUpdatedAt } : {}),
       ...(compatibleSnapshot?.model ? { model: compatibleSnapshot.model } : {}),

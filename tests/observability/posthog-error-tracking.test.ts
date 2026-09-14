@@ -67,7 +67,7 @@ describe("PostHog error tracking", () => {
     // The shell ships a same-origin /relay rewrite, so it opts into relative
     // API hosts to keep capture calls first-party on user subdomains.
     expect(shellClient).toContain("allowRelativeApiHost: true");
-    expect(shellClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(shellClient).not.toContain("buildPostHogCookieConsentInitOptions");
     expect(shellLayout).not.toContain("PostHogCookieBanner");
   });
 
@@ -596,7 +596,7 @@ describe("PostHog error tracking", () => {
     const shellPostHogClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
     expect(shellPostHogClient).toContain("same-origin PostHog proxy at /relay");
     expect(shellPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay"');
-    expect(shellPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
+    expect(shellPostHogClient).not.toContain("buildPostHogCookieConsentInitOptions");
     expect(shellPostHogClient).not.toContain("__loaded");
 
   });
@@ -641,38 +641,40 @@ describe("PostHog error tracking", () => {
   });
 
   it("tracks terminal websocket lifecycle without terminal output payloads", async () => {
-    const [terminalPane, gatewayServer] = await Promise.all([
+    const [terminalPane, terminalRuntime, gatewayServer] = await Promise.all([
       readFile("shell/src/components/terminal/TerminalPane.tsx", "utf8"),
+      readFile("shell/src/components/terminal/terminal-xterm-runtime.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
     ]);
 
-    expect(terminalPane).toContain('capturePostHogEvent("shell_terminal_ws"');
-    expect(terminalPane).toContain("capturePostHogLog");
+    expect(terminalRuntime).toContain('capturePostHogEvent("shell_terminal_ws"');
+    expect(terminalRuntime).toContain("capturePostHogLog");
     expect(terminalPane).toContain('track("schedule-reconnect"');
-    expect(terminalPane).not.toContain("capturePostHogEvent(\"shell_terminal_ws\", { data");
+    expect(terminalRuntime).not.toContain("capturePostHogEvent(\"shell_terminal_ws\", { data");
     expect(gatewayServer).toContain('posthogErrorTracker.captureEvent("gateway_terminal_ws"');
     expect(gatewayServer).toContain('captureTerminalEvent("attach-request"');
     expect(gatewayServer).not.toContain('captureTerminalEvent("input"');
   });
 
   it("tracks billing provisioning decisions as metadata-only events", async () => {
-    const billingPanel = await readFile(
-      "shell/src/components/settings/sections/BillingPanel.tsx",
-      "utf8",
-    );
+    const billingSources = (await Promise.all([
+      readFile("shell/src/components/settings/sections/BillingPanel.tsx", "utf8"),
+      readFile("shell/src/components/settings/sections/BillingCheckoutPanel.tsx", "utf8"),
+      readFile("shell/src/components/settings/sections/billing-checkout.ts", "utf8"),
+    ])).join("\n");
 
-    expect(billingPanel).toContain('capturePostHogEvent("shell_billing"');
-    expect(billingPanel).toContain("capturePostHogLog");
-    expect(billingPanel).toContain('"view_provisioning_billing"');
-    expect(billingPanel).toContain('"profile_select"');
-    expect(billingPanel).toContain('"region_select"');
-    expect(billingPanel).toContain('"checkout_intent"');
-    expect(billingPanel).toContain('"checkout_stripe_available"');
-    expect(billingPanel).toContain('"checkout_error"');
-    expect(billingPanel).toContain("selected_hetzner_type");
-    expect(billingPanel).toContain("selected_region_slug");
-    expect(billingPanel).not.toContain("cardNumber");
-    expect(billingPanel).not.toContain("terminalData");
+    expect(billingSources).toContain('capturePostHogEvent("shell_billing"');
+    expect(billingSources).toContain("capturePostHogLog");
+    expect(billingSources).toContain('"view_provisioning_billing"');
+    expect(billingSources).toContain('"profile_select"');
+    expect(billingSources).toContain('"region_select"');
+    expect(billingSources).toContain('"checkout_intent"');
+    expect(billingSources).toContain('"checkout_stripe_available"');
+    expect(billingSources).toContain('"checkout_error"');
+    expect(billingSources).not.toContain("selected_hetzner_type");
+    expect(billingSources).toContain("selected_region_slug");
+    expect(billingSources).not.toContain("cardNumber");
+    expect(billingSources).not.toContain("terminalData");
   });
 
   it("tracks shell, gateway, and CLI/TUI product activity without content payloads", async () => {

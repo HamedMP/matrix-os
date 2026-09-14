@@ -14,6 +14,7 @@ import {
   getContainer,
   getAccessibleRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
+  getUserMachine,
 } from './db.js';
 import { canClerkUserAccessMachine } from './customer-vps-preview.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
@@ -45,6 +46,13 @@ import { resolveContainerEndpoint } from './container-endpoint.js';
 import { describeError } from './platform-route-utils.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
+import {
+  buildCollaborationWebSocketUpgradeHeaders,
+  isCollaborationWebSocketCandidate,
+  isCollaborationWebSocketPath,
+  type CollaborationWebSocketAuthorizer,
+  type CollaborationWebSocketUpgrade,
+} from './collaboration/websocket.js';
 
 interface PlatformWebSocketTelemetry {
   capturePlatformEvent(event: MatrixTelemetryEvent, properties: Record<string, unknown>): void;
@@ -75,6 +83,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     runtimeSlot?: string,
     provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
+  collaborationSockets?: CollaborationWebSocketAuthorizer;
 }
 
 export function registerPlatformWebSocketUpgradeHandler(
@@ -93,6 +102,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     codeServerPort,
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
+    collaborationSockets,
   } = opts;
 
   server.on('upgrade', async (req: IncomingMessage, socket, head) => {
@@ -130,9 +140,15 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
     const isCodeDomain = isCodeDomainHost(host);
     const isAppDomain = isAppDomainHost(host);
+    const isCollaborationCandidate = isAppDomain && isCollaborationWebSocketCandidate(path);
+    const isCollaborationSocket = isAppDomain && isCollaborationWebSocketPath(path);
+    if (isCollaborationCandidate && !isCollaborationSocket) {
+      socket.destroy();
+      return;
+    }
     const hostClass = classifySessionRoutedHost(host);
     const explicitVmRoute = isAppDomain ? readExplicitVmWebSocketRoute(path) : null;
-    const webSocketProxyPath = explicitVmRoute
+    let webSocketProxyPath = explicitVmRoute
       ? buildExplicitVmWebSocketUpstreamPath(path)
       : path;
     const pathClass = classifyWebSocketPath(webSocketProxyPath);
@@ -164,6 +180,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         requestedHandle: explicitVmRoute?.handle,
         runtimeSlot: requestRuntimeSlot,
         wsToken,
+        clerkPrincipalOnly: isCollaborationSocket,
       });
       if (
         !identity
@@ -204,10 +221,38 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
 
+    let collaborationUpgrade: CollaborationWebSocketUpgrade | undefined;
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine: UserMachineRecord | undefined;
-    if (explicitVmRoute) {
+    if (isCollaborationSocket) {
+      if (!collaborationSockets || !identity.userId) {
+        socket.destroy();
+        return;
+      }
+      try {
+        collaborationUpgrade = await collaborationSockets.authorizeUpgrade({
+          actorId: identity.userId,
+          authentication: collaborationAuthentication(path, req.headers.authorization),
+          rawPath: path,
+          origin: firstHeader(req.headers.origin),
+        });
+      } catch (err: unknown) {
+        console.warn(`[platform] collaboration websocket authorization failed error=${describeError(err)}`);
+        socket.destroy();
+        return;
+      }
+      const machineId = parseCollaborationRuntimeId(collaborationUpgrade.runtimeId);
+      const authorityMachine = machineId ? await getUserMachine(db, machineId) : undefined;
+      if (!authorityMachine || authorityMachine.status !== 'running' || !authorityMachine.publicIPv4
+        || authorityMachine.clerkUserId !== collaborationUpgrade.ownerId) {
+        socket.destroy();
+        return;
+      }
+      runningMachine = authorityMachine;
+      runtimeSlot = authorityMachine.runtimeSlot;
+      webSocketProxyPath = collaborationUpgrade.upstreamPath;
+    } else if (explicitVmRoute) {
       const explicitMachine = await getRunningUserMachineByHandle(
         db,
         explicitVmRoute.handle,
@@ -261,7 +306,13 @@ export function registerPlatformWebSocketUpgradeHandler(
     socket.on('error', onSocketError);
 
     const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
-      buildPlatformWebSocketUpgradeHeaders({
+      collaborationUpgrade
+        ? buildCollaborationWebSocketUpgradeHeaders({
+            incomingHeaders: req.headers,
+            externalHost: host,
+            signedProof: collaborationUpgrade.signedProof,
+          })
+        : buildPlatformWebSocketUpgradeHeaders({
         incomingHeaders: req.headers,
         externalHost: host,
         handle,
@@ -392,4 +443,27 @@ export function registerPlatformWebSocketUpgradeHandler(
       socket.destroy();
     });
   });
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function collaborationAuthentication(
+  rawPath: string,
+  authorization: string | string[] | undefined,
+): 'session' | 'bearer' | 'ticket' {
+  try {
+    if (new URL(rawPath, 'https://platform.invalid').searchParams.has('ticket')) return 'ticket';
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn('[platform] collaboration websocket credential parse failed:', describeError(err));
+    }
+  }
+  return firstHeader(authorization)?.startsWith('Bearer ') ? 'bearer' : 'session';
+}
+
+function parseCollaborationRuntimeId(runtimeId: string): string | null {
+  const match = /^vps:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.exec(runtimeId);
+  return match?.[1] ?? null;
 }

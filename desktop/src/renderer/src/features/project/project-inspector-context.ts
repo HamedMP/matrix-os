@@ -62,15 +62,22 @@ export function buildProjectInspectorContext({
   const scopedActiveThreads = projectThreads(summary.activeThreads.items, projectId);
   const scopedAttentionThreads = projectThreads(summary.attentionThreads.items, projectId);
 
-  const terminalSessionId = selectedThread?.projectId === projectId
-    ? selectedThread.terminalSessionId
+  const terminalRef = selectedThread?.projectId === projectId
+    ? selectedThread.terminalRef
     : undefined;
-  const linkedTerminal = terminalSessionId
-    ? summary.terminalSessions.items.find((session) => session.id === terminalSessionId) ?? null
+  const linkedWorkspace = terminalRef
+    ? summary.terminalWorkspaces.items.find((workspace) => (
+        workspace.id === terminalRef.workspaceId
+        && workspace.scope === "project"
+        && workspace.projectId === projectId
+      )) ?? null
+    : null;
+  const linkedTerminal = linkedWorkspace
+    ? linkedWorkspace.tabs.find((tab) => tab.id === terminalRef?.tabId) ?? null
     : null;
   const terminalState: ProjectInspectorTerminalState = linkedTerminal
     ? "linked"
-    : terminalSessionId
+    : terminalRef
       ? "unavailable"
       : "unbound";
 
@@ -111,9 +118,11 @@ export function buildProjectInspectorContext({
       ...summary,
       activeThreads: { ...summary.activeThreads, items: scopedActiveThreads, hasMore: false },
       attentionThreads: { ...summary.attentionThreads, items: scopedAttentionThreads, hasMore: false },
-      terminalSessions: {
-        ...summary.terminalSessions,
-        items: linkedTerminal ? [linkedTerminal] : [],
+      terminalWorkspaces: {
+        ...summary.terminalWorkspaces,
+        items: linkedWorkspace && linkedTerminal
+          ? [{ ...linkedWorkspace, tabs: [linkedTerminal] }]
+          : [],
         hasMore: false,
       },
       previewSessions: { ...summary.previewSessions, items: scopedPreviews, hasMore: false },

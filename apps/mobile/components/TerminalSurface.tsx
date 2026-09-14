@@ -32,6 +32,8 @@ interface TerminalSurfaceProps {
   fontScale: number;
   /** Raw keystrokes typed directly into the emulator (hardware keyboard / tap). */
   onInput: (data: string) => void;
+  /** Byte-valued xterm protocol replies such as OSC and binary mouse reports. */
+  onBinary: (data: string) => void;
   /** Reports the fitted grid size whenever the surface lays out or resizes. */
   onResize: (cols: number, rows: number) => void;
   /** Cursor bottom edge in surface-local pixels; throttled by the emulator. */
@@ -159,6 +161,7 @@ function buildHtml(fontScale: number): string {
       doFit();
       window.addEventListener("resize", doFit);
       term.onData(function (data) { post({ type: "input", data: data }); });
+      term.onBinary(function (data) { post({ type: "binary", data: data }); });
 
       // Cursor bottom edge in page pixels so the RN side can lift the view
       // only as much as needed to keep typing visible above the keyboard.
@@ -213,7 +216,7 @@ function buildHtml(fontScale: number): string {
 }
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
-  function TerminalSurface({ fontScale, onInput, onResize, onCursor }, ref) {
+  function TerminalSurface({ fontScale, onInput, onBinary, onResize, onCursor }, ref) {
     const webRef = useRef<WebView | null>(null);
     const readyRef = useRef(false);
     const pendingRef = useRef<string[]>([]);
@@ -286,6 +289,10 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           onInput(msg.data);
           return;
         }
+        if (msg.type === "binary" && typeof msg.data === "string") {
+          onBinary(msg.data);
+          return;
+        }
         if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           onResize(msg.cols, msg.rows);
           return;
@@ -294,7 +301,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           onCursor?.(msg.bottom);
         }
       },
-      [flush, onInput, onResize, onCursor],
+      [flush, onInput, onBinary, onResize, onCursor],
     );
 
     return (

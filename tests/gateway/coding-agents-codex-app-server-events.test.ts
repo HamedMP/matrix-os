@@ -127,6 +127,8 @@ describe("Codex app-server request normalization", () => {
         threadId: "provider-thread",
         turnId: "provider-turn",
         itemId: "item_permissions_1",
+        // 0.154.0 uses LegacyAppPathString here; it is never used for a grant.
+        cwd: "legacy/relative/path",
         permissions: {
           fileSystem: { write: ["/home/matrix/private-project"] },
           network: { enabled: true, host: "private.internal" },

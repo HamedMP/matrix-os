@@ -1,10 +1,21 @@
-import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
+import { createFileDownloadService } from "./files/file-download-service";
 import { AuthService } from "./auth/auth-service";
+import { createAnalyticsBeforeQuit } from "./analytics-quit";
+import { readDesktopBuildSource } from "./build-source";
 import { createCredentialStore } from "./auth/credential-store";
-import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
+import {
+  installGatewayCors,
+  installHeaderInjection,
+  installSupportMessageAnalytics,
+} from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
-import { NativeAppBridge, createNativeAppQueryRequester } from "./embeds/native-app-bridge";
+import {
+  NativeAppBridge,
+  createNativeAppQueryRequester,
+  createNativeAppGatewayRequester,
+} from "./embeds/native-app-bridge";
 import {
   abortCodingAgentThread,
   createCodingAgentSourcePullRequest,
@@ -34,6 +45,7 @@ import {
   updateHermesConfiguration,
 } from "./hermes/configuration-client";
 import { registerIpcHandlers } from "./ipc/handlers";
+import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
 import { registerWindowsProtocolClients } from "./platform/protocol-registration";
@@ -46,12 +58,17 @@ import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
+import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
+const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
 
 app.setName(DESKTOP_APP_NAME);
+if (desktopRendererUrl && desktopRendererUrl !== process.env.ELECTRON_RENDERER_URL) {
+  app.commandLine.appendSwitch("host-resolver-rules", desktopDevHostResolverRules());
+}
 
 // Test isolation: e2e runs point userData at a temp dir so they never touch
 // the real profile or credential.
@@ -61,8 +78,13 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
+let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
+let downloadsDrained = false;
+let drainingDownloads = false;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
 let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
+let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) | null = null;
+let completePendingAnalyticsFlush: (() => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
   try {
@@ -128,8 +150,8 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   win.on("focus", () => sendEvent("window:focus-changed", { focused: true }));
   win.on("blur", () => sendEvent("window:focus-changed", { focused: false }));
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL).catch((err: unknown) => {
+  if (desktopRendererUrl) {
+    void win.loadURL(desktopRendererUrl).catch((err: unknown) => {
       logMainError("failed to load renderer URL", err);
     });
   } else {
@@ -202,18 +224,21 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          fileDownloads?.cancelAll();
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
-            ...(status.handle ? { handle: status.handle } : {}),
-            ...(status.displayName ? { displayName: status.displayName } : {}),
-            ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
+            ...(status.signedIn ? {
+              handle: status.handle,
+              ...(status.displayName ? { displayName: status.displayName } : {}),
+              ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
+            } : {}),
           });
         },
       });
       await auth.init();
 
-      const rendererOrigin = process.env.ELECTRON_RENDERER_URL
-        ? new URL(process.env.ELECTRON_RENDERER_URL).origin
+      const rendererOrigin = desktopRendererUrl
+        ? new URL(desktopRendererUrl).origin
         : "null";
       // Renderer session gets origin-scoped bearer injection; embed partitions
       // (separate sessions) never do (lesson L1).
@@ -226,8 +251,17 @@ if (!gotLock) {
       // The renderer is a different origin than the gateway (file:// in prod,
       // localhost in dev), so allow its cross-origin fetches to the gateway.
       installGatewayCors(session.defaultSession, () => auth.getGatewayOrigin(), rendererOrigin);
+      installSupportMessageAnalytics(
+        session.defaultSession,
+        () => auth.getGatewayOrigin(),
+        (detail) => sendEvent("analytics:capture", detail),
+      );
 
       const nativeAppBridge = new NativeAppBridge({
+        gatewayRequest: createNativeAppGatewayRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
         gatewayOrigin: () => auth.getGatewayOrigin(),
         request: createNativeAppQueryRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
@@ -276,13 +310,39 @@ if (!gotLock) {
           );
         },
       });
+      handleAnalyticsBeforeQuit = createAnalyticsBeforeQuit({
+        requestFlush: () => new Promise<void>((resolve) => {
+          completePendingAnalyticsFlush = resolve;
+          sendEvent("analytics:flush-requested", {});
+        }),
+        quit: () => app.quit(),
+        timeoutMs: 750,
+      });
       const codingAgentThreadEvents = createCodingAgentThreadEventStreamer({
         auth,
         emit: sendEvent,
       });
       closeCodingAgentThreadEvents = () => codingAgentThreadEvents.closeAll();
 
+      fileDownloads = createFileDownloadService({
+        auth,
+        chooseDestination: async (filename) => {
+          const options = {
+            title: "Download file",
+            defaultPath: join(app.getPath("downloads"), filename),
+            buttonLabel: "Save",
+            properties: ["createDirectory", "showOverwriteConfirmation"] as Array<"createDirectory" | "showOverwriteConfirmation">,
+          };
+          const result = mainWindow && !mainWindow.isDestroyed()
+            ? await dialog.showSaveDialog(mainWindow, options)
+            : await dialog.showSaveDialog(options);
+          return result.canceled ? null : result.filePath ?? null;
+        },
+      });
+      const downloads = fileDownloads;
       registerIpcHandlers(ipcMain, {
+        downloadFile: (request) => downloads.download(request),
+        cancelFileDownload: (requestId) => downloads.cancel(requestId),
         auth,
         store,
         embeds,
@@ -301,6 +361,7 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          downloads.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
@@ -330,6 +391,13 @@ if (!gotLock) {
           if (version !== app.getVersion()) return;
           await store.acknowledgeDesktopUpdateRelease(version);
         },
+        getAppVersion: () => app.getVersion(),
+        buildSource: readDesktopBuildSource(),
+        completeAnalyticsFlush: () => {
+          completePendingAnalyticsFlush?.();
+          completePendingAnalyticsFlush = null;
+        },
+        fetchSupportIdentity: () => fetchDesktopSupportIdentity(auth),
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
         fetchProjectWorkspace: (request) => fetchCodingAgentProjectWorkspace(auth, request),
         fetchNotificationPreferences: () => fetchCodingAgentNotificationPreferences(auth),
@@ -428,6 +496,16 @@ if (!gotLock) {
     });
 
   app.on("before-quit", (event) => {
+    if (handleAnalyticsBeforeQuit?.(event)) return;
+    if (!downloadsDrained && fileDownloads) {
+      event.preventDefault();
+      if (!drainingDownloads) {
+        drainingDownloads = true;
+        void fileDownloads.dispose().catch((error: unknown) => logMainError("download cleanup failed", error))
+          .finally(() => { downloadsDrained = true; app.quit(); });
+      }
+      return;
+    }
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;

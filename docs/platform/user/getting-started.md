@@ -66,6 +66,26 @@ Connect your Matrix OS to messaging platforms:
 
 Configure channels in your system settings.
 
+### Connect X
+
+Open **Settings > Integrations**, find **X**, and select **Connect**. The same
+connection is then available to the Matrix assistant and supported coding
+agents through the managed integrations boundary. Ask the agent to describe
+the `twitter` service before first use to see its approved actions.
+
+Matrix supports reading the connected profile, looking up a user, listing a
+user's posts, searching posts from the last seven days, and publishing a text
+post or reply. Publishing is classified as a write action and requires an
+explicit user request.
+
+The Pipedream X connector asks for credentials from an X developer app. Create
+the app in the [X Developer Console](https://developer.x.com/en/portal/dashboard),
+enable read and write access, and use the callback URL shown by Pipedream. X API
+calls use [pay-per-use credits](https://docs.x.com/x-api/getting-started/pricing),
+so set an appropriate spending limit before connecting a production account.
+Provider credentials remain with Pipedream; Matrix stores only the
+connected-account reference.
+
 ### Social Features
 - View other Matrix OS users
 - Send messages between instances

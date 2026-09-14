@@ -10,6 +10,7 @@ export function PromptInput({
   onSubmit,
   onAbort,
   busy,
+  submitWhileBusy = false,
   autoFocus,
   disabled = false,
   maxLength,
@@ -30,6 +31,7 @@ export function PromptInput({
   onSubmit: () => void;
   onAbort?: () => void;
   busy: boolean;
+  submitWhileBusy?: boolean;
   autoFocus?: boolean;
   disabled?: boolean;
   maxLength?: number;
@@ -69,7 +71,7 @@ export function PromptInput({
 
   return (
     <div
-      className="prompt-card flex flex-col rounded-[var(--radius-xl)] border"
+      className="prompt-card relative z-[1] flex flex-col rounded-[var(--radius-xl)] border"
       data-layout={layout}
       style={{ background: "var(--bg-surface)" }}
     >
@@ -108,7 +110,7 @@ export function PromptInput({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           {trailingControls}
-          {busy && onAbort ? (
+          {busy && onAbort && !(submitWhileBusy && submissionReady) ? (
             <button
               type="button"
               aria-label="Stop"

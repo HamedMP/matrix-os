@@ -33,10 +33,12 @@ const APP_RASTER_ICON_SLUGS = new Set([
 const SHIPPED_SVG_ICON_SLUGS = new Set([
   "calendar",
   "camera",
+  "canvas",
   "chart",
   "chat",
   "code",
   "document",
+  "desktop",
   "files",
   "folder",
   "game",

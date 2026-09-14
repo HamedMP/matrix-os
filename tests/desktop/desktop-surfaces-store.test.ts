@@ -81,6 +81,15 @@ describe("desktop surfaces store", () => {
     expect(useDesktopSurfaces.getState().surfaces.chat).toBeUndefined();
   });
 
+  it("lets a window touch and extend past the desktop border", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["files"], { width: 900, height: 620 });
+    const bounds = { x: -12, y: -8, width: 900, height: 620 };
+    useDesktopSurfaces.getState().setSurfaceBounds("files", bounds, { width: 900, height: 620 });
+    expect(useDesktopSurfaces.getState().surfaces.files?.bounds).toEqual(bounds);
+    useDesktopSurfaces.getState().reconcileTabs(["files"], { width: 900, height: 620 });
+    expect(useDesktopSurfaces.getState().surfaces.files?.bounds).toEqual(bounds);
+  });
+
   it("clamps moved and resized windows to the available desktop", () => {
     useDesktopSurfaces.getState().reconcileTabs(["files"], { width: 900, height: 620 });
     useDesktopSurfaces.getState().setSurfaceBounds(

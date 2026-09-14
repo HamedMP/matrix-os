@@ -32,3 +32,10 @@ export class ChatRunNotActiveError extends Error {
     this.name = "ChatRunNotActiveError";
   }
 }
+
+export class ChatRunNotAcknowledgeableError extends Error {
+  constructor(readonly chatId: string, readonly runId: string) {
+    super("Chat Run is not a successful completion");
+    this.name = "ChatRunNotAcknowledgeableError";
+  }
+}

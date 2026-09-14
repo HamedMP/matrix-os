@@ -9,6 +9,7 @@ import {
 } from "@matrix-os/contracts";
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
@@ -49,7 +50,7 @@ function summaryFixture(providers: RuntimeSummary["providers"] = [{
     },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
@@ -108,8 +109,10 @@ function mockOperator({ createImpl, summary = summaryFixture() }: {
     }
     if (channel === "runtime:get-project-workspace") return workspaceFixture();
     if (channel === "runtime:create-thread") {
-      if (createImpl) return createImpl(payload);
-      return createdThreadSnapshot((payload as { prompt?: string }).prompt ?? "New chat");
+      const snapshot = createImpl
+        ? await createImpl(payload)
+        : createdThreadSnapshot((payload as { prompt?: string }).prompt ?? "New chat");
+      return { ok: true, snapshot };
     }
     if (channel === "runtime:get-thread-snapshot") {
       const { threadId } = payload as { threadId: string };
@@ -154,7 +157,7 @@ function resetStores() {
   useProjectChatLauncher.setState({ composerRequest: null });
   useTabs.setState(useTabs.getInitialState(), true);
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
-  useProviderPreferences.setState({ defaultProviderId: null, composerSelections: {}, hydrated: false });
+  resetProviderPreferences();
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,
@@ -228,12 +231,6 @@ describe("draft chat implicit thread creation", () => {
     // The created thread replaces the draft in place.
     await waitFor(() => {
       expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_new_draft");
-    });
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      conversationType: "coding-agent",
-      id: "thread_new_draft",
-      label: "Investigate the flaky desktop check",
     });
     expect(useDraftChat.getState().draftFor("matrix-os")).toBeNull();
     expect(await screen.findByRole("region", { name: /Conversation/ })).toBeTruthy();
@@ -490,7 +487,7 @@ describe("draft chat implicit thread creation", () => {
     expect(pane.className).not.toContain("overflow-hidden");
   });
 
-  it("uploads dropped files and creates a project chat with existing structured refs", async () => {
+  it("uploads dropped files and creates a project chat with typed file attachments", async () => {
     const putBytes = vi.fn(async (path: string, file: File) => ({
       ok: true,
       path: decodeURIComponent(path.split("path=")[1] ?? ""),
@@ -515,7 +512,7 @@ describe("draft chat implicit thread creation", () => {
           prompt: "Use this context",
           attachments: [expect.objectContaining({
             id: expect.stringMatching(/^desktop_upload_[A-Za-z0-9]+$/),
-            kind: "structured_ref",
+            kind: "file",
             label: "context.txt",
             path: expect.stringMatching(/^temporary\/desktop-chat\/[A-Za-z0-9]+-context\.txt$/),
             mimeType: "text/plain",

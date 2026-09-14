@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
@@ -21,6 +21,10 @@ import { MissingRequestPrincipalError } from "../../packages/gateway/src/request
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };
 const baseNow = new Date("2026-07-06T12:00:00.000Z");
+const TEST_TERMINAL_REF = {
+  workspaceId: "tws_00000000000000000000000000000001",
+  tabId: "tt_00000000000000000000000000000001",
+} as const;
 
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
@@ -69,7 +73,7 @@ const createBody = {
   providerId: "codex",
   prompt: "Inspect the failing tests and propose a small fix.",
   projectId: "repo-main",
-  terminalSessionId: "main",
+  terminalRef: TEST_TERMINAL_REF,
   mode: "default",
   approvalPolicy: "on_request",
   sandboxMode: "workspace_write",
@@ -81,6 +85,303 @@ function workspaceSessionIdForThread(threadId: string): string {
 }
 
 describe("coding agent thread lifecycle", () => {
+  it("keeps an early background Provider resume state after cancellation", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-background-resume-state-"));
+    const resumeTurn = vi.fn(async ({ resumeState }) => ({
+      events: [],
+      outcome: "completed" as const,
+      resumeState,
+    }));
+    const resumeStatePublished = Promise.withResolvers<void>();
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "pi",
+      initialRunExecution: "background",
+      async startThread({ signal, publishEvents }) {
+        await publishEvents?.({
+          events: [],
+          resumeState: { conversationId: "session_before_cancel" },
+        });
+        resumeStatePublished.resolve();
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) resolve();
+          else signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return { events: [], outcome: "aborted" as const };
+      },
+      resumeTurn,
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      providers: [provider],
+      relationValidator: {
+        validateCreate: async () => undefined,
+        validateThread: async () => undefined,
+      },
+      turnDispatchTimeoutMs: 1_000,
+    });
+
+    try {
+      const created = await threads.createThread(ownerPrincipal, {
+        ...createBody,
+        providerId: "pi",
+        clientRequestId: "req_background_resume_1",
+      });
+      await resumeStatePublished.promise;
+      await threads.abortThread(
+        ownerPrincipal,
+        created.snapshot.thread.id,
+        "req_abort_background_resume_1",
+      );
+
+      await expect(threads.acceptTurn(ownerPrincipal, created.snapshot.thread.id, {
+        message: "What did I ask before cancellation?",
+        clientRequestId: "req_follow_up_background_resume_1",
+      })).resolves.toMatchObject({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(resumeTurn).toHaveBeenCalledWith(expect.objectContaining({
+          resumeState: { conversationId: "session_before_cancel" },
+        }));
+      });
+    } finally {
+      await threads.shutdownTurns();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("persists and publishes background provider events before the run finishes", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-streaming-initial-run-"));
+    let finishRun!: () => void;
+    const runGate = new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "pi",
+      initialRunExecution: "background",
+      async startThread({ thread, publishEvents, now: providerNow, nextEventId }) {
+        await publishEvents?.({
+          events: [AgentThreadEventSchema.parse({
+            type: "assistant.text.delta",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            messageId: "msg_streaming_initial",
+            delta: "Still working...",
+          })],
+        });
+        await runGate;
+        return {
+          events: [AgentThreadEventSchema.parse({
+            type: "thread.completed",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            outcome: "completed",
+          })],
+        };
+      },
+    };
+    const threads = createCodingAgentThreadStore({ homePath, providers: [provider] });
+    const published: AgentThreadEvent[] = [];
+    const subscription = threads.registerEventSink(({ events }) => published.push(...events));
+
+    try {
+      const created = await threads.createThread(ownerPrincipal, {
+        ...createBody,
+        providerId: "pi",
+        clientRequestId: "req_streaming_initial_1",
+      });
+      await vi.waitFor(() => {
+        expect(published).toEqual(expect.arrayContaining([
+          expect.objectContaining({ type: "assistant.text.delta", delta: "Still working..." }),
+        ]));
+      });
+      const active = await threads.getThread(ownerPrincipal, created.snapshot.thread.id);
+      expect(active.events.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "assistant.text.delta", delta: "Still working..." }),
+      ]));
+      expect(active.thread.status).not.toBe("completed");
+
+      finishRun();
+      await vi.waitFor(async () => {
+        await expect(threads.getThread(ownerPrincipal, created.snapshot.thread.id))
+          .resolves.toMatchObject({ thread: { status: "completed" } });
+      });
+    } finally {
+      finishRun();
+      subscription.dispose();
+      await threads.shutdownTurns();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a pending background initial run out of the global state queue and aborts it per thread", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-background-initial-run-"));
+    let started = false;
+    let signalAborted = false;
+    const pendingProvider: CodingAgentProviderAdapter = {
+      providerId: "pi",
+      initialRunExecution: "background",
+      startThread({ signal }) {
+        started = true;
+        return new Promise((resolve) => {
+          const finish = () => {
+            signalAborted = true;
+            resolve([]);
+          };
+          if (signal?.aborted) finish();
+          else signal?.addEventListener("abort", finish, { once: true });
+        });
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      providers: [pendingProvider, createFakeCodingAgentProvider({ providerId: "codex" })],
+      turnDispatchTimeoutMs: 1_000,
+    });
+
+    const created = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      providerId: "pi",
+      clientRequestId: "req_background_initial_1",
+    });
+    expect(started).toBe(true);
+    expect(created.snapshot.thread.status).toBe("queued");
+
+    await expect(threads.getThread(ownerPrincipal, created.snapshot.thread.id))
+      .resolves.toMatchObject({ thread: { status: "queued" } });
+    await expect(threads.createThread(ownerPrincipal, {
+      ...createBody,
+      clientRequestId: "req_background_parallel_2",
+    })).resolves.toMatchObject({ snapshot: { thread: { providerId: "codex", status: "running" } } });
+
+    await expect(threads.abortThread(
+      ownerPrincipal,
+      created.snapshot.thread.id,
+      "req_abort_background_initial_1",
+    )).resolves.toMatchObject({ thread: { status: "aborted" } });
+    expect(signalAborted).toBe(true);
+    await expect(threads.getThread(ownerPrincipal, created.snapshot.thread.id))
+      .resolves.toMatchObject({ thread: { status: "aborted" } });
+    await threads.shutdownTurns();
+  });
+
+  it("finalizes a cancelled background initial run as aborted without a provider failure", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-cancelled-background-initial-run-"));
+    const pendingProvider: CodingAgentProviderAdapter = {
+      providerId: "opencode",
+      initialRunExecution: "background",
+      startThread({ thread, signal, now: providerNow, nextEventId }) {
+        return new Promise((resolve) => {
+          const finish = () => resolve({
+            events: [AgentThreadEventSchema.parse({
+              type: "thread.completed",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              outcome: "aborted",
+            })],
+          });
+          if (signal?.aborted) finish();
+          else signal?.addEventListener("abort", finish, { once: true });
+        });
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      providers: [pendingProvider],
+      turnDispatchTimeoutMs: 1_000,
+    });
+
+    const created = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      providerId: "opencode",
+      clientRequestId: "req_cancelled_background_initial_1",
+    });
+    await threads.shutdownTurns();
+
+    const snapshot = await threads.getThread(ownerPrincipal, created.snapshot.thread.id);
+    expect(snapshot.thread).toMatchObject({ status: "aborted", attention: "none" });
+    expect(snapshot.events.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+    ]));
+    expect(snapshot.events.items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.error", error: expect.objectContaining({ code: "provider_run_failed" }) }),
+    ]));
+  });
+
+  it.each(["pi", "opencode"] as const)(
+    "classifies a %s background initial-run deadline as a provider failure",
+    async (providerId) => {
+      const homePath = await mkdtemp(join(tmpdir(), `matrix-${providerId}-initial-run-timeout-`));
+      const deadlineController = new AbortController();
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadlineController.signal);
+      const pendingCredentialProvider: CodingAgentProviderAdapter = {
+        providerId,
+        initialRunExecution: "background",
+        startThread({ thread, now: providerNow, nextEventId }) {
+          const abortedResult = {
+            events: [AgentThreadEventSchema.parse({
+              type: "thread.completed",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              outcome: "aborted",
+            })],
+          };
+          // Model credential resolution returning its abort-shaped result in
+          // the same microtask turn that the orchestration deadline fires.
+          // The provider result wins the Promise race, so the orchestration
+          // boundary must still classify the source signal explicitly.
+          return {
+            then(resolve: (result: typeof abortedResult) => void) {
+              resolve(abortedResult);
+              queueMicrotask(() => deadlineController.abort());
+            },
+          } as unknown as Promise<typeof abortedResult>;
+        },
+      };
+      const threads = createCodingAgentThreadStore({
+        homePath,
+        providers: [pendingCredentialProvider],
+        turnDispatchTimeoutMs: 1_000,
+      });
+      let resolveTerminalEvents!: () => void;
+      const terminalEvents = new Promise<void>((resolve) => {
+        resolveTerminalEvents = resolve;
+      });
+      const subscription = threads.registerEventSink(({ events }) => {
+        if (events.some((event) => event.type === "thread.completed" || event.type === "thread.error")) {
+          resolveTerminalEvents();
+        }
+      });
+
+      try {
+        const created = await threads.createThread(ownerPrincipal, {
+          ...createBody,
+          providerId,
+          clientRequestId: `req_${providerId}_background_initial_timeout_1`,
+        });
+        await terminalEvents;
+
+        const snapshot = await threads.getThread(ownerPrincipal, created.snapshot.thread.id);
+        expect(snapshot.thread).toMatchObject({ status: "failed", attention: "failed" });
+        expect(snapshot.events.items).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            type: "thread.error",
+            error: expect.objectContaining({ code: "provider_run_failed" }),
+          }),
+        ]));
+        expect(snapshot.events.items).not.toEqual(expect.arrayContaining([
+          expect.objectContaining({ type: "thread.completed", outcome: "aborted" }),
+        ]));
+      } finally {
+        subscription.dispose();
+        timeoutSpy.mockRestore();
+        await threads.shutdownTurns();
+      }
+    },
+  );
+
   it("reserves enough bounded event sinks for canonical Chat Runs", async () => {
     const { threads } = await createHarness();
     const subscriptions = Array.from({ length: 72 }, () => threads.registerEventSink(() => undefined));
@@ -138,7 +439,7 @@ describe("coding agent thread lifecycle", () => {
     expect(firstSnapshot.thread).toMatchObject({
       providerId: "codex",
       projectId: "repo-main",
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       status: "running",
       attention: "none",
     });
@@ -157,6 +458,56 @@ describe("coding agent thread lifecycle", () => {
     const replay = await app.request(`/api/coding-agents/threads/${firstSnapshot.thread.id}/events`);
     expect(replay.status).toBe(200);
     expect(AgentThreadSnapshotSchema.parse(await replay.json()).events.items).toHaveLength(4);
+  });
+
+  it("steers only the owner's exact active initial legacy Turn", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-steer-"));
+    const steerTurn = vi.fn(async () => undefined);
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return {
+          events: [AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          })],
+          resumeState: { conversationId: `sess_${thread.id.slice("thread_".length)}` },
+        };
+      },
+      steerTurn,
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    await expect(threads.steerTurn(ownerPrincipal, created.snapshot.thread.id, {
+      message: "Focus on the failing test.",
+      clientRequestId: "req_thread_steer_1",
+    })).resolves.toBeUndefined();
+    expect(steerTurn).toHaveBeenCalledWith(expect.objectContaining({
+      principal: ownerPrincipal,
+      thread: expect.objectContaining({ id: created.snapshot.thread.id }),
+      message: "Focus on the failing test.",
+      clientRequestId: "req_thread_steer_1",
+      resumeState: { conversationId: `sess_${created.snapshot.thread.id.slice("thread_".length)}` },
+    }));
+    expect(steerTurn.mock.calls[0]?.[0]).not.toHaveProperty("turnId");
+    await expect(threads.steerTurn(ownerPrincipal, created.snapshot.thread.id, {
+      expectedTurnId: "turn_stale_target",
+      message: "Stale.",
+      clientRequestId: "req_thread_steer_stale",
+    })).rejects.toThrow();
+    await expect(threads.steerTurn(otherPrincipal, created.snapshot.thread.id, {
+      message: "Cross-owner.",
+      clientRequestId: "req_thread_steer_other",
+    })).rejects.toThrow();
+    expect(steerTurn).toHaveBeenCalledTimes(1);
   });
 
   it("aggregates every bounded owner project thread beyond the list page", async () => {
@@ -380,14 +731,14 @@ describe("coding agent thread lifecycle", () => {
     });
     const created = await threads.createThread(ownerPrincipal, createBody);
 
-    const reconciled = await threads.reconcileTerminalSessionStopped({
+    const reconciled = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "exited",
     });
-    const duplicate = await threads.reconcileTerminalSessionStopped({
+    const duplicate = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "exited",
     });
 
@@ -429,10 +780,10 @@ describe("coding agent thread lifecycle", () => {
       clientRequestId: "req_create_other_owner",
     });
 
-    const reconciled = await threads.reconcileTerminalSessionStopped({
+    const reconciled = await threads.reconcileTerminalTabStopped({
       ownerId: otherPrincipal.userId,
       workspaceSessionId: workspaceSessionIdForThread(otherThread.snapshot.thread.id),
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "exited",
     });
 
@@ -457,17 +808,17 @@ describe("coding agent thread lifecycle", () => {
       providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
     });
     const created = await threads.createThread(ownerPrincipal, createBody);
-    await threads.reconcileTerminalSessionStopped({
+    await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
       workspaceSessionId: workspaceSessionIdForThread(created.snapshot.thread.id),
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "exited",
     });
 
-    const reused = await threads.reconcileTerminalSessionStopped({
+    const reused = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
       workspaceSessionId: "sess_reused_terminal",
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "failed",
     });
     const raw = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf-8"));
@@ -477,7 +828,7 @@ describe("coding agent thread lifecycle", () => {
       expect.objectContaining({
         ownerId: ownerPrincipal.userId,
         workspaceSessionId: "sess_reused_terminal",
-        terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
         runtimeStatus: "failed",
       }),
     ]);
@@ -491,15 +842,15 @@ describe("coding agent thread lifecycle", () => {
       providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
     });
 
-    const early = await threads.reconcileTerminalSessionStopped({
+    const early = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "failed",
     });
     const created = await threads.createThread(ownerPrincipal, createBody);
-    const duplicate = await threads.reconcileTerminalSessionStopped({
+    const duplicate = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "failed",
     });
     const later = await threads.createThread(ownerPrincipal, {
@@ -512,7 +863,7 @@ describe("coding agent thread lifecycle", () => {
     expect(created.snapshot.thread).toMatchObject({
       status: "failed",
       attention: "failed",
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
     });
     expect(created.snapshot.events.items.at(-2)).toMatchObject({
       type: "thread.status",
@@ -526,7 +877,7 @@ describe("coding agent thread lifecycle", () => {
     expect(later.snapshot.thread).toMatchObject({
       status: "running",
       attention: "none",
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
     });
     expect(attention.items).toEqual([
       expect.objectContaining({

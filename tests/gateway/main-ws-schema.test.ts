@@ -13,18 +13,20 @@ describe("MainWsClientMessageSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("accepts allowlisted per-message model and effort overrides", () => {
+  it("accepts allowlisted per-message model, effort, and access-source overrides", () => {
     const result = MainWsClientMessageSchema.safeParse({
       type: "message",
       text: "hello",
       model: "claude-sonnet-4-5",
       effort: "max",
+      accessSourceId: "matrix_included",
     });
 
     expect(result.success).toBe(true);
     if (result.success && result.data.type === "message") {
       expect(result.data.model).toBe("claude-sonnet-4-5");
       expect(result.data.effort).toBe("max");
+      expect(result.data.accessSourceId).toBe("matrix_included");
     }
   });
 
@@ -44,6 +46,7 @@ describe("MainWsClientMessageSchema", () => {
   it.each([
     ["model", "not-an-allowlisted-model"],
     ["effort", "extreme"],
+    ["accessSourceId", "somebody_elses_key"],
   ])("rejects an unsupported %s override", (key, value) => {
     const result = MainWsClientMessageSchema.safeParse({
       type: "message",

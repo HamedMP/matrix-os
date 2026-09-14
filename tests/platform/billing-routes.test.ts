@@ -48,6 +48,7 @@ describe('platform billing routes', () => {
       apiTimeoutMs: 10_000,
       createCheckoutSession: vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session', id: 'cs_test_session' }),
       retrieveCheckoutSession: vi.fn().mockRejectedValue(new Error('unexpected checkout retrieval')),
+      retrieveRecurringPrice: vi.fn().mockRejectedValue(new Error('unexpected price retrieval')),
       createPortalSession: vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' }),
       constructWebhookEvent: vi.fn(),
     };
@@ -62,6 +63,7 @@ describe('platform billing routes', () => {
     routeEnv: NodeJS.ProcessEnv = env,
     captureEvent?: Parameters<typeof createBillingRoutes>[0]['captureEvent'],
     now: () => Date = () => new Date('2026-05-30T00:00:00.000Z'),
+    redditConversions?: Parameters<typeof createBillingRoutes>[0]['redditConversions'],
   ) {
     const app = new Hono();
     app.route('/billing', createBillingRoutes({
@@ -71,11 +73,12 @@ describe('platform billing routes', () => {
       resolveClerkUserId: () => Promise.resolve(userId),
       now,
       captureEvent,
+      redditConversions,
     }));
     return app;
   }
 
-  it('creates checkout sessions from server-owned plan slugs and omits payment_method_types', async () => {
+  it('creates monthly checkout sessions from server-owned plan and region selections', async () => {
     const app = createApp();
 
     const res = await app.request('/billing/checkout', {
@@ -83,9 +86,17 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_builder',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
+        serverType: 'cpx42',
         runtimeSlot: 'studio',
+        attribution: {
+          rdt_cid: 'reddit-click',
+          utm_source: 'reddit',
+          utm_medium: 'cpc',
+          utm_campaign: 'launch',
+          landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
+        },
       }),
     });
 
@@ -95,12 +106,18 @@ describe('platform billing routes', () => {
       idempotencyKey: expect.any(String),
       clerkUserId: 'user_123',
       customerId: undefined,
-      priceId: 'price_builder_annual',
+      priceId: 'price_builder_monthly',
       mode: 'subscription',
       automaticTax: true,
       allowPromotionCodes: true,
       regionSlug: 'region_nbg1',
       runtimeSlot: 'studio',
+      redditAttributionExpiresAt: '2026-06-06T00:00:00.000Z',
+      attribution: expect.objectContaining({
+        rdt_cid: 'reddit-click',
+        utm_source: 'reddit',
+        utm_campaign: 'launch',
+      }),
       successUrl: 'https://app.matrix-os.com/?billing=success&checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
     }));
@@ -163,7 +180,7 @@ describe('platform billing routes', () => {
     expect(prebilling.createIntent).toHaveBeenCalledWith(expect.objectContaining({
       checkoutAttemptId: expect.any(String),
       clerkUserId: 'user_123',
-      serverType: 'cpx32',
+      serverType: 'cpx42',
       developerTools: ['codex', 'pi'],
     }));
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -336,7 +353,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_builder',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
         returnPath: '/auth/device?user_code=BCDF-GHJK',
       }),
@@ -347,19 +364,19 @@ describe('platform billing routes', () => {
       distinctId: 'user_123',
       properties: expect.objectContaining({
         plan_slug: 'matrix_builder',
-        billing_interval: 'annual',
+        billing_interval: 'monthly',
         region_slug: 'region_nbg1',
         return_path_present: true,
-        price_usd: 190,
+        selected_catalog_price_usd: 100,
       }),
     });
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_CREATED, {
       distinctId: 'user_123',
       properties: expect.objectContaining({
         plan_slug: 'matrix_builder',
-        billing_interval: 'annual',
+        billing_interval: 'monthly',
         region_slug: 'region_nbg1',
-        price_usd: 190,
+        selected_catalog_price_usd: 100,
       }),
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_test_session');
@@ -847,7 +864,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_max',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
         runtimeSlot: 'studio',
       }),
@@ -970,7 +987,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_max',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
         runtimeSlot: 'studio',
       }),
@@ -988,6 +1005,51 @@ describe('platform billing routes', () => {
     });
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
+
+  it.each(['region_ash', 'region_hil'])(
+    'keeps historical Stripe checkout metadata readable for US region %s',
+    async (regionSlug) => {
+      await insertCheckoutAttempt(db, {
+        id: `attempt_historical_${regionSlug}`,
+        clerkUserId: 'user_123',
+        stripeSessionId: `cs_historical_${regionSlug}`,
+        runtimeSlot: 'studio',
+        createdAt: '2026-05-29T23:00:00.000Z',
+        status: 'open',
+      });
+      vi.mocked(stripe.retrieveCheckoutSession).mockResolvedValue({
+        status: 'open',
+        url: 'https://checkout.stripe.test/historical-us',
+        clerkUserId: 'user_123',
+        priceId: 'price_builder_monthly',
+        regionSlug,
+      });
+      const app = createApp();
+
+      const res = await app.request('/billing/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug: 'region_fsn1',
+          runtimeSlot: 'studio',
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toEqual({
+        error: 'Checkout selection conflicts with an open session',
+        code: 'checkout_selection_conflict',
+        selection: {
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug,
+        },
+      });
+      expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+    },
+  );
 
   it('replaces a younger legacy checkout after Stripe confirms it expired', async () => {
     await insertCheckoutAttempt(db, {
@@ -1012,7 +1074,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_max',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_nbg1',
         runtimeSlot: 'studio',
       }),
@@ -1055,7 +1117,7 @@ describe('platform billing routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         planSlug: 'matrix_max',
-        interval: 'annual',
+        interval: 'monthly',
         regionSlug: 'region_fsn1',
         runtimeSlot: 'studio',
       }),
@@ -1127,6 +1189,89 @@ describe('platform billing routes', () => {
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
+  it.each(['region_ash', 'region_hil'])(
+    'accepts the US Builder server shape in region %s',
+    async (regionSlug) => {
+      const app = createApp();
+
+      const res = await app.request('/billing/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug,
+          serverType: 'cpx31',
+          runtimeSlot: 'studio',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ regionSlug }),
+      );
+    },
+  );
+
+  it('rejects a server type that does not match the selected plan and region', async () => {
+    const app = createApp();
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_ash',
+        serverType: 'cpx42',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects annual checkout for new sales while legacy annual prices remain recognizable', async () => {
+    const app = createApp();
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'annual',
+        regionSlug: 'region_fsn1',
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it.each(['region_fsn1', 'region_nbg1'])(
+    'accepts new checkout requests for German region %s',
+    async (regionSlug) => {
+      const app = createApp();
+
+      const res = await app.request('/billing/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug,
+          runtimeSlot: 'studio',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ regionSlug }),
+      );
+    },
+  );
+
   it('rejects unknown developer tool ids with a generic validation error', async () => {
     const app = createApp();
 
@@ -1143,6 +1288,42 @@ describe('platform billing routes', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Invalid request' });
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects more than one developer tool for a server-resolved CPX22 checkout', async () => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_starter',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        developerTools: ['codex', 'pi'],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it.each([[[]], [['codex']]] as const)('accepts the CPX22 developer tool selection %j', async (developerTools) => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_starter',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        developerTools,
+      }),
+    });
+
+    expect(res.status).toBe(200);
   });
 
   it('rejects oversized checkout bodies before parsing developer tool selections', async () => {
@@ -1259,7 +1440,7 @@ describe('platform billing routes', () => {
       includedRuntimeSlots: 3,
       addonRuntimeSlots: 0,
       defaultServerType: 'cpx52',
-      allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+      allowedServerTypes: ['cpx22', 'cpx21', 'cpx42', 'cpx31', 'cpx52', 'cpx41'],
       reason: 'internal engineer access',
       createdBy: 'test',
       expiresAt: null,
@@ -1271,19 +1452,26 @@ describe('platform billing routes', () => {
     const res = await app.request('/billing/status', { method: 'GET' });
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({
+    const body = await res.json();
+    expect(body).toMatchObject({
       entitlement: {
         source: 'override',
         planSlug: 'internal',
         status: 'active',
         maxRuntimeSlots: 3,
-        defaultServerType: 'cpx52',
+        allowedPlanSlugs: ['matrix_starter', 'matrix_builder', 'matrix_max'],
+        portalAvailable: false,
       },
       access: {
         runtimeProxyAllowed: true,
         reason: 'active',
       },
     });
+    expect(body.entitlement).not.toHaveProperty('clerkUserId');
+    expect(body.entitlement).not.toHaveProperty('defaultServerType');
+    expect(body.entitlement).not.toHaveProperty('allowedServerTypes');
+    expect(body.entitlement).not.toHaveProperty('stripeSubscriptionId');
+    expect(body.entitlement).not.toHaveProperty('stripePriceId');
   });
 
   it('returns the generic unavailable code when billing status lookup fails', async () => {
@@ -1365,7 +1553,7 @@ describe('platform billing routes', () => {
       planSlug: 'matrix_max',
       maxRuntimeSlots: 1,
       defaultServerType: 'cpx52',
-      allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+      allowedServerTypes: ['cpx22', 'cpx21', 'cpx42', 'cpx31', 'cpx52', 'cpx41'],
     });
     await expect(getBillingSubscription(db, 'user_123', 'studio', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({
       stripeSubscriptionId: 'sub_123',
@@ -1467,11 +1655,21 @@ describe('platform billing routes', () => {
     const studio = await statusApp.request('/billing/status?runtimeSlot=studio');
 
     await expect(primary.json()).resolves.toMatchObject({
-      entitlement: { stripeSubscriptionId: 'sub_primary', planSlug: 'matrix_starter', status: 'active' },
+      entitlement: {
+        planSlug: 'matrix_starter',
+        status: 'active',
+        allowedPlanSlugs: ['matrix_starter'],
+        portalAvailable: true,
+      },
       access: { runtimeProxyAllowed: true },
     });
     await expect(studio.json()).resolves.toMatchObject({
-      entitlement: { stripeSubscriptionId: 'sub_studio', planSlug: 'matrix_max', status: 'canceled' },
+      entitlement: {
+        planSlug: 'matrix_max',
+        status: 'canceled',
+        allowedPlanSlugs: ['matrix_starter', 'matrix_builder', 'matrix_max'],
+        portalAvailable: true,
+      },
       access: { runtimeProxyAllowed: false },
     });
     await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({ status: 'active' });
@@ -1479,7 +1677,17 @@ describe('platform billing routes', () => {
 
   it('captures subscription revenue metrics from Stripe webhook projections', async () => {
     const captureEvent = vi.fn();
-    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_revenue'));
+    await insertUserMachine(db, {
+      machineId: 'machine_revenue', clerkUserId: 'user_123', handle: 'revenue-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+      serverType: 'cpx31', location: 'ash',
+    });
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_revenue', {
+      runtimeSlot: 'primary',
+      priceId: 'price_builder_monthly',
+      unitAmountMinor: 2000,
+    }));
     const app = createApp(null, env, captureEvent);
 
     const res = await app.request('/billing/webhooks/stripe', {
@@ -1492,10 +1700,22 @@ describe('platform billing routes', () => {
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED, {
       distinctId: 'user_123',
       properties: {
-        plan_slug: 'matrix_max',
+        plan_slug: 'matrix_builder',
         subscription_status: 'active',
         billing_interval: 'monthly',
-        price_usd: 49,
+        recurring_unit_amount_minor: 2000,
+        recurring_total_amount_minor: 2000,
+        currency: 'usd',
+        price_interval_count: 1,
+        price_quantity: 1,
+        runtime_slot: 'primary',
+        region_slug: 'region_ash',
+        location_code: 'ash',
+        location_label: 'Ashburn, Virginia',
+        country: 'United States',
+        network_zone: 'us-east',
+        server_type: 'cpx31',
+        provider: 'hetzner',
         included_runtime_slots: 1,
         addon_runtime_slots: 0,
         max_runtime_slots: 1,
@@ -1503,6 +1723,105 @@ describe('platform billing routes', () => {
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('sub_123');
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cus_123');
+
+    const status = await createApp('user_123').request('/billing/status?runtimeSlot=primary');
+    await expect(status.json()).resolves.toMatchObject({
+      entitlement: {
+        planSlug: 'matrix_builder',
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: 'usd',
+          interval: 'monthly',
+          intervalCount: 1,
+          quantity: 1,
+        },
+        runtimePlacement: {
+          regionSlug: 'region_ash',
+          label: 'Ashburn, Virginia',
+          countryLabel: 'United States',
+          networkZone: 'us-east',
+        },
+      },
+    });
+  });
+
+  it('backfills a legacy subscription from its attached Stripe Price without catalog guessing', async () => {
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_legacy_price', {
+      runtimeSlot: 'primary', priceId: 'price_builder_monthly', unitAmountMinor: 2000,
+    }));
+    const webhookApp = createApp(null);
+    await webhookApp.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    await db.executor
+      .updateTable('billing_subscriptions')
+      .set({
+        price_unit_amount_minor: null,
+        price_currency: null,
+        price_interval_count: null,
+        price_quantity: null,
+      })
+      .where('stripe_subscription_id', '=', 'sub_123')
+      .execute();
+    vi.mocked(stripe.retrieveRecurringPrice).mockResolvedValue({
+      priceId: 'price_builder_monthly',
+      unitAmountMinor: 2000,
+      currency: 'usd',
+      interval: 'monthly',
+      intervalCount: 1,
+    });
+    const app = createApp('user_123');
+
+    const first = await app.request('/billing/status?runtimeSlot=primary');
+    const second = await app.request('/billing/status?runtimeSlot=primary');
+
+    await expect(first.json()).resolves.toMatchObject({
+      entitlement: {
+        recurringPrice: {
+          unitAmountMinor: 2000,
+          currency: 'usd',
+          interval: 'monthly',
+          intervalCount: 1,
+          quantity: 1,
+        },
+      },
+    });
+    await expect(second.json()).resolves.toMatchObject({
+      entitlement: { recurringPrice: { unitAmountMinor: 2000 } },
+    });
+    expect(stripe.retrieveRecurringPrice).toHaveBeenCalledOnce();
+  });
+
+  it('captures invoice amounts instead of treating catalog price as collected revenue', async () => {
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_invoice_subscription', {
+        runtimeSlot: 'primary', priceId: 'price_builder_monthly', unitAmountMinor: 2000,
+      }))
+      .mockReturnValueOnce(invoiceEvent(
+        'evt_invoice_paid_amount', 'invoice.paid', 'sub_123',
+        { amountDueMinor: 2380, amountPaidMinor: 2380, currency: 'usd' },
+      ));
+    const captureEvent = vi.fn();
+    const app = createApp(null, env, captureEvent);
+
+    await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    const paid = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(paid.status).toBe(200);
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_INVOICE_PAID, {
+      distinctId: 'user_123',
+      properties: {
+        amount_due_minor: 2380,
+        amount_paid_minor: 2380,
+        currency: 'usd',
+        plan_slug: 'matrix_builder',
+        runtime_slot: 'primary',
+      },
+    });
   });
 
   it('captures checkout completed and expired webhooks without Stripe session ids', async () => {
@@ -1534,6 +1853,57 @@ describe('platform billing routes', () => {
       properties: { stripe_event_type: 'checkout.session.expired' },
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_growth_test');
+  });
+
+  it('retries signed Stripe purchase attribution when Reddit delivery fails', async () => {
+    const sendPurchase = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValue('sent');
+    const sendSignUp = vi.fn().mockResolvedValue('sent');
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue({
+      id: 'evt_reddit_purchase',
+      type: 'checkout.session.completed',
+      created: 1_779_753_600,
+      data: {
+        object: {
+          id: 'cs_reddit_purchase',
+          mode: 'payment',
+          client_reference_id: 'user_123',
+          amount_total: 10000,
+          currency: 'usd',
+          metadata: {
+            clerk_user_id: 'user_123',
+            matrix_attr_rdt_cid: 'reddit-click',
+            matrix_attr_landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
+          },
+        },
+      },
+    });
+    const app = createApp(
+      null,
+      env,
+      undefined,
+      () => new Date('2026-05-30T00:00:00.000Z'),
+      { sendPurchase, sendSignUp },
+    );
+
+    const request = () => app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+    expect((await request()).status).toBe(500);
+    expect((await request()).status).toBe(200);
+    expect(sendPurchase).toHaveBeenCalledTimes(2);
+    expect(sendPurchase).toHaveBeenLastCalledWith({
+      eventAt: 1_779_753_600_000,
+      conversionId: 'cs_reddit_purchase',
+      clerkUserId: 'user_123',
+      clickId: 'reddit-click',
+      eventSourceUrl: 'https://matrix-os.com/?rdt_cid=reddit-click&utm_source=reddit',
+      currency: 'usd',
+      value: 100,
+    });
   });
 
   it('passes server-written intent metadata to signed checkout-expiry cleanup', async () => {
@@ -2443,6 +2813,9 @@ function subscriptionEvent(id: string, overrides: {
   trialStart?: number;
   trialEnd?: number;
   prebillingIntentId?: string;
+  unitAmountMinor?: number;
+  currency?: string;
+  intervalCount?: number;
 } = {}): StripeWebhookEvent {
   return {
     id,
@@ -2469,7 +2842,12 @@ function subscriptionEvent(id: string, overrides: {
         items: {
           data: [
             {
-              price: { id: overrides.priceId ?? 'price_max_monthly' },
+              price: {
+                id: overrides.priceId ?? 'price_max_monthly',
+                unit_amount: overrides.unitAmountMinor ?? 20000,
+                currency: overrides.currency ?? 'usd',
+                recurring: { interval: 'month', interval_count: overrides.intervalCount ?? 1 },
+              },
               quantity: 1,
               current_period_start: overrides.itemCurrentPeriodStart,
               current_period_end: overrides.itemCurrentPeriodEnd,
@@ -2486,6 +2864,7 @@ function invoiceEvent(
   id: string,
   type: 'invoice.paid' | 'invoice.payment_failed',
   subscriptionId: string,
+  amounts: { amountDueMinor?: number; amountPaidMinor?: number; currency?: string } = {},
 ): StripeWebhookEvent {
   return {
     id,
@@ -2496,6 +2875,9 @@ function invoiceEvent(
         id: `in_${id}`,
         created: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
         billing_reason: 'subscription_cycle',
+        amount_due: amounts.amountDueMinor ?? 0,
+        amount_paid: amounts.amountPaidMinor ?? 0,
+        currency: amounts.currency ?? 'usd',
         parent: { subscription_details: { subscription: subscriptionId } },
       },
     },

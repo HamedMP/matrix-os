@@ -1,0 +1,54 @@
+[Unit]
+Description=Matrix OS fixed-profile collaboration scope runtime supervisor
+After=matrix-restore.service
+Requires=matrix-restore.service
+ConditionPathExists=/opt/matrix/restore-complete
+ConditionPathExists=/opt/matrix/bin/matrix-scope-runtime
+ConditionPathExists=/opt/matrix/app/packages/scope-runtime/dist/main.js
+ConditionPathExists=!/opt/matrix/app/SCOPE_RUNTIME_DISABLED
+
+[Service]
+Type=simple
+# The system-owned supervisor needs the systemd manager to create transient
+# workload units. Its IPC accepts only source-controlled fixed-profile fields;
+# every spawned workload uses DynamicUser and the isolated profile.
+User=root
+Group=matrix
+ExecStart=/opt/matrix/bin/matrix-scope-runtime
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=45
+KillMode=control-group
+RuntimeDirectory=matrix-scope-runtime
+RuntimeDirectoryMode=0770
+StateDirectory=matrix-scope-runtime
+StateDirectoryMode=0700
+UMask=0007
+PrivateNetwork=yes
+PrivateIPC=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

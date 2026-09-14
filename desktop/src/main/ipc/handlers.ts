@@ -6,11 +6,13 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { DesktopReleaseNotes, DesktopUpdateSnapshot } from "../../shared/desktop-update";
-import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
+import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse, SupportIdentityResponse } from "@matrix-os/contracts";
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 import { clampZoomFactor, DEFAULT_ZOOM_FACTOR } from "../platform/zoom";
+import { AppError, categoryMessage, type AppErrorCategory } from "../../shared/app-error";
+import { BuildSourceSchema, type BuildSource } from "@matrix-os/contracts";
 
 interface IpcMainLike {
   handle(
@@ -36,6 +38,10 @@ export interface HandlerContext {
     shouldOpen: boolean;
   }>;
   acknowledgeWhatsNew: (version: string) => Promise<void>;
+  getAppVersion: () => string;
+  buildSource: BuildSource | null;
+  completeAnalyticsFlush: () => void;
+  fetchSupportIdentity: () => Promise<SupportIdentityResponse>;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
   fetchProjectWorkspace: (
     request: CodingAgentProjectWorkspaceRequest,
@@ -63,6 +69,8 @@ export interface HandlerContext {
   fetchFileSearch: (request: FileSearchRequest) => Promise<FileSearchResponse>;
   fetchFileContent: (request: FileReadRequest) => Promise<FileReadResponse>;
   saveFileContent: (request: FileWriteRequest) => Promise<FileWriteResponse>;
+  downloadFile: (request: InvokeRequest<"runtime:download-file">) => Promise<InvokeResponse<"runtime:download-file">>;
+  cancelFileDownload: (requestId: string) => InvokeResponse<"runtime:cancel-file-download">;
   prepareSourceCommit: (
     request: SourceControlPrepareCommitRequest,
   ) => Promise<SourceControlPrepareCommitResponse>;
@@ -102,6 +110,33 @@ type Handler<C extends InvokeChannel> = (
 
 const PUBLIC_IPC_ERRORS = new Set(["invalid request", "internal error", "embed unavailable"]);
 
+const THREAD_CREATE_ERROR_CODES: Record<AppErrorCategory, string> = {
+  unauthorized: "thread_create_unauthorized",
+  offline: "thread_create_offline",
+  timeout: "thread_create_timeout",
+  notFound: "thread_create_not_found",
+  server: "thread_create_server",
+  misconfigured: "thread_create_misconfigured",
+  fatalSession: "thread_create_fatal_session",
+};
+
+function threadCreateFailure(error: unknown): InvokeResponse<"runtime:create-thread"> {
+  const category: AppErrorCategory = error instanceof AppError ? error.category : "server";
+  return {
+    ok: false,
+    error: {
+      code: THREAD_CREATE_ERROR_CODES[category],
+      safeMessage: categoryMessage(category),
+      retryable: category !== "unauthorized" && category !== "fatalSession",
+      recoveryActions: category === "unauthorized" || category === "fatalSession"
+        ? ["sign_in"]
+        : category === "misconfigured"
+          ? ["select_runtime"]
+          : ["retry"],
+    },
+  };
+}
+
 // The sender's webContents is the only zoom target; anything else (tests,
 // malformed events) degrades to a no-op instead of throwing.
 interface ZoomTarget {
@@ -137,6 +172,11 @@ function toWebContentsViewBounds(
 }
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
+  const buildSource = BuildSourceSchema.nullable().parse(ctx.buildSource);
+  const { downloadFile, cancelFileDownload } = ctx;
+  if (typeof downloadFile !== "function" || typeof cancelFileDownload !== "function") {
+    throw new Error("download service unavailable");
+  }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
@@ -166,6 +206,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     });
   }
 
+  handle("analytics:flush-complete", () => {
+    ctx.completeAnalyticsFlush();
+    return { ok: true };
+  });
   handle("auth:start-device-flow", () => ctx.auth.startDeviceFlow());
   handle("auth:poll", () => ctx.auth.poll());
   handle("auth:status", () => ctx.auth.getStatus());
@@ -177,6 +221,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     await ctx.auth.expireSession();
     return { ok: true };
   });
+  handle("support:get-identity", () => ctx.fetchSupportIdentity());
+
+  handle("app:get-version", () => ({ version: ctx.getAppVersion(), source: buildSource }));
 
   handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
   handle("runtime:select", async ({ slot }) => {
@@ -198,6 +245,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:browse-files", (request) => ctx.fetchFileBrowse(request));
   handle("runtime:search-files", (request) => ctx.fetchFileSearch(request));
   handle("runtime:get-file-content", (request) => ctx.fetchFileContent(request));
+  handle("runtime:download-file", (request) => downloadFile(request));
+  handle("runtime:cancel-file-download", ({ requestId }) => cancelFileDownload(requestId));
   handle("runtime:save-file-content", (request) => ctx.saveFileContent(request));
   handle("runtime:prepare-source-commit", (request) => ctx.prepareSourceCommit(request));
   handle("runtime:create-source-pull-request", (request) => ctx.createSourcePullRequest(request));
@@ -212,7 +261,17 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
-  handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
+  handle("runtime:create-thread", async (request) => {
+    try {
+      return { ok: true, snapshot: await ctx.createAgentThread(request) };
+    } catch (error: unknown) {
+      console.warn(
+        "[ipc] runtime:create-thread failed:",
+        error instanceof AppError ? error.category : error instanceof Error ? error.name : "UnknownError",
+      );
+      return threadCreateFailure(error);
+    }
+  });
   handle("runtime:create-turn", (request) => ctx.createAgentTurn(request));
   handle("runtime:abort-thread", (request) => ctx.abortAgentThread(request));
 
@@ -273,14 +332,26 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
-  handle("embed:open", async ({ kind, slug, appIdentity, bounds, active }, event) => {
+  handle("embed:open", async (request, event) => {
     try {
+      const bounds = toWebContentsViewBounds(request.bounds, event);
+      if (request.kind === "hosted-shell" || request.kind === "code-editor") {
+        return await ctx.embeds.open({ kind: request.kind, bounds, active: request.active });
+      }
+      if (request.kind === "browser") {
+        return await ctx.embeds.open({
+          kind: request.kind,
+          url: request.url,
+          bounds,
+          active: request.active,
+        });
+      }
       return await ctx.embeds.open({
-        kind,
-        slug,
-        appIdentity,
-        bounds: toWebContentsViewBounds(bounds, event),
-        active,
+        kind: request.kind,
+        slug: request.slug,
+        appIdentity: request.appIdentity,
+        bounds,
+        active: request.active,
       });
     } catch (err: unknown) {
       console.warn(
@@ -299,6 +370,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("embed:set-active", ({ embedId, active }) => ({
     ok: ctx.embeds.setActive(embedId, active),
   }));
+  handle("embed:deactivate", ({ embedId }) => ctx.embeds.deactivate(embedId));
   handle("embed:suspend-all", () => ({ ok: ctx.embeds.suspendAll() }));
   handle("embed:reload", async ({ embedId }) => ({ ok: await ctx.embeds.reload(embedId) }));
   handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));

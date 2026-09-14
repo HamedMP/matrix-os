@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWorkspaceEventPublisher } from "../../packages/gateway/src/workspace-event-publisher.js";
 
+const TEST_TERMINAL_REF = {
+  workspaceId: "tws_00000000000000000000000000000001",
+  tabId: "tt_00000000000000000000000000000001",
+} as const;
+
 describe("workspace event publisher", () => {
   it("publishes bounded coding-agent projection changes in project and task scope", async () => {
     const eventStore = {
@@ -66,7 +71,7 @@ describe("workspace event publisher", () => {
       pr: 42,
       agent: "codex",
       runtime: { type: "zellij", status: "running" },
-      terminalSessionId: "term_sess_abc123",
+      terminalRef: TEST_TERMINAL_REF,
     });
     await publisher.publishSessionStopped({
       id: "sess_abc123",
@@ -78,7 +83,7 @@ describe("workspace event publisher", () => {
       pr: 42,
       agent: "codex",
       runtime: { type: "zellij", status: "exited" },
-      terminalSessionId: "term_sess_abc123",
+      terminalRef: TEST_TERMINAL_REF,
     });
 
     expect(eventStore.publishEvent).toHaveBeenNthCalledWith(1, {
@@ -108,7 +113,7 @@ describe("workspace event publisher", () => {
         kind: "agent",
         pr: 42,
         runtimeStatus: "running",
-        terminalSessionId: "term_sess_abc123",
+      terminalRef: TEST_TERMINAL_REF,
         worktreeId: "wt_abc123def456",
       },
     });
@@ -124,7 +129,7 @@ describe("workspace event publisher", () => {
         kind: "agent",
         pr: 42,
         runtimeStatus: "exited",
-        terminalSessionId: "term_sess_abc123",
+      terminalRef: TEST_TERMINAL_REF,
         worktreeId: "wt_abc123def456",
       },
     });
@@ -176,7 +181,7 @@ describe("workspace event publisher", () => {
       pr: 42,
       agent: "codex" as const,
       runtime: { type: "zellij" as const, status: "exited" as const },
-      terminalSessionId: "term_sess_abc123",
+      terminalRef: TEST_TERMINAL_REF,
     };
 
     await publisher.publishSessionStopped(session);
@@ -193,7 +198,7 @@ describe("workspace event publisher", () => {
         kind: "agent",
         pr: 42,
         runtimeStatus: "exited",
-        terminalSessionId: "term_sess_abc123",
+      terminalRef: TEST_TERMINAL_REF,
         worktreeId: "wt_abc123def456",
       },
     });
@@ -218,7 +223,7 @@ describe("workspace event publisher", () => {
       pr: 42,
       agent: "codex",
       runtime: { type: "zellij", status: "exited" },
-      terminalSessionId: "term_sess_abc123",
+      terminalRef: TEST_TERMINAL_REF,
     });
 
     await expect(Promise.race([
@@ -249,7 +254,7 @@ describe("workspace event publisher", () => {
       pr: 42,
       agent: "codex",
       runtime: { type: "zellij", status: "failed" },
-      terminalSessionId: "term_sess_abc123",
+      terminalRef: TEST_TERMINAL_REF,
     })).resolves.toBeUndefined();
     await Promise.resolve();
 

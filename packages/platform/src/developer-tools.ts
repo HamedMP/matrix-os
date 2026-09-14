@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { getMatrixDeveloperToolPreinstallLimit } from '@matrix-os/contracts';
 
 export const DEVELOPER_TOOL_IDS = ['codex', 'claude-code', 'opencode', 'pi'] as const;
 export type DeveloperToolId = (typeof DEVELOPER_TOOL_IDS)[number];
@@ -12,6 +13,19 @@ export function canonicalizeDeveloperTools(input: readonly DeveloperToolId[]): D
   return DEVELOPER_TOOL_IDS.filter((tool) => selected.has(tool));
 }
 
+export function developerToolsAllowedForServerType(
+  serverType: string,
+  developerTools: readonly DeveloperToolId[],
+): boolean {
+  const limit = getMatrixDeveloperToolPreinstallLimit(serverType);
+  return limit === null || canonicalizeDeveloperTools(developerTools).length <= limit;
+}
+
+export function defaultDeveloperToolsForServerType(serverType: string): DeveloperToolId[] {
+  const limit = getMatrixDeveloperToolPreinstallLimit(serverType);
+  return limit === null ? [...DEFAULT_DEVELOPER_TOOLS] : DEFAULT_DEVELOPER_TOOLS.slice(0, limit);
+}
+
 export const DeveloperToolsSchema = z
   .array(DeveloperToolIdSchema)
   .max(DEVELOPER_TOOL_IDS.length)
@@ -21,6 +35,14 @@ export const DeveloperToolsWithDefaultSchema = z.preprocess(
   (value) => value === undefined ? DEFAULT_DEVELOPER_TOOLS : value,
   DeveloperToolsSchema,
 );
+
+export function resolveProvisioningDeveloperTools(
+  explicitSelection: readonly DeveloperToolId[] | undefined,
+  settlingCheckoutSelection: readonly DeveloperToolId[] | undefined,
+): DeveloperToolId[] | undefined {
+  const selection = explicitSelection ?? settlingCheckoutSelection;
+  return selection === undefined ? undefined : canonicalizeDeveloperTools(selection);
+}
 
 export function serializeDeveloperTools(input: readonly DeveloperToolId[] = DEFAULT_DEVELOPER_TOOLS): string {
   return JSON.stringify(canonicalizeDeveloperTools(input));

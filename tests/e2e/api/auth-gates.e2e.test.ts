@@ -60,8 +60,8 @@ describe("E2E: Authentication gates", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects /api/terminal/sessions without token", async () => {
-    const res = await fetch(`${gw.url}/api/terminal/sessions`);
+  it("rejects /api/terminal/workspaces without token", async () => {
+    const res = await fetch(`${gw.url}/api/terminal/workspaces`);
     expect(res.status).toBe(401);
   });
 

@@ -29,13 +29,11 @@ const RUNTIME_SETUP: Record<AgentRuntimeId, ProviderSetupCommand> = {
     key: "hermes:model",
     label: "Hermes provider setup",
     command: "hermes model",
-    sessionName: "matrix-setup-hermes-model",
   },
   openclaw: {
     key: "openclaw:model-auth",
     label: "OpenClaw provider setup",
     command: "openclaw models auth add",
-    sessionName: "matrix-setup-openclaw-auth",
   },
 };
 
@@ -44,13 +42,11 @@ const RUNTIME_INSTALL: Record<AgentRuntimeId, ProviderSetupCommand> = {
     key: "hermes:install",
     label: "Install Hermes",
     command: "/opt/matrix/bin/matrix-agent-runtime-control install hermes",
-    sessionName: "matrix-install-hermes",
   },
   openclaw: {
     key: "openclaw:install",
     label: "Install OpenClaw",
     command: "/opt/matrix/bin/matrix-agent-runtime-control install openclaw",
-    sessionName: "matrix-install-openclaw",
   },
 };
 
@@ -59,13 +55,11 @@ const RUNTIME_RESTART: Record<AgentRuntimeId, ProviderSetupCommand> = {
     key: "hermes:restart",
     label: "Restart Hermes",
     command: "/opt/matrix/bin/matrix-agent-runtime-control switch hermes",
-    sessionName: "matrix-restart-hermes",
   },
   openclaw: {
     key: "openclaw:restart",
     label: "Restart OpenClaw",
     command: "/opt/matrix/bin/matrix-agent-runtime-control switch openclaw",
-    sessionName: "matrix-restart-openclaw",
   },
 };
 
@@ -73,7 +67,6 @@ const CLAUDE_SETUP: ProviderSetupCommand = {
   key: "claude:login",
   label: "Claude login",
   command: "claude",
-  sessionName: "matrix-setup-claude-login",
 };
 
 function statusLabel(value: string): string {

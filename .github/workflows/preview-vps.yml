@@ -332,8 +332,9 @@ jobs:
           provision_body="$(jq -cn \
             --arg owner "$PREVIEW_CLERK_USER_ID" \
             --arg handle "$HANDLE" \
+            --arg bundle_version "$VERSION" \
             --argjson access "$access_user_ids" \
-            '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}')"
+            '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access, bundleVersion: $bundle_version}')"
           code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
             -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision" \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
@@ -396,6 +397,69 @@ jobs:
               jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
                 "$response" >/dev/null
           }
+          collect_preview_diagnostics() {
+            local body response=/tmp/preview-update-diagnostics.json state_script
+            if ! printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+              echo "Preview diagnostics unavailable because the runtime address is invalid." >&2
+              return 1
+            fi
+
+            read -r -d '' state_script <<'PYTHON' || true
+          import json
+          import os
+          import re
+          import stat
+
+          def read_regular(path, limit):
+              fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+              try:
+                  metadata = os.fstat(fd)
+                  if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 1 or metadata.st_size > limit:
+                      raise ValueError("invalid file")
+                  value = os.read(fd, limit + 1)
+                  if len(value) > limit:
+                      raise ValueError("oversized file")
+                  return value.decode("utf-8")
+              finally:
+                  os.close(fd)
+
+          state = {}
+          try:
+              value = read_regular("/opt/matrix/app/BUNDLE_VERSION", 256).strip()
+              state["appVersion"] = value if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) else "invalid"
+          except (OSError, UnicodeError, ValueError):
+              state["appVersion"] = "unavailable"
+          try:
+              payload = json.loads(read_regular("/opt/matrix/release.json", 65536))
+              value = payload.get("version")
+              state["releaseVersion"] = value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) else "invalid"
+          except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+              state["releaseVersion"] = "unavailable"
+          try:
+              payload = json.loads(read_regular("/opt/matrix/app/.update-error.json", 65536))
+              code = payload.get("code")
+              version = payload.get("version")
+              state["updateError"] = code if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) else "invalid"
+              state["updateVersion"] = version if isinstance(version, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", version) else "invalid"
+          except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+              state["updateError"] = "none"
+          try:
+              value = read_regular("/opt/matrix/staging/update-phase", 64).strip()
+              state["updatePhase"] = value if re.fullmatch(r"[a-z][a-z-]{0,31}", value) else "invalid"
+          except (OSError, UnicodeError, ValueError):
+              state["updatePhase"] = "idle"
+          print(json.dumps(state, sort_keys=True))
+          PYTHON
+            body="$(jq -cn --arg script "$state_script" \
+              '{command:["/usr/bin/python3","-c",$script],timeoutMs:10000}')"
+            echo "::group::Sanitized preview updater state"
+            if send_runtime_command "$body" "$response"; then
+              jq -r '.stdout // ""' "$response"
+            else
+              echo "Bounded updater-state collection failed." >&2
+            fi
+            echo "::endgroup::"
+          }
           probe_active_bundle_version() {
             local body response=/tmp/preview-active-bundle-version.json probe_script
             read -r -d '' probe_script <<'PYTHON' || true
@@ -426,6 +490,35 @@ jobs:
             local body response=/tmp/preview-sync-agent-restart.json
             body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"],"timeoutMs":30000}'
             send_runtime_command "$body" "$response"
+          }
+          reconcile_preview_registration() {
+            local body response=/tmp/preview-registration-recovery.json
+            jq -e --arg h "$HANDLE" --arg v "$VERSION" \
+              '.status == "running" and .healthy == true and .handle == $h and .runtimeSlot == $h and .runtimeVersion == $v and (.machineId | type == "string") and (.publicIPv4 | type == "string")' \
+              <<< "$runtime" >/dev/null
+            body="$(jq -cn --rawfile script scripts/preview-registration-recovery.py \
+              --arg h "$HANDLE" --arg m "$(jq -r '.machineId' <<< "$runtime")" \
+              --arg v "$VERSION" --arg s "$address" \
+              '{command:["/usr/bin/python3","-c",$script,$h,$m,$v,$s],timeoutMs:15000}')"
+            send_runtime_command "$body" "$response"
+            echo "Preview registration verified against platform and host identity."
+          }
+          verify_preview_stability() {
+            local baseline="" current response=/tmp/preview-runtime-stability.json body until_time
+            body='{"command":["/usr/bin/systemctl","show","matrix-gateway.service","--property=MainPID","--property=NRestarts","--property=ActiveState"],"timeoutMs":10000}'
+            until_time=$((SECONDS + 900))
+            while true; do
+              send_runtime_command "$body" "$response"
+              current="$(jq -er '.stdout | select(contains("ActiveState=active") and (contains("MainPID=0\n") | not))' "$response")"
+              if [ -n "$baseline" ] && [ "$current" != "$baseline" ]; then
+                echo "Preview gateway restarted during stability validation." >&2
+                exit 1
+              fi
+              baseline="$current"
+              [ "$SECONDS" -lt "$until_time" ] || break
+              sleep 30
+            done
+            echo "Preview gateway remained stable for 15 minutes."
           }
           code="$(attempt)"
           if [ "$code" != "200" ]; then
@@ -474,6 +567,8 @@ jobs:
               if active_bundle_version="$(probe_active_bundle_version 2>/dev/null)"; then
                 echo "Active app version for ${HANDLE}: ${active_bundle_version:-unavailable}"
                 if [ "$active_bundle_version" = "$VERSION" ]; then
+                  reconcile_preview_registration
+                  verify_preview_stability
                   echo "Preview ready: ${HANDLE} is healthy on ${VERSION}"
                   break
                 fi
@@ -504,6 +599,7 @@ jobs:
               exit 1
             fi
             if [ "$SECONDS" -ge "$deadline" ]; then
+              collect_preview_diagnostics || true
               echo "Timed out waiting for ${HANDLE} to install ${VERSION} (last: status=${status}, healthy=${healthy}, version=${runtime_version})." >&2
               exit 1
             fi

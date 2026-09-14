@@ -169,6 +169,42 @@ describe("integration discovery", () => {
     expect(result.content[0].text).toContain("list_messages");
     expect(result.content[0].text).toContain("maxResults");
   });
+
+  it("describes safe parameter formats and bounds from the registry", async () => {
+    const fetcher = mockFetcher({
+      body: [{
+        id: "twitter",
+        name: "X",
+        actions: {
+          get_user_by_username: {
+            params: {
+              username: {
+                type: "string",
+                required: true,
+                minLength: 1,
+                maxLength: 15,
+                pattern: "^[A-Za-z0-9_]{1,15}$",
+                patternMessage: "must be a valid X username without @",
+              },
+            },
+          },
+          search_recent_posts: {
+            params: {
+              maxResults: { type: "number", minimum: 10, maximum: 100 },
+            },
+          },
+        },
+      }],
+    });
+
+    const result = await describeServiceHandler({ service: "twitter" }, fetcher);
+
+    expect(result.content[0].text).toContain(
+      "username (required): string [length: 1-15, format: must be a valid X username without @]",
+    );
+    expect(result.content[0].text).toContain("maxResults: number [range: 10-100]");
+    expect(result.content[0].text).not.toContain("^[A-Za-z0-9_]");
+  });
 });
 
 describe("disconnect_service handler", () => {

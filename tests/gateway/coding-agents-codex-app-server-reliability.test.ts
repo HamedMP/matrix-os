@@ -67,6 +67,7 @@ async function startFakeRuntime(
     failFirstToolCompletionWrite?: boolean;
     initialTranscriptBytes?: number;
     stubControlServer?: boolean;
+    env?: Record<string, string>;
   } = {},
 ): Promise<FakeRuntime> {
   const shortName = name.slice(0, 8);
@@ -146,9 +147,9 @@ async function startFakeRuntime(
     config,
   ], {
     cwd: homePath,
-    env: options.stubControlServer
-      ? { ...process.env, NODE_OPTIONS: `--import=${stubControlServerPath}` }
-      : process.env,
+    env: { ...process.env, ...options.env,
+      ...(options.stubControlServer ? { NODE_OPTIONS: `--import=${stubControlServerPath}` } : {}),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   return { child, controlPath, eventPath, homePath };
@@ -182,6 +183,126 @@ const initialize = "if (message.method === 'initialize') console.log(JSON.string
 const startThread = "else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));";
 
 describe("Codex app-server runner reliability", () => {
+  it("allows a progressing build to run beyond the no-progress and connector budgets", async () => {
+    const runtime = await startFakeRuntime("healthy_build", [
+      initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'command', type: 'commandExecution' } } }));",
+      "  const progress = setInterval(() => console.log(JSON.stringify({ method: 'item/commandExecution/outputDelta', params: { turnId: 'native-turn', itemId: 'command', delta: 'build progress' } })), 20);",
+      "  setTimeout(() => { clearInterval(progress); console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } })); }, 400);",
+      "} else if (message.method === 'turn/interrupt') console.log(JSON.stringify({ id: message.id, result: {} }));",
+    ], { stubControlServer: true, env: { MATRIX_CODEX_NO_PROGRESS_MS: "100", MATRIX_CODEX_TOOL_DEADLINE_MS: "100", MATRIX_CODEX_COMMAND_DEADLINE_MS: "2000" } });
+    try {
+      await waitForTranscript(runtime.eventPath, /"type":"turn\.completed"/);
+      expect((await replayTranscriptResult(runtime.eventPath)).outcomes).toEqual(["completed"]);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("does not count empty transport output as execution progress", async () => {
+    const runtime = await startFakeRuntime("empty_output", [
+      initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'command', type: 'commandExecution' } } }));",
+      "  setInterval(() => console.log(JSON.stringify({ method: 'item/commandExecution/outputDelta', params: { turnId: 'native-turn', itemId: 'command', delta: '' } })), 20);",
+      "} else if (message.method === 'turn/interrupt') console.log(JSON.stringify({ id: message.id, result: {} }));",
+    ], { stubControlServer: true, env: { MATRIX_CODEX_NO_PROGRESS_MS: "100" } });
+    try {
+      await expect(waitForExit(runtime.child)).resolves.toBe(1);
+      expect((await replayTranscriptResult(runtime.eventPath)).outcomes).toEqual(["failed"]);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("fences a late result and bounds an interrupt that never answers", async () => {
+    const runtime = await startFakeRuntime("late_result", [
+      initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'switch-project', type: 'mcpToolCall', server: 'posthog', tool: 'posthog_switch_project' } } }));",
+      "} else if (message.method === 'turn/interrupt') {",
+      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: 'late', delta: 'Must not resurrect.' } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn', status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true, env: { MATRIX_CODEX_TOOL_DEADLINE_MS: "100" } });
+    try {
+      await expect(waitForExit(runtime.child, 8_000)).resolves.toBe(1);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      expect(outcomes).toEqual(["failed"]);
+      expect(events.some((item) => item.type === "assistant.text.delta")).toBe(false);
+    } finally {
+      await cleanup(runtime);
+    }
+  }, 10_000);
+
+  it("expires one stalled batch member despite progress from another member", async () => {
+    const runtime = await startFakeRuntime("batch_stall", [
+      initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  for (const [id, type] of [['stuck', 'mcpToolCall'], ['healthy', 'commandExecution']]) console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id, type } } }));",
+      "  setInterval(() => console.log(JSON.stringify({ method: 'item/commandExecution/outputDelta', params: { turnId: 'native-turn', itemId: 'healthy', delta: 'still building' } })), 20);",
+      "} else if (message.method === 'turn/interrupt') console.log(JSON.stringify({ id: message.id, result: {} }));",
+    ], { stubControlServer: true, env: { MATRIX_CODEX_TOOL_DEADLINE_MS: "100" } });
+    try {
+      await expect(waitForExit(runtime.child)).resolves.toBe(1);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      expect(events.filter((item) => item.type === "tool.started")).toHaveLength(2);
+      expect(events.filter((item) => item.type === "tool.completed")).toHaveLength(2);
+      expect(outcomes).toEqual(["failed"]);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("does not charge human approval wait against execution deadlines", async () => {
+    const runtime = await startFakeRuntime("human_wait", [
+      initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'command', type: 'commandExecution' } } }));",
+      "  console.log(JSON.stringify({ id: 42, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread', turnId: 'native-turn', itemId: 'command' } }));",
+      "}",
+    ], { env: { MATRIX_CODEX_COMMAND_DEADLINE_MS: "100", MATRIX_CODEX_NO_PROGRESS_MS: "100" } });
+    try {
+      const transcript = await waitForTranscript(runtime.eventPath, /approval\.requested/);
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(runtime.child.exitCode).toBeNull();
+      expect(await readFile(runtime.eventPath, "utf8")).not.toContain('"type":"turn.failed"');
+      expect(transcript).toContain("approval.requested");
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("bounds a never-returning project switch without replaying it, even when cancellation fails", async () => {
+    const runtime = await startFakeRuntime("stuck_switch", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'switch-project', type: 'mcpToolCall', server: 'posthog', tool: 'posthog_switch_project', status: 'inProgress' } } }));",
+      "} else if (message.method === 'turn/interrupt') {",
+      "  console.log(JSON.stringify({ id: message.id, error: { code: -1, message: 'private failure' } }));",
+      "}",
+    ], { stubControlServer: true, env: { MATRIX_CODEX_TOOL_DEADLINE_MS: "100" } });
+    try {
+      await expect(waitForExit(runtime.child)).resolves.toBe(1);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      expect(events.filter((item) => item.type === "tool.started")).toHaveLength(1);
+      expect(events.filter((item) => item.type === "tool.completed")).toEqual([
+        expect.objectContaining({ outcome: "failed" }),
+      ]);
+      expect(outcomes).toEqual(["failed"]);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
   it("settles an in-flight assistant item before a completed turn is replayed", async () => {
     const runtime = await startFakeRuntime("assistant_cleanup", [
       initialize,
@@ -211,7 +332,7 @@ describe("Codex app-server runner reliability", () => {
     }
   });
 
-  it("settles an in-flight tool as cancelled before a failed turn is replayed", async () => {
+  it("settles an in-flight tool as cancelled before an interrupted turn is replayed", async () => {
     const runtime = await startFakeRuntime("tool_cleanup", [
       initialize,
       startThread,
@@ -223,11 +344,11 @@ describe("Codex app-server runner reliability", () => {
     ], { stubControlServer: true });
 
     try {
-      const transcript = await waitForTranscript(runtime.eventPath, /"type":"turn\.failed"/);
+      const transcript = await waitForTranscript(runtime.eventPath, /"type":"turn\.aborted"/);
       expect(runtime.child.exitCode).toBeNull();
       runtime.child.kill("SIGTERM");
       const exitCode = await waitForExit(runtime.child);
-      expect(exitCode, transcript).toBe(1);
+      expect(exitCode, transcript).toBe(0);
       const events = await replayTranscript(runtime.eventPath);
       const toolStarted = events.find((event) => event.type === "tool.started");
       expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command" });
@@ -267,7 +388,7 @@ describe("Codex app-server runner reliability", () => {
       expect(events.filter((event) => event.type === "tool.completed")).toEqual([
         expect.objectContaining({
           toolCallId: toolStarted && "toolCallId" in toolStarted ? toolStarted.toolCallId : undefined,
-          outcome: "cancelled",
+          outcome: "failed",
         }),
       ]);
       expect(outcomes).toEqual(["failed"]);
@@ -346,7 +467,7 @@ describe("Codex app-server runner reliability", () => {
       const completed = events.filter((event) => event.type === "tool.completed");
       expect(startedIds).toHaveLength(1);
       expect(completed).toEqual([
-        expect.objectContaining({ toolCallId: startedIds[0], outcome: "cancelled" }),
+        expect.objectContaining({ toolCallId: startedIds[0], outcome: "failed" }),
       ]);
       expect(outcomes).toEqual(["failed"]);
       expect(exitCode).toBe(1);
@@ -391,7 +512,7 @@ describe("Codex app-server runner reliability", () => {
 
     try {
       const transcript = await waitForTranscript(runtime.eventPath, /approval\.requested/);
-      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line))[0];
+      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line)).find((item) => item.type === "matrix.codex.approval.requested");
       expect(approval.allowedDecisions).toEqual(["decline"]);
       await expect(sendControl(runtime.controlPath, {
         type: "approval",
@@ -420,7 +541,7 @@ describe("Codex app-server runner reliability", () => {
 
     try {
       const transcript = await waitForTranscript(runtime.eventPath, /approval\.requested/);
-      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line))[0];
+      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line)).find((item) => item.type === "matrix.codex.approval.requested");
       expect(approval.allowedDecisions).toEqual(["decline", "cancel"]);
       await expect(sendControl(runtime.controlPath, {
         type: "approval",

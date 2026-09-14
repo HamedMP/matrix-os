@@ -268,7 +268,7 @@ must leave the source binding active or mark a recoverable detached state.
 
 Many-to-many association over existing canonical terminal sessions.
 
-- `terminalBindingId`, canonical `terminalSessionId`
+- `terminalBindingId`, canonical `terminalRef` (`workspaceId` and `tabId`)
 - required `projectId`; optional `taskId`, `threadId`, `runId`
 - role: `primary`, `agent`, `user`, `preview`, `setup`
 - state: `bound`, `detached`, `ended`

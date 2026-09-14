@@ -10,6 +10,5 @@ User=matrix
 Group=matrix
 EnvironmentFile=/opt/matrix/env/host.env
 EnvironmentFile=/opt/matrix/env/postgres.env
-EnvironmentFile=-/opt/matrix/env/r2.env
 ExecStart=/opt/matrix/bin/matrix-db-backup.sh
 TimeoutStartSec=600

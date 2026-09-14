@@ -5,25 +5,10 @@ beforeEach(() => {
   useUi.setState(useUi.getInitialState(), true);
 });
 
-describe("ui store create task dialog state", () => {
+describe("ui store project dialog state", () => {
   it("opens the create-project dialog", () => {
     useUi.getState().openCreateProject();
 
     expect(useUi.getState().createProjectOpen).toBe(true);
-  });
-
-  it("keeps explicit column preselection only for openCreateTask", () => {
-    useUi.getState().openCreateTask("done");
-    expect(useUi.getState().createTaskOpen).toBe(true);
-    expect(useUi.getState().createTaskStatus).toBe("done");
-  });
-
-  it("clears stale column preselection on generic create-task open", () => {
-    useUi.getState().openCreateTask("done");
-    useUi.getState().setCreateTaskOpen(false);
-    useUi.getState().setCreateTaskOpen(true);
-
-    expect(useUi.getState().createTaskOpen).toBe(true);
-    expect(useUi.getState().createTaskStatus).toBeNull();
   });
 });

@@ -95,47 +95,6 @@ describe("conversation search", () => {
 });
 
 describe("HermesConversationIndex", () => {
-  it("does not delete a valid Recent outside the bounded renderer index", async () => {
-    const gatewayConversations = Array.from({ length: 101 }, (_, index) => ({
-      id: `conversation-${index}`,
-      preview: `Conversation ${index}`,
-      messageCount: 1,
-      createdAt: index,
-      updatedAt: index,
-    }));
-    const client = api({ get: vi.fn(async () => gatewayConversations) });
-    useTabs.getState().recordRecentHermesConversation(
-      "conversation-100",
-      "Conversation 100",
-    );
-    useHermesChat.setState({ conversations: [], indexStatus: "idle" });
-
-    await act(async () => {
-      await useHermesChat.getState().refreshConversations(client);
-    });
-    render(<HermesConversationIndex api={client} />);
-
-    expect(useHermesChat.getState().conversations).toHaveLength(100);
-    await waitFor(() => expect(
-      useTabs.getState().recentViews.some((recent) => recent.id === "conversation-100"),
-    ).toBe(true));
-  });
-
-  it("reconciles deleted Recents when the complete Gateway index is available", async () => {
-    const gatewayConversations = conversations.map(({ title: _title, ...conversation }) => conversation);
-    const client = api({ get: vi.fn(async () => gatewayConversations) });
-    useTabs.getState().recordRecentHermesConversation("launch-plan", "Launch plan");
-    useTabs.getState().recordRecentHermesConversation("deleted-chat", "Deleted chat");
-    useHermesChat.setState({ conversations: [], indexStatus: "idle" });
-
-    await act(async () => {
-      await useHermesChat.getState().refreshConversations(client);
-    });
-    render(<HermesConversationIndex api={client} />);
-
-    await waitFor(() => expect(useTabs.getState().recentViews.map((recent) => recent.id))
-      .toEqual(["launch-plan"]));
-  });
 
   it("renders the approved header and focuses an ephemeral Search field", () => {
     render(<HermesConversationIndex api={api()} />);
@@ -260,7 +219,6 @@ describe("HermesConversationIndex", () => {
       expect.anything(),
       "launch-plan",
     ));
-    expect(useTabs.getState().recentViews).toEqual([]);
 
     openConversation.mockResolvedValue(false);
     fireEvent.click(screen.getByRole("button", { name: "Customer notes conversation" }));
@@ -268,8 +226,6 @@ describe("HermesConversationIndex", () => {
       expect.anything(),
       "support-notes",
     ));
-    expect(useTabs.getState().recentViews.some((recent) => recent.id === "support-notes"))
-      .toBe(false);
   });
 
   it("cancels without a request and confirms only once while pending", async () => {
@@ -298,18 +254,6 @@ describe("HermesConversationIndex", () => {
     pending.resolve({ ok: true });
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.queryByRole("button", { name: "Launch plan conversation" })).toBeNull();
-  });
-
-  it("removes a deleted conversation from global Recents", async () => {
-    useTabs.getState().recordRecentHermesConversation("launch-plan", "Launch plan");
-    render(<HermesConversationIndex api={api()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Delete Launch plan" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
-
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(useTabs.getState().recentViews.some((recent) => recent.id === "launch-plan"))
-      .toBe(false);
   });
 
   it("disables deletion for a known running chat with recovery guidance", () => {

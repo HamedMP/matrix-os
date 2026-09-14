@@ -3,6 +3,7 @@
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 import type { Theme } from "@/hooks/useTheme";
 import type { DesktopConfig } from "@/hooks/useDesktopConfig";
+import { normalizeOsViewDesktopAppPath } from "@matrix-os/contracts";
 
 export const SHELL_SNAPSHOT_STORAGE_PREFIX = "matrix:shell-snapshot:v1";
 const SHELL_SNAPSHOT_VERSION = 1;
@@ -154,10 +155,12 @@ function normalizeThemeSnapshot(value: unknown): Theme | undefined {
 function normalizeDesktopConfigSnapshot(value: unknown): DesktopConfig | undefined {
   if (!isRecord(value)) return undefined;
   const dock = normalizeDock(value.dock);
+  const desktopIcons = normalizeDesktopIconsSnapshot(value.desktopIcons);
   return {
     background: normalizeBackground(value.background),
     dock,
     pinnedApps: normalizeAppPaths(value.pinnedApps, DEFAULT_PINNED_APPS),
+    ...(desktopIcons !== undefined ? { desktopIcons } : {}),
     ...(typeof value.iconStyle === "string" && value.iconStyle.length <= 240 ? { iconStyle: value.iconStyle } : {}),
     ...(isRecord(value.dockOrder)
       ? {
@@ -168,6 +171,25 @@ function normalizeDesktopConfigSnapshot(value: unknown): DesktopConfig | undefin
         }
       : {}),
   };
+}
+
+function normalizeDesktopIconsSnapshot(value: unknown): DesktopConfig["desktopIcons"] {
+  if (!Array.isArray(value)) return undefined;
+  if (value.length === 0) return [];
+  const icons: NonNullable<DesktopConfig["desktopIcons"]> = [];
+  const seen = new Set<string>();
+  for (const entry of value.slice(0, 512)) {
+    if (!isRecord(entry) || typeof entry.path !== "string") continue;
+    const path = normalizeOsViewDesktopAppPath(entry.path.trim());
+    if (!SAFE_APP_PATH.test(path) || path.includes("..") || seen.has(path)) continue;
+    if (!Number.isInteger(entry.x) || !Number.isInteger(entry.y)) continue;
+    const x = entry.x as number;
+    const y = entry.y as number;
+    if (x < 0 || x > 16_384 || y < 0 || y > 16_384) continue;
+    seen.add(path);
+    icons.push({ path, x, y });
+  }
+  return icons.length > 0 ? icons : undefined;
 }
 
 function normalizeBootstrapSnapshot(value: unknown): ShellBootstrapSnapshot | undefined {
@@ -229,7 +251,7 @@ function normalizeDock(value: unknown): DesktopConfig["dock"] {
 }
 
 function normalizeBackground(value: unknown): DesktopConfig["background"] {
-  const fallback: DesktopConfig["background"] = { type: "wallpaper", name: "moraine-lake.jpg" };
+  const fallback: DesktopConfig["background"] = { type: "wallpaper", name: "matrix-dusk.webp" };
   if (!isRecord(value) || typeof value.type !== "string") return fallback;
   if (value.type === "pattern") return { type: "pattern" };
   if (value.type === "solid" && safeCssColor(value.color)) return { type: "solid", color: value.color };

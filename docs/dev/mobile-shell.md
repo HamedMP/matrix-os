@@ -1,12 +1,20 @@
-# Mobile Shell
+# Mobile OS Views
 
-The 075 mobile shell work makes the phone experience launcher-first while keeping Canvas explicit and recoverable.
+Native Mobile is the Expo application and the behavioral reference for Web Mobile. Both phone experiences are launcher-first. Canvas remains an explicit Web Mobile action rather than the phone home.
+
+## Mobile Parity Rule
+
+- Native Mobile defines the information architecture, actions, copy, state semantics, loading, empty, disabled, recovery, and error behavior for capabilities available on mobile.
+- Web Mobile follows that behavior using responsive Web components and the same gateway contracts.
+- Web Mobile may adapt browser chrome and viewport composition, but it must not invent separate business or presentation derivation.
+- A narrow browser screenshot is Web Mobile evidence and never counts as Native Mobile evidence. Native Mobile evidence comes from the Expo development client or a release-equivalent native build.
+- Mobile-only limitations require an architectural rationale and reviewer approval in the PR surface matrix from `specs/119-os-view-parity/spec.md`.
 
 ## Runtime Shape
 
-- Browser phone viewport: `Desktop.tsx` switches to the mobile launcher after client-side viewport detection.
+- Web Mobile: `Desktop.tsx` switches to the mobile launcher after client-side viewport detection.
 - Native Expo app: `apps/mobile/app/(tabs)/apps.tsx` is the primary launcher.
-- Apps open full screen through `MobileAppSurface` in the browser shell and native runtime routes in Expo.
+- Apps open full screen through `MobileAppSurface` in Web Mobile and native runtime routes in Expo.
 - Canvas is reachable through an explicit launcher action, not as the default phone home.
 - Terminal uses Matrix-authenticated gateway sessions and WebSockets; users do not need SSH keys.
 - The focused native Terminal participates in gateway-coordinated presentation

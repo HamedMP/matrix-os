@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 export interface SurfaceChromeSpec {
-  title?: string;
+  title?: ReactNode;
   leftActions?: ReactNode;
   rightActions?: ReactNode;
   leftPaneWidth?: number;

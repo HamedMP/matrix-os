@@ -14,6 +14,10 @@ const MIME_BY_EXTENSION = new Map([
 
 export type TerminalPasteFile = { file: File; mimeType: string };
 
+type ClipboardLike = {
+  read?: () => Promise<Array<{ types: readonly string[]; getType(type: string): Promise<Blob> }>>;
+};
+
 export function terminalPasteMimeType(file: File): string | null {
   const typed = file.type.trim().toLowerCase();
   if (SUPPORTED_MIME_TYPES.has(typed)) return typed;
@@ -48,6 +52,24 @@ export function terminalPasteFiles(
         return supported ? [supported] : [];
       });
   return files.slice(0, MAX_TERMINAL_PASTE_FILES);
+}
+
+export async function readTerminalClipboardFiles(
+  clipboard: ClipboardLike | undefined,
+): Promise<TerminalPasteFile[]> {
+  if (!clipboard?.read) return [];
+  const items = await clipboard.read();
+  const supportedItems = items.flatMap((item) => {
+    const mimeType = item.types.find((type) => SUPPORTED_MIME_TYPES.has(type.toLowerCase()));
+    return mimeType ? [{ item, mimeType }] : [];
+  }).slice(0, MAX_TERMINAL_PASTE_FILES);
+  return Promise.all(supportedItems.map(async ({ item, mimeType }) => {
+    const blob = await item.getType(mimeType);
+    return {
+      file: new File([blob], "clipboard-image", { type: mimeType }),
+      mimeType,
+    };
+  }));
 }
 
 export function bracketTerminalPaths(paths: readonly string[]): string {

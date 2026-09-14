@@ -15,6 +15,8 @@ export const SHELL_Z_INDEX = {
   appWindowMax: 500,
   fullscreenWindow: 600,
   fullscreenExit: 601,
+  // App-owned dialogs sit above terminal/fullscreen windows, below OS settings and gates.
+  appDialog: 620,
   desktopDrawerBackdrop: 640,
   desktopDrawer: 645,
   desktopHeader: 650,

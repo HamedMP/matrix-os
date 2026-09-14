@@ -2,6 +2,20 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@clerk/ui/themes/shadcn.css";
+@import "@matrix-os/ui/agents-providers.css";
+
+/* Opt-in command-list motion: immediate entry, delayed fade on exit. */
+[data-instant-list-hover] {
+  transition-delay: 75ms;
+  transition-duration: 180ms;
+  transition-property: background-color, color;
+  transition-timing-function: ease-out;
+}
+
+[data-instant-list-hover][data-selected="true"] {
+  transition-delay: 0ms;
+  transition-duration: 0ms;
+}
 
 @font-face {
   font-family: "MesloLGS NF";
@@ -368,70 +382,12 @@ pre {
   to { opacity: 1; }
 }
 
-/* Chat popover aurora -- a slow rotating conic gradient that lives behind
-   the input bar. Barely visible at rest; intensified on focus; pulses
-   when the agent is responding. The slow rotation gives a "this is alive"
-   quality without being distracting. */
-@keyframes chat-aurora-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
 /* Indeterminate progress shimmer for AgentStatusCard when no progress data
    is known (chat flow has no elapsed/estimated, just busy=true). The bar
    sweeps left-to-right then resets. */
 @keyframes agent-status-shimmer {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(380%); }
-}
-
-/* Brief border tint to confirm a queued message landed. Fires when user
-   submits while agent is busy; the input border pulses primary for a
-   moment so the user sees the queue acknowledged the input. */
-@keyframes chat-input-queued-flash {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  20% { box-shadow: 0 0 0 2px var(--primary); }
-}
-
-@keyframes chat-aurora-breathe {
-  0%, 100% { opacity: 0.28; }
-  50% { opacity: 0.55; }
-}
-
-/* Chat popover entrance: rises from the bottom-center of the screen. The
-   popup is horizontally centered via `left: 50%` + `translateX(-50%)`, so
-   the keyframes bake the -50% X translation in to keep centering coherent
-   with the animated Y/scale. transformOrigin is bottom-center so the scale
-   "grows out of" the bottom edge -- the popup feels like it's surfacing
-   from below rather than appearing in place. */
-@keyframes chat-popup-in {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, 24px) scale(0.96);
-    filter: blur(10px);
-  }
-  60% {
-    opacity: 1;
-    filter: blur(0);
-  }
-  100% {
-    opacity: 1;
-    transform: translate(-50%, 0) scale(1);
-    filter: blur(0);
-  }
-}
-
-@keyframes chat-popup-out {
-  from {
-    opacity: 1;
-    transform: translate(-50%, 0) scale(1);
-    filter: blur(0);
-  }
-  to {
-    opacity: 0;
-    transform: translate(-50%, 12px) scale(0.98);
-    filter: blur(6px);
-  }
 }
 
 /* Aoede dock button: hover and active states show the same 200%-gradient
@@ -511,21 +467,6 @@ pre {
     top: var(--win-y);
     width: var(--win-w);
     height: var(--win-h);
-  }
-}
-
-/* Response overlay: full-width on mobile, positioned on desktop */
-.response-overlay {
-  left: 0.5rem;
-  right: 0.5rem;
-  top: var(--ro-y);
-}
-
-@media (min-width: 768px) {
-  .response-overlay {
-    left: var(--ro-x);
-    right: auto;
-    width: var(--ro-w);
   }
 }
 
@@ -812,44 +753,7 @@ pre {
   box-shadow: 1px 0 0 var(--neu-shadow-light);
 }
 
-/* --- Menu Bar: Win98 raised taskbar --- */
-[data-theme-style="neumorphic"] [data-menu-bar] {
-  background: var(--card) !important;
-  backdrop-filter: none !important;
-  border: none !important;
-  border-bottom: 2px solid var(--neu-shadow-dark) !important;
-  box-shadow:
-    inset 0 1px 0 var(--neu-shadow-light) !important;
-}
-
-/* Menu bar buttons: Win98 raised feel on hover */
-[data-theme-style="neumorphic"] [data-menu-bar] button:hover {
-  background: var(--muted) !important;
-  border-top: 1px solid var(--neu-shadow-light);
-  border-left: 1px solid var(--neu-shadow-light);
-  border-bottom: 1px solid var(--neu-shadow-dark);
-  border-right: 1px solid var(--neu-shadow-dark);
-}
-
-/* Menu dropdowns: raised panel with bevel */
-[data-theme-style="neumorphic"] [data-menu-dropdown] {
-  background: var(--card) !important;
-  backdrop-filter: none !important;
-  border-radius: 2px !important;
-  border: none !important;
-  border-top: 2px solid var(--neu-shadow-light) !important;
-  border-left: 2px solid var(--neu-shadow-light) !important;
-  border-bottom: 2px solid var(--neu-shadow-dark) !important;
-  border-right: 2px solid var(--neu-shadow-dark) !important;
-  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2) !important;
-}
-
 /* Menu items: Win98 highlight style */
-[data-theme-style="neumorphic"] [data-menu-dropdown] button:hover {
-  background: var(--primary) !important;
-  color: var(--primary-foreground) !important;
-  border: none;
-}
 
 /* --- App tiles: square raised icons --- */
 [data-theme-style="neumorphic"] [data-app-tile] {
@@ -976,16 +880,6 @@ pre {
 
 [data-theme-style="neumorphic"] .active\:scale-95:active {
   transform: none !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  [data-onboarding-brand],
-  [data-onboarding-brand] * {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-    transition-duration: 1ms !important;
-  }
 }
 
 /* ═══════════════════════════════════════════════
@@ -1153,7 +1047,6 @@ pre {
 }
 
 /* --- Menu items: system-blue selection --- */
-[data-theme-style="macos-glass"] [data-menu-dropdown] button:hover,
 [data-theme-style="macos-glass"] [data-slot="context-menu-item"]:hover,
 [data-theme-style="macos-glass"] [data-slot="context-menu-item"][data-highlighted] {
   background: color-mix(in srgb, var(--primary) 85%, transparent) !important;
@@ -1191,30 +1084,6 @@ pre {
 
 [data-theme-style="macos-glass"] [data-dock] button img {
   border-radius: 10px !important;
-}
-
-/* --- Menu Bar: ultra-translucent white strip over the wallpaper --- */
-[data-theme-style="macos-glass"] [data-menu-bar] {
-  background: rgba(255, 255, 255, 0.45) !important;
-  backdrop-filter: var(--glass-blur) !important;
-  -webkit-backdrop-filter: var(--glass-blur) !important;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04) !important;
-}
-
-[data-theme-style="macos-glass"] [data-menu-bar] button:hover {
-  background: rgba(0, 0, 0, 0.07) !important;
-  border-radius: 5px;
-}
-
-/* --- Menu dropdowns: frosted panel --- */
-[data-theme-style="macos-glass"] [data-menu-dropdown] {
-  background: var(--glass-surface-strong) !important;
-  backdrop-filter: var(--glass-blur) !important;
-  -webkit-backdrop-filter: var(--glass-blur) !important;
-  border: 1px solid var(--glass-edge) !important;
-  border-radius: 12px !important;
-  box-shadow: var(--glass-specular), var(--glass-shadow) !important;
 }
 
 /* --- App tiles: rounded glass icons --- */
@@ -1346,8 +1215,7 @@ pre {
 [data-theme-style="winxp"] [data-slot="select-content"],
 [data-theme-style="winxp"] [data-slot="context-menu-content"],
 [data-theme-style="winxp"] [data-slot="dialog-content"],
-[data-theme-style="winxp"] [data-slot="popover-content"],
-[data-theme-style="winxp"] [data-menu-dropdown] {
+[data-theme-style="winxp"] [data-slot="popover-content"] {
   background: var(--xp-chrome) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -1368,7 +1236,6 @@ pre {
 }
 
 /* --- Menu items: XP selection blue --- */
-[data-theme-style="winxp"] [data-menu-dropdown] button:hover,
 [data-theme-style="winxp"] [data-slot="context-menu-item"]:hover,
 [data-theme-style="winxp"] [data-slot="context-menu-item"][data-highlighted] {
   background: var(--accent) !important;
@@ -1431,29 +1298,6 @@ pre {
 [data-theme-style="winxp"] [data-dock] .border-t {
   border-color: rgba(0, 0, 0, 0.35) !important;
   box-shadow: 1px 0 0 rgba(255, 255, 255, 0.25);
-}
-
-/* --- Menu Bar: Luna title-bar strip --- */
-[data-theme-style="winxp"] [data-menu-bar] {
-  background: var(--xp-titlebar) !important;
-  backdrop-filter: none !important;
-  border: none !important;
-  border-bottom: 1px solid #003c9e !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    0 1px 3px rgba(0, 0, 0, 0.35) !important;
-  color: #ffffff;
-}
-
-[data-theme-style="winxp"] [data-menu-bar] button,
-[data-theme-style="winxp"] [data-menu-bar] .text-foreground,
-[data-theme-style="winxp"] [data-menu-bar] .text-muted-foreground {
-  color: #ffffff !important;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
-}
-
-[data-theme-style="winxp"] [data-menu-bar] button:hover {
-  background: rgba(255, 255, 255, 0.18) !important;
 }
 
 /* --- App tiles: XP desktop icons --- */
@@ -1606,8 +1450,7 @@ pre {
 [data-theme-style="win11"] [data-slot="context-menu-content"],
 [data-theme-style="win11"] [data-slot="dialog-content"],
 [data-theme-style="win11"] [data-slot="popover-content"],
-[data-theme-style="win11"] [data-slot="tooltip-content"],
-[data-theme-style="win11"] [data-menu-dropdown] {
+[data-theme-style="win11"] [data-slot="tooltip-content"] {
   background: var(--win11-acrylic-strong) !important;
   backdrop-filter: var(--win11-blur) !important;
   -webkit-backdrop-filter: var(--win11-blur) !important;
@@ -1617,7 +1460,6 @@ pre {
 }
 
 /* --- Menu items: subtle gray pill hover --- */
-[data-theme-style="win11"] [data-menu-dropdown] button:hover,
 [data-theme-style="win11"] [data-slot="context-menu-item"]:hover,
 [data-theme-style="win11"] [data-slot="context-menu-item"][data-highlighted] {
   background: var(--win11-hover) !important;
@@ -1676,23 +1518,6 @@ pre {
   border-radius: 9999px !important;
   width: 12px !important;
   height: 3px !important;
-}
-
-/* --- Menu Bar: Mica strip --- */
-[data-theme-style="win11"] [data-menu-bar] {
-  background: var(--win11-acrylic) !important;
-  backdrop-filter: var(--win11-blur) !important;
-  -webkit-backdrop-filter: var(--win11-blur) !important;
-  border-bottom: 1px solid var(--win11-stroke) !important;
-  box-shadow: none !important;
-}
-
-[data-theme-style="win11"] [data-menu-bar] button {
-  border-radius: 6px;
-}
-
-[data-theme-style="win11"] [data-menu-bar] button:hover {
-  background: var(--win11-hover) !important;
 }
 
 /* --- App tiles: pill hover, Fluent icon rounding --- */

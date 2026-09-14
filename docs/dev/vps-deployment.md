@@ -49,9 +49,12 @@ Internet
 New VPS provisions download the host bundle from R2:
 
 ```text
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production resolves the `stable` channel to that immutable version when each
+provisioning job starts.
 
 The per-user Docker image path is legacy/local-development only. It is not used for production customer VPSes.
 
@@ -248,10 +251,10 @@ EOF
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | host bundle | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
 | `GEMINI_API_KEY` | platform/gateway when configured | runtime | Google Gemini API key for image/icon generation |
 | `POSTGRES_PASSWORD` | postgres + platform | runtime | PostgreSQL password (default: `matrixos`) |
-| `S3_ENDPOINT` / `R2_ENDPOINT` | customer VPS gateway/sync | runtime | Cloudflare R2 S3-API endpoint (see Sync Storage below) |
-| `S3_ACCESS_KEY_ID` / `R2_ACCESS_KEY_ID` | customer VPS gateway/sync | runtime | R2 API token access key |
-| `S3_SECRET_ACCESS_KEY` / `R2_SECRET_ACCESS_KEY` | customer VPS gateway/sync | runtime | R2 API token secret key |
-| `S3_BUCKET` / `R2_BUCKET` | customer VPS gateway/sync | runtime | R2 bucket name, default `matrixos-sync` |
+| `S3_ENDPOINT` / `R2_ENDPOINT` | platform storage broker | runtime | Cloudflare R2 S3-API endpoint (see Sync Storage below) |
+| `S3_ACCESS_KEY_ID` / `R2_ACCESS_KEY_ID` | platform storage broker | runtime | Platform-only R2 API token access key; never copy to customer VPSes |
+| `S3_SECRET_ACCESS_KEY` / `R2_SECRET_ACCESS_KEY` | platform storage broker | runtime | Platform-only R2 API token secret key; never copy to customer VPSes |
+| `S3_BUCKET` / `R2_BUCKET` | platform storage broker | runtime | R2 bucket name, default `matrixos-sync` |
 | `MATRIX_HOME_MIRROR` | customer VPS gateway/sync | runtime | `true` enables three-way sync (VPS home ↔ R2 ↔ peer) |
 | `PLATFORM_INTERNAL_URL` | customer VPS gateway | runtime | Base URL for platform-owned internal APIs; customer VPSes use it with their per-host token for sync and integrations |
 
@@ -265,7 +268,7 @@ PLATFORM_SECRET=$(openssl rand -hex 32)
 GOLDEN_SNAPSHOT_OPERATOR_SECRET=$(openssl rand -hex 32)
 ```
 
-**Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available when building the customer host bundle. Runtime vars for customer VPSes live in `/opt/matrix/env/host.env`, `/opt/matrix/env/r2.env`, and host systemd environment files.
+**Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available when building the customer host bundle. Runtime vars for customer VPSes live in `/opt/matrix/env/host.env` and host systemd environment files. Customer VPSes must not have an R2 provider credential file.
 
 ### Platform-Owned Integrations
 
@@ -293,7 +296,7 @@ The second check should return `[]` for a user with no connected services, not `
 
 ### Sync Storage (Cloudflare R2)
 
-The file-sync subsystem (spec 066) uses S3-compatible object storage. In prod the target is Cloudflare R2, one shared bucket, prefix-isolated per user at the gateway level.
+The file-sync subsystem (spec 066) uses S3-compatible object storage. In prod the target is Cloudflare R2, one shared bucket with tenant prefixes enforced by the authenticated platform storage broker. Customer VPSes receive short-lived presigned capabilities for an exact allowlist of their own sync and backup objects; they never receive the bucket credential.
 
 #### One-time: provision R2
 
@@ -326,9 +329,9 @@ EOF
 
 Replace the placeholders with the real values. `S3_ENDPOINT` and `S3_PUBLIC_ENDPOINT` are the same URL in prod — the split exists for dev where gateway reaches MinIO at `minio:9000` internally but presigned URLs need `localhost:9100` (see `docs/dev/sync-testing.md`).
 
-#### How env vars reach customer VPSes
+#### Customer VPS storage boundary
 
-Customer VPSes get machine-specific env through cloud-init and `/opt/matrix/env/host.env` plus `/opt/matrix/env/r2.env`. The host env includes `PLATFORM_INTERNAL_URL`, `UPGRADE_TOKEN`, `MATRIX_HANDLE`, `DATABASE_URL`, and R2 prefix metadata. It must not include platform-only secrets like `PIPEDREAM_CLIENT_SECRET`. Platform-owned integration routes stay on the platform and are reached from the customer VPS gateway through `PLATFORM_INTERNAL_URL`.
+Customer VPSes get machine-specific env through cloud-init and `/opt/matrix/env/host.env`. The host env includes `PLATFORM_INTERNAL_URL`, `UPGRADE_TOKEN`, `MATRIX_HANDLE`, and `DATABASE_URL`. It must not include R2/S3 credentials, a bucket-wide storage prefix, or platform-only secrets such as `PIPEDREAM_CLIENT_SECRET`. Storage and integration routes stay on the platform and are reached through `PLATFORM_INTERNAL_URL` using the per-host token.
 
 After editing platform `.env`, restart platform services on the platform VPS. After editing a customer VPS env file, restart that VPS's host services:
 
@@ -341,7 +344,8 @@ Verify the target customer VPS has the expected env:
 ```bash
 sudo systemctl show matrix-gateway.service --property=Environment
 sudo grep -E '^(PLATFORM_INTERNAL_URL|UPGRADE_TOKEN|MATRIX_HANDLE|DATABASE_URL)=' /opt/matrix/env/host.env
-sudo grep -E '^(S3_|R2_)' /opt/matrix/env/r2.env
+sudo test ! -e /opt/matrix/env/r2.env
+sudo -u matrix /opt/matrix/bin/matrixctl r2 broker-ready
 ```
 
 #### Verify R2 upload round-trip
@@ -360,14 +364,15 @@ wget -qO- http://127.0.0.1:4000/api/sync/manifest \
 # Open dashboard → R2 → matrixos-sync → Objects → search "r2-smoke"
 ```
 
-If manifest shows the file but R2 dashboard doesn't, check gateway logs for `SignatureDoesNotMatch` (bad key) or `NoSuchBucket` (wrong bucket name / typo in `S3_BUCKET`).
+If the manifest shows the file but the R2 dashboard does not, check platform broker logs and the customer gateway logs. Client-facing errors remain generic; provider signature and bucket details stay platform-side.
 
 #### Rotating R2 credentials
 
-1. Cloudflare → R2 → API Tokens → create a new token.
-2. Update `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` or `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` in `/opt/matrix/env/r2.env` on each affected customer VPS.
-3. Restart the affected VPS host services with `sudo systemctl restart matrix-gateway.service matrix-sync-agent.service matrix-db-backup.timer`.
-4. Revoke the old token in the Cloudflare dashboard.
+1. Deploy and verify a host bundle that uses the platform storage broker on every customer VPS. Confirm `matrixctl r2 broker-ready` succeeds and `/opt/matrix/env/r2.env` is absent everywhere.
+2. Cloudflare → R2 → API Tokens → create a new bucket-scoped token.
+3. Update the platform service's `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` (or R2 aliases) in Secret Manager and restart `matrix-platform.service`.
+4. Exercise one backup upload and restore probe through the broker.
+5. Revoke the old token in the Cloudflare dashboard. This revocation is mandatory after the broker migration because a previously deployed key may have been copied from an old VPS or cloud-init history.
 
 ## Step 4: Start the Platform
 
@@ -597,12 +602,18 @@ Customer VPS host services are not affected by a platform control-plane restart.
 
 ### Update Customer VPS Host Bundle
 
-Customer VPSes boot from a host bundle downloaded from R2 at:
+Customer VPSes boot from an immutable host bundle downloaded from R2 at:
 
 ```text
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
-system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
+
+Production provisioning is bound to the `stable` channel. Each create or
+recovery resolves `stable` once, persists the exact version and SHA, and uses
+that same immutable target for either a golden snapshot or clean-image
+fallback. Promote a reviewed prior release back to `stable` for rollback;
+never repoint production through a separate image-version environment value.
 
 Use this path whenever shell, gateway, bundled apps, host scripts, Postgres env wiring, or agent CLI versions change for VPS-hosted users. The normal path is the GitHub Actions release workflow on `main`; local builds are for break-glass verification or emergency release preparation.
 
@@ -633,6 +644,13 @@ curl --fail --silent --show-error \
 
 Do not SSH-copy bundles except for break-glass recovery. The sync agent downloads the registered bundle through platform, verifies the SHA-256, stages extraction, keeps `/opt/matrix/app.rollback`, swaps `/opt/matrix/app`, writes `/opt/matrix/release.json`, and restarts services.
 
+Project terminal workloads are deliberately outside those replaceable service
+cgroups. The updater may restart `matrix-gateway` and the
+`matrix-terminal-runtime` control plane, but it must never stop or restart
+`matrix-zellij@*`, `matrix-terminal.slice`, or the matrix user manager. Each
+project's tabs share one user unit and remain pinned to that unit's immutable
+terminal generation across ordinary update and rollback.
+
 Operational rules:
 
 - Keep release provenance and update subscription separate. `/opt/matrix/release.json`
@@ -648,6 +666,9 @@ Operational rules:
 - During in-place refreshes, wrapper scripts in `/opt/matrix/bin` must be executable by the `matrix` service user. Either keep bundle wrapper mode `0755`, or set group to `matrix` and mode `0750` after extraction.
 - Global agent CLI packages under `/opt/matrix/runtime/node/lib/node_modules` and their shims under `/opt/matrix/runtime/node/bin` must be writable by the `matrix` group. Codex, Claude, opencode, pi, and uv update themselves through the Matrix runtime prefix; root-owned, non-writable global packages cause `EACCES: permission denied, rename ...`. Hermes installs for the `matrix` user through `/opt/matrix/bin/matrix-install-hermes`.
 - Preserve `/opt/matrix/env`, `/home/matrix/home`, and the local Postgres data directory during in-place refreshes.
+- Installing updated terminal user-unit files requires only
+  `systemctl --user daemon-reload`; never restart active `matrix-zellij@*`
+  instances as part of a bundle refresh.
 - Host bundle sync may replace `/opt/matrix/app` only. It must not overwrite owner files under `/home/matrix/home`; protected template paths such as `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, configs, layouts, sessions, logs, conversations, memory, and state are user data.
 - Record the checksum/release version after publishing and mention which customer VPSes were refreshed.
 
@@ -656,7 +677,7 @@ Verification after deploying a host bundle:
 ```bash
 cat /opt/matrix/app/BUNDLE_VERSION
 cat /opt/matrix/release.json
-systemctl is-active matrix-gateway matrix-shell matrix-sync-agent
+systemctl is-active matrix-terminal-runtime matrix-gateway matrix-shell matrix-sync-agent
 curl -fsS http://127.0.0.1:4000/health
 
 source /opt/matrix/env/host.env
@@ -1043,12 +1064,13 @@ ls /etc/cloudflared/credentials.json
 
 Split the incident by layer before changing runtime code: direct customer VPS
 health, local platform websocket upgrade, then public `app.matrix-os.com`
-websocket upgrade. Public `/ws` or `/ws/terminal/session` failures while direct
+websocket upgrade. Public `/ws` or `/ws/terminal/tab` failures while direct
 origin probes succeed usually mean the Cloudflare tunnel is wedged.
 
 The production platform compose runs `cloudflared-watchdog`, which polls
 `/vps/fleet`, selects a healthy running customer VPS, mints a short-lived
-websocket token, and probes public `/ws` plus `/ws/terminal/session`. After
+websocket token, resolves a real tab from `/api/terminal/workspaces`, and probes
+public `/ws` plus `/ws/terminal/tab`. After
 three consecutive public websocket failures it restarts only the Cloudflared
 container through the Docker socket, then resumes probing. Tune it with:
 

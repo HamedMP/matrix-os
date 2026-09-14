@@ -113,6 +113,20 @@ describe("UserButton", () => {
     expect(screen.getByRole("menuitem", { name: "Get another computer" }).getAttribute("href")).toBe("/?billing=setup&handoff=add-computer");
   });
 
+  it("preserves desktop account Help and Billing navigation", async () => {
+    const onOpenSettings = vi.fn();
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="menubar" onOpenSettings={onOpenSettings} />);
+    await openAccountMenu();
+
+    const help = screen.getByRole("menuitem", { name: "Get help" });
+    expect(help.getAttribute("href")).toBe("https://matrix-os.com/docs");
+    expect(help.getAttribute("target")).toBe("_blank");
+    fireEvent.click(screen.getByRole("menuitem", { name: "View plans" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("billing");
+  });
+
   it("excludes hosted computer actions in self-hosted mode", async () => {
     document.documentElement.dataset.matrixSelfHosted = "1";
     const { UserButton } = await import("../../shell/src/components/UserButton.js");

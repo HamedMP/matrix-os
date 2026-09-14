@@ -5,13 +5,14 @@ import {
   CreditCard,
   LogOut,
   Settings,
+  UsersIcon,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useState, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
-import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
+import { openHelpInMatrixBrowser } from "../browser/help-navigation";
 
 function AccountAvatar({
   imageUrl,
@@ -158,13 +159,17 @@ export default function AccountMenu({
             </DropdownMenu.Label>
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
             <MenuRow icon={<Settings size={14} />} label="Settings" trailing onSelect={() => openSettings("account")} />
+            <MenuRow icon={<UsersIcon size={14} />} label="Shared with me" trailing onSelect={() => {
+              setOpen(false);
+              openTab({ kind: "shared", title: "Shared with me" });
+            }} />
             <MenuRow
               icon={<CircleHelp size={14} />}
               label="Get help"
               trailing
               onSelect={() => {
                 setOpen(false);
-                void invoke("shell:open-external", { url: "https://matrix-os.com/docs" });
+                openHelpInMatrixBrowser(openTab);
               }}
             />
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />

@@ -57,12 +57,6 @@ describe("T2101: attachments", () => {
     );
     expect(typeof mod.fileToBase64).toBe("function");
   });
-
-  it("InputBar includes AttachmentButton", async () => {
-    const mod = await import("../../shell/src/components/InputBar");
-    expect(mod.InputBar).toBeDefined();
-    // The component exists and includes attachment integration
-  });
 });
 
 // T2102: Reasoning / Chain-of-thought
@@ -327,49 +321,5 @@ describe("T2105: speech input", () => {
   it("existing useVoice hook is still available", async () => {
     const mod = await import("../../shell/src/hooks/useVoice");
     expect(mod.useVoice).toBeDefined();
-  });
-});
-
-// ChatPanel integration
-describe("ChatPanel integration (T2102, T2103, T2104)", () => {
-  it("ChatPanel imports reasoning, suggestions, plan, task", async () => {
-    const mod = await import("../../shell/src/components/ChatPanel");
-    expect(mod.ChatPanel).toBeDefined();
-  });
-
-  it("ChatPanel renders without errors with empty messages", async () => {
-    const mod = await import("../../shell/src/components/ChatPanel");
-    expect(mod.ChatPanel).toBeDefined();
-    // Verify the component function exists and accepts expected props
-    const props: Parameters<typeof mod.ChatPanel>[0] = {
-      messages: [],
-      sessionId: undefined,
-      busy: false,
-      connected: true,
-      conversations: [],
-      onNewChat: () => {},
-      onSwitchConversation: () => {},
-      onClose: () => {},
-      onSubmit: () => {},
-    };
-    expect(props.onSubmit).toBeDefined();
-  });
-});
-
-// InputBar integration
-describe("InputBar integration (T2101, T2105)", () => {
-  it("InputBar accepts files parameter in onSubmit", async () => {
-    const mod = await import("../../shell/src/components/InputBar");
-    expect(mod.InputBar).toBeDefined();
-  });
-
-  it("InputBar includes attachment and voice button support", async () => {
-    // Verify imports work
-    const att = await import(
-      "../../shell/src/components/ai-elements/attachments"
-    );
-    expect(att.AttachmentButton).toBeDefined();
-    expect(att.Attachments).toBeDefined();
-    expect(att.useAttachments).toBeDefined();
   });
 });

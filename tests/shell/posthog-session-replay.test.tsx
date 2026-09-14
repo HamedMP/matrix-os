@@ -11,7 +11,10 @@ const posthogMock = vi.hoisted(() => ({
   identify: vi.fn(),
   reset: vi.fn(),
   captureException: vi.fn(),
+  register: vi.fn(),
   setPersonProperties: vi.fn(),
+  has_opted_out_capturing: vi.fn(() => false),
+  opt_in_capturing: vi.fn(),
 }));
 
 vi.mock("posthog-js", () => ({
@@ -32,7 +35,12 @@ async function importShellPostHog() {
 describe("shell session replay init", () => {
   beforeEach(() => {
     posthogMock.init.mockClear();
+    posthogMock.register.mockClear();
     posthogMock.setPersonProperties.mockClear();
+    posthogMock.has_opted_out_capturing.mockReset();
+    posthogMock.has_opted_out_capturing.mockReturnValue(false);
+    posthogMock.opt_in_capturing.mockReset();
+    window.localStorage.removeItem("matrix_posthog_cookie_consent");
     vi.unstubAllEnvs();
   });
 
@@ -43,7 +51,7 @@ describe("shell session replay init", () => {
   it("enables masked session recording without console log capture", async () => {
     const { initializeShellPostHog } = await importShellPostHog();
 
-    initializeShellPostHog("US", TEST_CONFIG);
+    initializeShellPostHog(TEST_CONFIG);
 
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
@@ -56,6 +64,36 @@ describe("shell session replay init", () => {
       maskTextSelector: "[data-ph-mask]",
       blockSelector: ".ph-no-capture",
     });
+  });
+
+  it("migrates profiles that declined the removed Matrix consent banner", async () => {
+    window.localStorage.setItem("matrix_posthog_cookie_consent", "declined");
+    posthogMock.has_opted_out_capturing.mockReturnValue(true);
+    const { initializeShellPostHog } = await importShellPostHog();
+
+    initializeShellPostHog(TEST_CONFIG);
+
+    expect(posthogMock.opt_in_capturing).toHaveBeenCalledWith({ captureEventName: false });
+    expect(window.localStorage.getItem("matrix_posthog_cookie_consent")).toBeNull();
+  });
+
+  it("removes an accepted legacy consent marker without changing capture state", async () => {
+    window.localStorage.setItem("matrix_posthog_cookie_consent", "accepted");
+    const { initializeShellPostHog } = await importShellPostHog();
+
+    initializeShellPostHog(TEST_CONFIG);
+
+    expect(posthogMock.opt_in_capturing).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("matrix_posthog_cookie_consent")).toBeNull();
+  });
+
+  it("preserves PostHog opt-outs that did not come from the removed Matrix banner", async () => {
+    posthogMock.has_opted_out_capturing.mockReturnValue(true);
+    const { initializeShellPostHog } = await importShellPostHog();
+
+    initializeShellPostHog(TEST_CONFIG);
+
+    expect(posthogMock.opt_in_capturing).not.toHaveBeenCalled();
   });
 
   it("sets onboarding attribution as a first-touch person property", async () => {
@@ -82,7 +120,7 @@ describe("shell session replay init", () => {
     vi.stubEnv("NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY", "1");
     const { initializeShellPostHog } = await importShellPostHog();
 
-    initializeShellPostHog("US", TEST_CONFIG);
+    initializeShellPostHog(TEST_CONFIG);
 
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
@@ -94,7 +132,7 @@ describe("shell session replay init", () => {
     try {
       const { initializeShellPostHog } = await importShellPostHog();
 
-      initializeShellPostHog("US", TEST_CONFIG);
+      initializeShellPostHog(TEST_CONFIG);
 
       expect(posthogMock.init).toHaveBeenCalledTimes(1);
       const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
@@ -137,11 +175,4 @@ describe("ph-no-capture privacy surfaces", () => {
     expect(screen.getByRole("log").classList.contains("ph-no-capture")).toBe(true);
   });
 
-  it("keeps the ChatPopover message list out of session recording", () => {
-    const source = readFileSync(
-      join(process.cwd(), "shell/src/components/ChatPopover.tsx"),
-      "utf8",
-    );
-    expect(source).toMatch(/ph-no-capture[^"]*"[^>]*ref=\{attachScrollRef\}|ref=\{attachScrollRef\}[^>]*ph-no-capture/s);
-  });
 });

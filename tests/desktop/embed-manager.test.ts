@@ -43,6 +43,11 @@ class FakeView implements EmbedViewLike {
     }
   }
 
+  async captureSnapshot(): Promise<string> {
+    this.events.push("captureSnapshot");
+    return "data:image/jpeg;base64,c25hcHNob3Q=";
+  }
+
   attach(): void {
     this.events.push("attach");
   }
@@ -90,6 +95,7 @@ function flush(): Promise<void> {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -114,11 +120,16 @@ describe("EmbedManager", () => {
     ).toThrow(/exactly one allowed origin source/);
   });
 
-  it("names partitions persist:hosted-shell and persist:app-<slug>", () => {
+  it("names hosted, code editor, and app partitions deterministically", () => {
     const { manager, views } = makeManager();
     manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    manager.open("code-editor", null, BOUNDS, "https://gw.test/code");
     manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/");
-    expect(views.map((v) => v.partition)).toEqual(["persist:hosted-shell", "persist:app-notes"]);
+    expect(views.map((v) => v.partition)).toEqual([
+      "persist:hosted-shell",
+      "persist:code-editor",
+      "persist:app-notes",
+    ]);
   });
 
   it("uses the route slug for the partition while retaining a nested app identity", () => {
@@ -404,6 +415,37 @@ describe("EmbedManager", () => {
     expect(views[0]?.view.bounds).toEqual(next);
   });
 
+  it("allows a runtime browser to opt into only its ephemeral loopback origin", () => {
+    const created: Array<{ kind: string; partition: string; allowedOrigins: string[] }> = [];
+    const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
+      createView: ({ kind, partition, allowedOrigins, onState }) => {
+        created.push({ kind, partition, allowedOrigins });
+        return new FakeView(null, onState);
+      },
+    });
+
+    manager.open("browser", null, BOUNDS, "http://127.0.0.1:49152/docs", {
+      allowedOrigins: ["http://127.0.0.1:49152"],
+    });
+
+    expect(created).toEqual([{
+      kind: "browser",
+      partition: "persist:browser",
+      allowedOrigins: ["http://127.0.0.1:49152"],
+    }]);
+  });
+
+  it("runs embed disposal exactly once when a browser closes", () => {
+    const { manager } = makeManager();
+    const onDispose = vi.fn();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/", { onDispose });
+
+    expect(manager.close(id)).toBe(true);
+    expect(manager.close(id)).toBe(false);
+    expect(onDispose).toHaveBeenCalledTimes(1);
+  });
+
   it("close destroys the view and forgets the embed", () => {
     const { manager, views } = makeManager();
     const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/");
@@ -435,6 +477,81 @@ describe("EmbedManager", () => {
     expect(manager.setActive(id, false)).toBe(true);
     expect(views[0]?.view.events).toContain("detach");
     expect(manager.liveCount).toBe(0);
+  });
+
+  it("captures a retained frame before detaching an obscured embed", async () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+
+    await expect(manager.deactivate(id)).resolves.toEqual({
+      ok: true,
+      snapshotDataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+    });
+    expect(views[0]?.view.events.slice(-2)).toEqual(["captureSnapshot", "detach"]);
+    expect(manager.liveCount).toBe(0);
+  });
+
+  it("reuses the last retained frame when a later capture is unavailable", async () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("browser", null, BOUNDS, "https://gw.test/page");
+    await manager.deactivate(id);
+    manager.setActive(id, true);
+    vi.spyOn(views[0]!.view, "captureSnapshot").mockResolvedValueOnce(null);
+
+    await expect(manager.deactivate(id)).resolves.toEqual({
+      ok: true,
+      snapshotDataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+    });
+  });
+
+  it("does not detach after a pending capture is superseded by reactivation", async () => {
+    let resolveCapture!: (value: string) => void;
+    const events: string[] = [];
+    const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
+      createView: () => ({
+        setBounds: () => undefined,
+        setScale: () => undefined,
+        loadUrl: async () => undefined,
+        captureSnapshot: () => new Promise((resolve) => { resolveCapture = resolve; }),
+        attach: () => events.push("attach"),
+        detach: () => events.push("detach"),
+        destroy: () => undefined,
+      }),
+    });
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    const pending = manager.deactivate(id);
+
+    manager.setActive(id, true);
+    resolveCapture("data:image/jpeg;base64,c25hcHNob3Q=");
+    await pending;
+
+    expect(events).toEqual(["attach"]);
+    expect(manager.liveCount).toBe(1);
+  });
+
+  it("detaches within a bounded time when native frame capture stalls", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
+      createView: () => ({
+        setBounds: () => undefined,
+        setScale: () => undefined,
+        loadUrl: async () => undefined,
+        captureSnapshot: () => new Promise(() => undefined),
+        attach: () => events.push("attach"),
+        detach: () => events.push("detach"),
+        destroy: () => undefined,
+      }),
+    });
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    const pending = manager.deactivate(id);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(pending).resolves.toEqual({ ok: true, snapshotDataUrl: null });
+    expect(events).toEqual(["attach", "detach"]);
   });
 
   it("setActive(true) re-attaches a detached embed without reloading", () => {

@@ -50,12 +50,24 @@ vi.mock("@/components/BootSequence", () => ({
     children,
     platformSessionActive,
     e2eBypass,
+    completionRedirect,
+    runtimeSlot,
+    passivePostCheckout,
   }: {
     children: React.ReactNode;
     platformSessionActive?: boolean;
     e2eBypass?: boolean;
+    completionRedirect?: string;
+    runtimeSlot?: string | null;
+    passivePostCheckout?: boolean;
   }) => {
-    bootSequenceRender({ platformSessionActive, e2eBypass });
+    bootSequenceRender({
+      platformSessionActive,
+      e2eBypass,
+      completionRedirect,
+      runtimeSlot,
+      passivePostCheckout,
+    });
     return <div data-testid="boot-sequence">{children}</div>;
   },
 }));
@@ -87,6 +99,9 @@ describe("OnboardingGate", () => {
     expect(bootSequenceRender).toHaveBeenCalledWith({
       platformSessionActive: false,
       e2eBypass: false,
+      completionRedirect: undefined,
+      runtimeSlot: undefined,
+      passivePostCheckout: undefined,
     });
   });
 
@@ -108,13 +123,59 @@ describe("OnboardingGate", () => {
       );
 
       expect(await screen.findByTestId("billing-gate")).toBeTruthy();
-      expect(screen.queryByTestId("boot-sequence")).toBeNull();
+      expect(screen.getByTestId("boot-sequence")).toBeTruthy();
       expect(billingGateRender).toHaveBeenCalledWith({
         platformSessionActive: false,
         loadingSurface: "default",
       });
     },
   );
+
+  it("continues a paid device return through passive journey polling without another build decision", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/?checkout=success&runtime=studio&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+
+    render(
+      <OnboardingGate>
+        <div>Matrix workspace</div>
+      </OnboardingGate>,
+    );
+
+    expect(await screen.findByTestId("billing-gate")).toBeTruthy();
+    expect(screen.getByTestId("boot-sequence")).toBeTruthy();
+    expect(bootSequenceRender).toHaveBeenCalledWith({
+      platformSessionActive: false,
+      e2eBypass: false,
+      completionRedirect:
+        "/?runtime=studio&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+      runtimeSlot: "studio",
+      passivePostCheckout: true,
+    });
+  });
+
+  it("drops an invalid runtime selector before device journey and session polling", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/?checkout=success&runtime=Bad%20Slot!&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+
+    render(
+      <OnboardingGate>
+        <div>Matrix workspace</div>
+      </OnboardingGate>,
+    );
+
+    expect(await screen.findByTestId("boot-sequence")).toBeTruthy();
+    expect(bootSequenceRender).toHaveBeenCalledWith(expect.objectContaining({
+      completionRedirect: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+      runtimeSlot: null,
+      passivePostCheckout: true,
+    }));
+  });
 
   it("selects the signup surface only for the exact marker", async () => {
     for (const path of [

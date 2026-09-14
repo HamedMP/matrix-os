@@ -57,9 +57,14 @@ const ACTIVE_PHASES = new Set<JourneyPhase>(["payment_settling", "provisioning"]
  * failure it reports `unreachable` rather than guessing a phase. The request is
  * same-origin (proxied to the platform) and Clerk-bearer authed.
  */
-export function useJourney(options: { enabled?: boolean; keepPolling?: boolean } = {}): UseJourneyResult {
+export function useJourney(options: {
+  enabled?: boolean;
+  keepPolling?: boolean;
+  runtimeSlot?: string | null;
+} = {}): UseJourneyResult {
   const enabled = options.enabled ?? true;
   const keepPolling = options.keepPolling ?? false;
+  const runtimeSlot = options.runtimeSlot ?? null;
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [state, setState] = useState<JourneyState | null>(null);
   const [status, setStatus] = useState<JourneyStatus>("loading");
@@ -83,7 +88,10 @@ export function useJourney(options: { enabled?: boolean; keepPolling?: boolean }
       try {
         const token = await getToken();
         if (disposed) return;
-        const res = await fetch("/api/journey", {
+        const journeyUrl = runtimeSlot
+          ? `/api/journey?runtimeSlot=${encodeURIComponent(runtimeSlot)}`
+          : "/api/journey";
+        const res = await fetch(journeyUrl, {
           method: "GET",
           credentials: "include",
           cache: "no-store",
@@ -136,7 +144,7 @@ export function useJourney(options: { enabled?: boolean; keepPolling?: boolean }
       if (pollTimer !== undefined) window.clearTimeout(pollTimer);
       inFlightController?.abort();
     };
-  }, [enabled, isLoaded, isSignedIn, getToken, keepPolling, nonce]);
+  }, [enabled, isLoaded, isSignedIn, getToken, keepPolling, nonce, runtimeSlot]);
 
   return { state, status, refreshJourney };
 }

@@ -3,6 +3,7 @@ import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow.js";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
@@ -10,11 +11,15 @@ import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 const appViewerRender = vi.hoisted(() => vi.fn());
 const terminalRender = vi.hoisted(() => vi.fn());
 const terminalChildPointerFocusRecorder = vi.hoisted(() => vi.fn());
+const terminalMountStarts = vi.hoisted(() => vi.fn());
 const originalFocusWindow = useWindowManager.getState().focusWindow;
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: (props: unknown) => {
     terminalRender(props);
+    React.useEffect(() => {
+      terminalMountStarts();
+    }, []);
     return (
       <>
         <button
@@ -51,16 +56,8 @@ vi.mock("../../shell/src/components/preview-window/PreviewWindow.js", () => ({
   PreviewWindow: () => null,
 }));
 
-vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
-  WorkspaceApp: () => null,
-}));
-
 vi.mock("../../shell/src/components/ChatApp.js", () => ({
   ChatApp: () => null,
-}));
-
-vi.mock("../../shell/src/lib/open-app-tab.js", () => ({
-  openAppInStandaloneTab: vi.fn(),
 }));
 
 const terminalWindow: AppWindow = {
@@ -73,6 +70,7 @@ const terminalWindow: AppWindow = {
   height: 420,
   minimized: false,
   zIndex: 1,
+  terminalLayoutId: "term-layout_0123456789abcdef0123456789abcdef",
 };
 
 const iframeWindow: AppWindow = {
@@ -83,10 +81,27 @@ const iframeWindow: AppWindow = {
 };
 
 describe("CanvasWindow terminal interactivity", () => {
+  it("resizes Terminal from the northwest corner at Canvas zoom without restarting it", () => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const win = { ...terminalWindow, x: 100, y: 100, width: 1100, height: 800 };
+    useWindowManager.setState({ windows: [win] });
+    useCanvasTransform.setState({ zoom: 0.5 });
+    const view = render(<CanvasWindow win={win} />);
+    expect(view.container.querySelectorAll('[data-window-resize]')).toHaveLength(8);
+    fireEvent.pointerDown(view.container.querySelector('[data-window-resize="nw"]')!, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 150 });
+    expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 300, y: 200, width: 900, height: 700 });
+    fireEvent.pointerUp(window);
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+    view.unmount();
+    vi.unstubAllGlobals();
+  });
   beforeEach(() => {
+    useDesktopMode.setState({ mode: "canvas" });
     appViewerRender.mockClear();
     terminalRender.mockClear();
     terminalChildPointerFocusRecorder.mockReset();
+    terminalMountStarts.mockReset();
     document.getElementById("matrix-canvas-window-motion-styles")?.remove();
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
     useWindowManager.setState({
@@ -94,7 +109,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 1,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
       focusWindow: originalFocusWindow,
@@ -132,7 +146,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -167,7 +180,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -194,7 +206,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });
@@ -210,6 +221,8 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(container.textContent).toContain("Terminal tab one");
     expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
       launchTargetId: "win-terminal",
+      layoutId: terminalWindow.terminalLayoutId,
+      persistence: "durable",
       windowControls: expect.objectContaining({
         close: expect.any(Function),
         minimize: expect.any(Function),
@@ -241,13 +254,40 @@ describe("CanvasWindow terminal interactivity", () => {
     }));
   });
 
+  it("forwards every interactive Canvas zoom and survives a preview round trip without remounting", () => {
+    useCanvasTransform.setState({ zoom: 0.25, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
+    render(<CanvasWindow win={terminalWindow} />);
+
+    expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({ canvasZoom: 0.25 }));
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+
+    for (const zoom of [0.5, 1, 1.5, 3]) {
+      act(() => useCanvasTransform.setState({ zoom }));
+      expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({ canvasZoom: zoom }));
+      expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+    }
+
+    act(() => useCanvasTransform.setState({ zoom: 0.2 }));
+    expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({
+      canvasZoom: 0.2,
+      suspended: true,
+    }));
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+
+    act(() => useCanvasTransform.setState({ zoom: 0.25 }));
+    expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({
+      canvasZoom: 0.25,
+      suspended: false,
+    }));
+    expect(terminalMountStarts).toHaveBeenCalledTimes(1);
+  });
+
   it("moves terminal Canvas windows through the delegated Terminal chrome drag handle", () => {
     useWindowManager.setState({
       windows: [terminalWindow],
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
@@ -292,7 +332,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });
@@ -326,7 +365,6 @@ describe("CanvasWindow terminal interactivity", () => {
       nextZ: 2,
       closedPaths: new Set(),
       closedLayouts: new Map(),
-      apps: [],
       focusedWindowId: "win-terminal",
       fullscreenWindowId: null,
     });

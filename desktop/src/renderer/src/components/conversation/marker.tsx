@@ -10,7 +10,7 @@ const markerVariants = cva(
       variant: {
         default: "",
         separator: "before:mr-1 before:h-px before:min-w-0 before:flex-1 before:bg-[var(--border-default)] after:ml-1 after:h-px after:min-w-0 after:flex-1 after:bg-[var(--border-default)]",
-        border: "border-b border-[var(--border-default)] pb-2",
+        border: "border-b border-[var(--border-xsoft)] pb-2",
       },
     },
   },

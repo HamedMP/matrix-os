@@ -24,24 +24,24 @@ export async function materializeCanvasExport(record: CanvasRecord, deps: Recove
   return finalPath;
 }
 
-export function reconcileCanvasRecord(record: CanvasRecord, liveRefs: { terminalSessionIds?: Set<string>; projectIds?: Set<string>; reviewLoopIds?: Set<string> } = {}): CanvasRecord {
+export function reconcileCanvasRecord(record: CanvasRecord, liveRefs: { terminalRefs?: Set<string>; projectIds?: Set<string>; reviewLoopIds?: Set<string> } = {}): CanvasRecord {
   const nodes = record.nodes.map((node) => {
     if (typeof node !== "object" || node === null) return node;
-    const sourceRef = (node as { sourceRef?: { kind?: string; id?: string } | null }).sourceRef;
-    if (!sourceRef?.id) return node;
+    const sourceRef = (node as { sourceRef?: { kind?: string; id?: string; terminalRef?: { workspaceId: string; tabId: string } } | null }).sourceRef;
+    if (!sourceRef) return node;
     const missingTerminal =
-      liveRefs.terminalSessionIds !== undefined &&
-      sourceRef.kind === "terminal_session" &&
-      sourceRef.id !== "unattached" &&
-      !liveRefs.terminalSessionIds.has(sourceRef.id);
+      liveRefs.terminalRefs !== undefined &&
+      sourceRef.kind === "terminal_tab" &&
+      (!sourceRef.terminalRef ||
+        !liveRefs.terminalRefs.has(`${sourceRef.terminalRef.workspaceId}:${sourceRef.terminalRef.tabId}`));
     const missingProject =
       liveRefs.projectIds !== undefined &&
       sourceRef.kind === "project" &&
-      !liveRefs.projectIds.has(sourceRef.id);
+      (!sourceRef.id || !liveRefs.projectIds.has(sourceRef.id));
     const missingReview =
       liveRefs.reviewLoopIds !== undefined &&
       sourceRef.kind === "review_loop" &&
-      !liveRefs.reviewLoopIds.has(sourceRef.id);
+      (!sourceRef.id || !liveRefs.reviewLoopIds.has(sourceRef.id));
     if (missingTerminal || missingProject || missingReview) {
       return { ...node, displayState: "recoverable", metadata: { ...(node as { metadata?: object }).metadata, recoveryReason: "missing_reference" } };
     }

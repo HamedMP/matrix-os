@@ -1,7 +1,51 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TAB_ID = `tt_${"b".repeat(32)}`;
+const TERMINAL_REF_KEY = `${WORKSPACE_ID}:${TAB_ID}`;
+const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
+
+function attachedFrame(
+  nextSeq: number,
+  canonicalSize = { cols: 120, rows: 42 },
+  revision = 1,
+  capabilities: string[] | null = ["binary-input-v1"],
+) {
+  return {
+    type: "attached",
+    terminalRef: TERMINAL_REF,
+    canonicalSize,
+    revision,
+    nextSeq,
+    ...(capabilities === null ? {} : { capabilities }),
+  };
+}
+
+function outputFrame(seq: number, data: string, revision = 1) {
+  return { type: "output", terminalRef: TERMINAL_REF, revision, seq, data };
+}
+
+function replayStartFrame(fromSeq: number) {
+  return { type: "replay-start", terminalRef: TERMINAL_REF, revision: 1, fromSeq };
+}
+
+function replayEndFrame(nextSeq: number, toSeq?: number) {
+  return { type: "replay-end", terminalRef: TERMINAL_REF, revision: 1, nextSeq, ...(toSeq === undefined ? {} : { toSeq }) };
+}
 
 const createdTerminals = vi.hoisted(() => [] as Array<{
   options: Record<string, unknown>;
@@ -13,9 +57,15 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   focus: ReturnType<typeof vi.fn>;
   flushWrites: () => void;
   emitData: (data: string) => void;
+  emitBinary: (data: string) => void;
   resize: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
   reset: ReturnType<typeof vi.fn>;
+  selection: string;
+  customKeyEventHandler?: (event: KeyboardEvent) => boolean;
+  clearSelection: ReturnType<typeof vi.fn>;
+  selectAll: ReturnType<typeof vi.fn>;
+  hasSelection: ReturnType<typeof vi.fn>;
 }>);
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
@@ -65,6 +115,7 @@ const restorePlan = vi.hoisted(() => ({
         write: ReturnType<typeof vi.fn>;
         dispose: ReturnType<typeof vi.fn>;
         onData: ReturnType<typeof vi.fn>;
+        onBinary: ReturnType<typeof vi.fn>;
         onResize: ReturnType<typeof vi.fn>;
         attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
         clearSelection: ReturnType<typeof vi.fn>;
@@ -166,6 +217,8 @@ vi.mock("@xterm/xterm", () => ({
       }
     };
     reset = vi.fn();
+    selection = "";
+    customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     dispose = vi.fn();
     resize = vi.fn((cols: number, rows: number) => {
       this.cols = cols;
@@ -177,10 +230,20 @@ vi.mock("@xterm/xterm", () => ({
       return { dispose: vi.fn(() => { this.dataListener = null; }) };
     });
     emitData = (data: string) => this.dataListener?.(data);
+    private binaryListener: ((data: string) => void) | null = null;
+    onBinary = vi.fn((listener: (data: string) => void) => {
+      this.binaryListener = listener;
+      return { dispose: vi.fn(() => { this.binaryListener = null; }) };
+    });
+    emitBinary = (data: string) => this.binaryListener?.(data);
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
-    attachCustomKeyEventHandler = vi.fn();
+    attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+      this.customKeyEventHandler = handler;
+    });
     clearSelection = vi.fn();
-    getSelection = vi.fn(() => "");
+    selectAll = vi.fn();
+    hasSelection = vi.fn(() => this.selection.length > 0);
+    getSelection = vi.fn(() => this.selection);
     scrollToBottom = vi.fn();
     registerLinkProvider = vi.fn();
 
@@ -405,11 +468,15 @@ function createCachedTerminal() {
       loadAddon: vi.fn(),
       refresh: vi.fn(),
       write: vi.fn(),
+      resize: vi.fn(),
       dispose: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
+      onBinary: vi.fn(() => ({ dispose: vi.fn() })),
       onResize: vi.fn(() => ({ dispose: vi.fn() })),
       attachCustomKeyEventHandler: vi.fn(),
       clearSelection: vi.fn(),
+      hasSelection: vi.fn(() => false),
+      selectAll: vi.fn(),
       getSelection: vi.fn(() => ""),
       scrollToBottom: vi.fn(),
     },
@@ -418,7 +485,15 @@ function createCachedTerminal() {
 }
 
 describe("TerminalPane scrolling", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
     createdTerminals.length = 0;
     createdFitAddons.length = 0;
     createdWebglAddons.length = 0;
@@ -464,14 +539,14 @@ describe("TerminalPane scrolling", () => {
     Reflect.deleteProperty(window, "visualViewport");
   });
 
-  it("attaches desktop canonical sessions as hard clients with proposed dimensions", async () => {
+  it("attaches browser terminal tabs as soft clients with proposed dimensions", async () => {
     render(
       <TerminalPane
         paneId="pane-hard-attach"
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -481,11 +556,11 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
     expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
-      "/ws/terminal/session",
+      "/ws/terminal/tab",
       expect.objectContaining({
-        session: "main",
-        client: "hard",
-        lease: "exclusive",
+        workspaceId: WORKSPACE_ID,
+        tabId: TAB_ID,
+        client: "browser",
         cols: "120",
         rows: "42",
       }),
@@ -495,59 +570,64 @@ describe("TerminalPane scrolling", () => {
     expect(createdTerminals[0].resize).not.toHaveBeenCalled();
   });
 
-  it("restarts a pending observer connection with an exclusive lease when the pane becomes focused", async () => {
-    let resolveObserverUrl: (() => void) | null = null;
-    buildAuthenticatedWebSocketUrl
-      .mockImplementationOnce((path, query) => new Promise<string>((resolve) => {
-        const url = new URL(`ws://localhost${path}`);
-        for (const [key, value] of Object.entries(query ?? {})) {
-          if (value) url.searchParams.set(key, value);
-        }
-        resolveObserverUrl = () => resolve(url.toString());
-      }));
+  it("deletes a canonical tab when an explicitly closed pane unmounts", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 204 }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = render(
+      <TerminalPane
+        paneId="pane-explicit-close"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId={TERMINAL_REF_KEY}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => true}
+        onFocus={() => {}}
+      />,
+    );
 
-    const props = {
-      paneId: "pane-pending-focus-takeover",
-      cwd: "",
-      theme,
-      sessionId: "main",
-      isClosing: false,
-      shouldCacheOnUnmount: () => false,
-      shouldDestroyOnUnmount: () => false,
-      onFocus: () => {},
-    } satisfies Omit<Parameters<typeof TerminalPane>[0], "isFocused">;
-    const view = render(<TerminalPane {...props} isFocused={false} />);
-
-    await waitFor(() => expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledTimes(1));
-    expect(buildAuthenticatedWebSocketUrl.mock.calls[0]?.[1]).not.toHaveProperty("lease");
-
-    view.rerender(<TerminalPane {...props} isFocused />);
-
-    await waitFor(() => expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledTimes(2));
-    expect(buildAuthenticatedWebSocketUrl.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
-      session: "main",
-      client: "hard",
-      lease: "exclusive",
-      cols: "120",
-      rows: "42",
-    }));
-
-    await act(async () => {
-      resolveObserverUrl?.();
-      await Promise.resolve();
-    });
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
-    expect(new URL(WebSocketMock.instances[0]!.url).searchParams.get("lease")).toBe("exclusive");
+    mounted.unmount();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ID}`),
+      expect.objectContaining({ method: "DELETE", keepalive: true }),
+    ));
   });
 
-  it("renews the focused web terminal lease well before gateway expiry", async () => {
+  it("deletes the pending canonical tab when pane layout has not received its reference", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 204 }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = render(
+      <TerminalPane
+        paneId="pane-pending-explicit-close"
+        cwd=""
+        theme={theme}
+        isFocused
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => TERMINAL_REF_KEY}
+        onFocus={() => {}}
+      />,
+    );
+
+    mounted.unmount();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ID}`),
+      expect.objectContaining({ method: "DELETE", keepalive: true }),
+    ));
+  });
+
+  it("keeps the focused web terminal attachment healthy", async () => {
     render(
       <TerminalPane
         paneId="pane-heartbeat"
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -561,14 +641,14 @@ describe("TerminalPane scrolling", () => {
     expect(socketHealthConfigs.at(-1)?.pingIntervalMs).toBe(10_000);
   });
 
-  it("resets the web xterm before a replacement Zellij presentation", async () => {
+  it("renders the durable observer snapshot for a terminal tab", async () => {
     render(
       <TerminalPane
         paneId="pane-presentation-reset"
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -581,12 +661,22 @@ describe("TerminalPane scrolling", () => {
     const terminal = createdTerminals[0]!;
     await act(async () => {
       socket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+        data: JSON.stringify(attachedFrame(0)),
       });
-      socket.onmessage?.({ data: JSON.stringify({ type: "presentation-reset" }) });
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: "snapshot",
+          terminalRef: TERMINAL_REF,
+          revision: 1,
+          seq: 0,
+          ansi: "durable snapshot",
+          canonicalSize: { cols: 120, rows: 42 },
+          viewport: { top: 0, rows: 42 },
+        }),
+      });
     });
 
-    expect(terminal.reset).toHaveBeenCalledOnce();
+    expect(terminal.write).toHaveBeenCalledWith("durable snapshot");
   });
 
   it("waits for a measurable hard pane instead of attaching with a destructive fallback", async () => {
@@ -605,7 +695,7 @@ describe("TerminalPane scrolling", () => {
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -617,7 +707,7 @@ describe("TerminalPane scrolling", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(WebSocketMock.instances).toHaveLength(0);
 
-    const pane = container.firstElementChild as HTMLElement;
+    const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 1_010 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 660 });
     createdFitAddons[0].proposeDimensions.mockReturnValue({ cols: 999, rows: 999 });
@@ -629,8 +719,8 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
     expect(buildAuthenticatedWebSocketUrl).toHaveBeenLastCalledWith(
-      "/ws/terminal/session",
-      expect.objectContaining({ client: "hard", cols: "500", rows: "200" }),
+      "/ws/terminal/tab",
+      expect.objectContaining({ client: "browser", cols: "500", rows: "200" }),
     );
   });
 
@@ -641,7 +731,7 @@ describe("TerminalPane scrolling", () => {
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -652,8 +742,8 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
     expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
-      "/ws/terminal/session",
-      expect.objectContaining({ session: "main", client: "soft" }),
+      "/ws/terminal/tab",
+      expect.objectContaining({ workspaceId: WORKSPACE_ID, tabId: TAB_ID, client: "mobile" }),
     );
     const query = buildAuthenticatedWebSocketUrl.mock.calls.at(-1)?.[1];
     expect(query).not.toHaveProperty("cols");
@@ -667,7 +757,7 @@ describe("TerminalPane scrolling", () => {
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -678,7 +768,7 @@ describe("TerminalPane scrolling", () => {
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
     const terminal = createdTerminals[0];
     const fitAddon = createdFitAddons[0];
-    const pane = container.firstElementChild as HTMLElement;
+    const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     fitAddon.proposeDimensions.mockReturnValue({ cols: 154, rows: 51 });
 
     await act(async () => {
@@ -686,7 +776,12 @@ describe("TerminalPane scrolling", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
-    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({ type: "resize", cols: 154, rows: 51 }));
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "resize",
+      terminalRef: TERMINAL_REF,
+      mode: "soft",
+      size: { cols: 154, rows: 51 },
+    }));
     expect(terminal.resize).not.toHaveBeenCalled();
     expect(fitAddon.fit).not.toHaveBeenCalled();
 
@@ -721,7 +816,7 @@ describe("TerminalPane scrolling", () => {
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -736,7 +831,7 @@ describe("TerminalPane scrolling", () => {
 
     await act(async () => {
       socket.onmessage?.({
-        data: JSON.stringify({ type: "canonical-size", cols: 146, rows: 47 }),
+        data: JSON.stringify({ type: "canonical-size", terminalRef: TERMINAL_REF, revision: 2, canonicalSize: { cols: 146, rows: 47 } }),
       });
     });
     expect(terminal.resize).toHaveBeenLastCalledWith(146, 47);
@@ -750,7 +845,7 @@ describe("TerminalPane scrolling", () => {
         cwd=""
         theme={theme}
         isFocused
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -764,24 +859,18 @@ describe("TerminalPane scrolling", () => {
     const terminal = createdTerminals[0];
     const fitAddon = createdFitAddons[0];
     const socket = WebSocketMock.instances[0];
-    const pane = container.firstElementChild as HTMLElement;
+    const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 700 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 800 });
 
     expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
-      "/ws/terminal/session",
-      expect.objectContaining({ session: "main", client: "soft" }),
+      "/ws/terminal/tab",
+      expect.objectContaining({ workspaceId: WORKSPACE_ID, tabId: TAB_ID, client: "mobile" }),
     );
 
     await act(async () => {
       socket.onmessage?.({
-        data: JSON.stringify({
-          type: "attached",
-          session: "main",
-          state: "running",
-          fromSeq: 0,
-          canonicalSize: { cols: 140, rows: 40 },
-        }),
+        data: JSON.stringify(attachedFrame(0, { cols: 140, rows: 40 })),
       });
     });
 
@@ -801,7 +890,7 @@ describe("TerminalPane scrolling", () => {
 
     await act(async () => {
       socket.onmessage?.({
-        data: JSON.stringify({ type: "output", seq: 1, data: `${longLsRow}\r\n$ ` }),
+        data: JSON.stringify(outputFrame(1, `${longLsRow}\r\n$ `)),
       });
     });
     expect(terminal.logicalLines[0]).toBe(longLsRow);
@@ -822,7 +911,27 @@ describe("TerminalPane scrolling", () => {
       .filter((frame) => frame.type === "resize")).toHaveLength(0);
 
     terminal.emitData("x");
-    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "x" }));
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", terminalRef: TERMINAL_REF, data: "x" }));
+    terminal.emitBinary("\x1b]10;?\x07\x1b\\\x1b[<64;15;5M\x80\xff");
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "binary",
+      terminalRef: TERMINAL_REF,
+      dataBase64: "G10xMDs/BxtcG1s8NjQ7MTU7NU2A/w==",
+    }));
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify(attachedFrame(0, { cols: 140, rows: 40 }, 2, null)),
+      });
+    });
+    terminal.emitBinary("\x1b]10;rgb:1111/2222/3333\x07");
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "input",
+      terminalRef: TERMINAL_REF,
+      data: "\x1b]10;rgb:1111/2222/3333\x07",
+    }));
+    const sentBeforeInvalidBinary = stubWs.send.mock.calls.length;
+    terminal.emitBinary(`${"x".repeat(32_768)}\u{100}`);
+    expect(stubWs.send).toHaveBeenCalledTimes(sentBeforeInvalidBinary);
 
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 1_600 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 900 });
@@ -837,7 +946,7 @@ describe("TerminalPane scrolling", () => {
 
     await act(async () => {
       socket.onmessage?.({
-        data: JSON.stringify({ type: "canonical-size", cols: 132, rows: 36 }),
+        data: JSON.stringify({ type: "canonical-size", terminalRef: TERMINAL_REF, revision: 2, canonicalSize: { cols: 132, rows: 36 } }),
       });
     });
     await waitFor(() => expect(terminal.resize).toHaveBeenLastCalledWith(132, 36));
@@ -892,11 +1001,11 @@ describe("TerminalPane scrolling", () => {
         ws: stubWs,
         lastSeq: 0,
         hasReplayCursor: false,
-        sessionId: "cached-terminal",
+        sessionId: TERMINAL_REF_KEY,
       },
       reuseTerminal: true,
       reuseSocket: true,
-      sessionId: "cached-terminal",
+      sessionId: TERMINAL_REF_KEY,
       lastSeq: 0,
       hasReplayCursor: false,
     };
@@ -941,6 +1050,7 @@ describe("TerminalPane scrolling", () => {
         theme={theme}
         isFocused={false}
         isClosing={false}
+        sessionId={TERMINAL_REF_KEY}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
         onFocus={() => {}}
@@ -982,11 +1092,11 @@ describe("TerminalPane scrolling", () => {
         ws: stubWs,
         lastSeq: 14,
         hasReplayCursor: true,
-        sessionId: "cached-terminal-with-dom-renderer",
+        sessionId: TERMINAL_REF_KEY,
       },
       reuseTerminal: true,
       reuseSocket: true,
-      sessionId: "cached-terminal-with-dom-renderer",
+      sessionId: TERMINAL_REF_KEY,
       lastSeq: 14,
       hasReplayCursor: true,
     };
@@ -998,6 +1108,7 @@ describe("TerminalPane scrolling", () => {
         theme={theme}
         isFocused={false}
         isClosing={false}
+        sessionId={TERMINAL_REF_KEY}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
         onFocus={() => {}}
@@ -1009,11 +1120,8 @@ describe("TerminalPane scrolling", () => {
     await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
 
     expect(createdTerminals).toHaveLength(0);
-    expect(fitAddon.fit).toHaveBeenCalled();
+    expect(fitAddon.fit).not.toHaveBeenCalled();
     expect(cached.terminal.loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
-    expect(fitAddon.fit.mock.invocationCallOrder[0]).toBeLessThan(
-      cached.terminal.loadAddon.mock.invocationCallOrder[0],
-    );
     expect(cached.terminal.refresh.mock.invocationCallOrder[0]).toBeLessThan(
       cached.terminal.loadAddon.mock.invocationCallOrder[0],
     );
@@ -1153,7 +1261,7 @@ describe("TerminalPane scrolling", () => {
         cwd=""
         theme={lightTheme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -1174,7 +1282,7 @@ describe("TerminalPane scrolling", () => {
         cwd=""
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -1195,11 +1303,11 @@ describe("TerminalPane scrolling", () => {
         searchAddon: null,
         ws: stubWs,
         lastSeq: 0,
-        sessionId: "main",
+        sessionId: TERMINAL_REF_KEY,
       },
       reuseTerminal: true,
       reuseSocket: true,
-      sessionId: "main",
+      sessionId: TERMINAL_REF_KEY,
       lastSeq: 0,
       hasReplayCursor: false,
     };
@@ -1209,7 +1317,7 @@ describe("TerminalPane scrolling", () => {
         cwd=""
         theme={lightTheme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
@@ -1271,7 +1379,7 @@ describe("TerminalPane scrolling", () => {
         theme={theme}
         isFocused={false}
         isClosing={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
         onFocus={() => {}}
@@ -1281,9 +1389,11 @@ describe("TerminalPane scrolling", () => {
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
     const url = new URL(WebSocketMock.instances[0]!.url);
 
-    expect(url.pathname).toBe("/ws/terminal/session");
-    expect(url.searchParams.get("session")).toBe("main");
+    expect(url.pathname).toBe("/ws/terminal/tab");
+    expect(url.searchParams.get("workspaceId")).toBe(WORKSPACE_ID);
+    expect(url.searchParams.get("tabId")).toBe(TAB_ID);
     expect(url.searchParams.get("fromSeq")).toBe("0");
+    expect(url.searchParams.get("inputCapability")).toBe("binary-input-v1");
     expect(url.searchParams.get("fromSeq")).not.toBe(String(Number.MAX_SAFE_INTEGER));
   });
 
@@ -1294,7 +1404,7 @@ describe("TerminalPane scrolling", () => {
       theme,
       isFocused: false,
       isClosing: false,
-      sessionId: "main",
+      sessionId: TERMINAL_REF_KEY,
       shouldCacheOnUnmount: () => false,
       shouldDestroyOnUnmount: () => false,
       onFocus: () => {},
@@ -1316,13 +1426,13 @@ describe("TerminalPane scrolling", () => {
 
     await act(async () => {
       restoredSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+        data: JSON.stringify(attachedFrame(0)),
       });
-      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+      restoredSocket.onmessage?.({ data: JSON.stringify(replayStartFrame(0)) });
       restoredSocket.onmessage?.({
-        data: JSON.stringify({ type: "output", seq: 0, data: "retained-before-refresh\r\n" }),
+        data: JSON.stringify(outputFrame(0, "retained-before-refresh\r\n")),
       });
-      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-end" }) });
+      restoredSocket.onmessage?.({ data: JSON.stringify(replayEndFrame(1, 0)) });
     });
 
     expect(restoredTerminal.write).toHaveBeenCalledWith("retained-before-refresh\r\n");
@@ -1336,7 +1446,7 @@ describe("TerminalPane scrolling", () => {
         theme={theme}
         isFocused={false}
         isClosing={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
         onFocus={() => {}}
@@ -1359,14 +1469,14 @@ describe("TerminalPane scrolling", () => {
     ];
     await act(async () => {
       socket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+        data: JSON.stringify(attachedFrame(0)),
       });
-      socket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+      socket.onmessage?.({ data: JSON.stringify(replayStartFrame(0)) });
       for (const [seq, data] of replayFrames.entries()) {
-        socket.onmessage?.({ data: JSON.stringify({ type: "output", seq, data }) });
+        socket.onmessage?.({ data: JSON.stringify(outputFrame(seq, data)) });
         expect(terminal.element?.style.visibility).toBe("hidden");
       }
-      socket.onmessage?.({ data: JSON.stringify({ type: "replay-end", toSeq: replayFrames.length - 1 }) });
+      socket.onmessage?.({ data: JSON.stringify(replayEndFrame(replayFrames.length, replayFrames.length - 1)) });
     });
 
     expect(terminal.element?.style.visibility).toBe("hidden");
@@ -1399,7 +1509,7 @@ describe("TerminalPane scrolling", () => {
           theme={theme}
           isFocused={false}
           isClosing={false}
-          sessionId="main"
+          sessionId={TERMINAL_REF_KEY}
           shouldCacheOnUnmount={() => false}
           shouldDestroyOnUnmount={() => false}
           onFocus={() => {}}
@@ -1412,11 +1522,11 @@ describe("TerminalPane scrolling", () => {
 
       await act(async () => {
         socket.onmessage?.({
-          data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+          data: JSON.stringify(attachedFrame(0)),
         });
-        socket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+        socket.onmessage?.({ data: JSON.stringify(replayStartFrame(0)) });
         socket.onmessage?.({
-          data: JSON.stringify({ type: "output", seq: 0, data: "OLD_PRIVATE_FRAME\r\n" }),
+          data: JSON.stringify(outputFrame(0, "OLD_PRIVATE_FRAME\r\n")),
         });
       });
       expect(stalledReplayTimeout).not.toBeNull();
@@ -1439,7 +1549,7 @@ describe("TerminalPane scrolling", () => {
         theme={theme}
         isFocused={false}
         isClosing={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
         onFocus={() => {}}
@@ -1450,7 +1560,7 @@ describe("TerminalPane scrolling", () => {
     const firstSocket = WebSocketMock.instances[0]!;
     await act(async () => {
       firstSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 12 }),
+        data: JSON.stringify(attachedFrame(12)),
       });
     });
     expect(mockedCapturePostHogEvent).toHaveBeenCalledWith("shell_terminal_ws", expect.objectContaining({
@@ -1468,7 +1578,7 @@ describe("TerminalPane scrolling", () => {
     const reconnectSocket = WebSocketMock.instances[1]!;
     await act(async () => {
       reconnectSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 12 }),
+        data: JSON.stringify(attachedFrame(12)),
       });
     });
     expect(mockedCapturePostHogEvent).toHaveBeenCalledWith("shell_terminal_ws", expect.objectContaining({
@@ -1494,11 +1604,11 @@ describe("TerminalPane scrolling", () => {
         ws: stubWs,
         lastSeq: 23,
         hasReplayCursor: true,
-        sessionId: "main",
+        sessionId: TERMINAL_REF_KEY,
       },
       reuseTerminal: true,
       reuseSocket: true,
-      sessionId: "main",
+      sessionId: TERMINAL_REF_KEY,
       lastSeq: 23,
       hasReplayCursor: true,
     };
@@ -1521,7 +1631,7 @@ describe("TerminalPane scrolling", () => {
       stubWs.readyState = WebSocketMock.OPEN;
       stubWs.onopen?.();
       stubWs.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 23 }),
+        data: JSON.stringify(attachedFrame(23)),
       });
     });
 
@@ -1542,7 +1652,7 @@ describe("TerminalPane scrolling", () => {
         theme={theme}
         isFocused={false}
         isClosing={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
         onFocus={() => {}}
@@ -1554,9 +1664,9 @@ describe("TerminalPane scrolling", () => {
     const terminal = createdTerminals[0]!;
     await act(async () => {
       firstSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 40 }),
+        data: JSON.stringify(attachedFrame(40)),
       });
-      firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 40, data: "before-drop\r\n" }) });
+      firstSocket.onmessage?.({ data: JSON.stringify(outputFrame(40, "before-drop\r\n")) });
       firstSocket.onclose?.();
       document.dispatchEvent(new Event("visibilitychange"));
     });
@@ -1567,13 +1677,152 @@ describe("TerminalPane scrolling", () => {
     expect(terminal.element?.style.visibility).toBe("visible");
     await act(async () => {
       reconnectSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 41 }),
+        data: JSON.stringify(attachedFrame(41)),
       });
-      reconnectSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 41, data: "missed-once\r\n" }) });
+      reconnectSocket.onmessage?.({ data: JSON.stringify(outputFrame(41, "missed-once\r\n")) });
     });
 
     expect(terminal.write.mock.calls.filter(([data]) => data === "before-drop\r\n")).toHaveLength(1);
     expect(terminal.write.mock.calls.filter(([data]) => data === "missed-once\r\n")).toHaveLength(1);
+  });
+
+  it("resets retained presentation before writing an authoritative reconnect snapshot", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-reconnect-snapshot-reset-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId={TERMINAL_REF_KEY}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      firstSocket.onmessage?.({ data: JSON.stringify(attachedFrame(0)) });
+      firstSocket.onmessage?.({ data: JSON.stringify(outputFrame(0, "retained once\r\n")) });
+      firstSocket.onclose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const reconnectSocket = WebSocketMock.instances[1]!;
+    await act(async () => {
+      reconnectSocket.onmessage?.({ data: JSON.stringify(attachedFrame(1)) });
+      reconnectSocket.onmessage?.({
+        data: JSON.stringify({
+          type: "snapshot",
+          terminalRef: TERMINAL_REF,
+          revision: 1,
+          presentationRevision: 1,
+          seq: 0,
+          ansi: "authoritative presentation",
+          canonicalSize: { cols: 120, rows: 42 },
+          viewport: { top: 0, rows: 42 },
+        }),
+      });
+    });
+
+    expect(terminal.reset).toHaveBeenCalledTimes(1);
+    const snapshotWriteIndex = terminal.write.mock.calls.findIndex(
+      ([data]) => data === "authoritative presentation",
+    );
+    expect(snapshotWriteIndex).toBeGreaterThanOrEqual(0);
+    expect(terminal.reset.mock.invocationCallOrder[0]).toBeLessThan(
+      terminal.write.mock.invocationCallOrder[snapshotWriteIndex]!,
+    );
+  });
+
+  it("accepts an authoritative reconnect snapshot without rewinding its replay cursor", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-reconnect-stale-snapshot-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId={TERMINAL_REF_KEY}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      firstSocket.onmessage?.({ data: JSON.stringify(attachedFrame(0)) });
+      firstSocket.onmessage?.({ data: JSON.stringify(outputFrame(0, "newer retained\r\n")) });
+      firstSocket.onclose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const reconnectSocket = WebSocketMock.instances[1]!;
+    await act(async () => {
+      reconnectSocket.onmessage?.({ data: JSON.stringify(attachedFrame(1)) });
+      reconnectSocket.onmessage?.({
+        data: JSON.stringify({
+          type: "snapshot",
+          terminalRef: TERMINAL_REF,
+          revision: 1,
+          presentationRevision: 0,
+          seq: 0,
+          ansi: "older routine snapshot",
+          canonicalSize: { cols: 120, rows: 42 },
+          viewport: { top: 0, rows: 42 },
+        }),
+      });
+      reconnectSocket.onmessage?.({ data: JSON.stringify(outputFrame(1, "continued output\r\n")) });
+    });
+
+    expect(terminal.reset).toHaveBeenCalledTimes(1);
+    expect(terminal.write).toHaveBeenCalledWith("older routine snapshot");
+    expect(terminal.write).toHaveBeenCalledWith("continued output\r\n");
+    expect(reconnectSocket.close).not.toHaveBeenCalled();
+    expect(WebSocketMock.instances).toHaveLength(2);
+  });
+
+  it("accepts a lower revision watermark from a replacement socket", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-revision-reconnect-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId={TERMINAL_REF_KEY}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      firstSocket.onmessage?.({ data: JSON.stringify(attachedFrame(0, undefined, 10)) });
+      firstSocket.onmessage?.({ data: JSON.stringify(outputFrame(0, "before-reconnect\r\n", 10)) });
+      firstSocket.onclose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const reconnectSocket = WebSocketMock.instances[1]!;
+    await act(async () => {
+      reconnectSocket.onmessage?.({ data: JSON.stringify(attachedFrame(1, undefined, 1)) });
+      reconnectSocket.onmessage?.({ data: JSON.stringify(outputFrame(1, "after-reconnect\r\n", 1)) });
+    });
+
+    expect(terminal.write.mock.calls.filter(([data]) => data === "after-reconnect\r\n")).toHaveLength(1);
   });
 
   it("preserves the xterm buffer and replay cursor across cached tab switching", async () => {
@@ -1583,7 +1832,7 @@ describe("TerminalPane scrolling", () => {
       theme,
       isFocused: false,
       isClosing: false,
-      sessionId: "main",
+      sessionId: TERMINAL_REF_KEY,
       shouldCacheOnUnmount: () => true,
       shouldDestroyOnUnmount: () => false,
       onFocus: () => {},
@@ -1596,11 +1845,9 @@ describe("TerminalPane scrolling", () => {
     const terminal = createdTerminals[0]!;
     await act(async () => {
       firstSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 7 }),
+        data: JSON.stringify(attachedFrame(7)),
       });
-      firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 7, data: "cached-output\r\n" }) });
-    });
-    await act(async () => {
+      firstSocket.onmessage?.({ data: JSON.stringify(outputFrame(7, "cached-output\r\n")) });
       firstMount.unmount();
       await Promise.resolve();
     });
@@ -1625,7 +1872,7 @@ describe("TerminalPane scrolling", () => {
       },
       reuseTerminal: true,
       reuseSocket: false,
-      sessionId: "main",
+      sessionId: TERMINAL_REF_KEY,
       lastSeq: 8,
       hasReplayCursor: true,
     };
@@ -1635,7 +1882,14 @@ describe("TerminalPane scrolling", () => {
 
     expect(createdTerminals).toHaveLength(1);
     expect(terminal.write.mock.calls.filter(([data]) => data === "cached-output\r\n")).toHaveLength(1);
-    expect(new URL(WebSocketMock.instances[1]!.url).searchParams.get("fromSeq")).toBe("8");
+    const restoredSocket = WebSocketMock.instances[1]!;
+    expect(new URL(restoredSocket.url).searchParams.get("fromSeq")).toBe("8");
+    await act(async () => {
+      restoredSocket.onmessage?.({ data: JSON.stringify(attachedFrame(8)) });
+    });
+    stubWs.send.mockClear();
+    terminal.emitBinary("\x1b]10;rgb:1111/2222/3333\x07");
+    expect(stubWs.send).toHaveBeenCalledOnce();
   });
 
   it("detaches and restores a suspended canonical pane with replay and current dimensions", async () => {
@@ -1645,7 +1899,7 @@ describe("TerminalPane scrolling", () => {
       theme,
       isFocused: false,
       isClosing: false,
-      sessionId: "main",
+      sessionId: TERMINAL_REF_KEY,
       shouldCacheOnUnmount: () => true,
       shouldDestroyOnUnmount: () => false,
       onFocus: () => {},
@@ -1681,14 +1935,13 @@ describe("TerminalPane scrolling", () => {
 
     await act(async () => {
       restoredSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+        data: JSON.stringify(attachedFrame(0, { cols: 132, rows: 36 })),
       });
-      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+      restoredSocket.onmessage?.({ data: JSON.stringify(replayStartFrame(0)) });
       restoredSocket.onmessage?.({
-        data: JSON.stringify({ type: "output", seq: 0, data: "replayed-after-restore\r\n" }),
+        data: JSON.stringify(outputFrame(0, "replayed-after-restore\r\n")),
       });
-      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "canonical-size", cols: 132, rows: 36 }) });
-      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-end", toSeq: 0 }) });
+      restoredSocket.onmessage?.({ data: JSON.stringify(replayEndFrame(1, 0)) });
     });
 
     expect(terminal.write.mock.calls.filter(([data]) => data === "replayed-after-restore\r\n")).toHaveLength(1);
@@ -1703,7 +1956,7 @@ describe("TerminalPane scrolling", () => {
         theme={theme}
         isFocused={false}
         isClosing={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
         onFocus={() => {}}
@@ -1716,10 +1969,7 @@ describe("TerminalPane scrolling", () => {
     await act(async () => {
       firstSocket.onmessage?.({
         data: JSON.stringify({
-          type: "attached",
-          session: "main",
-          state: "running",
-          fromSeq,
+          ...attachedFrame(fromSeq),
         }),
       });
       firstSocket.onclose?.();
@@ -1728,8 +1978,9 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
     const reconnectUrl = new URL(WebSocketMock.instances[1]!.url);
-    expect(reconnectUrl.pathname).toBe("/ws/terminal/session");
-    expect(reconnectUrl.searchParams.get("session")).toBe("main");
+    expect(reconnectUrl.pathname).toBe("/ws/terminal/tab");
+    expect(reconnectUrl.searchParams.get("workspaceId")).toBe(WORKSPACE_ID);
+    expect(reconnectUrl.searchParams.get("tabId")).toBe(TAB_ID);
     expect(reconnectUrl.searchParams.get("fromSeq")).toBe(String(fromSeq));
   });
 });

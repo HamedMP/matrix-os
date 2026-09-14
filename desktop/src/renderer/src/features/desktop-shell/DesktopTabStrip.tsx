@@ -11,7 +11,6 @@ export default function DesktopTabStrip({
   activeTabId,
   onActivate,
   onRestore,
-  onMinimize,
   onClose,
   workspaceView,
   onShowDesktop,
@@ -23,7 +22,6 @@ export default function DesktopTabStrip({
   activeTabId: string | null;
   onActivate: (tabId: string) => void;
   onRestore: (tabId: string) => void;
-  onMinimize: (tabId: string) => void;
   onClose: (tab: Tab) => void;
   workspaceView: "desktop" | "tabs";
   onShowDesktop: () => void;
@@ -59,7 +57,7 @@ export default function DesktopTabStrip({
             canClose
             onClick={() => onActivate(tab.id)}
             onDoubleClick={() => onRestore(tab.id)}
-            onMinimize={() => onMinimize(tab.id)}
+            onRestore={() => onRestore(tab.id)}
             onClose={() => onClose(tab)}
           />
         );

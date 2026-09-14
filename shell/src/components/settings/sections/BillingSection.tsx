@@ -1,12 +1,60 @@
 "use client";
 
+import type { CSSProperties } from "react";
+import { desktopPalette, palette } from "@matrix-os/brand";
 import { Badge } from "@/components/ui/badge";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
+import type { BillingAccessIssue } from "@/hooks/useMatrixBillingAccess";
 import {
   BillingPanel,
   type BillingPanelMode,
   type ComputerSetupSelection,
 } from "./BillingPanel";
+
+function BillingStatusBadge({
+  active,
+  startsNewSubscription,
+  accessIssue,
+}: {
+  active: boolean | null;
+  startsNewSubscription: boolean;
+  accessIssue: BillingAccessIssue;
+}) {
+  if (active === false && !startsNewSubscription) return null;
+
+  let className = "border-border/30 bg-muted/30 text-muted-foreground";
+  let style: CSSProperties | undefined;
+  let label = "Checking";
+  if (accessIssue === "auth") {
+    className = "border-sky-500/30 bg-sky-500/10 text-sky-700";
+    label = "Reconnecting";
+  } else if (accessIssue === "status") {
+    className = "border-ember/30 bg-ember/10 text-ember";
+    label = "Unavailable";
+  } else if (startsNewSubscription) {
+    className = "";
+    style = {
+      backgroundColor: desktopPalette.canvas,
+      borderColor: desktopPalette.green,
+      color: desktopPalette.forest,
+    };
+    label = "New subscription";
+  } else if (active === true) {
+    className = "";
+    style = {
+      backgroundColor: desktopPalette.surfaceMuted,
+      borderColor: desktopPalette.forestHover,
+      color: desktopPalette.forest,
+    };
+    label = "Active";
+  }
+
+  return (
+    <Badge variant="outline" className={className} style={style}>
+      {label}
+    </Badge>
+  );
+}
 
 export function BillingSection({
   mode = "settings",
@@ -21,48 +69,26 @@ export function BillingSection({
   checkoutReturnPath?: string;
   checkoutRuntimeSlot?: string;
 }) {
-  const { active, entitlement, trialOffer, accessReason, accessIssue } = useMatrixBillingAccess();
+  const { active, entitlement, trialOffer, accessReason, accessIssue, retry } = useMatrixBillingAccess();
   const startsNewSubscription = mode === "add-computer" && entitlement?.source !== "override";
 
   return (
-    <div className="mx-auto max-w-5xl space-y-3 p-2 sm:p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold">Billing</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {mode === "device-setup"
-              ? "Choose billing in Settings, then Matrix returns to CLI device approval."
-              : mode === "add-computer"
-              ? "Choose the strength and region for another Matrix computer."
-              : mode === "provisioning"
-              ? "Choose a hosted runtime plan and launch through secure checkout."
-              : "Manage Matrix OS hosted runtime billing and payment details."}
-          </p>
-        </div>
-        <Badge
-          variant="outline"
-          className={
-            startsNewSubscription
-              ? "border-ember/30 bg-ember/10 text-ember"
-              : active === true
-              ? "border-forest/25 bg-forest/8 text-forest"
-              : accessIssue === "auth"
-                ? "border-sky-500/30 bg-sky-500/10 text-sky-700"
-              : active === false
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-700"
-                : "border-border/30 bg-muted/30 text-muted-foreground"
-          }
+    <div className="mx-auto max-w-5xl space-y-4 p-2 font-[family-name:var(--font-geist-sans)] sm:p-4">
+      <div
+        className="flex items-center justify-between gap-3 border-b pb-3"
+        style={{ borderColor: palette.cream }}
+      >
+        <h2
+          className="font-[family-name:var(--font-bricolage)] text-xl font-semibold tracking-tight"
+          style={{ color: palette.brandInk }}
         >
-          {startsNewSubscription
-            ? "New subscription"
-            : active === true
-              ? "Active"
-              : accessIssue === "auth"
-                ? "Reconnecting"
-                : active === false
-                  ? "Not active"
-                  : "Checking"}
-        </Badge>
+          Billing
+        </h2>
+        <BillingStatusBadge
+          active={active}
+          startsNewSubscription={startsNewSubscription}
+          accessIssue={accessIssue}
+        />
       </div>
 
       <BillingPanel
@@ -71,6 +97,7 @@ export function BillingSection({
         trialOffer={trialOffer}
         accessReason={accessReason}
         accessIssue={accessIssue}
+        onRetry={retry}
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
         onCheckoutNavigate={onCheckoutNavigate}

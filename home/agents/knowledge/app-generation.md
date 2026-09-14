@@ -6,13 +6,28 @@ The default output type is a **pre-built React app** using Vite in `~/apps/<slug
 
 Use `~/modules/<name>/` only when the user explicitly wants a module, when the app must follow existing module conventions, or when you are extending an existing module-based app. Do not default to `~/modules/` for new user-facing apps.
 
+### Design and launch contract
+
+Read the installed `matrix-app-builder` skill and its `references/app-craft.md`, plus
+`emil-design-eng` and `apple-design`, before UI work. Use the current skill catalog to
+resolve paths. Select layout and density for the user’s primary task; inherit Matrix
+tokens and fonts. Do not apply gradients, glass cards, pill inputs, or mount staggering
+universally. Inspect the running app and refine its typography, spacing, states, and motion.
+
+Owner-built manifests require `listingTrust: "first_party"` and personal scope. Missing
+trust causes a launch policy rejection, even after a successful build; it does not mean
+the user needs another login. Do not promote imported apps or expose gateway credentials.
+Run the builder skill’s `scripts/verify-app.mjs` against the app directory, then open it
+from Matrix and verify assets, bridge operations, persistence, and visual states.
+
 ### Scaffold Steps
 
 1. Create app directory: `~/apps/<slug>/`
 2. Write project files (see structure below)
 3. Run: `cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build`
 4. Verify `dist/index.html` exists
-5. Verify `matrix.json` has `runtime: "vite"` and `build.output: "dist"`
+5. Run the builder preflight; verify `runtime: "vite"`, `runtimeVersion`, `listingTrust: "first_party"`, personal scope, and `build.output: "dist"`
+6. Verify launch through Matrix and inspect the actual app before reporting success
 
 ### Structure
 ```
@@ -176,7 +191,7 @@ Use explicit app branding only when requested or when the app's domain requires 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-  background: linear-gradient(170deg, var(--sand-light) 0%, var(--sand-mid) 30%, #F7F3ED 60%, var(--sand-light) 100%);
+  background: var(--bg);
   color: var(--fg);
   font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
 }
@@ -189,7 +204,7 @@ button {
   color: var(--primary-fg);
   border: none;
   padding: 10px 24px;
-  border-radius: 50px;
+  border-radius: var(--matrix-radius, 8px);
   font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
   font-size: 0.875rem;
   font-weight: 500;
@@ -197,11 +212,11 @@ button {
 }
 
 input, textarea, select {
-  background: rgba(255,255,255,0.8);
+  background: var(--card);
   color: var(--fg);
   border: 1.5px solid var(--border);
   padding: 12px 20px;
-  border-radius: 50px;
+  border-radius: var(--matrix-radius, 8px);
   font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
 }
 ```
@@ -230,13 +245,13 @@ For very simple tools (calculators, clocks, single-screen utilities), use `~/app
 - No state management needed
 - No component hierarchy
 - Single screen, no routing
-- User explicitly asks for something "quick" or "simple"
+- User explicitly requests plain HTML
 
 ### Structure
 - One app directory in `~/apps/<slug>/`
 - `matrix.json` manifest
 - `index.html` entry point
-- CSS and JS inline or via CDN imports (esm.sh, unpkg)
+- Local CSS and JS; no remote script or font CDNs
 - Theme integration: CSS custom properties
 
 ### Manifest
@@ -264,8 +279,9 @@ For very simple tools (calculators, clocks, single-screen utilities), use `~/app
 | State management needed | React app in `~/apps/<slug>/` |
 | CRM, roadmap, dashboard, project tracker | React app in `~/apps/<slug>/` |
 | User explicitly wants a module or existing module extension | React module in `~/modules/<name>/` |
-| "quick", "simple", "just a..." | HTML app in `~/apps/<slug>/` |
-| Calculator, clock, single widget | HTML app in `~/apps/<slug>/` |
+| "quick", "simple", "just a..." | React app in `~/apps/<slug>/` |
+| Calculator, clock, single widget | React app in `~/apps/<slug>/` |
+| Explicit plain HTML request | HTML app in `~/apps/<slug>/` |
 
 Do not create Next.js, `.next/`, app router folders, API routes, `runtime: "node"`, or `npm start` unless the user explicitly asks for a server runtime or Next.js.
 
@@ -307,7 +323,7 @@ Apps that display data from external services (Gmail, Calendar, etc.) should fet
 wasteful and stale.
 
 ## Best Practices
-- Default to `~/apps/<slug>/matrix.json` + `index.html` for apps
+- Default to Vite React apps with `~/apps/<slug>/matrix.json` and built `dist/index.html`
 - Use TypeScript strict mode in all React apps/modules
 - Keep components small and focused
 - Use semantic HTML and accessible markup

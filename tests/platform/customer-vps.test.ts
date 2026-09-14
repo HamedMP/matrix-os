@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createHmac } from 'node:crypto';
 import {
   claimUserMachineDelete,
   claimRunningUserMachineResize,
@@ -33,6 +32,11 @@ import {
   validateDbLatestPointer,
 } from '../../packages/platform/src/customer-vps-r2.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import {
+  buildPlatformRuntimeVerificationToken,
+  timingSafeTokenEquals,
+  buildPlatformVerificationToken,
+} from '../../packages/platform/src/platform-token.js';
 
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
@@ -224,7 +228,9 @@ describe('platform/customer-vps', () => {
   });
 
   it('provisions a user machine idempotently by clerkUserId', async () => {
-    const { service, hetzner } = createService();
+    const { service, hetzner } = createService({
+      config: createTestConfig({ serverType: 'cpx42' }),
+    });
 
     const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice', developerTools: ['codex', 'pi'] });
     const second = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -338,35 +344,61 @@ describe('platform/customer-vps', () => {
     });
   });
 
-  it('persists a selected region and uses it for provisioning', async () => {
+  it('rejects a CPX22 provisioning request with multiple developer tools before creating a machine', async () => {
     const { service, hetzner } = createService({
-      config: createTestConfig({ location: 'nbg1' }),
-      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        defaultServerType: 'CPX22',
+        allowedServerTypes: ['CPX22'],
+      })),
     });
 
-    await service.provision({
+    await expect(service.provision({
       clerkUserId: 'user_123',
       handle: 'alice',
       serverType: 'cpx22',
-      location: 'hil',
+      developerTools: ['codex', 'pi'],
+    })).rejects.toMatchObject({
+      status: 400,
+      publicMessage: 'Invalid request',
     });
-
-    expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
-      serverType: 'cpx22',
-      location: 'hil',
-    });
-    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
-      serverType: 'cpx22',
-      location: 'hil',
-    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toBeUndefined();
   });
 
+  it.each(['ash', 'hil'] as const)(
+    'continues to provision an existing US machine in %s',
+    async (location) => {
+      const { service, hetzner } = createService({
+        config: createTestConfig({ location: 'nbg1' }),
+        resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
+      });
+
+      await service.provision({
+        clerkUserId: 'user_123',
+        handle: 'alice',
+        serverType: 'cpx22',
+        location,
+      });
+
+      expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+        serverType: 'cpx22',
+        location,
+      });
+      await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+        serverType: 'cpx22',
+        location,
+      });
+    },
+  );
+
   it('accepts only supported Hetzner locations at the provisioning boundary', () => {
-    expect(ProvisionRequestSchema.safeParse({
-      clerkUserId: 'user_123',
-      handle: 'alice',
-      location: 'hil',
-    }).success).toBe(true);
+    for (const location of ['fsn1', 'nbg1', 'ash', 'hil']) {
+      expect(ProvisionRequestSchema.safeParse({
+        clerkUserId: 'user_123',
+        handle: 'alice',
+        location,
+      }).success).toBe(true);
+    }
     expect(ProvisionRequestSchema.safeParse({
       clerkUserId: 'user_123',
       handle: 'alice',
@@ -1352,6 +1384,79 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
   });
 
+  it('boots operator previews from an explicitly published immutable bundle', async () => {
+    const version = 'v2026.09.11-pr1607-34614651893-1-1388d33';
+    await upsertHostBundleRelease(db, {
+      version,
+      channel: 'none',
+      gitCommit: '1388d33397ff502ff046f5d65cf3c3538b44d283',
+      gitRef: 'codex/om-214-chat-agent-ui',
+      buildTime: '2026-09-11T15:20:00.000Z',
+      bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`,
+      checksumKey: `system-bundles/${version}/matrix-host-bundle.tar.gz.sha256`,
+      sha256: 'b'.repeat(64),
+      size: 1_257_725_742,
+      severity: 'normal',
+      updateType: 'manual',
+      changelog: 'Preview bundle',
+      createdAt: '2026-09-11T15:22:00.000Z',
+    });
+    const { service, hetzner } = createService();
+
+    const provisioned = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-1607',
+      runtimeSlot: 'pr-1607',
+      bundleVersion: version,
+    });
+
+    expect((await getUserMachine(db, provisioned.machineId))?.imageVersion).toBe(version);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain(
+      `MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/${version}/matrix-host-bundle.tar.gz`,
+    );
+    expect(createInput?.userData).toContain(`MATRIX_IMAGE_VERSION=${version}`);
+    expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
+  });
+
+  it('rejects an unpublished explicit preview bundle before creating a server', async () => {
+    const { service, hetzner } = createService();
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-1607',
+      runtimeSlot: 'pr-1607',
+      bundleVersion: 'v2026.09.11-pr1607-1-1-abcdef0',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning unavailable',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unpublished explicit bundle before resuming an existing preview', async () => {
+    const { service, hetzner } = createService();
+    await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-1607',
+      runtimeSlot: 'pr-1607',
+    });
+    vi.mocked(hetzner.createServer).mockClear();
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-1607',
+      runtimeSlot: 'pr-1607',
+      bundleVersion: 'v2026.09.11-pr1607-unknown',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning unavailable',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
   it('can provision an isolated staging runtime for the same Clerk user', async () => {
     let nextId = 0;
     const ids = [
@@ -1415,29 +1520,72 @@ describe('platform/customer-vps', () => {
     await expect(getRunningUserMachineByHandle(db, 'alice-staging', 'primary')).resolves.toBeUndefined();
   });
 
-  it('templates the platform verification token into provisioned customer hosts', async () => {
+  it('templates legacy and exact runtime-bound verification tokens into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 
     await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
-    const expected = createHmac('sha256', 'platform-secret').update('alice').digest('hex');
+    const expected = buildPlatformVerificationToken('alice', 'platform-secret');
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    const fundedRuntimeToken = createInput?.userData
+      .match(/^\s*MATRIX_FUNDED_AI_RUNTIME_TOKEN=([^\s]+)$/m)?.[1];
     expect(createInput?.userData).toContain(`UPGRADE_TOKEN=${expected}`);
     expect(createInput?.userData).toContain(`MATRIX_AUTH_TOKEN=${expected}`);
     expect(createInput?.userData).toContain(`MATRIX_CODE_PROXY_TOKEN=${expected}`);
+    expect(fundedRuntimeToken).toBe(buildPlatformRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      runtimeSlot: 'primary',
+    }, 'platform-secret'));
+    expect(timingSafeTokenEquals(fundedRuntimeToken, buildPlatformRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      runtimeSlot: 'staging',
+    }, 'platform-secret'))).toBe(false);
+    expect(timingSafeTokenEquals(fundedRuntimeToken, buildPlatformRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: 'machine_predecessor',
+      runtimeSlot: 'primary',
+    }, 'platform-secret'))).toBe(false);
     expect(createInput?.userData).toContain('PLATFORM_INTERNAL_URL=http://localhost:9000');
     expect(createInput?.userData).not.toContain('PIPEDREAM_CLIENT_SECRET');
   });
 
-  it('templates R2 credentials into provisioned customer hosts for backups', async () => {
+  it('templates only the funded runtime flag and relay URL into customer hosts', async () => {
+    const { service, hetzner } = createService({
+      config: createTestConfig({
+        fundedAiEnabled: true,
+        fundedAiRelayUrl: 'https://relay.matrix-os.com',
+      }),
+    });
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain('MATRIX_FUNDED_AI_ENABLED=true');
+    expect(createInput?.userData).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.matrix-os.com');
+    const machine = await getActiveUserMachineByHandle(db, 'alice');
+    const fundedToken = buildPlatformRuntimeVerificationToken({
+      handle: 'alice',
+      machineId: machine!.machineId,
+      runtimeSlot: machine!.runtimeSlot,
+    }, 'platform-secret');
+    expect(createInput?.userData).toContain(`MATRIX_FUNDED_AI_RUNTIME_TOKEN=${fundedToken}`);
+    expect(fundedToken).not.toBe(buildPlatformVerificationToken('alice', 'platform-secret'));
+    expect(createInput?.userData).not.toContain('AI_RELAY_CONTROL_TOKEN');
+    expect(createInput?.userData).not.toContain('CF_AIG_AUTHORIZATION');
+  });
+
+  it('never templates platform R2 credentials into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 
     await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
-    expect(createInput?.userData).toContain("AWS_ACCESS_KEY_ID='r2-access-key'");
-    expect(createInput?.userData).toContain("AWS_SECRET_ACCESS_KEY='r2-secret-key'");
-    expect(createInput?.userData).toContain("R2_ENDPOINT='https://r2.example'");
+    expect(createInput?.userData).not.toContain('AWS_ACCESS_KEY_ID');
+    expect(createInput?.userData).not.toContain('AWS_SECRET_ACCESS_KEY');
+    expect(createInput?.userData).not.toContain('R2_ENDPOINT');
+    expect(createInput?.userData).not.toContain('/opt/matrix/env/r2.env');
   });
 
   it('templates public PostHog telemetry into provisioned customer hosts', async () => {
@@ -1515,6 +1663,24 @@ describe('platform/customer-vps', () => {
     expect(row?.registrationTokenHash).toBeNull();
     expect(row?.registrationTokenExpiresAt).toBeNull();
     expect(systemStore.writtenMeta).toHaveLength(1);
+  });
+
+  it('distinguishes a completed registration from other invalid states', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    const registration = {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    };
+
+    await service.register('registration-token', registration);
+
+    await expect(service.register('registration-token', registration)).rejects.toMatchObject({
+      status: 409,
+      code: 'already_registered',
+    });
   });
 
   it('completes registration after an already-authorized create when entitlement later changes', async () => {

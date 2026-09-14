@@ -8,6 +8,7 @@ import {
   CanonicalChatProviderBindingSchema,
   type CanonicalChat,
   type CanonicalChatMessage,
+  type CanonicalChatLatestSuccessfulCompletion,
   type CanonicalChatProviderBinding,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
@@ -35,6 +36,7 @@ export interface ChatRecord {
   projectId?: string;
   providerBinding?: CanonicalChatProviderBinding;
   activeRun?: NonNullable<CanonicalChatSummary["activeRun"]>;
+  latestSuccessfulCompletion?: CanonicalChatLatestSuccessfulCompletion;
 }
 
 export type ChatOutboxEventType =
@@ -42,6 +44,14 @@ export type ChatOutboxEventType =
   | "chat.updated"
   | "chat.user_state_updated"
   | "turn.accepted"
+  | "queue.enqueued"
+  | "queue.updated"
+  | "queue.cancelled"
+  | "queue.reordered"
+  | "queue.claimed"
+  | "run.steer_requested"
+  | "run.steered"
+  | "run.steer_failed"
   | "run.activity"
   | "run.message"
   | "chat.terminal_bound"
@@ -122,10 +132,23 @@ export function messageSearchText(message: CanonicalChatMessage): string {
     .slice(0, 96 * 1024);
 }
 
+export function messageAttribution(message: CanonicalChatMessage): {
+  actor_id: string | null;
+  purpose: "discussion" | "ai_request" | "assistant" | "system";
+} {
+  return {
+    actor_id: message.actorId ?? null,
+    purpose: message.purpose
+      ?? (message.role === "user" ? "ai_request" : message.role === "assistant" ? "assistant" : "system"),
+  };
+}
+
 export function toChatRecord(
   row: Selectable<ChatsTable>,
   activeRun?: Selectable<ChatRunsTable>,
   userState?: CanonicalChatUserState,
+  latestSuccessfulCompletionRow?: Pick<Selectable<ChatRunsTable>, "id" | "completed_at">,
+  attentionAcknowledgedAt?: Date | string | null,
 ): ChatRecord {
   const chat = CanonicalChatSchema.parse({
     id: row.id,
@@ -154,6 +177,8 @@ export function toChatRecord(
         lockedAtTurnId: row.bound_at_turn_id,
       })
     : undefined;
+  const completedAt = asIso(latestSuccessfulCompletionRow?.completed_at);
+  const acknowledgedAt = asIso(attentionAcknowledgedAt);
   return {
     chat,
     ...(row.project_id === null ? {} : { projectId: row.project_id }),
@@ -165,6 +190,13 @@ export function toChatRecord(
         status: activeRun.status,
       }),
     } : {}),
+    ...(latestSuccessfulCompletionRow && completedAt ? {
+      latestSuccessfulCompletion: {
+        runId: latestSuccessfulCompletionRow.id,
+        completedAt,
+        unacknowledged: acknowledgedAt === undefined || acknowledgedAt < completedAt,
+      },
+    } : {}),
   };
 }
 
@@ -175,6 +207,8 @@ export function toMessage(row: Selectable<ChatMessagesTable>): CanonicalChatMess
     seq: Number(row.seq),
     role: row.role,
     state: row.state,
+    ...(row.actor_id === null ? {} : { actorId: row.actor_id }),
+    purpose: row.purpose,
     ...(row.turn_id === null ? {} : { turnId: row.turn_id }),
     ...(row.run_id === null ? {} : { runId: row.run_id }),
     parts: parseJson(row.parts),

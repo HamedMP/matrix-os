@@ -1,4 +1,5 @@
 export { spawnKernel } from "./kernel.js";
+export { readClaudeModelInventory } from "./claude-model-inventory.js";
 export type { KernelEvent, KernelResult } from "./kernel.js";
 export { parseFrontmatter } from "./agents.js";
 export {
@@ -11,6 +12,7 @@ export {
   resolveKernelConfigFileAsync,
 } from "./options.js";
 export type { KernelConfig, KernelEffort } from "./options.js";
+export type { OsViewAgentTools } from "./ipc-server.js";
 export { createDB } from "./db.js";
 export type { MatrixDB } from "./db.js";
 export { ensureHome, generateTemplateManifest, smartSyncTemplate } from "./boot.js";

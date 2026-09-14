@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { AppError, categoryMessage } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
+import { readSystemVersionIdentity } from "../lib/system-version";
 import { parseProject, type Project, useBoard } from "./board";
 import { useCodingAgentWorkspace } from "./coding-agent-workspace";
 import { clearProjectView } from "./project-view";
@@ -20,10 +21,24 @@ const SAFE_ACTION_ERRORS: Record<string, string> = {
   delete_incomplete: "Project deletion could not be completed. Try again.",
 };
 
-function safeActionError(error: unknown): string {
+const PROJECT_ACTIONS_UNAVAILABLE =
+  "Project management is unavailable on this computer. Restart Matrix services and try again.";
+const PROJECT_UPDATE_INCOMPLETE =
+  "This computer has not finished applying its update. Restart Matrix services, then try again.";
+
+async function safeActionError(api: ApiClient, error: unknown): Promise<string> {
   if (error instanceof AppError) {
     if (error.category === "notFound" && !error.detail) {
-      return "Update this Matrix computer before managing projects.";
+      try {
+        const info = await api.get<unknown>("/api/system/info");
+        const { installedVersion, runningVersion } = readSystemVersionIdentity(info);
+        if (installedVersion && runningVersion && installedVersion !== runningVersion) {
+          return PROJECT_UPDATE_INCOMPLETE;
+        }
+      } catch (_diagnosticError: unknown) {
+        console.warn("[project-lifecycle] Gateway runtime identity could not be inspected");
+      }
+      return PROJECT_ACTIONS_UNAVAILABLE;
     }
     return (error.detail && SAFE_ACTION_ERRORS[error.detail]) || categoryMessage(error.category);
   }
@@ -60,7 +75,9 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
       return true;
     } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(generation)) return false;
-      set({ loading: false, error: safeActionError(error) });
+      const message = await safeActionError(api, error);
+      if (!isCurrentRuntimeGeneration(generation)) return false;
+      set({ loading: false, error: message });
       return false;
     }
   }
@@ -92,7 +109,9 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
       return true;
     } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(generation)) return false;
-      set({ pendingProjectSlug: null, error: safeActionError(error) });
+      const message = await safeActionError(api, error);
+      if (!isCurrentRuntimeGeneration(generation)) return false;
+      set({ pendingProjectSlug: null, error: message });
       return false;
     }
   }

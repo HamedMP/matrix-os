@@ -54,6 +54,8 @@ describe("Pipedream Actions API", () => {
   describe("discoverActions", () => {
     it("lists available actions for an app slug", async () => {
       const mockPage = {
+        hasNextPage: () => false,
+        getNextPage: vi.fn(),
         data: [
           {
             key: "gmail-send-email",
@@ -98,6 +100,8 @@ describe("Pipedream Actions API", () => {
 
     it("returns empty array when no actions found", async () => {
       const mockPage = {
+        hasNextPage: () => false,
+        getNextPage: vi.fn(),
         data: [],
         [Symbol.asyncIterator]: async function* () {},
       };

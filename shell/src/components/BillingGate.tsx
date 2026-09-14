@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { AlertCircleIcon, Loader2Icon } from "@/lib/hugeicons";
 import {
   getMatrixBillingSuccessRedirectUrl,
@@ -12,25 +12,18 @@ import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { MatrixBootMark } from "@/components/MatrixBootMark";
 import { SignupBillingHandoff } from "@/components/auth/SignupBillingHandoff";
-import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import {
   isSignupBillingHandoffSearch,
   type SignupBillingHandoffLoadingSurface,
 } from "@/lib/signup-billing-handoff";
 import { AddComputerOnboarding } from "@/components/runtime/RuntimeManager";
 import { Settings } from "./Settings";
-import { navigateForOnboarding } from "@/lib/onboarding-navigation";
-import { isAcceptedProvisionResponse, PROVISIONING_RETRY_ERROR } from "@/lib/provisioning-handoff";
-import {
-  buildDeviceBootHandoffPath,
-  normalizeDeviceReturnPath,
-} from "@/lib/device-onboarding";
+import { normalizeDeviceReturnPath } from "@/lib/device-onboarding";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const CHECKOUT_ATTEMPT_STORAGE_KEY = "matrix.billing.checkoutAttemptAt";
 const CHECKOUT_ATTEMPT_MAX_AGE_MS = 30 * 60 * 1000;
 const DEFAULT_SIGN_IN_URL = "https://matrix-os.com/login";
-const DEVICE_SETUP_TIMEOUT_MS = 10_000;
 
 function logCheckoutStorageError(action: "read" | "write", error: unknown): void {
   if (error instanceof Error) {
@@ -192,30 +185,6 @@ function SubscriptionConfirmationPending({
   );
 }
 
-function DeviceDefaultInstallsRequired({
-  onBuild,
-  loading,
-  error,
-}: {
-  onBuild: (tools: DeveloperToolId[]) => void;
-  loading: boolean;
-  error: string | null;
-}) {
-  return (
-    <Settings
-      open
-      onOpenChange={() => {}}
-      closeDisabled
-      billingActiveOverride
-      onboardingDefaultInstalls={{ onBuild, loading, error, collectAcquisitionSource: true }}
-    />
-  );
-}
-
-async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
-  return fetch(url, { ...options, signal: AbortSignal.timeout(DEVICE_SETUP_TIMEOUT_MS) });
-}
-
 function BillingStatusLoading() {
   return (
     <main data-matrix-billing-gate="true" className="flex min-h-screen items-center justify-center bg-page-bg px-6 py-10 text-forest/70">
@@ -309,9 +278,8 @@ function BillingGateInner({
   loadingSurface: SignupBillingHandoffLoadingSurface;
   handoffStartedAt: number;
 }) {
-  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { isLoaded, isSignedIn } = useAuth();
   const { active: billingActive, checking: billingAccessChecking } = useMatrixBillingAccess();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const signupBillingHandoff =
@@ -319,16 +287,12 @@ function BillingGateInner({
     isSignupBillingHandoffSearch(pathname, searchParams);
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const deviceReturnPath = normalizeDeviceReturnPath(searchParams.get("device_return"));
-  const requestedRuntime = searchParams.get("runtime");
   const billingCheckoutReturnPath = getBillingCheckoutReturnPath(deviceReturnPath);
   const hasBillingAccess = billingActive === true;
   const billingChecking = billingAccessChecking;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
-  const [deviceSetupLoading, setDeviceSetupLoading] = useState(false);
-  const [deviceSetupError, setDeviceSetupError] = useState<string | null>(null);
   const lastTrackedState = useRef<string | null>(null);
-  const deviceSetupStarted = useRef(false);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- not a cascade: this is a single post-hydration resolution of the checkout-return state. The two setStates batch in one render pass and only re-run when `checkoutReturnRequested` changes; they cannot be derived in render because hasRecentBillingCheckoutAttempt() reads sessionStorage, which is client-only and would break SSR/hydration.
   useEffect(() => {
@@ -349,60 +313,8 @@ function BillingGateInner({
         surface: "shell",
         source: "billing_gate",
       });
-      // react-doctor-disable-next-line react-doctor/nextjs-no-client-side-redirect -- legit post-action client redirect: once billing access is confirmed for a returning Stripe checkout, this strips the `?checkout=success` query so a reload does not re-trigger the confirmation flow. It must run client-side after the async billing-access check resolves (a server redirect() cannot observe client billing state), and it is gated on hasBillingAccess && checkoutReturnRequested so it fires once, not on every render.
-      router.replace("/");
     }
-  }, [checkoutReturnRequested, deviceReturnPath, hasBillingAccess, router]);
-
-  async function deviceAuthHeaders(): Promise<HeadersInit> {
-    const token = await getToken();
-    return {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-  }
-
-  async function startDeviceRuntimeSetup(developerTools: DeveloperToolId[]): Promise<void> {
-    if (!deviceReturnPath || deviceSetupStarted.current) return;
-    const activeDeviceReturnPath = deviceReturnPath;
-    const bootHandoffPath = buildDeviceBootHandoffPath(activeDeviceReturnPath, requestedRuntime);
-    deviceSetupStarted.current = true;
-    setDeviceSetupLoading(true);
-    setDeviceSetupError(null);
-    const finishSetup = (error: string | null = null): void => {
-      deviceSetupStarted.current = false;
-      setDeviceSetupLoading(false);
-      setDeviceSetupError(error);
-    };
-    try {
-      const provisionResponse = await fetchWithTimeout("/api/auth/provision-runtime", {
-        method: "POST",
-        credentials: "include",
-        headers: await deviceAuthHeaders(),
-        body: JSON.stringify({ developerTools }),
-      });
-      if (!await isAcceptedProvisionResponse(provisionResponse)) {
-        finishSetup(PROVISIONING_RETRY_ERROR);
-        return;
-      }
-      const sessionResponse = await fetchWithTimeout("/api/auth/app-session", {
-        method: "POST",
-        credentials: "include",
-        headers: await deviceAuthHeaders(),
-        body: JSON.stringify({ redirectTo: bootHandoffPath }),
-      });
-      if (!sessionResponse.ok) {
-        finishSetup(PROVISIONING_RETRY_ERROR);
-        return;
-      }
-      navigateForOnboarding(bootHandoffPath);
-      finishSetup();
-    } catch (error: unknown) {
-      console.warn("[billing] device runtime setup failed", error instanceof Error ? error.name : typeof error);
-      finishSetup(PROVISIONING_RETRY_ERROR);
-    }
-  }
+  }, [checkoutReturnRequested, deviceReturnPath, hasBillingAccess]);
 
   useEffect(() => {
     if (!isLoaded || billingChecking) return;
@@ -472,23 +384,6 @@ function BillingGateInner({
           {children}
         </div>
         <BillingRequired checkoutReturnPath={billingCheckoutReturnPath} />
-      </>
-    );
-  }
-
-  if (deviceReturnPath) {
-    return (
-      <>
-        <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
-          {children}
-        </div>
-        <DeviceDefaultInstallsRequired
-          loading={deviceSetupLoading}
-          error={deviceSetupError}
-          onBuild={(tools) => {
-            void startDeviceRuntimeSetup(tools);
-          }}
-        />
       </>
     );
   }

@@ -3,10 +3,23 @@
 import React from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChannelsSection from "../../desktop/src/renderer/src/features/settings/sections/ChannelsSection";
 import CronSection from "../../desktop/src/renderer/src/features/settings/sections/CronSection";
 import SystemSection from "../../desktop/src/renderer/src/features/settings/sections/SystemSection";
+import {
+  createDesktopQueryClient,
+  QueryClientProvider,
+} from "../../desktop/src/renderer/src/lib/query-client";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+
+let queryClient: ReturnType<typeof createDesktopQueryClient>;
+
+function renderSection(Component: React.ComponentType) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <Component />
+    </QueryClientProvider>,
+  );
+}
 
 function makeApi(response: unknown, reject = false) {
   return {
@@ -33,6 +46,7 @@ function makePendingApi() {
 describe("settings data sections", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    queryClient = createDesktopQueryClient();
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -44,17 +58,11 @@ describe("settings data sections", () => {
 
   afterEach(() => {
     cleanup();
+    queryClient.clear();
     vi.restoreAllMocks();
   });
 
   it.each([
-    {
-      name: "channels",
-      Component: ChannelsSection,
-      unavailable: "Channels unavailable.",
-      response: [{ name: "telegram", connected: true }],
-      visible: "telegram",
-    },
     {
       name: "cron",
       Component: CronSection,
@@ -70,11 +78,18 @@ describe("settings data sections", () => {
       visible: "1.0.0",
     },
   ])("clears stale $name errors after a successful retry", async ({ Component, unavailable, response, visible }) => {
-    render(<Component />);
+    const failingApi = useConnection.getState().api;
+    renderSection(Component);
 
-    await waitFor(() => {
-      expect(screen.queryByText(unavailable)).not.toBeNull();
-    });
+    await waitFor(
+      () => {
+        expect(screen.queryByText(unavailable)).not.toBeNull();
+      },
+      { timeout: 2_500 },
+    );
+    if (name === "cron") {
+      expect(failingApi.get).toHaveBeenCalledTimes(2);
+    }
 
     await act(async () => {
       useConnection.setState({ api: makeApi(response) });
@@ -88,12 +103,6 @@ describe("settings data sections", () => {
 
   it.each([
     {
-      name: "channels",
-      Component: ChannelsSection,
-      loading: "Loading channels...",
-      empty: "No channels configured yet.",
-    },
-    {
       name: "cron",
       Component: CronSection,
       loading: "Loading schedules...",
@@ -102,9 +111,26 @@ describe("settings data sections", () => {
   ])("shows loading instead of empty state while $name load is pending", ({ Component, loading, empty }) => {
     useConnection.setState({ api: makePendingApi() });
 
-    render(<Component />);
+    renderSection(Component);
 
     expect(screen.queryByText(loading)).not.toBeNull();
     expect(screen.queryByText(empty)).toBeNull();
+  });
+
+  it("shows installed and running bundle versions when an update is only partially applied", async () => {
+    useConnection.setState({
+      api: makeApi({
+        version: "v2026.08.19-1002",
+        runningVersion: "v2026.08.18-997",
+      }),
+    });
+
+    renderSection(SystemSection);
+
+    expect(await screen.findByText("Installed version")).not.toBeNull();
+    expect(screen.getByText("Running version")).not.toBeNull();
+    expect(screen.getByText(
+      "The running services do not match the installed update. Restart Matrix services to finish applying it.",
+    )).not.toBeNull();
   });
 });

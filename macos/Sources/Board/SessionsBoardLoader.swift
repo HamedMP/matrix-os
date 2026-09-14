@@ -1,67 +1,29 @@
-// MatrixBoard — zellij sessions as board cards.
-//
-// The user's original intent ("use the zellij sessions we have for the kanban
-// tasks") + the common reality that a fresh VPS has live sessions but no tasks.
-// This loader GETs `/api/sessions` (contracts/gateway-endpoints.md) and renders
-// each live zellij session as a card whose `linkedSessionId` opens its terminal.
-// `projectSlug` is ignored — sessions are not project-scoped.
 import Foundation
 import MatrixModel
 import MatrixNet
 
-/// Gateway sessions list response: `{ sessions: [...] }`.
-private struct SessionListEnvelope: Decodable {
-    let sessions: [SessionDTO]
+private struct TerminalWorkspacesEnvelope: Decodable {
+    let workspaces: [TerminalWorkspaceDTO]
 }
 
-/// One zellij session as returned by `GET /api/sessions`.
-private struct SessionDTO: Decodable {
+private struct TerminalWorkspaceDTO: Decodable {
+    let id: String
+    let projectId: String?
+    let tabs: [TerminalTabDTO]
+}
+
+private struct TerminalTabDTO: Decodable {
+    let id: String
     let name: String
     let status: String
     let updatedAt: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case name, id, sessionId, terminalSessionId, status, state, runtime, updatedAt, lastActivityAt
-    }
-
-    private enum RuntimeKeys: String, CodingKey {
-        case status, zellijSession
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let runtime = try? container.nestedContainer(keyedBy: RuntimeKeys.self, forKey: .runtime)
-        name = try container.decodeIfPresent(String.self, forKey: .name)
-            ?? runtime?.decodeIfPresent(String.self, forKey: .zellijSession)
-            ?? container.decodeIfPresent(String.self, forKey: .sessionId)
-            ?? container.decodeIfPresent(String.self, forKey: .terminalSessionId)
-            ?? container.decode(String.self, forKey: .id)
-        status = try container.decodeIfPresent(String.self, forKey: .status)
-            ?? container.decodeIfPresent(String.self, forKey: .state)
-            ?? runtime?.decodeIfPresent(String.self, forKey: .status)
-            ?? "active"
-        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
-            ?? container.decodeIfPresent(String.self, forKey: .lastActivityAt)
-    }
-
-    func toCard(id: String, order: Double) -> Card {
-        let active = ["active", "running", "attached", "ready", "idle", "waiting"].contains(status.lowercased())
-        return Card(
-            id: id,
-            projectSlug: "",
-            title: name,
-            status: active ? .running : .complete,
-            priority: .normal,
-            order: order,
-            linkedSessionId: name,
-            updatedAt: updatedAt ?? "",
-            revision: nil
-        )
-    }
 }
 
-/// A `BoardLoading` that renders live zellij sessions as cards. Active sessions
-/// land in RUNNING; exited ones in COMPLETE. Opening a card attaches its terminal.
+private struct ProjectEnvelope: Decodable {
+    struct Project: Decodable { let id: String }
+    let project: Project
+}
+
 public struct SessionsBoardLoader: BoardLoading {
     private let client: GatewayHTTPClient
 
@@ -70,14 +32,25 @@ public struct SessionsBoardLoader: BoardLoading {
     }
 
     public func fetchTasks(projectSlug: String) async throws -> [Card] {
-        let envelope: SessionListEnvelope = try await client.get("/api/sessions")
-        var seenIDs: [String: Int] = [:]
-        return envelope.sessions.enumerated().map { index, session in
-            let baseID = "session:\(session.name)"
-            let count = seenIDs[baseID, default: 0]
-            seenIDs[baseID] = count + 1
-            let cardID = count == 0 ? baseID : "\(baseID):\(count + 1)"
-            return session.toCard(id: cardID, order: Double(index))
+        let project: ProjectEnvelope = try await client.get("/api/projects/\(projectSlug)")
+        let envelope: TerminalWorkspacesEnvelope = try await client.get("/api/terminal/workspaces")
+        let tabs = envelope.workspaces
+            .filter { $0.projectId == project.project.id }
+            .flatMap { workspace in workspace.tabs.map { (workspace.id, $0) } }
+        return tabs.enumerated().map { index, entry in
+            let (workspaceId, tab) = entry
+            let active = ["active", "running", "starting", "idle", "waiting"].contains(tab.status.lowercased())
+            return Card(
+                id: "terminal:\(workspaceId):\(tab.id)",
+                projectSlug: projectSlug,
+                title: tab.name,
+                status: active ? .running : .complete,
+                priority: .normal,
+                order: Double(index),
+                linkedSessionId: "\(workspaceId):\(tab.id)",
+                updatedAt: tab.updatedAt ?? "",
+                revision: nil
+            )
         }
     }
 }

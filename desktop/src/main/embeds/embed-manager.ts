@@ -4,6 +4,7 @@
 // unbounded.
 import { randomUUID } from "node:crypto";
 import { isNavigationAllowed } from "./origin-policy";
+import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
 
 export interface Bounds {
   x: number;
@@ -16,12 +17,13 @@ export interface EmbedViewLike {
   setBounds(bounds: Bounds): void;
   setScale(factor: number): void;
   loadUrl(url: string): Promise<void>;
+  captureSnapshot?(): Promise<string | null>;
   attach(): void;
   detach(): void;
   destroy(): void;
 }
 
-export type EmbedKind = "hosted-shell" | "app";
+export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "browser";
 
 type EmbedOriginOptions =
   | { allowedOrigins: string[]; getAllowedOrigins?: never }
@@ -33,6 +35,9 @@ export type EmbedManagerOptions = {
     kind: EmbedKind;
     slug: string | null;
     routeSlug: string | null;
+    allowedOrigins: string[];
+    resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
+    allowPublicNavigation?: boolean;
     onState: (state: "loading" | "ready" | "failed") => void;
   }) => EmbedViewLike;
   maxLive?: number;
@@ -40,6 +45,7 @@ export type EmbedManagerOptions = {
 
 export const MAX_TOTAL_EMBEDS = 12;
 const DEFAULT_MAX_LIVE = 3;
+const EMBED_SNAPSHOT_TIMEOUT_MS = 400;
 const SAFE_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 const ERR_ABORTED = -3;
 
@@ -50,8 +56,11 @@ interface EmbedRecord {
   live: boolean;
   loadFailed: boolean;
   loadGeneration: number;
+  activationGeneration: number;
+  retainedSnapshotDataUrl: string | null;
   lastUsed: number;
   onState: (state: "loading" | "ready" | "failed") => void;
+  onDispose?: () => void;
 }
 
 function isAbortedLoadError(err: unknown): boolean {
@@ -96,19 +105,28 @@ export class EmbedManager {
       id?: string;
       active?: boolean;
       routeSlug?: string;
+      allowedOrigins?: string[];
+      resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
+      allowPublicNavigation?: boolean;
       onState?: (state: "loading" | "ready" | "failed") => void;
+      onDispose?: () => void;
     },
   ): string {
-    if (!isNavigationAllowed(url, this.getAllowedOrigins())) {
+    const allowedOrigins = options?.allowedOrigins ?? this.getAllowedOrigins();
+    if (!isNavigationAllowed(url, allowedOrigins)) {
       throw new Error("embed URL is not allowed");
     }
 
+    const id = options?.id ?? randomUUID();
     const partition =
       kind === "hosted-shell"
         ? "persist:hosted-shell"
-        : this.appPartition(options?.routeSlug ?? slug);
+        : kind === "code-editor"
+          ? "persist:code-editor"
+        : kind === "browser"
+          ? "persist:browser"
+          : this.appPartition(options?.routeSlug ?? slug);
 
-    const id = options?.id ?? randomUUID();
     const active = options?.active ?? true;
     if (this.records.has(id)) throw new Error("embed id already exists");
     const onState = options?.onState ?? (() => undefined);
@@ -130,6 +148,9 @@ export class EmbedManager {
       kind,
       slug,
       routeSlug: kind === "app" ? options?.routeSlug ?? slug : null,
+      allowedOrigins,
+      resolveNavigation: options?.resolveNavigation,
+      allowPublicNavigation: options?.allowPublicNavigation,
       onState: emitState,
     });
     record = {
@@ -139,8 +160,11 @@ export class EmbedManager {
       live: active,
       loadFailed: false,
       loadGeneration: 0,
+      activationGeneration: 0,
+      retainedSnapshotDataUrl: null,
       lastUsed: ++this.tick,
       onState: emitState,
+      onDispose: options?.onDispose,
     };
     if (active) view.attach();
     view.setBounds(bounds);
@@ -172,6 +196,7 @@ export class EmbedManager {
   setActive(embedId: string, active: boolean): boolean {
     const record = this.records.get(embedId);
     if (!record) return false;
+    record.activationGeneration += 1;
     if (active) {
       if (!record.live) {
         record.view.attach();
@@ -188,6 +213,43 @@ export class EmbedManager {
       record.live = false;
     }
     return true;
+  }
+
+  async deactivate(embedId: string): Promise<{ ok: boolean; snapshotDataUrl: string | null }> {
+    const record = this.records.get(embedId);
+    if (!record) return { ok: false, snapshotDataUrl: null };
+    const generation = ++record.activationGeneration;
+    let snapshotDataUrl: string | null = null;
+    try {
+      if (record.view.captureSnapshot) {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const capturedSnapshotDataUrl = await Promise.race([
+            record.view.captureSnapshot(),
+            new Promise<null>((resolve) => {
+              timeout = setTimeout(() => resolve(null), EMBED_SNAPSHOT_TIMEOUT_MS);
+            }),
+          ]);
+          if (capturedSnapshotDataUrl) {
+            record.retainedSnapshotDataUrl = capturedSnapshotDataUrl;
+          }
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      }
+    } catch (error: unknown) {
+      console.warn(
+        "[embeds] retained frame capture failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
+    const current = this.records.get(embedId);
+    if (current === record && record.activationGeneration === generation && record.live) {
+      record.view.detach();
+      record.live = false;
+    }
+    snapshotDataUrl ??= record.retainedSnapshotDataUrl;
+    return { ok: true, snapshotDataUrl };
   }
 
   suspendAll(): boolean {
@@ -298,6 +360,17 @@ export class EmbedManager {
       record.live = false;
     }
     record.view.destroy();
+    const onDispose = record.onDispose;
+    record.onDispose = undefined;
+    if (!onDispose) return;
+    try {
+      onDispose();
+    } catch (err: unknown) {
+      console.warn(
+        "[embed-manager] embed disposal failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   private leastRecentlyUsed(predicate: (record: EmbedRecord) => boolean): EmbedRecord | null {

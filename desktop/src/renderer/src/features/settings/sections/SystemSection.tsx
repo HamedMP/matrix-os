@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readSystemVersionIdentity } from "../../../lib/system-version";
 import { useConnection } from "../../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../../stores/runtime-generation";
 import { AlertTriangle, ArrowUpCircleIcon, LoaderCircle, RefreshCw } from "../../../lib/hugeicons";
@@ -19,7 +20,8 @@ interface SystemRelease {
 }
 
 interface SystemInfo {
-  version?: string;
+  version?: unknown;
+  runningVersion?: unknown;
   updateChannel?: string;
   runtime?: { handle?: string; runtimeSlot?: string; machineId?: string };
   resources?: { cpuCount?: number; memoryTotal?: number; memoryFree?: number; diskTotal?: number; diskFree?: number };
@@ -206,9 +208,13 @@ export default function SystemSection() {
   };
 
   const info = state.info;
-  const currentVersion = info?.release?.version ?? info?.version;
+  const { installedVersion, runningVersion } = readSystemVersionIdentity(info);
+  const currentVersion = installedVersion ?? info?.release?.version;
   const releases = releaseList?.releases ?? [];
   const latest = update?.latest;
+  const versionMismatch = Boolean(
+    installedVersion && runningVersion && installedVersion !== runningVersion,
+  );
 
   return (
     <>
@@ -216,12 +222,18 @@ export default function SystemSection() {
       <Card>
         {state.error ? <Empty text="System info unavailable." /> : (
           <>
-            <Row label="OS version" value={info?.version ?? "–"} />
-            <Row label="Release channel" value={info?.release?.channel ?? "–"} />
-            <Row label="Machine" value={info?.runtime?.machineId ?? info?.runtime?.handle ?? "–"} />
-            <Row label="CPU cores" value={info?.resources?.cpuCount ?? "–"} />
-            <Row label="Memory free" value={`${gb(info?.resources?.memoryFree)} of ${gb(info?.resources?.memoryTotal)}`} />
-            <Row label="Disk free" value={`${gb(info?.resources?.diskFree)} of ${gb(info?.resources?.diskTotal)}`} />
+            <Row label="Installed version" value={installedVersion ?? "–"} />
+            <Row label="Running version" value={runningVersion ?? "–"} />
+            {versionMismatch ? (
+              <p role="status" className="text-sm" style={{ color: "var(--warning)" }}>
+                The running services do not match the installed update. Restart Matrix services to finish applying it.
+              </p>
+            ) : null}
+            <Row label="Release channel" value={state.info?.release?.channel ?? "–"} />
+            <Row label="Machine" value={state.info?.runtime?.machineId ?? state.info?.runtime?.handle ?? "–"} />
+            <Row label="CPU cores" value={state.info?.resources?.cpuCount ?? "–"} />
+            <Row label="Memory free" value={`${gb(state.info?.resources?.memoryFree)} of ${gb(state.info?.resources?.memoryTotal)}`} />
+            <Row label="Disk free" value={`${gb(state.info?.resources?.diskFree)} of ${gb(state.info?.resources?.diskTotal)}`} />
           </>
         )}
       </Card>

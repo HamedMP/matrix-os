@@ -28,7 +28,7 @@ Durable source of truth for the reversible work Matrix performs while one primar
 | `machine_id` | `text nullable` | Unique foreign key to `user_machines` once allocated |
 | `stripe_session_expires_at` | `timestamptz nullable` | Exact server-returned Checkout expiry |
 | `lease_expires_at` | `timestamptz nullable` | Never later than the Stripe expiry for V1 |
-| `reserved_hourly_cost_micros` | `bigint` | Defaults to 0; set once if provider preparation is admitted |
+| `reserved_hourly_cost_micros` | `bigint` | Legacy compatibility field; retained without migration and written as 0; not part of the provisioning domain or admission decision |
 | `ready_at` | `timestamptz nullable` | Physical readiness timestamp; does not grant access |
 | `authorized_at` | `timestamptz nullable` | Signed subscription-projection promotion timestamp |
 | `cleaned_at` | `timestamptz nullable` | Set only after provider absence and local secret cleanup are confirmed |
@@ -39,7 +39,7 @@ Indexes and constraints:
 
 - Unique active intent for `(clerk_user_id, runtime_slot)` where state is nonterminal.
 - Unique `checkout_attempt_id` and unique non-null `machine_id`.
-- Check constraints for V1 `runtime_slot='primary'`, nonnegative reserved cost, and recognized states.
+- Check constraints for V1 `runtime_slot='primary'`, the nonnegative legacy reservation field, and recognized states.
 - GIN is not needed for `developer_tools`; selection comparison uses the canonical serialized array.
 
 Intent states:
@@ -137,19 +137,9 @@ Durable, leased, cancelable cleanup state machine. It is separate from the gener
 
 Only one unresolved cleanup action may exist per intent. A worker must renew or release its lease; abandoned claims become retryable. `completed` means the provider reports the exact machine absent and platform-owned transient secrets/credentials have been deleted.
 
-## `prebilling_capacity_buckets`
+## Global capacity admission
 
-Global admission must not be implemented with an in-memory counter or an unlocked aggregate query.
-
-| Column | Type | Purpose |
-|---|---|---|
-| `bucket` | `text` | Primary key, initially `global` |
-| `active_count` | `integer` | Reserved unauthorized preparations |
-| `reserved_hourly_cost_micros` | `bigint` | Sum of admitted cost reservations |
-| `revision` | `integer` | Optimistic concurrency fence |
-| `updated_at` | `timestamptz` | Audit timestamp |
-
-Admission locks the bucket row, verifies count and cost ceilings, updates the already-created intent with its reservation, creates the machine/job, and increments the bucket in one transaction. Authorization and completed cleanup decrement a nonzero reservation exactly once in the same transaction as the terminal transition. A repair reconciliation recomputes the bucket from active intents and alerts on drift.
+Global admission must not use an in-memory counter or an unlocked aggregate query. The admission transaction takes the PostgreSQL advisory transaction lock for the global prebilling capacity domain, counts active unpaid preparation states, and admits only when `activeCount < maxActive`. Machine size and the legacy reservation column do not participate. Paid intents bypass unpaid admission capacity while preserving their owner/slot fences and idempotent machine/job creation.
 
 ## Atomic Operations
 
@@ -163,11 +153,11 @@ Admission locks the bucket row, verifies count and cost ceilings, updates the al
 
 ### Checkout finalization and job admission
 
-In one transaction, enforce `checkout_attempt.status='creating'` and `intent.state='awaiting_checkout'` in the update predicates, record the open Stripe session and exact expiry, and lock the global capacity bucket. If admitted, reserve cost, create the `awaiting_billing` machine plus `prebilling_intent` job through the shared creation path, and transition the intent to `preparing`. If rollout or capacity denies admission, transition to `preparation_deferred` with zero reservation and no machine/job; the cohort still receives the safe Checkout Session and signed authorization later guarantees normal provisioning.
+In one transaction, enforce `checkout_attempt.status='creating'` and `intent.state='awaiting_checkout'` in the update predicates, record the open Stripe session and exact expiry, and take the global capacity advisory lock. If admitted, write the legacy reservation field as zero, create the `awaiting_billing` machine plus `prebilling_intent` job through the shared creation path, and transition the intent to `preparing`. If rollout or capacity denies admission, transition to `preparation_deferred` with a zero legacy reservation and no machine/job; the cohort still receives the safe Checkout Session and signed authorization later guarantees normal provisioning.
 
 ### Signed subscription promotion
 
-In one transaction, upsert the authoritative subscription projection, lock the owner/slot and intent, validate exact metadata and selection linkage, cancel unresolved cleanup, transition the machine activation state and intent to `authorized`, release the cost reservation once, and ensure the slot has either the bound nondeleted machine or one entitlement-backed provisioning job. Event replays are idempotent.
+In one transaction, upsert the authoritative subscription projection, lock the owner/slot and intent, validate exact metadata and selection linkage, cancel unresolved cleanup, transition the machine activation state and intent to `authorized`, keep the legacy reservation field at zero, and ensure the slot has either the bound nondeleted machine or one entitlement-backed provisioning job. Event replays are idempotent.
 
 ### Cleanup claim and deletion fence
 

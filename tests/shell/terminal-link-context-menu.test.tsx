@@ -23,18 +23,21 @@ describe("TerminalLinkContextMenu", () => {
     const onCopy = vi.fn();
     render(
       <TerminalLinkContextMenu
-        menu={{ x: 100, y: 120, link: CLAUDE_LINK }}
+        menu={{ x: 100, y: 120, link: CLAUDE_LINK, selection: "selected output" }}
         onClose={vi.fn()}
         onOpen={onOpen}
         onCopy={onCopy}
+        onCopySelection={vi.fn()}
+        onSelectAll={vi.fn()}
       />,
     );
 
-    expect(screen.getByRole("menu", { name: "Link actions" })).toBeTruthy();
+    expect(screen.getByRole("menu", { name: "Terminal actions" })).toBeTruthy();
     expect(screen.queryByText(/code_challenge=/)).toBeNull();
-    const open = screen.getByRole("menuitem", { name: "Sign in with Claude Code" });
-    expect(document.activeElement).toBe(open);
+    const terminalCopy = screen.getByRole("menuitem", { name: "Copy" });
+    expect(document.activeElement).toBe(terminalCopy);
 
+    const open = screen.getByRole("menuitem", { name: "Sign in with Claude Code" });
     fireEvent.click(open);
     expect(onOpen).toHaveBeenCalledWith(CLAUDE_LINK);
 
@@ -46,10 +49,12 @@ describe("TerminalLinkContextMenu", () => {
     const onClose = vi.fn();
     const { rerender } = render(
       <TerminalLinkContextMenu
-        menu={{ x: 100, y: 120, link: CLAUDE_LINK }}
+        menu={{ x: 100, y: 120, link: CLAUDE_LINK, selection: "" }}
         onClose={onClose}
         onOpen={vi.fn()}
         onCopy={vi.fn()}
+        onCopySelection={vi.fn()}
+        onSelectAll={vi.fn()}
       />,
     );
 
@@ -58,10 +63,12 @@ describe("TerminalLinkContextMenu", () => {
 
     rerender(
       <TerminalLinkContextMenu
-        menu={{ x: 100, y: 120, link: CLAUDE_LINK }}
+        menu={{ x: 100, y: 120, link: CLAUDE_LINK, selection: "" }}
         onClose={onClose}
         onOpen={vi.fn()}
         onCopy={vi.fn()}
+        onCopySelection={vi.fn()}
+        onSelectAll={vi.fn()}
       />,
     );
     fireEvent.pointerDown(document.body);
@@ -75,8 +82,56 @@ describe("TerminalLinkContextMenu", () => {
         onClose={vi.fn()}
         onOpen={vi.fn()}
         onCopy={vi.fn()}
+        onCopySelection={vi.fn()}
+        onSelectAll={vi.fn()}
       />,
     );
     expect(container.lastElementChild).toBeNull();
+  });
+
+  it("offers general terminal Copy and Select All without a link", () => {
+    const onCopySelection = vi.fn();
+    const onSelectAll = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <TerminalLinkContextMenu
+        menu={{
+          x: 100,
+          y: 120,
+          link: null,
+          selection: "first row\nλ second row 👩🏽‍💻",
+        }}
+        onClose={onClose}
+        onOpen={vi.fn()}
+        onCopy={vi.fn()}
+        onCopySelection={onCopySelection}
+        onSelectAll={onSelectAll}
+      />,
+    );
+
+    expect(screen.getByRole("menu", { name: "Terminal actions" })).toBeTruthy();
+    const copy = screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(false);
+    fireEvent.click(copy);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select All" }));
+
+    expect(onCopySelection).toHaveBeenCalledWith("first row\nλ second row 👩🏽‍💻");
+    expect(onSelectAll).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables terminal Copy when the selection snapshot is empty", () => {
+    render(
+      <TerminalLinkContextMenu
+        menu={{ x: 100, y: 120, link: null, selection: "" }}
+        onClose={vi.fn()}
+        onOpen={vi.fn()}
+        onCopy={vi.fn()}
+        onCopySelection={vi.fn()}
+        onSelectAll={vi.fn()}
+      />,
+    );
+
+    expect((screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

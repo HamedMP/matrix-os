@@ -96,6 +96,8 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
             return (
               <div
                 key={entry.name}
+                data-web-file-path={col.path ? `${col.path}/${entry.name}` : entry.name}
+                data-web-file-type={entry.type}
                 role="treeitem"
                 tabIndex={0}
                 aria-selected={isSelected}

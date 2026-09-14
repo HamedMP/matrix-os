@@ -1,14 +1,24 @@
-const LEGACY_PTY_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CANONICAL_SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+import { TerminalRefSchema, type TerminalRef } from "@matrix-os/contracts";
 
-export function isLegacyPtySessionId(sessionId: string): boolean {
-  return LEGACY_PTY_SESSION_ID_PATTERN.test(sessionId);
+const TERMINAL_REF_SEPARATOR = ":";
+
+export function terminalRefKey(ref: TerminalRef): string {
+  const parsed = TerminalRefSchema.parse(ref);
+  return `${parsed.workspaceId}${TERMINAL_REF_SEPARATOR}${parsed.tabId}`;
 }
 
-export function isCanonicalShellSessionId(sessionId: string): boolean {
-  return CANONICAL_SHELL_SESSION_NAME_PATTERN.test(sessionId);
+export function parseTerminalRefKey(value: string | null | undefined): TerminalRef | null {
+  if (!value) return null;
+  const [workspaceId, tabId, extra] = value.split(TERMINAL_REF_SEPARATOR);
+  if (extra !== undefined) return null;
+  const parsed = TerminalRefSchema.safeParse({ workspaceId, tabId });
+  return parsed.success ? parsed.data : null;
 }
 
-export function terminalWebSocketPathForSession(sessionId: string | null): "/ws/terminal" | "/ws/terminal/session" {
-  return sessionId && isCanonicalShellSessionId(sessionId) ? "/ws/terminal/session" : "/ws/terminal";
+export function isCanonicalShellSessionId(value: string): boolean {
+  return parseTerminalRefKey(value) !== null;
+}
+
+export function terminalWebSocketPathForSession(_value?: string | null): "/ws/terminal/tab" {
+  return "/ws/terminal/tab";
 }

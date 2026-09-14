@@ -199,22 +199,19 @@ async function main() {
 
 async function runOneBenchmark({ run, options, profile, WebSocket }) {
   const sessions = sessionNames(options.session, run.concurrency, run.id);
+  const terminalRefs = [];
   const clients = [];
   const startedAt = Date.now();
   let network = null;
 
   try {
     for (const session of sessions) {
-      if (options.force) {
-        await deleteSession(profile, session).catch((err) => {
-          if (!isNotFoundError(err)) throw err;
-        });
-      }
-      await createSession(profile, session, buildEchoCommand());
+      const terminalRef = await createSession(profile, session, buildEchoCommand());
+      terminalRefs.push(terminalRef);
       await delay(250);
       const client = await attachEchoClientWithRetry({
         profile,
-        session,
+        session: terminalRef,
         WebSocket,
         startupTimeoutMs: options.startupTimeoutMs,
       });
@@ -255,9 +252,9 @@ async function runOneBenchmark({ run, options, profile, WebSocket }) {
   } finally {
     for (const client of clients) client.close();
     if (!options.keepSession) {
-      for (const session of sessions) {
-        await deleteSession(profile, session).catch((err) => {
-          console.warn(`[bench] failed to delete ${session}: ${safeError(err)}`);
+      for (const terminalRef of terminalRefs) {
+        await deleteSession(profile, terminalRef).catch((err) => {
+          console.warn(`[bench] failed to delete ${terminalRef.workspaceId}:${terminalRef.tabId}: ${safeError(err)}`);
         });
       }
     }
@@ -487,22 +484,35 @@ function sessionNames(prefix, concurrency, runId) {
 }
 
 export function attachUrl(gateway, session) {
-  const url = new URL("/ws/terminal/session", gateway);
+  const url = new URL("/ws/terminal/tab", gateway);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("session", session);
+  url.searchParams.set("workspaceId", session.workspaceId);
+  url.searchParams.set("tabId", session.tabId);
+  url.searchParams.set("client", "hard");
+  url.searchParams.set("cols", "120");
+  url.searchParams.set("rows", "40");
   url.searchParams.set("fromSeq", String(LIVE_TAIL_FROM_SEQ));
   return url.toString();
 }
 
 export async function createSession(profile, session, cmd = undefined) {
-  await requestJson(profile, "/api/terminal/sessions", {
+  const ensured = await requestJson(profile, "/api/terminal/workspaces/ensure", {
     method: "POST",
-    body: JSON.stringify(cmd ? { name: session, cmd } : { name: session }),
+    body: "{}",
   });
+  const workspaceId = ensured?.workspace?.id;
+  if (typeof workspaceId !== "string") throw new Error("terminal_workspace_unavailable");
+  const created = await requestJson(profile, `/api/terminal/workspaces/${encodeURIComponent(workspaceId)}/tabs`, {
+    method: "POST",
+    body: JSON.stringify(cmd ? { name: session, command: ["sh", "-lc", cmd] } : { name: session }),
+  });
+  const tabId = created?.tab?.id;
+  if (typeof tabId !== "string") throw new Error("terminal_tab_unavailable");
+  return { workspaceId, tabId };
 }
 
 async function deleteSession(profile, session) {
-  await requestJson(profile, `/api/terminal/sessions/${encodeURIComponent(session)}?force=1`, {
+  await requestJson(profile, `/api/terminal/workspaces/${encodeURIComponent(session.workspaceId)}/tabs/${encodeURIComponent(session.tabId)}`, {
     method: "DELETE",
   });
 }

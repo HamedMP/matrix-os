@@ -76,6 +76,7 @@ describe("OpenClaw gateway RPC", () => {
         client: { id: "gateway-client", mode: "backend" },
         role: "operator",
         scopes: ["operator.read", "operator.write", "operator.admin"],
+        caps: ["tool-events"],
         auth: { token: "a".repeat(64) },
       },
     });
@@ -175,6 +176,33 @@ describe("OpenClaw gateway RPC", () => {
     await expect(call).rejects.toMatchObject({ kind: "runtime_unavailable" });
   });
 
+  it("reserves bounded correlation headroom for cancellation at the normal ceiling", async () => {
+    const active = await beginCall({ maxPending: 1 });
+    const abort = active.client.call("chat.abort", {
+      sessionKey: "agent:main:chat-openclaw",
+      runId: "run-openclaw",
+    }, new AbortController().signal);
+
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(3));
+    const abortRequest = JSON.parse(active.socket.sent[2]!);
+    active.socket.receive({
+      type: "res",
+      id: abortRequest.id,
+      ok: true,
+      payload: { ok: true, aborted: true },
+    });
+    await expect(abort).resolves.toMatchObject({ aborted: true });
+
+    active.socket.receive({
+      type: "res",
+      id: active.request.id,
+      ok: true,
+      payload: { ok: true },
+    });
+    await expect(active.call).resolves.toEqual({ ok: true });
+    await active.client.close();
+  });
+
   it("rejects oversized frames without logging frame or token content", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { client, socket, call } = await beginCall();
@@ -190,24 +218,45 @@ describe("OpenClaw gateway RPC", () => {
     }
   });
 
-  it("bounds calls with a timeout and honors caller abort", async () => {
-    const timed = await beginCall({ timeoutMs: 100 });
-    await expect(timed.call).rejects.toMatchObject({ kind: "runtime_unavailable" });
-    expect(timed.socket.readyState).toBe(3);
-    await timed.client.close();
-
+  it("isolates caller abort from other calls sharing the connection", async () => {
     const active = await beginCall();
     const controller = new AbortController();
     const aborted = active.client.call("models.list", {}, controller.signal);
     await vi.waitFor(() => expect(active.socket.sent).toHaveLength(3));
     controller.abort();
     await expect(aborted).rejects.toMatchObject({ kind: "runtime_unavailable" });
-    expect(active.socket.readyState).toBe(3);
-    const healthClosed = expect(active.call).rejects.toMatchObject({
-      kind: "runtime_unavailable",
+    expect(active.socket.readyState).toBe(1);
+
+    active.socket.receive({
+      type: "res",
+      id: active.request.id,
+      ok: true,
+      payload: { ok: true },
     });
+    await expect(active.call).resolves.toEqual({ ok: true });
     await active.client.close();
-    await healthClosed;
+  });
+
+  it("isolates a call timeout from other calls sharing the connection", async () => {
+    const active = await beginCall({ timeoutMs: 2_000 });
+    const timed = active.client.call(
+      "models.list",
+      {},
+      new AbortController().signal,
+      { timeoutMs: 100 },
+    );
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(3));
+
+    await expect(timed).rejects.toMatchObject({ kind: "runtime_unavailable" });
+    expect(active.socket.readyState).toBe(1);
+    active.socket.receive({
+      type: "res",
+      id: active.request.id,
+      ok: true,
+      payload: { ok: true },
+    });
+    await expect(active.call).resolves.toEqual({ ok: true });
+    await active.client.close();
   });
 
   it("honors caller abort while the initial handshake is pending", async () => {
@@ -285,6 +334,105 @@ describe("OpenClaw gateway RPC", () => {
     });
     await expect(active.call).resolves.toEqual({ ok: true });
     await active.client.close();
+  });
+
+  it("keeps an expectFinal agent call pending after acceptance and publishes agent events", async () => {
+    const active = await beginCall();
+    active.socket.receive({
+      type: "res",
+      id: active.request.id,
+      ok: true,
+      payload: { ok: true },
+    });
+    await active.call;
+    const accepted = vi.fn();
+    const onEvent = vi.fn();
+    const call = active.client.call("agent", {
+      message: "hello",
+      model: "openai/gpt-5.4",
+      sessionKey: "agent:main:chat-openclaw",
+      deliver: false,
+      timeout: 120,
+      idempotencyKey: "run-openclaw",
+    }, new AbortController().signal, {
+      expectFinal: true,
+      timeoutMs: 120_000,
+      onAccepted: accepted,
+      onEvent,
+    });
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(3));
+    const request = JSON.parse(active.socket.sent[2]!);
+
+    active.socket.receive({
+      type: "res",
+      id: request.id,
+      ok: true,
+      payload: {
+        runId: "run-openclaw",
+        sessionKey: "agent:main:chat-openclaw",
+        agentId: "main",
+        status: "accepted",
+        acceptedAt: 1_789_000_000_000,
+      },
+    });
+    active.socket.receive({
+      type: "event",
+      event: "agent",
+      payload: {
+        runId: "run-openclaw",
+        sessionKey: "agent:main:chat-openclaw",
+        agentId: "main",
+        seq: 1,
+        stream: "assistant",
+        ts: 1_789_000_000_001,
+        data: { delta: "Hi" },
+      },
+    });
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "agent" }));
+    let settled = false;
+    void call.finally(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    active.socket.receive({
+      type: "res",
+      id: request.id,
+      ok: true,
+      payload: { runId: "run-openclaw", status: "ok" },
+    });
+    await expect(call).resolves.toMatchObject({ status: "ok" });
+    await active.client.close();
+  });
+
+  it("validates bounded agent, wait, and abort requests before using the socket", async () => {
+    const socketFactory = vi.fn(() => new FakeSocket());
+    const client = createOpenClawRpcClient({
+      url: "ws://127.0.0.1:18789",
+      token: "a".repeat(64),
+      socketFactory,
+      timeoutMs: 100,
+    });
+
+    await expect(client.call("agent", {
+      message: "x".repeat(96 * 1024 + 1),
+      idempotencyKey: "run",
+    }, new AbortController().signal)).rejects.toMatchObject({ kind: "agent_config_invalid" });
+    await expect(client.call("agent", {
+      message: "hello",
+      cwd: "/safe/project",
+      idempotencyKey: "run",
+    }, new AbortController().signal)).rejects.toMatchObject({ kind: "agent_config_invalid" });
+    await expect(client.call("agent.wait", {
+      runId: "run",
+      timeoutMs: 300_001,
+    }, new AbortController().signal)).rejects.toMatchObject({ kind: "agent_config_invalid" });
+    await expect(client.call("chat.abort", {
+      sessionKey: "session",
+      preserveSideRuns: "yes",
+    }, new AbortController().signal)).rejects.toMatchObject({ kind: "agent_config_invalid" });
+    expect(socketFactory).not.toHaveBeenCalled();
+    await client.close();
   });
 
   it("ignores bounded events with additive state-version counters", async () => {

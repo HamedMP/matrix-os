@@ -364,7 +364,7 @@ describe("desktop update experience", () => {
 
     const view = render(
       <Tooltip.Provider>
-        <DesktopUpdateButton collapsed={false} />
+        <DesktopUpdateButton />
       </Tooltip.Provider>,
     );
 
@@ -380,13 +380,13 @@ describe("desktop update experience", () => {
     useDesktopUpdate.setState({ snapshot: { status: "downloading", version: "1.2.4", progress: 99 } });
     render(
       <Tooltip.Provider>
-        <DesktopUpdateButton collapsed={false} />
+        <DesktopUpdateButton />
       </Tooltip.Provider>,
     );
     expect(screen.queryByRole("button", { name: /Update Matrix OS/ })).toBeNull();
   });
 
-  it("renders a compact icon-only update control in expanded and collapsed sidebars", () => {
+  it("renders a compact icon-only update control", () => {
     vi.stubGlobal("operator", { invoke: vi.fn(), on: vi.fn() });
     useDesktopUpdate.setState({
       snapshot: {
@@ -397,29 +397,16 @@ describe("desktop update experience", () => {
       },
     });
 
-    const view = render(
+    render(
       <Tooltip.Provider>
-        <DesktopUpdateButton collapsed={false} />
+        <DesktopUpdateButton />
       </Tooltip.Provider>,
     );
 
-    const expandedButton = screen.getByRole("button", {
+    const button = screen.getByRole("button", {
       name: "Update Matrix OS to 1.2.3",
     });
-    expect(expandedButton.getAttribute("title")).toBe("Update Matrix OS to 1.2.3");
-    expect(screen.queryByText("Update")).toBeNull();
-    expect(screen.queryByText("v1.2.3")).toBeNull();
-
-    view.rerender(
-      <Tooltip.Provider>
-        <DesktopUpdateButton collapsed />
-      </Tooltip.Provider>,
-    );
-
-    const collapsedButton = screen.getByRole("button", {
-      name: "Update Matrix OS to 1.2.3",
-    });
-    expect(collapsedButton.getAttribute("title")).toBe("Update Matrix OS to 1.2.3");
+    expect(button.getAttribute("title")).toBe("Update Matrix OS to 1.2.3");
     expect(screen.queryByText("Update")).toBeNull();
     expect(screen.queryByText("v1.2.3")).toBeNull();
   });

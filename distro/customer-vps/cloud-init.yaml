@@ -78,8 +78,9 @@ write_files:
     content: |
       [Unit]
       Description=Matrix OS customer gateway
-      After=matrix-restore.service docker.service
+      After=matrix-restore.service matrix-terminal-runtime.service docker.service
       Requires=matrix-restore.service docker.service
+      Wants=matrix-terminal-runtime.service
       ConditionPathExists=/opt/matrix/restore-complete
       ConditionPathExists=/opt/matrix/bin/matrix-gateway
 
@@ -88,7 +89,7 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       Environment=SYMPHONY_PORT=4766
-      Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex
+      Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode
       WorkingDirectory=/opt/matrix
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
@@ -273,7 +274,6 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       EnvironmentFile=/opt/matrix/env/postgres.env
-      EnvironmentFile=-/opt/matrix/env/r2.env
       ExecStart=/opt/matrix/bin/matrix-db-backup.sh
       TimeoutStartSec=600
   - path: /etc/systemd/system/matrix-db-backup.timer
@@ -397,9 +397,10 @@ write_files:
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
+      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
-      MATRIX_R2_BUCKET={{r2Bucket}}
-      MATRIX_R2_PREFIX={{r2Prefix}}
+      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}
+      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
       POSTHOG_TOKEN={{posthogToken}}
       POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}
@@ -416,14 +417,6 @@ write_files:
       MATRIX_HANDLE={{handle}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
-  - path: /opt/matrix/env/r2.env
-    owner: root:root
-    permissions: "0640"
-    content: |
-      AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'
-      AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'
-      R2_ENDPOINT='{{r2Endpoint}}'
-      R2_ACCOUNT_ID='{{r2AccountId}}'
   - path: /opt/matrix/env/postgres.env
     owner: root:root
     permissions: "0640"
@@ -436,6 +429,7 @@ write_files:
     permissions: "0640"
     content: |
       MATRIX_REGISTRATION_TOKEN={{registrationToken}}
+      MATRIX_REGISTRATION_TOKEN_EXPIRES_AT={{registrationTokenExpiresAt}}
 
 runcmd:
   - |
@@ -592,6 +586,9 @@ runcmd:
       exit 1
     fi
     usermod -d /home/matrix/home matrix
+    # Cloud-init does not reapply supplementary groups to an existing snapshot
+    # user. The restore gate must access the local Postgres container as matrix.
+    usermod -aG docker matrix
     install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/home/projects /home/matrix/projects /var/lib/matrix/db /var/lib/matrix/db/snapshots /var/lib/matrix/logs
     ensure_owner_link() {
       local name="$1" mode="$2" legacy="/home/matrix/$1" target="/home/matrix/home/$1"
@@ -631,7 +628,7 @@ runcmd:
     fi
     install -d -o root -g root -m 0755 /home/matrixos
     ln -sfn /home/matrix/home /home/matrixos/home
-    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/r2.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
+    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
     # The builder performs this recursive normalization before writing the
     # exact-bundle readiness proof. A certified immutable clone preserves that
@@ -675,10 +672,10 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
+    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
-    for optional_bin in matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
+    for optional_bin in matrix-register-vps matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"
       fi
@@ -723,7 +720,13 @@ runcmd:
     if [ -f /etc/systemd/system/matrix-integrations-agents.service ] && [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
       systemctl enable matrix-integrations-agents.service
     fi
+    if [ -f /etc/systemd/system/matrix-terminal-runtime.service ]; then
+      systemctl enable --now matrix-terminal-runtime.service
+    fi
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
+    if [ -f /etc/systemd/system/matrix-vps-registration.service ]; then
+      systemctl enable --now matrix-vps-registration.service
+    fi
     log_bootstrap_phase core_services_started
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2

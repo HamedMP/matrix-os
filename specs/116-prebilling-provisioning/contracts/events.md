@@ -17,8 +17,8 @@ Internal domain events are emitted after their database transaction commits. Con
 
 | Event | Required bounded fields |
 |---|---|
-| `prebilling.intent.created` | correlation ID, rollout cohort, plan class, region class, reserved cost band |
-| `prebilling.admission.deferred` | reason code (`flag_off`, `not_eligible`, `account_limit`, `origin_limit`, `count_ceiling`, `cost_ceiling`, `unknown_cost`) |
+| `prebilling.intent.created` | correlation ID, rollout cohort, plan class, region class |
+| `prebilling.admission.deferred` | reason code (`flag_off`, `not_eligible`, `account_limit`, `origin_limit`, `count_ceiling`) |
 | `prebilling.job.started` | correlation ID, retry ordinal, snapshot-path boolean |
 | `prebilling.machine.ready` | correlation ID, elapsed bucket |
 | `prebilling.checkout.completed` | correlation ID, elapsed bucket |
@@ -42,7 +42,6 @@ Low-cardinality counters:
 Gauges:
 
 - active unauthorized preparations
-- reserved hourly cost
 - cleanup backlog count and oldest actionable age
 - payment-settling intents awaiting subscription projection
 - entitled primary slots with neither a nondeleted machine nor an active provisioning job
@@ -61,7 +60,7 @@ Histograms:
 Page or automatically stop new admission when any of these breach their configured threshold:
 
 - an authorized machine enters provider deletion or an authorization-vs-cleanup invariant fails
-- active unauthorized count or reserved cost exceeds its hard ceiling
+- active unauthorized count exceeds its hard ceiling
 - duplicate active machine/intent constraint errors appear
 - cleanup oldest age threatens the 35/45-minute objective
 - payment-settling backlog grows beyond the signed-event delivery allowance

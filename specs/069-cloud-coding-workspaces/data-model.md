@@ -118,7 +118,7 @@ interface WorkspaceSession {
     tmuxSession?: string;
     fallbackReason?: string;
   };
-  terminalSessionId: string;
+  terminalRef: TerminalRef;
   transcriptPath: string;
   attachedClients: number;
   writeMode: "owner" | "takeover" | "closed";

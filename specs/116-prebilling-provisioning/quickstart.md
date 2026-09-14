@@ -1,18 +1,22 @@
 # Validation Quickstart: Prebilling Provisioning
 
-This feature is developed test-first and remains disabled by default until every access and cleanup invariant passes. Commands run from the repository root of the feature worktree.
+This feature is developed test-first. The production deployment contract keeps count-only prebilling enabled at 100% rollout with a global maximum of four active unpaid preparations. Commands run from the repository root of the feature worktree.
 
-Admission requires all of these server-owned settings; missing values keep it off:
+Admission requires all of these server-owned settings:
 
 ```text
 MATRIX_PREBILLING_PROVISIONING_ENABLED=true
 MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=<0..100>
 MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=<positive integer>
-MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS=<positive integer>
-MATRIX_PREBILLING_PROVISIONING_COSTS_JSON={"cpx22":...,"cpx32":...,"cpx52":...}
 ```
 
-Setting `ENABLED=false` or rollout to `0` stops only new admission. Signed subscription activation and signed-expiry cleanup remain wired so existing intents can converge safely.
+The runtime's disabled-state behavior remains covered as a safety invariant: when intentionally configured off by reviewed code, awaiting intents are not admitted, failed unpaid preparations are not reset for retry, and a `preparing` crash state cannot create its first machine on resume. Detached work already in flight may settle, while paid-intent bypass, signed subscription activation, and signed-expiry cleanup remain wired so existing intents can converge safely. The production workflow does not expose this state as an operator control.
+
+## Operational Policy and Future Rollback
+
+Count-only prebilling remains enabled in the production deployment workflow. There is no prebuilt workflow-dispatch path that disables admission for a rollback drain. A direct revert to the former cost-aware implementation is unsupported because count-only revisions deliberately write the compatibility cost column as zero. If exceptional rollback behavior is ever required, it must be introduced through a separate reviewed workflow/code PR that defines and validates the necessary state and deployment transition.
+
+The retained database cost column avoids a schema migration and remains written as zero by count-only revisions. It is excluded from the provisioning domain and admission decisions, while preserving schema compatibility for a future reviewed PR that deliberately restores cost-based behavior.
 
 ## 1. Fake Stripe and Provider Integration
 
@@ -21,7 +25,7 @@ Required negative/race cases:
 - concurrent identical checkout requests produce one session, intent, job, and provider machine
 - conflicting selections cannot mutate a payable intent
 - Checkout creation definite failure produces zero provider calls
-- capacity/cost denial produces zero provider calls and safely falls back after authorization
+- count-capacity denial produces zero provider calls and safely falls back after authorization
 - provider create timeout reconciles the accepted machine instead of creating another
 - physical readiness before billing remains inaccessible across session routing, explicit VM routing, app session, runtime API, code-domain routing, WebSocket, terminal, recover, resize, and resume paths
 - checkout completion without a subscription projection remains `payment_settling` and is not deleted
@@ -35,8 +39,8 @@ Required negative/race cases:
 
 No live resource is created from this planning artifact. After implementation has an exact reviewed head and explicit operator approval:
 
-1. Deploy schema and continuation workers with admission disabled.
-2. Verify migrations, worker registration, cleanup drains, and metrics in the worker-enabled platform revision before directing traffic to it.
+1. Deploy the candidate with prebilling enabled, rollout at `100`, maximum active count `4`, and both legacy cost variables absent.
+2. Verify migrations, worker registration, cleanup reconciliation, metrics, and the candidate environment contract before directing traffic to it.
 3. Run Stripe test-mode checkout plus a disposable feature VPS in the selected region/shape.
 4. Delay checkout long enough to prove overlap; verify all prebilling routing probes deny access.
 5. Deliver the signed test subscription projection and verify activation uses the same machine.

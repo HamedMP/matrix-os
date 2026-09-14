@@ -38,6 +38,7 @@ export interface TestGatewayOptions {
   authToken?: string;
   config?: Record<string, unknown>;
   spawnFn?: SpawnFn;
+  runningVersion?: string;
 }
 
 export async function startTestGateway(
@@ -89,7 +90,12 @@ export async function startTestGateway(
 
   let gateway: Awaited<ReturnType<typeof createGateway>>;
   try {
-    gateway = await createGateway({ homePath, port, spawnFn: options.spawnFn });
+    gateway = await createGateway({
+      homePath,
+      port,
+      spawnFn: options.spawnFn,
+      runningVersion: options.runningVersion,
+    });
   } catch (error) {
     if (usesInsecureDevAuth) {
       releaseInsecureDevAuth();

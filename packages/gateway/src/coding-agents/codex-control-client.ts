@@ -11,6 +11,7 @@ import {
   UserInputAnswerRequestSchema,
 } from "@matrix-os/contracts";
 import { codexProviderEventPath } from "./codex-event-bridge.js";
+import { CodexHibernateControlSchema } from "./codex-idle-hibernation.mjs";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const MatrixQuestionIdSchema = z.string().regex(/^question_codex_[a-f0-9]{24}$/);
@@ -42,24 +43,54 @@ const TurnFrameSchema = z.object({
   modelOptions: z.array(AgentModelOptionSchema).max(32),
   clientRequestId: RequestIdSchema,
 }).strict();
-const ControlFrameSchema = z.discriminatedUnion("type", [TurnFrameSchema, ApprovalFrameSchema, InputFrameSchema]);
+const InterruptFrameSchema = z.object({
+  type: z.literal("interrupt"),
+  clientRequestId: RequestIdSchema,
+}).strict();
+const SteerFrameSchema = z.object({
+  type: z.literal("steer"),
+  prompt: TurnFrameSchema.shape.prompt,
+  clientRequestId: RequestIdSchema,
+}).strict();
+const ControlFrameSchema = z.discriminatedUnion("type", [
+  CodexHibernateControlSchema,
+  TurnFrameSchema,
+  SteerFrameSchema,
+  InterruptFrameSchema,
+  ApprovalFrameSchema,
+  InputFrameSchema,
+]);
 const ControlResponseSchema = z.union([
   z.object({ ok: z.literal(true), replayed: z.boolean().optional() }).strict(),
   z.object({ ok: z.literal(false) }).strict(),
 ]);
 
-const DEFAULT_TIMEOUT_MS = 2_000;
-const MAX_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 10_000;
+// A same-turn steer can be admitted at the next provider input boundary while
+// a long-running tool is active. Keep this aligned with the runner's bounded
+// steer RPC and control-socket windows.
+const DEFAULT_STEER_TIMEOUT_MS = 60_000;
+const MAX_TIMEOUT_MS = 60_000;
 const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
 export interface CodexControlClient {
+  hibernate?(input: { sessionId: string; providerThreadId: string; clientRequestId: string }): Promise<void>;
   submitTurn(input: {
     sessionId: string;
     turnId: string;
     prompt: string;
     model?: string;
     modelOptions: z.infer<typeof AgentModelOptionSchema>[];
+  }): Promise<void>;
+  interruptTurn(input: {
+    sessionId: string;
+    clientRequestId: string;
+  }): Promise<void>;
+  steerTurn(input: {
+    sessionId: string;
+    prompt: string;
+    clientRequestId: string;
   }): Promise<void>;
   submitApproval(input: {
     sessionId: string;
@@ -83,16 +114,23 @@ export function codexProviderControlPath(homePath: string, sessionId: string): s
 export function createCodexControlClient(options: {
   homePath: string;
   timeoutMs?: number;
-}): CodexControlClient {
+}): CodexControlClient & Required<Pick<CodexControlClient, "hibernate">> {
   const homePath = resolve(options.homePath);
   const requestedTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Number.isFinite(requestedTimeoutMs)
     ? Math.max(1, Math.min(Math.trunc(requestedTimeoutMs), MAX_TIMEOUT_MS))
     : DEFAULT_TIMEOUT_MS;
+  const steerTimeoutMs = options.timeoutMs === undefined ? DEFAULT_STEER_TIMEOUT_MS : timeoutMs;
 
-  async function send(sessionId: string, input: z.input<typeof ControlFrameSchema>): Promise<void> {
+  async function send(
+    sessionId: string,
+    input: z.input<typeof ControlFrameSchema>,
+    operationTimeoutMs = timeoutMs,
+  ): Promise<void> {
     const frame = ControlFrameSchema.parse(input);
     const path = codexProviderControlPath(homePath, sessionId);
+    let sent = false;
+    let rejected = false;
     try {
       const info = await lstat(path);
       if (!info.isSocket() || info.isSymbolicLink()) throw new Error("control_unavailable");
@@ -100,7 +138,7 @@ export function createCodexControlClient(options: {
       if (Buffer.byteLength(line, "utf8") > MAX_CONTROL_FRAME_BYTES) {
         throw new Error("control_frame_limit");
       }
-      const signal = AbortSignal.timeout(timeoutMs);
+      const signal = AbortSignal.timeout(operationTimeoutMs);
       const response = await new Promise<z.infer<typeof ControlResponseSchema>>((resolve, reject) => {
         const socket = createConnection({ path });
         let responseText = "";
@@ -116,9 +154,9 @@ export function createCodexControlClient(options: {
         const onAbort = () => fail();
         signal.addEventListener("abort", onAbort, { once: true });
         socket.setEncoding("utf8");
-        socket.setTimeout(timeoutMs, fail);
+        socket.setTimeout(operationTimeoutMs, fail);
         socket.once("error", fail);
-        socket.once("connect", () => socket.end(line));
+        socket.once("connect", () => { sent = true; socket.end(line); });
         socket.on("data", (chunk) => {
           responseText += chunk;
           if (Buffer.byteLength(responseText, "utf8") > MAX_RESPONSE_BYTES) fail();
@@ -138,13 +176,19 @@ export function createCodexControlClient(options: {
           if (!settled) fail();
         });
       });
-      if (!response.ok) throw new Error("control_rejected");
+      if (!response.ok) { rejected = true; throw new Error("control_rejected"); }
     } catch (_error) {
-      throw new Error("Codex control request failed");
+      const error = new Error("Codex control request failed");
+      error.name = rejected ? "CodexControlRejectedError" : sent ? "CodexControlTransportError" : "CodexControlUnavailableError";
+      throw error;
     }
   }
 
   return {
+    hibernate(input) {
+      return send(input.sessionId, { type: "hibernate", providerThreadId: input.providerThreadId,
+        clientRequestId: input.clientRequestId }, Math.min(timeoutMs, 2_000));
+    },
     submitTurn(input) {
       return send(input.sessionId, {
         type: "turn",
@@ -153,6 +197,19 @@ export function createCodexControlClient(options: {
         modelOptions: input.modelOptions,
         clientRequestId: `req_${input.turnId.slice("turn_".length)}`,
       });
+    },
+    interruptTurn(input) {
+      return send(input.sessionId, {
+        type: "interrupt",
+        clientRequestId: input.clientRequestId,
+      });
+    },
+    steerTurn(input) {
+      return send(input.sessionId, {
+        type: "steer",
+        prompt: input.prompt,
+        clientRequestId: input.clientRequestId,
+      }, steerTimeoutMs);
     },
     submitApproval(input) {
       return send(input.sessionId, {

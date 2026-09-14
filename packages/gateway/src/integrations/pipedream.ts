@@ -1,4 +1,4 @@
-type SdkClient = import("@pipedream/sdk").PipedreamClient;
+import { collectPipedreamPages } from "./pipedream-pagination.js";
 
 export interface PipedreamConfig {
   clientId: string;
@@ -21,6 +21,10 @@ export interface RunActionResult {
 export interface PipedreamConnectClient {
   createConnectToken(
     externalUserId: string,
+    redirects?: {
+      successRedirectUri: string;
+      errorRedirectUri: string;
+    },
   ): Promise<{ token: string; expiresAt: string; connectLinkUrl: string }>;
 
   getOAuthUrl(connectLinkUrl: string, app: string): string;
@@ -46,6 +50,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     params?: Record<string, string>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   proxyPost(opts: {
@@ -53,6 +58,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     body?: Record<string, unknown>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   proxyPut(opts: {
@@ -60,6 +66,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     body?: Record<string, unknown>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   proxyPatch(opts: {
@@ -67,6 +74,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     body?: Record<string, unknown>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   proxyDelete(opts: {
@@ -74,6 +82,7 @@ export interface PipedreamConnectClient {
     accountId: string;
     url: string;
     params?: Record<string, string>;
+    headers?: Record<string, string>;
   }): Promise<unknown>;
 
   revokeAccount(accountId: string): Promise<void>;
@@ -119,9 +128,9 @@ export async function createPipedreamClient(
   });
 
   return {
-    async createConnectToken(externalUserId: string) {
+    async createConnectToken(externalUserId: string, redirects) {
       const response = await sdk.tokens.create(
-        { externalUserId },
+        { externalUserId, ...redirects },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
       // The SDK exposes connectLinkUrl on the response but the published
@@ -178,10 +187,10 @@ export async function createPipedreamClient(
     async discoverActions(appSlug: string) {
       const page = await sdk.actions.list(
         { app: appSlug },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS, abortSignal: AbortSignal.timeout(30_000), maxRetries: 0 },
       );
-      const items = (page as any).data ?? [];
-      return items.map((c: any) => ({
+      const items = await collectPipedreamPages(page);
+      return items.map((c) => ({
         key: c.key,
         name: c.name,
         description: c.description,
@@ -211,6 +220,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           params: opts.params,
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -224,6 +234,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           body: opts.body ?? {},
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -237,6 +248,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           body: opts.body ?? {},
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -250,6 +262,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           body: opts.body ?? {},
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -268,6 +281,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           params: opts.params,
+          headers: opts.headers,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
@@ -302,10 +316,10 @@ export async function createPipedreamClient(
 
     async listAccounts(externalUserId: string) {
       const result = await sdk.accounts.list(
-        { externalUserId, include_credentials: false } as any,
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        { externalUserId, includeCredentials: false },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS, abortSignal: AbortSignal.timeout(30_000), maxRetries: 0 },
       );
-      const accounts = (result as any)?.data ?? (Array.isArray(result) ? result : []);
+      const accounts = await collectPipedreamPages(result);
       return accounts.map((a: any) => {
         const app = a.app;
         const appSlug = typeof app === "string" ? app

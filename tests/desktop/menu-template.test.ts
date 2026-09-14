@@ -2,6 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
 
 describe("createAppMenuTemplate", () => {
+  it("preserves Electron's standard non-terminal Edit menu roles", () => {
+    const template = createAppMenuTemplate({
+      appName: "Matrix OS",
+      isPackaged: true,
+      openExternal: vi.fn(),
+      send: vi.fn(),
+      adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(),
+      quitApp: vi.fn(),
+    });
+
+    expect(template.some((item) => item.role === "editMenu")).toBe(true);
+  });
+
   it("offers Check for Updates in installed and development application menus", () => {
     for (const isPackaged of [true, false]) {
       const checkForUpdates = vi.fn();

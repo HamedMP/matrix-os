@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useState } from "react";
 import Image from "next/image";
 import {
@@ -18,6 +19,7 @@ import {
 } from "@/lib/hugeicons";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
+import { IdentityPersonalitySection } from "./settings/sections/IdentityPersonalitySection";
 import { ChannelsSection } from "./settings/sections/ChannelsSection";
 import { IntegrationsSection } from "./settings/sections/IntegrationsSection";
 import { SkillsSection } from "./settings/sections/SkillsSection";
@@ -46,9 +48,10 @@ import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "agent", label: "Agent", icon: UserIcon },
+  { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
+  { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
-  { id: "integrations", label: "Integrations", icon: CableIcon },
+  { id: "integrations", label: "Services", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },
@@ -57,14 +60,20 @@ const sections = [
   { id: "system", label: "System", icon: MonitorIcon },
 ] as const;
 
-type StandardSectionId = typeof sections[number]["id"];
-type SectionId = StandardSectionId | "default-installs";
+export type SettingsSectionId = typeof sections[number]["id"];
+type SectionId = SettingsSectionId | "default-installs";
+type LegacySettingsSectionId = "agent" | "providers";
+type SettingsSectionInputId = SectionId | LegacySettingsSectionId;
 type SettingsSection = { id: SectionId; label: string; icon: typeof PaletteIcon };
+
+function normalizeSettingsSectionId(section: SettingsSectionInputId): SectionId {
+  return section === "agent" || section === "providers" ? "agents-providers" : section;
+}
 
 // Sections temporarily hidden from the Settings nav for the paid-beta scope.
 // The section components and render branches below are intentionally kept so a
 // section can be re-enabled by removing its id here. See AGENTS.md "Deferred work".
-const HIDDEN_SECTION_IDS = new Set<StandardSectionId>([
+const HIDDEN_SECTION_IDS = new Set<SettingsSectionId>([
   "channels",
   "skills",
   "security",
@@ -127,8 +136,8 @@ function SettingsAccountFooter() {
 interface SettingsProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  defaultSection?: SectionId;
-  lockedSection?: SectionId;
+  defaultSection?: SettingsSectionInputId;
+  lockedSection?: SettingsSectionInputId;
   billingActiveOverride?: boolean | null;
   closeDisabled?: boolean;
   billingMode?: "settings" | "provisioning" | "device-setup" | "add-computer";
@@ -143,6 +152,7 @@ interface SettingsProps {
     collectAcquisitionSource?: boolean;
   };
   onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
+  onOpenProviderTerminalSession?: (sessionId: string) => void;
 }
 
 export function Settings({
@@ -181,17 +191,23 @@ function SettingsFrame({
   billingCheckoutReturnPath,
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
-  onOpenAgentTerminal,
+  onOpenProviderTerminalSession,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
   const onboardingMode = onboardingDefaultInstalls !== undefined;
+  const canonicalDefaultSection = normalizeSettingsSectionId(defaultSection);
+  const canonicalLockedSection = lockedSection === undefined
+    ? undefined
+    : normalizeSettingsSectionId(lockedSection);
   const resolvedDefaultSection = onboardingMode
     ? "default-installs"
-    : !showBillingSection && defaultSection === "billing"
+    : !showBillingSection && canonicalDefaultSection === "billing"
       ? "appearance"
-      : defaultSection;
-  const resolvedLockedSection = !showBillingSection && lockedSection === "billing" ? undefined : lockedSection;
+      : canonicalDefaultSection;
+  const resolvedLockedSection = !showBillingSection && canonicalLockedSection === "billing"
+    ? undefined
+    : canonicalLockedSection;
   const standardFrameSections: SettingsSection[] = showBillingSection
     ? visibleSections
     : visibleSections.filter((section) => section.id !== "billing");
@@ -257,11 +273,16 @@ function SettingsFrame({
   if (open !== prevOpen) setPrevOpen(open);
   if (open && resolvedLockedSection) {
     if (activeSection !== resolvedLockedSection) setActiveSection(resolvedLockedSection);
-  } else if (justOpened && showBillingSection && billingActive === false) {
-    if (activeSection !== "billing") setActiveSection("billing");
+  } else if (justOpened) {
+    const openSection = showBillingSection && billingActive === false
+      ? "billing"
+      : resolvedDefaultSection;
+    if (activeSection !== openSection) setActiveSection(openSection);
   } else if (!open) {
     if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   }
+
+  useGettingStartedBlocker(open || mounted);
 
   if (!mounted) return null;
 
@@ -271,7 +292,7 @@ function SettingsFrame({
     <div className="fixed inset-0" style={{ zIndex: SHELL_Z_INDEX.settings }}>
       {onboardingMode ? (
         <Image
-          src={platformShellAssetPath("/wallpapers/moraine-lake.jpg")}
+          src={platformShellAssetPath("/wallpapers/matrix-dusk.webp")}
           alt=""
           fill
           priority
@@ -383,7 +404,10 @@ function SettingsFrame({
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
-              {activeSection === "agent" && <AgentSection onOpenTerminal={onOpenAgentTerminal} />}
+              {activeSection === "agents-providers" && (
+                <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
+              )}
+              {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}

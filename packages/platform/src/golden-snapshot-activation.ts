@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MATRIX_HOSTED_MACHINE_PROFILES } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import type { PlatformDB } from './db.js';
 import {
@@ -8,19 +9,36 @@ import {
 } from './golden-snapshot-repository.js';
 import { GoldenSnapshotRuntimeConfigSchema, type GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 
-const ServerProfiles: Record<string, { architecture: 'x86' | 'arm'; diskGb: number }> = {
-  cpx22: { architecture: 'x86', diskGb: 80 },
+type GoldenSnapshotServerProfile = { architecture: 'x86' | 'arm'; diskGb: number };
+
+// Existing machines may still recover onto a server type that predates the
+// current hosted billing catalog. New purchasable types come only from the
+// shared catalog below; this bounded compatibility set preserves recovery.
+const LegacyServerProfiles = {
   cpx32: { architecture: 'x86', diskGb: 160 },
-  cpx52: { architecture: 'x86', diskGb: 320 },
   cax21: { architecture: 'arm', diskGb: 80 },
   cax31: { architecture: 'arm', diskGb: 160 },
   cax41: { architecture: 'arm', diskGb: 320 },
-};
+} satisfies Record<string, GoldenSnapshotServerProfile>;
+
+const ServerProfiles = MATRIX_HOSTED_MACHINE_PROFILES.reduce<Record<string, GoldenSnapshotServerProfile>>(
+  (profiles, profile) => {
+    const candidate = { architecture: profile.architecture, diskGb: profile.diskGb };
+    const existing = profiles[profile.serverType];
+    if (existing
+      && (existing.architecture !== candidate.architecture || existing.diskGb !== candidate.diskGb)) {
+      throw new Error(`Conflicting hosted machine profile for ${profile.serverType}`);
+    }
+    profiles[profile.serverType] = candidate;
+    return profiles;
+  },
+  { ...LegacyServerProfiles },
+);
 
 export function getGoldenSnapshotServerProfile(
   serverType: string,
-): { architecture: 'x86' | 'arm'; diskGb: number } | undefined {
-  return ServerProfiles[serverType];
+): GoldenSnapshotServerProfile | undefined {
+  return Object.hasOwn(ServerProfiles, serverType) ? ServerProfiles[serverType] : undefined;
 }
 
 const SelectionInputSchema = z.object({
@@ -124,7 +142,7 @@ export async function chooseProvisioningImage(
   const target = await db.executor.selectFrom('host_bundle_releases').select(['sha256'])
     .where('version', '=', input.targetBundleVersion).executeTakeFirst();
   const rollout = await resolveGoldenSnapshotRollout(db, config, input.machineId, input.now);
-  const profile = ServerProfiles[input.serverType];
+  const profile = getGoldenSnapshotServerProfile(input.serverType);
   if (!rollout.included
     || !profile || profile.architecture !== config.compatibility.architecture || !target) {
     return persistCleanDecision(db, input, target?.sha256 ?? '0'.repeat(64));
@@ -193,7 +211,7 @@ export async function chooseRecoveryImage(
   const target = await db.executor.selectFrom('host_bundle_releases').select('sha256')
     .where('version', '=', input.targetBundleVersion).executeTakeFirst();
   const rollout = await resolveGoldenSnapshotRollout(db, config, input.machineId, input.now);
-  const profile = ServerProfiles[input.serverType];
+  const profile = getGoldenSnapshotServerProfile(input.serverType);
   if (!rollout.included
     || !profile || profile.architecture !== config.compatibility.architecture || !target) {
     return {

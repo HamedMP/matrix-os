@@ -1,26 +1,41 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import {
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  MessageSquare,
-  PanelLeftOpenIcon,
-  PinIcon,
-  PinOffIcon,
-  Plus,
-  Trash2,
-} from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ContextMenu } from "../../design/primitives";
-import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
+import { Plus } from "@renderer/lib/hugeicons";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  CanonicalChatClient,
+  CanonicalChatEventSource,
+} from "../../lib/canonical-chat-client";
 import type { Project } from "../../stores/board";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { DeleteConversationDialog } from "../chat/DeleteConversationDialog";
 import ProjectLifecycleDialog from "../mission-control/ProjectLifecycleDialog";
-import { buildWorkRailModel } from "./work-rail-model";
+import {
+  buildWorkRailModel,
+} from "./work-rail-model";
+import { WorkRailChatRow } from "./work-rail/WorkRailChatRow";
+import { WorkRailHeader } from "./work-rail/WorkRailHeader";
+import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
+import { WorkRailSection } from "./work-rail/WorkRailSection";
+import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
+import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
+
+function applyProjectedChats(
+  records: CanonicalChatRecord[],
+  projections: CanonicalChatTitleProjection[] | undefined,
+): CanonicalChatRecord[] {
+  if (!projections?.length) return records;
+  return records.map((record) => {
+    const projection = projections.find((candidate) => candidate.chatId === record.chat.id);
+    if (!projection || record.chat.revision >= projection.revision) return record;
+    return {
+      ...record,
+      chat: { ...record.chat, title: projection.title, revision: projection.revision },
+    };
+  });
+}
 
 async function loadWorkRailChats(client: CanonicalChatClient): Promise<CanonicalChatRecord[]> {
   const records: CanonicalChatRecord[] = [];
@@ -36,6 +51,8 @@ async function loadWorkRailChats(client: CanonicalChatClient): Promise<Canonical
 
 export function WorkRail({
   client,
+  eventSource,
+  projectedChatTitles,
   projects,
   active,
   activeChatId,
@@ -45,11 +62,14 @@ export function WorkRail({
   onNewProjectChat,
   onSelectChat,
   onChatDeleted,
+  onChatRenamed,
   onCollapse,
   showCollapseControl = true,
-  className = "w-[260px]",
+  className = "w-[240px]",
 }: {
   client: CanonicalChatClient | null;
+  eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
+  projectedChatTitles?: CanonicalChatTitleProjection[];
   projects: Project[];
   active: boolean;
   activeChatId?: string;
@@ -59,6 +79,7 @@ export function WorkRail({
   onNewProjectChat: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project?: Project) => void;
   onChatDeleted?: (record: CanonicalChatRecord, project?: Project) => void;
+  onChatRenamed?: (record: CanonicalChatRecord, project?: Project) => void;
   onCollapse: () => void;
   showCollapseControl?: boolean;
   className?: string;
@@ -76,9 +97,15 @@ export function WorkRail({
   const [deleteChatTarget, setDeleteChatTarget] = useState<CanonicalChatRecord | null>(null);
   const [deletingChat, setDeletingChat] = useState(false);
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
+  const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renamePending, setRenamePending] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
+  const projectedChatTitlesRef = useRef(projectedChatTitles);
+  projectedChatTitlesRef.current = projectedChatTitles;
   if (routeScopeRef.current.key !== routeScope || routeScopeRef.current.client !== client) {
     routeScopeRef.current = {
       client,
@@ -89,28 +116,63 @@ export function WorkRail({
   const model = useMemo(() => buildWorkRailModel(records, projects), [projects, records]);
 
   useEffect(() => {
+    if (!active || !client) setSearchOpen(false);
+  }, [active, client]);
+
+  useEffect(() => {
     let current = true;
     if (!client || !active) return () => { current = false; };
+    let refreshInFlight = false;
+    let refreshPending = false;
     setPinError(null);
     setPinning({});
     setDeleteChatTarget(null);
     setDeletingChat(false);
     setDeleteChatError(null);
+    setRenamingChatId(null);
+    setRenamePending(false);
+    setRenameError(null);
     setStatus("loading");
-    void loadWorkRailChats(client).then((loaded) => {
-      if (!current) return;
-      setRecords(loaded);
-      setStatus("ready");
-    }).catch((error: unknown) => {
-      if (!current) return;
-      console.warn(
-        "[work] Chat list load failed:",
-        error instanceof Error ? error.name : "UnknownError",
-      );
-      setStatus("error");
+    const refresh = async () => {
+      if (refreshInFlight) {
+        refreshPending = true;
+        return;
+      }
+      refreshInFlight = true;
+      do {
+        refreshPending = false;
+        try {
+          const loaded = await loadWorkRailChats(client);
+          if (!current) return;
+          setRecords(applyProjectedChats(loaded, projectedChatTitlesRef.current));
+          setStatus("ready");
+        } catch (error: unknown) {
+          if (!current) return;
+          console.warn(
+            "[work] Chat list load failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          setStatus("error");
+        }
+      } while (current && refreshPending);
+      refreshInFlight = false;
+    };
+    const subscription = eventSource?.subscribe((event) => {
+      if (event.type === "chat.changed" && event.eventType === "run.message") return;
+      void refresh();
     });
-    return () => { current = false; };
-  }, [active, activeChatId, activeProjectSlug, client]);
+    void refresh();
+    return () => {
+      current = false;
+      refreshPending = false;
+      subscription?.dispose();
+    };
+  }, [active, activeChatId, activeProjectSlug, client, eventSource]);
+
+  useEffect(() => {
+    if (!projectedChatTitles?.length) return;
+    setRecords((current) => applyProjectedChats(current, projectedChatTitles));
+  }, [projectedChatTitles]);
 
   const toggleSection = (key: SectionKey) => {
     setSections((current) => ({ ...current, [key]: !current[key] }));
@@ -175,45 +237,71 @@ export function WorkRail({
     }
   };
 
+  const renameChat = async (record: CanonicalChatRecord, title: string) => {
+    if (!client || renamePending) return;
+    const requestRouteGeneration = routeScopeRef.current.generation;
+    const targetProject = model.projects.find((group) => (
+      group.id === record.projectId || group.slug === record.projectId
+    ))?.project;
+    setRenamePending(true);
+    setRenameError(null);
+    try {
+      const updated = await client.updateTitle(record.chat.id, {
+        baseRevision: record.chat.revision,
+        title,
+      });
+      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
+      setRecords((current) => current.map((candidate) => (
+        candidate.chat.id === updated.chat.id ? updated : candidate
+      )));
+      setRenamingChatId(null);
+      onChatRenamed?.(updated, targetProject);
+    } catch (error: unknown) {
+      console.warn("[work] Chat rename failed:", error instanceof Error ? error.name : "UnknownError");
+      if (routeScopeRef.current.generation === requestRouteGeneration) {
+        setRenameError("The Chat could not be renamed. Try again.");
+        setRenamingChatId(null);
+      }
+    } finally {
+      if (routeScopeRef.current.generation === requestRouteGeneration) setRenamePending(false);
+    }
+  };
+
   return (
     <nav
       aria-label="Chat navigation"
-      className={`flex min-h-0 shrink-0 flex-col border-r ${className}`}
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
+      className={`flex min-h-0 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-2 ${className}`}
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
     >
-      <div className="mx-3 flex items-center gap-1 border-b py-3" style={{ borderColor: "var(--border-subtle)" }}>
-        <button
-          type="button"
-          className="flex h-9 min-w-0 flex-1 items-center justify-start gap-2 rounded-md px-2 text-left text-[15px] font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-primary)" }}
-          onClick={onNewGlobalChat}
-        >
-          <Plus size={18} aria-hidden />
-          New chat
-        </button>
-        {showCollapseControl ? <button
-          type="button"
-          aria-label="Hide Chat navigation"
-          title="Hide Chat navigation"
-          className="flex size-8 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-tertiary)" }}
-          onClick={onCollapse}
-        >
-          <PanelLeftOpenIcon size={15} aria-hidden />
-        </button> : null}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-        <RailSection
+      <WorkRailHeader
+        onNewChat={onNewGlobalChat}
+        onSearch={() => setSearchOpen(true)}
+        onCollapse={onCollapse}
+        showCollapseControl={showCollapseControl}
+      />
+      <div className="contents">
+        <WorkRailSection
           label="Pinned"
           expanded={sections.pinned}
           onToggle={() => toggleSection("pinned")}
         >
           {model.pinned.map((record) => (
-            <ChatRow
+            <WorkRailChatRow
               key={record.chat.id}
               record={record}
+              placement="pinned"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
+              renaming={renamingChatId === record.chat.id}
+              renamePending={renamePending && renamingChatId === record.chat.id}
+              renameDisabled={renamePending}
+              onRenameStart={() => {
+                if (renamePending) return;
+                setRenameError(null);
+                setRenamingChatId(record.chat.id);
+              }}
+              onRenameCommit={(title) => { void renameChat(record, title); }}
+              onRenameCancel={() => setRenamingChatId(null)}
               onSelect={() => onSelectChat(
                 record,
                 model.projects.find((group) => (
@@ -227,9 +315,9 @@ export function WorkRail({
               }}
             />
           ))}
-        </RailSection>
+        </WorkRailSection>
 
-        <RailSection
+        <WorkRailSection
           label="Projects"
           expanded={sections.projects}
           onToggle={() => toggleSection("projects")}
@@ -238,94 +326,74 @@ export function WorkRail({
               type="button"
               aria-label="Create project"
               title="Create project"
-              className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="flex size-5 items-center justify-center rounded-md opacity-0 outline-none transition-opacity hover:bg-[var(--bg-hover)] focus:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)] [section:hover_&]:opacity-100"
+              style={{ color: "var(--text-tertiary)" }}
               onClick={onCreateProject}
             >
-              <Plus size={14} aria-hidden />
+              <Plus size={12} aria-hidden />
             </button>
           )}
         >
           {model.projects.map((group) => {
             const expanded = Boolean(expandedProjects[group.id]);
             return (
-              <div key={group.id}>
-                <ContextMenu items={[{
-                  label: "Delete",
-                  danger: true,
-                  onSelect: () => setDeleteProjectTarget(group.project),
-                }]}>
-                  <div className="group/project flex min-w-0 items-center gap-1 rounded-md hover:bg-[var(--bg-hover)]">
-                    <button
-                      type="button"
-                      aria-label={group.name}
-                      aria-expanded={expanded}
-                      className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-                      style={{ color: activeProjectSlug === group.slug ? "var(--text-primary)" : "var(--text-secondary)" }}
-                      onClick={() => setExpandedProjects((current) => ({
-                        ...current,
-                        [group.id]: !current[group.id],
-                      }))}
-                    >
-                      {expanded ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
-                      <Folder size={14} aria-hidden className="shrink-0" />
-                      <span className="truncate">{group.name}</span>
-                    </button>
-                    <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover/project:opacity-100 group-focus-within/project:opacity-100">
-                      <button
-                        type="button"
-                        aria-label={`New chat in ${group.name}`}
-                        title={`New chat in ${group.name}`}
-                        className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                        onClick={() => onNewProjectChat(group.project)}
-                      >
-                        <Plus size={13} aria-hidden />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Delete ${group.name} project`}
-                        title={`Delete ${group.name} project`}
-                        className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                        onClick={() => setDeleteProjectTarget(group.project)}
-                      >
-                        <Trash2 size={13} aria-hidden />
-                      </button>
-                    </div>
-                  </div>
-                </ContextMenu>
-                {expanded ? (
-                  <div className="ml-4 border-l pl-1" style={{ borderColor: "var(--border-subtle)" }}>
-                    {group.chats.map((record) => (
-                      <ChatRow
-                        key={record.chat.id}
-                        record={record}
-                        active={record.chat.id === activeChatId}
-                        pinning={Boolean(pinning[record.chat.id])}
-                        onSelect={() => onSelectChat(record, group.project)}
-                        onPin={() => updatePinned(record)}
-                        onDelete={() => {
-                          setDeleteChatError(null);
-                          setDeleteChatTarget(record);
-                        }}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+              <WorkRailProjectGroup
+                key={group.id}
+                group={group}
+                expanded={expanded}
+                activeProjectSlug={activeProjectSlug}
+                activeChatId={activeChatId}
+                pinning={pinning}
+                renamingChatId={renamingChatId}
+                renamePending={renamePending}
+                onRenameChat={(record) => {
+                  if (renamePending) return;
+                  setRenameError(null);
+                  setRenamingChatId(record.chat.id);
+                }}
+                onRenameCommit={(record, title) => { void renameChat(record, title); }}
+                onRenameCancel={() => setRenamingChatId(null)}
+                onToggle={() => setExpandedProjects((current) => ({
+                  ...current,
+                  [group.id]: !current[group.id],
+                }))}
+                onNewChat={onNewProjectChat}
+                onDeleteProject={setDeleteProjectTarget}
+                onSelectChat={onSelectChat}
+                onPinChat={updatePinned}
+                onDeleteChat={(record) => {
+                  setDeleteChatError(null);
+                  setDeleteChatTarget(record);
+                }}
+              />
             );
           })}
-        </RailSection>
+        </WorkRailSection>
 
-        <RailSection
+        <WorkRailSection
           label="Recents"
           expanded={sections.recents}
           onToggle={() => toggleSection("recents")}
+          divider={false}
+
         >
           {model.recents.map((record) => (
-            <ChatRow
+            <WorkRailChatRow
               key={record.chat.id}
               record={record}
+              placement="recent"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
+              renaming={renamingChatId === record.chat.id}
+              renamePending={renamePending && renamingChatId === record.chat.id}
+              renameDisabled={renamePending}
+              onRenameStart={() => {
+                if (renamePending) return;
+                setRenameError(null);
+                setRenamingChatId(record.chat.id);
+              }}
+              onRenameCommit={(title) => { void renameChat(record, title); }}
+              onRenameCancel={() => setRenamingChatId(null)}
               onSelect={() => onSelectChat(record)}
               onPin={() => updatePinned(record)}
               onDelete={() => {
@@ -334,7 +402,7 @@ export function WorkRail({
               }}
             />
           ))}
-        </RailSection>
+        </WorkRailSection>
         {status === "loading" && records.length === 0 ? (
           <p role="status" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
         ) : null}
@@ -343,6 +411,9 @@ export function WorkRail({
         ) : null}
         {pinError ? (
           <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>{pinError}</p>
+        ) : null}
+        {renameError ? (
+          <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger)" }}>{renameError}</p>
         ) : null}
       </div>
       <DeleteConversationDialog
@@ -366,110 +437,18 @@ export function WorkRail({
           onClose={() => setDeleteProjectTarget(null)}
         />
       ) : null}
+      <WorkRailSearchDialog
+        open={searchOpen}
+        records={records}
+        projects={projects}
+        status={status}
+        onClose={() => setSearchOpen(false)}
+        onSelect={(record, project) => {
+          setSearchOpen(false);
+          if (project) onSelectChat(record, project);
+          else onSelectChat(record);
+        }}
+      />
     </nav>
-  );
-}
-
-function RailSection({
-  label,
-  expanded,
-  onToggle,
-  action,
-  children,
-}: {
-  label: string;
-  expanded: boolean;
-  onToggle: () => void;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="mb-2">
-      <div className="flex h-7 items-center gap-1">
-        <button
-          type="button"
-          aria-label={label}
-          aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-tertiary)" }}
-          onClick={onToggle}
-        >
-          {expanded ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
-          {label}
-        </button>
-        {action}
-      </div>
-      {expanded ? <div className="space-y-0.5">{children}</div> : null}
-    </section>
-  );
-}
-
-function ChatRow({
-  record,
-  active,
-  pinning,
-  onSelect,
-  onPin,
-  onDelete,
-}: {
-  record: CanonicalChatRecord;
-  active: boolean;
-  pinning: boolean;
-  onSelect: () => void;
-  onPin: () => void;
-  onDelete: () => void;
-}) {
-  const pinned = Boolean(record.chat.userState?.pinned);
-  return (
-    <ContextMenu items={[
-      {
-        label: pinned ? "Unpin" : "Pin",
-        disabled: pinning,
-        onSelect: onPin,
-      },
-      {
-        label: "Delete",
-        danger: true,
-        onSelect: onDelete,
-      },
-    ]}>
-      <div
-        className="group/chat flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]"
-        style={{ background: active ? "var(--bg-selected)" : undefined }}
-      >
-        <button
-          type="button"
-          aria-label={record.chat.title}
-          aria-current={active ? "page" : undefined}
-          className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-          style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
-          onClick={onSelect}
-        >
-          <MessageSquare size={13} aria-hidden className="shrink-0" />
-          <span className="truncate">{record.chat.title}</span>
-        </button>
-        <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/chat:opacity-100 group-focus-within/chat:opacity-100">
-          <button
-            type="button"
-            aria-label={`${pinned ? "Unpin" : "Pin"} ${record.chat.title}`}
-            title={`${pinned ? "Unpin" : "Pin"} ${record.chat.title}`}
-            disabled={pinning}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            onClick={onPin}
-          >
-            {pinned ? <PinOffIcon size={13} aria-hidden /> : <PinIcon size={13} aria-hidden />}
-          </button>
-          <button
-            type="button"
-            aria-label={`Delete ${record.chat.title}`}
-            title={`Delete ${record.chat.title}`}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            onClick={onDelete}
-          >
-            <Trash2 size={13} aria-hidden />
-          </button>
-        </div>
-      </div>
-    </ContextMenu>
   );
 }

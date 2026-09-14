@@ -1,5 +1,12 @@
 export interface ShellSessionSummary {
   name: string;
+  workspaceId: string;
+  tabId: string;
+  revision: number;
+  workspaceRevision: number;
+  projectId?: string;
+  cwd?: string;
+  pinned?: boolean;
   status?: "active" | "exited" | "degraded";
   placement?: "active" | "background";
   updatedAt?: string;
@@ -19,6 +26,8 @@ export interface ShellSessionSummary {
   branch?: string;
   pullRequest?: { number: number; url?: string };
   attachCommand?: string;
+  recoverable?: boolean;
+  recoveryReason?: "missing_runtime_session";
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
@@ -39,7 +48,7 @@ export function shouldShowShellStatusDot(shell: ShellSessionSummary): boolean {
   return getShellVisualStatus(shell) === "waiting";
 }
 
-export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
+export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "pinned">>;
 type ShellUiStatePatchKey = keyof ShellUiStatePatch;
 
 export interface ShellRefreshState {
@@ -49,7 +58,7 @@ export interface ShellRefreshState {
   error: string | null;
 }
 
-const SHELL_UI_STATE_PATCH_KEYS: ShellUiStatePatchKey[] = ["placement", "lastSeenSeq"];
+const SHELL_UI_STATE_PATCH_KEYS: ShellUiStatePatchKey[] = ["placement", "lastSeenSeq", "pinned"];
 
 export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSummary[]): boolean {
   return left.length === right.length && left.every((session, index) => {
@@ -57,6 +66,8 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
     if (!next) return false;
     if (
       session.name !== next.name ||
+      session.cwd !== next.cwd ||
+      session.pinned !== next.pinned ||
       session.status !== next.status ||
       session.placement !== next.placement ||
       session.updatedAt !== next.updatedAt ||
@@ -76,7 +87,9 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
       session.branch !== next.branch ||
       session.pullRequest?.number !== next.pullRequest?.number ||
       session.pullRequest?.url !== next.pullRequest?.url ||
-      session.attachCommand !== next.attachCommand
+      session.attachCommand !== next.attachCommand ||
+      session.recoverable !== next.recoverable ||
+      session.recoveryReason !== next.recoveryReason
     ) {
       return false;
     }
@@ -122,6 +135,9 @@ function snapshotShellUiStatePatchValue(
     case "lastSeenSeq":
       previousValues.lastSeenSeq = shell.lastSeenSeq;
       return;
+    case "pinned":
+      previousValues.pinned = shell.pinned;
+      return;
     default: {
       const unhandledKey: never = key;
       throw new Error(`Unhandled shell UI state patch key: ${String(unhandledKey)}`);
@@ -151,6 +167,10 @@ function rollbackShellUiStatePatchValue(
     case "lastSeenSeq":
       return Object.is(shell.lastSeenSeq, patch.lastSeenSeq)
         ? { ...shell, lastSeenSeq: previousValues.lastSeenSeq }
+        : shell;
+    case "pinned":
+      return Object.is(shell.pinned, patch.pinned)
+        ? { ...shell, pinned: previousValues.pinned }
         : shell;
     default: {
       const unhandledKey: never = key;

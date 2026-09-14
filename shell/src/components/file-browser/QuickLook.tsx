@@ -1,10 +1,12 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useState, useEffect } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { getGatewayUrl } from "@/lib/gateway";
 import { Button } from "@/components/ui/button";
+import { FileDownloadAction } from "./FileDownloadProvider";
 import { XIcon } from "@/lib/hugeicons";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -12,6 +14,7 @@ const QUICK_LOOK_FETCH_TIMEOUT_MS = 10_000;
 
 export function QuickLook() {
   const quickLookPath = useFileBrowser((s) => s.quickLookPath);
+  const entries = useFileBrowser((s) => s.entries);
   const currentPath = useFileBrowser((s) => s.currentPath);
   const setQuickLookPath = useFileBrowser((s) => s.setQuickLookPath);
   const openFile = usePreviewWindow((s) => s.openFile);
@@ -58,6 +61,8 @@ export function QuickLook() {
     };
   }, [fullPath, quickLookPath]);
 
+  useGettingStartedBlocker(Boolean(quickLookPath && fullPath));
+
   if (!quickLookPath || !fullPath) return null;
 
   return (
@@ -80,6 +85,7 @@ export function QuickLook() {
         <div className="flex items-center justify-between px-4 py-2 border-b">
           <div className="text-sm font-medium truncate">{quickLookPath}</div>
           <div className="flex items-center gap-2">
+            {entries.find((entry) => entry.name === quickLookPath)?.type === "file" ? <FileDownloadAction path={fullPath} size={entries.find((entry) => entry.name === quickLookPath)?.size} /> : null}
             <Button
               variant="ghost"
               size="sm"

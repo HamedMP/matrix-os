@@ -1,5 +1,6 @@
 "use client";
 
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect } from "react";
 import { useOsSessionStore } from "./os-session-store";
 import { BOOT_BEAT_MS } from "./os-session-utils";
@@ -11,7 +12,6 @@ import {
   XpWelcomeScreen,
 } from "./XpSessionOverlays";
 import { Win11LockScreen } from "./Win11LockScreen";
-import { MacLockScreen } from "./MacLockScreen";
 import "./os-session.css";
 
 /**
@@ -37,6 +37,7 @@ export function OsSessionHost() {
   // Body scroll lock while any full-screen overlay is up. The shell root is
   // already overflow-hidden; this is the guard for embedded/mobile contexts.
   const overlayOpen = view !== "none" || bootDesign !== null;
+  useGettingStartedBlocker(overlayOpen);
   useEffect(() => {
     if (!overlayOpen) return;
     const previous = document.body.style.overflow;
@@ -46,8 +47,7 @@ export function OsSessionHost() {
     };
   }, [overlayOpen]);
 
-  // Escape dismisses the dialog-style XP overlays (Win11/macOS lock screens
-  // use their OS-authentic dismissals instead: any key / password Enter).
+  // Escape dismisses the dialog-style XP overlays. Win11 uses its own dismissal.
   useEffect(() => {
     if (view !== "xp-logoff" && view !== "xp-shutdown" && view !== "xp-welcome") return;
     const onKey = (event: KeyboardEvent) => {
@@ -65,7 +65,6 @@ export function OsSessionHost() {
       {view === "xp-welcome" ? <XpWelcomeScreen /> : null}
       {view === "xp-safe-off" ? <XpSafeOffScreen /> : null}
       {view === "win11-lock" ? <Win11LockScreen /> : null}
-      {view === "macos-lock" ? <MacLockScreen /> : null}
     </>
   );
 }

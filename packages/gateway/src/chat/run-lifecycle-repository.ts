@@ -10,6 +10,7 @@ import {
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
+import { ChatRunFailureDiagnosticSchema, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import type { ChatDatabase, ChatsTable } from "./database.js";
 import {
   ChatBusyError,
@@ -20,6 +21,7 @@ import {
 } from "./errors.js";
 import {
   jsonb,
+  messageAttribution,
   messageSearchText,
   toActivity,
   toMessage,
@@ -30,7 +32,20 @@ import {
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 type Transact = <T>(fn: (trx: Executor) => Promise<T>) => Promise<T>;
+type AppendOutbox = (
+  executor: Executor,
+  owner: ChatOwner,
+  chatId: string,
+  revision: number,
+  eventType: ChatOutboxEventType,
+  payload?: Record<string, unknown>,
+) => Promise<void>;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
+function recoveredTextParts(text: string) {
+  if (Buffer.byteLength(text) > 96 * 1024) throw new RangeError("Recovered output limit exceeded");
+  return (text.match(/[\s\S]{1,4000}/gu) ?? [""]).map((chunk) =>
+    CanonicalChatMessagePartSchema.parse({ type: "text", text: chunk }));
+}
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
 
@@ -53,6 +68,35 @@ function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
       && ["completed", "failed", "aborted"].includes(activity.status));
 }
 
+function railTransitionForActivity(activity: CanonicalChatRunActivity): {
+  runStatus: "running" | "waiting_for_approval" | "waiting_for_input";
+  attention: "none" | "approval_required" | "input_required";
+} | undefined {
+  switch (activity.type) {
+    case "approval.requested":
+      return { runStatus: "waiting_for_approval", attention: "approval_required" };
+    case "input.requested":
+      return { runStatus: "waiting_for_input", attention: "input_required" };
+    case "approval.resolved":
+    case "input.resolved":
+      return { runStatus: "running", attention: "none" };
+    default:
+      return undefined;
+  }
+}
+
+function canTransitionAgentActivity(
+  current: Extract<CanonicalChatRunActivity, { type: "agent.activity" }>,
+  next: Extract<CanonicalChatRunActivity, { type: "agent.activity" }>,
+): boolean {
+  if (current.activityId !== next.activityId || current.kind !== next.kind || current.label !== next.label) return false;
+  if (current.status === "running") return true;
+  if (current.status === "partial") {
+    return ["partial", "completed", "failed", "cancelled"].includes(next.status);
+  }
+  return current.status === next.status;
+}
+
 async function selectOwnedChat(
   executor: Executor,
   owner: ChatOwner,
@@ -67,29 +111,25 @@ async function selectOwnedChat(
   return query.executeTakeFirst();
 }
 
-async function insertOutbox(
-  executor: Executor,
-  owner: ChatOwner,
-  chatId: string,
-  revision: number,
-  eventType: ChatOutboxEventType,
-  payload: Record<string, unknown> = {},
-): Promise<void> {
-  await executor.insertInto("chat_outbox").values({
-    owner_type: owner.type,
-    owner_id: owner.ownerId,
-    chat_id: chatId,
-    revision,
-    event_type: eventType,
-    payload: jsonb(payload),
-  }).execute();
-}
-
 export class ChatRunLifecycleRepository {
   constructor(
     private readonly kysely: Kysely<ChatDatabase>,
     private readonly transact: Transact,
+    private readonly appendOutbox: AppendOutbox,
   ) {}
+
+  async hasRetryRequest(ownerInput: ChatOwner, input: { chatId: string; turnId: string; clientRequestId: string }): Promise<boolean> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.turnId, input.clientRequestId].forEach(requireSafeRef);
+    const row = await this.kysely.selectFrom("chat_runs")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select("chat_runs.id")
+      .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId).where("chat_runs.turn_id", "=", input.turnId)
+      .where("chat_runs.client_request_id", "=", input.clientRequestId).executeTakeFirst();
+    return row !== undefined;
+  }
 
   async getAdapterState(ownerInput: ChatOwner, input: {
     runId: string;
@@ -119,6 +159,9 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     driverKind: string;
     instanceId: string;
+    schemaVersion: number;
+    executionRootFingerprint: string | null;
+    includeInterrupted?: boolean;
   }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     const owner = validateOwner(ownerInput);
     [input.driverKind, input.instanceId].forEach(requireSafeRef);
@@ -133,10 +176,17 @@ export class ChatRunLifecycleRepository {
       .where("chat_runs.chat_id", "=", input.chatId)
       .where("chat_runs.driver_kind", "=", input.driverKind)
       .where("chat_runs.instance_id", "=", input.instanceId)
-      .where("chat_runs.status", "=", "completed")
+      // A new user turn continues the native conversation even when its last
+      // run failed. Explicit retry callers retain the completed-only boundary.
+      .where("chat_runs.status", "in", input.includeInterrupted
+        ? ["completed", "failed", "aborted"]
+        : ["completed"])
       .where("chat_run_adapter_state.driver_kind", "=", input.driverKind)
       .where("chat_run_adapter_state.instance_id", "=", input.instanceId)
+      .where("chat_run_adapter_state.schema_version", "=", input.schemaVersion)
+      .where("chat_runs.execution_root_fingerprint", input.executionRootFingerprint === null ? "is" : "=", input.executionRootFingerprint)
       .orderBy("chat_runs.completed_at", "desc")
+      .limit(1)
       .executeTakeFirst();
     if (!row) return null;
     return {
@@ -146,6 +196,38 @@ export class ChatRunLifecycleRepository {
         executionRootFingerprint: row.execution_root_fingerprint,
       }),
     };
+  }
+
+  async getPendingApproval(ownerInput: ChatOwner, input: {
+    chatId: string;
+    runId: string;
+    approvalId: string;
+  }): Promise<Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    [input.runId, input.approvalId].forEach(requireSafeRef);
+    const rows = await this.kysely.selectFrom("chat_run_events")
+      .innerJoin("chat_runs", "chat_runs.id", "chat_run_events.run_id")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select(["chat_run_events.event"])
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId)
+      .where("chat_runs.id", "=", input.runId)
+      .where("chat_runs.status", "in", [...ACTIVE_RUNS])
+      .orderBy("chat_run_events.run_seq")
+      .limit(500)
+      .execute();
+    let pending: Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null = null;
+    for (const row of rows) {
+      const activity = CanonicalChatRunActivitySchema.safeParse(row.event);
+      if (!activity.success) continue;
+      if (activity.data.type !== "approval.requested" && activity.data.type !== "approval.resolved") continue;
+      if (activity.data.approvalId !== input.approvalId) continue;
+      if (activity.data.type === "approval.requested") pending = activity.data;
+      if (activity.data.type === "approval.resolved") pending = null;
+    }
+    return pending;
   }
 
   async markRunRunning(ownerInput: ChatOwner, input: {
@@ -256,13 +338,14 @@ export class ChatRunLifecycleRepository {
       const count = await trx.selectFrom("chat_run_events").select(({ fn }) => fn.countAll().as("count"))
         .where("run_id", "=", runId).executeTakeFirstOrThrow();
       const activityIds = [...new Set(activities.map((activity) => activity.id))];
-      const existing = await trx.selectFrom("chat_run_events").select(["id", "chat_id", "run_id"])
+      const existing = await trx.selectFrom("chat_run_events").select(["id", "chat_id", "run_id", "run_seq", "event"])
         .where("id", "in", activityIds).execute();
       if (existing.some((row) => row.chat_id !== chatId || row.run_id !== runId)) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
       const unseenCount = activityIds.length - existing.length;
       const overflow = Number(count.count) + unseenCount - 500;
+      let removedActivityIds: string[] = [];
       if (overflow > 0) {
         if (!activities.some(isTerminalActivity)) {
           throw new ChatConflictError(chatId, Number(current.revision));
@@ -282,16 +365,40 @@ export class ChatRunLifecycleRepository {
           throw new ChatConflictError(chatId, Number(current.revision));
         }
         await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
+        removedActivityIds = evictedIds;
       }
       const latestSequence = await trx.selectFrom("chat_run_events")
         .select(({ fn }) => fn.max("run_seq").as("sequence"))
         .where("run_id", "=", runId)
         .executeTakeFirst();
       const existingIds = new Set(existing.map((row) => row.id));
+      const existingById = new Map(existing.map((row) => [row.id, row]));
       let nextSequence = Number(latestSequence?.sequence ?? 0);
-      let inserted = 0;
+      let changed = 0;
+      let railTransition: ReturnType<typeof railTransitionForActivity>;
       for (const activity of activities) {
-        if (existingIds.has(activity.id)) continue;
+        if (existingIds.has(activity.id)) {
+          const row = existingById.get(activity.id);
+          if (!row) throw new ChatConflictError(chatId, Number(current.revision));
+          const persisted = CanonicalChatRunActivitySchema.parse(row.event);
+          if (persisted.type !== "agent.activity" || activity.type !== "agent.activity") continue;
+          if (!canTransitionAgentActivity(persisted, activity)) {
+            throw new ChatConflictError(chatId, Number(current.revision));
+          }
+          const updated = CanonicalChatRunActivitySchema.parse({
+            ...activity,
+            sequence: Number(row.run_seq ?? persisted.sequence),
+            occurredAt: persisted.occurredAt,
+          });
+          if (JSON.stringify(updated) === JSON.stringify(persisted)) continue;
+          await trx.updateTable("chat_run_events").set({ event: jsonb(updated) })
+            .where("id", "=", activity.id)
+            .where("chat_id", "=", chatId)
+            .where("run_id", "=", runId)
+            .execute();
+          changed += 1;
+          continue;
+        }
         nextSequence += 1;
         const sequenced = CanonicalChatRunActivitySchema.parse({
           ...activity,
@@ -306,7 +413,8 @@ export class ChatRunLifecycleRepository {
           occurred_at: sequenced.occurredAt,
         }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
         if (row) {
-          inserted += 1;
+          changed += 1;
+          railTransition = railTransitionForActivity(sequenced) ?? railTransition;
           if (sequenced.type === "terminal.bound") {
             await trx.insertInto("chat_terminal_bindings").values({
               chat_id: chatId,
@@ -321,12 +429,22 @@ export class ChatRunLifecycleRepository {
           }
         }
       }
-      if (inserted > 0) {
+      if (changed > 0) {
         const revision = Number(current.revision) + 1;
-        await trx.updateTable("chats").set({ revision, updated_at: sql`now()` }).where("id", "=", chatId).execute();
-        await insertOutbox(trx, owner, chatId, revision, "run.activity", { runId });
+        if (railTransition) {
+          await trx.updateTable("chat_runs").set({
+            status: railTransition.runStatus,
+            updated_at: sql`now()`,
+          }).where("id", "=", runId).where("status", "in", [...ACTIVE_RUNS]).execute();
+        }
+        await trx.updateTable("chats").set({
+          revision,
+          ...(railTransition ? { attention: railTransition.attention } : {}),
+          updated_at: sql`now()`,
+        }).where("id", "=", chatId).execute();
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId, activityIds, removedActivityIds });
       }
-      return inserted;
+      return changed;
     });
   }
 
@@ -334,15 +452,17 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     runId: string;
     messageId: string;
-    seq: number;
     delta: string;
     createdAt: string;
+    /** Full backing text, merged by prefix under the same Run/message locks. */
+    snapshot?: boolean;
   }): Promise<CanonicalChatMessage> {
     const owner = validateOwner(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     [input.runId, input.messageId].forEach(requireSafeRef);
     const createdAt = new Date(input.createdAt).toISOString();
     return this.transact(async (trx) => {
+      let delta = input.delta;
       const chat = await selectOwnedChat(trx, owner, chatId, true);
       if (!chat) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").selectAll()
@@ -367,17 +487,23 @@ export class ChatRunLifecycleRepository {
           : undefined;
         if (current.chatId !== chatId || current.runId !== input.runId
           || current.turnId !== run.turn_id || current.role !== "assistant"
-          || current.state !== "pending" || current.seq !== input.seq || !textParts?.length) {
+          || current.state !== "pending" || !textParts?.length) {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const last = textParts.at(-1)!;
+        if (input.snapshot) {
+          const persisted = textParts.map((part) => part.text).join("");
+          if (!input.delta.startsWith(persisted)) throw new ChatConflictError(chatId, Number(chat.revision));
+          delta = input.delta.slice(persisted.length);
+          if (delta.length === 0) return current;
+        }
         const combined = CanonicalChatMessagePartSchema.safeParse({
           type: "text",
-          text: `${last.text}${input.delta}`,
+          text: `${last.text}${delta}`,
         });
-        const parts = combined.success
+        const parts = input.snapshot ? recoveredTextParts(input.delta) : combined.success
           ? [...textParts.slice(0, -1), combined.data]
-          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: input.delta })];
+          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: delta })];
         next = CanonicalChatMessageSchema.parse({
           ...current,
           parts,
@@ -392,18 +518,16 @@ export class ChatRunLifecycleRepository {
           .select(({ fn }) => fn.max("seq").as("seq"))
           .where("chat_id", "=", chatId)
           .executeTakeFirst();
-        if (input.seq !== Number(latest?.seq ?? 0) + 1) {
-          throw new ChatConflictError(chatId, Number(chat.revision));
-        }
+        const seq = Number(latest?.seq ?? 0) + 1;
         next = CanonicalChatMessageSchema.parse({
           id: input.messageId,
           chatId,
-          seq: input.seq,
+          seq,
           role: "assistant",
           state: "pending",
           turnId: run.turn_id,
           runId: input.runId,
-          parts: [{ type: "text", text: input.delta }],
+          parts: input.snapshot ? recoveredTextParts(input.delta) : [{ type: "text", text: input.delta }],
           createdAt,
         });
         await trx.insertInto("chat_messages").values({
@@ -417,6 +541,7 @@ export class ChatRunLifecycleRepository {
           parts: jsonb(next.parts),
           byte_count: encoded.encode(JSON.stringify(next)).byteLength,
           search_text: messageSearchText(next),
+          ...messageAttribution(next),
           created_at: next.createdAt,
         }).execute();
         inserted = true;
@@ -428,9 +553,16 @@ export class ChatRunLifecycleRepository {
         last_message_preview: preview(next),
         updated_at: createdAt,
       }).where("id", "=", chatId).execute();
-      await insertOutbox(trx, owner, chatId, revision, "run.message", {
+      await this.appendOutbox(trx, owner, chatId, revision, "run.message", {
         runId: input.runId,
         messageId: input.messageId,
+        // Recovery can replace part boundaries; use the existing invalidation
+        // fallback rather than pretending it is a single-part live delta.
+        ...(input.snapshot ? {} : { messageDelta: {
+          message: { ...next, parts: [{ type: "text", text: delta }] },
+          partIndex: next.parts.length - 1,
+          offset: (next.parts.at(-1) as { text: string }).text.length - delta.length,
+        } }),
       });
       return next;
     });
@@ -441,6 +573,7 @@ export class ChatRunLifecycleRepository {
     runId: string;
     outcome: "completed" | "failed" | "aborted";
     completedAt: string;
+    diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;
   }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
     const owner = validateOwner(ownerInput);
@@ -456,32 +589,38 @@ export class ChatRunLifecycleRepository {
         return { run: toRun(current), transitioned: false };
       }
       const expectedState = input.outcome === "completed" ? "committed" : "failed";
-      const pendingRow = await trx.selectFrom("chat_messages").selectAll()
+      const pendingRows = await trx.selectFrom("chat_messages").selectAll()
         .where("chat_id", "=", input.chatId)
         .where("run_id", "=", input.runId)
         .where("role", "=", "assistant")
+        .orderBy("seq")
         .forUpdate()
-        .executeTakeFirst();
+        .execute();
       let finalizedOutput: CanonicalChatMessage | undefined;
       let insertedOutput = false;
-      if (pendingRow) {
-        const pending = toMessage(pendingRow);
-        if (pending.state !== "pending") {
+      if (pendingRows.length > 0) {
+        const pendingMessages = pendingRows.map(toMessage);
+        if (pendingMessages.some((pending) => pending.state !== "pending")) {
           throw new ChatConflictError(input.chatId, Number(chat.revision));
         }
-        if (output !== undefined && (output.id !== pending.id || output.seq !== pending.seq)) {
+        if (output !== undefined && !pendingMessages.some((pending) => (
+          output.id === pending.id && output.seq === pending.seq
+        ))) {
           throw new ChatConflictError(input.chatId, Number(chat.revision));
         }
-        finalizedOutput = CanonicalChatMessageSchema.parse({
-          ...(output ?? pending),
-          state: expectedState,
-        });
-        await trx.updateTable("chat_messages").set({
-          state: expectedState,
-          parts: jsonb(finalizedOutput.parts),
-          byte_count: encoded.encode(JSON.stringify(finalizedOutput)).byteLength,
-          search_text: messageSearchText(finalizedOutput),
-        }).where("id", "=", pending.id).execute();
+        for (const pending of pendingMessages) {
+          const finalized = CanonicalChatMessageSchema.parse({
+            ...(output?.id === pending.id ? output : pending),
+            state: expectedState,
+          });
+          await trx.updateTable("chat_messages").set({
+            state: expectedState,
+            parts: jsonb(finalized.parts),
+            byte_count: encoded.encode(JSON.stringify(finalized)).byteLength,
+            search_text: messageSearchText(finalized),
+          }).where("id", "=", pending.id).execute();
+          finalizedOutput = finalized;
+        }
       } else if (output !== undefined) {
         if (output.chatId !== input.chatId || output.runId !== input.runId
           || output.turnId !== current.turn_id || output.role !== "assistant"
@@ -506,6 +645,7 @@ export class ChatRunLifecycleRepository {
           parts: jsonb(output.parts),
           byte_count: encoded.encode(JSON.stringify(output)).byteLength,
           search_text: messageSearchText(output),
+          ...messageAttribution(output),
           created_at: output.createdAt,
         }).execute();
         finalizedOutput = output;
@@ -532,7 +672,11 @@ export class ChatRunLifecycleRepository {
         attention: input.outcome === "failed" ? "failed" : "none",
         updated_at: completedAt,
       }).where("id", "=", input.chatId).execute();
-      await insertOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, { runId: input.runId });
+      await this.appendOutbox(trx, owner, input.chatId, revision, `run.${input.outcome}` as ChatOutboxEventType, {
+        runId: input.runId,
+        ...(input.outcome === "failed" && input.diagnostic
+          ? { failureDiagnostic: ChatRunFailureDiagnosticSchema.parse(input.diagnostic) } : {}),
+      });
       return { run: toRun(updated), transitioned: true };
     });
   }

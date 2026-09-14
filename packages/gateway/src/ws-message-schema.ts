@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { KernelEffortSchema, KernelModelSchema } from "./kernel-settings.js";
+import { KernelCredentialAccessSourceIdSchema } from "./kernel-credentials.js";
 
 export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
   z.object({
@@ -10,6 +11,7 @@ export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
     requestId: z.string().min(1).max(256).optional(),
     model: KernelModelSchema.optional(),
     effort: KernelEffortSchema.optional(),
+    accessSourceId: KernelCredentialAccessSourceIdSchema.optional(),
   }).strict(),
   z.object({
     type: z.literal("switch_session"),

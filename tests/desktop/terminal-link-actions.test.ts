@@ -6,10 +6,13 @@ import {
   DesktopWebLinkProvider,
   activateDesktopTerminalLink,
   copyDesktopTerminalLink,
+  copyDesktopTerminalText,
   findDesktopTerminalLinkAtCell,
   findDesktopTerminalLinkAtPointer,
   resolveDesktopTerminalLink,
 } from "@desktop/renderer/src/features/terminal/terminal-link-actions";
+
+const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 
 const LINK = {
   url: "https://example.org/final-check",
@@ -19,7 +22,14 @@ const LINK = {
 };
 
 describe("desktop terminal link actions", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalClipboardDescriptor) {
+      Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
 
   it("keeps a secondary-button OSC activation inert", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
@@ -73,6 +83,71 @@ describe("desktop terminal link actions", () => {
     copyDesktopTerminalLink(LINK);
 
     expect(writeText).toHaveBeenCalledWith(LINK.url);
+  });
+
+  it("returns success after writing the exact terminal selection", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const selection = "first row\nλ second row 👩🏽‍💻";
+
+    await expect(copyDesktopTerminalText(selection)).resolves.toBe("success");
+
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith(selection);
+  });
+
+  it("falls back when clipboard write is unavailable and reports success", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+
+    await expect(copyDesktopTerminalText("fallback selection")).resolves.toBe("success");
+
+    expect(execCommand).toHaveBeenCalledWith("copy");
+  });
+
+  it("reports unavailable when both clipboard paths reject the copy", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+
+    await expect(copyDesktopTerminalText("private selection")).resolves.toBe("unavailable");
+  });
+
+  it("never logs clipboard content or raw denial details when copy fallbacks fail", async () => {
+    const privateSelection = "token=clipboard-secret";
+    const rawFailure = "OpenAI /Users/operator/private.txt session-alpha";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error(rawFailure)) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+
+    await expect(copyDesktopTerminalText(privateSelection)).resolves.toBe("unavailable");
+
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    expect(diagnostics).not.toContain(privateSelection);
+    expect(diagnostics).not.toContain(rawFailure);
+    expect(diagnostics).not.toContain("/Users/operator/private.txt");
+    expect(diagnostics).not.toContain("session-alpha");
   });
 
   it("detects plain-text URLs and does not activate them on secondary click", () => {

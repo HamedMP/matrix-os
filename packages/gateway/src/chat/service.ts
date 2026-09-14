@@ -6,25 +6,53 @@ import {
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
   CanonicalChatRunCancellationResponseSchema,
+  CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatQueueAdmissionResponseSchema,
+  CanonicalChatQueueCancellationResponseSchema,
+  CanonicalChatQueueReorderResponseSchema,
+  CanonicalChatQueueUpdateResponseSchema,
+  CanonicalChatRunIdSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
+  CanonicalQueueChatTurnRequestSchema,
+  CanonicalCancelQueuedChatTurnRequestSchema,
+  CanonicalReorderQueuedChatTurnsRequestSchema,
+  CanonicalUpdateQueuedChatTurnRequestSchema,
+  CanonicalSteerQueuedChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalSubmitChatApprovalRequestSchema,
+  CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   CanonicalCreateChatRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
   type CanonicalChatRunCancellationResponse,
+  type CanonicalChatRunSteeringResponse,
   type CanonicalChatRunAdmissionResponse,
+  type CanonicalChatQueueAdmissionResponse,
+  type CanonicalChatQueueCancellationResponse,
+  type CanonicalChatQueueReorderResponse,
+  type CanonicalChatQueueUpdateResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCancelChatRunRequest,
+  type CanonicalCancelQueuedChatTurnRequest,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalQueueChatTurnRequest,
+  type CanonicalReorderQueuedChatTurnsRequest,
+  type CanonicalUpdateQueuedChatTurnRequest,
+  type CanonicalSteerQueuedChatTurnRequest,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalSubmitChatApprovalRequest,
+  type CanonicalSteerChatRunRequest,
+  type CanonicalChatApprovalSubmissionResponse,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -51,7 +79,19 @@ const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
 ]);
 
 type CursorEnvelope = z.infer<typeof CursorEnvelopeSchema>;
-type ChatServiceRepository = Pick<ChatRepository, "create" | "update" | "updateUserState" | "hardDelete" | "list" | "search" | "getDetailPage">;
+type ChatServiceRepository = Pick<ChatRepository,
+  | "create"
+  | "update"
+  | "updateUserState"
+  | "acknowledgeCompletion"
+  | "hardDelete"
+  | "list"
+  | "search"
+  | "getDetailPage"
+  | "cancelQueuedTurn"
+  | "reorderQueuedTurns"
+  | "updateQueuedTurn"
+>;
 
 function encodeCursor(value: CursorEnvelope): string {
   return CanonicalChatApiCursorSchema.parse(
@@ -91,10 +131,28 @@ function decodeMessageCursor(value: string, chatId: string): number {
 export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
-    orchestrator?: Pick<CanonicalChatOrchestrator, "admitTurn" | "cancelRun" | "retryTurn">;
+    orchestrator?: Pick<CanonicalChatOrchestrator,
+      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn" | "reconcileActiveRuns"
+    >;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
+    collaborationGuard?: {
+      assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
+    };
   } = {},
 ): CanonicalChatRouteService {
+  const assertPersonalExecutionAllowed = async (owner: ChatOwner, chatId: string): Promise<void> => {
+    if (!options.collaborationGuard) return;
+    try {
+      await options.collaborationGuard.assertPersonalExecutionAllowed(owner, chatId);
+    } catch (error: unknown) {
+      if (!(error instanceof Error && "code" in error && error.code === "shared_execution_disabled")) throw error;
+      throw new CanonicalChatOrchestrationError(CanonicalChatSafeErrorSchema.parse({
+        code: "capability_mismatch",
+        safeMessage: "AI is unavailable while this shared Chat is in discussion-only mode.",
+        retryable: false,
+      }), 409);
+    }
+  };
   return {
     async create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord> {
       const request = CanonicalCreateChatRequestSchema.parse(input);
@@ -146,6 +204,18 @@ export function createCanonicalChatService(
       ));
     },
 
+    async updateTitle(
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalUpdateChatTitleRequest,
+    ): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.update(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalUpdateChatTitleRequestSchema.parse(input),
+      ));
+    },
+
     async updateUserState(
       owner: ChatOwner,
       chatId: string,
@@ -158,6 +228,14 @@ export function createCanonicalChatService(
       ));
     },
 
+    async acknowledgeCompletion(owner, chatId, runId): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.acknowledgeCompletion(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalChatRunIdSchema.parse(runId),
+      ));
+    },
+
     async delete(owner, chatId, clientRequestId) {
       return repository.hardDelete(owner, {
         chatId: CanonicalChatIdSchema.parse(chatId),
@@ -166,6 +244,7 @@ export function createCanonicalChatService(
     },
 
     async list(owner, input): Promise<CanonicalChatListResponse> {
+      await options.orchestrator?.reconcileActiveRuns(owner);
       const page = await repository.list(owner, {
         limit: input.limit,
         ...(input.lifecycle === undefined ? {} : { lifecycle: input.lifecycle }),
@@ -186,6 +265,7 @@ export function createCanonicalChatService(
     },
 
     async search(owner, input): Promise<CanonicalChatListResponse> {
+      await options.orchestrator?.reconcileActiveRuns(owner);
       return CanonicalChatListResponseSchema.parse({
         items: await repository.search(
           owner,
@@ -198,6 +278,7 @@ export function createCanonicalChatService(
 
     async getDetail(owner, chatId, input): Promise<CanonicalChatDetailResponse | null> {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      await options.orchestrator?.reconcileActiveRuns(owner);
       const page = await repository.getDetailPage(owner, parsedChatId, {
         limit: input.limit,
         ...(input.cursor === undefined ? {} : {
@@ -211,6 +292,7 @@ export function createCanonicalChatService(
         turns: page.turns,
         runs: page.runs,
         activities: page.activities,
+        queuedTurns: page.queuedTurns,
         terminalSessionIds: page.terminalSessionIds,
         ...(page.nextBeforeSeq === undefined ? {} : {
           nextCursor: encodeCursor({
@@ -229,6 +311,7 @@ export function createCanonicalChatService(
       chatId: string,
       input: CanonicalCreateChatTurnRequest,
     ): Promise<CanonicalChatTurnAdmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatTurnAdmissionResponseSchema.parse(await options.orchestrator.admitTurn(
         principal,
@@ -238,15 +321,141 @@ export function createCanonicalChatService(
       ));
     },
 
+    async enqueueQueuedTurn(
+      principal: RequestPrincipal,
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalQueueChatTurnRequest,
+    ): Promise<CanonicalChatQueueAdmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatQueueAdmissionResponseSchema.parse(
+        await options.orchestrator.enqueueQueuedTurn(
+          principal,
+          owner,
+          CanonicalChatIdSchema.parse(chatId),
+          CanonicalQueueChatTurnRequestSchema.parse(input),
+        ),
+      );
+    },
+
+    async cancelQueuedTurn(
+      owner: ChatOwner,
+      chatId: string,
+      queuedTurnId: string,
+      input: CanonicalCancelQueuedChatTurnRequest,
+    ): Promise<CanonicalChatQueueCancellationResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      const request = CanonicalCancelQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatQueueCancellationResponseSchema.parse(
+        await repository.cancelQueuedTurn(owner, {
+          chatId: CanonicalChatIdSchema.parse(chatId),
+          queuedTurnId,
+          clientRequestId: request.clientRequestId,
+          baseRevision: request.baseRevision,
+          cancelledAt: new Date().toISOString(),
+        }),
+      );
+    },
+
+    async reorderQueuedTurns(
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalReorderQueuedChatTurnsRequest,
+    ): Promise<CanonicalChatQueueReorderResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      const request = CanonicalReorderQueuedChatTurnsRequestSchema.parse(input);
+      return CanonicalChatQueueReorderResponseSchema.parse(
+        await repository.reorderQueuedTurns(owner, {
+          chatId: CanonicalChatIdSchema.parse(chatId),
+          clientRequestId: request.clientRequestId,
+          baseRevision: request.baseRevision,
+          queuedTurnIds: request.queuedTurnIds,
+          reorderedAt: new Date().toISOString(),
+        }),
+      );
+    },
+
+    async updateQueuedTurn(
+      owner: ChatOwner,
+      chatId: string,
+      queuedTurnId: string,
+      input: CanonicalUpdateQueuedChatTurnRequest,
+    ): Promise<CanonicalChatQueueUpdateResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      const request = CanonicalUpdateQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatQueueUpdateResponseSchema.parse(await repository.updateQueuedTurn(owner, {
+        chatId: CanonicalChatIdSchema.parse(chatId),
+        queuedTurnId,
+        clientRequestId: request.clientRequestId,
+        baseRevision: request.baseRevision,
+        parts: request.parts,
+        updatedAt: new Date().toISOString(),
+      }));
+    },
+
     async cancelRun(
       owner: ChatOwner,
       chatId: string,
       runId: string,
       _input: CanonicalCancelChatRunRequest,
     ): Promise<CanonicalChatRunCancellationResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatRunCancellationResponseSchema.parse(
         await options.orchestrator.cancelRun(owner, CanonicalChatIdSchema.parse(chatId), runId),
+      );
+    },
+
+    async steerRun(
+      owner: ChatOwner,
+      chatId: string,
+      runId: string,
+      input: CanonicalSteerChatRunRequest,
+    ): Promise<CanonicalChatRunSteeringResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatRunSteeringResponseSchema.parse(await options.orchestrator.steerRun(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalChatRunIdSchema.parse(runId),
+        CanonicalSteerChatRunRequestSchema.parse(input),
+      ));
+    },
+
+    async steerQueuedTurn(
+      owner: ChatOwner,
+      chatId: string,
+      runId: string,
+      queuedTurnId: string,
+      input: CanonicalSteerQueuedChatTurnRequest,
+    ): Promise<CanonicalChatRunSteeringResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return CanonicalChatRunSteeringResponseSchema.parse(await options.orchestrator.steerQueuedTurn(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        CanonicalChatRunIdSchema.parse(runId),
+        queuedTurnId,
+        CanonicalSteerQueuedChatTurnRequestSchema.parse(input),
+      ));
+    },
+
+    async submitApproval(
+      owner: ChatOwner,
+      chatId: string,
+      runId: string,
+      approvalId: string,
+      input: CanonicalSubmitChatApprovalRequest,
+    ): Promise<CanonicalChatApprovalSubmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return options.orchestrator.submitApproval(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        runId,
+        approvalId,
+        CanonicalSubmitChatApprovalRequestSchema.parse(input),
       );
     },
 
@@ -257,6 +466,7 @@ export function createCanonicalChatService(
       turnId: string,
       input: CanonicalRetryChatTurnRequest,
     ): Promise<CanonicalChatRunAdmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
       return CanonicalChatRunAdmissionResponseSchema.parse(await options.orchestrator.retryTurn(
         principal,
@@ -278,13 +488,22 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
   return {
     create: unavailable,
     updateProject: unavailable,
+    updateTitle: unavailable,
     updateUserState: unavailable,
+    acknowledgeCompletion: unavailable,
     delete: unavailable,
     list: unavailable,
     search: unavailable,
     getDetail: unavailable,
     admitTurn: unavailable,
+    enqueueQueuedTurn: unavailable,
+    cancelQueuedTurn: unavailable,
+    reorderQueuedTurns: unavailable,
+    updateQueuedTurn: unavailable,
+    steerQueuedTurn: unavailable,
+    steerRun: unavailable,
     cancelRun: unavailable,
+    submitApproval: unavailable,
     retryTurn: unavailable,
   };
 }

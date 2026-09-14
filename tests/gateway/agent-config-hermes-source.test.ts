@@ -153,6 +153,58 @@ describe("Hermes agent settings source", () => {
     ]);
   });
 
+  it("omits pro models without losing a selected ordinary model", () => {
+    const selectedOrdinary = normalizeHermesRuntimeSnapshot({
+      status: { gateway_running: true },
+      options: {
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        providers: [{
+          slug: "openai-codex",
+          authenticated: true,
+          auth_type: "oauth",
+          models: [
+            "gpt-5.6-terra-pro",
+            "gpt-5.6-sol",
+            "gpt-5.6-sol-pro",
+            "gpt-5.6-luna",
+          ],
+        }],
+      },
+    });
+    const staleProSelection = normalizeHermesRuntimeSnapshot({
+      status: { gateway_running: true },
+      options: {
+        provider: "openai-codex",
+        model: "gpt-5.6-sol-pro",
+        providers: [{
+          slug: "openai-codex",
+          authenticated: true,
+          auth_type: "oauth",
+          models: ["gpt-5.6-sol", "gpt-5.6-sol-pro"],
+        }],
+      },
+    });
+
+    expect(selectedOrdinary.providers[0]?.models.map((model) => model.id))
+      .toEqual(["gpt-5.6-sol", "gpt-5.6-luna"]);
+    expect(selectedOrdinary.messaging).toEqual({
+      runtime: "hermes",
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      configured: true,
+    });
+    expect(staleProSelection.providers[0]?.models.map((model) => model.id))
+      .toEqual(["gpt-5.6-sol"]);
+    expect(staleProSelection.runtime.options[0]?.configured).toBe(false);
+    expect(staleProSelection.messaging).toEqual({
+      runtime: "hermes",
+      provider: null,
+      model: null,
+      configured: false,
+    });
+  });
+
   it("coalesces concurrent reads and reuses a five-second snapshot", async () => {
     let now = 1_000;
     const readJson = vi.fn(async (path: string) => {

@@ -44,7 +44,7 @@ function summaryFixture(): RuntimeSummary {
     },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
@@ -94,17 +94,20 @@ function mockOperator({ withThreads = true, failFirstCreate = false }: {
       if (failFirstCreate && createCount === 1) throw new Error("provider failed");
       const draft = payload as { projectId?: string; prompt?: string };
       return {
-        thread: {
-          id: `thread_created_${createCount}`,
-          providerId: "codex",
-          title: draft.prompt ?? "Created chat",
-          status: "queued",
-          attention: "none",
-          projectId: draft.projectId,
-          createdAt: NOW,
-          updatedAt: NOW,
+        ok: true,
+        snapshot: {
+          thread: {
+            id: `thread_created_${createCount}`,
+            providerId: "codex",
+            title: draft.prompt ?? "Created chat",
+            status: "queued",
+            attention: "none",
+            projectId: draft.projectId,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+          events: { items: [], hasMore: false, limit: 200 },
         },
-        events: { items: [], hasMore: false, limit: 200 },
       };
     }
     if (channel === "runtime:get-thread-snapshot") {

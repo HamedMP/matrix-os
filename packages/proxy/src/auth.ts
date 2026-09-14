@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const PROXY_API_KEY_PREFIX = "sk-proxy-";
+const FUNDED_PROXY_API_KEY_PREFIX = "sk-matrix-funded-";
 
 function timingSafeCompare(a: string, b: string): boolean {
   const aBuf = Buffer.from(a);
@@ -35,6 +36,10 @@ export function parseProxyApiKey(
   if (!/^[a-z][a-z0-9-]{2,30}$/.test(handle)) return null;
   const expected = signatureForHandle(handle, secret);
   return timingSafeCompare(signature, expected) ? { handle } : null;
+}
+
+export function isFundedProxyApiKey(key: string): boolean {
+  return key.startsWith(FUNDED_PROXY_API_KEY_PREFIX);
 }
 
 export function isAuthorizedProxyAdminRequest(

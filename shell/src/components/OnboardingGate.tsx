@@ -2,11 +2,15 @@
 
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
+import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
 import { BillingGate } from "@/components/BillingGate";
 import { BootSequence } from "@/components/BootSequence";
 import { MatrixLoadingScreen } from "@/components/MatrixLoadingScreen";
 import { SignupBillingHandoff } from "@/components/auth/SignupBillingHandoff";
-import { normalizeDeviceReturnPath } from "@/lib/device-onboarding";
+import {
+  buildDeviceBootHandoffPath,
+  normalizeDeviceReturnPath,
+} from "@/lib/device-onboarding";
 import { navigateForOnboarding } from "@/lib/onboarding-navigation";
 import {
   isSignupBillingHandoffSearch,
@@ -25,11 +29,11 @@ function DeviceReturnHandoff({ deviceReturnPath }: { deviceReturnPath: string })
 
 /**
  * Chooses the onboarding gate (spec 092 Phase C):
+ * - BillingGate establishes paid access only.
  * - Device-flow returns (`device_return`, used by the CLI and native macOS app)
- *   use BillingGate until provisioning starts. The platform boot page preserves
- *   the return target, and a server-verified running shell completes the handoff
- *   back to device approval.
- * - Every other (web) entry uses the journey-driven BootSequence.
+ *   then use the same journey-driven BootSequence as web onboarding. The
+ *   server-verified running shell completes the handoff back to device approval.
+ * - Every other (web) entry uses the journey-driven BootSequence directly.
  *
  * The page.tsx cutover is intentionally conservative; the web BootSequence path
  * is validated end-to-end with a preview VPS before this gate becomes the only one.
@@ -48,7 +52,10 @@ function OnboardingGateInner({
   const signupBillingHandoff = isSignupBillingHandoffSearch(pathname, searchParams);
   const rawDeviceReturnPath = searchParams.get("device_return");
   const deviceReturnPath = normalizeDeviceReturnPath(rawDeviceReturnPath);
-  const isDeviceFlow = rawDeviceReturnPath !== null;
+  const isDeviceFlow = deviceReturnPath !== null;
+  const parsedRuntime = MatrixComputerRuntimeSlotSchema.safeParse(searchParams.get("runtime"));
+  const requestedRuntime = parsedRuntime.success ? parsedRuntime.data : null;
+  const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const isBillingEntrypoint =
     searchParams.has("billing") ||
     searchParams.has("plans") ||
@@ -64,7 +71,19 @@ function OnboardingGateInner({
         loadingSurface={signupBillingHandoff ? "signup-handoff" : "default"}
         handoffStartedAt={handoffStartedAt}
       >
-        {children}
+        <BootSequence
+          platformSessionActive={platformSessionActive}
+          e2eBypass={e2eBypass}
+          completionRedirect={
+            deviceReturnPath
+              ? buildDeviceBootHandoffPath(deviceReturnPath, requestedRuntime)
+              : undefined
+          }
+          runtimeSlot={requestedRuntime}
+          passivePostCheckout={isDeviceFlow || checkoutReturnRequested}
+        >
+          {children}
+        </BootSequence>
       </BillingGate>
     );
   }

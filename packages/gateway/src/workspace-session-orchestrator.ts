@@ -52,6 +52,8 @@ export interface StartWorkspaceSessionRequest {
   kind: "shell" | "agent";
   agent?: SupportedAgent;
   prompt?: string;
+  /** Gateway-internal native Provider thread used to recover an existing Chat. */
+  providerThreadId?: string;
   attachments?: AgentAttachment[];
   model?: string;
   modelOptions?: AgentModelOption[];
@@ -67,6 +69,8 @@ export interface StartWorkspaceSessionRequest {
 export interface StartWorkspaceSessionInput {
   ownerScope: OwnerScope;
   request: StartWorkspaceSessionRequest;
+  /** Internal only: authenticated provider-thread recovery, never request-body data. */
+  recoveryThreadId?: string;
 }
 
 function failure(status: number, code: string, message: string): Failure {
@@ -127,6 +131,7 @@ async function resolveAgentSandbox(options: {
   request: StartWorkspaceSessionRequest;
   sessionId: string;
   workspacePath: string;
+  reuseCodexScratch?: boolean;
 }): Promise<{ ok: true; sandbox?: AgentLaunchSandbox } | Failure> {
   const preflight = await options.agentSandbox.preflight({
     agent: options.agent,
@@ -137,7 +142,7 @@ async function resolveAgentSandbox(options: {
     approvalPolicy: toLaunchApprovalPolicy(options.request.approvalPolicy) ??
       (options.agent === "claude" ? "on-request" : "never"),
     sandboxMode: options.request.sandboxMode ?? "workspace_write",
-  });
+  }, ...(options.reuseCodexScratch ? [{ reuseCodexScratch: true as const }] : []));
   if (!preflight.ok) {
     return {
       ok: false,
@@ -170,7 +175,7 @@ function errnoIs(error: unknown, code: string): boolean {
     && (error as NodeJS.ErrnoException).code === code;
 }
 
-async function prepareRootChatWorkspace(homePath: string, sessionId: string): Promise<string> {
+async function prepareRootChatWorkspace(homePath: string, sessionId: string, authorizeReuse: () => Promise<boolean>): Promise<{ path: string; created: boolean }> {
   const canonicalHome = await realpath(resolve(homePath));
   const root = join(canonicalHome, "temporary", "root-chat-workspaces");
   await mkdir(root, { recursive: true, mode: 0o700 });
@@ -179,12 +184,19 @@ async function prepareRootChatWorkspace(homePath: string, sessionId: string): Pr
     throw new Error("Root Chat workspace root is invalid");
   }
   const workspace = join(root, sessionId);
-  await mkdir(workspace, { mode: 0o700 });
+  let created = false;
+  try {
+    await mkdir(workspace, { mode: 0o700 });
+    created = true;
+  } catch (error: unknown) {
+    if (!errnoIs(error, "EEXIST")) throw error;
+    if (!await authorizeReuse()) throw new Error("Root Chat workspace recovery is unavailable");
+  }
   const workspaceStats = await lstat(workspace);
   if (!workspaceStats.isDirectory() || workspaceStats.isSymbolicLink() || await realpath(workspace) !== workspace) {
     throw new Error("Root Chat workspace is invalid");
   }
-  return workspace;
+  return { path: workspace, created };
 }
 
 async function cleanupRootChatWorkspace(homePath: string, sessionId: string): Promise<void> {
@@ -256,7 +268,8 @@ export function createWorkspaceSessionOrchestrator(options: {
 }) {
   const idGenerator = options.idGenerator ?? (() => `sess_${randomUUID()}`);
   const prepareRootWorkspace = options.prepareRootChatWorkspace
-    ?? (options.homePath ? (sessionId: string) => prepareRootChatWorkspace(options.homePath!, sessionId) : undefined);
+    ? async (sessionId: string) => ({ path: await options.prepareRootChatWorkspace!(sessionId), created: true })
+    : (options.homePath ? (sessionId: string, authorizeReuse: () => Promise<boolean>) => prepareRootChatWorkspace(options.homePath!, sessionId, authorizeReuse) : undefined);
   const cleanupRootWorkspace = options.cleanupRootChatWorkspace
     ?? (options.homePath ? (sessionId: string) => cleanupRootChatWorkspace(options.homePath!, sessionId) : undefined);
   const sweepRootWorkspaces = options.sweepRootChatWorkspaces
@@ -343,9 +356,24 @@ export function createWorkspaceSessionOrchestrator(options: {
         ? { ...input.request, approvalPolicy: input.request.approvalPolicy ?? "on_request" }
         : input.request;
       const sessionId = request.sessionId ?? idGenerator();
+      if (!/^sess_[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return failure(400, "invalid_session_id", "Session identifier is invalid");
       let sandbox: AgentLaunchSandbox | undefined;
       let effectiveRequest = request;
       let ownsRootWorkspace = false;
+      let reuseCodexScratch = false;
+
+      // Only the internal, owner-scoped native-thread recovery path may reuse
+      // sandbox files. Ordinary starts retain exclusive-create semantics.
+      if (request.agent === "codex" && request.providerThreadId
+        && input.ownerScope.type === "user"
+        && input.recoveryThreadId === `thread_${sessionId.slice(5)}`) {
+        const previous = await options.agentSessionManager.getSession(sessionId);
+        reuseCodexScratch = previous.ok && previous.session.id === sessionId
+          && previous.session.ownerId === input.ownerScope.id
+          && previous.session.kind === "agent" && previous.session.agent === "codex"
+          && previous.session.projectSlug === request.projectSlug
+          && previous.session.worktreeId === request.worktreeId;
+      }
 
       if (request.agent === "codex" || request.agent === "claude") {
         let workspacePath: string;
@@ -366,7 +394,15 @@ export function createWorkspaceSessionOrchestrator(options: {
             return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
           }
           try {
-            workspacePath = await prepareRootWorkspace(sessionId);
+            const prepared = await prepareRootWorkspace(sessionId, async () => {
+              if (input.ownerScope.type !== "user" || input.recoveryThreadId !== `thread_${sessionId.slice(5)}`) return false;
+              const prior = await options.agentSessionManager.getSession(sessionId);
+              return prior.ok && prior.session.ownerId === input.ownerScope.id
+                && prior.session.kind === "agent" && prior.session.agent === request.agent
+                && !prior.session.projectSlug;
+            });
+            workspacePath = prepared.path;
+            ownsRootWorkspace = prepared.created;
           } catch (error: unknown) {
             console.warn(
               "[workspace-session-orchestrator] Root Chat workspace setup failed:",
@@ -375,7 +411,6 @@ export function createWorkspaceSessionOrchestrator(options: {
             return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
           }
         }
-        ownsRootWorkspace = !request.projectSlug;
         effectiveRequest = {
           ...request,
           ...(resolvedWorktreeId ? { worktreeId: resolvedWorktreeId } : {}),
@@ -387,6 +422,7 @@ export function createWorkspaceSessionOrchestrator(options: {
           request: effectiveRequest,
           sessionId,
           workspacePath,
+          reuseCodexScratch,
         });
         if (!preflight.ok) {
           if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
@@ -402,7 +438,7 @@ export function createWorkspaceSessionOrchestrator(options: {
         sandbox,
       });
       if (!result.ok) {
-        if (sandbox) await cleanupSessionScratch(sessionId);
+        if (sandbox && !reuseCodexScratch) await cleanupSessionScratch(sessionId);
         if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
         return result;
       }

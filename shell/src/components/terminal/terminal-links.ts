@@ -191,20 +191,18 @@ function tryFallbackCopy(text: string): void {
   try {
     fallbackCopy(text);
   } catch (err: unknown) {
-    console.warn(
-      "Terminal link fallback copy failed:",
-      err instanceof Error ? err.message : err,
-    );
+    console.warn("[terminal] link fallback copy unavailable", {
+      category: err instanceof DOMException ? err.name : "clipboard-error",
+    });
   }
 }
 
 export function copyTerminalLink(link: TerminalLinkEntry): void {
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(link.url).catch((err: unknown) => {
-      console.warn(
-        "Terminal link clipboard write failed, using fallback:",
-        err instanceof Error ? err.message : err,
-      );
+      console.warn("[terminal] link clipboard copy unavailable; trying fallback", {
+        category: err instanceof DOMException ? err.name : "clipboard-error",
+      });
       tryFallbackCopy(link.url);
     });
     return;

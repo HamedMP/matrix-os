@@ -2,6 +2,11 @@ import { ChevronLeft, Play, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 import type { RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import TerminalView from "../terminal/TerminalView";
+import { runtimeTerminalTabs, type RuntimeTerminalTab } from "../../lib/terminal-workspaces";
+
+type InspectorTerminal = Pick<RuntimeTerminalTab, "id" | "name" | "attachable" | "refKey"> & {
+  status: RuntimeTerminalTab["status"] | TerminalSessionSummary["status"];
+};
 
 const STATUS_COLOR: Record<string, string> = {
   running: "var(--success)",
@@ -33,7 +38,9 @@ export function InspectorTerminalPanel({
   emptyMessage?: string;
 }) {
   const [embeddedId, setEmbeddedId] = useState<string | null>(null);
-  const sessions = providedSessions ?? summary?.terminalSessions.items ?? [];
+  const sessions: InspectorTerminal[] = providedSessions
+    ? providedSessions.map((session) => ({ ...session, refKey: session.id }))
+    : summary ? runtimeTerminalTabs(summary) : [];
   // The embedded session must still exist and stay attachable; a refresh that
   // ends or detaches it drops the embed back to the list in the same render.
   const embedded = embeddedId
@@ -69,7 +76,7 @@ export function InspectorTerminalPanel({
           className="flex min-h-[240px] min-w-0 flex-1 flex-col overflow-hidden rounded-md border"
           style={{ borderColor: "var(--border-subtle)" }}
         >
-          <TerminalView key={`${chatId ?? "standalone"}:${embedded.name}`} sessionName={embedded.name} chatId={chatId} active={active} />
+          <TerminalView key={`${chatId ?? "standalone"}:${embedded.refKey}`} sessionName={embedded.refKey} chatId={chatId} active={active} />
         </div>
       </div>
     );
@@ -96,7 +103,7 @@ function SessionRow({
   session,
   onOpen,
 }: {
-  session: TerminalSessionSummary;
+  session: InspectorTerminal;
   onOpen: () => void;
 }) {
   return (

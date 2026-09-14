@@ -89,6 +89,7 @@ const PROFILE: ConnectionProfile = {
   platformHost: "https://app.matrix-os.com",
   runtimeSlot: "primary",
   displayName: "Thomas Anderson",
+  email: "neo@matrix-os.com",
 };
 
 describe("AuthService token expiry", () => {
@@ -97,7 +98,33 @@ describe("AuthService token expiry", () => {
     await auth.init();
     expect(auth.getStatus().signedIn).toBe(true);
     expect(auth.getStatus().displayName).toBe("Thomas Anderson");
+    expect(auth.getStatus().userId).toBe("user-1");
+    expect(auth.getStatus().email).toBe("neo@matrix-os.com");
     expect(auth.getToken()).toBe("tok");
+  });
+
+  it("does not expose stale profile identity for a different credential owner", async () => {
+    const { auth } = makeService({
+      credential: VALID,
+      profile: {
+        ...PROFILE,
+        handle: "previous-owner",
+        userId: "user-previous",
+        displayName: "Previous Owner",
+        email: "previous@example.com",
+      },
+      now: 10_000,
+    });
+
+    await auth.init();
+
+    expect(auth.getStatus()).toMatchObject({
+      signedIn: true,
+      handle: "neo",
+      userId: "user-1",
+    });
+    expect(auth.getStatus().displayName).toBeUndefined();
+    expect(auth.getStatus().email).toBeUndefined();
   });
 
   it("does not throw when expired credential cleanup fails during init", async () => {
@@ -629,6 +656,7 @@ describe("AuthService device flow", () => {
       expect(auth.getStatus()).toEqual({
         signedIn: true,
         handle: "neo",
+        userId: "user-1",
         displayName: "Thomas Anderson",
         runtimeSlot: "review",
         platformHost: "https://app.matrix-os.com",

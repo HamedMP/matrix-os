@@ -86,6 +86,113 @@ describe("Integration Routes", () => {
       expect(gmail).toBeDefined();
       expect(gmail.name).toBe("Gmail");
       expect(gmail.actions).toBeDefined();
+      expect(data.some((service: { id: string }) => service.id === "granola")).toBe(false);
+    });
+
+    it("keeps the official X logo instead of Pipedream's legacy Twitter artwork", async () => {
+      const logoClient = mockPipedream({
+        getAppInfo: vi.fn().mockImplementation(async (slug: string) => ({
+          name: slug,
+          imgSrc: `https://legacy.example/${slug}.png`,
+        })),
+      });
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream: logoClient,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+      });
+      const logoApp = new Hono();
+      logoApp.route("/api/integrations", routes);
+
+      await vi.waitFor(() => {
+        expect(logoClient.getAppInfo).toHaveBeenCalledWith("gmail");
+      });
+      expect(logoClient.getAppInfo).not.toHaveBeenCalledWith("twitter");
+
+      const res = await logoApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; logoUrl: string }>;
+      expect(data.find((service) => service.id === "twitter")?.logoUrl)
+        .toBe("/integration-logos/x.svg");
+    });
+
+    it("advertises MCP presets only when their broker is wired", async () => {
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string }>;
+      expect(data.some((service) => service.id === "granola")).toBe(true);
+    });
+
+    it("filters an authenticated MCP preset to the connection's invocable actions", async () => {
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["list_notes", "get_note", "get_account"]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      const granola = data.find((service) => service.id === "granola");
+      expect(Object.keys(granola?.actions ?? {})).toEqual(["list_notes", "get_note", "get_account"]);
+    });
+
+    it("fails closed when MCP capability identity resolution fails", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => {
+          throw new Error("identity unavailable");
+        },
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["list_notes"]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/available");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      const granola = data.find((service) => service.id === "granola");
+      expect(granola?.actions).toEqual({});
+      expect(warn).toHaveBeenCalledWith(
+        "[integrations] Optional capability identity resolution failed:",
+        "identity unavailable",
+      );
+      warn.mockRestore();
     });
   });
 
@@ -142,6 +249,37 @@ describe("Integration Routes", () => {
       expect(data.url).toContain("pipedream.com/connect");
       expect(data.service).toBe("gmail");
       expect(pipedream.createConnectToken).toHaveBeenCalled();
+    });
+
+    it("passes the allowlisted mobile return route to Pipedream", async () => {
+      const res = await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          redirectUri: "matrixos://integrations",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(pipedream.createConnectToken).toHaveBeenCalledWith("pd_ext_route", {
+        successRedirectUri: "matrixos://integrations",
+        errorRedirectUri: "matrixos://integrations",
+      });
+    });
+
+    it("rejects untrusted integration redirect URIs", async () => {
+      const res = await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          redirectUri: "https://attacker.example/callback",
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(pipedream.createConnectToken).not.toHaveBeenCalled();
     });
 
     it("rejects unknown service", async () => {
@@ -624,6 +762,95 @@ describe("Integration Routes", () => {
   // -----------------------------------------------------------------------
 
   describe("DELETE /:id", () => {
+    it("rejects oversized DELETE bodies before probing either connector", async () => {
+      const disconnect = vi.fn().mockResolvedValue(false);
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect,
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request(
+        "/api/integrations/00000000-0000-0000-0000-000000000000",
+        {
+          method: "DELETE",
+          headers: { "content-length": "2048" },
+          body: "x".repeat(2048),
+        },
+      );
+
+      expect(res.status).toBe(413);
+      expect(disconnect).not.toHaveBeenCalled();
+      expect(pipedream.revokeAccount).not.toHaveBeenCalled();
+    });
+
+    it("does not probe the MCP broker when disconnecting a Pipedream account", async () => {
+      const svc = await db.connectService({
+        userId,
+        service: "github",
+        pipedreamAccountId: "pd_acc_broker_independent",
+        accountLabel: "Broker Independent",
+        scopes: ["repo"],
+      });
+      const disconnect = vi.fn().mockRejectedValue(new Error("custom MCP database unavailable"));
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect,
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request(`/api/integrations/${svc.id}`, { method: "DELETE" });
+
+      expect(res.status).toBe(200);
+      expect(disconnect).not.toHaveBeenCalled();
+      expect(pipedream.revokeAccount).toHaveBeenCalledWith("pd_acc_broker_independent");
+    });
+
+    it("maps MCP broker disconnect failures to a generic service error", async () => {
+      const disconnect = vi.fn().mockRejectedValue(new Error("custom MCP database unavailable"));
+      const routes = createIntegrationRoutes({
+        db,
+        pipedream,
+        webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockResolvedValue({}),
+          disconnect,
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request(
+        "/api/integrations/00000000-0000-0000-0000-000000000000",
+        { method: "DELETE" },
+      );
+
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: "Integration service unavailable" });
+      expect(disconnect).toHaveBeenCalledWith(userId, "00000000-0000-0000-0000-000000000000");
+    });
+
     it("disconnects a service and revokes Pipedream credentials", async () => {
       const svc = await db.connectService({
         userId,
@@ -884,6 +1111,27 @@ describe("Integration Routes", () => {
       const data = await res.json();
       expect(data.error).toMatch(/type/i);
     });
+
+    it("rejects malformed X identifiers before looking up a connection", async () => {
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "twitter",
+          action: "list_user_posts",
+          params: { userId: "../../admin", maxResults: 101 },
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("Invalid param value");
+      expect(data.value_errors).toEqual([
+        "userId: must be a 1-19 digit X user ID",
+        "maxResults: must be at most 100",
+      ]);
+      expect(pipedream.proxyGet).not.toHaveBeenCalled();
+    });
   });
 
   describe("POST /call -- unconnected service error", () => {
@@ -1007,6 +1255,7 @@ describe("Integration Routes", () => {
   // -----------------------------------------------------------------------
 
   describe("POST /call -- Actions API (runAction)", () => {
+    const sendDirectApi = getService("gmail")!.actions.send_email.directApi;
     beforeEach(async () => {
       await db.connectService({
         userId,
@@ -1016,6 +1265,8 @@ describe("Integration Routes", () => {
         scopes: ["read", "send"],
       });
 
+      // Exercise the component-only path independently of reviewed direct mappings.
+      getService("gmail")!.actions.send_email.directApi = undefined;
       // Simulate discovered component key
       const gmail = getService("gmail")!;
       gmail.actions.send_email.componentKey = "gmail-send-email";
@@ -1023,6 +1274,7 @@ describe("Integration Routes", () => {
     });
 
     afterEach(() => {
+      getService("gmail")!.actions.send_email.directApi = sendDirectApi;
       // Clean up componentKeys
       const gmail = getService("gmail")!;
       for (const action of Object.values(gmail.actions)) {
@@ -1030,7 +1282,7 @@ describe("Integration Routes", () => {
       }
     });
 
-    it("uses runAction when componentKey is available", async () => {
+    it("uses runAction for component-only actions", async () => {
       const res = await app.request("/api/integrations/call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

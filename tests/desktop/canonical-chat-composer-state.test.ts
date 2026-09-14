@@ -4,6 +4,7 @@ import type {
   CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
 import {
+  applyCanonicalComposerPreference,
   changeCanonicalComposerInstance,
   createCanonicalComposerSelection,
   listCanonicalSlashEntries,
@@ -155,6 +156,22 @@ describe("canonical Chat composer state", () => {
         { id: "effort", value: "low" },
         { id: "fast", value: false },
       ]);
+  });
+
+  it("applies a remembered model only while it remains available", () => {
+    const catalog = catalogFixture();
+    const current = createCanonicalComposerSelection(catalog)!;
+
+    expect(applyCanonicalComposerPreference(catalog, current, {
+      model: "gpt-5.6-terra",
+      options: [],
+      permissionMode: "supervised",
+    }).model).toBe("gpt-5.6-terra");
+    expect(applyCanonicalComposerPreference(catalog, current, {
+      model: "gpt-5.6-missing",
+      options: [],
+      permissionMode: "supervised",
+    }).model).toBe("gpt-5.6-sol");
   });
 
   it("combines skills and commands into one slash menu", () => {

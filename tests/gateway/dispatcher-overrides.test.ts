@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import {
   createDispatcher,
   type SpawnFn,
 } from "../../packages/gateway/src/dispatcher.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 
 const temporaryHomePaths: string[] = [];
 
@@ -61,6 +62,82 @@ describe("dispatcher per-message kernel overrides", () => {
     });
     expect(configs[1]).toMatchObject({ model: "claude-opus-4-6" });
     expect(configs[1].effort).toBeUndefined();
+  });
+
+  it("routes an explicit access source for only the selected dispatch", async () => {
+    const homePath = makeHomePath();
+    writeFileSync(
+      join(homePath, "system/config.json"),
+      JSON.stringify({ kernel: { anthropicApiKey: "sk-ant-owner-key" } }),
+    );
+    writeFileSync(
+      join(homePath, ".claude.json"),
+      JSON.stringify({ oauthAccount: { accountUuid: "oauth-account" } }),
+    );
+    const configs: KernelConfig[] = [];
+    const spawn = vi.fn<SpawnFn>(async function* (_message, config) {
+      configs.push(config);
+      yield resultEvent();
+    });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
+
+    await dispatcher.dispatch(
+      "use my profile",
+      undefined,
+      () => {},
+      undefined,
+      undefined,
+      { accessSourceId: "owner_anthropic_profile" },
+    );
+    await dispatcher.dispatch("use the default", undefined, () => {});
+
+    expect(configs[0].env?.HOME).toBe(homePath);
+    expect(configs[0].env?.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(configs[1].env?.ANTHROPIC_API_KEY).toBe("sk-ant-owner-key");
+  });
+
+  it("injects rotating Matrix credentials and aborts the funded run at its bounded deadline", async () => {
+      const provider: MatrixFundedCredentialProvider = {
+        enabled: true,
+        maxRunMs: 250,
+        getCredential: vi.fn(async () => ({
+          token: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
+          tokenId: "credential_123",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          relayBaseUrl: "https://relay.matrix-os.com",
+          maxRunMs: 250,
+        })),
+        invalidate: vi.fn(),
+        close: vi.fn(),
+      };
+      const seen: KernelConfig[] = [];
+      const spawn = vi.fn<SpawnFn>(async function* (_message, config, controller) {
+        seen.push(config);
+        await new Promise<void>((_resolve, reject) => {
+          controller?.signal.addEventListener("abort", () => reject(new Error("run aborted")), { once: true });
+        });
+        yield resultEvent();
+      });
+      const dispatcher = createDispatcher({
+        homePath: makeHomePath(),
+        spawnFn: spawn,
+        maxConcurrency: 1,
+        fundedCredentialProvider: provider,
+      });
+      const dispatched = dispatcher.dispatch(
+        "use included AI",
+        undefined,
+        () => {},
+        undefined,
+        undefined,
+        { accessSourceId: "matrix_included" },
+      );
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+      expect(seen[0].env).toMatchObject({
+        ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
+        ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
+      });
+      await expect(dispatched).rejects.toThrow("run aborted");
   });
 
   it("passes a validated working directory to only the selected queued dispatch", async () => {

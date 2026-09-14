@@ -1,17 +1,12 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useWorkspace, type PanelLayout } from "../../stores/workspace";
-import {
-  CODING_AGENTS_DESKTOP_WORKSPACE,
-  NATIVE_DESKTOP_WINDOW_SHELL,
-} from "../../lib/feature-flags";
-import Sidebar from "./Sidebar";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import NavigationHeader from "./NavigationHeader";
-import TabContent from "./TabContent";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
 import CreateProjectDialog from "../board/CreateProjectDialog";
@@ -21,38 +16,9 @@ import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { useShellSessionSync } from "../../lib/shell-session-sync";
-import { preloadAppIcons, useApps } from "../../stores/apps";
+import { preloadAppIcons, useAppsQuery } from "../apps/apps.api";
 import NativeDesktopShell from "../desktop-shell/NativeDesktopShell";
-import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
-
-export function MissionControlContentSurface({
-  collapsed,
-  children,
-}: {
-  collapsed: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <main
-      data-testid="mission-control-content-surface"
-      className="absolute flex min-h-0 min-w-0 flex-col"
-      style={{
-        left: collapsed ? "4px" : "var(--sidebar-expanded-width)",
-        top: "var(--titlebar-height)",
-        right: "4px",
-        bottom: "4px",
-        overflow: "hidden",
-        border: "1px solid var(--border-subtle)",
-        borderRadius: "var(--radius)",
-        background: "var(--bg-app)",
-        transition: "left 140ms var(--ease-out)",
-      }}
-    >
-      {children}
-    </main>
-  );
-}
 
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
@@ -61,20 +27,16 @@ export default function MissionControl() {
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const authGeneration = useConnection((s) => s.authGeneration);
   const loadProjects = useBoard((s) => s.loadProjects);
-  const loadApps = useApps((s) => s.load);
+  const { data: apps = [] } = useAppsQuery();
   const loadNativeDesktopMode = useNativeDesktopMode((s) => s.load);
-  const openTab = useTabs((s) => s.openTab);
-  const tabCount = useTabs((s) => s.tabs.length);
   const createProjectOpen = useUi((s) => s.createProjectOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
-  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
   const rendererOverlayOpen = useUi(
     (s) =>
       s.paletteOpen ||
       s.composerOpen ||
       s.quickOpenOpen ||
       s.appLauncherOpen ||
-      s.createTaskOpen ||
       s.createProjectOpen ||
       s.rendererOverlayCount > 0,
   );
@@ -83,7 +45,7 @@ export default function MissionControl() {
   useShellSessionSync(api, `${runtimeScope}|${authGeneration}|${runtimeSlot}`);
 
   useEffect(() => {
-    if (NATIVE_DESKTOP_WINDOW_SHELL) void loadNativeDesktopMode();
+    void loadNativeDesktopMode();
   }, [loadNativeDesktopMode]);
 
   useEffect(() => {
@@ -103,12 +65,6 @@ export default function MissionControl() {
   useEffect(() => {
     useTabs.getState().ensureNavigationScope(`${runtimeScope}|${authGeneration}`);
   }, [authGeneration, runtimeScope]);
-
-  useEffect(() => {
-    // Open the Home tab on first mount so the workspace is never empty.
-    if (!NATIVE_DESKTOP_WINDOW_SHELL && tabCount === 0) openTab(HOSTED_SHELL_TAB_SPEC);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!api) return;
@@ -155,17 +111,8 @@ export default function MissionControl() {
   // Warm the catalog and icon cache as soon as this computer is connected,
   // rather than making the first Apps-tab visit wait for both request stages.
   useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
-    void loadApps(api).then(() => {
-      if (!cancelled) {
-        preloadAppIcons(platformHost, runtimeSlot, useApps.getState().apps);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, loadApps, platformHost, runtimeSlot]);
+    if (apps.length > 0) preloadAppIcons(platformHost, runtimeSlot, apps);
+  }, [apps, platformHost, runtimeSlot]);
 
   useEffect(() => {
     if (!api) return;
@@ -174,8 +121,8 @@ export default function MissionControl() {
   }, [api, platformHost, runtimeSlot]);
 
   // Eagerly load the coding-agent runtime summary: the Agents page used to own
-  // this fetch, and now the sidebar attention badges, project headers, and the
-  // command palette all read it. Runtime switches clear the store centrally
+  // this fetch; project headers and the command palette now read it.
+  // Runtime switches clear the store centrally
   // (reconcileDesktopRuntimeChange), so this just (re)loads for the scope.
   useEffect(() => {
     if (!api || !CODING_AGENTS_DESKTOP_WORKSPACE) return;
@@ -193,25 +140,11 @@ export default function MissionControl() {
     <div
       className="relative flex flex-1 overflow-hidden"
       style={{
-        background: NATIVE_DESKTOP_WINDOW_SHELL ? "var(--bg-app)" : "var(--bg-sunken)",
+        background: "var(--bg-app)",
       }}
     >
-      <NavigationHeader nativeDesktop={NATIVE_DESKTOP_WINDOW_SHELL} />
-      {NATIVE_DESKTOP_WINDOW_SHELL ? (
-        <NativeDesktopShell overlayOpen={rendererOverlayOpen} />
-      ) : (
-        <>
-          <div
-            className="absolute bottom-0 left-0"
-            style={{ top: "var(--titlebar-height)" }}
-          >
-            <Sidebar />
-          </div>
-          <MissionControlContentSurface collapsed={sidebarCollapsed}>
-            <TabContent />
-          </MissionControlContentSurface>
-        </>
-      )}
+      <NavigationHeader />
+      <NativeDesktopShell overlayOpen={rendererOverlayOpen} />
       <Composer />
       <CommandPalette />
       <QuickOpen />

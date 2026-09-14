@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import type {
+  CanonicalChatClient,
+  CanonicalChatEventSource,
+  CanonicalChatInvalidation,
+} from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
+import { AppError } from "@desktop/shared/app-error";
 import { describe, expect, it, vi } from "vitest";
 
 const globalRecord = {
@@ -32,6 +37,7 @@ function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClie
     list: vi.fn(async () => ({ items: [globalRecord] })),
     search: vi.fn(async () => ({ items: [globalRecord] })),
     getDetail: vi.fn(async () => detail),
+    acknowledgeCompletion: vi.fn(async () => globalRecord),
     create: vi.fn(),
     updateProject: vi.fn(async (_chatId, input) => ({
       ...globalRecord,
@@ -39,13 +45,309 @@ function client(overrides: Partial<CanonicalChatClient> = {}): CanonicalChatClie
       ...(input.projectId === null ? {} : { projectId: input.projectId }),
     })),
     admitTurn: vi.fn(),
+    queueTurn: vi.fn(),
+    steerRun: vi.fn(),
+    cancelQueuedTurn: vi.fn(),
+    reorderQueuedTurns: vi.fn(),
     cancelRun: vi.fn(),
+    submitApproval: vi.fn(),
     retryTurn: vi.fn(),
     ...overrides,
   } as CanonicalChatClient;
 }
 
+const MAX_TEST_EVENT_LISTENERS = 16;
+
+function boundedTestListeners<T>() {
+  const listeners: T[] = [];
+  return {
+    add(listener: T) {
+      if (listeners.length >= MAX_TEST_EVENT_LISTENERS) {
+        throw new Error("Test event listener limit reached");
+      }
+      listeners.push(listener);
+    },
+    delete(listener: T) {
+      const index = listeners.indexOf(listener);
+      if (index >= 0) listeners.splice(index, 1);
+    },
+    notify(deliver: (listener: T) => void) {
+      for (const listener of [...listeners]) deliver(listener);
+    },
+    get size() {
+      return listeners.length;
+    },
+  };
+}
+
+function eventHarness(initialConnectionState: ReturnType<CanonicalChatEventSource["connectionState"]> = "open") {
+  const listeners = boundedTestListeners<(event: CanonicalChatInvalidation) => void>();
+  const connectionStateListeners = boundedTestListeners<() => void>();
+  let connectionState = initialConnectionState;
+  const eventSource: Pick<
+    CanonicalChatEventSource,
+    "subscribe" | "subscribeConnectionState" | "connectionState"
+  > = {
+    subscribe(listener) {
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    },
+    subscribeConnectionState(listener) {
+      connectionStateListeners.add(listener);
+      return { dispose: () => connectionStateListeners.delete(listener) };
+    },
+    connectionState: () => connectionState,
+  };
+  return {
+    eventSource,
+    listeners,
+    setConnectionState(next: ReturnType<CanonicalChatEventSource["connectionState"]>) {
+      connectionState = next;
+      connectionStateListeners.notify((listener) => listener());
+    },
+    emit(event: CanonicalChatInvalidation) {
+      listeners.notify((listener) => listener(event));
+    },
+  };
+}
+
+function chatChanged(
+  chatId: string,
+  cursor: number,
+  eventType: Extract<CanonicalChatInvalidation, { type: "chat.changed" }>["eventType"] = "chat.updated",
+): CanonicalChatInvalidation {
+  return { type: "chat.changed", chatId, cursor, revision: cursor, eventType };
+}
+
 describe("canonical Chat route controller", () => {
+  it("bounds simulated stream listeners like the production event source", () => {
+    const events = eventHarness();
+    const subscriptions = Array.from(
+      { length: MAX_TEST_EVENT_LISTENERS },
+      () => events.eventSource.subscribeConnectionState(() => undefined),
+    );
+
+    expect(() => events.eventSource.subscribeConnectionState(() => undefined))
+      .toThrow("Test event listener limit reached");
+
+    subscriptions[0]?.dispose();
+    const replacement = events.eventSource.subscribeConnectionState(() => undefined);
+    for (const subscription of subscriptions) subscription.dispose();
+    replacement.dispose();
+  });
+
+  it("acknowledges a completed response with privacy-safe routing and character count", async () => {
+    const completedRecord = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, revision: 2, messageCount: 2 },
+      latestSuccessfulCompletion: {
+        runId: "run_response_analytics",
+        completedAt: "2026-08-26T00:01:00.000Z",
+        unacknowledged: true,
+      },
+    };
+    const completedRun = {
+      id: "run_response_analytics",
+      driverKind: "hermes" as const,
+      selection: { instanceId: "hermes_default", model: "anthropic:claude-opus-5" },
+    };
+    const assistantMessage = {
+      id: "msg_response_analytics",
+      chatId: globalRecord.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "committed" as const,
+      runId: completedRun.id,
+      parts: [
+        { type: "text" as const, text: "hello" },
+        { type: "status" as const, tone: "success" as const, label: "private tool status" },
+        { type: "text" as const, text: " world" },
+      ],
+      createdAt: "2026-08-26T00:01:00.000Z",
+    };
+    const acknowledgedRecord = {
+      ...completedRecord,
+      latestSuccessfulCompletion: {
+        ...completedRecord.latestSuccessfulCompletion,
+        unacknowledged: false,
+      },
+    };
+    const acknowledgeCompletion = vi.fn(async () => acknowledgedRecord);
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [completedRecord] })),
+      getDetail: vi.fn(async () => ({
+        ...detail,
+        record: completedRecord,
+        messages: [assistantMessage],
+        runs: [completedRun],
+      })),
+      acknowledgeCompletion,
+    });
+
+    renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+
+    await waitFor(() => expect(acknowledgeCompletion).toHaveBeenCalledWith(
+      globalRecord.chat.id,
+      completedRun.id,
+      {
+        chatScope: "global",
+        harness: "hermes",
+        model: "anthropic:claude-opus-5",
+        responseCharacterCount: 11,
+      },
+    ));
+    expect(JSON.stringify(acknowledgeCompletion.mock.calls)).not.toContain("private tool status");
+  });
+
+  it("keeps a rendered Chat ready while a full refresh runs in the background", async () => {
+    const events = eventHarness();
+    let resolveRefresh!: (value: { items: typeof globalRecord[] }) => void;
+    const refresh = new Promise<{ items: typeof globalRecord[] }>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const list = vi.fn(async () => ({ items: [globalRecord] }));
+    const sharedClient = client({ list });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+      eventSource: events.eventSource,
+    }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    list.mockImplementationOnce(() => refresh);
+
+    act(() => events.emit({ type: "chat.full_refresh", cursor: 2 }));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+
+    expect(result.current.status).toBe("ready");
+    await act(async () => resolveRefresh({ items: [globalRecord] }));
+  });
+
+  it("refreshes only the selected Chat from the shared event source and acknowledges its exact completion", async () => {
+    const events = eventHarness();
+    const runningA = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, id: "chat_parallel_a", title: "Parallel A" },
+      activeRun: {
+        runId: "run_parallel_a",
+        turnId: "cturn_parallel_a",
+        status: "running" as const,
+      },
+    };
+    const completedB = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, id: "chat_parallel_b", title: "Parallel B", revision: 2 },
+      latestSuccessfulCompletion: {
+        runId: "run_parallel_b_completed",
+        completedAt: "2026-08-29T01:02:00.000Z",
+        unacknowledged: true,
+      },
+    };
+    const acknowledgedB = {
+      ...completedB,
+      latestSuccessfulCompletion: {
+        ...completedB.latestSuccessfulCompletion,
+        unacknowledged: false,
+      },
+    };
+    const getDetail = vi.fn(async (chatId: string) => ({
+      ...detail,
+      record: chatId === completedB.chat.id ? completedB : runningA,
+    }));
+    const acknowledgeCompletion = vi.fn(async () => acknowledgedB);
+    const list = vi.fn(async () => ({ items: [runningA, completedB] }));
+    const sharedClient = client({
+      list,
+      getDetail,
+      acknowledgeCompletion,
+    });
+    const { result, unmount } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: completedB.chat.id,
+      eventSource: events.eventSource,
+    }));
+
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(completedB.chat.id));
+    await waitFor(() => expect(acknowledgeCompletion).toHaveBeenCalledWith(
+      completedB.chat.id,
+      completedB.latestSuccessfulCompletion.runId,
+    ));
+    expect(acknowledgeCompletion).toHaveBeenCalledTimes(1);
+    const beforeBackgroundEvent = getDetail.mock.calls.length;
+
+    act(() => events.emit(chatChanged(runningA.chat.id, 3)));
+    await Promise.resolve();
+    expect(getDetail).toHaveBeenCalledTimes(beforeBackgroundEvent);
+
+    act(() => events.emit(chatChanged(completedB.chat.id, 4)));
+    await waitFor(() => expect(getDetail.mock.calls.length).toBe(beforeBackgroundEvent + 1));
+    expect(acknowledgeCompletion).toHaveBeenCalledTimes(1);
+
+    const listCallsBeforeGap = list.mock.calls.length;
+    act(() => events.emit({ type: "chat.full_refresh", cursor: 4 }));
+    await waitFor(() => expect(list.mock.calls.length).toBe(listCallsBeforeGap + 1));
+
+    unmount();
+    expect(events.listeners.size).toBe(0);
+  });
+
+  it("coalesces a burst of selected Chat events into one in-flight and one pending detail refresh", async () => {
+    const events = eventHarness();
+    const firstRefresh = {
+      ...detail,
+      record: {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 1, title: "First refresh" },
+      },
+    };
+    const secondRefresh = {
+      ...detail,
+      record: {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 2, title: "Second refresh" },
+      },
+    };
+    let resolveFirstRefresh!: (value: typeof firstRefresh) => void;
+    const deferredFirstRefresh = new Promise<typeof firstRefresh>((resolve) => {
+      resolveFirstRefresh = resolve;
+    });
+    const getDetail = vi.fn(async () => detail);
+    const sharedClient = client({ getDetail });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+      eventSource: events.eventSource,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(globalRecord.chat.id));
+    expect(getDetail).toHaveBeenCalledTimes(1);
+    getDetail.mockImplementationOnce(() => deferredFirstRefresh);
+    getDetail.mockResolvedValueOnce(secondRefresh);
+
+    act(() => {
+      for (const cursor of [1, 2, 3]) {
+        events.emit(chatChanged(globalRecord.chat.id, cursor));
+      }
+    });
+    expect(getDetail).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveFirstRefresh(firstRefresh);
+      await deferredFirstRefresh;
+    });
+    await waitFor(() => expect(getDetail).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(result.current.detail?.record.chat.title).toBe("Second refresh"));
+  });
+
   it("loads Global and Project entry points through the same scoped controller", async () => {
     const sharedClient = client();
     const { result, rerender } = renderHook(
@@ -94,6 +396,114 @@ describe("canonical Chat route controller", () => {
     expect(result.current.detail?.record.projectId).toBe("project_1");
   });
 
+  it("retries a failed canonical turn and installs the admitted Run in the active detail", async () => {
+    const failedRecord = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, revision: 3 },
+    };
+    const failedRun = {
+      id: "run_failed",
+      chatId: globalRecord.chat.id,
+      turnId: "cturn_failed",
+      attempt: 1,
+      driverKind: "codex" as const,
+      instanceId: "codex_default",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      status: "failed" as const,
+      outcome: "failed" as const,
+      historyBoundarySeq: 1,
+      capabilitySnapshot: {
+        revision: "catalog_1",
+        rootChat: true,
+        attachments: ["file" as const],
+        resources: ["file" as const],
+        tools: [],
+        approvals: true,
+        userInput: true,
+        resume: true,
+        cancellation: true,
+        worktrees: "optional" as const,
+        interactionModes: ["default"],
+        permissionModes: ["supervised"],
+      },
+      createdAt: "2026-08-26T00:00:00.000Z",
+      updatedAt: "2026-08-26T00:01:00.000Z",
+      completedAt: "2026-08-26T00:01:00.000Z",
+    };
+    const admittedRun = { ...failedRun, id: "run_retry", attempt: 2, status: "accepted" as const, outcome: undefined, completedAt: undefined };
+    const admittedRecord = {
+      ...failedRecord,
+      chat: { ...failedRecord.chat, revision: 4 },
+      activeRun: { runId: admittedRun.id, turnId: admittedRun.turnId, status: "accepted" as const },
+    };
+    const retryTurn = vi.fn(async () => ({ admission: "accepted" as const, record: admittedRecord, run: admittedRun }));
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [failedRecord] })),
+      getDetail: vi.fn(async () => ({ ...detail, record: failedRecord, runs: [failedRun] })),
+      retryTurn,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.runs).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.retryTurn("cturn_failed");
+    });
+
+    expect(retryTurn).toHaveBeenCalledWith(globalRecord.chat.id, "cturn_failed", {
+      clientRequestId: expect.any(String),
+      baseRevision: 3,
+    });
+    expect(result.current.detail?.record.activeRun?.runId).toBe("run_retry");
+    expect(result.current.detail?.runs.map((run) => run.id)).toEqual(["run_failed", "run_retry"]);
+  });
+
+  it("submits an approval decision for the active Run and refreshes its durable state", async () => {
+    const waitingRecord = {
+      ...globalRecord,
+      activeRun: { runId: "run_waiting", turnId: "cturn_waiting", status: "waiting_for_approval" as const },
+    };
+    const waitingDetail = { ...detail, record: waitingRecord };
+    const resolvedDetail = { ...detail, record: globalRecord };
+    const getDetail = vi.fn()
+      .mockResolvedValueOnce(waitingDetail)
+      .mockResolvedValueOnce(resolvedDetail);
+    const submitApproval = vi.fn(async () => ({
+      approvalId: "appr_command",
+      decision: "approve" as const,
+      submission: "accepted" as const,
+    }));
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [waitingRecord] })),
+      getDetail,
+      submitApproval,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.activeRun?.runId).toBe("run_waiting"));
+
+    await act(async () => {
+      await result.current.submitApproval("appr_command", "approve");
+    });
+
+    expect(submitApproval).toHaveBeenCalledWith("chat_global", "run_waiting", "appr_command", {
+      clientRequestId: expect.any(String),
+      decision: "approve",
+    });
+    expect(getDetail).toHaveBeenCalledTimes(2);
+    expect(result.current.detail?.record.activeRun).toBeUndefined();
+  });
+
   it("uses one scoped search identity instead of a second Project index", async () => {
     const search = vi.fn(async () => ({ items: [globalRecord] }));
     const sharedClient = client({ search });
@@ -137,6 +547,77 @@ describe("canonical Chat route controller", () => {
 
     await waitFor(() => expect(result.current.detail?.record.chat.id).toBe("chat_moved"));
     expect(getDetail).toHaveBeenCalledWith("chat_moved", { limit: 200 });
+  });
+
+  it("does not let a delayed old acknowledgement overwrite a newer successful completion", async () => {
+    vi.useFakeTimers();
+    try {
+      const oldCompletion = {
+        runId: "run_completed_old",
+        completedAt: "2026-08-26T00:01:00.000Z",
+        unacknowledged: true,
+      };
+      const initiallyRunningRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 5 },
+        activeRun: { runId: "run_newer_running", turnId: "cturn_newer", status: "running" as const },
+        latestSuccessfulCompletion: oldCompletion,
+      };
+      const newestCompletionRecord = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 6 },
+        latestSuccessfulCompletion: {
+          runId: "run_completed_newest",
+          completedAt: "2026-08-26T00:02:00.000Z",
+          unacknowledged: true,
+        },
+      };
+      const delayedOldAcknowledgement = {
+        ...globalRecord,
+        chat: { ...globalRecord.chat, revision: 6 },
+        latestSuccessfulCompletion: { ...oldCompletion, unacknowledged: false },
+      };
+      let resolveAcknowledgement!: (record: typeof delayedOldAcknowledgement) => void;
+      const acknowledgeCompletion = vi.fn(() => new Promise<typeof delayedOldAcknowledgement>((resolve) => {
+        resolveAcknowledgement = resolve;
+      }));
+      const getDetail = vi.fn()
+        .mockResolvedValueOnce({ ...detail, record: initiallyRunningRecord })
+        .mockResolvedValue({ ...detail, record: newestCompletionRecord });
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [initiallyRunningRecord] })),
+        getDetail,
+        acknowledgeCompletion,
+      });
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(acknowledgeCompletion).toHaveBeenCalledWith(
+        globalRecord.chat.id,
+        oldCompletion.runId,
+      );
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+      expect(acknowledgeCompletion.mock.calls).toEqual([
+        [globalRecord.chat.id, oldCompletion.runId],
+        [globalRecord.chat.id, newestCompletionRecord.latestSuccessfulCompletion.runId],
+      ]);
+      expect(result.current.detail?.record.latestSuccessfulCompletion)
+        .toEqual(newestCompletionRecord.latestSuccessfulCompletion);
+
+      await act(async () => {
+        resolveAcknowledgement(delayedOldAcknowledgement);
+        await Promise.resolve();
+      });
+      expect(result.current.detail?.record.latestSuccessfulCompletion)
+        .toEqual(newestCompletionRecord.latestSuccessfulCompletion);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not reload when the retained tab reflects an internally selected Chat", async () => {
@@ -186,7 +667,9 @@ describe("canonical Chat route controller", () => {
     await waitFor(() => expect(result.current.status).toBe("ready"));
   });
 
-  it("polls active Runs so persisted activity and assistant deltas reach the shared surface", async () => {
+  it("refreshes persisted activity and assistant deltas from the shared event stream", async () => {
+    vi.useFakeTimers();
+    const events = eventHarness("open");
     const runningRecord = {
       ...globalRecord,
       activeRun: { runId: "run_streaming", turnId: "turn_streaming", status: "running" as const },
@@ -223,21 +706,27 @@ describe("canonical Chat route controller", () => {
       getDetail,
     });
 
-    const { result } = renderHook(() => useCanonicalChatRouteController({
-      client: sharedClient,
-      projectId: null,
-      active: true,
-      initialChatId: globalRecord.chat.id,
-    }));
+    try {
+      const { result } = renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+        eventSource: events.eventSource,
+      }));
 
-    await waitFor(() => expect(result.current.detail?.record.activeRun?.status).toBe("running"));
-    await waitFor(() => expect(result.current.detail?.activities).toEqual(streamedDetail.activities), {
-      timeout: 2_000,
-    });
-    expect(getDetail).toHaveBeenCalledTimes(2);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.detail?.record.activeRun?.status).toBe("running");
+      act(() => events.emit(chatChanged(globalRecord.chat.id, 1, "run.message")));
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      expect(result.current.detail?.activities).toEqual(streamedDetail.activities);
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("refreshes an active Run quickly enough for conversational streaming", async () => {
+  it("refreshes an active Run through the bounded fallback when no event stream is available", async () => {
     vi.useFakeTimers();
     try {
       const runningRecord = {
@@ -259,7 +748,115 @@ describe("canonical Chat route controller", () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(getDetail).toHaveBeenCalledTimes(1);
-      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses an open Chat event stream without polling the active Run", async () => {
+    vi.useFakeTimers();
+    try {
+      const events = eventHarness("open");
+      const runningRecord = {
+        ...globalRecord,
+        activeRun: { runId: "run_streaming", turnId: "turn_streaming", status: "running" as const },
+      };
+      const runningDetail = { ...detail, record: runningRecord };
+      const getDetail = vi.fn(async () => runningDetail);
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+        eventSource: events.eventSource,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_500); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        events.emit(chatChanged(globalRecord.chat.id, 1));
+        await Promise.resolve();
+      });
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses a low-frequency snapshot fallback while the Chat event stream reconnects", async () => {
+    vi.useFakeTimers();
+    try {
+      const events = eventHarness("reconnecting");
+      const runningRecord = {
+        ...globalRecord,
+        activeRun: { runId: "run_fallback", turnId: "turn_fallback", status: "running" as const },
+      };
+      const runningDetail = { ...detail, record: runningRecord };
+      const getDetail = vi.fn(async () => runningDetail);
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+        eventSource: events.eventSource,
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+      expect(getDetail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("coalesces a burst of streamed message invalidations into one detail refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      const events = eventHarness("open");
+      const runningRecord = {
+        ...globalRecord,
+        activeRun: { runId: "run_burst", turnId: "turn_burst", status: "running" as const },
+      };
+      const runningDetail = { ...detail, record: runningRecord };
+      const getDetail = vi.fn(async () => runningDetail);
+      const sharedClient = client({
+        list: vi.fn(async () => ({ items: [runningRecord] })),
+        getDetail,
+      });
+      renderHook(() => useCanonicalChatRouteController({
+        client: sharedClient,
+        projectId: null,
+        active: true,
+        initialChatId: globalRecord.chat.id,
+        eventSource: events.eventSource,
+      }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        for (const cursor of [1, 2, 3]) {
+          events.emit(chatChanged(globalRecord.chat.id, cursor, "run.message"));
+        }
+      });
+      expect(getDetail).toHaveBeenCalledTimes(1);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
       expect(getDetail).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -296,7 +893,7 @@ describe("canonical Chat route controller", () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(result.current.detail?.record.chat.revision).toBe(1);
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_500); });
 
       expect(getDetail).toHaveBeenCalledTimes(3);
       expect(result.current.detail?.record.chat.revision).toBe(3);
@@ -372,9 +969,9 @@ describe("canonical Chat route controller", () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(result.current.detail?.record.chat.revision).toBe(5);
-      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
       expect(result.current.detail?.record.chat.revision).toBe(5);
-      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
       expect(result.current.detail?.record.chat.revision).toBe(6);
       expect(getDetail).toHaveBeenCalledTimes(3);
     } finally {
@@ -507,7 +1104,7 @@ describe("canonical Chat route controller", () => {
           permissionMode: "supervised",
         }, "Project continuation");
       });
-      await act(async () => { await vi.advanceTimersByTimeAsync(450); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(4_100); });
 
       expect(getDetail).toHaveBeenCalledTimes(3);
       expect(result.current.detail?.messages).toContainEqual(assistantMessage);
@@ -727,12 +1324,12 @@ describe("canonical Chat route controller", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("keeps the user error generic while recording a diagnostic category", async () => {
+  it("includes a safe failure reason while recording only the diagnostic category", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const failedClient = client({
       list: vi.fn(async () => ({ items: [] })),
       create: vi.fn(async () => globalRecord),
-      admitTurn: vi.fn(async () => { throw new TypeError("provider secret detail"); }),
+      admitTurn: vi.fn(async () => { throw new AppError("offline", { cause: new TypeError("provider secret detail") }); }),
     });
     const { result } = renderHook(() => useCanonicalChatRouteController({
       client: failedClient,
@@ -751,9 +1348,197 @@ describe("canonical Chat route controller", () => {
       }, "Fail safely");
     });
 
-    expect(result.current.error).toBe("The message could not be sent. Try again.");
-    expect(warn).toHaveBeenCalledWith("[canonical-chat] submit failed:", "TypeError");
+    expect(result.current.error).toBe(
+      "The message could not be sent. Reason: Can't reach Matrix OS. Check your connection.",
+    );
+    expect(warn).toHaveBeenCalledWith("[canonical-chat] submit failed:", "offline");
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("provider secret detail"));
     warn.mockRestore();
+  });
+
+  it("steers the exact active Run and manages the durable Queue with current revisions", async () => {
+    const runningRecord = {
+      ...globalRecord,
+      chat: { ...globalRecord.chat, revision: 5 },
+      activeRun: {
+        runId: "run_queue_controller",
+        turnId: "cturn_queue_controller",
+        status: "running" as const,
+      },
+    };
+    const queuedTurn = (id: string, position: number, text: string) => ({
+      id,
+      chatId: globalRecord.chat.id,
+      clientRequestId: `req_${id}`,
+      position,
+      parts: [{ type: "text" as const, text }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      createdAt: "2026-08-31T01:00:00.000Z",
+      updatedAt: "2026-08-31T01:00:00.000Z",
+    });
+    const activeRunRecord = {
+      id: runningRecord.activeRun.runId,
+      chatId: globalRecord.chat.id,
+      turnId: runningRecord.activeRun.turnId,
+      attempt: 1,
+      driverKind: "codex" as const,
+      instanceId: "codex_default",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      status: "running" as const,
+      historyBoundarySeq: 0,
+      capabilitySnapshot: {
+        revision: "catalog_controller_queue",
+        rootChat: true,
+        attachments: ["file" as const],
+        resources: ["file" as const],
+        tools: [],
+        approvals: true,
+        userInput: true,
+        resume: true,
+        cancellation: true,
+        steering: "same_run" as const,
+        worktrees: "optional" as const,
+        interactionModes: ["default"],
+        permissionModes: ["supervised"],
+      },
+      createdAt: "2026-08-31T01:00:00.000Z",
+      updatedAt: "2026-08-31T01:00:00.000Z",
+    };
+    const first = queuedTurn("qturn_controller_1", 1, "First queued turn");
+    const second = queuedTurn("qturn_controller_2", 2, "Second queued turn");
+    const third = queuedTurn("qturn_controller_3", 3, "Third queued turn");
+    const detailAt = (revision: number, queuedTurns: ReturnType<typeof queuedTurn>[]) => ({
+      ...detail,
+      record: { ...runningRecord, chat: { ...runningRecord.chat, revision } },
+      runs: [activeRunRecord],
+      queuedTurns,
+    });
+    const getDetail = vi.fn(async () => detailAt(5, [first, second]));
+    const steerRun = vi.fn(async () => ({
+      runId: runningRecord.activeRun.runId,
+      turnId: runningRecord.activeRun.turnId,
+      message: {
+        id: "msg_controller_steer",
+        chatId: globalRecord.chat.id,
+        seq: 1,
+        role: "user" as const,
+        state: "committed" as const,
+        turnId: runningRecord.activeRun.turnId,
+        runId: runningRecord.activeRun.runId,
+        parts: [{ type: "text" as const, text: "Steer this run" }],
+        createdAt: "2026-08-31T01:00:01.000Z",
+      },
+      steering: "accepted" as const,
+    }));
+    const queueTurn = vi.fn(async () => ({ queuedTurn: third, queueDepth: 3 }));
+    const reorderQueuedTurns = vi.fn(async () => ({ queuedTurns: [second, first, third] }));
+    const cancelQueuedTurn = vi.fn(async () => ({
+      queuedTurnId: first.id,
+      queueDepth: 2,
+      cancellation: "cancelled" as const,
+    }));
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [runningRecord] })),
+      getDetail,
+      steerRun,
+      queueTurn,
+      reorderQueuedTurns,
+      cancelQueuedTurn,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.chat.revision).toBe(5));
+
+    await act(async () => {
+      await result.current.steerActiveRun([{ type: "text", text: "Steer this run" }]);
+    });
+    expect(steerRun).toHaveBeenCalledWith(globalRecord.chat.id, runningRecord.activeRun.runId, {
+      clientRequestId: expect.any(String),
+      expectedTurnId: runningRecord.activeRun.turnId,
+      parts: [{ type: "text", text: "Steer this run" }],
+    });
+
+    await act(async () => {
+      await result.current.queueTurn({
+        parts: third.parts,
+        selection: third.selection,
+        interactionMode: third.interactionMode,
+        permissionMode: third.permissionMode,
+      });
+    });
+    expect(queueTurn).toHaveBeenCalledWith(globalRecord.chat.id, expect.objectContaining({
+      baseRevision: 7,
+      parts: third.parts,
+    }));
+
+    await act(async () => {
+      await result.current.reorderQueuedTurns([second.id, first.id, third.id]);
+    });
+    expect(reorderQueuedTurns).toHaveBeenCalledWith(globalRecord.chat.id, {
+      clientRequestId: expect.any(String),
+      baseRevision: 8,
+      queuedTurnIds: [second.id, first.id, third.id],
+    });
+
+    await act(async () => {
+      await result.current.cancelQueuedTurn(first.id);
+    });
+    expect(cancelQueuedTurn).toHaveBeenCalledWith(globalRecord.chat.id, first.id, {
+      clientRequestId: expect.any(String),
+      baseRevision: 9,
+    });
+    expect(getDetail).toHaveBeenCalledTimes(1);
+    expect(result.current.detail?.record.chat.revision).toBe(10);
+    expect(result.current.detail?.queuedTurns?.map((turn) => turn.id)).toEqual([
+      second.id,
+      third.id,
+    ]);
+  });
+
+  it("fails closed when the active Run snapshot does not support same-run steering", async () => {
+    const activeRecord = {
+      ...globalRecord,
+      activeRun: {
+        runId: "run_without_steering",
+        turnId: "cturn_without_steering",
+        status: "running" as const,
+      },
+    };
+    const steerRun = vi.fn();
+    const sharedClient = client({
+      list: vi.fn(async () => ({ items: [activeRecord] })),
+      getDetail: vi.fn(async () => ({
+        ...detail,
+        record: activeRecord,
+        runs: [{
+          id: activeRecord.activeRun.runId,
+          capabilitySnapshot: { steering: "none" },
+        } as never],
+      })),
+      steerRun,
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null,
+      active: true,
+      initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.activeRun).toBeTruthy());
+
+    let response: unknown;
+    await act(async () => {
+      response = await result.current.steerActiveRun([{ type: "text", text: "Do not send" }]);
+    });
+
+    expect(response).toBeNull();
+    expect(steerRun).not.toHaveBeenCalled();
   });
 });

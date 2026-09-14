@@ -1,12 +1,18 @@
-// Merges zellij sessions (GET /api/terminal/sessions) with workspace session
-// records (GET /api/sessions) into the single attachable list (L6). Workspace
-// records without runtime.zellijSession are orchestrator-only and must NEVER
-// become attach targets — their UUIDs caused infinite session_not_found
-// retries in the 092 prototype.
+// Merges owner-visible terminal workspace tabs with coding workspace records.
+// Every attach target is a stable Matrix TerminalRef key; internal Zellij
+// names and pane IDs never cross this client boundary.
 
-export interface ZellijSessionDTO {
-  name: string;
-  status?: "active" | "exited";
+export interface TerminalWorkspaceDTO {
+  id: string;
+  scope?: "main" | "project";
+  projectId?: string;
+  tabs?: Array<{
+    id?: string;
+    name?: string;
+    cwd?: string;
+    status?: string;
+    agent?: { providerId?: string };
+  }>;
 }
 
 export interface WorkspaceSessionDTO {
@@ -18,7 +24,7 @@ export interface WorkspaceSessionDTO {
   projectSlug?: string;
   taskId?: string | null;
   worktreeId?: string | null;
-  runtime?: { zellijSession?: string | null; status?: string } | null;
+  runtime?: { terminalRef?: { workspaceId?: string; tabId?: string } | null; status?: string } | null;
   status?: string;
 }
 
@@ -26,16 +32,15 @@ export interface AttachableSession {
   name: string;
   attachName: string;
   status: "active" | "exited";
-  source: "zellij" | "workspace";
-  // Workspace-only metadata (absent for plain zellij shells): the session kind,
-  // the agent CLI when kind==="agent", and the fine-grained runtime status
-  // (running | waiting | idle | failed | …) that drives the agent-run badge.
+  source: "terminal-tab" | "workspace";
   kind?: "shell" | "agent";
   agent?: string;
   projectSlug?: string;
   taskId?: string;
   worktreeId?: string;
   runtimeStatus?: string;
+  projectId?: string;
+  cwd?: string;
 }
 
 export interface SessionMergeResult {
@@ -43,73 +48,70 @@ export interface SessionMergeResult {
   aliasMap: Record<string, string>;
 }
 
-const EXITED_STATUSES = new Set(["exited", "failed"]);
+const WORKSPACE_ID = /^tws_[0-9a-f]{32}$/;
+const TAB_ID = /^tt_[0-9a-f]{32}$/;
+const EXITED_STATUSES = new Set(["exited", "failed", "unavailable"]);
 
-function workspaceStatus(record: WorkspaceSessionDTO): "active" | "exited" {
-  const status = record.runtime?.status ?? record.status;
-  return status !== undefined && EXITED_STATUSES.has(status) ? "exited" : "active";
+function refKey(ref: { workspaceId?: string; tabId?: string } | null | undefined): string | null {
+  return ref && WORKSPACE_ID.test(ref.workspaceId ?? "") && TAB_ID.test(ref.tabId ?? "")
+    ? `${ref.workspaceId}:${ref.tabId}`
+    : null;
 }
 
-// Optional workspace metadata, added only when present so plain zellij shells
-// keep their minimal shape.
-function workspaceMeta(
-  record: WorkspaceSessionDTO,
-): Partial<Pick<AttachableSession, "kind" | "agent" | "projectSlug" | "taskId" | "worktreeId" | "runtimeStatus">> {
-  const meta: Partial<Pick<AttachableSession, "kind" | "agent" | "projectSlug" | "taskId" | "worktreeId" | "runtimeStatus">> = {};
-  if (record.kind === "shell" || record.kind === "agent") meta.kind = record.kind;
-  if (typeof record.agent === "string" && record.agent.length > 0) meta.agent = record.agent;
-  if (typeof record.projectSlug === "string" && record.projectSlug.length > 0) meta.projectSlug = record.projectSlug;
-  if (typeof record.taskId === "string" && record.taskId.length > 0) meta.taskId = record.taskId;
-  if (typeof record.worktreeId === "string" && record.worktreeId.length > 0) meta.worktreeId = record.worktreeId;
-  const runtimeStatus = record.runtime?.status;
-  if (typeof runtimeStatus === "string" && runtimeStatus.length > 0) meta.runtimeStatus = runtimeStatus;
-  return meta;
+function workspaceMeta(record: WorkspaceSessionDTO): Partial<AttachableSession> {
+  return {
+    ...(record.kind === "shell" || record.kind === "agent" ? { kind: record.kind } : {}),
+    ...(typeof record.agent === "string" && record.agent ? { agent: record.agent } : {}),
+    ...(typeof record.projectSlug === "string" && record.projectSlug ? { projectSlug: record.projectSlug } : {}),
+    ...(typeof record.taskId === "string" && record.taskId ? { taskId: record.taskId } : {}),
+    ...(typeof record.worktreeId === "string" && record.worktreeId ? { worktreeId: record.worktreeId } : {}),
+    ...(typeof record.runtime?.status === "string" ? { runtimeStatus: record.runtime.status } : {}),
+  };
 }
 
 export function mergeAttachableSessions(
-  zellij: ZellijSessionDTO[],
-  workspace: WorkspaceSessionDTO[],
+  terminalWorkspaces: TerminalWorkspaceDTO[],
+  workspaceSessions: WorkspaceSessionDTO[],
 ): SessionMergeResult {
   const sessions: AttachableSession[] = [];
   const byAttach = new Map<string, AttachableSession>();
   const aliasMap: Record<string, string> = {};
-  const seenAttachNames = new Set<string>();
 
-  for (const entry of zellij) {
-    const name = entry.name;
-    if (!name || name.trim().length === 0 || seenAttachNames.has(name)) continue;
-    seenAttachNames.add(name);
-    const session: AttachableSession = {
-      name,
-      attachName: name,
-      status: entry.status === "exited" ? "exited" : "active",
-      source: "zellij",
-    };
-    sessions.push(session);
-    byAttach.set(name, session);
-    aliasMap[name] = name;
+  for (const workspace of terminalWorkspaces) {
+    if (!WORKSPACE_ID.test(workspace.id)) continue;
+    for (const tab of workspace.tabs ?? []) {
+      if (!TAB_ID.test(tab.id ?? "")) continue;
+      const attachName = `${workspace.id}:${tab.id}`;
+      const session: AttachableSession = {
+        name: typeof tab.name === "string" && tab.name ? tab.name : tab.id!,
+        attachName,
+        status: EXITED_STATUSES.has(tab.status ?? "") ? "exited" : "active",
+        source: "terminal-tab",
+        ...(workspace.projectId ? { projectId: workspace.projectId } : {}),
+        ...(typeof tab.cwd === "string" ? { cwd: tab.cwd } : {}),
+        ...(typeof tab.agent?.providerId === "string" ? { agent: tab.agent.providerId } : {}),
+      };
+      sessions.push(session);
+      byAttach.set(attachName, session);
+      aliasMap[attachName] = attachName;
+    }
   }
 
-  for (const record of workspace) {
-    const attachName = record.runtime?.zellijSession;
-    if (!attachName || attachName.trim().length === 0) continue;
-
+  for (const record of workspaceSessions) {
+    const attachName = refKey(record.runtime?.terminalRef);
+    if (!attachName) continue;
     for (const alias of [record.id, record.sessionId, record.name, attachName]) {
-      if (alias && alias.trim().length > 0) aliasMap[alias] = attachName;
+      if (alias) aliasMap[alias] = attachName;
     }
-
-    // Zellij (or an earlier record) already owns this attach name — its status
-    // wins, but enrich it with the workspace metadata (kind/agent/run status).
-    if (seenAttachNames.has(attachName)) {
-      const existing = byAttach.get(attachName);
-      if (existing) Object.assign(existing, workspaceMeta(record));
+    const existing = byAttach.get(attachName);
+    if (existing) {
+      Object.assign(existing, workspaceMeta(record));
       continue;
     }
-    seenAttachNames.add(attachName);
     const session: AttachableSession = {
-      name: record.name && record.name.trim().length > 0 ? record.name : attachName,
+      name: record.name || attachName,
       attachName,
-      status: workspaceStatus(record),
+      status: EXITED_STATUSES.has(record.runtime?.status ?? record.status ?? "") ? "exited" : "active",
       source: "workspace",
       ...workspaceMeta(record),
     };

@@ -7,6 +7,9 @@ import {
   listConnectedServicesHandler,
   listIntegrationInventoryHandler,
   syncServicesHandler,
+  listCustomMcpServersHandler,
+  describeCustomMcpServerHandler,
+  callCustomMcpToolHandler,
   type GatewayFetcher,
 } from "../../kernel/dist/tools/integrations.js";
 import { z } from "zod/v4";
@@ -86,6 +89,7 @@ export function createIntegrationsMcpServer(
         params: z.record(z.string(), z.unknown()).optional(),
         label: labelSchema,
       },
+      annotations: { destructiveHint: true },
     },
     async (input) => callServiceHandler(input, fetcher),
   );
@@ -98,6 +102,32 @@ export function createIntegrationsMcpServer(
       annotations: { destructiveHint: true },
     },
     async (input) => disconnectServiceHandler(input, fetcher),
+  );
+  server.registerTool(
+    "list_custom_mcp_servers",
+    { description: "List platform-brokered personal Custom MCP servers without exposing credentials." },
+    async () => listCustomMcpServersHandler(fetcher),
+  );
+  server.registerTool(
+    "describe_custom_mcp_server",
+    {
+      description: "List enabled tools and approval policies for one personal Custom MCP server.",
+      inputSchema: { server_id: z.uuid() },
+    },
+    async (input) => describeCustomMcpServerHandler(input, fetcher),
+  );
+  server.registerTool(
+    "call_custom_mcp_tool",
+    {
+      description: "Call one enabled tool through Matrix's credential-isolating Custom MCP broker.",
+      inputSchema: {
+        server_id: z.uuid(),
+        tool: z.string().min(1).max(128),
+        arguments: z.record(z.string(), z.unknown()).optional(),
+      },
+      annotations: { destructiveHint: true },
+    },
+    async (input) => callCustomMcpToolHandler(input, fetcher),
   );
 
   return server;

@@ -6,8 +6,18 @@
 // native principal (L1).
 import { net, session, type BaseWindow } from "electron";
 import { randomUUID } from "node:crypto";
+import {
+  startPortForward as startMatrixPortForward,
+  type PortForwardHandle,
+  type StartPortForwardOptions,
+} from "@finnaai/matrix/port-forward";
+import {
+  resolveBrowserAddress,
+  resolveRuntimeBrowserNavigation,
+} from "../../shared/runtime-browser-url";
 import { EmbedManager, type Bounds } from "./embed-manager";
 import { LaunchTokenCache } from "./launch-token-cache";
+import { AppLaunchError, requestAppLaunchToken } from "./app-launch";
 import {
   HOSTED_SHELL_SESSION_REFRESH_RETRY_MS,
   computeHostedShellSessionRefreshDelay,
@@ -29,12 +39,14 @@ interface EmbedServiceDeps {
   emitState: (embedId: string, state: EmbedState) => void;
   appBridge?: NativeAppBridge;
   appPreloadPath?: string;
+  startPortForward?: (options: StartPortForwardOptions) => Promise<PortForwardHandle>;
 }
 
 interface OpenRequest {
-  kind: "hosted-shell" | "app";
+  kind: "hosted-shell" | "code-editor" | "app" | "browser";
   slug?: string;
   appIdentity?: string;
+  url?: string;
   bounds: Bounds;
   active?: boolean;
 }
@@ -46,7 +58,11 @@ interface OpenResult {
 
 const MAX_PENDING_HOSTED_SHELLS = 12;
 const MAX_PENDING_APPS = 12;
+const MAX_PENDING_CODE_EDITORS = 12;
+const MAX_PENDING_BROWSERS = 12;
 const HOSTED_SHELL_PARTITION = "persist:hosted-shell";
+const CODE_EDITOR_PARTITION = "persist:code-editor";
+const CODE_EDITOR_ORIGIN = "https://code.matrix-os.com";
 
 interface PendingAppEmbed {
   slug: string;
@@ -60,20 +76,35 @@ export class EmbedService {
   private readonly deps: EmbedServiceDeps;
   private readonly pendingHostedShells = new Map<string, Bounds>();
   private readonly pendingApps = new Map<string, PendingAppEmbed>();
+  private readonly pendingCodeEditors = new Map<string, Bounds>();
   private readonly pendingActive = new Map<string, boolean>();
   private readonly hostedShellIds = new Set<string>();
+  private readonly codeEditorIds = new Set<string>();
+  private readonly pendingBrowsers = new Set<string>();
+  private readonly browserForwards = new Map<string, PortForwardHandle>();
   private hostedShellRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private hostedShellHandoffInFlight: Promise<HandoffResult> | null = null;
   private hostedShellHandoffInFlightGeneration: number | null = null;
   private hostedShellRefreshGatewayOrigin: string | null = null;
   private hostedShellGeneration = 0;
+  private browserGeneration = 0;
+  private codeEditorGeneration = 0;
 
   constructor(deps: EmbedServiceDeps) {
     this.deps = deps;
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
-      createView: ({ partition, kind, slug, routeSlug, onState }) => {
+      createView: ({
+        partition,
+        kind,
+        slug,
+        routeSlug,
+        allowedOrigins,
+        resolveNavigation,
+        allowPublicNavigation,
+        onState,
+      }) => {
         const window = this.deps.getWindow();
         if (!window) throw new Error("no window for embed");
         const bridge = kind === "app" && slug && this.deps.appBridge && this.deps.appPreloadPath
@@ -89,8 +120,11 @@ export class EmbedService {
         return createWebContentsView({
           window,
           partition,
-          allowedOrigins: [this.deps.getGatewayOrigin()],
+          allowedOrigins,
+          resolveNavigation,
+          allowPublicNavigation,
           onState,
+          denyPermissions: kind === "code-editor" || kind === "browser",
           ...(bridge ? { appBridge: bridge } : {}),
         });
       },
@@ -101,6 +135,17 @@ export class EmbedService {
     const gatewayOrigin = this.deps.getGatewayOrigin();
     if (request.kind === "hosted-shell") {
       return this.openHostedShell(gatewayOrigin, request.bounds, request.active ?? true);
+    }
+    if (request.kind === "code-editor") {
+      return this.openCodeEditor(gatewayOrigin, request.bounds, request.active ?? true);
+    }
+    if (request.kind === "browser") {
+      return this.openBrowser(
+        gatewayOrigin,
+        request.url ?? "",
+        request.bounds,
+        request.active ?? true,
+      );
     }
     return this.openApp(
       gatewayOrigin,
@@ -120,7 +165,7 @@ export class EmbedService {
   }
 
   setActive(embedId: string, active: boolean): boolean {
-    const pending = this.pendingHostedShells.has(embedId) || this.pendingApps.has(embedId);
+    const pending = this.isPending(embedId);
     if (pending) {
       this.pendingActive.set(embedId, active);
     }
@@ -130,11 +175,26 @@ export class EmbedService {
     return this.manager.setActive(embedId, active) || pending;
   }
 
+  async deactivate(embedId: string): Promise<{ ok: boolean; snapshotDataUrl: string | null }> {
+    const pending = this.isPending(embedId);
+    if (pending) {
+      this.pendingActive.set(embedId, false);
+      return { ok: true, snapshotDataUrl: null };
+    }
+    return this.manager.deactivate(embedId);
+  }
+
   suspendAll(): boolean {
     for (const embedId of this.pendingHostedShells.keys()) {
       this.pendingActive.set(embedId, false);
     }
     for (const embedId of this.pendingApps.keys()) {
+      this.pendingActive.set(embedId, false);
+    }
+    for (const embedId of this.pendingCodeEditors.keys()) {
+      this.pendingActive.set(embedId, false);
+    }
+    for (const embedId of this.pendingBrowsers) {
       this.pendingActive.set(embedId, false);
     }
     return this.manager.suspendAll();
@@ -149,31 +209,279 @@ export class EmbedService {
         return false;
       }
     }
+    if (this.codeEditorIds.has(embedId)) {
+      const generation = this.codeEditorGeneration;
+      const handoff = await this.runCodeEditorHandoff(this.deps.getGatewayOrigin());
+      if (!handoff.ok) return false;
+      if (generation !== this.codeEditorGeneration || !this.codeEditorIds.has(embedId)) return false;
+    }
     return this.manager.reload(embedId);
   }
 
   close(embedId: string): boolean {
     const wasPending = this.pendingHostedShells.delete(embedId);
     const wasPendingApp = this.pendingApps.delete(embedId);
+    const wasPendingCodeEditor = this.pendingCodeEditors.delete(embedId);
+    const wasPendingBrowser = this.pendingBrowsers.delete(embedId);
+    const browserForward = this.browserForwards.get(embedId);
     this.pendingActive.delete(embedId);
     const wasHostedShell = this.hostedShellIds.delete(embedId);
+    const wasCodeEditor = this.codeEditorIds.delete(embedId);
     if (wasHostedShell && this.hostedShellIds.size === 0) {
       this.hostedShellGeneration += 1;
       this.clearHostedShellRefreshTimer();
     }
-    return this.manager.close(embedId) || wasPending || wasPendingApp;
+    const closed = this.manager.close(embedId);
+    if (!closed && browserForward) this.disposeBrowserForward(embedId, browserForward);
+    return closed || wasPending || wasPendingApp || wasPendingCodeEditor || wasCodeEditor
+      || wasPendingBrowser || Boolean(browserForward);
   }
 
   closeAll(): void {
     this.hostedShellGeneration += 1;
+    this.browserGeneration += 1;
+    this.codeEditorGeneration += 1;
     this.pendingHostedShells.clear();
     this.pendingApps.clear();
+    this.pendingCodeEditors.clear();
+    this.pendingBrowsers.clear();
     this.pendingActive.clear();
     this.hostedShellIds.clear();
+    this.codeEditorIds.clear();
     this.clearHostedShellRefreshTimer();
     this.tokenCache.clear();
     this.manager.closeAll();
+    for (const [embedId, forward] of this.browserForwards) {
+      this.disposeBrowserForward(embedId, forward);
+    }
     this.deps.appBridge?.clear();
+  }
+
+  private async openCodeEditor(
+    gatewayOrigin: string,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
+    const embedId = randomUUID();
+    if (this.pendingCodeEditors.size >= MAX_PENDING_CODE_EDITORS) {
+      return { embedId, state: "failed" };
+    }
+    const generation = this.codeEditorGeneration;
+    this.pendingCodeEditors.set(embedId, bounds);
+    this.pendingActive.set(embedId, active);
+    const handoff = await this.runCodeEditorHandoff(gatewayOrigin);
+    if (
+      generation !== this.codeEditorGeneration
+      || !this.pendingCodeEditors.has(embedId)
+    ) {
+      return { embedId, state: "failed" };
+    }
+    if (!handoff.ok) return { embedId, state: "auth-required" };
+    try {
+      this.attachCodeEditor(bounds, embedId, this.pendingActive.get(embedId) ?? true);
+    } catch (err: unknown) {
+      this.pendingCodeEditors.delete(embedId);
+      this.pendingActive.delete(embedId);
+      console.warn(
+        "[embed-service] code editor open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { embedId, state: "failed" };
+    }
+    this.pendingCodeEditors.delete(embedId);
+    this.pendingActive.delete(embedId);
+    this.codeEditorIds.add(embedId);
+    return { embedId, state: "loading" };
+  }
+
+  private attachCodeEditor(bounds: Bounds, embedId: string, active: boolean): void {
+    this.manager.open("code-editor", null, bounds, `${CODE_EDITOR_ORIGIN}/`, {
+      id: embedId,
+      active,
+      allowedOrigins: [CODE_EDITOR_ORIGIN],
+      resolveNavigation: (rawUrl) => {
+        try {
+          const url = new URL(rawUrl);
+          return url.origin === CODE_EDITOR_ORIGIN
+            ? { disposition: "rewrite" as const, url: url.toString() }
+            : { disposition: "external" as const };
+        } catch {
+          return { disposition: "block" as const };
+        }
+      },
+      onState: (state) => this.deps.emitState(embedId, state),
+    });
+  }
+
+  private async runCodeEditorHandoff(gatewayOrigin: string): Promise<HandoffResult> {
+    return handoffWithRetry(
+      {
+        gatewayOrigin,
+        cookieOrigin: CODE_EDITOR_ORIGIN,
+        cookieJar: this.cookieJarFor(CODE_EDITOR_PARTITION),
+        request: (url, init) => this.gatewayRequest(url, init),
+      },
+      "/",
+    );
+  }
+
+  private async openRuntimeBrowser(
+    gatewayOrigin: string,
+    rawUrl: string,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
+    const embedId = randomUUID();
+    const resolved = resolveBrowserAddress(rawUrl);
+    const token = this.deps.getToken();
+    if (resolved?.disposition !== "runtime" || !token) {
+      return { embedId, state: token ? "failed" : "auth-required" };
+    }
+    if (this.pendingBrowsers.size >= MAX_PENDING_BROWSERS) {
+      return { embedId, state: "failed" };
+    }
+
+    const generation = this.browserGeneration;
+    this.pendingBrowsers.add(embedId);
+    this.pendingActive.set(embedId, active);
+    const startPortForward = this.deps.startPortForward ?? startMatrixPortForward;
+    let forward: PortForwardHandle;
+    try {
+      forward = await startPortForward({
+        gatewayUrl: gatewayOrigin,
+        token,
+        localHost: "127.0.0.1",
+        localPort: 0,
+        remoteHost: resolved.remoteHost,
+        remotePort: resolved.remotePort,
+      });
+    } catch (err: unknown) {
+      this.pendingBrowsers.delete(embedId);
+      this.pendingActive.delete(embedId);
+      console.warn(
+        "[embed-service] runtime browser tunnel failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { embedId, state: "failed" };
+    }
+
+    const stillPending = this.pendingBrowsers.delete(embedId);
+    const resolvedActive = this.pendingActive.get(embedId) ?? active;
+    this.pendingActive.delete(embedId);
+    if (generation !== this.browserGeneration || !stillPending) {
+      void forward.close().catch((err: unknown) => {
+        console.warn(
+          "[embed-service] stale runtime browser tunnel cleanup failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      });
+      return { embedId, state: "failed" };
+    }
+
+    const localUrl = new URL(resolved.url);
+    localUrl.hostname = "127.0.0.1";
+    localUrl.port = String(forward.localPort);
+    const allowedOrigins = [localUrl.origin];
+    this.browserForwards.set(embedId, forward);
+    const disposeForward = () => this.disposeBrowserForward(embedId, forward);
+    void forward.closed.then(
+      () => this.handleBrowserForwardClosed(embedId, forward),
+      (err: unknown) => this.handleBrowserForwardClosed(embedId, forward, err),
+    );
+    try {
+      this.manager.open("browser", null, bounds, localUrl.toString(), {
+        id: embedId,
+        active: resolvedActive,
+        allowedOrigins,
+        resolveNavigation: (url) => resolveRuntimeBrowserNavigation(
+          url,
+          resolved.remotePort,
+          localUrl.origin,
+        ),
+        onDispose: disposeForward,
+        onState: (state) => this.deps.emitState(embedId, state),
+      });
+    } catch (err: unknown) {
+      disposeForward();
+      console.warn(
+        "[embed-service] runtime browser open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { embedId, state: "failed" };
+    }
+    return { embedId, state: "loading" };
+  }
+
+  private isPending(embedId: string): boolean {
+    return this.pendingHostedShells.has(embedId)
+      || this.pendingCodeEditors.has(embedId)
+      || this.pendingApps.has(embedId)
+      || this.pendingBrowsers.has(embedId);
+  }
+
+  private async openBrowser(
+    gatewayOrigin: string,
+    rawUrl: string,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
+    const resolved = resolveBrowserAddress(rawUrl);
+    if (!resolved) return { embedId: randomUUID(), state: "failed" };
+    if (resolved.disposition === "runtime") {
+      return this.openRuntimeBrowser(gatewayOrigin, resolved.url, bounds, active);
+    }
+
+    const embedId = randomUUID();
+    const origin = new URL(resolved.url).origin;
+    try {
+      this.manager.open("browser", null, bounds, resolved.url, {
+        id: embedId,
+        active,
+        allowedOrigins: [origin],
+        allowPublicNavigation: true,
+        onState: (state) => this.deps.emitState(embedId, state),
+      });
+      return { embedId, state: "loading" };
+    } catch (err: unknown) {
+      console.warn(
+        "[embed-service] public browser open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { embedId, state: "failed" };
+    }
+  }
+
+  private disposeBrowserForward(embedId: string, forward: PortForwardHandle): void {
+    if (this.browserForwards.get(embedId) !== forward) return;
+    this.browserForwards.delete(embedId);
+    void forward.close().catch((err: unknown) => {
+      console.warn(
+        "[embed-service] runtime browser tunnel cleanup failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+  }
+
+  private handleBrowserForwardClosed(
+    embedId: string,
+    forward: PortForwardHandle,
+    err?: unknown,
+  ): void {
+    if (this.browserForwards.get(embedId) !== forward) return;
+    this.browserForwards.delete(embedId);
+    this.deps.emitState(embedId, "failed");
+    this.manager.close(embedId);
+    if (err === undefined) return;
+    console.warn(
+      "[embed-service] runtime browser tunnel close monitoring failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    void forward.close().catch((closeErr: unknown) => {
+      console.warn(
+        "[embed-service] failed Browser tunnel final cleanup:",
+        closeErr instanceof Error ? closeErr.message : String(closeErr),
+      );
+    });
   }
 
   async retryAuth(embedId: string): Promise<boolean> {
@@ -199,6 +507,36 @@ export class EmbedService {
       this.deps.emitState(embedId, "loading");
       return true;
     }
+    if (this.pendingCodeEditors.has(embedId)) {
+      const bounds = this.pendingCodeEditors.get(embedId)!;
+      const generation = this.codeEditorGeneration;
+      const handoff = await this.runCodeEditorHandoff(this.deps.getGatewayOrigin());
+      if (
+        generation !== this.codeEditorGeneration
+        || !this.pendingCodeEditors.has(embedId)
+      ) return false;
+      if (!handoff.ok) {
+        this.deps.emitState(embedId, "auth-required");
+        return false;
+      }
+      try {
+        this.attachCodeEditor(bounds, embedId, this.pendingActive.get(embedId) ?? true);
+      } catch (err: unknown) {
+        this.pendingCodeEditors.delete(embedId);
+        this.pendingActive.delete(embedId);
+        console.warn(
+          "[embed-service] code editor retry failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+        this.deps.emitState(embedId, "failed");
+        return false;
+      }
+      this.pendingCodeEditors.delete(embedId);
+      this.pendingActive.delete(embedId);
+      this.codeEditorIds.add(embedId);
+      this.deps.emitState(embedId, "loading");
+      return true;
+    }
     if (this.pendingApps.has(embedId)) {
       const pending = this.pendingApps.get(embedId)!;
       const opened = await this.createAppEmbed(
@@ -210,8 +548,8 @@ export class EmbedService {
         this.pendingActive.get(embedId) ?? true,
         () => this.pendingApps.has(embedId),
       );
-      if (!opened) {
-        if (this.pendingApps.has(embedId)) this.deps.emitState(embedId, "auth-required");
+      if (opened !== "loading") {
+        if (this.pendingApps.has(embedId)) this.deps.emitState(embedId, opened);
         return false;
       }
       this.pendingApps.delete(embedId);
@@ -228,6 +566,19 @@ export class EmbedService {
         return false;
       }
       this.scheduleHostedShellSessionRefresh(this.deps.getGatewayOrigin());
+      return this.manager.reload(embedId);
+    }
+    if (this.codeEditorIds.has(embedId)) {
+      const generation = this.codeEditorGeneration;
+      const handoff = await this.runCodeEditorHandoff(this.deps.getGatewayOrigin());
+      if (
+        generation !== this.codeEditorGeneration
+        || !this.codeEditorIds.has(embedId)
+      ) return false;
+      if (!handoff.ok) {
+        this.deps.emitState(embedId, "auth-required");
+        return false;
+      }
       return this.manager.reload(embedId);
     }
     return this.manager.focus(embedId);
@@ -470,9 +821,9 @@ export class EmbedService {
   ): Promise<OpenResult> {
     const embedId = randomUUID();
     const opened = await this.createAppEmbed(gatewayOrigin, slug, appIdentity, bounds, embedId, active);
-    if (!opened) {
+    if (opened !== "loading") {
       this.rememberPendingApp(embedId, { slug, appIdentity, bounds }, active);
-      return { embedId, state: "auth-required" };
+      return { embedId, state: opened };
     }
     return { embedId, state: "loading" };
   }
@@ -496,22 +847,28 @@ export class EmbedService {
     embedId: string,
     active = true,
     shouldAttach: () => boolean = () => true,
-  ): Promise<boolean> {
+  ): Promise<"loading" | "auth-required" | "failed"> {
     let cached = this.tokenCache.get(slug);
     if (!cached) {
-      const token = await this.fetchLaunchToken(gatewayOrigin, slug);
+      let token;
+      try {
+        token = await this.fetchLaunchToken(gatewayOrigin, slug);
+      } catch (err: unknown) {
+        console.warn("[embed-service] app launch failed:", err instanceof Error ? err.name : "UnknownError");
+        return err instanceof AppLaunchError ? err.state : "failed";
+      }
       if (token) {
         this.tokenCache.set(slug, token);
         cached = token;
       }
     }
-    if (!cached) return false;
-    if (!shouldAttach()) return false;
+    if (!cached) return "failed";
+    if (!shouldAttach()) return "failed";
     const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
     if (!resolved) {
-      console.warn("[embed-service] app launch url failed origin check:", cached.launchUrl);
+      console.warn("[embed-service] app launch url failed origin check");
       this.tokenCache.delete(slug);
-      return false;
+      return "failed";
     }
     this.manager.open("app", appIdentity, bounds, resolved, {
       id: embedId,
@@ -519,37 +876,17 @@ export class EmbedService {
       routeSlug: slug,
       onState: (state) => this.deps.emitState(embedId, state),
     });
-    return true;
+    return "loading";
   }
 
   private async fetchLaunchToken(
     gatewayOrigin: string,
     slug: string,
   ): Promise<{ launchUrl: string; expiresAt: number } | null> {
-    try {
-      const response = await this.gatewayRequest(
-        `${gatewayOrigin}/api/apps/${encodeURIComponent(slug)}/session-token`,
-        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
-      );
-      if (response.status < 200 || response.status >= 300) return null;
-      const parsed: unknown = JSON.parse(response.body);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        typeof (parsed as { launchUrl?: unknown }).launchUrl === "string" &&
-        typeof (parsed as { expiresAt?: unknown }).expiresAt === "number"
-      ) {
-        const { launchUrl, expiresAt } = parsed as { launchUrl: string; expiresAt: number };
-        return { launchUrl, expiresAt };
-      }
-      return null;
-    } catch (err: unknown) {
-      console.warn(
-        "[embed-service] launch token fetch failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-      return null;
-    }
+    return requestAppLaunchToken(() => this.gatewayRequest(
+      `${gatewayOrigin}/api/apps/${encodeURIComponent(slug)}/session-token`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    ));
   }
 
   private gatewayRequest(

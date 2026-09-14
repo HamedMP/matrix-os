@@ -8,7 +8,9 @@ import {
 } from "@desktop/renderer/src/stores/connection";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { clearDraftChats, useDraftChat } from "@desktop/renderer/src/stores/draft-chat";
-import { useApps } from "@desktop/renderer/src/stores/apps";
+import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
+import { registerActiveNotesController } from "@desktop/renderer/src/features/notes/notes-controller";
+import { seedDesktopApps } from "./apps-query-test-utils";
 
 type Listener = (payload: unknown) => void;
 
@@ -30,6 +32,52 @@ afterEach(() => {
 });
 
 describe("connection event wiring", () => {
+  it("flushes dirty native Notes before replacing the selected runtime credential", async () => {
+    const order: string[] = [];
+    const unregister = registerActiveNotesController({
+      flush: async () => {
+        order.push("flush-notes");
+        return true;
+      },
+    });
+    window.operator = {
+      invoke: vi.fn(async (channel: string) => {
+        order.push(channel);
+        if (channel === "auth:status") {
+          return {
+            signedIn: true,
+            handle: "neo",
+            platformHost: "https://app.matrix-os.com",
+            runtimeSlot: "preview",
+            authGeneration: 2,
+          };
+        }
+        return {};
+      }),
+      on: vi.fn(),
+    };
+
+    try {
+      await useConnection.getState().selectRuntime("preview");
+      expect(order.slice(0, 2)).toEqual(["flush-notes", "runtime:select"]);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("keeps the authenticated session active when dirty native Notes cannot save", async () => {
+    const unregister = registerActiveNotesController({ flush: async () => false });
+    const invoke = vi.fn(async () => ({}));
+    window.operator = { invoke, on: vi.fn() };
+
+    try {
+      await expect(useConnection.getState().signOut()).rejects.toThrow("notes_save_failed");
+      expect(invoke).not.toHaveBeenCalledWith("auth:sign-out", {});
+    } finally {
+      unregister();
+    }
+  });
+
   it("clears unsent drafts when an auth event replaces the identity", async () => {
     const listeners = new Map<string, Listener>();
     useConnection.setState({
@@ -243,6 +291,38 @@ describe("connection event wiring", () => {
     expect(useConnection.getState().authGeneration).toBe(7);
   });
 
+  it("publishes the authenticated Clerk identity and clears it on sign-out", async () => {
+    window.operator = {
+      invoke: vi.fn(async () => ({
+        signedIn: true,
+        handle: "neo",
+        userId: "user_2abcDEF",
+        email: "neo@example.com",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+        authGeneration: 1,
+      })),
+      on: vi.fn(),
+    };
+
+    await useConnection.getState().refresh();
+
+    expect(useConnection.getState()).toMatchObject({
+      userId: "user_2abcDEF",
+      email: "neo@example.com",
+    });
+
+    window.operator.invoke = vi.fn(async () => ({
+      signedIn: false,
+      platformHost: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+      authGeneration: 2,
+    }));
+    await useConnection.getState().refresh();
+
+    expect(useConnection.getState()).toMatchObject({ userId: null, email: null });
+  });
+
   it("recovers from an initial auth status failure instead of staying loading", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     window.operator = {
@@ -259,12 +339,7 @@ describe("connection event wiring", () => {
 
   it("clears app catalog state when auth status lookup fails", async () => {
     useConnection.setState({ status: "signed-in", handle: "old-owner" });
-    useApps.setState({
-      apps: [{ slug: "private-app", name: "Private app" }],
-      loaded: true,
-      loading: false,
-      error: null,
-    });
+    seedDesktopApps([{ slug: "private-app", name: "Private app" }]);
     window.operator = {
       invoke: vi.fn().mockRejectedValue(new Error("ipc unavailable")),
       on: vi.fn(),
@@ -272,7 +347,7 @@ describe("connection event wiring", () => {
 
     await useConnection.getState().refresh();
 
-    expect(useApps.getState()).toMatchObject({ apps: [], loaded: false, loading: false, error: null });
+    expect(desktopQueryClient.getQueryCache().getAll()).toEqual([]);
   });
 
   it("unwires auth and runtime listeners so tests can reinitialize the bridge", async () => {

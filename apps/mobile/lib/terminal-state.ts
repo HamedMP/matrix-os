@@ -9,8 +9,14 @@ export type TerminalConnectionStatus =
 export type ShellVisualStatus = "running" | "waiting" | "finished" | "idle";
 
 export interface MobileTerminalSession {
-  /** The zellij session name (e.g. "matrix-7af3c2e"); the attach identifier. */
+  /** Local serialized TerminalRef key; never an internal Zellij name. */
   sessionId: string;
+  workspaceId: string;
+  tabId: string;
+  revision: number;
+  workspaceRevision: number;
+  projectId?: string;
+  name: string;
   cwd: string;
   state: "running" | "exited" | "destroyed" | string;
   createdAt?: string;
@@ -76,8 +82,7 @@ export const MAX_TERMINAL_OUTPUT_CHARS = 80_000;
 export const MAX_TERMINAL_INPUT_CHARS = 64_000;
 const MIN_TERMINAL_FONT_SCALE = 0.85;
 const MAX_TERMINAL_FONT_SCALE = 1.3;
-const SAFE_TERMINAL_SESSION_ID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_TERMINAL_REF_KEY = /^tws_[0-9a-f]{32}:tt_[0-9a-f]{32}$/;
 
 export const initialTerminalState: TerminalState = {
   status: "idle",
@@ -119,13 +124,14 @@ export function terminalReducer(
           : null,
       };
     case "sessions.loaded": {
-      const activeSessionStillExists = state.activeSessionId
-        ? action.sessions.some((session) => session.sessionId === state.activeSessionId)
-        : false;
+      const activeSession = state.activeSessionId
+        ? action.sessions.find((session) => session.sessionId === state.activeSessionId)
+        : undefined;
       return {
         ...state,
         sessions: action.sessions,
-        activeSessionId: activeSessionStillExists ? state.activeSessionId : null,
+        activeSessionId: activeSession ? state.activeSessionId : null,
+        cwd: activeSession ? formatTerminalCwd(activeSession.cwd) : state.cwd,
       };
     }
     case "terminal.attached":
@@ -167,58 +173,32 @@ export function terminalReducer(
 }
 
 export function isSafeSessionId(value: string): boolean {
-  return SAFE_TERMINAL_SESSION_ID.test(value);
+  return SAFE_TERMINAL_REF_KEY.test(value);
 }
 
 export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
-    const candidate = entry as Record<string, unknown>;
-    if (typeof candidate.sessionId !== "string" || !isSafeSessionId(candidate.sessionId)) {
-      return [];
-    }
-    const session: MobileTerminalSession = {
-      sessionId: candidate.sessionId,
-      cwd: typeof candidate.cwd === "string" ? candidate.cwd : "~",
-      state: typeof candidate.state === "string" ? candidate.state : "running",
-    };
-    if (typeof candidate.createdAt === "string") session.createdAt = candidate.createdAt;
-    if (typeof candidate.lastAttachedAt === "string") session.lastAttachedAt = candidate.lastAttachedAt;
-    if (typeof candidate.attachedClients === "number") session.attachedClients = candidate.attachedClients;
-    if (typeof candidate.exitCode === "number" || candidate.exitCode === null) session.exitCode = candidate.exitCode;
-    return [session];
-  });
-}
-
-// Gateway shell-session names: lowercase, digits, hyphens, 1-31 chars (e.g. "matrix-7af3c2e", "main").
-const SAFE_SHELL_SESSION_NAME = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
-
-export function isSafeShellSessionName(value: string): boolean {
-  return SAFE_SHELL_SESSION_NAME.test(value);
-}
-
-function mapShellState(status: unknown, visual: unknown): MobileTerminalSession["state"] {
-  if (visual === "finished" || status === "exited") return "exited";
-  return "running";
-}
-
-/**
- * Parse the gateway's shell-sessions response (`GET /api/terminal/sessions`,
- * `ShellSessionSummary[]`). The session `name` is the attach identifier and is
- * carried in `sessionId` so existing consumers keep working during migration.
- */
-export function parseShellSessions(value: unknown): MobileTerminalSession[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
-    const c = entry as Record<string, unknown>;
-    if (typeof c.name !== "string" || !isSafeShellSessionName(c.name)) return [];
-    const session: MobileTerminalSession = {
-      sessionId: c.name,
-      cwd: typeof c.cwd === "string" ? c.cwd : "~",
-      state: mapShellState(c.status, c.visualStatus),
-    };
+    const workspace = entry as Record<string, unknown>;
+    if (typeof workspace.id !== "string" || !/^tws_[0-9a-f]{32}$/.test(workspace.id) || !Array.isArray(workspace.tabs)) return [];
+    const workspaceRevision = typeof workspace.revision === "number" ? workspace.revision : 0;
+    const projectId = typeof workspace.projectId === "string" ? workspace.projectId : undefined;
+    return workspace.tabs.flatMap((tab) => {
+      if (!tab || typeof tab !== "object") return [];
+      const c = tab as Record<string, unknown>;
+      if (typeof c.id !== "string" || !/^tt_[0-9a-f]{32}$/.test(c.id) || typeof c.name !== "string") return [];
+      const session: MobileTerminalSession = {
+        sessionId: `${workspace.id}:${c.id}`,
+        workspaceId: workspace.id as string,
+        tabId: c.id,
+        revision: typeof c.revision === "number" ? c.revision : 0,
+        workspaceRevision,
+        ...(projectId ? { projectId } : {}),
+        name: c.name,
+        cwd: typeof c.cwd === "string" ? c.cwd : "",
+        state: c.status === "exited" || c.status === "failed" ? "exited" : "running",
+      };
     if (
       c.visualStatus === "running" ||
       c.visualStatus === "waiting" ||
@@ -232,8 +212,9 @@ export function parseShellSessions(value: unknown): MobileTerminalSession[] {
     }
     if (typeof c.updatedAt === "string") session.updatedAt = c.updatedAt;
     if (typeof c.unread === "boolean") session.unread = c.unread;
-    if (c.agent === "claude" || c.agent === "codex" || c.agent === "opencode" || c.agent === "pi") {
-      session.agent = c.agent;
+    const agent = c.agent && typeof c.agent === "object" ? (c.agent as Record<string, unknown>).providerId : undefined;
+    if (agent === "claude" || agent === "codex" || agent === "opencode" || agent === "pi") {
+      session.agent = agent;
     }
     if (typeof c.subtitle === "string") session.subtitle = c.subtitle;
     if (typeof c.lastAction === "string") session.lastAction = c.lastAction;
@@ -252,23 +233,12 @@ export function parseShellSessions(value: unknown): MobileTerminalSession[] {
         };
       }
     }
-    if (Array.isArray(c.tabs)) {
-      const tabs: NonNullable<MobileTerminalSession["tabs"]> = [];
-      for (const tab of c.tabs) {
-        if (!tab || typeof tab !== "object") continue;
-        const t = tab as Record<string, unknown>;
-        if (!Number.isInteger(t.idx)) continue;
-        tabs.push({
-          idx: t.idx as number,
-          ...(typeof t.name === "string" ? { name: t.name } : {}),
-          ...(typeof t.focused === "boolean" ? { focused: t.focused } : {}),
-        });
-      }
-      if (tabs.length > 0) session.tabs = tabs;
-    }
-    return [session];
+      return [session];
+    });
   });
 }
+
+export const parseShellSessions = parseTerminalSessions;
 
 export function buildTerminalControlSequence(key: TerminalControlKey): string {
   if (key.startsWith("ctrl-")) {

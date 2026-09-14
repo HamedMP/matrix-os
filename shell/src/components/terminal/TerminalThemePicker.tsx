@@ -1,3 +1,4 @@
+import { GettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useRef, useState, type CSSProperties } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, CheckIcon, SquareTerminalIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -515,6 +516,7 @@ function TerminalAppThemeMenu({
           onClose();
         }}
       >
+        <GettingStartedBlocker />
         <button
           type="button"
           aria-label="Dismiss theme menu"
@@ -739,6 +741,7 @@ function ShellThemeChooser({
           onClose();
         }}
       >
+        <GettingStartedBlocker />
         <button
           type="button"
           aria-label="Dismiss theme menu"

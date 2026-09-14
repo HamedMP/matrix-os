@@ -119,6 +119,8 @@ describe("onboarding acquisition source", () => {
     fireEvent.keyDown(window, { key: "1" });
     fireEvent.keyDown(window, { key: "Enter" });
     const agentList = screen.getByRole("list", { name: "Coding agents" });
+    expect(agentList.className).toContain("flex-col");
+    expect(agentList.className).not.toContain("grid-cols-2");
     expect(agentList.querySelectorAll("li")).toHaveLength(4);
     expect(Array.from(agentList.querySelectorAll("kbd"), (key) => key.textContent)).toEqual([
       "1", "2", "3", "4",
@@ -134,6 +136,26 @@ describe("onboarding acquisition source", () => {
     fireEvent.keyDown(window, { key: "Enter" });
 
     expect(onBuild).toHaveBeenCalledWith(["claude-code", "opencode"]);
+  });
+
+  it("submits an immutable empty selection by click and Enter", () => {
+    const submittedSelections: string[][] = [];
+    const onBuild = vi.fn((tools: Array<"codex" | "claude-code" | "opencode" | "pi">) => {
+      submittedSelections.push([...tools]);
+      tools.push("codex");
+    });
+    render(<DefaultInstallsStep onBuild={onBuild} />);
+
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      fireEvent.click(screen.getByRole("checkbox", { name: label }));
+    }
+    const buildButton = screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement;
+    expect(buildButton.disabled).toBe(false);
+
+    fireEvent.click(buildButton);
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(submittedSelections).toEqual([[], []]);
   });
 
   it("does not repeat first-touch attribution in reused add-computer flows", () => {

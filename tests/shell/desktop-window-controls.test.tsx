@@ -87,19 +87,19 @@ describe("web desktop window controls", () => {
         onDragStart={vi.fn()}
         onFocusWindow={vi.fn()}
         onOpenWindow={vi.fn()}
-        onResizeEnd={onResizeEnd}
-        onResizeMove={vi.fn()}
-        onResizeStart={vi.fn()}
+        onResizeInteractionChange={onResizeEnd}
         onToggleFullscreen={vi.fn()}
         topInset={38}
       />,
     );
 
     fireEvent.pointerCancel(container.querySelector('[data-slot="card-header"]')!);
-    fireEvent.pointerCancel(container.querySelector(".cursor-se-resize")!);
+    expect(container.querySelectorAll("[data-window-resize]")).toHaveLength(8);
+    fireEvent.pointerDown(container.querySelector('[data-window-resize="se"]')!, { button: 0 });
+    fireEvent.pointerCancel(window);
 
     expect(onDragEnd).toHaveBeenCalledOnce();
-    expect(onResizeEnd).toHaveBeenCalledOnce();
+    expect(onResizeEnd).toHaveBeenLastCalledWith(false);
   });
 
   it("stays interactive until both overlapping pointer interactions finish", () => {

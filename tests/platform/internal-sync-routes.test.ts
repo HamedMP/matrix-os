@@ -16,6 +16,7 @@ describe("platform/internal-sync-routes", () => {
   const r2 = {
     getPresignedGetUrl: vi.fn(),
     getPresignedPutUrl: vi.fn(),
+    headObject: vi.fn(),
     createMultipartUpload: vi.fn(),
     getPresignedPartUrl: vi.fn(),
     getObject: vi.fn(),
@@ -67,6 +68,7 @@ describe("platform/internal-sync-routes", () => {
         db,
         r2,
         platformSecret: "platform-secret-123",
+        r2PrefixRoot: "matrixos-sync",
       }),
     });
   }
@@ -109,6 +111,158 @@ describe("platform/internal-sync-routes", () => {
     );
   });
 
+  it("presigns customer database backup reads from a server-derived tenant prefix", async () => {
+    r2.getPresignedGetUrl.mockResolvedValue("https://platform.example/presigned-system-get");
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/system/presign/get", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ key: "system/db/latest" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ url: "https://platform.example/presigned-system-get" });
+    expect(r2.getPresignedGetUrl).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/system/db/latest",
+      300,
+    );
+  });
+
+  it("presigns customer database backup writes from a server-derived tenant prefix", async () => {
+    r2.getPresignedPutUrl.mockResolvedValue("https://platform.example/presigned-system-put");
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/system/presign/put", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "system/db/snapshots/2026-08-29T1604Z.dump",
+        size: 123,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ url: "https://platform.example/presigned-system-put" });
+    expect(r2.getPresignedPutUrl).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/system/db/snapshots/2026-08-29T1604Z.dump",
+      123,
+      300,
+    );
+  });
+
+  it("checks backup existence only under the authenticated tenant prefix", async () => {
+    r2.headObject.mockResolvedValue({ exists: true, etag: '"etag"' });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/system/exists", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ key: "system/db/latest" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ exists: true });
+    expect(r2.headObject).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/system/db/latest",
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("brokers large backup multipart uploads under the authenticated tenant prefix", async () => {
+    r2.createMultipartUpload.mockResolvedValue("upload-123");
+    r2.getPresignedPartUrl.mockResolvedValue("https://platform.example/presigned-part");
+    r2.completeMultipartUpload.mockResolvedValue({ etag: '"complete"' });
+    const app = createTestApp();
+    const headers = {
+      authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+      "content-type": "application/json",
+    };
+    const key = "system/db/snapshots/2026-08-29T1604Z.dump";
+
+    const created = await app.request("/internal/containers/alice/sync/system/multipart/create", {
+      method: "POST", headers, body: JSON.stringify({ key }),
+    });
+    const part = await app.request("/internal/containers/alice/sync/system/multipart/part", {
+      method: "POST", headers, body: JSON.stringify({ key, uploadId: "upload-123", partNumber: 1 }),
+    });
+    const complete = await app.request("/internal/containers/alice/sync/system/multipart/complete", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ key, uploadId: "upload-123", parts: [{ partNumber: 1, etag: '"part"' }] }),
+    });
+
+    expect(created.status).toBe(200);
+    expect(part.status).toBe(200);
+    expect(complete.status).toBe(200);
+    const fullKey = "matrixos-sync/user_alice/system/db/snapshots/2026-08-29T1604Z.dump";
+    expect(r2.createMultipartUpload).toHaveBeenCalledWith(fullKey);
+    expect(r2.getPresignedPartUrl).toHaveBeenCalledWith(fullKey, "upload-123", 1, 300);
+    expect(r2.completeMultipartUpload).toHaveBeenCalledWith(
+      fullKey,
+      "upload-123",
+      [{ partNumber: 1, etag: '"part"' }],
+    );
+  });
+
+  it("rejects cross-tenant and non-backup system storage capabilities", async () => {
+    const app = createTestApp();
+    const headers = {
+      authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+      "content-type": "application/json",
+    };
+
+    const crossTenant = await app.request(
+      "/internal/containers/alice/sync/system/presign/get",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ key: "matrixos-sync/user_bob/system/db/latest" }),
+      },
+    );
+    const metadataWrite = await app.request(
+      "/internal/containers/alice/sync/system/presign/put",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ key: "system/vps-meta.json", size: 10 }),
+      },
+    );
+    const crossTenantMultipart = await app.request(
+      "/internal/containers/alice/sync/system/multipart/create",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ key: "matrixos-sync/user_bob/system/db/snapshots/2026-08-29T1604Z.dump" }),
+      },
+    );
+    const invalidRuntimeSlot = await app.request(
+      "/internal/containers/alice/sync/system/presign/get",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ key: "system/runtime-slots/../db/latest" }),
+      },
+    );
+
+    expect(crossTenant.status).toBe(400);
+    expect(metadataWrite.status).toBe(403);
+    expect(crossTenantMultipart.status).toBe(400);
+    expect(invalidRuntimeSlot.status).toBe(400);
+    expect(r2.getPresignedGetUrl).not.toHaveBeenCalled();
+    expect(r2.getPresignedPutUrl).not.toHaveBeenCalled();
+    expect(r2.createMultipartUpload).not.toHaveBeenCalled();
+  });
+
   it("authorizes VPS-native user machines when no legacy container row exists", async () => {
     await insertUserMachine(db, {
       machineId: "machine-bob",
@@ -139,6 +293,36 @@ describe("platform/internal-sync-routes", () => {
     expect(r2.getPresignedGetUrl).toHaveBeenCalledWith(
       "matrixos-sync/user_bob/manifest.json",
       undefined,
+    );
+  });
+
+  it("uses the active VPS owner instead of a stale legacy container owner", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice",
+      clerkUserId: "user_current",
+      handle: "alice",
+      hetznerServerId: 457,
+      publicIPv4: "203.0.113.13",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-08-29T00:00:00.000Z",
+    });
+    r2.getPresignedGetUrl.mockResolvedValue("https://platform.example/presigned-get");
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/system/presign/get", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ key: "system/db/latest" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(r2.getPresignedGetUrl).toHaveBeenCalledWith(
+      "matrixos-sync/user_current/system/db/latest",
+      300,
     );
   });
 

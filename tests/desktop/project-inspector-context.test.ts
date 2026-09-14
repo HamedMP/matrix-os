@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { AgentThreadSummary, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { AgentThreadSummary, ReviewSummary, RuntimeSummary, TerminalRef } from "@matrix-os/contracts";
 import { buildProjectInspectorContext } from "../../desktop/src/renderer/src/features/project/project-inspector-context";
 
 const NOW = "2026-08-18T12:00:00.000Z";
+const MATRIX_WORKSPACE_ID = "tws_00000000000000000000000000000001";
+const MATRIX_TAB_ID = "tt_00000000000000000000000000000001";
+const OTHER_WORKSPACE_ID = "tws_00000000000000000000000000000002";
+const OTHER_TAB_ID = "tt_00000000000000000000000000000002";
 
-function thread(id: string, projectId: string, terminalSessionId?: string): AgentThreadSummary {
+function thread(id: string, projectId: string, terminalRef?: TerminalRef): AgentThreadSummary {
   return {
     id,
     providerId: "codex",
@@ -12,7 +16,7 @@ function thread(id: string, projectId: string, terminalSessionId?: string): Agen
     status: "running",
     attention: "none",
     projectId,
-    terminalSessionId,
+    terminalRef,
     createdAt: NOW,
     updatedAt: NOW,
   };
@@ -29,7 +33,10 @@ function summary(): RuntimeSummary {
     providers: [],
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: {
-      items: [thread("thread_matrix", "matrix-os", "term_matrix"), thread("thread_other", "website", "term_other")],
+      items: [
+        thread("thread_matrix", "matrix-os", { workspaceId: MATRIX_WORKSPACE_ID, tabId: MATRIX_TAB_ID }),
+        thread("thread_other", "website", { workspaceId: OTHER_WORKSPACE_ID, tabId: OTHER_TAB_ID }),
+      ],
       hasMore: false,
       limit: 20,
     },
@@ -38,10 +45,50 @@ function summary(): RuntimeSummary {
       hasMore: false,
       limit: 20,
     },
-    terminalSessions: {
+    terminalWorkspaces: {
       items: [
-        { id: "term_matrix", name: "matrix", status: "running", attachable: true, createdAt: NOW, updatedAt: NOW },
-        { id: "term_other", name: "website", status: "running", attachable: true, createdAt: NOW, updatedAt: NOW },
+        {
+          id: MATRIX_WORKSPACE_ID,
+          scope: "project",
+          projectId: "matrix-os",
+          canonicalSize: { cols: 120, rows: 40 },
+          status: "running",
+          revision: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+          tabs: [{
+            id: MATRIX_TAB_ID,
+            workspaceId: MATRIX_WORKSPACE_ID,
+            name: "matrix",
+            cwd: "projects/matrix-os",
+            status: "running",
+            revision: 1,
+            order: 0,
+            createdAt: NOW,
+            updatedAt: NOW,
+          }],
+        },
+        {
+          id: OTHER_WORKSPACE_ID,
+          scope: "project",
+          projectId: "website",
+          canonicalSize: { cols: 120, rows: 40 },
+          status: "running",
+          revision: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+          tabs: [{
+            id: OTHER_TAB_ID,
+            workspaceId: OTHER_WORKSPACE_ID,
+            name: "website",
+            cwd: "projects/website",
+            status: "running",
+            revision: 1,
+            order: 0,
+            createdAt: NOW,
+            updatedAt: NOW,
+          }],
+        },
       ],
       hasMore: false,
       limit: 20,
@@ -95,7 +142,8 @@ describe("buildProjectInspectorContext", () => {
     expect(context.summary.previewSessions.items.map((item) => item.id)).toEqual(["preview_matrix"]);
     expect(context.summary.activeThreads.items.map((item) => item.id)).toEqual(["thread_matrix"]);
     expect(context.summary.attentionThreads.items.map((item) => item.id)).toEqual(["thread_attention"]);
-    expect(context.summary.terminalSessions.items.map((item) => item.id)).toEqual(["term_matrix"]);
+    expect(context.summary.terminalWorkspaces.items.map((item) => item.id)).toEqual([MATRIX_WORKSPACE_ID]);
+    expect(context.summary.terminalWorkspaces.items[0]?.tabs.map((item) => item.id)).toEqual([MATRIX_TAB_ID]);
     expect(context.summary.recentActivity.items).toEqual([]);
     expect(context.terminalState).toBe("linked");
     expect(context.counts).toEqual({ changes: 1, files: undefined, terminal: 1, preview: 1, activity: 2 });
@@ -106,11 +154,14 @@ describe("buildProjectInspectorContext", () => {
     const context = buildProjectInspectorContext({
       projectId: "matrix-os",
       summary: summary(),
-      selectedThread: thread("thread_missing", "matrix-os", "term_missing"),
+      selectedThread: thread("thread_missing", "matrix-os", {
+        workspaceId: MATRIX_WORKSPACE_ID,
+        tabId: "tt_00000000000000000000000000000003",
+      }),
       reviews: [],
     });
 
-    expect(context.summary.terminalSessions.items).toEqual([]);
+    expect(context.summary.terminalWorkspaces.items).toEqual([]);
     expect(context.terminalState).toBe("unavailable");
     expect(context.counts.terminal).toBe(0);
     expect(context.defaultTab).toBe("preview");

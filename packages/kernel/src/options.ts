@@ -10,7 +10,8 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
-import { getCoreAgents, loadCustomAgents } from "./agents.js";
+import type { OsViewAgentTools } from "./ipc-server.js";
+import { getCoreAgents, loadCustomAgents, loadCustomAgentMcpAllowlists } from "./agents.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { ensureSdkSkillsMirror } from "./skills.js";
 import {
@@ -22,6 +23,8 @@ import {
   onSubagentComplete,
   notifyShellHook,
   preCompactHook,
+  createIntegrationApprovalHook,
+  type RequestApprovalFn,
 } from "./hooks.js";
 import { createProtectedFilesHook } from "./evolution.js";
 
@@ -49,6 +52,13 @@ const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__list_connected_services",
   "mcp__matrix-os-ipc__sync_services",
   "mcp__matrix-os-ipc__disconnect_service",
+  "mcp__matrix-os-ipc__list_custom_mcp_servers",
+  "mcp__matrix-os-ipc__describe_custom_mcp_server",
+  "mcp__matrix-os-ipc__call_custom_mcp_tool",
+];
+const OS_VIEW_IPC_TOOL_NAMES = [
+  "mcp__matrix-os-ipc__list_placeable_apps",
+  "mcp__matrix-os-ipc__add_app_to_desktop",
 ];
 
 const BROWSER_TOOL_NAMES = [
@@ -80,12 +90,41 @@ function loadBrowserConfig(homePath: string): {
   }
 }
 
-const KERNEL_EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
+const KERNEL_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 const SAFE_KERNEL_MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
 const KERNEL_CONFIG_MAX_BYTES = 256 * 1024;
 export type KernelEffort = (typeof KERNEL_EFFORT_VALUES)[number];
-export const DEFAULT_KERNEL_MODEL = "claude-opus-4-6";
+export const DEFAULT_KERNEL_MODEL = "claude-opus-5";
 export const DEFAULT_KERNEL_EFFORT: KernelEffort = "high";
+
+const ALL_ADAPTIVE_EFFORT_MODELS = new Set([
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-sonnet-5",
+]);
+const FOUR_LEVEL_ADAPTIVE_EFFORT_MODELS = new Set([
+  "claude-opus-4-6",
+  "claude-sonnet-4-5",
+]);
+
+export function resolveKernelSdkControls(
+  model: string,
+  effort: string,
+): { effort?: KernelEffort; thinking?: { type: "adaptive" } } {
+  const normalizedEffort = KERNEL_EFFORT_VALUES.includes(effort as KernelEffort)
+    ? effort as KernelEffort
+    : DEFAULT_KERNEL_EFFORT;
+  if (ALL_ADAPTIVE_EFFORT_MODELS.has(model)) {
+    return { effort: normalizedEffort, thinking: { type: "adaptive" } };
+  }
+  if (FOUR_LEVEL_ADAPTIVE_EFFORT_MODELS.has(model)) {
+    return {
+      effort: normalizedEffort === "xhigh" ? DEFAULT_KERNEL_EFFORT : normalizedEffort,
+      thinking: { type: "adaptive" },
+    };
+  }
+  return {};
+}
 
 function parseKernelConfigFile(raw: string): { model?: string; effort?: KernelEffort } {
   const config = JSON.parse(raw);
@@ -199,6 +238,8 @@ export interface KernelConfig {
   effort?: string;
   maxTurns?: number;
   env?: Record<string, string | undefined>;
+  requestApproval?: RequestApprovalFn;
+  osViewTools?: OsViewAgentTools;
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -212,12 +253,13 @@ export async function kernelOptions(config: KernelConfig) {
   // Explicit per-call config wins; otherwise fall back to the persisted
   // ~/system/config.json kernel settings, then hardcoded defaults.
   const fileKernel = resolveKernelConfigFile(homePath);
-  const effort = (config.effort ?? fileKernel.effort) as KernelEffort;
-  const resolvedEffort = KERNEL_EFFORT_VALUES.includes(effort) ? effort : DEFAULT_KERNEL_EFFORT;
+  const model = config.model ?? fileKernel.model;
+  const controls = resolveKernelSdkControls(model, config.effort ?? fileKernel.effort);
 
-  const ipcServer = await createIpcServer(db, homePath);
+  const ipcServer = await createIpcServer(db, homePath, config.osViewTools);
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
+  const customAgentMcpAllowlists = loadCustomAgentMcpAllowlists(`${homePath}/agents/custom`);
   const agents = { ...coreAgents, ...customAgents };
   const systemPrompt = buildSystemPrompt(homePath, db);
   console.log("[kernel] System prompt length:", systemPrompt.length, "chars");
@@ -238,8 +280,8 @@ export async function kernelOptions(config: KernelConfig) {
   }
 
   return {
-    model: config.model ?? fileKernel.model,
-    effort: resolvedEffort,
+    model,
+    ...controls,
     systemPrompt,
     cwd: config.workingDirectory ?? homePath,
     ...(config.env ? { env: config.env } : {}),
@@ -259,14 +301,22 @@ export async function kernelOptions(config: KernelConfig) {
       "TaskOutput",
       "WebSearch",
       "WebFetch",
-      "Skill",
       ...IPC_TOOL_NAMES,
+      ...(config.osViewTools ? OS_VIEW_IPC_TOOL_NAMES : []),
       ...browserToolNames,
     ],
+    skills: "all" as const,
     maxTurns: config.maxTurns ?? 80,
-    thinking: { type: "adaptive" as const },
     hooks: {
       PreToolUse: [
+        {
+          matcher: "mcp__matrix-os-ipc__call_service|mcp__matrix-os-ipc__call_custom_mcp_tool",
+          hooks: [createIntegrationApprovalHook(
+            homePath,
+            config.requestApproval ?? (async () => false),
+            customAgentMcpAllowlists,
+          ) as (...args: unknown[]) => Promise<unknown>],
+        },
         {
           matcher: "Bash|Write|Edit",
           hooks: [safetyGuardHook as (...args: unknown[]) => Promise<unknown>],

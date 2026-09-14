@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readdir, rename, unlink, type FileHandle } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { resolveWritableFileApiPath } from "../path-security.js";
 import { shellError } from "./errors.js";
@@ -13,6 +14,12 @@ const SUPPORTED_MIME_TYPES = new Set([
   "image/webp",
 ]);
 const SAFE_CLIENT_FILENAME = /^[^/\\\0]{1,255}$/;
+const PASTE_ASSET_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_RETAINED_PASTE_ASSETS = 128;
+const DATE_DIRECTORY = /^\d{4}-\d{2}-\d{2}$/;
+export const TERMINAL_PASTE_ASSET_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = constants;
+const DIRECTORY_OPEN_FLAGS = O_RDONLY | O_DIRECTORY | O_NOFOLLOW;
 
 interface PasteAssetKind {
   mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
@@ -35,6 +42,63 @@ export interface TerminalPasteAssetResult {
   mimeType: string;
 }
 
+export interface TerminalPasteAssetCleanupLifecycle {
+  runNow(): Promise<void>;
+  waitForIdle(): Promise<void>;
+  close(): void;
+}
+
+export function createTerminalPasteAssetCleanupLifecycle(options: {
+  homePath: string;
+  intervalMs?: number;
+  now?: () => number;
+  schedule?: (callback: () => void, intervalMs: number) => unknown;
+  cancel?: (handle: unknown) => void;
+  onError?: (error: unknown) => void;
+}): TerminalPasteAssetCleanupLifecycle {
+  const intervalMs = options.intervalMs ?? TERMINAL_PASTE_ASSET_CLEANUP_INTERVAL_MS;
+  if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
+    throw new Error("InvalidTerminalPasteAssetCleanupInterval");
+  }
+  const now = options.now ?? Date.now;
+  const schedule = options.schedule ?? ((callback, ms) => setInterval(callback, ms));
+  const cancel = options.cancel ?? ((handle) => clearInterval(handle as ReturnType<typeof setInterval>));
+  let closed = false;
+  let inFlight: Promise<void> | null = null;
+
+  const runNow = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (inFlight) return inFlight;
+    const cleanup = cleanupTerminalPasteAssets(options.homePath, now());
+    inFlight = cleanup.then(
+      () => { inFlight = null; },
+      (error: unknown) => {
+        inFlight = null;
+        throw error;
+      },
+    );
+    return inFlight;
+  };
+
+  const handle = schedule(() => {
+    void runNow().catch((error: unknown) => options.onError?.(error));
+  }, intervalMs);
+  if (typeof handle === "object" && handle !== null && "unref" in handle) {
+    const unref = (handle as { unref?: unknown }).unref;
+    if (typeof unref === "function") unref.call(handle);
+  }
+
+  return {
+    runNow,
+    async waitForIdle() { await inFlight; },
+    close() {
+      if (closed) return;
+      closed = true;
+      cancel(handle);
+    },
+  };
+}
+
 export async function saveTerminalPasteAsset(input: TerminalPasteAssetInput): Promise<TerminalPasteAssetResult> {
   if (input.bytes.byteLength < 1 || input.bytes.byteLength > TERMINAL_PASTE_ASSET_BODY_LIMIT) {
     throw shellError("payload_too_large", "Request too large", 413);
@@ -49,7 +113,8 @@ export async function saveTerminalPasteAsset(input: TerminalPasteAssetInput): Pr
     throw shellError("unsupported_media_type", "Invalid request", 400);
   }
 
-  const date = formatPasteAssetDate(input.now ?? new Date());
+  const now = input.now ?? new Date();
+  const date = formatPasteAssetDate(now);
   const relativeDir = join("temporary", "terminal-pastes", date);
   const filename = `${Date.now()}-${randomUUID()}${kind.extension}`;
   const relativePath = join(relativeDir, filename);
@@ -62,6 +127,7 @@ export async function saveTerminalPasteAsset(input: TerminalPasteAssetInput): Pr
     throw shellError("invalid_request", "Invalid request", 400);
   }
 
+  await cleanupTerminalPasteAssets(input.homePath, now.getTime());
   await mkdir(absoluteDir, { recursive: true });
   const tempPath = join(absoluteDir, `.${filename}.tmp`);
   const handle = await open(tempPath, "wx");
@@ -88,6 +154,101 @@ export async function saveTerminalPasteAsset(input: TerminalPasteAssetInput): Pr
     size: input.bytes.byteLength,
     mimeType: kind.mimeType,
   };
+}
+
+interface PinnedDirectory {
+  handle: FileHandle;
+  path: string;
+}
+
+async function openPinnedDirectory(path: string): Promise<PinnedDirectory | null> {
+  let handle: FileHandle;
+  try {
+    handle = await open(path, DIRECTORY_OPEN_FLAGS);
+  } catch (error: unknown) {
+    if (isMissing(error) || isUnsafeDirectory(error)) return null;
+    throw error;
+  }
+  const pinnedPath = process.platform === "linux"
+    ? `/proc/self/fd/${handle.fd}`
+    : process.platform === "darwin" ? `/dev/fd/${handle.fd}` : path;
+  return { handle, path: pinnedPath };
+}
+
+async function cleanupTerminalPasteAssets(homePath: string, nowMs: number): Promise<void> {
+  const root = resolveWritableFileApiPath(homePath, join("temporary", "terminal-pastes"));
+  if (!root) throw shellError("invalid_request", "Invalid request", 400);
+  const pinnedHome = await openPinnedDirectory(homePath);
+  if (!pinnedHome) return;
+  let pinnedTemporary: PinnedDirectory | null = null;
+  let pinnedRoot: PinnedDirectory | null = null;
+  try {
+    pinnedTemporary = await openPinnedDirectory(join(pinnedHome.path, "temporary"));
+    if (!pinnedTemporary) return;
+    pinnedRoot = await openPinnedDirectory(join(pinnedTemporary.path, "terminal-pastes"));
+    if (!pinnedRoot) return;
+    const retained: Array<{ path: string; mtimeMs: number; directory: PinnedDirectory }> = [];
+    const retainedDirectories = new Set<PinnedDirectory>();
+    try {
+      for (const dateDirectory of await readdir(pinnedRoot.path)) {
+        if (!DATE_DIRECTORY.test(dateDirectory)) continue;
+        const pinnedDirectory = await openPinnedDirectory(join(pinnedRoot.path, dateDirectory));
+        if (!pinnedDirectory) continue;
+        try {
+          for (const filename of await readdir(pinnedDirectory.path)) {
+            const path = join(pinnedDirectory.path, filename);
+            let stat;
+            try { stat = await lstat(path); }
+            catch (error: unknown) { if (isMissing(error)) continue; throw error; }
+            if (stat.isSymbolicLink() || !stat.isFile()) continue;
+            if (nowMs - stat.mtimeMs >= PASTE_ASSET_TTL_MS) {
+              await unlinkIfPresent(path);
+              continue;
+            }
+            retained.push({ path, mtimeMs: stat.mtimeMs, directory: pinnedDirectory });
+            retained.sort((left, right) => right.mtimeMs - left.mtimeMs);
+            if (retained.length > MAX_RETAINED_PASTE_ASSETS - 1) {
+              const evicted = retained.pop()!;
+              await unlinkIfPresent(evicted.path);
+              if (evicted.directory !== pinnedDirectory
+                && !retained.some((candidate) => candidate.directory === evicted.directory)) {
+                retainedDirectories.delete(evicted.directory);
+                await evicted.directory.handle.close();
+              }
+            }
+          }
+          if (retained.some((candidate) => candidate.directory === pinnedDirectory)) {
+            retainedDirectories.add(pinnedDirectory);
+          } else {
+            await pinnedDirectory.handle.close();
+          }
+        } catch (error: unknown) {
+          if (!retainedDirectories.has(pinnedDirectory)) await pinnedDirectory.handle.close();
+          throw error;
+        }
+      }
+    } finally {
+      await Promise.all([...retainedDirectories].map((directory) => directory.handle.close()));
+    }
+  } finally {
+    if (pinnedRoot) await pinnedRoot.handle.close();
+    if (pinnedTemporary) await pinnedTemporary.handle.close();
+    await pinnedHome.handle.close();
+  }
+}
+
+async function unlinkIfPresent(path: string): Promise<void> {
+  try { await unlink(path); }
+  catch (error: unknown) { if (!isMissing(error)) throw error; }
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function isUnsafeDirectory(error: unknown): boolean {
+  return error instanceof Error && "code" in error
+    && (error.code === "ELOOP" || error.code === "ENOTDIR");
 }
 
 function normalizeContentType(contentType: string | undefined): string | undefined {

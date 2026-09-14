@@ -5,6 +5,8 @@ import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary, getMe
 import { calculateCost } from './cost.js';
 import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } from './metrics.js';
 import { isAuthorizedProxyAdminRequest, parseProxyApiKey } from './auth.js';
+import { createFundedRelay, resolveFundedRelayConfig } from './funded-relay.js';
+import { configureProxyServerTimeouts } from './server-timeouts.js';
 
 const ANTHROPIC_API = process.env.ANTHROPIC_API_URL ?? 'https://api.anthropic.com';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY ?? '';
@@ -12,6 +14,7 @@ const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const PROXY_FETCH_TIMEOUT_MS = 30_000;
 const PROXY_ADMIN_TOKEN = process.env.PROXY_ADMIN_TOKEN ?? process.env.PROXY_AUTH_TOKEN ?? process.env.PLATFORM_SECRET;
 const PROXY_SHARED_SECRET = process.env.PROXY_SHARED_SECRET ?? process.env.PLATFORM_SECRET;
+const fundedRelayConfig = resolveFundedRelayConfig(process.env);
 
 const app = new Hono();
 const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
@@ -118,6 +121,11 @@ app.post('/quotas/:userId', async (c) => {
   setQuota(c.req.param('userId'), body.dailyLimitUsd ?? null, body.monthlyLimitUsd ?? null);
   return c.json({ ok: true });
 });
+
+// When enabled, the funded relay owns the Anthropic-compatible surface and
+// terminates the request before the legacy direct-provider handler below.
+const fundedRelay = createFundedRelay(fundedRelayConfig);
+fundedRelay.register(app);
 
 // Proxy all /v1/* requests to Anthropic
 app.all('/v1/*', async (c) => {
@@ -320,6 +328,7 @@ for (const row of getMetricsSeed()) {
 const server = serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`Proxy listening on :${PORT} -> ${ANTHROPIC_API}`);
 });
+configureProxyServerTimeouts(server);
 
 let isShuttingDown = false;
 
@@ -330,6 +339,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   server.close();
   const forceExit = setTimeout(() => process.exit(1), 6_000);
   try {
+    await fundedRelay.close();
     await posthogErrorTracker.shutdown();
   } catch (err: unknown) {
     console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));

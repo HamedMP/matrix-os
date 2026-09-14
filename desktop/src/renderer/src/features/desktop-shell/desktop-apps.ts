@@ -1,64 +1,140 @@
 import {
+  Blocks,
+  BrushIcon,
+  Code2,
+  FilePenLine,
   FolderTree,
   Globe2,
   MessageSquare,
+  Notebook,
   Settings,
   SquareTerminal,
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
+import { OS_VIEW_FIXED_APP_APPEARANCES } from "@matrix-os/contracts";
+import vscodeIconUrl from "../../../../../../shell/public/vscode.png";
 
-export type DesktopAppId = "browser" | "work" | "terminal" | "files" | "settings";
+const APPEARANCE = OS_VIEW_FIXED_APP_APPEARANCES;
+
+export type DesktopAppId =
+  | "work"
+  | "terminal"
+  | "files"
+  | "editor"
+  | "vscode"
+  | "settings"
+  | "plugins"
+  | "browser"
+  | "notes"
+  | "whiteboard";
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
+  path: string;
   kind: TabKind;
   icon: LucideIcon;
   name: string;
   color?: string;
   iconColor?: string;
+  iconUrl?: string;
+  settingsSection?: "services";
+  slug?: "whiteboard";
 }
 
 export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
-    id: "browser",
-    kind: "home",
-    icon: Globe2,
-    name: "Browser",
-    color: "var(--surface-info-emphasis, #3B85BA)",
-    iconColor: "white",
-  },
-  {
     id: "work",
+    path: "__chat__",
     kind: "work",
     icon: MessageSquare,
     name: "Chat",
-    color: "var(--surface-error-emphasis, #BA5236)",
-    iconColor: "white",
+    color: APPEARANCE.chat.background,
+    iconColor: APPEARANCE.chat.foreground,
   },
   {
     id: "terminal",
+    path: "__terminal__",
     kind: "terminals",
     icon: SquareTerminal,
     name: "Terminal",
-    color: "var(--surface-warning-emphasis, #E0AA52)",
-    iconColor: "white",
+    color: APPEARANCE.terminal.background,
+    iconColor: APPEARANCE.terminal.foreground,
   },
   {
     id: "files",
+    path: "__file-browser__",
     kind: "files",
     icon: FolderTree,
     name: "Files",
-    color: "var(--surface-brand-emphasis, #748E59)",
-    iconColor: "white",
+    color: APPEARANCE.files.background,
+    iconColor: APPEARANCE.files.foreground,
+  },
+  {
+    id: "editor",
+    path: "__editor__",
+    kind: "editor",
+    icon: FilePenLine,
+    name: "Editor",
+    color: APPEARANCE.editor.background,
+    iconColor: APPEARANCE.editor.foreground,
+  },
+  {
+    id: "vscode",
+    path: "__vscode__",
+    kind: "vscode",
+    icon: Code2,
+    iconUrl: vscodeIconUrl,
+    name: "VS Code",
+    color: APPEARANCE.vscode.background,
+    iconColor: APPEARANCE.vscode.foreground,
   },
   {
     id: "settings",
+    path: "__settings__",
     kind: "settings",
     icon: Settings,
     name: "Settings",
-    color: "var(--surface-neutral-emphasis, #6B7280)",
-    iconColor: "white",
+    color: APPEARANCE.settings.background,
+    iconColor: APPEARANCE.settings.foreground,
+  },
+  {
+    id: "plugins",
+    path: "__plugins__",
+    kind: "settings",
+    icon: Blocks,
+    name: "Plugins",
+    color: APPEARANCE.plugins.background,
+    iconColor: APPEARANCE.plugins.foreground,
+    settingsSection: "services",
+  },
+  {
+    id: "browser",
+    path: "__browser__",
+    kind: "browser",
+    icon: Globe2,
+    name: "Browser",
+    color: APPEARANCE.browser.background,
+    iconColor: APPEARANCE.browser.foreground,
+  },
+  {
+    id: "notes",
+    path: "apps/notes/index.html",
+    kind: "notes",
+    icon: Notebook,
+    name: "Notes",
+    color: APPEARANCE.notes.background,
+    iconColor: APPEARANCE.notes.foreground,
+  },
+  {
+    id: "whiteboard",
+    path: "apps/whiteboard/index.html",
+    kind: "app",
+    icon: BrushIcon,
+    name: "Whiteboard",
+    color: APPEARANCE.whiteboard.background,
+    iconColor: APPEARANCE.whiteboard.foreground,
+    slug: "whiteboard",
   },
 ];
 

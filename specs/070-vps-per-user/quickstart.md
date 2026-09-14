@@ -22,7 +22,7 @@ HETZNER_SERVER_TYPE=cpx22
 HETZNER_SSH_KEY_NAME=matrix-ops
 PLATFORM_SECRET=...
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_or_pk_test_...
-CUSTOMER_VPS_IMAGE_VERSION=matrix-os-host-dev
+CUSTOMER_VPS_IMAGE_VERSION=stable
 R2_ACCOUNT_ID=...
 R2_ACCESS_KEY_ID=...
 R2_SECRET_ACCESS_KEY=...
@@ -45,14 +45,18 @@ sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 
 The build must fail if `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is missing. A bundle that serves `clerk.example.com` is invalid and must not be published.
 
-Publish:
+Publish an immutable version:
 
 ```text
-system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz
-system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz.sha256
+system-bundles/<version>/matrix-host-bundle.tar.gz
+system-bundles/<version>/matrix-host-bundle.tar.gz.sha256
 ```
 
-For new provisions, bump `CUSTOMER_VPS_IMAGE_VERSION` when the bundle is meant to become the default. For already-running VPSes, refresh the bundle in place or run recovery/reprovisioning until automated bundle upgrades exist.
+Production keeps `CUSTOMER_VPS_IMAGE_VERSION=stable`. Promote the reviewed
+immutable release to the `stable` channel when it should become the default for
+new provisions. The platform resolves and pins the exact version and SHA at
+provision time, so a later channel promotion cannot change an in-flight job and
+clean-image fallback cannot drift from the selected snapshot target.
 
 ## 2. Test-First Checklist
 

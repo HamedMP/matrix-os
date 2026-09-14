@@ -100,7 +100,7 @@ export function createLegacyContainerRoutes(opts: {
           clerkUserId,
           runtimeSlot,
           serverType,
-          ...(developerTools ? { developerTools } : {}),
+          ...(developerTools !== undefined ? { developerTools } : {}),
         });
         await ensureProvisionedPlatformUser(db, {
           clerkUserId,

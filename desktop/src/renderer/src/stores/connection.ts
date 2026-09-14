@@ -6,15 +6,19 @@ import { createApiClient, type ApiClient } from "../lib/api";
 import { clearDraftChats } from "./draft-chat";
 import { advanceRuntimeGeneration } from "./runtime-generation";
 import { reconcileDesktopRuntimeChange } from "./runtime-transition";
-import { resetAppsRuntime } from "./apps";
+import { clearPreloadedAppIcons } from "../features/apps/app-icons";
+import { flushActiveNotesBeforeIdentityChange } from "../features/notes/notes-controller";
+import { clearDesktopQueryCache } from "../lib/query-client";
 
 export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 
 interface ConnectionState {
   status: ConnectionStatus;
   handle: string | null;
+  userId: string | null;
   displayName: string | null;
   imageUrl: string | null;
+  email: string | null;
   platformHost: string;
   runtimeSlot: string;
   // Trusted-core credential generation; advances on every credential
@@ -29,8 +33,10 @@ interface ConnectionState {
 export const useConnection = create<ConnectionState>()((set, get) => ({
   status: "loading",
   handle: null,
+  userId: null,
   displayName: null,
   imageUrl: null,
+  email: null,
   platformHost: "",
   runtimeSlot: "primary",
   authGeneration: 0,
@@ -49,15 +55,17 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       const identityChanged =
         previous.status !== (status.signedIn ? "signed-in" : "signed-out")
         || previous.handle !== (status.handle ?? null)
+        || previous.userId !== (status.userId ?? null)
         || previous.platformHost !== status.platformHost
         || previous.runtimeSlot !== status.runtimeSlot
         || previous.authGeneration !== status.authGeneration;
       // Advance BEFORE publishing the new identity so a response settling in
       // between is already considered stale.
       if (identityChanged) {
+        clearDesktopQueryCache();
         advanceRuntimeGeneration();
         clearDraftChats();
-        resetAppsRuntime();
+        clearPreloadedAppIcons();
       }
       const api = status.signedIn
         ? createApiClient({
@@ -73,8 +81,10 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       set({
         status: status.signedIn ? "signed-in" : "signed-out",
         handle: status.handle ?? null,
+        userId: status.userId ?? null,
         displayName: status.displayName ?? null,
         imageUrl: status.imageUrl ?? null,
+        email: status.email ?? null,
         platformHost: status.platformHost,
         runtimeSlot: status.runtimeSlot,
         authGeneration: status.authGeneration,
@@ -84,11 +94,12 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       console.warn("[connection] failed to refresh auth status:", err instanceof Error ? err.message : String(err));
       // Dropping to signed-out is an identity change too.
       if (get().status !== "signed-out") {
+        clearDesktopQueryCache();
         advanceRuntimeGeneration();
         clearDraftChats();
-        resetAppsRuntime();
+        clearPreloadedAppIcons();
       }
-      set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
+      set({ status: "signed-out", handle: null, userId: null, displayName: null, imageUrl: null, email: null, api: null });
     }
   },
 
@@ -98,10 +109,17 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     // API would become observable before reconciliation, letting surfaces load
     // the new computer under the old runtime generation only to be wiped.
     runtimeSwitchesInFlight += 1;
+    let selectionStarted = false;
     try {
+      // Finish note persistence before the trusted core replaces the credential
+      // used by the currently selected runtime. A failed save leaves the user on
+      // the current computer with their dirty editor state still mounted.
+      await flushActiveNotesBeforeIdentityChange();
+      selectionStarted = true;
       await invoke("runtime:select", { slot });
       // Clear previous-computer state only after the trusted core confirms the
       // switch, and before the new slot becomes observable to the UI.
+      clearDesktopQueryCache();
       reconcileDesktopRuntimeChange();
       // Publish the slot only after invalidating the previous ApiClient. The
       // trusted auth snapshot below may settle on a later turn; keeping the old
@@ -111,7 +129,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     } catch (err: unknown) {
       // The switch never happened: keep every surface on the still-selected
       // computer and refresh the auth snapshot so the API client stays valid.
-      await get().refresh();
+      if (selectionStarted) await get().refresh();
       throw err;
     } finally {
       runtimeSwitchesInFlight -= 1;
@@ -122,13 +140,15 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   signOut: async () => {
+    await flushActiveNotesBeforeIdentityChange();
     await invoke("auth:sign-out", {});
     // Signing out is a runtime identity boundary just like switching
     // computers. Advance the shared generation and synchronously remove every
     // previous-owner cache before publishing signed-out state, so an in-flight
     // request cannot repopulate the next account's desktop.
+    clearDesktopQueryCache();
     reconcileDesktopRuntimeChange();
-    set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
+    set({ status: "signed-out", handle: null, userId: null, displayName: null, imageUrl: null, email: null, api: null });
   },
 }));
 

@@ -127,7 +127,7 @@ describe("workspace startup recovery", () => {
       pr: 42,
       agent: "codex",
       runtime: { type: "zellij" as const, status: "degraded" as const, fallbackReason: "zellij_unavailable" },
-      terminalSessionId: "term_sess_abc123",
+      terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
       transcriptPath: "/home/matrix/home/system/session-output/sess_abc123.jsonl",
       attachedClients: 0,
       writeMode: "closed" as const,

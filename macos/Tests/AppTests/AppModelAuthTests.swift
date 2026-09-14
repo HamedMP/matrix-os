@@ -795,30 +795,36 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.selectedCard?.id, "matrix_session_alpha")
     }
 
-    func testCreateSessionRetriesPureTwoWordCollisions() async throws {
+    func testCreateSessionCreatesProjectWorkspaceTab() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         try await principal.setToken("token")
         let postedNames = LockedStringArray()
         AppTestURLProtocol.setHandler { req in
-            if req.url?.path == "/api/terminal/sessions", req.httpMethod == "POST" {
-                let name = appTestRequestName(req) ?? ""
-                postedNames.append(name)
-                if postedNames.values.count < shellSessionCreateAttempts {
-                    return (
-                        appTestHTTPResponse(req.url!, 409),
-                        Data(#"{"error":{"code":"session_exists","message":"Request failed"}}"#.utf8)
-                    )
-                }
+            if req.url?.path == "/api/projects/main" {
                 return (
-                    appTestHTTPResponse(req.url!, 201),
-                    Data(#"{"name":"\#(name)"}"#.utf8)
+                    appTestHTTPResponse(req.url!, 200),
+                    Data(#"{"project":{"id":"project_main"}}"#.utf8)
                 )
             }
-            if req.url?.path == "/api/terminal/sessions" {
+            if req.url?.path == "/api/terminal/workspaces/ensure", req.httpMethod == "POST" {
+                return (
+                    appTestHTTPResponse(req.url!, 200),
+                    Data(#"{"workspace":{"id":"tws_00000000000000000000000000000000"}}"#.utf8)
+                )
+            }
+            if req.url?.path == "/api/terminal/workspaces/tws_00000000000000000000000000000000/tabs", req.httpMethod == "POST" {
+                let name = appTestRequestName(req) ?? ""
+                postedNames.append(name)
+                return (
+                    appTestHTTPResponse(req.url!, 201),
+                    Data(#"{"tab":{"id":"tt_22222222222222222222222222222222","name":"\#(name)"}}"#.utf8)
+                )
+            }
+            if req.url?.path == "/api/terminal/workspaces" {
                 let name = postedNames.last ?? "swift-falcon"
                 return (
                     appTestHTTPResponse(req.url!, 200),
-                    Data(#"{"sessions":[{"name":"\#(name)","status":"active"}]}"#.utf8)
+                    Data(#"{"workspaces":[{"id":"tws_00000000000000000000000000000000","projectId":"project_main","tabs":[{"id":"tt_22222222222222222222222222222222","name":"\#(name)","status":"running"}]}]}"#.utf8)
                 )
             }
             return (appTestHTTPResponse(req.url!, 200), Data("{}".utf8))
@@ -846,7 +852,7 @@ final class AppModelAuthTests: XCTestCase {
         await fulfillment(of: [loaded], timeout: 5)
 
         let names = postedNames.values
-        XCTAssertEqual(names.count, shellSessionCreateAttempts)
+        XCTAssertEqual(names.count, 1)
         XCTAssertTrue(names.allSatisfy(isTwoWordShellSessionName))
         XCTAssertTrue(model.sessions.map(\.name).contains(names.last ?? ""))
     }

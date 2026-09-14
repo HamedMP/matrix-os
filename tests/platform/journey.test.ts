@@ -86,7 +86,7 @@ function prebillingIntent(
     planSlug: 'matrix_builder', billingInterval: 'monthly', serverType: 'cpx32',
     regionSlug: 'region_fsn1', developerTools: ['codex'], state, revision: 3,
     machineId: null, stripeSessionId: 'cs_1', stripeSessionExpiresAt: '2026-06-11T12:30:00.000Z',
-    leaseExpiresAt: null, reservedHourlyCostMicros: 0,
+    leaseExpiresAt: null,
     paymentConfirmedAt: '2026-06-11T11:59:00.000Z', authorizedAt: null, cleanedAt: null,
     lastErrorCode: null, createdAt: '2026-06-11T11:55:00.000Z', updatedAt: '2026-06-11T11:59:00.000Z',
     ...overrides,
@@ -174,6 +174,7 @@ describe('platform/journey deriveJourneyPhase', () => {
       nextAction: { kind: 'wait' },
       progress: { stage: 'creating_server', startedAt: '2026-06-11T11:55:00.000Z' },
     });
+    expect(['choose_default_installs', 'start_provision']).not.toContain(s.nextAction.kind);
     expect(s.detail).toBe('Finishing your Matrix computer…');
   });
 

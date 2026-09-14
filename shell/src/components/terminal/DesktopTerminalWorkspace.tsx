@@ -1,18 +1,24 @@
 "use client";
 
-import { PlusIcon, SearchIcon, SquareTerminalIcon } from "@/lib/hugeicons";
+import { LoaderCircleIcon, PlusIcon, SearchIcon, SquareTerminalIcon } from "@/lib/hugeicons";
 
 export function DesktopTerminalEmptyState({
   ready,
+  creating,
   onCreate,
 }: {
   ready: boolean;
+  creating: boolean;
   onCreate: () => void;
 }) {
+  const createDisabled = !ready || creating;
+  const createLabel = creating ? "Creating shell session" : "New shell session";
+
   return (
     <section
       className="flex min-h-0 flex-1 flex-col p-7"
       data-terminal-desktop-overview
+      aria-busy={creating}
       style={{ background: "var(--terminal-app-body-bg)", color: "var(--terminal-chrome-fg)" }}
     >
       <header className="flex shrink-0 items-center justify-between gap-4">
@@ -28,8 +34,8 @@ export function DesktopTerminalEmptyState({
           </button>
           <button
             type="button"
-            aria-label="New shell session"
-            disabled={!ready}
+            aria-label={createLabel}
+            disabled={createDisabled}
             className="h-9 rounded-xl px-4 text-sm font-medium transition-transform hover:scale-[1.02] active:scale-95 disabled:opacity-50"
             style={{
               background: "var(--terminal-drawer-primary-button-bg)",
@@ -37,7 +43,7 @@ export function DesktopTerminalEmptyState({
             }}
             onClick={onCreate}
           >
-            New
+            {creating ? "Creating…" : "New"}
           </button>
         </div>
       </header>
@@ -51,8 +57,8 @@ export function DesktopTerminalEmptyState({
           <p className="mt-1 text-xs" style={{ color: "var(--terminal-chrome-muted)" }}>Start a shell to attach from the Terminal app.</p>
           <button
             type="button"
-            aria-label="New shell session"
-            disabled={!ready}
+            aria-label={createLabel}
+            disabled={createDisabled}
             className="mt-4 inline-flex h-9 items-center gap-2 rounded-xl border px-4 text-sm font-medium disabled:opacity-50"
             style={{
               background: "var(--terminal-chrome-control-bg)",
@@ -61,8 +67,14 @@ export function DesktopTerminalEmptyState({
             }}
             onClick={onCreate}
           >
-            <PlusIcon className="size-4" aria-hidden="true" />
-            New shell
+            {creating ? (
+              <span className="inline-flex size-4 animate-spin" aria-hidden="true">
+                <LoaderCircleIcon className="size-4" />
+              </span>
+            ) : (
+              <PlusIcon className="size-4" aria-hidden="true" />
+            )}
+            <span aria-live="polite">{creating ? "Creating…" : "New shell"}</span>
           </button>
         </div>
       </div>

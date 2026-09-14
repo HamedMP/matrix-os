@@ -1,8 +1,73 @@
 import { describe, expect, it } from "vitest";
 import { getAction } from "../../packages/gateway/src/integrations/registry.js";
-import { validateActionParams } from "../../packages/gateway/src/integrations/routes.js";
+import {
+  formatActionParamValidationError,
+  validateActionParams,
+} from "../../packages/gateway/src/integrations/parameter-validation.js";
 
 describe("integrations registry", () => {
+  it("formats every parameter-validation failure through the shared helper", () => {
+    expect(formatActionParamValidationError({
+      valid: false,
+      missing: ["text"],
+      typeErrors: ["maxResults: expected number, got string"],
+      valueErrors: ["replyToPostId: must be a 1-19 digit X post ID"],
+    })).toBe(
+      "Missing required params: text. " +
+      "Invalid param type: maxResults: expected number, got string. " +
+      "Invalid param value: replyToPostId: must be a 1-19 digit X post ID",
+    );
+  });
+
+  it("rejects malformed or out-of-range X action parameters at the route boundary", () => {
+    const byUsername = getAction("twitter", "get_user_by_username");
+    const listPosts = getAction("twitter", "list_user_posts");
+    const search = getAction("twitter", "search_recent_posts");
+    const createPost = getAction("twitter", "create_post");
+
+    expect(byUsername).toBeDefined();
+    expect(listPosts).toBeDefined();
+    expect(search).toBeDefined();
+    expect(createPost).toBeDefined();
+
+    expect(validateActionParams(byUsername!, { username: "bad/name" })).toEqual({
+      valid: false,
+      missing: [],
+      typeErrors: [],
+      valueErrors: ["username: must be a valid X username without @"],
+    });
+    expect(validateActionParams(listPosts!, { userId: "../../admin", maxResults: 101 })).toEqual({
+      valid: false,
+      missing: [],
+      typeErrors: [],
+      valueErrors: [
+        "userId: must be a 1-19 digit X user ID",
+        "maxResults: must be at most 100",
+      ],
+    });
+    expect(validateActionParams(search!, { query: "", maxResults: 9 })).toEqual({
+      valid: false,
+      missing: [],
+      typeErrors: [],
+      valueErrors: [
+        "query: must contain at least 1 character",
+        "maxResults: must be at least 10",
+      ],
+    });
+    expect(validateActionParams(search!, { query: "x".repeat(513) })).toEqual({
+      valid: false,
+      missing: [],
+      typeErrors: [],
+      valueErrors: ["query: must contain at most 512 characters"],
+    });
+    expect(validateActionParams(createPost!, { text: "ok", replyToPostId: "not-an-id" })).toEqual({
+      valid: false,
+      missing: [],
+      typeErrors: [],
+      valueErrors: ["replyToPostId: must be a 1-19 digit X post ID"],
+    });
+  });
+
   it("passes Linear label IDs as an array", () => {
     const action = getAction("linear", "create_issue");
     expect(action).toBeDefined();

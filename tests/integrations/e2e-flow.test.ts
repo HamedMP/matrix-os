@@ -505,7 +505,7 @@ describe("E2E: Actions API (connect -> discover -> call action)", () => {
     await db.destroy();
   });
 
-  it("discovers component keys and uses runAction for service calls", async () => {
+  it("keeps reviewed direct mappings after component discovery", async () => {
     // Step 1: Discover component keys
     const stats = await discoverComponentKeys(pipedream);
     expect(stats.matched).toBeGreaterThan(0);
@@ -534,7 +534,7 @@ describe("E2E: Actions API (connect -> discover -> call action)", () => {
     });
     expect(webhookRes.status).toBe(200);
 
-    // Step 3: Call action using Actions API
+    // Step 3: Discovered components cannot replace reviewed direct mappings.
     const callRes = await app.request("/api/integrations/call", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -547,26 +547,16 @@ describe("E2E: Actions API (connect -> discover -> call action)", () => {
     expect(callRes.status).toBe(200);
     const callData = await callRes.json();
 
-    // Verify the response uses the actions API format
-    expect(callData.summary).toBe("Successfully sent email to test@example.com");
-    expect(callData.data).toEqual({ messageId: "msg_e2e_123", threadId: "thread_e2e_456" });
+    expect(callData.summary).toBeUndefined();
+    expect(callData.data).toEqual({ ok: true });
     expect(callData.service).toBe("gmail");
     expect(callData.action).toBe("send_email");
-
-    // Verify runAction was called with correct configuredProps
-    expect(pipedream.runAction).toHaveBeenCalledWith({
+    expect(pipedream.proxyPost).toHaveBeenCalledWith(expect.objectContaining({
       externalUserId: "pd_ext_actions_e2e",
-      componentKey: "gmail-send-email",
-      configuredProps: {
-        gmail: { authProvisionId: "pd_acc_actions_e2e" },
-        to: "test@example.com",
-        subject: "E2E Test",
-        body: "Hello from Actions API",
-      },
-    });
-
-    // Verify callAction (proxy) was NOT used
-    expect(pipedream.callAction).not.toHaveBeenCalled();
+      accountId: "pd_acc_actions_e2e",
+      url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+    }));
+    expect(pipedream.runAction).not.toHaveBeenCalled();
 
     // Step 4: Verify last_used_at was updated
     const services = await db.listConnectedServices(userId);

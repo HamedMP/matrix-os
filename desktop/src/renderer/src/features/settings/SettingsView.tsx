@@ -16,13 +16,14 @@ import AccountSection from "./sections/AccountSection";
 import AppearanceSection from "./sections/AppearanceSection";
 import RuntimeSection from "./sections/RuntimeSection";
 import AgentSection from "./sections/AgentSection";
+import ProvidersSection from "./sections/ProvidersSection";
+import IdentityPersonalitySection from "./sections/IdentityPersonalitySection";
 import BillingSection from "./sections/BillingSection";
 import IntegrationsSettingsSection from "../integrations/IntegrationsSettingsSection";
 import CliSection from "../plugins/CliSection";
 import McpServersSection from "../plugins/McpServersSection";
 import SkillsSection from "../plugins/SkillsSection";
 import CronSection from "./sections/CronSection";
-import ProvidersSection from "./sections/ProvidersSection";
 import SystemSection from "./sections/SystemSection";
 import { useUi } from "../../stores/ui";
 
@@ -31,8 +32,8 @@ export type SettingsSectionId =
   | "appearance"
   | "billing"
   | "runtime"
-  | "agent"
-  | "providers"
+  | "agents-providers"
+  | "identity-personality"
   | "services"
   | "mcps"
   | "skills"
@@ -48,8 +49,8 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
   { id: "cli", label: "CLI", icon: <SquareTerminal size={15} />, group: "Integrations" },
-  { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
-  { id: "providers", label: "Providers", icon: <Bot size={15} />, group: "Machine" },
+  { id: "agents-providers", label: "Agents & providers", icon: <Bot size={15} />, group: "Machine" },
+  { id: "identity-personality", label: "Identity & personality", icon: <Sparkles size={15} />, group: "Machine" },
   { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
   { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },
   { id: "system", label: "System", icon: <Cpu size={15} />, group: "Machine" },
@@ -63,6 +64,20 @@ const SECTION_GROUPS = Object.keys(SECTIONS_BY_GROUP);
 
 export function isSettingsSectionId(value: string): value is SettingsSectionId {
   return SECTIONS.some((candidate) => candidate.id === value);
+}
+
+export function resolveSettingsSectionId(value: string): SettingsSectionId | null {
+  if (value === "agent" || value === "providers") return "agents-providers";
+  return isSettingsSectionId(value) ? value : null;
+}
+
+function LegacyAgentsProvidersSettings() {
+  return (
+    <div data-settings-adapter="agents-providers-legacy">
+      <AgentSection />
+      <ProvidersSection />
+    </div>
+  );
 }
 
 export function SettingsSidebar({
@@ -125,7 +140,8 @@ export default function SettingsView({
   useEffect(() => {
     if (!requestedSection) return;
     if (controlledSection !== undefined) return;
-    if (isSettingsSectionId(requestedSection)) setLocalSection(requestedSection);
+    const resolvedSection = resolveSettingsSectionId(requestedSection);
+    if (resolvedSection) setLocalSection(resolvedSection);
     useUi.getState().clearRequestedSettingsSection();
   }, [controlledSection, requestedSection]);
 
@@ -140,8 +156,8 @@ export default function SettingsView({
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
-          {section === "agent" ? <AgentSection /> : null}
-          {section === "providers" ? <ProvidersSection /> : null}
+          {section === "agents-providers" ? <LegacyAgentsProvidersSettings /> : null}
+          {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}

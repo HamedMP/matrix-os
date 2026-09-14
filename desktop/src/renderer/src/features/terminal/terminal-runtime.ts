@@ -17,7 +17,6 @@ export function getAttachManager(): AttachManager {
           sessionName,
           chatId,
           runtimeSlot,
-          clientClass: "hard",
           events,
         });
       },

@@ -4,6 +4,9 @@
 // partitions never get this hook (lesson L1: remote content can never ride the
 // native principal).
 
+import { DESKTOP_DEV_RENDERER_HOST } from "../renderer-url";
+import type { DesktopAnalyticsDetail } from "../../shared/desktop-analytics";
+
 interface WebRequestLike {
   onBeforeSendHeaders(
     listener: (
@@ -26,6 +29,23 @@ interface WebRequestLike {
 
 interface SessionLike {
   webRequest: WebRequestLike;
+}
+
+interface SupportAnalyticsSessionLike {
+  webRequest: {
+    onBeforeRequest(
+      listener: (
+        details: { url: string; method: string },
+        callback: (response: Record<string, never>) => void,
+      ) => void,
+    ): void;
+    onCompleted(
+      listener: (details: { url: string; method: string; statusCode: number }) => void,
+    ): void;
+    onErrorOccurred(
+      listener: (details: { url: string; method: string; error: string }) => void,
+    ): void;
+  };
 }
 
 const MATRIX_SUPPORT_REFERRER = "https://app.matrix-os.com/";
@@ -85,7 +105,12 @@ function isLocalDevRendererOrigin(origin: string): boolean {
   if (!normalized) return false;
   const url = new URL(normalized);
   return (
-    (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]") &&
+    (
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "[::1]" ||
+      url.hostname === DESKTOP_DEV_RENDERER_HOST
+    ) &&
     url.port.length > 0
   );
 }
@@ -139,6 +164,48 @@ export function installHeaderInjection(
       }
     }
     callback({ requestHeaders: details.requestHeaders });
+  });
+}
+
+function isSupportMessagePost(
+  details: { url: string; method: string },
+  gatewayOrigin: string | null,
+): boolean {
+  if (details.method !== "POST" || !shouldInjectAuth(details.url, gatewayOrigin)) return false;
+  try {
+    return new URL(details.url).pathname === "/relay/api/conversations/v1/widget/message";
+  } catch {
+    return false;
+  }
+}
+
+export function installSupportMessageAnalytics(
+  rendererSession: SupportAnalyticsSessionLike,
+  getGatewayOrigin: () => string | null,
+  emit: (detail: DesktopAnalyticsDetail) => void,
+): void {
+  rendererSession.webRequest.onBeforeRequest((details, callback) => {
+    if (isSupportMessagePost(details, getGatewayOrigin())) {
+      emit({ name: "desktop_support_send_attempted" });
+    }
+    callback({});
+  });
+  rendererSession.webRequest.onCompleted((details) => {
+    if (!isSupportMessagePost(details, getGatewayOrigin())) return;
+    if (details.statusCode >= 200 && details.statusCode < 300) {
+      emit({ name: "desktop_support_send_succeeded" });
+      return;
+    }
+    const failureKind = details.statusCode >= 400 && details.statusCode < 500
+      ? "client"
+      : details.statusCode >= 500 && details.statusCode < 600
+        ? "server"
+        : "unknown";
+    emit({ name: "desktop_support_send_failed", failureKind });
+  });
+  rendererSession.webRequest.onErrorOccurred((details) => {
+    if (!isSupportMessagePost(details, getGatewayOrigin())) return;
+    emit({ name: "desktop_support_send_failed", failureKind: "network" });
   });
 }
 

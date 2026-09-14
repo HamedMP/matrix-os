@@ -34,4 +34,16 @@ describe("runtime proxy response streaming", () => {
     expect(requestSignal?.aborted).toBe(false);
     expect(await response.text()).toBe("complete media");
   });
+
+  it("still aborts a streaming route if upstream headers never arrive", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => new Promise((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const result = fetchRuntimeProxy(
+      "https://runtime.invalid/api/chats/events", { method: "GET" }, 10, true,
+    ).then(() => "unexpected success", (error: Error) => error.name);
+    await vi.advanceTimersByTimeAsync(11);
+    expect(await result).toBe("AbortError");
+  });
 });

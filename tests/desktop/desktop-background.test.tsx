@@ -21,14 +21,43 @@ vi.mock("../../desktop/src/renderer/src/stores/ui", () => ({
 }));
 
 import DesktopBackground from "../../desktop/src/renderer/src/features/desktop-shell/DesktopBackground";
+import {
+  captureDesktopIconsHydrationRevision,
+  resetDesktopIconsRuntime,
+  useDesktopIcons,
+} from "../../desktop/src/renderer/src/stores/desktop-icons";
 
 afterEach(() => {
   cleanup();
+  resetDesktopIconsRuntime();
   vi.unstubAllGlobals();
   mocks.api = null;
 });
 
 describe("DesktopBackground", () => {
+  it("does not replace canonical icon positions with legacy desktop settings", async () => {
+    const movedSettingsIcon = { path: "__settings__", x: 640, y: 320 };
+    useDesktopIcons.getState().hydrate(
+      [movedSettingsIcon],
+      [],
+      captureDesktopIconsHydrationRevision(),
+    );
+    mocks.api = {
+      get: vi.fn().mockResolvedValue({
+        background: { type: "solid", color: "#123456" },
+        desktopIcons: [{ path: "__settings__", x: 20, y: 204 }],
+      }),
+      getBlob: vi.fn(),
+    };
+
+    const { getByTestId } = render(<DesktopBackground />);
+
+    await waitFor(() => {
+      expect(getByTestId("desktop-background").style.backgroundColor).toBe("rgb(18, 52, 86)");
+    });
+    expect(useDesktopIcons.getState().icons).toEqual([movedSettingsIcon]);
+  });
+
   it("keeps the current wallpaper visible until a focus refresh downloads its replacement", async () => {
     class LoadedImage {
       onload: (() => void) | null = null;

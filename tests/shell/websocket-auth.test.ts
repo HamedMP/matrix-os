@@ -74,9 +74,13 @@ describe("websocket auth", () => {
     await expect(buildAuthenticatedWebSocketUrl("/ws", undefined, { requireToken: true }))
       .resolves
       .toBe("wss://app.matrix-os.com/vm/pr-1018/ws?token=preview-token");
-    await expect(buildAuthenticatedWebSocketUrl("/ws/terminal/session", { session: "main" }, { requireToken: true }))
+    await expect(buildAuthenticatedWebSocketUrl("/ws/terminal/tab", {
+      workspaceId: "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      tabId: "tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      client: "browser",
+    }, { requireToken: true }))
       .resolves
-      .toBe("wss://app.matrix-os.com/vm/pr-1018/ws/terminal/session?session=main&token=preview-token");
+      .toBe("wss://app.matrix-os.com/vm/pr-1018/ws/terminal/tab?workspaceId=tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&tabId=tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&client=browser&token=preview-token");
   });
 
   it("does not reuse a websocket token after the explicit computer route changes", async () => {

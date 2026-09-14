@@ -32,6 +32,62 @@ describe("buildGatewayUrl", () => {
 });
 
 describe("createApiClient", () => {
+  it("opens an authenticated runtime stream without consuming its response body", async () => {
+    const response = new Response("data: {}\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    });
+    const fetchFn = vi.fn().mockResolvedValue(response);
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const caller = new AbortController();
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => "computer-b",
+      fetchFn,
+    });
+
+    const opened = await client.openStream("/api/chats/events", {
+      accept: "text/event-stream",
+      headers: { "last-event-id": "12" },
+      signal: caller.signal,
+      timeoutMs: 300_000,
+    });
+
+    expect(opened).toBe(response);
+    expect(opened.bodyUsed).toBe(false);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/chats/events?runtime=computer-b",
+      expect.objectContaining({
+        method: "GET",
+        headers: { accept: "text/event-stream", "last-event-id": "12" },
+      }),
+    );
+    expect(timeout).toHaveBeenCalledWith(300_000);
+    caller.abort();
+    expect((fetchFn.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
+  it("can pin requests to the original runtime", async () => {
+    let runtimeSlot = "computer-a";
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => runtimeSlot,
+      fetchFn,
+    });
+    const pinned = client.forRuntime(runtimeSlot);
+
+    runtimeSlot = "computer-b";
+    await pinned.post("/api/bridge/query", { action: "update" });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/bridge/query?runtime=computer-a",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("fetches and parses JSON with a timeout signal", async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { projects: [{ slug: "matrix-os" }] }));
     const client = createApiClient({
@@ -43,6 +99,35 @@ describe("createApiClient", () => {
     expect(data.projects[0]!.slug).toBe("matrix-os");
     const [, init] = fetchFn.mock.calls[0]!;
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("composes a caller cancellation signal with the mandatory timeout", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    const caller = new AbortController();
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+
+    await client.get("/api/apps", { signal: caller.signal });
+
+    const [, init] = fetchFn.mock.calls[0]!;
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+    caller.abort();
+    expect((init as RequestInit).signal!.aborted).toBe(true);
+  });
+
+  it("rejects JSON responses that exceed the configured byte limit", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { value: "x".repeat(128) }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+
+    await expect(client.get("/api/ai/provider-settings", { maxBytes: 32 }))
+      .rejects.toMatchObject({ category: "server" });
   });
 
   it("maps 401 to unauthorized AppError", async () => {
@@ -158,14 +243,14 @@ describe("createApiClient", () => {
     const image = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: "image/png" });
 
     await client.postBytes(
-      "/api/terminal/sessions/main/paste-assets",
+      "/api/terminal/workspaces/tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/tabs/tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/paste-assets",
       image,
       { "Content-Type": "image/png", "X-Matrix-Filename": "shot.png" },
       { timeoutMs: 30_000 },
     );
 
     const [url, init] = fetchFn.mock.calls[0]!;
-    expect(url).toBe("https://x.test/api/terminal/sessions/main/paste-assets?runtime=vm-2");
+    expect(url).toBe("https://x.test/api/terminal/workspaces/tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/tabs/tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/paste-assets?runtime=vm-2");
     expect(init).toMatchObject({ method: "POST", body: image });
     expect((init as RequestInit).headers).toEqual({
       "Content-Type": "image/png",

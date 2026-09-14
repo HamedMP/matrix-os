@@ -33,7 +33,6 @@ const CONVERSATION_INDEX_CAP = 100;
 const CONVERSATION_PREVIEW_CAP = 240;
 const CONVERSATION_TITLE_CAP = 80;
 const REPLAY_EVENT_CAP = 2_000;
-const DISCONNECTED_MESSAGE = "Can't reach Matrix OS. Check your connection.";
 const INDEX_ERROR_MESSAGE = "Conversations could not be loaded. Try again.";
 const LOAD_ERROR_MESSAGE = "Conversation could not be opened. Try again.";
 const DELETE_ERROR_MESSAGE = "Chat could not be deleted. Try again.";
@@ -182,7 +181,7 @@ interface HermesChatState {
   transcriptRevision: number;
   seenReplayEventIds: string[];
   providerInstanceLocked: boolean;
-  send: (text: string) => void;
+  send: (text: string) => boolean;
   abort: () => void;
   newChat: () => void;
   showIndex: () => void;
@@ -253,7 +252,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
 
   send: (text) => {
     const trimmed = text.trim();
-    if (trimmed.length === 0 || get().status !== "idle") return;
+    if (trimmed.length === 0 || get().status !== "idle") return false;
     const requestId = nextId();
     const userMessage: ChatMessage = {
       id: nextId(),
@@ -262,28 +261,21 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       requestId,
       timestamp: Date.now(),
     };
-    set((state) => ({
-      messages: [...state.messages, userMessage].slice(-TRANSCRIPT_CAP),
-      status: "thinking",
-      activeRequestId: requestId,
-      transcriptRevision: state.transcriptRevision + 1,
-    }));
     const sent = sendKernelMessage({
       text: trimmed,
       requestId,
       ...(get().sessionId ? { sessionId: get().sessionId! } : {}),
     });
     if (!sent) {
-      set((state) => ({
-        messages: reduceChat(state.messages, {
-          type: "kernel:error",
-          message: DISCONNECTED_MESSAGE,
-          requestId,
-        }).slice(-TRANSCRIPT_CAP),
-        status: "idle",
-        activeRequestId: null,
-      }));
+      return false;
     }
+    set((state) => ({
+      messages: [...state.messages, userMessage].slice(-TRANSCRIPT_CAP),
+      status: "thinking",
+      activeRequestId: requestId,
+      transcriptRevision: state.transcriptRevision + 1,
+    }));
+    return true;
   },
 
   abort: () => {

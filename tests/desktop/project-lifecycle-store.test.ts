@@ -6,6 +6,7 @@ import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-age
 import { useProjectLifecycle } from "@desktop/renderer/src/stores/project-lifecycle";
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "@desktop/renderer/src/stores/project-workspaces";
+import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 
 function deferred<T>() {
@@ -133,8 +134,12 @@ describe("project lifecycle store", () => {
     expect(useProjectLifecycle.getState().error).toBe("Stop active project work before continuing.");
   });
 
-  it("explains when the selected computer predates project lifecycle routes", async () => {
+  it("explains when an installed update is not the bundle serving project actions", async () => {
     const client = api({
+      get: vi.fn(async () => ({
+        version: "v2026.08.19-1002",
+        runningVersion: "v2026.08.18-997",
+      })),
       post: vi.fn(async () => {
         throw new AppError("notFound");
       }),
@@ -143,8 +148,79 @@ describe("project lifecycle store", () => {
     await expect(useProjectLifecycle.getState().archiveProject(client, "repo")).resolves.toBe(false);
 
     expect(useProjectLifecycle.getState().error).toBe(
-      "Update this Matrix computer before managing projects.",
+      "This computer has not finished applying its update. Restart Matrix services, then try again.",
     );
+    expect(client.get).toHaveBeenCalledWith("/api/system/info");
+  });
+
+  it("does not claim an update is missing when installed and running versions match", async () => {
+    const client = api({
+      get: vi.fn(async () => ({
+        version: "v2026.08.19-1002",
+        runningVersion: "v2026.08.19-1002",
+      })),
+      post: vi.fn(async () => {
+        throw new AppError("notFound");
+      }),
+    });
+
+    await expect(useProjectLifecycle.getState().archiveProject(client, "repo")).resolves.toBe(false);
+
+    expect(useProjectLifecycle.getState().error).toBe(
+      "Project management is unavailable on this computer. Restart Matrix services and try again.",
+    );
+  });
+
+  it("preserves structured not-found errors without probing system identity", async () => {
+    const client = api({
+      post: vi.fn(async () => {
+        throw new AppError("notFound", { detail: "not_found" });
+      }),
+    });
+
+    await expect(useProjectLifecycle.getState().archiveProject(client, "repo")).resolves.toBe(false);
+
+    expect(useProjectLifecycle.getState().error).toBe("That item could not be found.");
+    expect(client.get).not.toHaveBeenCalledWith("/api/system/info");
+  });
+
+  it("falls back to safe restart guidance when runtime identity cannot be inspected", async () => {
+    const client = api({
+      get: vi.fn(async () => {
+        throw new AppError("offline");
+      }),
+      post: vi.fn(async () => {
+        throw new AppError("notFound");
+      }),
+    });
+
+    await expect(useProjectLifecycle.getState().archiveProject(client, "repo")).resolves.toBe(false);
+
+    expect(useProjectLifecycle.getState().error).toBe(
+      "Project management is unavailable on this computer. Restart Matrix services and try again.",
+    );
+  });
+
+  it("does not apply a stale diagnostic after the active runtime changes", async () => {
+    const systemInfo = deferred<unknown>();
+    const client = api({
+      get: vi.fn(() => systemInfo.promise),
+      post: vi.fn(async () => {
+        throw new AppError("notFound");
+      }),
+    });
+
+    const action = useProjectLifecycle.getState().archiveProject(client, "repo");
+    await vi.waitFor(() => expect(client.get).toHaveBeenCalledWith("/api/system/info"));
+    advanceRuntimeGeneration();
+    useProjectLifecycle.setState(useProjectLifecycle.getInitialState(), true);
+    systemInfo.resolve({
+      version: "v2026.08.19-1002",
+      runningVersion: "v2026.08.18-997",
+    });
+
+    await expect(action).resolves.toBe(false);
+    expect(useProjectLifecycle.getState().error).toBeNull();
   });
 
   it("sends exact typed confirmation when permanently deleting a project", async () => {

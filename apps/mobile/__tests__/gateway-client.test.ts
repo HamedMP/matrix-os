@@ -208,7 +208,7 @@ describe("GatewayClient", () => {
   it("routes websockets for hosted computers through the canonical platform origin", () => {
     const routed = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
     expect(routed.wsUrl).toBe("wss://app.matrix-os.com/ws?runtime=pr-919");
-    expect(routed.terminalWsUrl).toBe("wss://app.matrix-os.com/ws/terminal/session?runtime=pr-919");
+    expect(routed.terminalWsUrl).toBe("wss://app.matrix-os.com/ws/terminal/tab?runtime=pr-919");
 
     const primary = new GatewayClient("https://app.matrix-os.com/vm/neo");
     expect(primary.wsUrl).toBe("wss://app.matrix-os.com/ws");
@@ -581,7 +581,7 @@ describe("GatewayClient", () => {
         hasMore: false,
         limit: 20,
       },
-      terminalSessions: {
+      terminalWorkspaces: {
         items: [],
         limit: 20,
         hasMore: false,
@@ -609,7 +609,14 @@ describe("GatewayClient", () => {
     const client = new GatewayClient("http://localhost:4000", "token");
     await expect(client.getCodingAgentRuntimeSummary()).resolves.toEqual({
       ok: true,
-      summary,
+      summary: {
+        ...summary,
+        terminalSessions: {
+          items: [],
+          hasMore: false,
+          limit: 50,
+        },
+      },
     });
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/coding-agents/summary", expect.objectContaining({
       headers: expect.objectContaining({
@@ -742,7 +749,7 @@ describe("GatewayClient", () => {
         title: "Repair mobile route",
         status: "running",
         attention: "none",
-        terminalSessionId: "matrix-abc1234",
+        terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
         createdAt: "2026-07-06T00:00:00.000Z",
         updatedAt: "2026-07-06T00:01:00.000Z",
       },

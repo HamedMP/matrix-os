@@ -4,10 +4,12 @@ import {
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatStreamServerFrameSchema,
   CanonicalCreateChatRequestSchema,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
@@ -76,6 +78,20 @@ const run = {
 } as const;
 
 describe("canonical Chat API contracts", () => {
+  it("rejects WebSocket-only pong frames from the server event contract", () => {
+    expect(CanonicalChatStreamServerFrameSchema.safeParse({ type: "pong" }).success).toBe(false);
+    expect(CanonicalChatStreamServerFrameSchema.parse({
+      type: "chat.event",
+      event: {
+        cursor: 4,
+        chatId: "chat_4",
+        revision: 4,
+        eventType: "run.message",
+        createdAt: "2026-08-25T12:00:00.000Z",
+      },
+    })).toMatchObject({ type: "chat.event" });
+  });
+
   it("accepts bounded create requests without client-controlled ownership or Chat ids", () => {
     expect(CanonicalCreateChatRequestSchema.parse({
       clientRequestId: "req_create_api_test",
@@ -104,6 +120,26 @@ describe("canonical Chat API contracts", () => {
       .toEqual({ pinned: true });
     expect(CanonicalUpdateChatUserStateRequestSchema.safeParse({
       pinned: true,
+      ownerId: "other_owner",
+    }).success).toBe(false);
+  });
+
+  it("accepts only bounded, non-empty revision-guarded Chat titles", () => {
+    expect(CanonicalUpdateChatTitleRequestSchema.parse({
+      baseRevision: 4,
+      title: "  Release plan  ",
+    })).toEqual({ baseRevision: 4, title: "Release plan" });
+    expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
+      baseRevision: 4,
+      title: "   ",
+    }).success).toBe(false);
+    expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
+      baseRevision: 4,
+      title: "x".repeat(161),
+    }).success).toBe(false);
+    expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
+      baseRevision: 4,
+      title: "Release plan",
       ownerId: "other_owner",
     }).success).toBe(false);
   });
@@ -143,6 +179,30 @@ describe("canonical Chat API contracts", () => {
       runs: [],
       activities: [],
     }).success).toBe(false);
+  });
+
+  it("preserves the exact successful completion fact in canonical list and detail records", () => {
+    const completion = {
+      runId: "run_completed_exact",
+      completedAt: "2026-08-25T12:02:00.000Z",
+      unacknowledged: true,
+    };
+    const completedRecord = {
+      ...chatRecord,
+      latestSuccessfulCompletion: completion,
+    };
+
+    const list = CanonicalChatListResponseSchema.parse({ items: [completedRecord] });
+    const detail = CanonicalChatDetailResponseSchema.parse({
+      record: completedRecord,
+      messages: [],
+      turns: [],
+      runs: [],
+      activities: [],
+    });
+
+    expect(list.items[0]?.latestSuccessfulCompletion).toEqual(completion);
+    expect(detail.record).toEqual(list.items[0]);
   });
 
   it("accepts only bounded user Turn input and keeps ownership and paths server-owned", () => {

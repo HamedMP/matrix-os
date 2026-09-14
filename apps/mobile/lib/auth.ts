@@ -15,6 +15,10 @@ export async function authenticateBiometric(): Promise<boolean> {
   const available = await isBiometricAvailable();
   if (!available) return true;
 
+  return authenticateBiometricNow();
+}
+
+export async function authenticateBiometricNow(): Promise<boolean> {
   const result = await LocalAuthentication.authenticateAsync({
     promptMessage: "Unlock Matrix OS",
     fallbackLabel: "Use passcode",
