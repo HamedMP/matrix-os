@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TerminalTabSchema } from "@matrix-os/contracts";
 import {
   createAgentSessionManager,
   hasActiveWorkspaceSessionForTerminalRef,
@@ -64,7 +65,7 @@ describe("agent-session-manager", () => {
       buildLaunch: vi.fn((input: AgentLaunchInput): AgentLaunchSpec => ({
         command: input.agent,
         args: ["--safe-mode", input.prompt ?? ""].filter((arg) => arg.length > 0),
-        cwd: join(homePath, "projects", "repo", "worktrees", worktreeId),
+        cwd: input.cwd,
         env: {},
       })),
     };
@@ -98,6 +99,43 @@ describe("agent-session-manager", () => {
       }]),
     };
   }
+
+  it.each([
+    { label: "home", request: {}, cwd: "" },
+    { label: "project", request: { projectSlug: "repo" }, cwd: "projects/repo/repo" },
+    { label: "worktree", request: { projectSlug: "repo", worktreeId }, cwd: `projects/repo/worktrees/${worktreeId}` },
+  ])("passes a valid relative Terminal cwd for $label while preserving launcher cwd", async ({ request, cwd }) => {
+    const createTab = vi.fn(async (_id: string, input: { cwd: string }) => {
+      TerminalTabSchema.shape.cwd.parse(input.cwd);
+      return { id: "tt_00000000000000000000000000000001" };
+    });
+    const { manager, agentLauncher } = createManager({ terminalRuntime: { createTab } });
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", ...request });
+    expect(result.ok).toBe(true);
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({ cwd: join(homePath, cwd) }));
+    expect(createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ cwd }));
+  });
+
+  it("converts internal Chat workspace roots without changing the launcher directory", async () => {
+    const { manager, terminalRuntime, agentLauncher } = createManager();
+    const workspaceRoot = join(homePath, "projects", "repo", "repo");
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", workspaceRoot });
+    expect(result.ok).toBe(true);
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({ cwd: await realpath(workspaceRoot) }));
+    expect(terminalRuntime.createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ cwd: "projects/repo/repo" }));
+  });
+
+  it("releases a worktree lease before returning a rejected external launch directory", async () => {
+    const { manager, agentLauncher, terminalRuntime, worktreeManager } = createManager();
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
+    agentLauncher.buildLaunch.mockReturnValueOnce({ command: "codex", args: [], cwd: tmpdir(), env: {} });
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", projectSlug: "repo", worktreeId });
+    expect(result.ok).toBe(false);
+    expect(terminalRuntime.ensureWorkspace).not.toHaveBeenCalled();
+    expect(terminalRuntime.createTab).not.toHaveBeenCalled();
+    expect(releaseLease).toHaveBeenCalled();
+    await expect(stat(join(homePath, "system", "sessions", "sess_abc123.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
 
   it("deletes only inactive project sessions owned by the requesting user", async () => {
     const { manager } = createManager();

@@ -24,6 +24,7 @@ import type { createAgentLauncher } from "./agent-launcher.js";
 import type { createWorktreeManager, WorktreeRecord } from "./worktree-manager.js";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { codexProviderEventPath } from "./coding-agents/codex-event-bridge.js";
+import { agentTerminalCwd } from "./agent-terminal-cwd.js";
 import { logSessionStartupFailure } from "./session-startup-diagnostics.js";
 
 export type SessionKind = "shell" | "agent";
@@ -434,6 +435,7 @@ export function createAgentSessionManager(options: {
 
       let terminalRef: TerminalRef | undefined;
       try {
+        const terminalCwd = await agentTerminalCwd(homePath, launch.cwd);
         const workspace = await options.terminalRuntime.ensureWorkspace(projectId ? { projectId } : {});
         const command = [
           "env",
@@ -443,7 +445,7 @@ export function createAgentSessionManager(options: {
         ];
         const tab = await options.terminalRuntime.createTab(workspace.id, {
           name: request.agent ?? "shell",
-          cwd: launch.cwd,
+          cwd: terminalCwd,
           command,
           ...(request.agent ? { agent: { providerId: request.agent } } : {}),
         });
