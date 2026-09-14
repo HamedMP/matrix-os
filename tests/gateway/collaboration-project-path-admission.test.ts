@@ -61,4 +61,23 @@ describe("legacy project path admission", () => {
     }, async () => "ordinary")).resolves.toBe("ordinary");
     expect(withLegacyAdmission).not.toHaveBeenCalled();
   });
+
+  it("admits complete stored manifests larger than the interactive request limit", async () => {
+    const withLegacyAdmission = vi.fn(async (_input, operation: () => Promise<string>) => operation());
+    const admission = createLegacyProjectPathAdmission({
+      homePath,
+      listOwnerProjects: async () => [
+        { id: "proj_a", localPath: join(homePath, "projects", "outer") },
+      ],
+      projectOperationAdmission: { withLegacyAdmission },
+    });
+
+    await expect(admission.withStoredPaths({
+      ownerType: "personal",
+      ownerId: "user_owner",
+      paths: Array.from({ length: 10_001 }, () => "projects/outer/file.ts"),
+      kind: "write",
+    }, async () => "emptied")).resolves.toBe("emptied");
+    expect(withLegacyAdmission).toHaveBeenCalledTimes(1);
+  });
 });
