@@ -9,10 +9,18 @@ function fixture(resume = false, ignorePermissions = false) {
   let stream!: ReadableStreamDefaultController<Uint8Array>;
   let complete!: (response: Response) => void;
   const send = (type: string, properties: unknown) => stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type, properties })}\n\n`));
+  let permissions = resume ? [...OPENCODE_READ_ONLY_PERMISSIONS] : [];
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
-    if (path === "/session" || (path === "/session/ses_test" && init.method === "PATCH")) return Response.json({ id: "ses_test", directory: "/work/repo", permission: OPENCODE_READ_ONLY_PERMISSIONS });
-    if (path === "/session/ses_test" && init.method === "GET") return Response.json({ id: "ses_test", directory: "/work/repo", permission: ignorePermissions ? [] : OPENCODE_READ_ONLY_PERMISSIONS.map(rule => ({ action: rule.action, pattern: rule.pattern, permission: rule.permission })) });
+    if (path === "/session") {
+      permissions = JSON.parse(String(init.body)).permission;
+      return Response.json({ id: "ses_test" });
+    }
+    if (path === "/session/ses_test" && init.method === "PATCH") {
+      permissions.push(...JSON.parse(String(init.body)).permission);
+      return Response.json({ id: "ses_test" });
+    }
+    if (path === "/session/ses_test" && init.method === "GET") return Response.json({ id: "ses_test", directory: "/work/repo", permission: ignorePermissions ? [] : permissions.map(rule => ({ action: rule.action, pattern: rule.pattern, permission: rule.permission })) });
     if (path === "/event") return new Response(new ReadableStream({ start(controller) { stream = controller; } }), { headers: { "content-type": "text/event-stream" } });
     if (path === "/session/ses_test/message") {
       queueMicrotask(() => send("question.asked", { id: "que_test", sessionID: "ses_test", questions: [{ header: "Color", question: "Choose colors", options: [{ label: "Red", description: "Red" }, { label: "Blue", description: "Blue" }], multiple: true, custom: false }] }));
@@ -32,8 +40,8 @@ function fixture(resume = false, ignorePermissions = false) {
   return { process, lines, exited, spawn, fetch, child, send };
 }
 describe("OpenCode local server transport", () => {
-  it("answers a native pending question in the same authenticated session", async () => {
-    const run = fixture();
+  it.each([false, true])("answers a native pending question without appending permissions (resume: %s)", async (resume) => {
+    const run = fixture(resume);
     await vi.waitFor(() => expect(run.lines.some(line => line.type === "matrix.input.requested")).toBe(true));
     const request = run.lines.find(line => line.type === "matrix.input.requested")!;
     expect(request.questions[0]).toMatchObject({ questionId: "q0", multiSelect: true, allowOther: false });
@@ -47,6 +55,7 @@ describe("OpenCode local server transport", () => {
     expect(run.fetch.mock.calls.every(([, init]) => new Headers(init.headers).get("authorization") === `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`)).toBe(true);
     expect(run.fetch.mock.calls.find(([url]) => url.endsWith("/reply"))?.[1].body).toBe(JSON.stringify({ answers: [["Red", "Blue"]] }));
     expect(run.child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(run.fetch.mock.calls.some(([, init]) => init.method === "PATCH")).toBe(false);
   });
   it("verifies resumed permissions before admitting any prompt", async () => {
     const run = fixture(true, true);

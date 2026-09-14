@@ -145,7 +145,8 @@ export function createOpenCodeServerProcess(
       sessionId = created.id;
     }
     const path = `/session/${encodeURIComponent(sessionId)}`;
-    await boundedJson(await request(path, { permission: OPENCODE_READ_ONLY_PERMISSIONS }, "PATCH"));
+    // OpenCode PATCH appends permission rules; creation already sets the policy.
+    // Resumed sessions must retain that exact policy before any prompt is sent.
     const verified = object(await boundedJson(await request(path)));
     if (verified?.id !== sessionId || verified.directory !== options.cwd || (!Array.isArray(verified.permission) || verified.permission.length !== OPENCODE_READ_ONLY_PERMISSIONS.length
       || verified.permission.some((value, index) => { const rule = object(value); const expected = OPENCODE_READ_ONLY_PERMISSIONS[index]!;
