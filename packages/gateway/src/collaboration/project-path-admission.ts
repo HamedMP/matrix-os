@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 import { z } from "zod/v4";
 import { resolveWithinHome, resolveWritableFileApiPath } from "../path-security.js";
 import {
@@ -8,6 +8,8 @@ import {
 
 const MAX_MATCHED_PROJECTS = 32;
 const MAX_OWNER_PROJECTS = 10_000;
+const MAX_STORED_PATHS = 50_000;
+const PATHS_PER_EVENT_LOOP_TURN = 256;
 const PathSchema = z.string().min(1).max(4_096);
 const OwnerIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const AdmissionContextSchema = z.object({
@@ -35,11 +37,6 @@ export interface LegacyProjectPathAdmission {
   }, operation: () => Promise<T>): Promise<T>;
 }
 
-function containsPath(root: string, target: string): boolean {
-  const path = relative(resolve(root), target);
-  return path === "" || (!path.startsWith(`..${sep}`) && path !== ".." && !isAbsolute(path));
-}
-
 export function createLegacyProjectPathAdmission(options: {
   homePath: string;
   listOwnerProjects(ownerType: "personal" | "organization", ownerId: string): Promise<Array<{
@@ -57,7 +54,7 @@ export function createLegacyProjectPathAdmission(options: {
       paths: readonly string[];
       kind: "write" | "run";
     },
-    maxPaths: number | null,
+    maxPaths: number,
     operation: () => Promise<T>,
   ): Promise<T> {
     const input = AdmissionContextSchema.safeParse({
@@ -66,7 +63,7 @@ export function createLegacyProjectPathAdmission(options: {
       kind: rawInput.kind,
     });
     if (!input.success) throw new ProjectFenceError("invalid");
-    if (!Array.isArray(rawInput.paths) || (maxPaths !== null && rawInput.paths.length > maxPaths)) {
+    if (!Array.isArray(rawInput.paths) || rawInput.paths.length > maxPaths) {
       throw new ProjectFenceError("invalid");
     }
 
@@ -74,21 +71,36 @@ export function createLegacyProjectPathAdmission(options: {
       await options.listOwnerProjects(input.data.ownerType, input.data.ownerId),
     );
     if (!projects.success) throw new ProjectFenceError("unavailable");
-    const projectRoots = projects.data.flatMap((project) => {
+    // At most MAX_OWNER_PROJECTS keys and values are inserted. Ancestor lookup
+    // avoids multiplying every maintenance path by the full project inventory.
+    const projectsByRoot = new Map<string, typeof projects.data>();
+    for (const project of projects.data) {
       const root = resolveWithinHome(homePath, project.localPath);
-      return root === null ? [] : [{ project, root }];
-    });
+      if (root === null) continue;
+      const entries = projectsByRoot.get(root);
+      if (entries) entries.push(project);
+      else projectsByRoot.set(root, [project]);
+    }
     const unique: typeof projects.data = [];
-    for (const candidate of rawInput.paths) {
+    for (const [index, candidate] of rawInput.paths.entries()) {
+      if (index > 0 && index % PATHS_PER_EVENT_LOOP_TURN === 0) {
+        await new Promise<void>((complete) => setImmediate(complete));
+      }
       const path = PathSchema.safeParse(candidate);
       if (!path.success) throw new ProjectFenceError("invalid");
       const target = resolveWritableFileApiPath(homePath, path.data);
       if (!target) continue;
-      for (const entry of projectRoots) {
-        if (!containsPath(entry.root, target)
-          || unique.some((project) => project.id === entry.project.id)) continue;
-        unique.push(entry.project);
-        if (unique.length > MAX_MATCHED_PROJECTS) throw new ProjectFenceError("capacity");
+      let ancestor = target;
+      for (;;) {
+        for (const project of projectsByRoot.get(ancestor) ?? []) {
+          if (unique.some((entry) => entry.id === project.id)) continue;
+          unique.push(project);
+          if (unique.length > MAX_MATCHED_PROJECTS) throw new ProjectFenceError("capacity");
+        }
+        if (ancestor === homePath) break;
+        const parent = dirname(ancestor);
+        if (parent === ancestor) break;
+        ancestor = parent;
       }
     }
     unique.sort((left, right) => left.id.localeCompare(right.id));
@@ -122,10 +134,7 @@ export function createLegacyProjectPathAdmission(options: {
       paths: readonly string[];
       kind: "write" | "run";
     }, operation: () => Promise<T>): Promise<T> {
-      // Stored manifests are already resident in memory. Validate entries one
-      // at a time so maintenance operations can drain every valid manifest
-      // while the matched-project lock set remains bounded above.
-      return admit(rawInput, null, operation);
+      return admit(rawInput, MAX_STORED_PATHS, operation);
     },
   };
 }
