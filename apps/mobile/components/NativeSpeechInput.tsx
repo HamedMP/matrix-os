@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Text, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { requestRecordingPermissionsAsync, useAudioStream, type AudioStreamBuffer } from 'expo-audio';
+import { getRandomBytes } from 'expo-crypto';
 import Cancel01Icon from '@hugeicons/core-free-icons/Cancel01Icon';
 import Mic01Icon from '@hugeicons/core-free-icons/Mic01Icon';
 import StopIcon from '@hugeicons/core-free-icons/StopIcon';
@@ -11,8 +12,7 @@ import { createNativeSpeechCapture, type NativeSpeechRecording } from '@/lib/spe
 import { createNativeSpeechClient } from '@/lib/speech/client';
 
 function nativeSpeechRequestId(): string {
-  const entropy = new Uint8Array(12);
-  globalThis.crypto.getRandomValues(entropy);
+  const entropy = getRandomBytes(12);
   return `sp_${Date.now()}_${Array.from(entropy, byte => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
@@ -21,13 +21,13 @@ export function NativeSpeechInput(props: {
   baseUrl: string;
   runtimeSlot: string;
   getToken(): Promise<string | null>;
-  getDraftRevision(): number;
-  onDraft(text: string, recordingRevision: number): void | string;
+  getDraftGeneration(): number;
+  onDraft(text: string, recordingGeneration: number): void | string;
   onActive(active: boolean): void;
 }) {
   const { theme } = useUnistyles();
   const bufferListener = useRef<((buffer: AudioStreamBuffer) => void) | null>(null);
-  const recordingRevision = useRef(0);
+  const recordingGeneration = useRef(0);
   const commitDraft = useRef(props.onDraft);
   commitDraft.current = props.onDraft;
   const { stream } = useAudioStream({ sampleRate: 16000, channels: 1, encoding: 'int16', onBuffer: buffer => bufferListener.current?.(buffer) });
@@ -36,7 +36,7 @@ export function NativeSpeechInput(props: {
     start: () => stream.start(), stop: () => stream.stop(),
     subscribe: callback => { bufferListener.current = callback; return { remove: () => { if (bufferListener.current === callback) bufferListener.current = null; } }; },
   }, requestRecordingPermissionsAsync), [stream]);
-  const onDraft = useCallback((text: string) => commitDraft.current(text, recordingRevision.current), []);
+  const onDraft = useCallback((text: string) => commitDraft.current(text, recordingGeneration.current), []);
   const speech = usePlatformSpeechDraft<NativeSpeechRecording>({
     scopeKey: props.scopeKey,
     client,
@@ -62,7 +62,7 @@ export function NativeSpeechInput(props: {
   }, [speech.inputLevel, speech.inputLevelSequence, speech.phase]);
 
   const start = () => {
-    recordingRevision.current = props.getDraftRevision();
+    recordingGeneration.current = props.getDraftGeneration();
     void speech.start();
   };
   const commonButton = { buttonSize: 44, iconSize: 21 } as const;
@@ -71,6 +71,10 @@ export function NativeSpeechInput(props: {
     return <IconButton {...commonButton} accessibilityLabel="Checking speech input" icon={Mic01Icon} loading disabled />;
   }
   if (speech.phase === 'unavailable') {
+    if (speech.unavailableReason === 'capability_check_failed'
+      || speech.unavailableReason === 'temporarily_unavailable') {
+      return <IconButton {...commonButton} accessibilityLabel="Retry speech input" accessibilityHint="Speech availability could not be checked" icon={Mic01Icon} iconColor={theme.v2.appColors.muted} onPress={speech.retryCapabilities} />;
+    }
     return <IconButton {...commonButton} accessibilityLabel="Speech input unavailable" accessibilityHint="Speech input is not enabled for this computer" icon={Mic01Icon} iconColor={theme.v2.appColors.muted} disabled />;
   }
   if (speech.phase === 'requesting_permission') {

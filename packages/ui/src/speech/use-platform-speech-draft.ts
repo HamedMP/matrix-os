@@ -12,9 +12,19 @@ export type PlatformSpeechDraftPhase =
   | "transcribing"
   | "error";
 
+export type PlatformSpeechUnavailableReason =
+  | "unsupported"
+  | "capability_check_failed"
+  | "disabled"
+  | "misconfigured"
+  | "funding_unavailable"
+  | "media_validation_unavailable"
+  | "temporarily_unavailable";
+
 export interface UsePlatformSpeechDraftResult {
   phase: PlatformSpeechDraftPhase;
   error: string | null;
+  unavailableReason: PlatformSpeechUnavailableReason | null;
   isSupported: boolean;
   elapsedMs: number;
   /** Current microphone energy, normalized to the inclusive range 0..1. */
@@ -24,6 +34,7 @@ export interface UsePlatformSpeechDraftResult {
   start(): Promise<void>;
   stop(): void;
   cancel(): void;
+  retryCapabilities(): void;
 }
 
 export interface PlatformSpeechRecording {
@@ -66,6 +77,7 @@ interface ActiveRecording<TRecording extends PlatformSpeechRecording> {
   elapsedTimer: ReturnType<typeof setInterval>;
   stopping: boolean;
   maxBytes: number;
+  requestId: string;
 }
 
 interface ActiveRequest {
@@ -118,6 +130,8 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   const client = options.client;
   const [phase, setPhase] = useState<PlatformSpeechDraftPhase>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [unavailableReason, setUnavailableReason] = useState<PlatformSpeechUnavailableReason | null>(null);
+  const [capabilityAttempt, setCapabilityAttempt] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [inputMeter, setInputMeter] = useState({ level: 0, sequence: 0 });
   const [capabilities, setCapabilities] = useState<SpeechCapabilitiesResponse | null>(null);
@@ -157,6 +171,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     setCapabilities(null);
     setError(null);
     if (!options.captureAdapter.isSupported()) {
+      setUnavailableReason("unsupported");
       setPhase("unavailable");
       return () => {
         controller.abort();
@@ -164,15 +179,25 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
         disposeActive(true);
       };
     }
+    setUnavailableReason(null);
     setPhase("loading");
     void client.capabilities(controller.signal).then((value) => {
       if (generationRef.current !== generation) return;
       setCapabilities(value);
-      setPhase(supportedMediaType(value, options.captureAdapter) ? "idle" : "unavailable");
+      if (supportedMediaType(value, options.captureAdapter)) {
+        setUnavailableReason(null);
+        setPhase("idle");
+      } else {
+        setUnavailableReason(value.fileTranscription.status === "unavailable"
+          ? value.fileTranscription.reason
+          : "unsupported");
+        setPhase("unavailable");
+      }
     }).catch((caught: unknown) => {
       if (generationRef.current !== generation || controller.signal.aborted) return;
       console.warn("[speech-draft] capability check failed", caught instanceof Error ? caught.name : "UnknownError");
       setCapabilities(null);
+      setUnavailableReason("capability_check_failed");
       setPhase("unavailable");
     });
     return () => {
@@ -184,7 +209,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     // instances are stable wiring dependencies and must not restart an active
     // microphone merely because an object identity changes during render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.scopeKey]);
+  }, [options.scopeKey, capabilityAttempt]);
 
   const finishRecording = async (active: ActiveRecording<TRecording>): Promise<void> => {
     if (active.stopping) return;
@@ -213,7 +238,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       setPhase("error");
       return;
     }
-    const requestId = (options.requestIdFactory ?? defaultRequestId)();
+    const requestId = active.requestId;
     const controller = new AbortController();
     requestRef.current = { requestId, controller, generation: active.generation };
     setError(null);
@@ -253,6 +278,15 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       || captureStartRef.current || recordingRef.current || requestRef.current) return;
     const mediaType = supportedMediaType(capabilities, options.captureAdapter);
     if (!mediaType || capabilities.fileTranscription.status !== "ready") return;
+    let requestId: string;
+    try {
+      requestId = (options.requestIdFactory ?? defaultRequestId)();
+    } catch (caught: unknown) {
+      console.warn("[speech-draft] request identity creation failed", caught instanceof Error ? caught.name : "UnknownError");
+      setError("Speech recording could not start");
+      setPhase("error");
+      return;
+    }
     const generation = ++generationRef.current;
     setError(null);
     setElapsedMs(0);
@@ -315,6 +349,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       }, 250),
       stopping: false,
       maxBytes: policy.maxBytes,
+      requestId,
     };
     recordingRef.current = active;
     setPhase("recording");
@@ -334,9 +369,15 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     setPhase(supportedMediaType(capabilities, options.captureAdapter) ? "idle" : "unavailable");
   }
 
+  function retryCapabilities(): void {
+    if (recordingRef.current || requestRef.current || captureStartRef.current) return;
+    setCapabilityAttempt((current) => current + 1);
+  }
+
   return {
     phase,
     error,
+    unavailableReason,
     isSupported: phase !== "loading"
       && phase !== "unavailable"
       && supportedMediaType(capabilities, options.captureAdapter) !== undefined,
@@ -346,5 +387,6 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     start,
     stop,
     cancel,
+    retryCapabilities,
   };
 }

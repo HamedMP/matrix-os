@@ -2,9 +2,11 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { AppState, type AppStateStatus } from 'react-native';
 const mockCancel = jest.fn();
-const mockSpeech = { phase: 'idle', isSupported: true, error: null as string | null, inputLevel: 0, inputLevelSequence: 0, elapsedMs: 0, start: jest.fn(), stop: jest.fn(), cancel: mockCancel };
+const mockRetryCapabilities = jest.fn();
+const mockSpeech = { phase: 'idle', isSupported: true, error: null as string | null, unavailableReason: null as string | null, inputLevel: 0, inputLevelSequence: 0, elapsedMs: 0, start: jest.fn(), stop: jest.fn(), cancel: mockCancel, retryCapabilities: mockRetryCapabilities };
 jest.mock('@matrix-os/ui/speech', () => ({ usePlatformSpeechDraft: () => mockSpeech }), { virtual: true });
 jest.mock('expo-audio', () => ({ useAudioStream: () => ({ stream: { start: jest.fn(), stop: jest.fn() } }), requestRecordingPermissionsAsync: jest.fn() }));
+jest.mock('expo-crypto', () => ({ getRandomBytes: () => new Uint8Array(12).fill(7) }));
 jest.mock('../lib/speech/client', () => ({ createNativeSpeechClient: jest.fn() }));
 jest.mock('react-native-unistyles', () => ({ useUnistyles: () => ({ theme: { v2: { colors: { textDefault: 'black' }, appColors: { ink: 'black', muted: 'gray', blue: 'blue', surface: 'white', danger: 'red' } } } }) }));
 import { NativeSpeechInput } from '../components/NativeSpeechInput';
@@ -13,10 +15,11 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockSpeech.phase = 'idle';
   mockSpeech.error = null;
+  mockSpeech.unavailableReason = null;
 });
 
 function props() {
-  return { scopeKey: 'owner:computer:chat', baseUrl: 'https://example.com', runtimeSlot: 'primary', getToken: async () => 'token', getDraftRevision: () => 3, onDraft: jest.fn(), onActive: jest.fn() };
+  return { scopeKey: 'owner:computer:chat', baseUrl: 'https://example.com', runtimeSlot: 'primary', getToken: async () => 'token', getDraftGeneration: () => 3, onDraft: jest.fn(), onActive: jest.fn() };
 }
 
 it('cancels on background and reports active capture to the composer', () => {
@@ -75,5 +78,18 @@ it.each([
   let root!: ReturnType<typeof create>;
   act(() => { root = create(<NativeSpeechInput {...props()} />); });
   expect(root.root.findByProps({ accessibilityLabel: label })).toBeTruthy();
+  act(() => root.unmount());
+});
+
+it('allows retry after a transient capability check failure', () => {
+  jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
+  mockSpeech.phase = 'unavailable';
+  mockSpeech.unavailableReason = 'capability_check_failed';
+  let root!: ReturnType<typeof create>;
+  act(() => { root = create(<NativeSpeechInput {...props()} />); });
+
+  act(() => root.root.findByProps({ accessibilityLabel: 'Retry speech input' }).props.onPress());
+
+  expect(mockRetryCapabilities).toHaveBeenCalledTimes(1);
   act(() => root.unmount());
 });

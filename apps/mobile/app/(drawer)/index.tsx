@@ -78,18 +78,25 @@ export default function ChatScreen() {
 
   const [draft, setDraft] = useState("");
   const draftRef = useRef("");
-  const draftRevisionRef = useRef(0);
+  const draftGenerationRef = useRef(0);
   const [speechActive, setSpeechActive] = useState(false);
   const replaceDraft = useCallback((text: string) => {
     draftRef.current = text;
-    draftRevisionRef.current += 1;
     setDraft(text);
   }, []);
-  const appendSpeechDraft = useCallback((text: string, recordingRevision: number): void | string => {
+  const handleDraftChange = useCallback((text: string) => {
+    if (!text && draftRef.current) draftGenerationRef.current += 1;
+    replaceDraft(text);
+  }, [replaceDraft]);
+  const clearDraft = useCallback(() => {
+    draftGenerationRef.current += 1;
+    replaceDraft("");
+  }, [replaceDraft]);
+  const appendSpeechDraft = useCallback((text: string, recordingGeneration: number): void | string => {
     const merged = mergeNativeSpeechDraft({
       current: draftRef.current,
-      currentRevision: draftRevisionRef.current,
-      recordingRevision,
+      currentGeneration: draftGenerationRef.current,
+      recordingGeneration,
       transcript: text,
     });
     if (!merged.ok) {
@@ -98,7 +105,7 @@ export default function ChatScreen() {
         : "The transcript is too long for this message";
     }
     draftRef.current = merged.value;
-    draftRevisionRef.current = merged.revision;
+    draftGenerationRef.current = merged.generation;
     setDraft(merged.value);
   }, []);
   const [inputFocused, setInputFocused] = useState(false);
@@ -173,7 +180,7 @@ export default function ChatScreen() {
     }, {
       onSuccess: () => {
         if (pendingSendRef.current?.text === trimmed) pendingSendRef.current = null;
-        if (draftRef.current === trimmed) replaceDraft("");
+        if (draftRef.current === trimmed) clearDraft();
       },
     });
   }, [
@@ -185,10 +192,16 @@ export default function ChatScreen() {
     detail?.record.chat.revision,
     selectedProjectId,
     sendMessage,
-    replaceDraft,
+    clearDraft,
   ]);
 
   const insets = useSafeAreaInsets();
+  const speechScopeKey = isSignedIn && computer
+    ? `${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? "draft"}`
+    : null;
+  useEffect(() => {
+    draftGenerationRef.current += 1;
+  }, [speechScopeKey]);
 
   // Keep the composer focused and the keyboard open while there's no active
   // chat (a fresh draft) -- `autoFocus` alone doesn't reliably refire across
@@ -280,7 +293,7 @@ export default function ChatScreen() {
               ref={inputRef}
               accessibilityLabel="Message Matrix"
               value={draft}
-              onChangeText={replaceDraft}
+              onChangeText={handleDraftChange}
               onSubmitEditing={send}
               onFocus={handleInputFocus}
               onBlur={handleInputBlur}
@@ -290,13 +303,13 @@ export default function ChatScreen() {
               returnKeyType="send"
               style={inputFocused || speechActive ? styles.inputActive : styles.input}
             />
-            {isSignedIn && computer ? <NativeSpeechInput
-              key={`${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? 'draft'}`}
-              scopeKey={`${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? 'draft'}`}
+            {speechScopeKey && computer ? <NativeSpeechInput
+              key={speechScopeKey}
+              scopeKey={speechScopeKey}
               baseUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`}
               runtimeSlot={computer.runtimeSlot}
               getToken={getToken}
-              getDraftRevision={() => draftRevisionRef.current}
+              getDraftGeneration={() => draftGenerationRef.current}
               onDraft={appendSpeechDraft}
               onActive={setSpeechActive}
             /> : null}
@@ -563,6 +576,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.v2.appColors.ink,
   },
   composerInputRow: {
+    flex: 1,
     minHeight: 46,
     alignSelf: "stretch",
     flexDirection: "row",

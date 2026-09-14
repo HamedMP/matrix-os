@@ -166,6 +166,7 @@ describe("mobile speech recording configuration", () => {
   it("ships native audio capture behind a new app-version runtime boundary", () => {
     expect(appConfig.expo?.version).toBe("0.2.3");
     expect(packageConfig.dependencies?.["expo-audio"]).toBe("~57.0.5");
+    expect(packageConfig.dependencies?.["expo-crypto"]).toBe("~57.0.0");
     expect(appConfig.expo?.plugins).toContainEqual([
       "expo-audio",
       {

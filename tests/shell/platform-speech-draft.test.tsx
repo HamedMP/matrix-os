@@ -79,6 +79,24 @@ describe("platform speech draft recording", () => {
     expect(speech.transcribe).toHaveBeenCalledTimes(1);
   });
 
+  it("fails safely before microphone capture when request identity creation is unavailable", async () => {
+    const adapter = captureAdapter();
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-1",
+      client: client(),
+      captureAdapter: adapter,
+      onDraft: vi.fn(),
+      requestIdFactory: () => { throw new Error("crypto unavailable"); },
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+
+    await act(async () => hook.result.current.start());
+
+    expect(hook.result.current.phase).toBe("error");
+    expect(hook.result.current.error).toBe("Speech recording could not start");
+    expect(adapter.start).not.toHaveBeenCalled();
+  });
+
   it("keeps a safe draft-commit error when the destination revision changed", async () => {
     const onDraft = vi.fn(() => "Your draft changed while the recording was transcribed");
     const hook = renderHook(() => usePlatformSpeechDraft({
@@ -277,5 +295,25 @@ describe("platform speech draft recording", () => {
     expect(hook.result.current.isSupported).toBe(false);
     await act(async () => hook.result.current.start());
     expect(hook.result.current.phase).toBe("unavailable");
+  });
+
+  it("retries a transient capability check without changing chat scope", async () => {
+    const capabilities = vi.fn()
+      .mockRejectedValueOnce(new Error("temporary network failure"))
+      .mockResolvedValueOnce(ready);
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-1",
+      client: client({ capabilities }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("unavailable"));
+    expect(hook.result.current.unavailableReason).toBe("capability_check_failed");
+
+    act(() => hook.result.current.retryCapabilities());
+
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    expect(capabilities).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.unavailableReason).toBeNull();
   });
 });

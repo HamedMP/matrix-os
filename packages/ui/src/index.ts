@@ -71,6 +71,7 @@ export type {
   PlatformSpeechCaptureAdapter,
   PlatformSpeechDraftClient,
   PlatformSpeechDraftPhase,
+  PlatformSpeechUnavailableReason,
   PlatformSpeechRecording,
   UsePlatformSpeechDraftResult,
 } from "./speech/use-platform-speech-draft.js";

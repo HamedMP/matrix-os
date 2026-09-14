@@ -138,6 +138,7 @@ describe("shared chat platform speech input", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     const waveform = await screen.findByTestId("speech-input-waveform");
+    expect(waveform.className).toContain("text-primary");
     expect(waveform.getAttribute("data-level")).toBe("0");
     act(() => emitLevel?.(0.8));
     await waitFor(() => expect(waveform.getAttribute("data-level")).toBe("0.8"));
@@ -201,5 +202,25 @@ describe("shared chat platform speech input", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(lateCancel).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps transient capability failures visible and retryable", async () => {
+    const retryingClient = speechClient();
+    vi.mocked(retryingClient.capabilities)
+      .mockRejectedValueOnce(new Error("temporary network failure"));
+    render(<ChatInput
+      speechScopeKey="chat-1"
+      connected
+      busy={false}
+      onSubmit={vi.fn()}
+      attachmentsEnabled={false}
+      speechClient={retryingClient}
+      speechCaptureAdapter={captureAdapter}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry voice input" }));
+
+    expect(await screen.findByRole("button", { name: "Start voice input" })).toBeTruthy();
+    expect(retryingClient.capabilities).toHaveBeenCalledTimes(2);
   });
 });
