@@ -12,7 +12,8 @@ capacity gaps broke static asset loads. Increasing capacity alone cannot fix it.
 
 This PR changes code and documents an operator rollout; it does not authorize
 production changes. Keep the temporary matrix-platform **minimum 3 / maximum 30**.
-Do not restart `matrix-symphony` on `kongfupanda65` except with the corrected bundle.
+Do not restart the incident-mitigated customer Symphony service except with the
+corrected bundle; identify that host from the private operator incident record.
 Never log into customer Matrix accounts for validation.
 
 ## Deploy in this order, after explicit approval
