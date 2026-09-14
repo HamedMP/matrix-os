@@ -765,18 +765,21 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   ): Promise<T> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 10; attempt += 1) {
+      // Execution and deadline failures are systemic, not evidence that one
+      // saved session is unavailable. Keep them outside the recoverable path.
+      const output = (await this.run(
+        args,
+        binaryPath,
+        remainingCommandTimeout(operationDeadline),
+      )).trim();
       try {
-        const output = (await this.run(
-          args,
-          binaryPath,
-          remainingCommandTimeout(operationDeadline),
-        )).trim();
         // Missing/exited sessions can return exit 0 with a human-readable
         // inventory. ANSI escapes and prose can contain brackets, including
         // "[]": extracting a JSON substring would fabricate an empty inventory
         // and incorrectly retire persisted tabs. Require the whole response.
         return schema.parse(JSON.parse(output));
       } catch (error) {
+        if (!(error instanceof SyntaxError) && !(error instanceof z.ZodError)) throw error;
         lastError = error;
         await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
       }

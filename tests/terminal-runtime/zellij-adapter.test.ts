@@ -72,6 +72,30 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["ENOENT", "EACCES", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "ETIMEDOUT"])(
+    "does not classify a command failure as a recoverable session: %s", async (code) => {
+      const failure = Object.assign(new Error("command failed"), { code });
+      const run = vi.fn().mockResolvedValueOnce("session unavailable").mockRejectedValue(failure);
+      const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+      await expect(adapter.findTabsByInternalName(
+        "matrix-w-0123456789abcdef0123456789abcdef",
+        ["matrix-tab-0123456789abcdef0123456789abcdef"],
+      )).rejects.toBe(failure);
+      expect(run).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("does not classify an expired operation deadline as a recoverable session", async () => {
+    const run = vi.fn();
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+    await expect(adapter.prepareShellTabs(
+      "matrix-w-0123456789abcdef0123456789abcdef",
+      [{ internalName: "matrix-tab-0123456789abcdef0123456789abcdef", cwd: "" }],
+      Date.now() - 1,
+    )).rejects.toThrow("Terminal runtime operation timed out");
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("propagates one explicit owner runtime environment to attachments", async () => {
     const runtimeEnvironment = {
       HOME: "/home/matrix/home",
