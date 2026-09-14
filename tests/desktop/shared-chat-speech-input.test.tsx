@@ -100,6 +100,7 @@ describe("Electron shared Chat speech input", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     const waveform = await screen.findByTestId("speech-input-waveform");
+    expect(waveform.className).toContain("text-[var(--accent)]");
     act(() => emitLevel?.(0.64));
     await waitFor(() => expect(waveform.getAttribute("data-level")).toBe("0.64"));
   });
@@ -159,5 +160,23 @@ describe("Electron shared Chat speech input", () => {
     await waitFor(() => expect(onDraft).toHaveBeenCalledWith("spoken draft"));
     expect(captureAdapter.start).toHaveBeenCalledTimes(2);
     expect(speechClient.transcribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps transient capability failures visible and retryable", async () => {
+    const speechClient = client();
+    vi.mocked(speechClient.capabilities)
+      .mockRejectedValueOnce(new Error("temporary network failure"));
+    render(<DesktopSpeechInputControl
+      scopeKey="account-a:primary:chat-a"
+      client={speechClient}
+      captureAdapter={{ isSupported: () => true, start: vi.fn() }}
+      onDraft={vi.fn()}
+      disabled={false}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry voice input" }));
+
+    expect(await screen.findByRole("button", { name: "Start voice input" })).toBeTruthy();
+    expect(speechClient.capabilities).toHaveBeenCalledTimes(2);
   });
 });

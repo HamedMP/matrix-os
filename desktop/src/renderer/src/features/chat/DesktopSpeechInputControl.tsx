@@ -42,17 +42,25 @@ export function DesktopSpeechInputControl({
     onActiveChange?.(active);
     return () => onActiveChange?.(false);
   }, [active, onActiveChange]);
-  if (!speech.isSupported && !active && !speech.error) return null;
-  const label = speech.phase === "requesting_permission"
-    ? "Cancel microphone request"
-    : speech.phase === "recording"
-      ? "Stop recording"
-      : speech.phase === "transcribing"
-        ? "Cancel transcription"
-        : "Start voice input";
+  const retryable = speech.phase === "unavailable"
+    && ["capability_check_failed", "temporarily_unavailable"].includes(speech.unavailableReason ?? "");
+  const label = speech.phase === "loading"
+    ? "Checking voice input"
+    : retryable
+      ? "Retry voice input"
+      : speech.phase === "unavailable"
+        ? "Voice input unavailable"
+        : speech.phase === "requesting_permission"
+          ? "Cancel microphone request"
+          : speech.phase === "recording"
+            ? "Stop recording"
+            : speech.phase === "transcribing"
+              ? "Cancel transcription"
+              : "Start voice input";
   const activate = () => {
     if (speech.phase === "recording") speech.stop();
     else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
+    else if (speech.phase === "unavailable") speech.retryCapabilities();
     else void speech.start();
   };
   return (
@@ -71,7 +79,7 @@ export function DesktopSpeechInputControl({
           <SpeechInputWaveform
             level={speech.inputLevel}
             sampleSequence={speech.inputLevelSequence}
-            className="mx-1 text-[var(--danger)]"
+            className="mx-1 text-[var(--accent)]"
           />
           <span aria-live="polite" className="px-1 text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
             {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
@@ -82,12 +90,14 @@ export function DesktopSpeechInputControl({
         type="button"
         aria-label={label}
         title={label}
-        disabled={disabled && !active}
+        disabled={(disabled && !active)
+          || speech.phase === "loading"
+          || (speech.phase === "unavailable" && !retryable)}
         onClick={activate}
         className="flex h-9 w-9 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
         style={{ color: speech.phase === "recording" ? "var(--danger)" : "var(--text-secondary)" }}
       >
-        {speech.phase === "requesting_permission" ? (
+        {speech.phase === "loading" || speech.phase === "requesting_permission" ? (
           <Loader2Icon size={16} aria-hidden className="animate-spin motion-reduce:animate-none" />
         ) : speech.phase === "transcribing" ? (
           <XCircleIcon size={16} aria-hidden />
